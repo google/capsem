@@ -5,7 +5,7 @@ description: How capsem-gate works and how to add or change a gate command. Use 
 
 # The build and release gate
 
-The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
+The justfile dispatches; `build_system/builder/gate/` decides. No recipe carries a shell
 body, none exceeds five lines, and both are contract tests rather than
 conventions.
 
@@ -67,7 +67,7 @@ Nothing in `gatelaunch` may import `capsem.gate` at module scope.
 
 `Qualification.from_environment` is read once in `GateCommand.__init__` and
 passed to `artifacts()`, `functional()` and `glowup()`. Three legal shapes —
-local, binary release, profile release — and every partial combination is
+local, binary release, runtime release — and every partial combination is
 refused while the plan is being built. **No module below reads
 `CAPSEM_RELEASE_*` itself.** They each did, from a different variable, and a
 dropped `GITHUB_ENV` line built a plan that verified pulled assets against a
@@ -194,8 +194,8 @@ Reach for the builders rather than assembling dictionaries:
 under `[environment.package]`, `[environment.release_site]`,
 `[environment.install_proof]`.
 
-Treat a profile's assets and materialized configuration as one typed
-`ProfileContent` root. Pass that value through composed package/install/glow-up
+Treat the runtime assets and materialized configuration as one typed
+`RuntimeContent` root. Pass that value through composed package/install/glow-up
 fragments; never rediscover its halves from ambient variables or mutable
 checkout selectors at a Docker/Colima boundary.
 

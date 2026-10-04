@@ -5,7 +5,7 @@ pub(super) fn assets_channel_index(
     channel: &str,
     generated_at: &str,
     manifest_blake3: &str,
-    profiles: AssetsChannelProfilesSummary,
+    runtime: AssetsChannelRuntimeSummary,
     asset_base: &str,
 ) -> AssetsChannelIndex {
     let mut arches = BTreeSet::new();
@@ -56,8 +56,7 @@ pub(super) fn assets_channel_index(
         host_sboms,
         attestations,
         vm_oboms,
-        profiles,
-        image_update_state: "not_published".to_string(),
+        runtime: Some(runtime),
     }
 }
 
@@ -71,13 +70,10 @@ pub(super) fn assets_channel_index_from_graph(
         .get("packages")
         .and_then(|value| value.as_array())
         .ok_or_else(|| anyhow!("graph manifest packages must be an array"))?;
-    let profiles = manifest
-        .get("profiles")
-        .and_then(|value| value.as_object())
-        .ok_or_else(|| anyhow!("graph manifest profiles must be an object"))?;
+    let runtime = graph_runtime(manifest);
     let binary_version = graph_binary_version(packages);
-    let profiles_summary = graph_profiles_summary(profiles)?;
-    let current_asset_files = graph_asset_files(profiles)?;
+    let runtime_summary = runtime.map(graph_runtime_summary).transpose()?;
+    let current_asset_files = runtime.map(graph_asset_files).transpose()?.unwrap_or_default();
     let vm_oboms = current_asset_files
         .iter()
         .filter(|file| is_vm_obom_asset_file(file))
@@ -91,11 +87,17 @@ pub(super) fn assets_channel_index_from_graph(
         .collect();
     let mut attestations = binary_package_attestations(&binary_files);
     attestations.extend(current_asset_attestations(&current_asset_files));
-    let arches = current_asset_files
+    let asset_release_history = runtime_summary
         .iter()
-        .map(|file| file.arch.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
+        .map(|summary| AssetsChannelAssetRelease {
+            version: summary.revision.clone(),
+            date: generated_at.get(..10).unwrap_or(generated_at).to_string(),
+            state: "current".to_string(),
+            deprecated: false,
+            deprecated_date: None,
+            min_binary: summary.min_binary.clone(),
+            arches: summary.architectures.clone(),
+        })
         .collect::<Vec<_>>();
     Ok(AssetsChannelIndex {
         schema_version: 1,
@@ -105,38 +107,39 @@ pub(super) fn assets_channel_index_from_graph(
         release_site: "https://release.capsem.org/".to_string(),
         summary: "Capsem asset channel generated from release graph manifest.".to_string(),
         manifest: format!("/assets/{channel}/manifest.json"),
-        asset_base: "/profiles/releases".to_string(),
+        asset_base: "/runtime/releases".to_string(),
         manifest_blake3: manifest_blake3.to_string(),
         binary_version,
-        asset_version: profiles_summary.revision.clone(),
-        asset_state: "current".to_string(),
-        asset_min_binary: Some(profiles_summary.min_binary.clone()),
+        asset_version: runtime_summary
+            .as_ref()
+            .map_or_else(|| "not_published".to_string(), |summary| summary.revision.clone()),
+        asset_state: if runtime_summary.is_some() {
+            "current"
+        } else {
+            "missing"
+        }
+        .to_string(),
+        asset_min_binary: runtime_summary.as_ref().map(|summary| summary.min_binary.clone()),
         binary_state: if packages.is_empty() { "missing" } else { "current" }.to_string(),
-        asset_releases: 1,
-        asset_release_history: vec![AssetsChannelAssetRelease {
-            version: profiles_summary.revision.clone(),
-            date: generated_at.get(..10).unwrap_or(generated_at).to_string(),
-            state: "current".to_string(),
-            deprecated: false,
-            deprecated_date: None,
-            min_binary: profiles_summary.min_binary.clone(),
-            arches,
-        }],
+        asset_releases: asset_release_history.len(),
+        asset_release_history,
         binary_releases: if packages.is_empty() { 0 } else { 1 },
-        arches: current_asset_files
-            .iter()
-            .map(|file| file.arch.clone())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect(),
+        arches: runtime_summary
+            .as_ref()
+            .map(|summary| summary.architectures.clone())
+            .unwrap_or_default(),
         current_asset_files,
         binary_files,
         host_sboms,
         attestations,
         vm_oboms,
-        profiles: profiles_summary,
-        image_update_state: "not_published".to_string(),
+        runtime: runtime_summary,
     })
+}
+
+/// The graph's runtime document, or `None` before its first runtime release.
+pub(super) fn graph_runtime(manifest: &serde_json::Value) -> Option<&serde_json::Value> {
+    manifest.get("runtime").filter(|runtime| !runtime.is_null())
 }
 
 pub(super) fn graph_binary_version(packages: &[serde_json::Value]) -> String {
@@ -150,67 +153,59 @@ pub(super) fn graph_binary_version(packages: &[serde_json::Value]) -> String {
         .to_string()
 }
 
-pub(super) fn graph_profiles_summary(
-    profiles: &serde_json::Map<String, serde_json::Value>,
-) -> Result<AssetsChannelProfilesSummary> {
-    let profile_ids = profiles.keys().cloned().collect::<Vec<_>>();
-    let revision = graph_profile_revision_summary(profiles);
-    let min_binary = profiles
-        .values()
-        .filter_map(|profile| profile.get("min_capsem_version").and_then(|value| value.as_str()))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .next()
-        .unwrap_or("")
-        .to_string();
-    Ok(AssetsChannelProfilesSummary {
-        revision,
-        profile_count: profiles.len(),
-        profile_ids,
-        refresh_policy: "graph".to_string(),
-        min_binary,
-        requires_newer_binary: false,
+pub(super) fn graph_runtime_summary(runtime: &serde_json::Value) -> Result<AssetsChannelRuntimeSummary> {
+    let architectures = runtime
+        .get("architectures")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("graph runtime architectures must be an array"))?
+        .iter()
+        .map(|architecture| require_json_string(architecture, &["architecture"]))
+        .collect::<Result<BTreeSet<_>>>()?;
+    Ok(AssetsChannelRuntimeSummary {
+        revision: require_json_string(runtime, &["revision"])?,
+        min_binary: runtime
+            .get("min_capsem_version")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
+        architectures: architectures.into_iter().collect(),
     })
 }
 
-pub(super) fn graph_asset_files(
-    profiles: &serde_json::Map<String, serde_json::Value>,
-) -> Result<Vec<AssetsChannelAssetFile>> {
+pub(super) fn graph_asset_files(runtime: &serde_json::Value) -> Result<Vec<AssetsChannelAssetFile>> {
     let mut files = Vec::new();
-    for profile in profiles.values() {
-        let architectures = profile
-            .get("architectures")
-            .and_then(|value| value.as_array())
-            .ok_or_else(|| anyhow!("graph profile architectures must be an array"))?;
-        for arch_doc in architectures {
-            let arch = require_json_string(arch_doc, &["architecture"])?;
-            for field in ["images", "evidence"] {
-                for item in arch_doc
-                    .get(field)
-                    .and_then(|value| value.as_array())
-                    .into_iter()
-                    .flatten()
-                {
-                    let url = require_json_string(item, &["url"])?;
-                    let digest = require_json_string(item, &["digest", "blake3"])?;
-                    let size = item
-                        .get("bytes")
-                        .and_then(|value| value.as_u64())
-                        .ok_or_else(|| anyhow!("graph asset file bytes missing"))?;
-                    let logical_name = item
-                        .get("name")
-                        .and_then(|value| value.as_str())
-                        .or_else(|| item.get("kind").and_then(|value| value.as_str()))
-                        .unwrap_or("asset")
-                        .to_string();
-                    files.push(AssetsChannelAssetFile {
-                        arch: arch.clone(),
-                        logical_name,
-                        url,
-                        hash: digest,
-                        size,
-                    });
-                }
+    let architectures = runtime
+        .get("architectures")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("graph runtime architectures must be an array"))?;
+    for arch_doc in architectures {
+        let arch = require_json_string(arch_doc, &["architecture"])?;
+        for field in ["images", "evidence"] {
+            for item in arch_doc
+                .get(field)
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+            {
+                let url = require_json_string(item, &["url"])?;
+                let digest = require_json_string(item, &["digest", "blake3"])?;
+                let size = item
+                    .get("bytes")
+                    .and_then(|value| value.as_u64())
+                    .ok_or_else(|| anyhow!("graph asset file bytes missing"))?;
+                let logical_name = item
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .or_else(|| item.get("kind").and_then(|value| value.as_str()))
+                    .unwrap_or("asset")
+                    .to_string();
+                files.push(AssetsChannelAssetFile {
+                    arch: arch.clone(),
+                    logical_name,
+                    url,
+                    hash: digest,
+                    size,
+                });
             }
         }
     }
@@ -300,64 +295,61 @@ pub(super) fn summarize_asset_releases(manifest: &ManifestV2) -> Vec<AssetsChann
     releases
 }
 
-pub(super) fn publishable_profiles(
+/// The runtime document for the manifest's current asset release.
+///
+/// The runtime revision is the asset release itself (`assets.current`), and
+/// every architecture that release builds publishes one image set.
+pub(super) fn publishable_runtime(
     manifest: &ManifestV2,
-    profiles_dir: &Path,
     channel: &str,
     asset_base: &str,
     assets_dir: &Path,
     asset_digest_cache: &mut AssetDigestCache,
-    profile_revision_policy: ProfileRevisionPolicyArg,
-) -> Result<PublishableProfiles> {
+) -> Result<PublishableRuntime> {
+    let revision = manifest.assets.current.as_str();
+    release_graph::validate_runtime_revision(revision)?;
     let current_release = manifest
         .assets
         .releases
-        .get(&manifest.assets.current)
+        .get(revision)
         .ok_or_else(|| anyhow!("manifest current asset release is missing"))?;
-    let catalog = ProfileCatalog::load_from_dir(profiles_dir)
-        .map_err(|error| anyhow!("load profile directory {}: {error}", profiles_dir.display()))?;
-    let config_root = profiles_dir
-        .parent()
-        .ok_or_else(|| anyhow!("profile directory {} has no config root", profiles_dir.display()))?;
-    let mut profiles = catalog
-        .profiles()
-        .cloned()
-        .map(|profile| publishable_profile_config(profile, config_root, manifest, current_release, asset_base))
-        .collect::<Result<Vec<_>>>()?;
-    profiles.sort_by(|left, right| left.id.cmp(&right.id));
-    let profile_ids = profiles.iter().map(|profile| profile.id.clone()).collect::<Vec<_>>();
-    let revision = profile_release_revision(&profiles, profile_revision_policy)?;
-    validate_profile_revision_path(&revision)?;
-    let refresh_policy = profile_refresh_policy(&profiles);
-    let min_binary = current_release.min_binary.clone();
-    let mut file_copies = Vec::new();
-    let mut graph_profiles = Vec::new();
-    let graph_context = ProfileGraphContext {
+    let context = RuntimeGraphContext {
         channel,
-        manifest,
-        current_release,
+        revision,
         asset_base,
         assets_dir,
     };
-    for profile in &profiles {
-        graph_profiles.push(graph_profile_document(
-            profile,
-            config_root,
-            &graph_context,
+    let mut file_copies = Vec::new();
+    let mut architectures = Vec::new();
+    let arch_names = current_release.arches.keys().cloned().collect::<BTreeSet<_>>();
+    for arch in &arch_names {
+        architectures.push(runtime_architecture_document(
+            arch,
+            &current_release.arches[arch],
+            &context,
             &mut file_copies,
             asset_digest_cache,
         )?);
     }
-    Ok(PublishableProfiles {
-        summary: AssetsChannelProfilesSummary {
-            revision,
-            profile_count: graph_profiles.len(),
-            profile_ids,
-            refresh_policy,
+    if architectures.is_empty() {
+        return Err(anyhow!("manifest current release {revision} builds no architecture"));
+    }
+    let min_binary = current_release.min_binary.clone();
+    let mut runtime = serde_json::json!({
+        "revision": revision,
+        "status": "current",
+        "architectures": architectures,
+    });
+    if !min_binary.is_empty() {
+        runtime["min_capsem_version"] = serde_json::Value::String(min_binary.clone());
+    }
+    Ok(PublishableRuntime {
+        summary: AssetsChannelRuntimeSummary {
+            revision: revision.to_string(),
             min_binary,
-            requires_newer_binary: false,
+            architectures: arch_names.into_iter().collect(),
         },
-        profiles: graph_profiles,
+        runtime,
         file_copies,
     })
 }
@@ -377,21 +369,10 @@ pub(super) fn validate_graph_manifest_version(version: &str) -> Result<()> {
 pub(super) fn render_graph_release_manifest(
     manifest: &ManifestV2,
     channel: &str,
-    profiles: &[serde_json::Value],
-    _asset_base: &str,
+    runtime: &serde_json::Value,
     version: &str,
 ) -> Result<String> {
     let packages = graph_package_rows(manifest)?;
-    let profile_map = profiles
-        .iter()
-        .map(|profile| {
-            let id = profile
-                .get("id")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| anyhow!("graph profile missing id"))?;
-            Ok((id.to_string(), profile.clone()))
-        })
-        .collect::<Result<BTreeMap<_, _>>>()?;
     Ok(format!(
         "{}\n",
         serde_json::to_string_pretty(&serde_json::json!({
@@ -399,16 +380,15 @@ pub(super) fn render_graph_release_manifest(
             "channel": channel,
             "status": "current",
             "packages": packages,
-            "profiles": profile_map,
+            "runtime": runtime,
         }))
         .context("serialize graph release manifest")?
     ))
 }
 
-pub(super) struct ProfileGraphContext<'a> {
+pub(super) struct RuntimeGraphContext<'a> {
     channel: &'a str,
-    manifest: &'a ManifestV2,
-    current_release: &'a capsem_assets::asset_manager::AssetRelease,
+    revision: &'a str,
     asset_base: &'a str,
     assets_dir: &'a Path,
 }
@@ -495,288 +475,131 @@ pub(super) fn package_sbom_refs(
         .collect()
 }
 
-pub(super) fn graph_profile_document(
-    profile: &ProfileConfigFile,
-    config_root: &Path,
-    context: &ProfileGraphContext<'_>,
-    file_copies: &mut Vec<ProfileReleaseFileCopy>,
+/// Where the channel copies VM blobs it publishes itself.
+const LOCAL_ASSET_BASE: &str = "/assets/releases";
+
+/// The boot images every runtime architecture carries, by graph kind.
+const RUNTIME_IMAGE_FILES: [(&str, &str); 3] = [
+    ("kernel", "vmlinuz"),
+    ("initrd", "initrd.img"),
+    ("rootfs", "rootfs.erofs"),
+];
+
+/// The evidence a runtime architecture publishes when its build produced it.
+const RUNTIME_EVIDENCE_FILES: [(&str, &str); 3] = [
+    ("abom", "abom.cdx.json"),
+    ("obom", "obom.cdx.json"),
+    ("software_inventory", "software-inventory.json"),
+];
+
+pub(super) fn runtime_architecture_document(
+    arch: &str,
+    manifest_assets: &std::collections::HashMap<String, capsem_assets::asset_manager::AssetEntry>,
+    context: &RuntimeGraphContext<'_>,
+    file_copies: &mut Vec<RuntimeReleaseFileCopy>,
     asset_digest_cache: &mut AssetDigestCache,
 ) -> Result<serde_json::Value> {
-    let revision = profile.revision.clone();
-    let images = graph_profile_images(profile, &revision, context, file_copies, asset_digest_cache)?;
-    let software = graph_profile_software(profile, &revision, context, asset_digest_cache)?;
-    let image_records = images
-        .as_array()
-        .ok_or_else(|| anyhow!("profile {} image graph is not an array", profile.id))?;
-    let mut architectures = Vec::new();
-    for image in image_records {
-        let arch = image
-            .get("architecture")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| anyhow!("profile {} image record missing architecture", profile.id))?;
-        let config = graph_profile_config_refs(profile, config_root, context.channel, &revision, arch, file_copies)?;
-        let arch_software = software.get(arch).cloned().unwrap_or_default();
-        let image_artifacts = image
-            .get("artifacts")
-            .and_then(|value| value.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let evidence = image
-            .get("evidence")
-            .and_then(|value| value.as_array())
-            .cloned()
-            .unwrap_or_default();
-        architectures.push(serde_json::json!({
-            "architecture": arch,
-            "package_inventory_revision": context.manifest.assets.current,
-            "image_revision": context.manifest.assets.current,
-            "software": arch_software,
-            "config": config,
-            "images": image_artifacts,
-            "evidence": evidence,
-        }));
-    }
-    Ok(serde_json::json!({
-        "id": profile.id,
-        "name": profile.name,
-        "description": profile.description,
-        "version": profile.revision,
-        "revision": profile.revision,
-        "status": "current",
-        "min_capsem_version": context.current_release.min_binary,
-        "architectures": architectures,
-    }))
-}
-
-pub(super) fn graph_profile_config_refs(
-    profile: &ProfileConfigFile,
-    config_root: &Path,
-    channel: &str,
-    revision: &str,
-    arch: &str,
-    file_copies: &mut Vec<ProfileReleaseFileCopy>,
-) -> Result<Vec<serde_json::Value>> {
-    let mut files = Vec::new();
-    let profile_toml = format!("profiles/{}/profile.toml", profile.id);
-    files.push(("profile".to_string(), profile_toml, None));
-    for (kind, descriptor) in profile_file_descriptors(profile) {
-        files.push((kind.to_string(), descriptor.path.clone(), None));
-    }
-    if let Some(root_manifest_descriptor) = profile.files.root_manifest.as_ref() {
-        let manifest_path = config_root.join(&root_manifest_descriptor.path);
-        check_profile_root_manifest(&manifest_path)?;
-        let manifest: ProfileRootManifest = serde_json::from_slice(
-            &fs::read(&manifest_path)
-                .with_context(|| format!("read profile root manifest {}", manifest_path.display()))?,
-        )
-        .with_context(|| format!("parse profile root manifest {}", manifest_path.display()))?;
-        let manifest_parent = Path::new(&root_manifest_descriptor.path)
-            .parent()
-            .ok_or_else(|| anyhow!("profile {} root manifest has no parent path", profile.id))?;
-        for entry in manifest.files {
-            let relative_path = manifest_parent.join("root").join(&entry.path);
-            let relative = relative_path
-                .to_str()
-                .ok_or_else(|| {
-                    anyhow!(
-                        "profile {} root payload path is not UTF-8: {}",
-                        profile.id,
-                        relative_path.display()
-                    )
-                })?
-                .replace(std::path::MAIN_SEPARATOR, "/");
-            validate_relative_manifest_path("profile root publication path", &relative)?;
-            files.push(("root_payload".to_string(), relative, Some("root-payload".to_string())));
-        }
-    }
-    files.sort_by(|left, right| left.1.cmp(&right.1));
-    files.dedup_by(|left, right| left.1 == right.1);
-
-    let mut rows = Vec::new();
-    let mut urls = BTreeMap::new();
-    let mut digest_urls = BTreeMap::new();
-    for (kind, relative, publication_name) in files {
-        let source = config_root.join(&relative);
-        let (bytes, digest) = file_digest(&source)?;
-        let file_name = match publication_name {
-            Some(prefix) => format!(
-                "{prefix}-{}",
-                digest
-                    .get("blake3")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| { anyhow!("profile {} config path lacks BLAKE3 digest: {relative}", profile.id) })?
-            ),
-            None => Path::new(&relative)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| anyhow!("profile {} config path has no file name: {relative}", profile.id))?
-                .to_string(),
-        };
-        let identity = (
-            bytes,
-            digest
-                .get("sha256")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            digest
-                .get("blake3")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        );
-        let proposed_url = profile_release_url(channel, &profile.id, revision, arch, &file_name)?;
-        let url = digest_urls.entry(identity.clone()).or_insert(proposed_url).clone();
-        if let Some(previous) = urls.insert(url.clone(), identity.clone()) {
-            if previous != identity {
-                return Err(anyhow!(
-                    "profile {}/{} config publication URL collides: {}",
-                    profile.id,
-                    arch,
-                    url
-                ));
-            }
-        }
-        file_copies.push(ProfileReleaseFileCopy {
-            source,
-            url: url.clone(),
-        });
-        rows.push(serde_json::json!({
+    let mut images = Vec::new();
+    for (kind, logical_name) in RUNTIME_IMAGE_FILES {
+        let entry = manifest_assets.get(logical_name).ok_or_else(|| {
+            anyhow!(
+                "manifest current release {} arch {arch} is missing {logical_name}",
+                context.revision
+            )
+        })?;
+        let (bytes, digest) = asset_entry_digest(arch, logical_name, entry, asset_digest_cache)?;
+        images.push(serde_json::json!({
             "kind": kind,
-            "path": relative,
-            "url": url,
+            "name": logical_name,
+            "url": publish_runtime_file(context, arch, logical_name, file_copies)?,
             "bytes": bytes,
             "digest": digest,
             "status": "current",
         }));
     }
-    Ok(rows)
+    let mut evidence = Vec::new();
+    for (kind, logical_name) in RUNTIME_EVIDENCE_FILES {
+        let Some(entry) = manifest_assets.get(logical_name) else {
+            continue;
+        };
+        let (bytes, digest) = asset_entry_digest(arch, logical_name, entry, asset_digest_cache)?;
+        evidence.push(serde_json::json!({
+            "kind": kind,
+            "url": publish_runtime_file(context, arch, logical_name, file_copies)?,
+            "bytes": bytes,
+            "digest": digest,
+            "status": "current",
+        }));
+    }
+    let software = runtime_architecture_software(arch, manifest_assets, context, asset_digest_cache)?;
+    Ok(serde_json::json!({
+        "architecture": arch,
+        "package_inventory_revision": context.revision,
+        "image_revision": context.revision,
+        "software": software,
+        "images": images,
+        "evidence": evidence,
+    }))
 }
 
-pub(super) fn profile_release_url(
+/// The URL one runtime file is published at in this channel build.
+pub(super) fn runtime_file_url(context: &RuntimeGraphContext<'_>, arch: &str, logical_name: &str) -> Result<String> {
+    if context.asset_base == LOCAL_ASSET_BASE {
+        return runtime_release_url(context.channel, context.revision, arch, logical_name);
+    }
+    Ok(channel_asset_url(
+        context.asset_base,
+        context.revision,
+        arch,
+        logical_name,
+    ))
+}
+
+/// The URL of one runtime file, staging its bytes when the channel hosts them.
+pub(super) fn publish_runtime_file(
+    context: &RuntimeGraphContext<'_>,
+    arch: &str,
+    logical_name: &str,
+    file_copies: &mut Vec<RuntimeReleaseFileCopy>,
+) -> Result<String> {
+    let url = runtime_file_url(context, arch, logical_name)?;
+    if context.asset_base == LOCAL_ASSET_BASE {
+        file_copies.push(RuntimeReleaseFileCopy {
+            source: source_asset_path(context.assets_dir, arch, logical_name)?,
+            url: url.clone(),
+        });
+    }
+    Ok(url)
+}
+
+pub(super) fn runtime_release_url(
     channel: &str,
-    profile: &str,
     revision: &str,
     architecture: &str,
     file_name: &str,
 ) -> Result<String> {
-    profile_publication_identity(channel, profile, revision)?;
+    runtime_publication_identity(channel, revision)?;
     for (label, value) in [
-        ("profile architecture", architecture),
-        ("profile publication file", file_name),
+        ("runtime architecture", architecture),
+        ("runtime publication file", file_name),
     ] {
         let valid = !value.is_empty()
+            && value != ".."
             && value
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
         if !valid {
-            return Err(anyhow!("{label} cannot form an immutable profile path: {value}"));
+            return Err(anyhow!("{label} cannot form an immutable runtime path: {value}"));
         }
     }
     Ok(format!(
-        "/profiles/releases/{channel}/{profile}/{revision}/{architecture}/{file_name}"
+        "/runtime/releases/{channel}/{revision}/{architecture}/{file_name}"
     ))
-}
-
-pub(super) fn graph_profile_images(
-    profile: &ProfileConfigFile,
-    revision: &str,
-    context: &ProfileGraphContext<'_>,
-    file_copies: &mut Vec<ProfileReleaseFileCopy>,
-    asset_digest_cache: &mut AssetDigestCache,
-) -> Result<serde_json::Value> {
-    let mut images = Vec::new();
-    for (arch, arch_assets) in &profile.assets.arch {
-        let manifest_assets = context.current_release.arches.get(arch).ok_or_else(|| {
-            anyhow!(
-                "manifest current release {} does not contain profile arch {arch}",
-                context.manifest.assets.current
-            )
-        })?;
-        let artifacts = [
-            ("kernel", &arch_assets.kernel),
-            ("initrd", &arch_assets.initrd),
-            ("rootfs", &arch_assets.rootfs),
-        ]
-        .into_iter()
-        .map(|(kind, descriptor)| {
-            let entry = manifest_assets
-                .get(&descriptor.name)
-                .ok_or_else(|| anyhow!("manifest current release arch {arch} is missing {}", descriptor.name))?;
-            let (bytes, digest) =
-                asset_entry_digest(context.assets_dir, arch, &descriptor.name, entry, asset_digest_cache)?;
-            let url = if context.asset_base == "/assets/releases" {
-                let url = profile_release_url(context.channel, &profile.id, revision, arch, &descriptor.name)?;
-                file_copies.push(ProfileReleaseFileCopy {
-                    source: context.assets_dir.join(arch).join(&descriptor.name),
-                    url: url.clone(),
-                });
-                url
-            } else {
-                channel_asset_url(
-                    context.asset_base,
-                    &context.manifest.assets.current,
-                    arch,
-                    &descriptor.name,
-                )
-            };
-            Ok(serde_json::json!({
-                "kind": kind,
-                "name": descriptor.name,
-                "url": url,
-                "bytes": bytes,
-                "digest": digest,
-                "status": "current",
-            }))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-        let mut evidence = Vec::new();
-        for (kind, logical_name) in [
-            ("abom", "abom.cdx.json"),
-            ("obom", "obom.cdx.json"),
-            ("software_inventory", "software-inventory.json"),
-        ] {
-            if let Some(entry) = manifest_assets.get(logical_name) {
-                let (bytes, digest) =
-                    asset_entry_digest(context.assets_dir, arch, logical_name, entry, asset_digest_cache)?;
-                let url = if context.asset_base == "/assets/releases" {
-                    let url = profile_release_url(context.channel, &profile.id, revision, arch, logical_name)?;
-                    file_copies.push(ProfileReleaseFileCopy {
-                        source: context.assets_dir.join(arch).join(logical_name),
-                        url: url.clone(),
-                    });
-                    url
-                } else {
-                    channel_asset_url(context.asset_base, &context.manifest.assets.current, arch, logical_name)
-                };
-                evidence.push(serde_json::json!({
-                    "kind": kind,
-                    "url": url,
-                    "bytes": bytes,
-                    "digest": digest,
-                    "status": "current",
-                }));
-            }
-        }
-        images.push(serde_json::json!({
-            "architecture": arch,
-            "artifacts": artifacts,
-            "evidence": evidence,
-        }));
-    }
-    images.sort_by(|left, right| {
-        left.get("architecture")
-            .and_then(|value| value.as_str())
-            .cmp(&right.get("architecture").and_then(|value| value.as_str()))
-    });
-    Ok(serde_json::Value::Array(images))
 }
 
 pub(super) type AssetDigestCache = BTreeMap<(String, String), (u64, serde_json::Value)>;
 
 pub(super) fn asset_entry_digest(
-    _assets_dir: &Path,
     arch: &str,
     logical_name: &str,
     entry: &capsem_assets::asset_manager::AssetEntry,
@@ -802,86 +625,71 @@ pub(super) fn asset_entry_digest(
     Ok(result)
 }
 
-pub(super) fn graph_profile_software(
-    profile: &ProfileConfigFile,
-    revision: &str,
-    context: &ProfileGraphContext<'_>,
+pub(super) fn runtime_architecture_software(
+    arch: &str,
+    manifest_assets: &std::collections::HashMap<String, capsem_assets::asset_manager::AssetEntry>,
+    context: &RuntimeGraphContext<'_>,
     asset_digest_cache: &mut AssetDigestCache,
-) -> Result<BTreeMap<String, Vec<serde_json::Value>>> {
-    let mut rows: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
-    for arch in profile.assets.arch.keys() {
-        let manifest_assets = context.current_release.arches.get(arch).ok_or_else(|| {
-            anyhow!(
-                "manifest current release {} does not contain profile arch {arch}",
-                context.manifest.assets.current
-            )
-        })?;
-        let logical_name = "software-inventory.json";
-        let entry = manifest_assets.get(logical_name).ok_or_else(|| {
-            anyhow!(
-                "manifest current release {} arch {arch} missing software-inventory.json",
-                context.manifest.assets.current
-            )
-        })?;
-        asset_entry_digest(context.assets_dir, arch, logical_name, entry, asset_digest_cache)?;
-        let inventory_path = context.assets_dir.join(arch).join(logical_name);
-        let inventory_bytes =
-            fs::read(&inventory_path).with_context(|| format!("read {}", inventory_path.display()))?;
-        let inventory: serde_json::Value =
-            serde_json::from_slice(&inventory_bytes).with_context(|| format!("parse {}", inventory_path.display()))?;
-        if inventory.get("schema").and_then(|value| value.as_str()) != Some("capsem.profile_software_inventory.v1") {
+) -> Result<Vec<serde_json::Value>> {
+    let logical_name = "software-inventory.json";
+    let entry = manifest_assets.get(logical_name).ok_or_else(|| {
+        anyhow!(
+            "manifest current release {} arch {arch} missing software-inventory.json",
+            context.revision
+        )
+    })?;
+    asset_entry_digest(arch, logical_name, entry, asset_digest_cache)?;
+    let inventory_path = source_asset_path(context.assets_dir, arch, logical_name)?;
+    let inventory_bytes = fs::read(&inventory_path).with_context(|| format!("read {}", inventory_path.display()))?;
+    let inventory: serde_json::Value =
+        serde_json::from_slice(&inventory_bytes).with_context(|| format!("parse {}", inventory_path.display()))?;
+    if inventory.get("schema").and_then(|value| value.as_str()) != Some("capsem.profile_software_inventory.v1") {
+        return Err(anyhow!(
+            "{} schema must be capsem.profile_software_inventory.v1",
+            inventory_path.display()
+        ));
+    }
+    let packages = inventory
+        .get("packages")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("{} missing packages array", inventory_path.display()))?;
+    let evidence = runtime_file_url(context, arch, logical_name)?;
+    let mut rows = Vec::new();
+    for package in packages {
+        let name = require_json_string_value(package, "name")
+            .with_context(|| format!("{} package missing name", inventory_path.display()))?;
+        let version = require_json_string_value(package, "version")
+            .with_context(|| format!("{name} missing version in {}", inventory_path.display()))?;
+        if version == "unversioned" {
             return Err(anyhow!(
-                "{} schema must be capsem.profile_software_inventory.v1",
+                "{name} in {} has unversioned version",
                 inventory_path.display()
             ));
         }
-        let packages = inventory
-            .get("packages")
-            .and_then(|value| value.as_array())
-            .ok_or_else(|| anyhow!("{} missing packages array", inventory_path.display()))?;
-        let evidence = if context.asset_base == "/assets/releases" {
-            profile_release_url(context.channel, &profile.id, revision, arch, logical_name)?
-        } else {
-            channel_asset_url(context.asset_base, &context.manifest.assets.current, arch, logical_name)
-        };
-        for package in packages {
-            let name = require_json_string_value(package, "name")
-                .with_context(|| format!("{} package missing name", inventory_path.display()))?;
-            let version = require_json_string_value(package, "version")
-                .with_context(|| format!("{name} missing version in {}", inventory_path.display()))?;
-            if version == "unversioned" {
-                return Err(anyhow!(
-                    "{name} in {} has unversioned version",
-                    inventory_path.display()
-                ));
-            }
-            let source = require_json_string_value(package, "source")
-                .with_context(|| format!("{name} missing source in {}", inventory_path.display()))?;
-            let row_core = serde_json::json!({
-                "name": name,
-                "version": version,
-                "source": source,
-                "architecture": arch,
-                "evidence": evidence,
-            });
-            let digest = json_digest(&row_core)?;
-            rows.entry(arch.clone()).or_default().push(serde_json::json!({
-                "name": name,
-                "version": version,
-                "source": source,
-                "architecture": arch,
-                "digest": digest,
-                "evidence": evidence,
-            }));
-        }
-    }
-    for arch_rows in rows.values_mut() {
-        arch_rows.sort_by(|left, right| {
-            left.get("name")
-                .and_then(|value| value.as_str())
-                .cmp(&right.get("name").and_then(|value| value.as_str()))
+        let source = require_json_string_value(package, "source")
+            .with_context(|| format!("{name} missing source in {}", inventory_path.display()))?;
+        let row_core = serde_json::json!({
+            "name": name,
+            "version": version,
+            "source": source,
+            "architecture": arch,
+            "evidence": evidence,
         });
+        let digest = json_digest(&row_core)?;
+        rows.push(serde_json::json!({
+            "name": name,
+            "version": version,
+            "source": source,
+            "architecture": arch,
+            "digest": digest,
+            "evidence": evidence,
+        }));
     }
+    rows.sort_by(|left, right| {
+        left.get("name")
+            .and_then(|value| value.as_str())
+            .cmp(&right.get("name").and_then(|value| value.as_str()))
+    });
     Ok(rows)
 }
 
@@ -901,52 +709,12 @@ pub(super) fn json_digest(value: &serde_json::Value) -> Result<serde_json::Value
     }))
 }
 
-pub(super) fn profile_file_descriptors(
-    profile: &ProfileConfigFile,
-) -> Vec<(&'static str, &capsem_core::net::policy_config::ProfileFileDescriptor)> {
-    let mut descriptors = Vec::new();
-    if let Some(value) = profile.files.enforcement.as_ref() {
-        descriptors.push(("enforcement", value));
-    }
-    if let Some(value) = profile.files.detection.as_ref() {
-        descriptors.push(("detection", value));
-    }
-    if let Some(value) = profile.files.mcp.as_ref() {
-        descriptors.push(("mcp", value));
-    }
-    if let Some(value) = profile.files.apt_packages.as_ref() {
-        descriptors.push(("apt_packages", value));
-    }
-    if let Some(value) = profile.files.python_requirements.as_ref() {
-        descriptors.push(("python_requirements", value));
-    }
-    if let Some(value) = profile.files.python_requirements_lock.as_ref() {
-        descriptors.push(("python_requirements_lock", value));
-    }
-    if let Some(value) = profile.files.npm_packages.as_ref() {
-        descriptors.push(("npm_packages", value));
-    }
-    if let Some(value) = profile.files.npm_package_lock.as_ref() {
-        descriptors.push(("npm_package_lock", value));
-    }
-    if let Some(value) = profile.files.build.as_ref() {
-        descriptors.push(("build", value));
-    }
-    if let Some(value) = profile.files.tips.as_ref() {
-        descriptors.push(("tips", value));
-    }
-    if let Some(value) = profile.files.root_manifest.as_ref() {
-        descriptors.push(("root_manifest", value));
-    }
-    descriptors
-}
-
-pub(super) fn copy_profile_release_files(out_dir: &Path, copies: &[ProfileReleaseFileCopy]) -> Result<()> {
+pub(super) fn copy_runtime_release_files(out_dir: &Path, copies: &[RuntimeReleaseFileCopy]) -> Result<()> {
     for copy in copies {
         let dst = out_dir.join(copy.url.trim_start_matches('/'));
         fs::create_dir_all(
             dst.parent()
-                .ok_or_else(|| anyhow!("profile release file path has no parent"))?,
+                .ok_or_else(|| anyhow!("runtime release file path has no parent"))?,
         )
         .with_context(|| format!("create parent for {}", dst.display()))?;
         hardlink_or_copy(&copy.source, &dst)?;
@@ -1069,96 +837,6 @@ pub(super) fn binary_description_for_name(name: &str) -> &'static str {
     }
 }
 
-pub(super) fn publishable_profile_config(
-    mut profile: ProfileConfigFile,
-    config_root: &Path,
-    manifest: &ManifestV2,
-    current_release: &capsem_assets::asset_manager::AssetRelease,
-    asset_base: &str,
-) -> Result<ProfileConfigFile> {
-    materialize_profile_file_descriptors(&mut profile, config_root)?;
-    profile
-        .assets
-        .arch
-        .retain(|arch, _| current_release.arches.contains_key(arch));
-    if profile.assets.arch.is_empty() {
-        return Err(anyhow!(
-            "manifest current release {} does not contain any arches for profile {}",
-            manifest.assets.current,
-            profile.id
-        ));
-    }
-    for (arch, arch_assets) in profile.assets.arch.iter_mut() {
-        let manifest_assets = current_release.arches.get(arch).ok_or_else(|| {
-            anyhow!(
-                "manifest current release {} does not contain profile arch {arch}",
-                manifest.assets.current
-            )
-        })?;
-        rewrite_publishable_asset_descriptor(
-            &manifest.assets.current,
-            arch,
-            &mut arch_assets.kernel,
-            manifest_assets,
-            asset_base,
-        )?;
-        rewrite_publishable_asset_descriptor(
-            &manifest.assets.current,
-            arch,
-            &mut arch_assets.initrd,
-            manifest_assets,
-            asset_base,
-        )?;
-        rewrite_publishable_asset_descriptor(
-            &manifest.assets.current,
-            arch,
-            &mut arch_assets.rootfs,
-            manifest_assets,
-            asset_base,
-        )?;
-        if let Some(entry) = manifest_assets.get("obom.cdx.json") {
-            profile
-                .obom
-                .get_or_insert_with(|| ProfileObomConfig {
-                    format: "cyclonedx-obom.v1".to_string(),
-                    arch: BTreeMap::new(),
-                })
-                .arch
-                .insert(
-                    arch.clone(),
-                    ProfileObomDescriptor {
-                        name: "obom.cdx.json".to_string(),
-                        url: profile_release_asset_url(asset_base, &manifest.assets.current, arch, "obom.cdx.json"),
-                        hash: format!("blake3:{}", entry.hash),
-                        size: entry.size,
-                        generator: "remote".to_string(),
-                        generator_version: "unknown".to_string(),
-                    },
-                );
-        }
-    }
-    profile
-        .validate()
-        .map_err(|error| anyhow!("validate publishable profile {}: {error}", profile.id))?;
-    Ok(profile)
-}
-
-pub(super) fn rewrite_publishable_asset_descriptor(
-    asset_version: &str,
-    arch: &str,
-    descriptor: &mut capsem_core::net::policy_config::ProfileAssetDescriptor,
-    manifest_assets: &std::collections::HashMap<String, capsem_assets::asset_manager::AssetEntry>,
-    asset_base: &str,
-) -> Result<()> {
-    let entry = manifest_assets
-        .get(&descriptor.name)
-        .ok_or_else(|| anyhow!("manifest current release arch {arch} is missing {}", descriptor.name))?;
-    descriptor.url = profile_release_asset_url(asset_base, asset_version, arch, &descriptor.name);
-    descriptor.hash = Some(format!("blake3:{}", entry.hash));
-    descriptor.size = Some(entry.size);
-    Ok(())
-}
-
 pub(super) fn channel_asset_url(asset_base: &str, asset_version: &str, arch: &str, logical_name: &str) -> String {
     if asset_base.starts_with('/') {
         return format!(
@@ -1167,78 +845,6 @@ pub(super) fn channel_asset_url(asset_base: &str, asset_version: &str, arch: &st
         );
     }
     capsem_assets::asset_manager::asset_download_url_with_base(asset_base, asset_version, arch, logical_name)
-}
-
-pub(super) fn profile_release_asset_url(
-    asset_base: &str,
-    asset_version: &str,
-    arch: &str,
-    logical_name: &str,
-) -> String {
-    if asset_base.starts_with('/') {
-        return format!(
-            "https://release.capsem.org{}",
-            channel_asset_url(asset_base, asset_version, arch, logical_name)
-        );
-    }
-    channel_asset_url(asset_base, asset_version, arch, logical_name)
-}
-
-pub(super) fn validate_profile_revision_path(revision: &str) -> Result<()> {
-    if revision.is_empty()
-        || !revision
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
-    {
-        return Err(anyhow!("profile revision must be URL-path safe: {revision}"));
-    }
-    Ok(())
-}
-
-pub(super) fn profile_release_revision(
-    profiles: &[ProfileConfigFile],
-    policy: ProfileRevisionPolicyArg,
-) -> Result<String> {
-    for profile in profiles {
-        validate_profile_revision_path(&profile.revision)
-            .with_context(|| format!("profile {} declares an unsafe revision", profile.id))?;
-        let strict = release_graph::parse_profile_revision(&profile.revision);
-        if strict.is_err()
-            && (policy == ProfileRevisionPolicyArg::Strict
-                || !release_graph::is_legacy_profile_revision(&profile.revision))
-        {
-            strict.with_context(|| format!("profile {} declares an unusable revision", profile.id))?;
-        }
-    }
-    let mut revisions = profiles
-        .iter()
-        .map(|profile| profile.revision.as_str())
-        .collect::<BTreeSet<_>>();
-    if revisions.len() == 1 {
-        let revision = revisions
-            .pop_first()
-            .ok_or_else(|| anyhow!("profile revision set is empty"))?;
-        return Ok(revision.to_string());
-    }
-    let hash = profile_config_set_hash(profiles)?;
-    Ok(format!("profiles-{}", &hash[..16]))
-}
-
-pub(super) fn profile_refresh_policy(profiles: &[ProfileConfigFile]) -> String {
-    let policies = profiles
-        .iter()
-        .map(|profile| profile.refresh_policy.as_str())
-        .collect::<BTreeSet<_>>();
-    if policies.len() == 1 {
-        policies.into_iter().next().unwrap_or("mixed").to_string()
-    } else {
-        "mixed".to_string()
-    }
-}
-
-pub(super) fn profile_config_set_hash(profiles: &[ProfileConfigFile]) -> Result<String> {
-    let bytes = serde_json::to_vec(profiles).context("serialize profile set for hashing")?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
 pub(super) fn release_state<T: ReleaseDeprecated>(release: &T) -> &'static str {
@@ -1425,6 +1031,12 @@ pub(super) fn render_assets_channels_catalog(
 }
 
 pub(super) fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result<String> {
+    let runtime_revision = index.runtime.as_ref().map(|runtime| runtime.revision.as_str());
+    let runtime_state = if runtime_revision.is_some() {
+        "current"
+    } else {
+        "not_published"
+    };
     Ok(format!(
         "{}\n",
         serde_json::to_string_pretty(&serde_json::json!({
@@ -1463,16 +1075,13 @@ pub(super) fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result
                 "files": index.current_asset_files,
             },
             "asset_releases": index.asset_release_history,
-                "profiles": {
-                    "revision": index.profiles.revision,
-                    "state": "current",
-                    "source": "manifest.profiles",
-                    "profile_count": index.profiles.profile_count,
-                    "profile_ids": index.profiles.profile_ids,
-                    "refresh_policy": index.profiles.refresh_policy,
-                    "min_binary": index.profiles.min_binary,
-                    "requires_newer_binary": index.profiles.requires_newer_binary,
-                },
+            "runtime": index.runtime.as_ref().map(|runtime| serde_json::json!({
+                "revision": runtime.revision,
+                "state": "current",
+                "source": "manifest.runtime",
+                "min_binary": runtime.min_binary,
+                "architectures": runtime.architectures,
+            })),
             "updates": {
                 "binary": {
                     "latest": index.binary_version,
@@ -1496,22 +1105,11 @@ pub(super) fn render_assets_channel_health(index: &AssetsChannelIndex) -> Result
                         "binary": false,
                     },
                 },
-                "profiles": {
-                    "latest": index.profiles.revision,
-                    "current": index.profiles.revision,
-                    "state": "current",
-                    "source": "manifest.profiles",
-                    "profile_count": index.profiles.profile_count,
-                    "profile_ids": index.profiles.profile_ids,
-                    "refresh_policy": index.profiles.refresh_policy,
-                    "min_binary": index.profiles.min_binary,
-                    "requires_newer_binary": index.profiles.requires_newer_binary,
-                },
-                "images": {
-                    "latest": serde_json::Value::Null,
-                    "current": serde_json::Value::Null,
-                    "state": index.image_update_state,
-                    "source": "manifest.profiles.images",
+                "runtime": {
+                    "latest": runtime_revision,
+                    "current": runtime_revision,
+                    "state": runtime_state,
+                    "source": "manifest.runtime",
                 },
             },
             "evidence": {
@@ -1566,7 +1164,7 @@ pub(super) fn render_assets_channel_headers_for_channels(channels: &[String]) ->
     lines.extend([
         "/assets/releases/*".to_string(),
         "  Cache-Control: public, max-age=31536000, immutable".to_string(),
-        "/profiles/releases/*".to_string(),
+        "/runtime/releases/*".to_string(),
         "  Cache-Control: public, max-age=31536000, immutable".to_string(),
         "/robots.txt".to_string(),
         "  Cache-Control: public, max-age=3600".to_string(),
@@ -1594,20 +1192,11 @@ pub(super) fn validate_channel_name(channel: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn profile_publication_identity(channel: &str, profile: &str, revision: &str) -> Result<String> {
+/// The immutable publication identity (GitHub release tag) of one runtime.
+pub(super) fn runtime_publication_identity(channel: &str, revision: &str) -> Result<String> {
     validate_channel_name(channel)?;
-    for (label, value) in [("profile", profile), ("profile revision", revision)] {
-        let valid = !value.is_empty()
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
-        if !valid {
-            return Err(anyhow!(
-                "{label} cannot form an immutable publication identity: {value}"
-            ));
-        }
-    }
-    Ok(format!("profile-{channel}-{profile}-{revision}"))
+    release_graph::validate_runtime_revision(revision)?;
+    Ok(format!("runtime-{channel}-{revision}"))
 }
 
 pub(super) fn current_utc_rfc3339() -> Result<String> {

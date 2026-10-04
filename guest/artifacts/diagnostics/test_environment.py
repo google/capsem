@@ -154,8 +154,8 @@ def test_boot_stages_within_budget():
 
     Aggregate first-boot time is reported for diagnosis but is not a stable
     shared-runner gate: host descheduling can inflate several healthy stages
-    at once. Runtime tests separately prove that uv and the activated venv
-    exist, so a missing-tool fallback cannot pass silently.
+    at once. The venv is created in the background, so its stage measures
+    only the spawn; test_python_venv_active proves the venv itself exists.
     """
     import json
     timing_path = "/run/capsem-boot-timing"

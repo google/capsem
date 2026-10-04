@@ -1,8 +1,8 @@
-"""Building every profile's VM assets, both architectures at once.
+"""Building the VM runtime assets, both architectures at once.
 
 A hosted release runner has an observed hard lifetime below the workflow's
-nominal timeout, so the four-cell profile/architecture matrix only fits if the
-two architectures build concurrently. Each lane owns a distinct Docker tag
+nominal timeout, so the build only fits if the two architectures build
+concurrently. Each lane owns a distinct Docker tag
 (`capsem-*-<arch>`) and an isolated output root, which is what keeps them from
 colliding over tags or over the `current` symlink.
 
@@ -19,7 +19,6 @@ either result is read.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 from . import assetidentity, assetreceipt, assetstore, imagebuild
@@ -33,51 +32,22 @@ from .filesystem import make_dir, remove
 from .proc import Runner
 
 
-@dataclass(frozen=True)
-class Profile:
-    """A checked-in profile, by the directory that declares it."""
-
-    name: str
-    manifest: Path
-
-
-def discover_profiles(config: gate_config.GateConfig) -> list[Profile]:
-    """Every checked-in profile, in the order the gate builds them."""
-    pattern = config.assets.profiles_glob
-    found = [
-        Profile(name=path.parent.name, manifest=path) for path in sorted(config.root.glob(pattern))
-    ]
-    if not found:
-        raise GateError(f"no profiles matched {pattern} under {config.root}")
-    return found
-
-
-def lane_assets(config: gate_config.GateConfig, profile: Profile, arch: Arch) -> Path:
+def lane_assets(config: gate_config.GateConfig, arch: Arch) -> Path:
     """The isolated output root shared by planning and lane execution."""
-    return config.path(config.assets.test_root) / profile.name / f"build-{arch.name}"
+    return assetstore.local_lane(config, arch=arch)
 
 
-def prepare_workspace(config: gate_config.GateConfig, profiles: list[Profile]) -> None:
+def prepare_workspace(config: gate_config.GateConfig) -> None:
     """Remove derived/obsolete output while retaining isolated lane caches."""
     root = config.path(config.assets.test_root)
     if root.is_symlink() or (root.exists() and not root.is_dir()):
         remove(root)
     make_dir(root)
-    expected = {profile.name: profile for profile in profiles}
+    retained = {lane_assets(config, arch).name for arch in config.architectures.values()}
     for child in tuple(root.iterdir()):
-        if child.name not in expected or child.is_symlink() or not child.is_dir():
+        if child.name not in retained or (not child.is_symlink() and not child.is_dir()):
             remove(child)
-    for profile in profiles:
-        profile_root = root / profile.name
-        make_dir(profile_root)
-        retained = {
-            lane_assets(config, profile, arch).name for arch in config.architectures.values()
-        }
-        for child in tuple(profile_root.iterdir()):
-            if child.name not in retained or (not child.is_symlink() and not child.is_dir()):
-                remove(child)
-    identity = assetidentity.lane_identity(config)
-    assetstore.materialize(config, tuple(expected), identity)
+    assetstore.materialize(config, assetidentity.lane_identity(config))
 
 
 class RequireLaneReceipts(Action, name="require-asset-lane-receipts"):
@@ -86,13 +56,11 @@ class RequireLaneReceipts(Action, name="require-asset-lane-receipts"):
     def __init__(
         self,
         config: gate_config.GateConfig,
-        profiles: list[Profile],
         arches: tuple[Arch, ...],
         *,
         stages: frozenset[str] = assetreceipt.REUSABLE_STAGES,
     ) -> None:
         self._config = config
-        self._profiles = profiles
         self._arches = arches
         self._stages = stages
 
@@ -102,14 +70,12 @@ class RequireLaneReceipts(Action, name="require-asset-lane-receipts"):
     def perform(self, context: Context) -> None:
         identity = assetidentity.lane_identity(self._config)
         invalid = [
-            f"{profile.name}/{arch.name}"
-            for profile in self._profiles
+            arch.name
             for arch in self._arches
             if not assetreceipt.validates(
                 self._config,
-                lane_assets(self._config, profile, arch),
+                lane_assets(self._config, arch),
                 identity,
-                profile=profile.name,
                 arch=arch,
                 stages=self._stages,
                 touch=True,
@@ -122,98 +88,66 @@ class RequireLaneReceipts(Action, name="require-asset-lane-receipts"):
 class SealPackedReceipts(Action, name="seal-packed-asset-lane-receipts"):
     """The terminal action of initrd packing, before the step may record OK."""
 
-    def __init__(self, config: gate_config.GateConfig, profiles: list[Profile]) -> None:
+    def __init__(self, config: gate_config.GateConfig) -> None:
         self._config = config
-        self._profiles = profiles
 
     def render(self) -> str:
         return "record exact packed asset lane receipts"
 
     def perform(self, context: Context) -> None:
         identity = assetidentity.lane_identity(self._config)
-        for profile in self._profiles:
-            for arch in self._config.architectures.values():
-                assetreceipt.record(
-                    self._config,
-                    lane_assets(self._config, profile, arch),
-                    identity,
-                    profile=profile.name,
-                    arch=arch,
-                    stage=assetreceipt.PACKED_STAGE,
-                )
+        for arch in self._config.architectures.values():
+            assetreceipt.record(
+                self._config,
+                lane_assets(self._config, arch),
+                identity,
+                arch=arch,
+                stage=assetreceipt.PACKED_STAGE,
+            )
         CacheControl(context.runner).enforce("assets", "packed VM assets")
 
 
 class AssetLanes:
     """One build lane per architecture, run concurrently and reported together."""
 
-    def __init__(
-        self, runner: Runner, config: gate_config.GateConfig, profiles: list[Profile]
-    ) -> None:
+    def __init__(self, runner: Runner, config: gate_config.GateConfig) -> None:
         self._runner = runner
         self._config = config
         self._root = config.path(config.assets.test_root)
-        self._profiles = profiles
 
-    def lane_assets(self, profile: Profile, arch: Arch) -> Path:
-        return lane_assets(self._config, profile, arch)
+    def lane_assets(self, arch: Arch) -> Path:
+        return lane_assets(self._config, arch)
 
     def _build(self, arch: Arch) -> None:
         log = self._root / f"build-{arch.name}.log"
         identity = assetidentity.lane_identity(self._config)
-        for profile in self._profiles:
-            output = self.lane_assets(profile, arch)
-            if assetreceipt.validates(
-                self._config,
-                output,
-                identity,
-                profile=profile.name,
-                arch=arch,
-                touch=True,
-            ):
-                self._runner.note(
-                    f"Ironbank asset lane {profile.name} ({arch.name}) is current "
-                    f"for {identity}; reusing it"
-                )
-                self._require_artifacts(output / arch.name)
-                continue
-            assetstore.reset_lane(
-                self._config,
-                output,
-                identity,
-                profile=profile.name,
-                arch=arch,
+        output = self.lane_assets(arch)
+        if assetreceipt.validates(self._config, output, identity, arch=arch, touch=True):
+            self._runner.note(
+                f"Ironbank asset lane {arch.name} is current for {identity}; reusing it"
             )
-            self._runner.step(f"Ironbank asset build lane: {profile.name} ({arch.name})")
-            for stage in self._config.imagebuild.lane_templates:
-                # Straight to the builder, with this lane's output. It used to
-                # go through a recipe that accepted an output argument and
-                # dropped it -- so every lane wrote into the one shared assets
-                # tree while checking a private one. That recipe is gone: it
-                # had no caller left once the lanes came here, and a parameter
-                # with no destination is a knob that lies.
-                self._runner.run(
-                    imagebuild.build_argv(
-                        self._config,
-                        profile=profile.name,
-                        arch=arch.name,
-                        template=stage,
-                        output=str(output),
-                    ),
-                    log=log,
-                )
             self._require_artifacts(output / arch.name)
-            # This action is inside the lane step, so a journal may carry the
-            # output only after the source-bound byte receipt exists. Packing
-            # overwrites it with the terminal `packed` receipt later.
-            assetreceipt.record(
-                self._config,
-                output,
-                identity,
-                profile=profile.name,
-                arch=arch,
-                stage=assetreceipt.BUILD_STAGE,
+            return
+        assetstore.reset_lane(self._config, output, identity, arch=arch)
+        self._runner.step(f"Ironbank asset build lane: {arch.name}")
+        for stage in self._config.imagebuild.lane_templates:
+            # Straight to the builder, with this lane's output. It used to go
+            # through a recipe that accepted an output argument and dropped it
+            # -- so every lane wrote into the one shared assets tree while
+            # checking a private one.
+            self._runner.run(
+                imagebuild.build_argv(
+                    self._config, arch=arch.name, template=stage, output=str(output)
+                ),
+                log=log,
             )
+        self._require_artifacts(output / arch.name)
+        # This action is inside the lane step, so a journal may carry the
+        # output only after the source-bound byte receipt exists. Packing
+        # overwrites it with the terminal `packed` receipt later.
+        assetreceipt.record(
+            self._config, output, identity, arch=arch, stage=assetreceipt.BUILD_STAGE
+        )
 
     def _require_artifacts(self, produced: Path) -> None:
         missing = [

@@ -78,14 +78,14 @@ Release CI reuses the same checked-in private modules as local `just test`:
 - `_test-release-contracts`
 
 The build scope is selective; the quality scope is not. Binary CI builds only
-packages and resolves every channel profile by recorded digest. Profile CI
-builds exactly one channel/profile and resolves the current package by recorded
+packages and resolves the channel's runtime by recorded digest. Runtime CI
+builds the runtime for one channel and resolves the current package by recorded
 digest. The resolved complementary artifacts are staged into the production
 test harness, not replaced by source-built substitutes.
 
 Every activated pairing must pass artifact validation, all VM suites,
 Winterfell/MCP lifecycle, IronBank, injection, integration, benchmarks, full
-`capsem-doctor`, exact native install, and update glow-up. A staged profile
+`capsem-doctor`, exact native install, and update glow-up. A staged runtime
 whose minimum package is not yet satisfied may run only the self-consistency,
 integrity, isolation, and boot proof; the following binary lane must run the
 complete functional and glow-up modules before activation.
@@ -100,7 +100,7 @@ boundary through `build_system/packaging/macos/macos_release_glowup.py`: it buil
 production assembler, installs that exact file in a disposable headless Tart
 guest, verifies the receipt, app bundle, complete binary cohort, service and
 gateway health, then extracts the same package on the physical Mac and boots a
-real Capsem guest VM from its exact binary/profile payload to a shell marker.
+real Capsem guest VM from its exact binary/runtime payload to a shell marker.
 The local package is unsigned; its postinstall ad-hoc signs the installed
 Mach-O payload with the required entitlements. Local qualification must not
 load Developer ID material or create a signing keychain. The tagged publication
@@ -319,7 +319,7 @@ When touching security-relevant code, check these invariants have test coverage:
 | CORS rejects external origins | Only localhost/127.0.0.1/tauri allowed | `capsem-gateway::tests` |
 | Body size limit | 413 for >10MB payloads | `capsem-gateway::proxy::tests` |
 | VM ID validation | Path traversal (`../`), dots, spaces, null bytes rejected | `capsem-gateway::terminal::tests` |
-| Rootfs read-only | profile rootfs asset mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
+| Rootfs read-only | runtime rootfs asset mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
 | Suspend reports errors | IPC failure and timeout both return 500, not silent success | `capsem-service` tests |
 
 ## Test fixture anti-pattern: masking races with polling
@@ -544,7 +544,7 @@ Both are enforced by `build_system/tests/gate/test_path_and_log_wrappers_are_man
 
 ### Verify with the gate's environment, not a bare shell
 
-`just test` exports `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, `CAPSEM_TEST_PROFILE`, and
+`just test` exports `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, and
 `CAPSEM_BENCHMARK_OUTPUT_ROOT`. A test that reads ambient state passes in your
 shell and fails in the gate:
 

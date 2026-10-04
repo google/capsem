@@ -18,12 +18,8 @@ RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_grap
 ADMIN_PACKAGE_INSPECTION = (
     PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "package_inspection.rs"
 )
-ADMIN_RENDER = (
-    PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "assets_channel_render.rs"
-)
-ADMIN_VALIDATION = (
-    PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "assets_channel_validation.rs"
-)
+ADMIN_RENDER = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "assets_channel_render.rs"
+ADMIN_VALIDATION = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "assets_channel_validation.rs"
 ADMIN_CHANNEL_BUILD_TESTS = (
     PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "tests" / "channel_build.rs"
 )
@@ -41,9 +37,7 @@ def test_package_rows_are_not_binary_rows() -> None:
     assert "pub package: String" not in source
     assert "pub installed_path: String" in source
     assert "pub sbom_component_ref: String" in source
-    assert "package_inventory_rows_are_separate_from_binary_rows" in sibling_tests(
-        RELEASE_GRAPH
-    )
+    assert "package_inventory_rows_are_separate_from_binary_rows" in sibling_tests(RELEASE_GRAPH)
 
 
 def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
@@ -52,16 +46,13 @@ def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
     assert "pub struct PackagedExecutableFile" in source
     assert "pub fn executable_inventory_from_package_files" in source
     assert "pub fn verify_package_contents_match_binary_inventory" in source
-    assert "format!(\"{:x}\", Sha256::digest(&file.bytes))" in source
+    assert 'format!("{:x}", Sha256::digest(&file.bytes))' in source
     assert "blake3::hash(&file.bytes)" in source
     assert "sbom_component_refs" in source
     assert "missing SBOM component reference" in source
 
     tests = sibling_tests(RELEASE_GRAPH)
-    assert (
-        "executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs"
-        in tests
-    )
+    assert "executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs" in tests
     assert "executable_inventory_rejects_missing_sbom_component_ref" in tests
     assert "executable_inventory_matches_macos_and_deb_package_contents" in tests
     assert "executable_inventory_rejects_package_content_hash_drift" in tests
@@ -74,9 +65,7 @@ def test_sha1_only_spdx_is_rejected() -> None:
     tests = ADMIN_CHANNEL_BUILD_TESTS.read_text(encoding="utf-8")
 
     assert "fn validate_host_spdx_sbom_bytes" in render
-    assert (
-        "let blake3 = blake3::hash(&bytes).to_hex().to_string();" in package_inspection
-    )
+    assert "let blake3 = blake3::hash(&bytes).to_hex().to_string();" in package_inspection
     assert "blake3: file.blake3.clone()" in render
     assert "channel manifest host binary {} has malformed blake3" in validation
     assert 'algorithm.eq_ignore_ascii_case("SHA256")' in render
@@ -88,35 +77,33 @@ def test_binary_lane_allowed_diff_gate_is_channel_scoped() -> None:
     policy = DIFF_POLICY.read_text(encoding="utf-8")
     tests = DIFF_POLICY_TESTS.read_text(encoding="utf-8")
 
-    assert 'choices=["binary", "profile", "channel"]' in policy
+    assert 'choices=["binary", "runtime", "channel"]' in policy
     assert 'manifest_field in {"version", "status", "packages", "binaries"}' in policy
     assert 'path[:2] != ("manifests", channel)' in policy
     assert "test_binary_allowed_diff" in tests
-    assert "test_binary_lane_rejects_profile_changes" in tests
+    assert "test_binary_lane_rejects_runtime_changes" in tests
     assert "test_binary_lane_rejects_other_channel_binary_changes" in tests
 
 
-def test_binary_lane_rejects_profile_ref_change(tmp_path: Path) -> None:
+def test_binary_lane_rejects_runtime_ref_change(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
-    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "bad-profile-drift"
+    new["manifests"]["stable"]["1.0.2"]["runtime"]["revision"] = "bad-runtime-drift"
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
 
     assert result.returncode == 1
-    assert "manifests.stable.1.0.2.profiles.co-work.revision" in result.stderr
+    assert "manifests.stable.1.0.2.runtime.revision" in result.stderr
 
 
 def test_nightly_binary_update_does_not_change_stable(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "c" * 64
-    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["digest"][
-        "sha256"
-    ] = "d" * 64
-    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["binaries"][0][
-        "digest"
-    ]["blake3"] = "e" * 64
+    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["digest"]["sha256"] = "d" * 64
+    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["binaries"][0]["digest"]["blake3"] = (
+        "e" * 64
+    )
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "nightly")
 
@@ -133,7 +120,15 @@ def _run_policy(
     old_path.write_text(json.dumps(old), encoding="utf-8")
     new_path.write_text(json.dumps(new), encoding="utf-8")
     return subprocess.run(
-        [sys.executable, str(DIFF_POLICY), "--old", str(old_path), "--new", str(new_path), *args],
+        [
+            sys.executable,
+            str(DIFF_POLICY),
+            "--old",
+            str(old_path),
+            "--new",
+            str(new_path),
+            *args,
+        ],
         check=False,
         text=True,
         capture_output=True,
@@ -188,17 +183,14 @@ def _manifest(channel: str, version: str) -> dict:
                 ],
             }
         ],
-        "profiles": {
-            "co-work": {
-                "id": "co-work",
-                "revision": f"1.1.0-{channel}",
-                "images": [
-                    {
-                        "architecture": "arm64",
-                        "artifacts": [{"kind": "rootfs", "digest": _digest("a")}],
-                    }
-                ],
-            }
+        "runtime": {
+            "revision": f"1.1.0-{channel}",
+            "architectures": [
+                {
+                    "architecture": "arm64",
+                    "images": [{"kind": "rootfs", "digest": _digest("a")}],
+                }
+            ],
         },
     }
 

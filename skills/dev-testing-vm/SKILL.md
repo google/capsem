@@ -23,13 +23,14 @@ just exec "capsem-doctor -x"           # Stop on first failure
 | File | What it verifies |
 |------|------------------|
 | `test_sandbox.py` | Read-only rootfs, binary permissions, setuid/setgid, kernel hardening (no modules, no debugfs, no IPv6, no swap), process integrity, network isolation (dummy0, fake DNS, iptables) |
-| `test_network.py` | MITM CA in system store + certifi, curl without -k, Python urllib HTTPS, CA env vars, HTTP/80 blocked, non-443 blocked, direct IP blocked, multi-domain DNS, AI provider domains |
+| `test_network.py` | MITM CA in system store, curl without -k, Python urllib HTTPS, CA env vars, HTTP/80 blocked, non-443 blocked, direct IP blocked, multi-domain DNS, AI provider domains |
 | `test_environment.py` | TERM/HOME/PATH env vars, bash shell, kernel version, aarch64 arch, mount points, tmpfs |
-| `test_runtimes.py` | Python3, Node.js, npm, pip3, git version checks, Python/Node file I/O, git workflow |
-| `test_utilities.py` | ~36 unix utilities (coreutils, text processing, network, system tools) |
+| `test_runtimes.py` | python3/pip3 versions, hermetic pip install into the venv, hermetic apt install of a local .deb, apt sandbox TLS trust, Python file I/O |
 | `test_workflows.py` | Text write/read, JSON roundtrip, shell pipes, large file (10MB) |
-| `test_ai_cli.py` | claude/gemini/codex installed and executable |
 | `test_virtiofs.py` | VirtioFS mount, ext4 loopback, workspace I/O, pip install, file delete+recreate |
+
+The runtime rootfs is minimal: no node, uv, git or AI CLIs. Those live in the OCI
+images under `images/`, and `tests/images/` proves each one boots and runs its agent.
 
 ### Adding new in-VM tests
 

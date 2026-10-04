@@ -174,58 +174,33 @@ def test_a_symlink_refuses_to_replace_a_real_directory(tmp_path: Path, context: 
 # ---------------------------------------------------------------------------
 
 
-def test_a_release_profile_refuses_an_unknown_channel_before_the_gate() -> None:
-    """`release-binaries` validated its channel and `release-profile` did not.
+def _release_assets(channel: str):
+    return GateCommand.registry["release-assets"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(
+            dry_run=False,
+            graph=False,
+            timing=False,
+            channel=channel,
+            source_commit=SourceCommit("0" * 40),
+        ),
+    )._describe()
+
+
+def test_a_release_runtime_refuses_an_unknown_channel_before_the_gate() -> None:
+    """`release-binaries` validated its channel and the runtime lane did not.
 
     Both spend a complete gate before publishing, so an unknown channel that
     surfaces afterwards costs the whole run to learn something knowable in
     milliseconds.
     """
     with pytest.raises(GateError, match="unknown channel"):
-        GateCommand.registry["release-profile"](
-            RecordingRunner(PROJECT_ROOT),
-            argparse.Namespace(
-                dry_run=False,
-                graph=False,
-                timing=False,
-                channel="prod",
-                profile="code",
-                source_commit=SourceCommit("0" * 40),
-            ),
-        )._describe()
+        _release_assets("prod")
 
 
-def test_a_release_profile_refuses_an_unknown_profile_before_the_gate() -> None:
-    """The same argument for the other argument."""
-    with pytest.raises(GateError, match="unknown profile"):
-        GateCommand.registry["release-profile"](
-            RecordingRunner(PROJECT_ROOT),
-            argparse.Namespace(
-                dry_run=False,
-                graph=False,
-                timing=False,
-                channel="nightly",
-                profile="no-such-profile",
-                source_commit=SourceCommit("0" * 40),
-            ),
-        )._describe()
-
-
-def test_a_known_channel_and_profile_are_accepted() -> None:
-    """So the two refusals above cannot pass by refusing everything."""
-    plan = GateCommand.registry["release-profile"](
-        RecordingRunner(PROJECT_ROOT),
-        argparse.Namespace(
-            dry_run=False,
-            graph=False,
-            timing=False,
-            channel="nightly",
-            profile="code",
-            source_commit=SourceCommit("0" * 40),
-        ),
-    )._describe()
-
-    assert plan.labels
+def test_a_known_channel_is_accepted() -> None:
+    """So the refusal above cannot pass by refusing everything."""
+    assert _release_assets("nightly").labels
 
 
 # ---------------------------------------------------------------------------

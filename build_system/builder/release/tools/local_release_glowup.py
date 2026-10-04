@@ -21,7 +21,6 @@ from typing import cast
 from urllib.parse import unquote, urljoin, urlparse
 
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.productschema import ProfileRevisionPolicy
 from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import SourceCommit
 
@@ -30,10 +29,10 @@ from . import repository_root
 from .marketing_install_surface import validate_checked_in_marketing_install_surface
 from .package_payload import deb_field
 from .release_first_release import (
-    activates_first_profiles,
+    activates_first_runtime,
     classify_pairing_inputs,
     resolve_public_before_package,
-    verify_candidate_profile_publication,
+    verify_candidate_runtime_publication,
 )
 from .release_fixture_server import serve_release_root
 from .release_glowup import (
@@ -45,8 +44,7 @@ from .release_glowup import (
     build_report,
     build_transition_evidence,
     explicit_channel_switch_args,
-    requires_changed_profiles,
-    tamper_profile_artifact_digest,
+    tamper_runtime_artifact_digest,
     validate_installed_evidence,
     validate_pairing_inputs,
 )
@@ -55,7 +53,7 @@ from .release_inputs import (
     safe_relative,
     verify_payload,
 )
-from .release_pairing_baseline import exact_channel_catalog, validate_selected_profile_scope
+from .release_pairing_baseline import exact_channel_catalog
 from .release_transition import validate_transition_verdict
 
 PROJECT_ROOT = repository_root()
@@ -66,7 +64,6 @@ class ExactReleasePairing:
     channel: str
     baseline_channel: str
     transition: TransitionKind
-    changed_profiles: tuple[str, ...]
     #: Absent for a first release: no predecessor to identify or to boot.
     before: PairingIdentity | None
     after: PairingIdentity
@@ -74,8 +71,8 @@ class ExactReleasePairing:
     after_manifest: Path
     before_package: Path | None
     after_package: Path
-    before_profile_inputs: Path
-    after_profile_inputs: Path
+    before_release_inputs: Path
+    after_release_inputs: Path
 
 
 @dataclass(frozen=True)
@@ -154,12 +151,6 @@ def main() -> int:
         help="Use an already repacked publishable package without rebuilding it.",
     )
     parser.add_argument(
-        "--profile-revision-policy",
-        required=True,
-        type=ProfileRevisionPolicy,
-        choices=tuple(ProfileRevisionPolicy),
-    )
-    parser.add_argument(
         "--release-channel",
         choices=("stable", "nightly"),
         default=_environment_value("CAPSEM_RELEASE_CHANNEL"),
@@ -175,8 +166,8 @@ def main() -> int:
             "auto",
             TransitionKind.FRESH_INSTALL.value,
             TransitionKind.BINARY_ONLY.value,
-            TransitionKind.PROFILE_ONLY.value,
-            TransitionKind.PROFILE_THEN_BINARY.value,
+            TransitionKind.RUNTIME_ONLY.value,
+            TransitionKind.RUNTIME_THEN_BINARY.value,
         ),
         default=_environment_value("CAPSEM_RELEASE_TRANSITION"),
     )
@@ -196,20 +187,19 @@ def main() -> int:
         default=_environment_path("CAPSEM_RELEASE_BEFORE_PACKAGE"),
     )
     parser.add_argument(
-        "--before-profile-inputs",
+        "--before-release-inputs",
         type=Path,
-        default=_environment_path("CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS"),
+        default=_environment_path("CAPSEM_RELEASE_BEFORE_INPUTS"),
     )
     parser.add_argument(
-        "--after-profile-inputs",
+        "--after-release-inputs",
         type=Path,
-        default=_environment_path("CAPSEM_RELEASE_AFTER_PROFILE_INPUTS"),
+        default=_environment_path("CAPSEM_RELEASE_AFTER_INPUTS"),
     )
-    parser.add_argument("--profile", default=_environment_value("CAPSEM_RELEASE_PROFILE"))
     parser.add_argument(
-        "--candidate-profile-publication",
+        "--candidate-runtime-publication",
         type=Path,
-        default=_environment_path("CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION"),
+        default=_environment_path("CAPSEM_RELEASE_CANDIDATE_RUNTIME_PUBLICATION"),
     )
     parser.add_argument(
         "--publication-base",
@@ -323,12 +313,10 @@ def main() -> int:
             runner=run,
             admin=admin,
             assets_dir=args.assets_dir,
-            profiles_dir=args.config_root / "profiles",
             source_commit=source_commit,
             asset_source_base=f"{base_url}/assets/releases/{{asset_version}}",
             dist=dist,
             manifest_version=config.install.manifest_version,
-            profile_revision_policy=args.profile_revision_policy,
         )
         stable_channel_manifest = author_candidate(
             stable_manifest,
@@ -441,7 +429,7 @@ def main() -> int:
                         "tampered_artifact": json.loads(
                             exact_evidence.tamper_rejection.read_text(encoding="utf-8")
                         ),
-                        "incompatible_profile": json.loads(
+                        "incompatible_runtime": json.loads(
                             exact_evidence.incompatible_rejection.read_text(encoding="utf-8")
                         ),
                     },
@@ -508,21 +496,22 @@ def validate_exact_release_pairing(
         "release_transition": args.release_transition or None,
         "before_manifest": args.before_manifest or None,
         "after_manifest": args.after_manifest or None,
-        "before_profile_inputs": args.before_profile_inputs or None,
-        "after_profile_inputs": args.after_profile_inputs or None,
+        "before_release_inputs": args.before_release_inputs or None,
+        "after_release_inputs": args.after_release_inputs or None,
     }
-    profile_fields = {
-        "profile": args.profile or None,
-        "candidate_profile_publication": args.candidate_profile_publication or None,
+    publication_fields = {
+        "candidate_runtime_publication": args.candidate_runtime_publication or None,
         "publication_base": args.publication_base or None,
     }
-    if not any(value is not None for value in (*core_fields.values(), *profile_fields.values())):
+    if not any(
+        value is not None for value in (*core_fields.values(), *publication_fields.values())
+    ):
         return None
     missing = [name for name, value in core_fields.items() if value is None]
     if missing:
         raise SystemExit(
             "exact pairing requires release channel, baseline channel, transition, before/after "
-            "manifests, and before/after profile inputs; "
+            "manifests, and before/after release inputs; "
             f"missing={missing}"
         )
 
@@ -530,21 +519,21 @@ def validate_exact_release_pairing(
     baseline_channel = str(args.release_baseline_channel)
     before_manifest = Path(args.before_manifest)
     after_manifest = Path(args.after_manifest)
-    before_profile_inputs = Path(args.before_profile_inputs)
-    after_profile_inputs = Path(args.after_profile_inputs)
+    before_release_inputs = Path(args.before_release_inputs)
+    after_release_inputs = Path(args.after_release_inputs)
     before_manifest_bytes = before_manifest.read_bytes()
     after_manifest_bytes = after_manifest.read_bytes()
-    before_report, _, _ = load_verified_release_inputs(before_profile_inputs)
-    after_report, _, _ = load_verified_release_inputs(after_profile_inputs)
-    if before_report.get("kind") != "profiles" or after_report.get("kind") != "profiles":
-        raise SystemExit("exact pairing inputs must contain verified profiles")
-    if (before_profile_inputs / "manifest.json").read_bytes() != before_manifest_bytes:
+    before_report, _, _ = load_verified_release_inputs(before_release_inputs)
+    after_report, _, _ = load_verified_release_inputs(after_release_inputs)
+    if before_report.get("kind") != "runtime" or after_report.get("kind") != "runtime":
+        raise SystemExit("exact pairing inputs must contain a verified runtime")
+    if (before_release_inputs / "manifest.json").read_bytes() != before_manifest_bytes:
         raise SystemExit(
-            "exact pairing before profile inputs do not reproduce the public-before manifest"
+            "exact pairing before release inputs do not reproduce the public-before manifest"
         )
-    if (after_profile_inputs / "manifest.json").read_bytes() != after_manifest_bytes:
+    if (after_release_inputs / "manifest.json").read_bytes() != after_manifest_bytes:
         raise SystemExit(
-            "exact pairing after profile inputs do not reproduce the candidate-after manifest"
+            "exact pairing after release inputs do not reproduce the candidate-after manifest"
         )
 
     before_package, before_artifact = resolve_public_before_package(
@@ -555,7 +544,7 @@ def validate_exact_release_pairing(
         Path(args.input_deb),
     )
     if args.release_transition == "auto":
-        transition, changed_profiles = classify_pairing_inputs(
+        transition = classify_pairing_inputs(
             channel=channel,
             baseline_channel=baseline_channel,
             before_manifest_bytes=before_manifest_bytes,
@@ -563,59 +552,32 @@ def validate_exact_release_pairing(
             before_artifact=before_artifact,
             after_artifact=after_artifact,
         )
-        validate_selected_profile_scope(
-            transition=transition,
-            selected_profile=args.profile,
-            changed_profiles=changed_profiles,
-        )
     else:
         transition = TransitionKind(str(args.release_transition))
-        changed_profiles = (str(args.profile),) if args.profile is not None else ()
 
-    # Asked of the validator's own rule rather than restated. See
-    # `release_glowup.requires_changed_profiles`.
-    changed_profile = requires_changed_profiles(transition)
-    publication_fields = {
-        "candidate_profile_publication": args.candidate_profile_publication,
-        "publication_base": args.publication_base,
-    }
-    supplied_publication_fields = [
-        name for name, value in publication_fields.items() if value is not None
-    ]
-    if transition is TransitionKind.PROFILE_ONLY or (
-        transition is TransitionKind.CHANNEL_SWITCH and args.profile is not None
-    ):
-        missing_profile = [name for name, value in profile_fields.items() if value is None]
-        if missing_profile:
-            raise SystemExit(
-                "exact profile pairing requires profile, candidate publication, "
-                f"and publication base; missing={missing_profile}"
-            )
-        verify_candidate_profile_publication(
-            after_manifest=after_manifest,
-            profile=args.profile,
-            publication_base=args.publication_base,
-            release_dir=args.candidate_profile_publication,
-        )
-    elif transition is TransitionKind.PROFILE_THEN_BINARY:
-        if not changed_profiles:
-            raise SystemExit("profile_then_binary exact pairing requires staged profiles")
-        if supplied_publication_fields and len(supplied_publication_fields) != 2:
-            raise SystemExit(
-                "candidate profile publication base and directory must be supplied together"
-            )
-        if len(supplied_publication_fields) == 2:
-            if args.profile is None:
-                raise SystemExit("a local candidate publication requires its selected profile")
-            verify_candidate_profile_publication(
-                after_manifest=after_manifest,
-                profile=args.profile,
-                publication_base=args.publication_base,
-                release_dir=args.candidate_profile_publication,
-            )
-    elif any(value is not None for value in profile_fields.values()):
+    # A runtime-only pairing exists to activate a staged publication, so it must
+    # prove one; any other runtime-bearing pairing may, with both halves; a
+    # pairing that stages no runtime may not name one.
+    supplied = [name for name, value in publication_fields.items() if value is not None]
+    if transition is TransitionKind.RUNTIME_ONLY and len(supplied) != len(publication_fields):
+        missing_publication = sorted(set(publication_fields) - set(supplied))
         raise SystemExit(
-            f"{transition.value} exact pairing cannot supply candidate profile publication inputs"
+            "exact runtime_only pairing requires a candidate publication and its base; "
+            f"missing={missing_publication}"
+        )
+    if transition in {TransitionKind.FRESH_INSTALL, TransitionKind.BINARY_ONLY} and supplied:
+        raise SystemExit(
+            f"{transition.value} exact pairing cannot supply candidate runtime publication inputs"
+        )
+    if supplied and len(supplied) != len(publication_fields):
+        raise SystemExit(
+            "candidate runtime publication base and directory must be supplied together"
+        )
+    if supplied:
+        verify_candidate_runtime_publication(
+            after_manifest=after_manifest,
+            publication_base=args.publication_base,
+            release_dir=args.candidate_runtime_publication,
         )
 
     before, after = validate_pairing_inputs(
@@ -626,21 +588,19 @@ def validate_exact_release_pairing(
         after_manifest_bytes=after_manifest_bytes,
         before_artifact=before_artifact,
         after_artifact=after_artifact,
-        changed_profiles=changed_profiles if changed_profile else (),
     )
     return ExactReleasePairing(
         channel=channel,
         baseline_channel=baseline_channel,
         transition=transition,
-        changed_profiles=changed_profiles,
         before=before,
         after=after,
         before_manifest=before_manifest,
         after_manifest=after_manifest,
         before_package=before_package,
         after_package=Path(args.input_deb),
-        before_profile_inputs=before_profile_inputs,
-        after_profile_inputs=after_profile_inputs,
+        before_release_inputs=before_release_inputs,
+        after_release_inputs=after_release_inputs,
     )
 
 
@@ -699,7 +659,7 @@ def _stage_exact_transport_release(
     label: str,
     manifest_path: Path,
     package_path: Path | None,
-    profile_inputs: Path,
+    release_inputs: Path,
     dist: Path,
     base_url: str,
 ) -> tuple[Path, Path | None]:
@@ -707,31 +667,31 @@ def _stage_exact_transport_release(
     authority = json.loads(manifest_bytes)
     if not isinstance(authority, dict):
         raise SystemExit(f"exact {label} manifest must be a JSON object")
-    report, verified_manifest, _ = load_verified_release_inputs(profile_inputs)
-    if report.get("kind") != "profiles" or verified_manifest != authority:
-        raise SystemExit(f"exact {label} profile inputs do not reproduce their authority manifest")
+    report, verified_manifest, _ = load_verified_release_inputs(release_inputs)
+    if report.get("kind") != "runtime" or verified_manifest != authority:
+        raise SystemExit(f"exact {label} release inputs do not reproduce their authority manifest")
     manifest_url = report.get("manifest_url")
     artifacts = report.get("artifacts")
     if not isinstance(manifest_url, str) or not isinstance(artifacts, list):
-        raise SystemExit(f"exact {label} profile input report is malformed")
+        raise SystemExit(f"exact {label} release input report is malformed")
 
     root = dist / "transitions" / label
     replacements: dict[str, str] = {}
-    expected_profile_urls: set[str] = set()
+    expected_runtime_urls: set[str] = set()
     for index, row_value in enumerate(artifacts):
         if not isinstance(row_value, dict):
-            raise SystemExit(f"exact {label} profile input row {index} is malformed")
+            raise SystemExit(f"exact {label} release input row {index} is malformed")
         row = cast(dict[str, object], row_value)
         url = row.get("url")
         if not isinstance(url, str):
-            raise SystemExit(f"exact {label} profile input row {index} has no URL")
+            raise SystemExit(f"exact {label} release input row {index} has no URL")
         relative = safe_relative(row.get("path"))
-        source = profile_inputs / relative
-        target = root / "profiles" / relative
+        source = release_inputs / relative
+        target = root / "runtime" / relative
         copy_artifact_tree(source, target)
-        local_url = f"{base_url}/transitions/{label}/profiles/{relative.as_posix()}"
+        local_url = f"{base_url}/transitions/{label}/runtime/{relative.as_posix()}"
         replacements[url] = local_url
-        expected_profile_urls.add(url)
+        expected_runtime_urls.add(url)
 
     staged_package: Path | None = None
     package_absolute_url: str | None = None
@@ -758,9 +718,9 @@ def _stage_exact_transport_release(
         reverse=reverse,
         used=used,
     )
-    if not expected_profile_urls.issubset(used):
-        missing = sorted(expected_profile_urls - used)
-        raise SystemExit(f"exact {label} transport omitted profile URLs: {missing}")
+    if not expected_runtime_urls.issubset(used):
+        missing = sorted(expected_runtime_urls - used)
+        raise SystemExit(f"exact {label} transport omitted runtime URLs: {missing}")
     if package_absolute_url is not None and package_absolute_url not in used:
         raise SystemExit(f"exact {label} transport omitted its native package URL")
 
@@ -788,7 +748,7 @@ def stage_exact_release_transport(
         label="before",
         manifest_path=pairing.before_manifest,
         package_path=pairing.before_package,
-        profile_inputs=pairing.before_profile_inputs,
+        release_inputs=pairing.before_release_inputs,
         dist=dist,
         base_url=base_url,
     )
@@ -796,7 +756,7 @@ def stage_exact_release_transport(
         label="after",
         manifest_path=pairing.after_manifest,
         package_path=pairing.after_package,
-        profile_inputs=pairing.after_profile_inputs,
+        release_inputs=pairing.after_release_inputs,
         dist=dist,
         base_url=base_url,
     )
@@ -904,31 +864,18 @@ def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
     promote_exact_transport_manifest(transport, transport.after_manifest)
 
 
-def _adversarial_profile(
-    manifest: dict[str, object],
-    pairing: ExactReleasePairing,
-) -> tuple[str, dict[str, object]]:
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict) or not profiles:
-        raise SystemExit("exact adversarial candidate has no profiles")
-    profile_map = cast(dict[str, object], profiles)
-    profile_ids = pairing.changed_profiles or tuple(sorted(profiles))
-    for profile_id in profile_ids:
-        profile = profile_map.get(profile_id)
-        if isinstance(profile_id, str) and isinstance(profile, dict):
-            return profile_id, cast(dict[str, object], profile)
-    raise SystemExit("exact adversarial candidate lacks its selected profile")
+def _adversarial_runtime(manifest: dict[str, object]) -> dict[str, object]:
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        raise SystemExit("exact adversarial candidate has no runtime")
+    return cast(dict[str, object], runtime)
 
 
-def _tamper_selected_profile_digest(
-    manifest: dict[str, object], pairing: ExactReleasePairing, architecture: str
-) -> None:
+def _tamper_runtime_digest(manifest: dict[str, object], architecture: str) -> None:
     try:
-        tamper_profile_artifact_digest(
-            manifest, profile_ids=pairing.changed_profiles, architecture=architecture
-        )
+        tamper_runtime_artifact_digest(manifest, architecture=architecture)
     except RuntimeError as error:
-        raise SystemExit(f"cannot stage exact adversarial profile: {error}") from error
+        raise SystemExit(f"cannot stage exact adversarial runtime: {error}") from error
 
 
 def stage_adversarial_exact_candidates(
@@ -950,14 +897,13 @@ def stage_adversarial_exact_candidates(
         raise SystemExit("exact projected candidate manifest must be an object")
 
     tampered = copy.deepcopy(projected)
-    _tamper_selected_profile_digest(tampered, pairing, architecture)
+    _tamper_runtime_digest(tampered, architecture)
     incompatible = copy.deepcopy(projected)
-    _, incompatible_profile = _adversarial_profile(incompatible, pairing)
-    incompatible_profile["min_capsem_version"] = "9999.0.0"
+    _adversarial_runtime(incompatible)["min_capsem_version"] = "9999.0.0"
 
     output_dir.mkdir(parents=True, exist_ok=True)
     tampered_manifest = output_dir / "tampered-artifact-manifest.json"
-    incompatible_manifest = output_dir / "incompatible-profile-manifest.json"
+    incompatible_manifest = output_dir / "incompatible-runtime-manifest.json"
     tampered_manifest.write_text(
         json.dumps(tampered, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -973,7 +919,7 @@ def stage_adversarial_exact_candidates(
     if tampered_manifest.read_bytes() == projected_before:
         raise SystemExit("tampered artifact candidate did not change the projected manifest")
     if incompatible_manifest.read_bytes() == projected_before:
-        raise SystemExit("incompatible profile candidate did not change the projected manifest")
+        raise SystemExit("incompatible runtime candidate did not change the projected manifest")
     return AdversarialExactCandidates(
         tampered_manifest=tampered_manifest,
         incompatible_manifest=incompatible_manifest,
@@ -1060,7 +1006,15 @@ def stage_package_ready_artifact(input_deb: Path, output_deb: Path) -> None:
 
 def generate_sbom(output: Path, deb: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([sys.executable, "build_system/scripts/release/generate-host-binary-sbom.py", "--output", str(output), str(deb)])
+    run(
+        [
+            sys.executable,
+            "build_system/scripts/release/generate-host-binary-sbom.py",
+            "--output",
+            str(output),
+            str(deb),
+        ]
+    )
 
 
 def copy_artifact_tree(source: Path, target: Path) -> None:
@@ -1095,7 +1049,7 @@ def stage_manifest_artifacts(
     base_url: str,
 ) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if isinstance(manifest.get("profiles"), dict):
+    if isinstance(manifest.get("runtime"), dict):
         _stage_graph_manifest_artifacts(manifest_path, manifest, dist, base_url)
         return
 
@@ -1129,7 +1083,7 @@ def clone_manifest_for_channel(source: Path, destination: Path, channel: str) ->
     manifest = json.loads(source.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         raise SystemExit("local glow-up manifest must be an object")
-    if isinstance(manifest.get("profiles"), dict):
+    if isinstance(manifest.get("runtime"), dict):
         manifest["channel"] = channel
         destination.write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -1145,93 +1099,73 @@ def _stage_graph_manifest_artifacts(
     dist: Path,
     base_url: str,
 ) -> None:
-    profiles = cast(dict[str, object], manifest.get("profiles"))
-    if not isinstance(profiles, dict) or not profiles:
-        raise SystemExit("local glow-up release graph has no profiles")
+    runtime = cast(dict[str, object], manifest["runtime"])
+    if runtime.get("status") == "revoked":
+        raise SystemExit("local glow-up release graph runtime is revoked")
+    architectures = runtime.get("architectures")
+    if not isinstance(architectures, list) or not architectures:
+        raise SystemExit("local glow-up release runtime has no architectures")
 
     staged: list[tuple[dict[str, object], Path, Path, bytes]] = []
-    for profile_id, profile in sorted(profiles.items()):
-        if (
-            not isinstance(profile, dict)
-            or cast(dict[str, object], profile).get("status") == "revoked"
-        ):
-            continue
-        architectures = cast(dict[str, object], profile).get("architectures")
-        if not isinstance(architectures, list) or not architectures:
-            raise SystemExit(f"local glow-up release profile {profile_id} has no architectures")
-        staged_architectures: list[dict[str, object]] = []
-        for architecture in architectures:
-            if not isinstance(architecture, dict):
-                raise SystemExit(
-                    f"local glow-up release profile {profile_id} has malformed architecture"
-                )
-            arch = cast(dict[str, object], architecture).get("architecture", "unknown")
-            active_rows: list[tuple[str, int, dict[str, object], str]] = []
-            for section in ("config", "images", "evidence"):
-                rows = cast(dict[str, object], architecture).get(section, [])
-                if not isinstance(rows, list):
+    staged_architectures: list[dict[str, object]] = []
+    for architecture in architectures:
+        if not isinstance(architecture, dict):
+            raise SystemExit("local glow-up release runtime has malformed architecture")
+        arch = cast(dict[str, object], architecture).get("architecture", "unknown")
+        active_rows: list[tuple[str, int, dict[str, object], str]] = []
+        for section in ("images", "evidence"):
+            rows = cast(dict[str, object], architecture).get(section, [])
+            if not isinstance(rows, list):
+                raise SystemExit(f"local glow-up release runtime {arch} has malformed {section}")
+            for index, row in enumerate(rows):
+                if (
+                    not isinstance(row, dict)
+                    or cast(dict[str, object], row).get("status") == "revoked"
+                ):
+                    continue
+                url = cast(dict[str, object], row).get("url")
+                if not isinstance(url, str):
                     raise SystemExit(
-                        f"local glow-up release profile {profile_id}/{arch} has malformed {section}"
+                        f"local glow-up release runtime {arch} {section}[{index}] has no URL"
                     )
-                for index, row in enumerate(rows):
-                    if (
-                        not isinstance(row, dict)
-                        or cast(dict[str, object], row).get("status") == "revoked"
-                    ):
-                        continue
-                    url = cast(dict[str, object], row).get("url")
-                    if not isinstance(url, str):
-                        raise SystemExit(
-                            f"local glow-up release profile {profile_id}/{arch} "
-                            f"{section}[{index}] has no URL"
-                        )
-                    active_rows.append((section, index, cast(dict[str, object], row), url))
-            if not active_rows:
-                raise SystemExit(
-                    f"local glow-up release profile {profile_id}/{arch} has no active artifacts"
-                )
-            local_rows = [
-                row
-                for row in active_rows
-                if (parsed := urlparse(row[3])).scheme == "file" and not parsed.netloc
-            ]
-            if local_rows and len(local_rows) != len(active_rows):
-                raise SystemExit(
-                    f"local glow-up release profile {profile_id}/{arch} "
-                    "mixes staged and unstaged artifacts"
-                )
-            if not local_rows:
-                continue
-            staged_architectures.append(cast(dict[str, object], architecture))
-            for section, index, row, url in active_rows:
-                parsed = urlparse(url)
-                source = Path(unquote(parsed.path))
-                if not source.is_file():
-                    raise SystemExit(f"local glow-up graph artifact is missing: {source}")
-                payload = source.read_bytes()
-                label = (
-                    f"profile {profile_id}/{arch} {section}[{index}] "
-                    f"{row.get('name') or row.get('path') or row.get('kind') or url}"
-                )
-                try:
-                    verify_payload(payload, row, label)
-                except ValueError as error:
-                    raise SystemExit(str(error)) from error
-                digest = cast(dict[str, object], row["digest"])
-                sha256 = cast(str, digest["sha256"]).lower()
-                filename = source.name
-                if not filename or filename in {".", ".."}:
-                    raise SystemExit(f"local glow-up graph artifact has unsafe name: {url}")
-                relative = Path("artifacts") / "sha256" / sha256 / filename
-                staged.append((row, source, dist / relative, payload))
-        if not staged_architectures:
+                active_rows.append((section, index, cast(dict[str, object], row), url))
+        if not active_rows:
+            raise SystemExit(f"local glow-up release runtime {arch} has no active artifacts")
+        local_rows = [
+            row
+            for row in active_rows
+            if (parsed := urlparse(row[3])).scheme == "file" and not parsed.netloc
+        ]
+        if local_rows and len(local_rows) != len(active_rows):
             raise SystemExit(
-                f"local glow-up release profile {profile_id} has no fully staged architectures"
+                f"local glow-up release runtime {arch} mixes staged and unstaged artifacts"
             )
-        cast(dict[str, object], profile)["architectures"] = staged_architectures
-
-    if not staged:
-        raise SystemExit("local glow-up release graph resolved no profile artifacts")
+        if not local_rows:
+            continue
+        staged_architectures.append(cast(dict[str, object], architecture))
+        for section, index, row, url in active_rows:
+            source = Path(unquote(urlparse(url).path))
+            if not source.is_file():
+                raise SystemExit(f"local glow-up graph artifact is missing: {source}")
+            payload = source.read_bytes()
+            label = (
+                f"runtime {arch} {section}[{index}] "
+                f"{row.get('name') or row.get('path') or row.get('kind') or url}"
+            )
+            try:
+                verify_payload(payload, row, label)
+            except ValueError as error:
+                raise SystemExit(str(error)) from error
+            digest = cast(dict[str, object], row["digest"])
+            sha256 = cast(str, digest["sha256"]).lower()
+            filename = source.name
+            if not filename or filename in {".", ".."}:
+                raise SystemExit(f"local glow-up graph artifact has unsafe name: {url}")
+            relative = Path("artifacts") / "sha256" / sha256 / filename
+            staged.append((row, source, dist / relative, payload))
+    if not staged_architectures:
+        raise SystemExit("local glow-up release runtime has no fully staged architectures")
+    runtime["architectures"] = staged_architectures
 
     for row, source, target, payload in staged:
         if target.exists():
@@ -1287,10 +1221,10 @@ def check_generated_release(
     )
     if expected_version is not None and expected_architecture is not None:
         package = assert_manifest_artifact(manifest, artifact)
-    profile_artifacts = release_profile_artifacts(manifest)
+    runtime_artifacts = release_runtime_artifacts(manifest)
     missing_assets: list[str] = []
     staged_assets: list[tuple[str, Path, dict[str, object]]] = []
-    for record in profile_artifacts:
+    for record in runtime_artifacts:
         url = cast(str, record["url"])
         artifact_path = local_release_artifact_path(base_url, url, dist)
         if not artifact_path.is_file():
@@ -1306,7 +1240,7 @@ def check_generated_release(
             verify_payload(
                 artifact_path.read_bytes(),
                 record,
-                f"generated {channel} profile artifact {url}",
+                f"generated {channel} runtime artifact {url}",
             )
         except ValueError as error:
             raise SystemExit(str(error)) from error
@@ -1334,40 +1268,28 @@ def local_release_artifact_path(base_url: str, url: str, dist: Path) -> Path:
 
 
 def release_asset_urls(manifest: dict[str, object]) -> list[str]:
-    return [cast(str, record["url"]) for record in release_profile_artifacts(manifest)]
+    return [cast(str, record["url"]) for record in release_runtime_artifacts(manifest)]
 
 
-def release_profile_artifacts(manifest: dict[str, object]) -> list[dict[str, object]]:
+def release_runtime_artifacts(manifest: dict[str, object]) -> list[dict[str, object]]:
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        raise SystemExit("generated release manifest has no runtime")
+    architectures = cast(dict[str, object], runtime).get("architectures")
     artifacts: list[dict[str, object]] = []
     image_count = 0
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict):
-        raise SystemExit("generated stable release manifest has no profile graph")
-    for profile in profiles.values():
-        if not isinstance(profile, dict):
+    for architecture in architectures if isinstance(architectures, list) else ():
+        if not isinstance(architecture, dict):
             continue
-        profile_fields = cast(dict[str, object], profile)
-        architectures = profile_fields.get("architectures")
-        if not isinstance(architectures, list):
-            continue
-        for architecture in architectures:
-            if not isinstance(architecture, dict):
-                continue
-            architecture_fields = cast(dict[str, object], architecture)
-            for section in ("config", "images", "evidence"):
-                rows = architecture_fields.get(section)
-                if not isinstance(rows, list):
-                    continue
-                for row in rows:
-                    if not isinstance(row, dict):
-                        continue
-                    row_fields = cast(dict[str, object], row)
-                    if isinstance(row_fields.get("url"), str):
-                        artifacts.append(row_fields)
-                        if section == "images":
-                            image_count += 1
+        architecture_fields = cast(dict[str, object], architecture)
+        for section in ("images", "evidence"):
+            rows = architecture_fields.get(section)
+            for row in rows if isinstance(rows, list) else ():
+                if isinstance(row, dict) and isinstance(row.get("url"), str):
+                    artifacts.append(cast(dict[str, object], row))
+                    image_count += 1 if section == "images" else 0
     if image_count == 0:
-        raise SystemExit("generated stable release manifest has no VM asset URLs")
+        raise SystemExit("generated release manifest has no VM asset URLs")
     return artifacts
 
 
@@ -1426,7 +1348,7 @@ def _run_exact_installed_glowup(
     if before_artifact is not None and before_artifact.architecture != after_artifact.architecture:
         raise SystemExit("exact installed transition cannot change package architecture")
 
-    first_activation = activates_first_profiles(
+    first_activation = activates_first_runtime(
         transition=pairing.transition, before_manifest_bytes=pairing.before_manifest.read_bytes()
     )
     if first_activation:
@@ -1525,7 +1447,7 @@ export DEBIAN_FRONTEND=noninteractive
 {probe_functions}
 cp "$CAPSEM_HOME_DIR/assets/manifest.json" \
   "$EVIDENCE_DIR/tampered-before-manifest.json"
-profile_digest_before=$(installed_profile_tree_digest)
+runtime_digest_before=$(installed_runtime_digest)
 previous_manifest_sha=$(sha256sum "$EVIDENCE_DIR/tampered-before-manifest.json" | cut -d' ' -f1)
 assert_manifest_served {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(file_sha256(adversarial.tampered_manifest))} "the tampered manifest"
@@ -1539,7 +1461,7 @@ cmp "$EVIDENCE_DIR/tampered-before-manifest.json" \
   "$CAPSEM_HOME_DIR/assets/manifest.json"
 ! cmp -s {shlex.quote(str(transport.current_manifest))} \
   "$CAPSEM_HOME_DIR/assets/manifest.json"
-test "$(installed_profile_tree_digest)" = "$profile_digest_before"
+test "$(installed_runtime_digest)" = "$runtime_digest_before"
 dpkg-query -W -f='${{Version}}' capsem \
   | grep -Fx {shlex.quote(after_artifact.version)}
 """
@@ -1558,13 +1480,13 @@ export DEBIAN_FRONTEND=noninteractive
 {probe_functions}
 cp "$CAPSEM_HOME_DIR/assets/manifest.json" \
   "$EVIDENCE_DIR/incompatible-before-manifest.json"
-profile_digest_before=$(installed_profile_tree_digest)
+runtime_digest_before=$(installed_runtime_digest)
 previous_manifest_sha=$(sha256sum "$EVIDENCE_DIR/incompatible-before-manifest.json" | cut -d' ' -f1)
 assert_manifest_served {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(file_sha256(adversarial.incompatible_manifest))} \
-  "the incompatible-profile manifest"
+  "the incompatible-runtime manifest"
 systemctl --user restart capsem.service
-observe_update_transition incompatible_profile rejected \
+observe_update_transition incompatible_runtime rejected \
   {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(file_sha256(adversarial.incompatible_manifest))} \
   "$(cat {shlex.quote(str(incompatible_marker))})" \
@@ -1573,7 +1495,7 @@ cmp "$EVIDENCE_DIR/incompatible-before-manifest.json" \
   "$CAPSEM_HOME_DIR/assets/manifest.json"
 ! cmp -s {shlex.quote(str(transport.current_manifest))} \
   "$CAPSEM_HOME_DIR/assets/manifest.json"
-test "$(installed_profile_tree_digest)" = "$profile_digest_before"
+test "$(installed_runtime_digest)" = "$runtime_digest_before"
 dpkg-query -W -f='${{Version}}' capsem \
   | grep -Fx {shlex.quote(after_artifact.version)}
 """
@@ -1724,7 +1646,7 @@ def exact_installed_transition_rows(
     installed_after_sha256 = file_sha256(transport.after_manifest)
     for path, kind in (
         (evidence.tamper_rejection, "tampered_artifact"),
-        (evidence.incompatible_rejection, "incompatible_profile"),
+        (evidence.incompatible_rejection, "incompatible_runtime"),
     ):
         verdict = _load_transition_verdict(path)
         candidate_sha256 = verdict.get("candidate_manifest_sha256")
@@ -1785,9 +1707,9 @@ def exact_installed_transition_rows(
                 result="activated",
                 doctor_passed=candidate_doctor,
                 winterfell_passed=candidate_winterfell,
-                staged_profiles_sha256=(
-                    pairing.after.profiles_sha256
-                    if pairing.transition is TransitionKind.PROFILE_THEN_BINARY
+                staged_runtime_sha256=(
+                    pairing.after.runtime_sha256
+                    if pairing.transition is TransitionKind.RUNTIME_THEN_BINARY
                     else None
                 ),
             )

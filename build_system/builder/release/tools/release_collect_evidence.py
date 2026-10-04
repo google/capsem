@@ -280,7 +280,9 @@ def _ironbank_guard(project_root: Path) -> dict[str, Any]:
 def _installed_credential_store_guard(home: Path) -> dict[str, Any]:
     bin_dir = home / ".capsem" / "bin"
     capsem_dir = home / ".capsem"
-    scan_dirs = [path for path in [bin_dir, *sorted(capsem_dir.glob("bin.backup*"))] if path.exists()]
+    scan_dirs = [
+        path for path in [bin_dir, *sorted(capsem_dir.glob("bin.backup*"))] if path.exists()
+    ]
     if not scan_dirs:
         return {
             "installed_bin_dir": str(bin_dir),

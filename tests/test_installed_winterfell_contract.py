@@ -56,32 +56,23 @@ module._resolve_winterfell_artifact_roots({{}})
     assert result.returncode == 0, result.stderr
 
 
-def _installed_roots(tmp_path: Path) -> tuple[Path, Path, Path]:
+def _installed_roots(tmp_path: Path) -> tuple[Path, Path]:
     bin_dir = tmp_path / "installed" / "bin"
     assets_dir = tmp_path / "installed" / "assets"
-    profiles_dir = tmp_path / "installed" / "profiles"
     bin_dir.mkdir(parents=True)
     assets_dir.mkdir(parents=True)
-    profile_dir = profiles_dir / "code"
-    profile_dir.mkdir(parents=True)
-    (assets_dir / "manifest.json").write_text('{"profiles":{"code":{}}}\n')
-    (profile_dir / "profile.toml").write_text('id = "code"\n')
+    (assets_dir / "manifest.json").write_text('{"runtime":{}}\n')
     for name in REQUIRED_BINARIES:
         binary = bin_dir / name
         binary.write_text("#!/bin/sh\nexit 0\n")
         binary.chmod(0o755)
-    return bin_dir, assets_dir, profiles_dir
+    return bin_dir, assets_dir
 
 
-def _environment(
-    bin_dir: Path,
-    assets_dir: Path,
-    profiles_dir: Path,
-) -> dict[str, str]:
+def _environment(bin_dir: Path, assets_dir: Path) -> dict[str, str]:
     return {
         "CAPSEM_WINTERFELL_BIN_DIR": str(bin_dir),
         "CAPSEM_WINTERFELL_ASSETS_DIR": str(assets_dir),
-        "CAPSEM_WINTERFELL_PROFILES_DIR": str(profiles_dir),
     }
 
 
@@ -117,8 +108,6 @@ def test_development_winterfell_honours_the_functional_content_selector(
     [
         ("CAPSEM_WINTERFELL_BIN_DIR",),
         ("CAPSEM_WINTERFELL_ASSETS_DIR",),
-        ("CAPSEM_WINTERFELL_PROFILES_DIR",),
-        ("CAPSEM_WINTERFELL_BIN_DIR", "CAPSEM_WINTERFELL_ASSETS_DIR"),
     ],
 )
 def test_installed_winterfell_override_is_all_or_nothing(
@@ -127,67 +116,46 @@ def test_installed_winterfell_override_is_all_or_nothing(
 ) -> None:
     environment = {name: str(tmp_path / name) for name in present}
 
-    with pytest.raises(RuntimeError, match="all three installed artifact roots"):
+    with pytest.raises(RuntimeError, match="both installed artifact roots"):
         service.resolve_winterfell_artifact_roots(environment)
 
 
 def test_installed_winterfell_roots_accept_one_complete_installed_cohort(
     tmp_path: Path,
 ) -> None:
-    bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
+    bin_dir, assets_dir = _installed_roots(tmp_path)
 
-    roots = service.resolve_winterfell_artifact_roots(
-        _environment(bin_dir, assets_dir, profiles_dir)
-    )
+    roots = service.resolve_winterfell_artifact_roots(_environment(bin_dir, assets_dir))
 
     assert roots.installed is True
     assert roots.binary("capsem-service") == bin_dir / "capsem-service"
     assert roots.assets_dir == assets_dir
-    assert roots.profiles_dir == profiles_dir
-
-
-def test_installed_profiles_are_not_compared_to_an_ambient_runtime_selector(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
-    monkeypatch.setattr(service, "PROFILES_DIR", profiles_dir)
-
-    roots = service.resolve_winterfell_artifact_roots(
-        _environment(bin_dir, assets_dir, profiles_dir)
-    )
-
-    assert roots.installed is True
-    assert roots.profiles_dir == profiles_dir
+    # Packages ship no profile catalog, so an installed cohort has none.
+    assert roots.profiles_dir is None
 
 
 @pytest.mark.parametrize(
-    ("bin_dir", "assets_dir", "profiles_dir"),
+    ("bin_dir", "assets_dir"),
     [
         (
             PROJECT_ROOT / "cache" / "target" / "cargo" / "debug",
             PROJECT_ROOT / "cache" / "target" / "assets",
-            PROJECT_ROOT / "cache" / "target" / "config" / "profiles",
         ),
         (
             PROJECT_ROOT / "cache" / "target" / "cargo" / "debug",
             PROJECT_ROOT / "cache" / "target" / "assets" / "arm64",
-            PROJECT_ROOT / "cache" / "target" / "config" / "profiles",
         ),
     ],
 )
-def test_installed_winterfell_rejects_source_built_roots(
-    bin_dir: Path,
-    assets_dir: Path,
-    profiles_dir: Path,
-) -> None:
+def test_installed_winterfell_rejects_source_built_roots(bin_dir: Path, assets_dir: Path) -> None:
     with pytest.raises(RuntimeError, match="source-built"):
-        service.resolve_winterfell_artifact_roots(_environment(bin_dir, assets_dir, profiles_dir))
+        service.resolve_winterfell_artifact_roots(_environment(bin_dir, assets_dir))
 
 
 def test_installed_winterfell_rejects_binary_symlinks_into_target_debug(
     tmp_path: Path,
 ) -> None:
-    bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
+    bin_dir, assets_dir = _installed_roots(tmp_path)
     source_binary = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-service"
     if not source_binary.is_file():
         pytest.skip("source service binary has not been built")
@@ -195,7 +163,7 @@ def test_installed_winterfell_rejects_binary_symlinks_into_target_debug(
     (bin_dir / "capsem-service").symlink_to(source_binary)
 
     with pytest.raises(RuntimeError, match="source-built"):
-        service.resolve_winterfell_artifact_roots(_environment(bin_dir, assets_dir, profiles_dir))
+        service.resolve_winterfell_artifact_roots(_environment(bin_dir, assets_dir))
 
 
 @pytest.mark.parametrize("collect", [False, True])
@@ -205,7 +173,7 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
     collect: bool,
 ) -> None:
     module = _load_runner()
-    bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
+    bin_dir, assets_dir = _installed_roots(tmp_path)
     evidence = tmp_path / "winterfell.json"
     captured: dict[str, object] = {}
     run_process = subprocess.run
@@ -239,8 +207,6 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
             str(bin_dir),
             "--assets-dir",
             str(assets_dir),
-            "--profiles-dir",
-            str(profiles_dir),
             "--evidence-out",
             str(evidence),
         ]
@@ -263,10 +229,9 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
     child_environment = cast(dict[str, str], captured["env"])
     assert child_environment["CAPSEM_WINTERFELL_BIN_DIR"] == str(bin_dir)
     assert child_environment["CAPSEM_WINTERFELL_ASSETS_DIR"] == str(assets_dir)
-    assert child_environment["CAPSEM_WINTERFELL_PROFILES_DIR"] == str(profiles_dir)
     assert child_environment["CAPSEM_RELEASE_BIN_DIR"] == str(bin_dir)
     assert child_environment["CAPSEM_ASSETS_DIR"] == str(assets_dir)
-    assert child_environment["CAPSEM_PROFILES_DIR"] == str(profiles_dir)
+    assert "CAPSEM_WINTERFELL_PROFILES_DIR" not in child_environment
     assert child_environment["CAPSEM_TEST_ARTIFACTS_ROOT"] == str(
         tmp_path / "failure-artifacts"
     )
@@ -278,7 +243,6 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
         "roots": {
             "assets": str(assets_dir),
             "binaries": str(bin_dir),
-            "profiles": str(profiles_dir),
         },
     }
 
@@ -288,7 +252,7 @@ def test_runner_records_failure_and_returns_pytest_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _load_runner()
-    bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
+    bin_dir, assets_dir = _installed_roots(tmp_path)
     evidence = tmp_path / "winterfell.json"
 
     class Result:
@@ -302,8 +266,6 @@ def test_runner_records_failure_and_returns_pytest_status(
             str(bin_dir),
             "--assets-dir",
             str(assets_dir),
-            "--profiles-dir",
-            str(profiles_dir),
             "--evidence-out",
             str(evidence),
         ]

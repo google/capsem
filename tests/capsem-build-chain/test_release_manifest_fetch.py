@@ -9,22 +9,23 @@ from capsem_builder.release.tools import fetch_channel_source_manifest as SOURCE
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_binary_source_manifest_requires_staged_profile_membership() -> None:
-    empty = json.dumps({"channel": "nightly", "profiles": {}, "packages": []}).encode()
-    staged = json.dumps({"channel": "nightly", "profiles": {"code": {}}, "packages": []}).encode()
+def test_binary_source_manifest_requires_a_staged_runtime() -> None:
+    empty = json.dumps({"channel": "nightly", "runtime": None, "packages": []}).encode()
+    runtime = {"revision": "0.7.0-0123456789ab", "status": "current", "architectures": []}
+    staged = json.dumps({"channel": "nightly", "runtime": runtime, "packages": []}).encode()
 
-    with pytest.raises(ValueError, match="no staged profiles"):
+    with pytest.raises(ValueError, match="no staged runtime"):
         SOURCE.validate_binary_source_manifest(empty, "nightly")
-    assert SOURCE.validate_binary_source_manifest(staged, "nightly")["profiles"] == {"code": {}}
+    assert SOURCE.validate_binary_source_manifest(staged, "nightly")["runtime"] == runtime
 
 
-def test_binary_release_fetches_fresh_source_without_bootstrapping_profiles() -> None:
+def test_binary_release_fetches_fresh_source_without_bootstrapping_a_runtime() -> None:
     """Read out of the release plan, which is where the ordering now lives.
 
-    The claim is the same one: the binary lane fetches the mutable manifest
-    fresh, requires the channel to already have profile membership, and must
-    not bootstrap it. Asserted against the plan rather than the recipe, so it
-    also covers *where* in the sequence the fetch sits.
+    The binary lane fetches the mutable manifest fresh, requires the channel
+    to already carry a staged runtime, and must not bootstrap one. Asserted
+    against the plan rather than the recipe, so it also covers *where* in the
+    sequence the fetch sits.
     """
     import argparse
 
@@ -46,7 +47,7 @@ def test_binary_release_fetches_fresh_source_without_bootstrapping_profiles() ->
     described = plan.describe()
 
     assert "build_system/scripts/release/fetch-channel-source-manifest.py" in described
-    assert "--require-profile-membership" in described
+    assert "--require-runtime" in described
     assert "--bootstrap-missing-first-party" not in described
 
     order = list(plan.labels)

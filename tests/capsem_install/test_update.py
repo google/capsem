@@ -22,7 +22,6 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import ClassVar
-from urllib.parse import urljoin
 
 import pytest
 from blake3 import blake3
@@ -42,9 +41,9 @@ def _workspace_version() -> str:
     """The version the binary under test reports, read rather than restated.
 
     A literal floor outlives the line it was written for. These fixtures named
-    one directly, which every profile satisfied until the workspace version
-    moved below it -- and then `capsem update` refused every catalog, reporting
-    that the profile required a newer Capsem than the one selected.
+    one directly, which every runtime satisfied until the workspace version
+    moved below it -- and then `capsem update` refused every runtime, reporting
+    that it required a newer Capsem than the one selected.
     `test_benchmark_retention_contract` carries the same lesson, and
     `test_authoritative_values_are_not_restated` fails a docstring that spells
     the version out, which is how this one was written the first time.
@@ -80,7 +79,7 @@ def _default_release_graph() -> dict:
         _artifact_record(
             kind,
             name,
-            f"/profiles/releases/stable/code/2026.0627.8/{architecture}/{name}",
+            f"/runtime/releases/stable/2026.0627.8/{architecture}/{name}",
             f"standalone-{architecture}-{kind}".encode(),
         )
         for kind, name in [
@@ -112,26 +111,21 @@ def _default_release_graph() -> dict:
                 "evidence": [],
             }
         ],
-        "profiles": {
-            "code": {
-                "id": "code",
-                "name": "Code",
-                "version": "2026.0627.8",
-                "revision": "2026.0627.8",
-                "status": "current",
-                "min_capsem_version": COMPATIBLE_MINIMUM,
-                "max_capsem_version": None,
-                "architectures": [
-                    {
-                        "architecture": architecture,
-                        "image_revision": "2026.0627.8",
-                        "config": [],
-                        "images": images,
-                        "evidence": [],
-                        "software": [],
-                    }
-                ],
-            }
+        "runtime": {
+            "revision": "2026.0627.8",
+            "status": "current",
+            "min_capsem_version": COMPATIBLE_MINIMUM,
+            "max_capsem_version": None,
+            "architectures": [
+                {
+                    "architecture": architecture,
+                    "package_inventory_revision": "2026.0627.8",
+                    "image_revision": "2026.0627.8",
+                    "images": images,
+                    "evidence": [],
+                    "software": [],
+                }
+            ],
         },
     }
 
@@ -143,13 +137,10 @@ def _load_test_asset_manifest() -> dict:
     if not path.is_file():
         raise FileNotFoundError(
             f"install-test asset manifest missing at {path}; "
-            "run just _gate-install with rebuilt or pulled profile assets"
+            "run just _gate-install with rebuilt or pulled runtime assets"
         )
     manifest = json.loads(path.read_text(encoding="utf-8"))
-    if not (
-        isinstance(manifest.get("packages"), list)
-        and isinstance(manifest.get("profiles"), dict)
-    ):
+    if not (isinstance(manifest.get("packages"), list) and "runtime" in manifest):
         raise AssertionError(
             f"install tests require an authoritative release graph, got {path}"
         )
@@ -279,9 +270,7 @@ def _update_manifest(
     asset_base: str | None = None,
 ) -> dict:
     manifest = _load_test_asset_manifest()
-    if isinstance(manifest.get("packages"), list) and isinstance(
-        manifest.get("profiles"), dict
-    ):
+    if isinstance(manifest.get("packages"), list) and "runtime" in manifest:
         return _update_release_graph(
             manifest,
             binary_version,
@@ -344,15 +333,13 @@ def _update_release_graph(
             for binary in package.get("binaries", []):
                 binary["version"] = binary_version
 
-    for profile in manifest["profiles"].values():
-        if profile.get("status", "current") == "revoked":
-            continue
-        profile["revision"] = asset_version
-        profile["version"] = asset_version
-        if min_binary is not None:
-            profile["min_capsem_version"] = min_binary
-        for architecture in profile.get("architectures", []):
-            architecture["image_revision"] = asset_version
+    runtime = manifest["runtime"]
+    runtime["revision"] = asset_version
+    if min_binary is not None:
+        runtime["min_capsem_version"] = min_binary
+    for architecture in runtime.get("architectures", []):
+        architecture["package_inventory_revision"] = asset_version
+        architecture["image_revision"] = asset_version
     return manifest
 
 
@@ -483,27 +470,27 @@ def _binary_update_health(base_url: str, installer_name: str, payload: bytes) ->
     }
 
 
-def test_binary_update_fixture_preserves_profile_transport_authority(
+def test_binary_update_fixture_preserves_runtime_transport_authority(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A binary-only fixture may not manufacture a profile update.
+    """A binary-only fixture may not manufacture a runtime update.
 
     Installed-package CI supplies the selected public graph through
     ``CAPSEM_TEST_ASSET_MANIFEST``.  Repointing that graph's ``asset_base`` at
-    the fixture server changes every relative profile image URL, so a binary
-    test unexpectedly stages profiles and then 404s on bytes it never meant
-    to serve.  The package URL is already absolute; profile transport must
+    the fixture server changes every relative runtime image URL, so a binary
+    test unexpectedly stages the runtime and then 404s on bytes it never meant
+    to serve.  The package URL is already absolute; runtime transport must
     remain byte-for-byte under the selected graph's authority.
     """
     selected = _default_release_graph()
     selected["asset_base"] = "https://release.example.invalid/assets-v1"
-    for profile in selected["profiles"].values():
-        profile["revision"] = "2030.0101.1"
-        profile["version"] = "2030.0101.1"
-        profile["min_capsem_version"] = "99.99.98"
-        for architecture in profile["architectures"]:
-            architecture["image_revision"] = "2030.0101.1"
+    runtime = selected["runtime"]
+    runtime["revision"] = "2030.0101.1"
+    runtime["min_capsem_version"] = "99.99.98"
+    for architecture in runtime["architectures"]:
+        architecture["package_inventory_revision"] = "2030.0101.1"
+        architecture["image_revision"] = "2030.0101.1"
     manifest = tmp_path / "selected-manifest.json"
     manifest.write_text(json.dumps(selected), encoding="utf-8")
     monkeypatch.setitem(globals(), "TEST_ASSET_MANIFEST", str(manifest))
@@ -519,51 +506,7 @@ def test_binary_update_fixture_preserves_profile_transport_authority(
         served = json.load(response)
 
     assert served["asset_base"] == selected["asset_base"]
-    assert served["profiles"] == selected["profiles"]
-
-
-def _profile_toml_bytes(revision: str, *, profile_id: str = "code") -> bytes:
-    return f"""
-id = "code"
-name = "Code"
-description = "Default coding profile"
-revision = "{revision}"
-refresh_policy = "manual"
-
-[assets]
-format = "profile-assets.v1"
-refresh_policy = "manual"
-
-[assets.arch.arm64.kernel]
-name = "arm64-vmlinuz"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-vmlinuz"
-
-[assets.arch.arm64.initrd]
-name = "arm64-initrd.img"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-initrd.img"
-
-[assets.arch.arm64.rootfs]
-name = "arm64-rootfs.erofs"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-rootfs.erofs"
-
-[assets.arch.x86_64.kernel]
-name = "x86_64-vmlinuz"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-vmlinuz"
-
-[assets.arch.x86_64.initrd]
-name = "x86_64-initrd.img"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-initrd.img"
-
-[assets.arch.x86_64.rootfs]
-name = "x86_64-rootfs.erofs"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-rootfs.erofs"
-""".lstrip().replace('id = "code"', f'id = "{profile_id}"', 1).encode()
-
-
-def _write_installed_profile_catalog(profiles_dir: Path, revision: str) -> None:
-    profile_dir = profiles_dir / "code"
-    profile_dir.mkdir(parents=True)
-    profile_dir.joinpath("profile.toml").write_bytes(_profile_toml_bytes(revision))
+    assert served["runtime"] == selected["runtime"]
 
 
 def _artifact_record(kind: str, name: str, url: str, payload: bytes) -> dict:
@@ -580,134 +523,13 @@ def _artifact_record(kind: str, name: str, url: str, payload: bytes) -> dict:
     }
 
 
-def _self_contained_profile_graph(
-    revision: str,
-    *,
-    profile_id_in_toml: str = "code",
-) -> tuple[dict, dict[str, bytes], bytes]:
-    """Return one complete profile graph and every byte it declares.
-
-    The image URLs and image revision deliberately remain stable as the profile
-    config revision changes. This lets tests prove that profile-only updates do
-    not manufacture a binary or VM-image update.
-    """
-    manifest = _load_test_asset_manifest()
-    if not (
-        isinstance(manifest.get("packages"), list)
-        and isinstance(manifest.get("profiles"), dict)
-    ):
-        raise AssertionError("native update tests require a release graph manifest")
-
-    current_packages = [
-        package
-        for package in manifest["packages"]
-        if package.get("status", "current") == "current"
-    ]
-    if not current_packages:
-        raise AssertionError("release graph fixture has no current package")
-    manifest["packages"] = current_packages
-
-    host_arch = "arm64" if platform.machine().lower() in {"aarch64", "arm64"} else "x86_64"
-    profile = manifest["profiles"]["code"]
-    source_arch = next(
-        architecture
-        for architecture in profile["architectures"]
-        if architecture["architecture"] == host_arch
-    )
-    profile_bytes = _profile_toml_bytes(revision, profile_id=profile_id_in_toml)
-    profile_path = "/profile-artifacts/code/profile.toml"
-    files = {profile_path: profile_bytes}
-
-    images = []
-    for kind, name in [
-        ("kernel", "vmlinuz"),
-        ("initrd", "initrd.img"),
-        ("rootfs", "rootfs.erofs"),
-    ]:
-        payload = f"capsem-test-{host_arch}-{kind}-image".encode()
-        path = f"/image-artifacts/{host_arch}/{name}"
-        files[path] = payload
-        images.append(_artifact_record(kind, name, path, payload))
-
-    profile["revision"] = revision
-    profile["version"] = revision
-    profile["min_capsem_version"] = COMPATIBLE_MINIMUM
-    profile["architectures"] = [
-        {
-            **source_arch,
-            "architecture": host_arch,
-            "image_revision": "2030.0101.1",
-            "config": [
-                {
-                    **_artifact_record(
-                        "profile",
-                        "profile.toml",
-                        profile_path,
-                        profile_bytes,
-                    ),
-                    "path": "profiles/code/profile.toml",
-                }
-            ],
-            "evidence": [],
-            "images": images,
-            "software": [],
-        }
-    ]
-    manifest["profiles"] = {"code": profile}
-    return manifest, files, profile_bytes
-
-
-def _write_installed_profile_graph(
-    capsem_home: Path,
-    manifest: dict,
-    profile_bytes: bytes,
-) -> Path:
-    assets_dir = capsem_home / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = assets_dir / "manifest.json"
-    manifest_path.write_bytes(_manifest_bytes(manifest))
-    profile_path = capsem_home / "profiles" / "code" / "profile.toml"
-    profile_path.parent.mkdir(parents=True, exist_ok=True)
-    profile_path.write_bytes(profile_bytes)
-    return manifest_path
-
-
-def _assert_installed_profile_uses_manifest_pins(
-    profile_path: Path,
-    manifest: dict,
-    manifest_url: str,
-    *,
-    profile_id: str = "code",
-) -> None:
-    host_arch = "arm64" if platform.machine().lower() in {"aarch64", "arm64"} else "x86_64"
-    architecture = next(
-        row
-        for row in manifest["profiles"][profile_id]["architectures"]
-        if row["architecture"] == host_arch
-    )
-    images = {image["kind"]: image for image in architecture["images"]}
-    installed = tomllib.loads(profile_path.read_text(encoding="utf-8"))
-    assets = installed["assets"]["arch"][host_arch]
-    for kind in ("kernel", "initrd", "rootfs"):
-        image = images[kind]
-        assert assets[kind] == {
-            "name": image["name"],
-            "url": urljoin(manifest_url, image["url"]),
-            "hash": f"blake3:{image['digest']['blake3']}",
-            "size": image["bytes"],
-        }
-
-
 def _write_installed_asset_manifest(capsem_home: Path, current_assets: str) -> None:
     manifest = _load_test_asset_manifest()
-    if isinstance(manifest.get("profiles"), dict):
-        for profile in manifest["profiles"].values():
-            if profile.get("status", "current") == "revoked":
-                continue
-            profile["revision"] = current_assets
-            profile["version"] = current_assets
-            for architecture in profile.get("architectures", []):
-                architecture["image_revision"] = current_assets
+    if "runtime" in manifest:
+        manifest["runtime"]["revision"] = current_assets
+        for architecture in manifest["runtime"].get("architectures", []):
+            architecture["package_inventory_revision"] = current_assets
+            architecture["image_revision"] = current_assets
     else:
         manifest["assets"]["current"] = current_assets
     assets_dir = capsem_home / "assets"
@@ -753,61 +575,6 @@ def _installer_cache_path(capsem_home: Path, name: str, payload: bytes) -> Path:
         / hashlib.sha256(payload).hexdigest()
         / name
     )
-
-
-def _write_persistent_vm_pin_registry(capsem_home: Path) -> Path:
-    assets_dir = capsem_home / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    registry_path = assets_dir / "persistent_registry.json"
-    profile_hash = f"blake3:{'a' * 64}"
-    kernel_hash = f"blake3:{'1' * 64}"
-    initrd_hash = f"blake3:{'2' * 64}"
-    rootfs_hash = f"blake3:{'3' * 64}"
-    registry = {
-        "vms": {
-            "pinned-session": {
-                "id": "pinned-session-id",
-                "name": "pinned-session",
-                "profile_id": "code",
-                "profile_revision": "profiles-2030.0101.0",
-                "profile_payload_hash": profile_hash,
-                "asset_pins": {
-                    "kernel": {
-                        "name": "vmlinuz",
-                        "hash": kernel_hash,
-                        "size": 11,
-                    },
-                    "initrd": {
-                        "name": "initrd.img",
-                        "hash": initrd_hash,
-                        "size": 22,
-                    },
-                    "rootfs": {
-                        "name": "rootfs.erofs",
-                        "hash": rootfs_hash,
-                        "size": 33,
-                    },
-                },
-                "ram_mb": 2048,
-                "cpus": 2,
-                "base_version": "1.4.0",
-                "created_at": "2030-01-01T00:00:00Z",
-                "session_dir": str(capsem_home / "persistent" / "pinned-session"),
-                "forked_from": None,
-                "description": None,
-                "suspended": True,
-                "defunct": False,
-                "last_error": None,
-                "checkpoint_path": None,
-                "env": None,
-            }
-        }
-    }
-    registry_path.write_text(
-        json.dumps(registry, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return registry_path
 
 
 def _fresh_capsem_binary() -> Path:
@@ -856,16 +623,11 @@ def test_update_fetches_release_manifest_and_writes_channel_cache(
     assert cache.get("validation_error") is None
     assert cache["latest_version"] == "99.99.99"
     assert cache["update_available"] is True
-    assert cache["latest_assets"].startswith("images-")
+    assert cache["latest_assets"]
     assert cache.get("current_assets") is None
-    assert cache["latest_profiles"].startswith("catalog-")
-    assert cache["current_profiles"]
-    assert cache["profiles_update_available"] is True
-    assert (
-        f"Profile catalog update available: {cache['current_profiles']} -> "
-        f"{cache['latest_profiles']}" in result.stdout
-    )
-    assert cache["profiles_state"] == "current"
+    assert "latest_profiles" not in cache
+    assert "profiles_update_available" not in cache
+    assert "Profile catalog" not in result.stdout
     assert cache["images_state"] == "current"
 
 
@@ -1075,28 +837,21 @@ def test_corporate_manifest_metadata_uses_manifest_endpoint_for_update_check(
     assert cache.get("validation_error") is None
     assert cache["latest_version"] == "99.99.99"
     assert cache["update_available"] is True
-    assert cache["latest_assets"].startswith("images-")
-    assert cache["current_assets"].startswith("images-")
+    assert cache["latest_assets"]
+    assert cache["current_assets"]
     assert cache["latest_assets"] != cache["current_assets"]
     assert cache["assets_update_available"] is True
-    assert cache["latest_profiles"].startswith("catalog-")
-    assert cache["current_profiles"].startswith("catalog-")
-    assert cache["latest_profiles"] != cache["current_profiles"]
-    assert cache["profiles_update_available"] is True
-    assert cache["profiles_state"] == "current"
+    assert "profiles_update_available" not in cache
     assert cache["images_state"] == "current"
     assert (
         f"VM asset update available: {cache['current_assets']} -> {cache['latest_assets']}."
         in result.stdout
     )
-    assert (
-        f"Profile catalog update available: {cache['current_profiles']} -> "
-        f"{cache['latest_profiles']}" in result.stdout
-    )
+    assert "Profile catalog" not in result.stdout
     assert f"VM image update available: {cache['latest_images']}." in result.stdout
 
 
-def test_update_check_reports_binary_profile_asset_and_image_tracks(
+def test_update_check_reports_binary_asset_and_image_tracks(
     tmp_path: Path,
     installed_layout,
 ) -> None:
@@ -1115,15 +870,6 @@ def test_update_check_reports_binary_profile_asset_and_image_tracks(
             "assets": {
                 "latest": "2030.0101.1",
                 "current": "2030.0101.0",
-            },
-            "profiles": {
-                "latest": "profiles-2030.0101.1",
-                "state": "published",
-                "requires_newer": {"binary": True, "assets": False},
-                "compatibility": {
-                    "min_binary": "99.99.99",
-                    "min_assets": "2030.0101.0",
-                },
             },
             "images": {
                 "latest": None,
@@ -1154,19 +900,14 @@ def test_update_check_reports_binary_profile_asset_and_image_tracks(
     cache = json.loads(
         (capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8")
     )
-    assert cache["latest_assets"].startswith("images-")
-    assert cache["latest_profiles"].startswith("catalog-")
+    assert cache["latest_assets"]
     assert (
         "VM asset state unknown: installed manifest not found; "
         f"latest release is {cache['latest_assets']}." in result.stdout
     )
-    assert (
-        f"Profile catalog update available: {cache['current_profiles']} -> "
-        f"{cache['latest_profiles']}" in result.stdout
-    )
     assert f"VM image track latest: {cache['latest_images']}." in result.stdout
-    assert "Profile catalog update applied" not in result.stdout
-    assert not (capsem_home / "profiles" / "catalog-origin.json").exists()
+    assert "Profile catalog" not in result.stdout
+    assert not (capsem_home / "profiles").exists()
 
 
 def test_binary_update_state_does_not_claim_asset_update(
@@ -1222,14 +963,11 @@ def test_binary_update_state_does_not_claim_asset_update(
     cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["update_available"] is True
     assert cache["assets_update_available"] is False
-    assert cache["latest_assets"].startswith("images-")
+    assert cache["latest_assets"]
     assert cache["latest_assets"] == cache["current_assets"]
-    assert cache["latest_profiles"].startswith("catalog-")
-    assert cache["latest_profiles"] == cache["current_profiles"]
-    assert cache["profiles_update_available"] is False
 
 
-def test_profile_update_state_does_not_claim_binary_update(
+def test_runtime_update_state_does_not_claim_binary_update(
     tmp_path: Path,
     installed_layout,
 ) -> None:
@@ -1281,26 +1019,18 @@ def test_profile_update_state_does_not_claim_binary_update(
     cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["update_available"] is False
     assert cache["assets_update_available"] is True
-    assert cache["profiles_update_available"] is True
     assert cache["images_update_available"] is True
-    assert cache["latest_assets"].startswith("images-")
-    assert cache["current_assets"].startswith("images-")
+    assert cache["latest_assets"]
+    assert cache["current_assets"]
     assert cache["latest_assets"] != cache["current_assets"]
-    assert cache["latest_profiles"].startswith("catalog-")
-    assert cache["current_profiles"].startswith("catalog-")
-    assert cache["latest_profiles"] != cache["current_profiles"]
     assert (
         f"VM asset update available: {cache['current_assets']} -> {cache['latest_assets']}."
         in result.stdout
     )
-    assert (
-        f"Profile catalog update available: {cache['current_profiles']} -> "
-        f"{cache['latest_profiles']}" in result.stdout
-    )
     assert f"VM image update available: {cache['latest_images']}." in result.stdout
 
 
-def test_profile_update_requiring_newer_binary_is_rejected_before_apply(
+def test_runtime_update_requiring_newer_binary_is_rejected_before_apply(
     tmp_path: Path,
     installed_layout,
 ) -> None:
@@ -1354,58 +1084,7 @@ def test_profile_update_requiring_newer_binary_is_rejected_before_apply(
     assert installed_manifest.read_bytes() == before_manifest
 
 
-def test_profile_update_state_does_not_claim_binary_or_asset_update(
-    tmp_path: Path,
-    installed_layout,
-) -> None:
-    capsem_home = tmp_path / ".capsem"
-    installed_graph, _, installed_profile = _self_contained_profile_graph("2030.0101.0")
-    _write_installed_profile_graph(capsem_home, installed_graph, installed_profile)
-    fresh_capsem = _fresh_capsem_binary()
-    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
-    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
-    release_graph, release_files, _ = _self_contained_profile_graph("2030.0101.1")
-    manifest_path = "/assets/stable/manifest.json"
-
-    with _serve_manifest_release(
-        {**release_files, manifest_path: _manifest_bytes(release_graph)}
-    ) as (base_url, requests):
-        _write_manifest_metadata(capsem_home, f"{base_url}{manifest_path}")
-        result = subprocess.run(
-            [str(capsem), "update", "--check"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={
-                **os.environ,
-                "CAPSEM_HOME": str(capsem_home),
-                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-            },
-        )
-
-    assert result.returncode == 0, (
-        f"capsem update --check failed\nstdout={result.stdout}\nstderr={result.stderr}"
-    )
-    assert "Binary update available" not in result.stdout
-    assert "VM asset update available" not in result.stdout
-    assert "VM image update available" not in result.stdout
-    assert requests == [manifest_path]
-
-    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
-    assert cache["update_available"] is False
-    assert cache["assets_update_available"] is False
-    assert cache["profiles_update_available"] is True
-    assert cache["images_update_available"] is False
-    assert cache["current_profiles"].startswith("catalog-")
-    assert cache["latest_profiles"].startswith("catalog-")
-    assert cache["current_profiles"] != cache["latest_profiles"]
-    assert (
-        f"Profile catalog update available: {cache['current_profiles']} -> "
-        f"{cache['latest_profiles']}" in result.stdout
-    )
-
-
-def test_mixed_binary_and_profile_update_state_reports_both_tracks(
+def test_mixed_binary_and_runtime_update_state_reports_both_tracks(
     tmp_path: Path,
     installed_layout,
 ) -> None:
@@ -1456,15 +1135,10 @@ def test_mixed_binary_and_profile_update_state_reports_both_tracks(
     cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["update_available"] is True
     assert cache["assets_update_available"] is True
-    assert cache["profiles_update_available"] is True
     assert cache["images_update_available"] is True
     assert (
         f"VM asset update available: {cache['current_assets']} -> {cache['latest_assets']}."
         in result.stdout
-    )
-    assert (
-        f"Profile catalog update available: {cache['current_profiles']} -> "
-        f"{cache['latest_profiles']}" in result.stdout
     )
     assert f"VM image update available: {cache['latest_images']}." in result.stdout
 
@@ -1475,23 +1149,23 @@ def test_mixed_binary_and_profile_update_state_reports_both_tracks(
         {
             "id": "binary-only",
             "binary_latest": "99.99.99",
-            "profile_revision": "2026.0627.8",
+            "runtime_revision": "2026.0627.8",
             "binary_update": True,
-            "profile_update": False,
+            "runtime_update": False,
         },
         {
-            "id": "profile-only",
+            "id": "runtime-only",
             "binary_latest": "0.0.0",
-            "profile_revision": "2030.0101.1",
+            "runtime_revision": "2030.0101.1",
             "binary_update": False,
-            "profile_update": True,
+            "runtime_update": True,
         },
         {
-            "id": "profile-then-binary",
+            "id": "runtime-then-binary",
             "binary_latest": "99.99.99",
-            "profile_revision": "2030.0101.1",
+            "runtime_revision": "2030.0101.1",
             "binary_update": True,
-            "profile_update": True,
+            "runtime_update": True,
         },
     ],
     ids=lambda case: case["id"],
@@ -1513,7 +1187,7 @@ def test_staged_update_state_matrix_keeps_cli_tracks_separated(
                 "files": [],
             },
             "assets": {
-                "latest": case["profile_revision"],
+                "latest": case["runtime_revision"],
                 "current": "2026.0627.8",
             },
             "images": {
@@ -1547,218 +1221,21 @@ def test_staged_update_state_matrix_keeps_cli_tracks_separated(
 
     cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["update_available"] is case["binary_update"]
-    assert cache["assets_update_available"] is case["profile_update"]
-    assert cache["profiles_update_available"] is case["profile_update"]
-    assert cache["images_update_available"] is case["profile_update"]
+    assert cache["assets_update_available"] is case["runtime_update"]
+    assert cache["images_update_available"] is case["runtime_update"]
+    assert "profiles_update_available" not in cache
     if case["binary_update"]:
         assert "Binary update available" in result.stdout
     else:
         assert "Capsem binary is current" in result.stdout
         assert "Binary update available" not in result.stdout
-    if case["profile_update"]:
+    assert "Profile catalog" not in result.stdout
+    if case["runtime_update"]:
         assert "VM asset update available" in result.stdout
-        assert "Profile catalog update available" in result.stdout
         assert "VM image update available" in result.stdout
     else:
         assert "VM asset update available" not in result.stdout
-        assert "Profile catalog update available" not in result.stdout
         assert "VM image update available" not in result.stdout
-
-
-def test_update_reports_profile_catalog_without_applying_by_default(
-    tmp_path: Path,
-    installed_layout,
-) -> None:
-    capsem_home = tmp_path / ".capsem"
-    installed_graph, _, installed_profile = _self_contained_profile_graph("2030.0101.0")
-    installed_manifest = _write_installed_profile_graph(
-        capsem_home,
-        installed_graph,
-        installed_profile,
-    )
-    before_manifest = installed_manifest.read_bytes()
-    fresh_capsem = _fresh_capsem_binary()
-    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
-    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
-    release_graph, release_files, _ = _self_contained_profile_graph("2030.0101.1")
-    manifest_path = "/assets/stable/manifest.json"
-
-    with _serve_manifest_release(
-        {**release_files, manifest_path: _manifest_bytes(release_graph)}
-    ) as (base_url, requests):
-        _write_manifest_metadata(capsem_home, f"{base_url}{manifest_path}")
-        result = subprocess.run(
-            [str(capsem), "update"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={
-                **os.environ,
-                "CAPSEM_HOME": str(capsem_home),
-                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-            },
-        )
-
-    assert result.returncode == 0, (
-        f"capsem update failed\nstdout={result.stdout}\nstderr={result.stderr}"
-    )
-    assert "Profile catalog update available" in result.stdout
-    assert "Re-run with --yes to apply the profile catalog update." in result.stdout
-    assert "atomically activated" not in result.stdout
-    assert (capsem_home / "profiles" / "code" / "profile.toml").read_bytes() == installed_profile
-    assert installed_manifest.read_bytes() == before_manifest
-    assert requests == [manifest_path]
-
-
-def test_update_yes_applies_compatible_profile_catalog_from_release_channel(
-    tmp_path: Path,
-    installed_layout,
-) -> None:
-    capsem_home = tmp_path / ".capsem"
-    installed_graph, _, installed_profile = _self_contained_profile_graph("2030.0101.0")
-    installed_manifest = _write_installed_profile_graph(
-        capsem_home,
-        installed_graph,
-        installed_profile,
-    )
-    fresh_capsem = _fresh_capsem_binary()
-    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
-    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
-    release_graph, release_files, release_profile = _self_contained_profile_graph("2030.0101.1")
-    release_manifest = _manifest_bytes(release_graph)
-    manifest_path = "/assets/stable/manifest.json"
-
-    with _serve_manifest_release(
-        {**release_files, manifest_path: release_manifest}
-    ) as (base_url, requests):
-        _write_manifest_metadata(capsem_home, f"{base_url}{manifest_path}")
-        result = subprocess.run(
-            [str(capsem), "update", "--yes"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={
-                **os.environ,
-                "CAPSEM_HOME": str(capsem_home),
-                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-            },
-        )
-
-    assert result.returncode == 0, (
-        f"capsem update --yes failed\nstdout={result.stdout}\nstderr={result.stderr}"
-    )
-    assert "Profile catalog update available" in result.stdout
-    assert "Profile configuration and VM assets were atomically activated." in result.stdout
-    installed_profile = capsem_home / "profiles" / "code" / "profile.toml"
-    assert installed_profile.read_bytes() != release_profile
-    _assert_installed_profile_uses_manifest_pins(
-        installed_profile,
-        release_graph,
-        f"{base_url}{manifest_path}",
-    )
-    assert installed_manifest.read_bytes() == release_manifest
-    assert requests[0] == manifest_path
-    assert set(requests[1:]) == set(release_files)
-
-
-def test_profile_catalog_preserves_existing_vm_pins_on_update(
-    tmp_path: Path,
-    installed_layout,
-) -> None:
-    capsem_home = tmp_path / ".capsem"
-    installed_graph, _, installed_profile = _self_contained_profile_graph("2030.0101.0")
-    manifest_path = _write_installed_profile_graph(
-        capsem_home,
-        installed_graph,
-        installed_profile,
-    )
-    registry_path = _write_persistent_vm_pin_registry(capsem_home)
-    before_registry = registry_path.read_bytes()
-    before_manifest = manifest_path.read_bytes()
-    fresh_capsem = _fresh_capsem_binary()
-    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
-    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
-    release_graph, release_files, release_profile = _self_contained_profile_graph("2030.0101.1")
-    release_manifest = _manifest_bytes(release_graph)
-    release_manifest_path = "/assets/stable/manifest.json"
-
-    with _serve_manifest_release(
-        {**release_files, release_manifest_path: release_manifest}
-    ) as (base_url, _):
-        _write_manifest_metadata(capsem_home, f"{base_url}{release_manifest_path}")
-        result = subprocess.run(
-            [str(capsem), "update", "--yes"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={
-                **os.environ,
-                "CAPSEM_HOME": str(capsem_home),
-                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-            },
-        )
-
-    assert result.returncode == 0, (
-        f"capsem update --yes failed\nstdout={result.stdout}\nstderr={result.stderr}"
-    )
-    assert "Profile configuration and VM assets were atomically activated." in result.stdout
-    installed_profile = capsem_home / "profiles" / "code" / "profile.toml"
-    assert installed_profile.read_bytes() != release_profile
-    _assert_installed_profile_uses_manifest_pins(
-        installed_profile,
-        release_graph,
-        f"{base_url}{release_manifest_path}",
-    )
-    assert registry_path.read_bytes() == before_registry
-    assert manifest_path.read_bytes() != before_manifest
-    assert manifest_path.read_bytes() == release_manifest
-
-
-def test_update_preserves_profile_catalog_when_release_catalog_is_invalid(
-    tmp_path: Path,
-    installed_layout,
-) -> None:
-    capsem_home = tmp_path / ".capsem"
-    installed_graph, _, installed_profile = _self_contained_profile_graph("2030.0101.0")
-    installed_manifest = _write_installed_profile_graph(
-        capsem_home,
-        installed_graph,
-        installed_profile,
-    )
-    before_manifest = installed_manifest.read_bytes()
-    fresh_capsem = _fresh_capsem_binary()
-    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
-    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
-    release_graph, release_files, _ = _self_contained_profile_graph(
-        "2030.0101.1",
-        profile_id_in_toml="wrong-profile",
-    )
-    release_manifest = _manifest_bytes(release_graph)
-    manifest_path = "/assets/stable/manifest.json"
-
-    with _serve_manifest_release(
-        {**release_files, manifest_path: release_manifest}
-    ) as (base_url, _):
-        _write_manifest_metadata(capsem_home, f"{base_url}{manifest_path}")
-        result = subprocess.run(
-            [str(capsem), "update", "--yes"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env={
-                **os.environ,
-                "CAPSEM_HOME": str(capsem_home),
-                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-            },
-        )
-
-    assert result.returncode != 0, (
-        f"invalid profile catalog apply should fail\nstdout={result.stdout}\nstderr={result.stderr}"
-    )
-    assert "validate staged profile catalog" in result.stderr
-    assert (capsem_home / "profiles" / "code" / "profile.toml").read_bytes() == installed_profile
-    assert installed_manifest.read_bytes() == before_manifest
-    assert not list((capsem_home / "updates" / "candidates").glob(".*.tmp"))
 
 
 def test_macos_update_yes_applies_verified_pkg_with_package_manager(

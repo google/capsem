@@ -7,15 +7,16 @@ deployment checks.
 
 ## Evidence and integrity
 
-The manifest defines channel membership, profiles, compatibility bounds,
+The manifest defines channel membership, the runtime, compatibility bounds,
 packages, binaries, and integrity digests. SBOM, OBOM, existing attestations,
 and GitHub workflow logs are the release evidence. Do not add another
 provenance or approval document.
 
-Profiles belong to channels. A profile may appear in several channels, one
-channel, or no public channel; each channel/profile publication is independent.
-Every immutable config, image, evidence, and revision path must include enough
-channel/profile identity to prevent stable and nightly from aliasing bytes.
+Each channel carries at most one runtime, and each channel's runtime
+publication is independent. Every immutable image, evidence, and revision path
+includes the channel and runtime revision
+(`/runtime/releases/<channel>/<revision>/<arch>/<file>`) so stable and nightly
+never alias bytes.
 
 Public graph rules:
 
@@ -23,7 +24,7 @@ Public graph rules:
   `capsem-admin manifest generate`;
 - packages are delivery containers;
 - per-binary inventory stays under its owning package;
-- profiles own config, images, inventory, OBOM, evidence, and their minimum
+- the runtime owns images, inventory, OBOM, evidence, and its minimum
   compatible Capsem version;
 - mutable channel pointers use
   `Cache-Control: no-cache, must-revalidate`;
@@ -47,11 +48,11 @@ Native installation is a functional outcome, not a file-existence check:
 - publication depends on both platform rails;
 - skipped, optional, source-layout-only, or inspect-only checks do not count;
 - `build_system/scripts/release/verify-installed-release.py` verifies the exact installed manifest,
-  metadata sidecar, profile readiness, package version, update state, and
+  metadata sidecar, asset readiness, package version, update state, and
   post-mortem retrieval of a preserved failed-session log through the installed
   CLI. The same verifier runs in Linux, native macOS, and Tart package lanes;
-- the stateful glow-up proves binary-only, profile-only,
-  profile-then-binary, channel switching, tamper rejection, and preservation
+- the stateful glow-up proves binary-only, runtime-only,
+  runtime-then-binary, channel switching, tamper rejection, and preservation
   of the previous working state, with Winterfell and full doctor after
   transitions.
 
@@ -77,8 +78,8 @@ an unverified tag. The shared host-builder is an explicit prerequisite; sealing
 that upstream materializer is separate tracked work, so do not describe a cold
 daemon as globally one-egress until that prerequisite is also closed.
 
-Selected profile bytes travel beside assets/config in one verified read-only
-`ProfileContent` root. Qualification rechecks those immutable inputs inside the
+Selected runtime bytes travel beside assets/config in one verified read-only
+`RuntimeContent` root. Qualification rechecks those immutable inputs inside the
 container, extracts `capsem-admin` from the exact package, authors one checked
 local graph containing both artifact families, securely hands it to postinst,
 and executes one `dpkg -i`. The standalone Debian proof uses that same graph
@@ -180,7 +181,7 @@ learned from prior failures.
 
 ## Release-channel Cloudflare prerequisites
 
-Before running a live binary or profile channel deploy, verify the Cloudflare
+Before running a live binary or runtime channel deploy, verify the Cloudflare
 Pages project serving `release.capsem.org`, its `release.capsem.org` custom
 domain, and both `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`.
 After deployment, run `build_system/release_site/scripts/check-release-site-contract.py`; it validates

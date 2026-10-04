@@ -27,7 +27,7 @@ target = "build_system/tests/gate/runlog_worker.py"
 [[owned]]
 owner = "gate"
 source = "tests/test_build_assets_profile.py"
-target = "build_system/tests/gate/test_build_assets_profile.py"
+target = "build_system/tests/gate/test_build_assets.py"
 
 [[owned]]
 owner = "gate"
@@ -647,7 +647,7 @@ target = "build_system/tests/release/test_live_channel_watch.py"
 [[owned]]
 owner = "release"
 source = "tests/test_profile_revision_semver.py"
-target = "build_system/tests/release/test_profile_revision_semver.py"
+target = "build_system/tests/release/test_release_version_discipline.py"
 
 [[owned]]
 owner = "release"
@@ -732,12 +732,12 @@ target = "build_system/tests/release/test_release_package_install_contract.py"
 [[owned]]
 owner = "release"
 source = "tests/test_release_profile_architecture_contract.py"
-target = "build_system/tests/release/test_release_profile_architecture_contract.py"
+target = "build_system/tests/release/test_release_runtime_architecture_contract.py"
 
 [[owned]]
 owner = "release"
 source = "tests/test_release_profile_contract.py"
-target = "build_system/tests/release/test_release_profile_contract.py"
+target = "build_system/tests/release/test_release_runtime_contract.py"
 
 [[owned]]
 owner = "release"
@@ -842,7 +842,7 @@ target = "build_system/tests/scripts/test_injection_script.py"
 [[owned]]
 owner = "scripts"
 source = "tests/test_integration_script_profiles.py"
-target = "build_system/tests/scripts/test_integration_script_profiles.py"
+target = "build_system/tests/scripts/test_integration_script.py"
 
 [[owned]]
 owner = "scripts"

@@ -51,10 +51,10 @@ class ModulesConfig(Strict):
     rust_doctests: tuple[str, ...]
     guest_binary_tests: tuple[str, ...]
     release_input_dir: str
-    release_profile: str
+    release_runtime: str
     release_package: str
     verify_inputs_script: str
-    prove_profile_assets_script: str
+    prove_runtime_assets_script: str
     glowup_script: str
     macos_glowup_script: str
     platform_support_script: str
@@ -191,18 +191,15 @@ class ImageBuildConfig(Strict):
     workspace_guest_dir: str
     lane_templates: tuple[str, ...]
     templates: tuple[str, ...]
-    profiles_glob: str
-    profile_manifest: str
     config_root: str
     output: str
     doctor_skips: dict[str, str]
 
     @model_validator(mode="after")
-    def _workspace_is_profile_and_arch_scoped(self) -> ImageBuildConfig:
-        for field in ("{profile}", "{arch}"):
-            if field not in self.workspace_root:
-                raise ValueError(f"image workspace_root must contain {field}")
-        rendered = self.workspace_root.format(profile="profile", arch="arch")
+    def _workspace_is_arch_scoped(self) -> ImageBuildConfig:
+        if "{arch}" not in self.workspace_root:
+            raise ValueError("image workspace_root must contain {arch}")
+        rendered = self.workspace_root.format(arch="arch")
         path = PurePosixPath(rendered)
         if path.is_absolute() or ".." in path.parts:
             raise ValueError("image workspace_root must remain inside the checkout")

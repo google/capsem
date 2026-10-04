@@ -21,7 +21,6 @@ import os
 import platform
 import subprocess
 import threading
-import tomllib
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -130,64 +129,45 @@ def _make_release_channel_manifest(
     arch: str,
     files: dict[str, bytes],
     *,
-    profile_id: str = "default",
+    channel: str = "stable",
     revision: str = NEW_ASSET_VERSION,
-    image_revision: str | None = None,
-    config_files: dict[str, bytes] | None = None,
 ) -> dict:
-    """Build the split-lane release graph shape published at /assets/<channel>/manifest.json."""
+    """Build the release graph published at /assets/<channel>/manifest.json."""
     return {
         "version": "1.5.1",
+        "channel": channel,
         "status": "current",
         "packages": [],
-        "profiles": {
-            profile_id: {
-                "version": "1",
-                "id": profile_id,
-                "name": "Default",
-                "revision": revision,
-                "status": "current",
-                "architectures": [
-                    {
-                        "architecture": arch,
-                        "image_revision": image_revision or revision,
-                        "software": [],
-                        "config": [
-                            {
-                                "kind": "profile" if name == "profile.toml" else "config",
-                                "path": f"profiles/{profile_id}/{name}",
-                                "url": f"/profiles/releases/{revision}/{profile_id}/{arch}/{name}",
-                                "bytes": len(blob),
-                                "digest": {
-                                    "sha256": _sha256(blob),
-                                    "blake3": _blake3(blob),
-                                },
-                                "status": "current",
-                            }
-                            for name, blob in (config_files or {}).items()
-                        ],
-                        "images": [
-                            {
-                                "kind": kind,
-                                "name": name,
-                                "url": f"/profiles/releases/{revision}/{profile_id}/{arch}/{name}",
-                                "bytes": len(blob),
-                                "digest": {
-                                    "sha256": _sha256(blob),
-                                    "blake3": _blake3(blob),
-                                },
-                                "status": "current",
-                            }
-                            for kind, name, blob in (
-                                ("kernel", "vmlinuz", files["vmlinuz"]),
-                                ("initrd", "initrd.img", files["initrd.img"]),
-                                ("rootfs", "rootfs.erofs", files["rootfs.erofs"]),
-                            )
-                        ],
-                        "evidence": [],
-                    }
-                ],
-            }
+        "runtime": {
+            "revision": revision,
+            "status": "current",
+            "architectures": [
+                {
+                    "architecture": arch,
+                    "package_inventory_revision": revision,
+                    "image_revision": revision,
+                    "software": [],
+                    "images": [
+                        {
+                            "kind": kind,
+                            "name": name,
+                            "url": f"/runtime/releases/{channel}/{revision}/{arch}/{name}",
+                            "bytes": len(blob),
+                            "digest": {
+                                "sha256": _sha256(blob),
+                                "blake3": _blake3(blob),
+                            },
+                            "status": "current",
+                        }
+                        for kind, name, blob in (
+                            ("kernel", "vmlinuz", files["vmlinuz"]),
+                            ("initrd", "initrd.img", files["initrd.img"]),
+                            ("rootfs", "rootfs.erofs", files["rootfs.erofs"]),
+                        )
+                    ],
+                    "evidence": [],
+                }
+            ],
         },
     }
 
@@ -739,7 +719,7 @@ def test_explicit_manifest_records_its_source_without_rebranding_public_channel(
     }.issubset(set(requested_paths))
 
 
-def test_update_assets_accepts_release_channel_profile_manifest(
+def test_update_assets_accepts_release_channel_runtime_manifest(
     tmp_path: Path,
     http_fixture,
     installed_layout,
@@ -748,57 +728,25 @@ def test_update_assets_accepts_release_channel_profile_manifest(
     arch = _arch()
 
     old_files = {
-        "vmlinuz": b"old-profile-graph-kernel",
-        "initrd.img": b"old-profile-graph-initrd",
-        "rootfs.erofs": b"old-profile-graph-rootfs",
+        "vmlinuz": b"old-runtime-graph-kernel",
+        "initrd.img": b"old-runtime-graph-initrd",
+        "rootfs.erofs": b"old-runtime-graph-rootfs",
     }
     new_files = {
-        "vmlinuz": b"profile-graph-kernel-" + os.urandom(64),
-        "initrd.img": b"profile-graph-initrd-" + os.urandom(64),
-        "rootfs.erofs": b"profile-graph-rootfs-" + os.urandom(64),
+        "vmlinuz": b"runtime-graph-kernel-" + os.urandom(64),
+        "initrd.img": b"runtime-graph-initrd-" + os.urandom(64),
+        "rootfs.erofs": b"runtime-graph-rootfs-" + os.urandom(64),
     }
     channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
-    profile_release_url = (
-        f"{base_url}/profiles/releases/{NEW_ASSET_VERSION}/default/{arch}"
-    )
-    profile_config = f"""\
-id = "default"
-name = "Default"
-description = "Release-channel profile graph fixture."
-revision = "{NEW_ASSET_VERSION}"
-refresh_policy = "24h"
-
-[assets]
-format = "profile-assets.v1"
-refresh_policy = "on_profile_refresh"
-
-[assets.arch.{arch}.kernel]
-name = "vmlinuz"
-url = "{profile_release_url}/vmlinuz"
-
-[assets.arch.{arch}.initrd]
-name = "initrd.img"
-url = "{profile_release_url}/initrd.img"
-
-[assets.arch.{arch}.rootfs]
-name = "rootfs.erofs"
-url = "{profile_release_url}/rootfs.erofs"
-""".encode()
-
-    channel_manifest = _make_release_channel_manifest(
-        arch,
-        new_files,
-        config_files={"profile.toml": profile_config},
-    )
+    channel_manifest = _make_release_channel_manifest(arch, new_files)
     channel_manifest_path = serve_dir / "assets" / "stable" / "manifest.json"
     channel_manifest_path.parent.mkdir(parents=True)
     channel_manifest_path.write_text(json.dumps(channel_manifest), encoding="utf-8")
 
-    release_dir = serve_dir / "profiles" / "releases" / NEW_ASSET_VERSION / "default" / arch
+    release_dir = serve_dir / "runtime" / "releases" / "stable" / NEW_ASSET_VERSION / arch
     release_dir.mkdir(parents=True)
     for name, blob in new_files.items():
         (release_dir / name).write_bytes(blob)
-    (release_dir / "profile.toml").write_bytes(profile_config)
 
     capsem_home = tmp_path / ".capsem"
     assets = capsem_home / "assets"
@@ -821,16 +769,16 @@ url = "{profile_release_url}/rootfs.erofs"
     assert f"Installed asset manifest from {channel_manifest_url}" in result.stdout
     assert "/assets/stable/manifest.json" in requested_paths
     expected_blob_paths = {
-        f"/profiles/releases/{NEW_ASSET_VERSION}/default/{arch}/{name}" for name in new_files
+        f"/runtime/releases/stable/{NEW_ASSET_VERSION}/{arch}/{name}" for name in new_files
     }
     assert expected_blob_paths.issubset(set(requested_paths))
-    assert f"/profiles/releases/{NEW_ASSET_VERSION}/default/{arch}/profile.toml" in requested_paths
+    assert not any("/profiles/" in path for path in requested_paths)
     assert "missing field `format`" not in result.stderr
 
     installed_manifest = json.loads((assets / "manifest.json").read_text())
     assert installed_manifest == channel_manifest
-    assert installed_manifest["profiles"]["default"]["revision"] == NEW_ASSET_VERSION
-    installed_images = installed_manifest["profiles"]["default"]["architectures"][0]["images"]
+    assert installed_manifest["runtime"]["revision"] == NEW_ASSET_VERSION
+    installed_images = installed_manifest["runtime"]["architectures"][0]["images"]
     assert {image["name"] for image in installed_images} == {
         "vmlinuz",
         "initrd.img",
@@ -843,21 +791,9 @@ url = "{profile_release_url}/rootfs.erofs"
         target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
         assert target.read_bytes() == blob
-    installed_profile = tomllib.loads(
-        (capsem_home / "profiles" / "default" / "profile.toml").read_text(
-            encoding="utf-8"
-        )
-    )
-    installed_assets = installed_profile["assets"]["arch"][arch]
-    images_by_kind = {image["kind"]: image for image in installed_images}
-    for kind in ("kernel", "initrd", "rootfs"):
-        image = images_by_kind[kind]
-        assert installed_assets[kind] == {
-            "name": image["name"],
-            "url": f"{base_url}{image['url']}",
-            "hash": f"blake3:{image['digest']['blake3']}",
-            "size": image["bytes"],
-        }
+    # The runtime is the whole VM-asset release; nothing projects it into a
+    # per-profile catalog under the install home.
+    assert not (capsem_home / "profiles").exists()
 
 
 def test_installed_cli_switches_public_channels_then_corporate_channel_locks(

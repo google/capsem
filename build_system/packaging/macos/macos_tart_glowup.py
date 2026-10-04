@@ -51,13 +51,10 @@ def tart_run_command(
     vm_name: str,
     share: Path,
     asset_share: Path | None = None,
-    profile_share: Path | None = None,
 ) -> list[str]:
     directories = [f"--dir=capsem-release:{share}"]
     if asset_share is not None:
         directories.append(f"--dir=capsem-assets:{asset_share}")
-    if profile_share is not None:
-        directories.append(f"--dir=capsem-profiles:{profile_share}")
     return [
         "tart",
         "run",
@@ -362,7 +359,6 @@ def main() -> int:
     parser.add_argument("--incompatible-manifest-file", required=True, type=Path)
     parser.add_argument("--sbom", required=True, type=Path)
     parser.add_argument("--asset-share", required=True, type=Path)
-    parser.add_argument("--profile-share", required=True, type=Path)
     parser.add_argument("--channel", choices=("stable", "nightly"), required=True)
     parser.add_argument(
         "--image",
@@ -386,9 +382,6 @@ def main() -> int:
     asset_share = args.asset_share.resolve()
     if not asset_share.is_dir():
         raise RuntimeError(f"candidate asset share is missing: {asset_share}")
-    profile_share = args.profile_share.resolve()
-    if not profile_share.is_dir():
-        raise RuntimeError(f"candidate profile share is missing: {profile_share}")
     manifest = load_manifest_bytes(manifest_file.read_bytes())
     assert_manifest_artifact(manifest, artifact)
     candidate_files = (
@@ -449,7 +442,7 @@ def main() -> int:
         )
         tart_log = work_dir / "tart-run.log"
         log_stream = tart_log.open("w")
-        command = tart_run_command(vm_name, share, asset_share, profile_share)
+        command = tart_run_command(vm_name, share, asset_share)
         print("+", shlex.join(command), flush=True)
         runner = subprocess.Popen(
             command,

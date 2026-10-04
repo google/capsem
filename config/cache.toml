@@ -178,8 +178,8 @@ scope = "disk"
 path = "target/vm-assets"
 entry_root = "generations"
 selector_globs = [
-  "target/tests/ironbank/*/build-*",
-  "worktrees/*/cache/target/tests/ironbank/*/build-*",
+  "target/tests/ironbank/build-*",
+  "worktrees/*/cache/target/tests/ironbank/build-*",
 ]
 warm_size_bytes = 6442450944 # 6 GiB
 max_size_bytes = 12884901888 # 12 GiB

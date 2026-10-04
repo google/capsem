@@ -1,4 +1,8 @@
-"""CLI cold-start latency benchmarks."""
+"""Interpreter cold-start latency benchmarks.
+
+The runtime carries no agent CLIs or Node: applications come from OCI
+images. What it does carry, and every in-guest Capsem tool starts, is Python.
+"""
 
 import subprocess
 import time
@@ -10,10 +14,7 @@ from .helpers import console, drop_caches
 
 STARTUP_COMMANDS = [
     ("python3", ["python3", "--version"]),
-    ("node", ["node", "--version"]),
-    ("claude", ["claude", "--version"]),
-    ("gemini", ["gemini", "--version"]),
-    ("codex", ["codex", "--version"]),
+    ("python3-import", ["python3", "-c", "import json, ssl, asyncio"]),
 ]
 STARTUP_RUNS = 3
 
@@ -32,7 +33,7 @@ def time_command(cmd):
 
 
 def startup_bench():
-    """Time cold-start latency for key CLIs."""
+    """Time cold-start latency for the runtime's interpreters."""
     table = Table(title=Text(f"CLI Cold Start Latency  [{STARTUP_RUNS} runs each]"))
     table.add_column("Command", style="bold")
     table.add_column("Min (ms)", justify="right")

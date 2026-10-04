@@ -11,7 +11,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import imagebuild
 from .actions import Run, Script
 from .command import GateCommand
 from .config import GateConfig
@@ -33,19 +32,6 @@ def _require_channel(config: GateConfig, channel: str) -> None:
         raise GateError(
             f"unknown channel {channel!r}; expected one of {', '.join(config.package.channels)}"
         )
-
-
-def _selected_profiles(config: GateConfig, profile: str) -> list[str]:
-    """The profiles one `release-profile` run dispatches, in dispatch order."""
-    known = imagebuild.profiles(config)
-    every = config.release.all_profiles
-    if every in known:
-        raise GateError(f"a profile is named {every!r}, which release-profile reserves for every profile")
-    if profile == every:
-        return known
-    if profile not in known:
-        raise GateError(f"unknown profile {profile!r}; expected {every!r} or one of {', '.join(known)}")
-    return [profile]
 
 
 class ReleaseBinariesCommand(
@@ -132,7 +118,7 @@ class ReleaseBinariesCommand(
                     channel,
                     "--repository",
                     os.environ.get(settings.repository_variable, settings.default_repository),
-                    "--require-profile-membership",
+                    "--require-runtime",
                     "--output",
                     settings.channel_source,
                     outside_sandbox=True,
@@ -181,11 +167,11 @@ class ReleaseBinariesCommand(
         return plan
 
 
-class ReleaseProfileCommand(
+class ReleaseAssetsCommand(
     QualifiedRelease,
     GateCommand,
-    name="release-profile",
-    help="release one channel profile, or every profile with `all`",
+    name="release-assets",
+    help="release the VM runtime assets for one channel from a locally qualified commit",
 ):
     exclusive = True
     publishes = True
@@ -194,7 +180,6 @@ class ReleaseProfileCommand(
     @classmethod
     def add_arguments(cls, parser) -> None:
         parser.add_argument("channel")
-        parser.add_argument("profile")
         parser.add_argument("source_commit", type=SourceCommit)
         parser.add_argument(
             "--force",
@@ -212,13 +197,10 @@ class ReleaseProfileCommand(
         settings = config.release
         checkout = _checkout(config)
 
-        # Both arguments, checked in milliseconds. This command spends a
-        # complete gate before it publishes, so a name that is wrong is worth
-        # discovering now rather than forty minutes from now. `release-binaries`
-        # validated its channel and this did not, which is the kind of asymmetry
-        # nobody notices until the run that needed it.
+        # Checked in milliseconds. This command spends a complete gate before
+        # it publishes, so a channel that is wrong is worth discovering now
+        # rather than forty minutes from now.
         _require_channel(config, self._args.channel)
-        profiles = _selected_profiles(config, self._args.profile)
 
         clean = self._worktree_steps(plan, self.source_commit())
         accepted = self._qualification_steps(plan, self.source_commit(), after=clean)
@@ -269,24 +251,16 @@ class ReleaseProfileCommand(
                 # this authors an immutable publication and dispatches a
                 # workflow, and it must do that from the repository being
                 # released rather than from a tree about to be reclaimed.
-                # One dispatch per profile, in order, behind the one proof
-                # above: each waits on its hosted run, and the first failure
-                # stops the rest.
-                *(
-                    Run(
-                        [
-                            *settings.profile,
-                            "--channel",
-                            self._args.channel,
-                            "--profile",
-                            profile,
-                            "--source-commit",
-                            str(self.source_commit()),
-                        ],
-                        cwd=checkout,
-                        outside_sandbox=True,
-                    )
-                    for profile in profiles
+                Run(
+                    [
+                        *settings.assets,
+                        "--channel",
+                        self._args.channel,
+                        "--source-commit",
+                        str(self.source_commit()),
+                    ],
+                    cwd=checkout,
+                    outside_sandbox=True,
                 ),
                 kind=Kind.PUBLISH,
                 needs=frozenset({Needs.NETWORK}),

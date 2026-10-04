@@ -34,7 +34,7 @@ quick checks. After frontend changes intended for the desktop app, use
 Use `fast-test` once for cheap source feedback and the smallest `focus-test`
 group for a specific regression. Use `test` when complete local whole-system
 verification is useful; it reuses valid build products. It is optional before
-release. The hosted `release-profile` and `release-binaries` lanes each perform
+release. The hosted `release-assets` and `release-binaries` lanes each perform
 their own release qualification and do not consume the local test journal.
 Low-impact source is admitted to another complete run after ten commits. Before
 that threshold, the command refuses early and prints the exact `focus-test`
@@ -93,13 +93,15 @@ LIMIT 20;"
 
 | Recipe | What it does | Time |
 |--------|-------------|------|
-| `just build-assets code [arch]` | Full profile-derived rebuild: kernel + rootfs via `capsem-admin` (needs Docker) | ~10 min |
-| `just build-kernel <arch> code` | Kernel only through the profile-derived build rail | ~5 min |
-| `just build-rootfs <arch> code` | Rootfs only through the profile-derived build rail | ~8 min |
+| `just build-assets [arch]` | Full runtime rebuild: kernel + rootfs via `capsem-admin` (needs Docker) | ~10 min |
+| `just _build-kernel <arch>` | Kernel only (CI-facing primitive) | ~5 min |
+| `just _build-rootfs <arch>` | Rootfs only (CI-facing primitive) | ~8 min |
 | `just cross-compile [arch]` | Full Linux build in container: agent binaries + `.deb` package | ~15 min |
 
-You only need `just build-assets code` on first setup or when profile-owned
-package/root/install inputs or backend image templates change rootfs contents.
+You only need `just build-assets` on first setup or when the runtime inputs
+(`config/docker/image/`, `guest/artifacts/`) or backend image templates change
+rootfs contents. Application tools live in OCI images under `images/` and never
+need a runtime rebuild.
 Day-to-day, `just shell` and `just exec` repack the initrd without rebuilding
 rootfs images.
 
@@ -110,8 +112,9 @@ _check-assets -> _pack-initrd -> _materialize-config -> _ensure-service
 ```
 
 `_materialize-config` invokes `capsem-admin profile materialize`, which writes
-the current-build runtime profile under `cache/target/config/` from checked-in
-`config/` source files and `cache/target/assets/manifest.json`.
+the catalog the development service still reads under `cache/target/config/`
+from checked-in `config/` source files and `cache/target/assets/manifest.json`.
+It is a dev/test service input, not a build or release unit.
 
 ## Session inspection
 
@@ -140,13 +143,15 @@ the tested composition.
 | Recipe | What it does |
 |--------|-------------|
 | `just release-binaries <channel> <source-commit>` | Qualify one committed source, build packages only, and publish binary-owned manifest fields |
-| `just release-profile <channel> <profile> <source-commit>` | Qualify one committed source, build one channel/profile, and publish only that profile |
+| `just release-assets <channel> <source-commit>` | Qualify one committed source, build the VM runtime for every architecture, and publish only the channel's `runtime` document |
+| `just qualify-binaries <workspace-root>` | Qualify candidate packages against the manifest-selected runtime |
+| `just qualify-assets <input-dir> <workspace-root> <activation-ready>` | Qualify built runtime assets against the selected binary |
 
-Both commands share one `capsem-release-<channel>` lock from source-manifest
-read through deployment. If a profile needs newer code, release the profile
-first as staged immutable assets, then release the binary; the second lane
-reuses the same profile bytes and activates the completed pairing after the
-full functional and glow-up proof.
+Both release commands share one `capsem-release-<channel>` lock from
+source-manifest read through deployment. If the runtime needs newer code,
+release the runtime first as staged immutable assets, then release the binary;
+the second lane reuses the same runtime bytes and activates the completed
+pairing after the full functional and glow-up proof.
 
 ## Cleanup
 
@@ -167,10 +172,10 @@ ui               -> _ensure-setup + _pnpm-install + run-service
 build-ui         -> _pnpm-install + frontend build + cargo build -p capsem-app
 smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
-build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
+build-assets     -> capsem-gate build-assets -> capsem-admin image build
 test-install     -> Docker package install + generated local stable/nightly glow-up
 build_system/packaging/macos/macos_release_glowup.py -> production .pkg + clean Tart install + physical-host exact-payload VZ boot
-release-profile  -> capsem-admin release + locked one-profile workflow
+release-assets   -> capsem-admin release + locked runtime workflow
 release-binaries -> adversarial binary script + locked package workflow
 ```
 
@@ -189,7 +194,7 @@ release-binaries -> adversarial binary script + locked package workflow
 | `_test-static` | Rust/Python coverage, install-harness preflight, and cross-compilation |
 | `_test-artifacts` | Packages, inventories, SBOM/OBOM, images, evidence, digests, architecture coverage, and boot |
 | `_test-functional` | VM suites, Winterfell, MCP lifecycle, IronBank, injection, integration, benchmarks, and full doctor |
-| `_test-glowup` | Native install and manifest-driven binary/profile/channel update transitions |
+| `_test-glowup` | Native install and manifest-driven binary/runtime/channel update transitions |
 | `_test-release-contracts` | Lane boundaries, shared serialization, deploy containment, and corporate authoring |
 
 ## Where the logic lives

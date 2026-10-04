@@ -34,15 +34,6 @@ def local_tart_capabilities() -> dict[str, bool]:
     }
 
 
-def tree_digest(root: Path) -> str:
-    digest = hashlib.sha256()
-    for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file()):
-        digest.update(path.relative_to(root).as_posix().encode())
-        digest.update(b"\0")
-        digest.update(bytes.fromhex(sha256(path)))
-    return digest.hexdigest()
-
-
 def assert_url(url: str, expected: Path) -> None:
     request = urllib.request.Request(
         url,
@@ -110,9 +101,8 @@ def write_report(args: argparse.Namespace) -> None:
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
-    for command in ("sha256", "tree-digest"):
-        child = commands.add_parser(command)
-        child.add_argument("path", type=Path)
+    digest = commands.add_parser("sha256")
+    digest.add_argument("path", type=Path)
     exact = commands.add_parser("assert-url")
     exact.add_argument("url")
     exact.add_argument("expected", type=Path)
@@ -143,8 +133,6 @@ def main() -> int:
     args = parser().parse_args()
     if args.command == "sha256":
         print(sha256(args.path))
-    elif args.command == "tree-digest":
-        print(tree_digest(args.path))
     elif args.command == "assert-url":
         assert_url(args.url, args.expected)
     elif args.command == "promote":

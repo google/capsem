@@ -2,8 +2,8 @@
 
 Retention used to guess "current" as the newest image by creation time. That
 is not what a gate needs: a BuildKit cache hit reproduces an old image with
-its old timestamp, one repository holds a current tag per profile
-(`capsem-rootfs-dependencies-*` is keyed by profile), and two checkouts on
+its old timestamp, one repository holds a current tag per architecture
+(`capsem-rootfs-dependencies-*` is keyed by architecture), and two checkouts on
 different sources each have their own. On 2026-09-29 routine enforcement
 removed the current `capsem-kernel-dependencies-x86_64` generation of the
 running release proof, which rebuilt it minutes later, and an early enforce

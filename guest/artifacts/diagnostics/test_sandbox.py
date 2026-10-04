@@ -142,9 +142,18 @@ def test_no_setgid_binaries():
 
 
 def test_no_kernel_modules():
-    """Kernel module loading must be disabled (CONFIG_MODULES=n)."""
-    result = run("modprobe dummy 2>&1")
-    assert result.returncode != 0, "modprobe should fail with CONFIG_MODULES=n"
+    """Kernel module loading must be compiled out (CONFIG_MODULES=n).
+
+    Asked of the kernel rather than of `modprobe`: the runtime ships no kmod,
+    and a missing tool failing would prove nothing. The module loader's
+    sysctl and /proc/modules exist only when the kernel can load modules.
+    """
+    assert not os.path.exists("/proc/sys/kernel/modprobe"), (
+        "kernel/modprobe sysctl exists: the kernel was built with CONFIG_MODULES"
+    )
+    assert not os.path.exists("/proc/modules"), (
+        "/proc/modules exists: the kernel was built with CONFIG_MODULES"
+    )
 
 
 def test_no_dev_mem():

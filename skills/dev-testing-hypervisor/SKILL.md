@@ -72,8 +72,8 @@ When changing KVM checkpoint or VirtioFS state:
   without sleeps or retries; this proves Capsem's userspace KVM VirtioFS
   handle table, not Apple VZ's framework-owned device state;
 - rebuild `capsem-process` before black-box testing, because it owns the KVM
-  hypervisor, and run the lifecycle test serially against one exact asset and
-  profile cohort.
+  hypervisor, and run the lifecycle test serially against one exact runtime asset
+  cohort.
 
 ## x86_64 KVM boot: known pitfalls
 

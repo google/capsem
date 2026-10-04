@@ -43,7 +43,7 @@ def test_session_boot_failure_reads_the_reason_the_service_already_recorded() ->
     # A booting VM and a resumable stopped one still owe us a prompt.
     assert module.session_boot_failure({"status": "Running", "can_resume": False}) is None
     assert module.session_boot_failure({"status": "Stopped", "can_resume": True}) is None
-    assert module.session_boot_failure({"profile_id": "code"}) is None
+    assert module.session_boot_failure({"name": "proof-session"}) is None
 
     assert module.session_boot_failure(
         {
@@ -92,7 +92,7 @@ def _fake_capsem_with_dead_session(tmp_path: Path) -> tuple[Path, Path]:
     log = tmp_path / "calls.log"
     binary = tmp_path / "capsem"
     info_json = (
-        '{"profile_id":"code","status":"Defunct","can_resume":false,'
+        '{"status":"Defunct","can_resume":false,'
         '"last_error":"failed to build VmConfig: rootfs hash mismatch"}'
     )
     binary.write_text(
@@ -131,8 +131,6 @@ def test_shell_proof_fails_fast_with_the_boot_error_of_an_unreachable_session(
             "CAPSEM_NEVER_REACHED",
             "--session-name",
             "dead-proof",
-            "--profile",
-            "code",
             "--startup-delay",
             "0",
             "--timeout",
@@ -170,7 +168,7 @@ def _fake_capsem(tmp_path: Path, *, execute_input: bool) -> tuple[Path, Path]:
         'case "$1" in\n'
         "  create) exit 0 ;;\n"
         "  delete) exit 0 ;;\n"
-        "  info) printf '{\"profile_id\":\"co-work\"}\\n'; exit 0 ;;\n"
+        "  info) printf '{\"status\":\"Running\"}\\n'; exit 0 ;;\n"
         "  shell)\n"
         "    printf 'root@%s:~# ' \"$3\"\n"
         f"{shell_body}"
@@ -247,43 +245,6 @@ def test_shell_proof_preserves_the_guest_shell_when_keeping_its_session(
     assert ("delete keep-proof" in log.read_text().splitlines()) is not keep_session
 
 
-def test_shell_proof_creates_session_with_requested_profile(tmp_path: Path) -> None:
-    binary, log = _fake_capsem(tmp_path, execute_input=True)
-    env = os.environ.copy()
-    env["CAPSEM_FAKE_LOG"] = str(log)
-    env["HOME"] = str(tmp_path)
-
-    result = subprocess.run(
-        [
-            "python3",
-            str(PROOF_SCRIPT),
-            "--capsem",
-            str(binary),
-            "--marker",
-            "CAPSEM_PROFILE_SHELL_OK",
-            "--session-name",
-            "profile-proof",
-            "--profile",
-            "co-work",
-            "--startup-delay",
-            "0",
-            "--timeout",
-            "5",
-        ],
-        cwd=PROJECT_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert log.read_text(encoding="utf-8").splitlines()[0] == (
-        "create --name profile-proof --profile co-work"
-    )
-    assert "info profile-proof --json" in log.read_text(encoding="utf-8").splitlines()
-
-
 def test_shell_proof_rejects_typed_but_unexecuted_command(tmp_path: Path) -> None:
     binary, log = _fake_capsem(tmp_path, execute_input=False)
     env = os.environ.copy()
@@ -342,7 +303,7 @@ def test_shell_proof_waits_for_guest_prompt_and_sends_one_command(
         "if args[0] in {'create', 'delete'}:\n"
         "    raise SystemExit(0)\n"
         "if args[0] == 'info':\n"
-        "    print(json.dumps({'profile_id': 'co-work'}))\n"
+        "    print(json.dumps({'status': 'Running'}))\n"
         "    raise SystemExit(0)\n"
         "if args[0] != 'shell':\n"
         "    raise SystemExit(2)\n"

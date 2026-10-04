@@ -20,7 +20,7 @@ from capsem_builder.cache.runtimemodels import DockerRuntimePolicy
 from capsem_builder.cache.views import ViewReceipt
 from capsem_builder.gate import cachelayout, crosscompile
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.packageinputs import pinned_toolchain, resolve_channel
 from capsem_builder.gate.packagerail import PackageRail
@@ -132,7 +132,7 @@ def _rail(runner: RecordingRunner, **kwargs) -> PackageRail:
     return PackageRail(
         runner,
         TARGET,
-        content=ProfileContent.standalone(gate_config.load(runner.root)),
+        content=RuntimeContent.standalone(gate_config.load(runner.root)),
         **kwargs,
     )
 
@@ -147,7 +147,7 @@ def test_profile_content_derives_both_trees_from_one_root_without_reading_it(
 ) -> None:
     missing = tmp_path / "not-materialized-yet"
 
-    content = ProfileContent.isolated(CONFIG, missing)
+    content = RuntimeContent.isolated(CONFIG, missing)
 
     assert content.root == missing
     assert content.assets == missing / CONFIG.assets.merged_assets_dir
@@ -161,12 +161,12 @@ def test_profile_content_derives_both_trees_from_one_root_without_reading_it(
 @pytest.mark.parametrize("relative", [Path("/absolute"), Path("../sibling")])
 def test_profile_content_refuses_a_path_outside_its_root(tmp_path: Path, relative: Path) -> None:
     with pytest.raises(ValueError, match="relative path under"):
-        ProfileContent(tmp_path, relative, Path("config"))
+        RuntimeContent(tmp_path, relative, Path("config"))
 
 
 def test_profile_content_completeness_is_explicitly_target_scoped(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
-    content = ProfileContent.standalone(gate_config.load(root))
+    content = RuntimeContent.standalone(gate_config.load(root))
 
     content.require_complete(gate_config.load(root), arches=(TARGET,))
 
@@ -183,7 +183,7 @@ def test_profile_content_refuses_an_architecture_not_declared_by_the_manifest(
     (root / CONFIG.outputs.assets / undeclared.name).mkdir()
 
     with pytest.raises(GateError, match=r"manifest.*x86_64"):
-        ProfileContent.standalone(config).require_complete(config, arches=(undeclared,))
+        RuntimeContent.standalone(config).require_complete(config, arches=(undeclared,))
 
 
 def test_profile_content_refuses_missing_required_evidence_before_docker(
@@ -240,7 +240,7 @@ def test_explicit_package_content_refuses_a_symlink_root_before_docker(
     selected = tmp_path / "selected-content"
     selected.symlink_to(real.name, target_is_directory=True)
     runner = Building(checkout, replies={"select-linux": "skip"})
-    rail = PackageRail(runner, TARGET, content=ProfileContent.isolated(config, selected))
+    rail = PackageRail(runner, TARGET, content=RuntimeContent.isolated(config, selected))
 
     with pytest.raises(GateError, match=r"root.*symlink"):
         _run_lane(rail)
@@ -276,7 +276,7 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     isolated = root / "cache" / "target" / "ironbank-assets" / "code"
-    content = ProfileContent.isolated(config, isolated)
+    content = RuntimeContent.isolated(config, isolated)
     content.assets.mkdir(parents=True)
     content.config.mkdir(parents=True)
     manifest = _asset_manifest(TARGET.name)
@@ -310,9 +310,9 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
 
     create = runner.matching(r"docker create")[0]
     assert f"{content.assets}:/src/{CONFIG.outputs.assets}:ro" in create
-    assert f"{content.config}:/src/cache/target/config:ro" in create
+    # The package ships no configuration catalog, so no config tree is mounted.
+    assert ":/src/cache/target/config" not in create
     assert f"{canonical_assets}:/src/{CONFIG.outputs.assets}" not in create
-    assert f"{root / 'target' / 'config'}:/src/cache/target/config" not in create
     assert canonical_assets.lstat().st_ino == selector_inode
     assert canonical_assets.readlink() == selector_target
     assert sentinel.read_bytes() == b"canonical config must survive"
@@ -936,7 +936,7 @@ def test_package_helper_exact_identity_is_written_to_the_run_journal(
     runner = RecordingRunner(root)
     journal = RecordingJournal()
 
-    crosscompile._phase(config.arch("arm64"), "materialize", ProfileContent.standalone(config))(
+    crosscompile._phase(config.arch("arm64"), "materialize", RuntimeContent.standalone(config))(
         Context(runner, config, journal=journal)
     )
 
@@ -1318,7 +1318,7 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
 def test_the_standalone_plan_keeps_the_exact_package_proof() -> None:
     plan = Plan("standalone-package")
     crosscompile.fragment(
-        plan, CONFIG, CONFIG.host_arch(), content=ProfileContent.standalone(CONFIG)
+        plan, CONFIG, CONFIG.host_arch(), content=RuntimeContent.standalone(CONFIG)
     )
 
     rendered = "\n".join(plan.step_named(f"package.{CONFIG.host_arch().name}.prove").render())

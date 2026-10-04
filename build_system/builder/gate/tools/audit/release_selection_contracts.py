@@ -124,7 +124,7 @@ def _release_workflows_are_serialized(root: Path) -> bool:
 
     allowed_writers = {path.resolve() for path in release_workflows}
     writer_markers = (
-        "stage-profile-publication.py",
+        "stage-runtime-publication.py",
         "capsem-admin -- release",
         'gh release upload "$RELEASE_TAG" "$named"',
     )

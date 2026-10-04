@@ -122,7 +122,6 @@ fn assets_channel_build_refuses_a_manifest_whose_arch_key_escapes() {
     let error = build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,

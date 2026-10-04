@@ -83,13 +83,6 @@ if [ -z "$MANIFEST_SOURCE" ]; then
     echo "capsem: packaged manifest-metadata.json has no manifest_url" >&2
     exit 1
 fi
-CAPSEM_INSTALL_PHASE="install_profiles"
-if [ -d "/usr/share/capsem/profiles" ]; then
-    rm -rf "$CAPSEM_DIR/profiles"
-    mkdir -p "$CAPSEM_DIR/profiles"
-    cp -R /usr/share/capsem/profiles/. "$CAPSEM_DIR/profiles/" 2>/dev/null || true
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=profiles_copied"
-fi
 
 # Symlink system binaries into user dir
 CAPSEM_INSTALL_PHASE="link_binaries"

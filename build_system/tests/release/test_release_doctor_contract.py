@@ -127,27 +127,6 @@ def _boot_timing_module():
     return module
 
 
-def _doctor_runtimes_module():
-    module_path = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py"
-    spec = importlib.util.spec_from_file_location("capsem_doctor_runtimes", module_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    host_conftest = sys.modules.get("conftest")
-    sys.modules["conftest"] = SimpleNamespace(
-        run=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr="")
-    )
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        if host_conftest is None:
-            del sys.modules["conftest"]
-        else:
-            sys.modules["conftest"] = host_conftest
-    return module
-
-
 #: Recipes whose behaviour moved into the gate, and the command that owns it
 #: now. These contracts are about what the gate *does*; when the doing moved
 #: from a shell body into a plan, the place to read it moved with it.
@@ -160,8 +139,8 @@ _DISPATCHED = {
     "_gate-host-package-sbom:": ("host-sbom", {}),
     "_cross-compile": ("cross-compile", {"arch": "arm64"}),
     "release-binaries": ("release-binaries", {"channel": "nightly"}),
-    "release-profile": ("release-profile", {"channel": "nightly", "profile": "code"}),
-    "_build-assets": ("build-assets", {"profile": "code", "arch": "arm64", "template": "all"}),
+    "release-assets": ("release-assets", {"channel": "nightly"}),
+    "_build-assets": ("build-assets", {"arch": "arm64", "template": "all"}),
     "_pack-initrd:": ("pack-initrd", {}),
 }
 
@@ -197,12 +176,12 @@ _GATE_STAGES = {
     "Audits + lint + web surfaces": "fast.audit.",
     "Cross-compile agent (both arches)": "static.guest-agents",
     "Rust: test suite with coverage": "static.rust-coverage",
-    "Python: non-serial tests (n=4 parallel)": "functional.pytest.broad.",
-    "Python: serial timing and benchmark tests": "functional.pytest.timing.",
+    "Python: non-serial tests (n=4 parallel)": "functional.pytest.broad",
+    "Python: serial timing and benchmark tests": "functional.pytest.timing",
     "Fast source and serialized release contracts": "contracts.release",
-    "Injection test": "functional.injection.",
-    "Integration test": "functional.integration.",
-    "Benchmarks": "functional.pytest.benchmark.",
+    "Injection test": "functional.injection",
+    "Integration test": "functional.integration",
+    "Benchmarks": "functional.pytest.benchmark",
     "Cross-compile Linux releases (Docker, both arches)": "package.",
     "Install e2e tests (Docker + systemd)": "glowup.install",
 }
@@ -373,11 +352,11 @@ def test_whole_gate_aliases_share_one_inspection_per_qualification(tmp_path, mon
         gate._issues.cache_clear()
 
 
-def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
+def test_doctor_fix_builds_the_runtime_assets_once_per_architecture() -> None:
     source = (PROJECT_ROOT / "build_system" / "scripts" / "doctor" / "doctor-common.sh").read_text()
 
-    assert "for profile in config/profiles/*/profile.toml" in source
-    assert 'just _build-assets "$(basename "$(dirname "$profile")")" "$arch"' in source
+    assert "config/profiles/*/profile.toml" not in source
+    assert 'just _build-assets "$arch"' in source
     assert '"touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just _build-assets"' not in source
 
 
@@ -455,13 +434,13 @@ def test_host_sbom_zstd_dependency_has_local_and_binary_lane_parity() -> None:
     assert "sudo apt-get install -y --no-install-recommends zstd" in release[install:generate]
 
 
-def test_profile_release_builds_both_published_architectures() -> None:
+def test_runtime_release_builds_both_published_architectures() -> None:
     build_assets = _workflow_job_block("build-assets", "release-assets.yaml")
     assert "- arch: arm64" in build_assets
     assert "- arch: x86_64" in build_assets
     assert "ASSET_ARCH: ${{ matrix.arch }}" in build_assets
-    assert "RELEASE_PROFILE: ${{ inputs.profile }}" in build_assets
-    assert 'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"' in build_assets
+    assert 'just build-assets "$ASSET_ARCH"\n' in build_assets
+    assert "profile" not in build_assets.lower()
 
 
 def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> None:
@@ -798,9 +777,9 @@ def test_release_workflows_run_disjoint_lane_policy_gates() -> None:
     assert "just _build-rootfs" not in binary_workflow
 
     assert "workflow_dispatch:" in asset_workflow
-    assert "profile:" in asset_workflow
-    assert "Verify profile release lane policy" in asset_workflow
-    assert "tests/capsem-release/test_profile_lane_gate.py" in asset_workflow
+    assert "profile:" not in asset_workflow
+    assert "Verify runtime release lane policy" in asset_workflow
+    assert "tests/capsem-release/test_runtime_lane_gate.py" in asset_workflow
     assert "tests/capsem-release/test_release_lane_diff_policy.py" in asset_workflow
     assert "BINARY_VERSION" not in asset_workflow
     assert "Record binary release metadata" not in asset_workflow
@@ -838,7 +817,7 @@ def test_moved_test_scripts_resolve_the_repository_root() -> None:
     assert '$(dirname "${BASH_SOURCE[0]}")/../../..' in linux_rust
 
 
-def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
+def test_runtime_release_builds_one_runtime_against_resolved_binary() -> None:
     # The workflow plus every command boundary it dispatches to. A step that
     # grew past the shell-body ceiling and moved under its functional owner runs the same commands;
     # asserting against the workflow text alone made that refactor look like a
@@ -849,9 +828,8 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
 
     assert "workflow_dispatch:" in workflow
     assert "channel:" in trigger
-    assert "profile:" in trigger
+    assert "profile" not in trigger
     assert "default: stable" not in trigger
-    assert "default: code" not in trigger
     assert "push:" not in workflow
     assert "tags:" not in workflow
     assert "group: capsem-release-${{ inputs.channel }}" in workflow
@@ -859,18 +837,21 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "deployments: write" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "kind: packages" in workflow
-    assert "output: cache/target/profile-public-before/packages" in workflow
-    assert "--input-dir cache/target/profile-public-before/packages" in workflow
+    assert "output: cache/target/runtime-public-before/packages" in workflow
+    assert "--input-dir cache/target/runtime-public-before/packages" in workflow
+    assert "kind: runtime" in workflow
+    assert "allow-empty-runtime: true" in workflow
+    assert "output: cache/target/runtime-public-before/runtime" in workflow
     assert "--print-package-path" in workflow
     assert "ASSET_ARCH: ${{ matrix.arch }}" in workflow
-    assert "RELEASE_PROFILE: ${{ inputs.profile }}" in workflow
-    assert 'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"' in workflow
+    assert 'just build-assets "$ASSET_ARCH"\n' in workflow
     assert "- arch: arm64" in workflow
     assert "- arch: x86_64" in workflow
     assert "cargo run -p capsem-admin -- release" in workflow
     assert "--publication-base" in workflow
-    assert "stage-profile-publication.py" in workflow
-    assert "verify-profile-publication.py" in workflow
+    assert "stage-runtime-publication.py" in workflow
+    assert "verify-runtime-publication.py" in workflow
+    assert "stage-runtime-pairing.sh" in workflow
     assert "build_system/packaging/macos/build-pkg.sh" not in workflow
     assert "build_system/packaging/linux/repack-deb.sh" not in workflow
     assert "cargo tauri build" not in workflow
@@ -884,11 +865,12 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "just _test-release-contracts" not in workflow
     assert "build_system/scripts/release/build-complete-release-channel.py" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
-    assert "check-profile-release-delta.py" in workflow
+    assert "check-runtime-release-delta.py" in workflow
+    assert "if: ${{ needs.resolve-current-binary.outputs.release_needed == 'true' }}" in workflow
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
     assert "dist_artifact: asset-channel-preview" in workflow
     assert (
-        "if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.release_needed == 'true' && needs.publish-profile-release.outputs.activation_ready == 'true' }}"
+        "if: ${{ inputs.dry_run == false && needs.publish-runtime-release.outputs.activation_ready == 'true' }}"
         in workflow
     )
 
@@ -1363,7 +1345,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     assert "validates their SPDX 2.3 or CycloneDX document shape" in docs_text
     assert "validates attestation subjects and predicate URLs" in docs_text
     assert "validates attestation subjects and predicate URLs" in docs_text
-    assert "Profile image attestations are incomplete unless" in docs_text
+    assert "Runtime image attestations are incomplete unless" in docs_text
     assert "`github_attestations_vm_assets`" in docs_text
     assert "`predicate_url` points at the published VM OBOM evidence" in docs_text
 
@@ -1371,7 +1353,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
 def test_docs_preserve_vm_obom_attestation_predicate_contract() -> None:
     docs_text = " ".join(_source_text("web/docs/src/content/docs/development/ci.md").split())
 
-    assert "Profile image attestations are incomplete unless" in docs_text
+    assert "Runtime image attestations are incomplete unless" in docs_text
     assert "`github_attestations_vm_assets`" in docs_text
     assert "`predicate_url` points at the published VM OBOM evidence" in docs_text
 
@@ -1512,7 +1494,6 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     frontend = _source_text("web/app/src/lib/__tests__/update-status.test.ts")
     frontend_api = _source_text("web/app/src/lib/__tests__/api.test.ts")
 
-    assert "Profile catalog update available" in cli
     assert "Run `capsem update --assets` separately to refresh VM assets." not in cli
     assert "--assets cannot be combined with --corp" in cli
     assert "update_status_lines_separate_available_and_blocked_tracks" in cli_status
@@ -1714,10 +1695,10 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert """echo '{"releases":{}}'""" not in workflow
     assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
-    assert "kind: profiles" in workflow
-    assert "output: cache/target/binary-public-before/profiles" in workflow
-    assert "output: cache/target/candidate-profile-inputs" in workflow
-    assert "--input-dir cache/target/candidate-profile-inputs" in workflow
+    assert "kind: runtime" in workflow
+    assert "output: cache/target/binary-public-before/runtime" in workflow
+    assert "output: cache/target/candidate-runtime-inputs" in workflow
+    assert "--input-dir cache/target/candidate-runtime-inputs" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "run: just fast-test" in fast_gate
     assert (
@@ -1785,7 +1766,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "path: cache/target/binary-channel/" in assemble_channel
     record_step = author_candidate.split(
         "- name: Record binary candidate metadata once", maxsplit=1
-    )[1].split("- name: Prove binary candidate preserved every profile", maxsplit=1)[0]
+    )[1].split("- name: Prove binary candidate preserved the runtime", maxsplit=1)[0]
     assert "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in record_step
     assert "for channel in" not in record_step
     build_channels = assemble_channel.split(
@@ -1802,8 +1783,8 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert build_channels.index('generated_at="$(date -u') < build_channels.index(
         "build_system/scripts/release/build-complete-release-channel.py"
     )
-    assert "Prove binary candidate preserved every profile" in author_candidate
-    assert "binary candidate changed profile metadata" in author_candidate
+    assert "Prove binary candidate preserved the runtime" in author_candidate
+    assert "binary candidate changed runtime metadata" in author_candidate
     assert author_candidate.index("Preserve serialized public-before manifest") < (
         author_candidate.index("Record binary candidate metadata once")
     )
@@ -1894,7 +1875,7 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert 'case "$ASSET_CHANNEL" in stable|nightly)' in assemble_channel
     assert "build_system/scripts/release/fetch-channel-source-manifest.py" in assemble_channel
     assert '--channel "$ASSET_CHANNEL"' in assemble_channel
-    assert "--require-profile-membership" in assemble_channel
+    assert "--require-runtime" in assemble_channel
     assert "build_system/scripts/release/write-binary-staging-artifacts.sh" in assemble_channel
     assert "Capsem-${VERSION}.pkg" in artifact_builder
     assert "Capsem_${VERSION}_arm64.deb" in artifact_builder
@@ -1908,7 +1889,7 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     staging_proof = _source_text(
         "build_system/scripts/release/write-binary-channel-staging-proof.py"
     )
-    assert "binary dry-run changed profile image metadata" in staging_proof
+    assert "binary dry-run changed runtime image metadata" in staging_proof
     assert "binary dry-run changed VM asset metadata" in staging_proof
     assert '"vm_asset_jobs": "not_run"' in staging_proof
     assert '"vm_assets_unchanged": True' in staging_proof
@@ -1947,7 +1928,7 @@ def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
     assert "api.github.com/repos/google/capsem/releases/latest" not in workflow
     docs_text = " ".join(docs.split())
     assert "binary freshness comes from the selected manifest in the release graph" in docs_text
-    assert "releases do not rebuild or upload profile images, and they do not publish" in docs_text
+    assert "releases do not rebuild or upload runtime images, and they do not publish" in docs_text
     assert (
         "`latest.json`; binary freshness comes from the selected manifest in the release graph"
         in docs_text
@@ -1969,7 +1950,7 @@ def test_binary_release_channel_policy_supports_daily_nightly_and_explicit_stabl
     assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow
     assert "group: capsem-release-${{ inputs.channel }}" in workflow
     assert "cancel-in-progress: false" in workflow
-    assert "Prove binary candidate preserved every profile" in workflow
+    assert "Prove binary candidate preserved the runtime" in workflow
     assert "Nightly rebuild runs once daily" in normalized_docs
     assert "Stable has no schedule" in normalized_docs
     assert "Daily nightly automation calls this same binary command path" in release_skill
@@ -1978,7 +1959,7 @@ def test_binary_release_channel_policy_supports_daily_nightly_and_explicit_stabl
 
 def test_release_lanes_reuse_complete_modules_without_independent_sha_authority() -> None:
     binary = _workflow_text("release.yaml")
-    profile = _workflow_text("release-assets.yaml")
+    runtime = _workflow_text("release-assets.yaml")
     fast_gate = _workflow_text("fast-gate.yaml")
     runtime_preflight = _workflow_text("release-runtime-preflight.yaml")
     agents = _source_text("AGENTS.md")
@@ -1992,7 +1973,7 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
         in fast_gate
     )
 
-    for workflow, verb in ((binary, "qualify-binaries"), (profile, "qualify-assets")):
+    for workflow, verb in ((binary, "qualify-binaries"), (runtime, "qualify-assets")):
         assert "group: capsem-release-${{ inputs.channel }}" in workflow
         assert "cancel-in-progress: false" in workflow
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
@@ -2000,15 +1981,14 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
         assert "just _test-release-contracts" not in workflow
 
     assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in binary
-    assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in profile
+    assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in runtime
     assert "workflow_call:" in runtime_preflight
     assert "workflow_dispatch:" not in runtime_preflight
     assert "inputs.sha" not in runtime_preflight
     assert "EXPECTED_SHA" not in runtime_preflight
     assert (
         "**Run `just test <source-commit>` to success first**: both commands refuse a "
-        "source without a complete, passing journal on this machine"
-        in normalized_release_skill
+        "source without a complete, passing journal on this machine" in normalized_release_skill
     )
     assert "The hosted lane still qualifies what it publishes." in normalized_release_skill
     assert "Release CI reuses the same checked-in private modules" in testing_skill
@@ -2048,7 +2028,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in linux_build
     assert "Collect Linux artifacts" in linux_build
     assert "Record binary candidate metadata once" in author
-    assert "Prove binary candidate preserved every profile" in author
+    assert "Prove binary candidate preserved the runtime" in author
 
     assert "needs: [build-app-macos, author-binary-candidate]" in macos
     assert "needs: [build-app-linux, author-binary-candidate]" in linux
@@ -2180,7 +2160,7 @@ def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> No
     assert "Fix forward with a normal commit" in release_skill
     assert "build_system/scripts/release/verify-installed-release.py" in release_skill
     assert "byte-for-byte" in release_skill
-    assert "profile readiness" in release_skill
+    assert "asset readiness" in release_skill
 
 
 def test_release_skill_requires_exact_manifest_single_metadata_and_shared_status_contract() -> None:
@@ -2207,9 +2187,10 @@ def test_release_dispatch_has_exactly_two_single_purpose_just_recipes() -> None:
     assert '\nrelease tag="" channel="stable":' not in f"\n{justfile}"
     assert "\nprepare-release:" not in justfile
     assert '\nrelease-binaries channel source_commit force="false":' in justfile
-    assert '\nrelease-profile channel profile source_commit force="false":' in justfile
-    assert "build_system/scripts/release/release-binaries.py" in _recipe_block("release-binaries")
-    assert "capsem-admin -- release" in _recipe_block("release-profile")
+    assert '\nrelease-assets channel source_commit force="false":' in justfile
+    assert "\nrelease-profile" not in justfile
+    assert "capsem-gate release-binaries" in _recipe_block("release-binaries")
+    assert "capsem-gate release-assets" in _recipe_block("release-assets")
 
 
 def test_self_update_docs_match_verified_package_execution() -> None:
@@ -2260,7 +2241,6 @@ def _install_release_graph_contract_fixture(
     index_text: str | None = None,
     channels_mutator=None,
     manifest_mutator=None,
-    catalog_mutator=None,
     payload_mutator=None,
     headers_mutator=None,
 ) -> dict[str, object]:
@@ -2268,7 +2248,7 @@ def _install_release_graph_contract_fixture(
     channel = "stable"
     current_binary = "1.4.0"
     current_assets = "2030.0101.1"
-    profile_revision = "profiles-2030.0101.1"
+    runtime_revision = "2030.0101.1-0123456789ab"
     manifest_path = "/assets/stable/manifest.json"
     asset_base = "/assets/releases"
 
@@ -2281,8 +2261,7 @@ def _install_release_graph_contract_fixture(
     artifacts = {
         "/packages/Capsem-1.4.0.pkg": b"package bytes\n",
         "/packages/Capsem-1.4.0.spdx.json": b'{"spdxVersion":"SPDX-2.3","files":[]}\n',
-        f"/profiles/releases/{profile_revision}/co-work/arm64/profile.toml": b'id = "co-work"\n',
-        f"/profiles/releases/{profile_revision}/co-work/arm64/software-inventory.json": (
+        f"/runtime/releases/stable/{runtime_revision}/arm64/software-inventory.json": (
             b'{"schema":"capsem.profile_software_inventory.v1","packages":[]}\n'
         ),
         f"{asset_base}/{current_assets}/arm64-vmlinuz": b"kernel bytes\n",
@@ -2304,9 +2283,8 @@ def _install_release_graph_contract_fixture(
 
     package_url = "/packages/Capsem-1.4.0.pkg"
     package_sbom_url = "/packages/Capsem-1.4.0.spdx.json"
-    config_url = f"/profiles/releases/{profile_revision}/co-work/arm64/profile.toml"
     software_inventory_url = (
-        f"/profiles/releases/{profile_revision}/co-work/arm64/software-inventory.json"
+        f"/runtime/releases/stable/{runtime_revision}/arm64/software-inventory.json"
     )
     obom_url = f"{asset_base}/{current_assets}/arm64-obom.cdx.json"
 
@@ -2347,76 +2325,60 @@ def _install_release_graph_contract_fixture(
                 ],
             }
         ],
-        "profiles": {
-            "co-work": {
-                "id": "co-work",
-                "name": "Co-work",
-                "description": "Collaborative agent profile.",
-                "revision": profile_revision,
-                "min_capsem_version": current_binary,
-                "architectures": [
-                    {
-                        "architecture": "arm64",
-                        "software": [
-                            {
-                                "name": "@openai/codex",
-                                "version": "0.142.5",
-                                "source": "npm",
-                                "architecture": "arm64",
-                                "evidence": software_inventory_url,
-                                "digest": digest(b"codex software row\n"),
-                            }
-                        ],
-                        "config": [
-                            {
-                                "kind": "profile",
-                                "path": "profiles/co-work/profile.toml",
-                                "url": config_url,
-                                "status": "current",
-                                "bytes": len(artifacts[config_url]),
-                                "digest": digest(artifacts[config_url]),
-                            }
-                        ],
-                        "images": [
-                            file_record(
-                                "kernel",
-                                "vmlinuz",
-                                f"{asset_base}/{current_assets}/arm64-vmlinuz",
-                            ),
-                            file_record(
-                                "initrd",
-                                "initrd.img",
-                                f"{asset_base}/{current_assets}/arm64-initrd.img",
-                            ),
-                            file_record(
-                                "rootfs",
-                                "rootfs.erofs",
-                                f"{asset_base}/{current_assets}/arm64-rootfs.erofs",
-                            ),
-                        ],
-                        "evidence": [
-                            {
-                                "kind": "software_inventory",
-                                "url": software_inventory_url,
-                                "status": "current",
-                                "bytes": len(artifacts[software_inventory_url]),
-                                "digest": digest(artifacts[software_inventory_url]),
-                            },
-                            {
-                                "kind": "obom",
-                                "url": obom_url,
-                                "status": "current",
-                                "bytes": len(artifacts[obom_url]),
-                                "digest": digest(artifacts[obom_url]),
-                            },
-                        ],
-                    }
-                ],
-            }
+        "runtime": {
+            "revision": runtime_revision,
+            "status": "current",
+            "min_capsem_version": current_binary,
+            "architectures": [
+                {
+                    "architecture": "arm64",
+                    "software": [
+                        {
+                            "name": "@openai/codex",
+                            "version": "0.142.5",
+                            "source": "npm",
+                            "architecture": "arm64",
+                            "evidence": software_inventory_url,
+                            "digest": digest(b"codex software row\n"),
+                        }
+                    ],
+                    "images": [
+                        file_record(
+                            "kernel",
+                            "vmlinuz",
+                            f"{asset_base}/{current_assets}/arm64-vmlinuz",
+                        ),
+                        file_record(
+                            "initrd",
+                            "initrd.img",
+                            f"{asset_base}/{current_assets}/arm64-initrd.img",
+                        ),
+                        file_record(
+                            "rootfs",
+                            "rootfs.erofs",
+                            f"{asset_base}/{current_assets}/arm64-rootfs.erofs",
+                        ),
+                    ],
+                    "evidence": [
+                        {
+                            "kind": "software_inventory",
+                            "url": software_inventory_url,
+                            "status": "current",
+                            "bytes": len(artifacts[software_inventory_url]),
+                            "digest": digest(artifacts[software_inventory_url]),
+                        },
+                        {
+                            "kind": "obom",
+                            "url": obom_url,
+                            "status": "current",
+                            "bytes": len(artifacts[obom_url]),
+                            "digest": digest(artifacts[obom_url]),
+                        },
+                    ],
+                }
+            ],
         },
     }
-    if catalog_mutator is not None:
-        catalog_mutator(manifest["profiles"]["co-work"])
     if manifest_mutator is not None:
         manifest_mutator(manifest)
     manifest_bytes = (json.dumps(manifest, sort_keys=True) + "\n").encode()
@@ -2461,25 +2423,7 @@ def _install_release_graph_contract_fixture(
 
     package = manifest["packages"][0]
     binary = package["binaries"][0]
-    profile = manifest["profiles"]["co-work"]
-    architecture = profile["architectures"][0]
-    config = architecture["config"][0]
-    image_digest_labels = [
-        label
-        for image in architecture["images"]
-        for label in (
-            checker.hash_label(image["digest"]["sha256"]),
-            checker.hash_label(image["digest"]["blake3"]),
-        )
-    ]
-    evidence_digest_labels = [
-        label
-        for evidence in architecture["evidence"]
-        for label in (
-            checker.hash_label(evidence["digest"]["sha256"]),
-            checker.hash_label(evidence["digest"]["blake3"]),
-        )
-    ]
+    runtime = manifest["runtime"]
     channel_page_text = " ".join(
         [
             "Stable",
@@ -2487,10 +2431,8 @@ def _install_release_graph_contract_fixture(
             manifest_path,
             package["name"],
             package["version"],
-            profile["id"],
-            profile["name"],
-            profile["revision"],
-            profile["min_capsem_version"],
+            runtime["revision"],
+            runtime["min_capsem_version"],
         ]
     )
     package_page_text = " ".join(
@@ -2509,19 +2451,6 @@ def _install_release_graph_contract_fixture(
             checker.hash_label(binary["digest"]["blake3"]),
         ]
     )
-    profile_page_text = " ".join(
-        [
-            profile["name"],
-            profile["id"],
-            profile["revision"],
-            architecture["architecture"],
-            checker.hash_label(config["digest"]["sha256"]),
-            checker.hash_label(config["digest"]["blake3"]),
-            *image_digest_labels,
-            *evidence_digest_labels,
-        ]
-    )
-
     headers = {
         f"{site}/": "no-cache, must-revalidate",
         f"{site}/channels.json": "no-cache, must-revalidate",
@@ -2539,8 +2468,6 @@ def _install_release_graph_contract_fixture(
             return checker.FetchText(text=channel_page_text)
         if url == f"{site}/channels/{channel}/packages/{package['id']}/":
             return checker.FetchText(text=package_page_text)
-        if url == f"{site}/channels/{channel}/profiles/{profile['id']}/":
-            return checker.FetchText(text=profile_page_text)
         return checker.FetchText(text="", error=f"unexpected text fetch {url}")
 
     def fake_fetch_json(url: str):
@@ -2570,13 +2497,13 @@ def _install_release_graph_contract_fixture(
         "manifest_path": manifest_path,
         "current_binary": current_binary,
         "current_assets": current_assets,
-        "profile_revision": profile_revision,
+        "runtime_revision": runtime_revision,
         "manifest": manifest,
         "channels": channels,
     }
 
 
-def test_remote_readiness_accepts_channels_manifest_profile_graph_contract() -> None:
+def test_remote_readiness_accepts_channels_manifest_runtime_graph_contract() -> None:
     checker = _readiness_checker_module()
     fixture = _install_release_graph_contract_fixture(checker)
 
@@ -2585,7 +2512,7 @@ def test_remote_readiness_accepts_channels_manifest_profile_graph_contract() -> 
     assert result.ok, result.detail
     assert "channels.json" in result.detail
     assert "graph manifest" in result.detail
-    assert "profile artifacts" in result.detail
+    assert "runtime artifacts" in result.detail
 
 
 def test_remote_readiness_helper_edge_cases_reject_malformed_release_contract() -> None:
@@ -2602,7 +2529,7 @@ def test_remote_readiness_helper_edge_cases_reject_malformed_release_contract() 
     assert "channels.stable missing or not an object" in result.detail
 
 
-def test_remote_readiness_rejects_stale_index_profile_metadata() -> None:
+def test_remote_readiness_rejects_stale_index_metadata() -> None:
     checker = _readiness_checker_module()
     fixture = _install_release_graph_contract_fixture(checker, index_text="1.4.0 2030.0101.1")
 
@@ -2662,12 +2589,11 @@ def test_remote_readiness_rejects_manifest_pointer_drift() -> None:
     )
 
 
-def test_remote_readiness_rejects_profile_catalog_artifact_drift() -> None:
+def test_remote_readiness_rejects_runtime_artifact_drift() -> None:
     checker = _readiness_checker_module()
 
     def stale_rootfs_digest(manifest: dict[str, object]) -> None:
-        profile = manifest["profiles"]["co-work"]
-        architecture = profile["architectures"][0]
+        architecture = manifest["runtime"]["architectures"][0]
         rootfs = next(item for item in architecture["images"] if item["kind"] == "rootfs")
         rootfs["digest"]["blake3"] = "0" * 64
 
@@ -2680,14 +2606,14 @@ def test_remote_readiness_rejects_profile_catalog_artifact_drift() -> None:
 
     assert not result.ok
     assert (
-        "profile co-work architecture arm64 image "
+        "runtime architecture arm64 image "
         "/assets/releases/2030.0101.1/arm64-rootfs.erofs blake3 mismatch" in result.detail
     )
 
 
-def test_remote_readiness_rejects_profile_catalog_content_drift() -> None:
+def test_remote_readiness_rejects_runtime_evidence_content_drift() -> None:
     checker = _readiness_checker_module()
-    source = "/profiles/releases/profiles-2030.0101.1/co-work/arm64/software-inventory.json"
+    source = "/runtime/releases/stable/2030.0101.1-0123456789ab/arm64/software-inventory.json"
 
     def stale_inventory(payloads: dict[str, bytes], _checker) -> None:
         payloads[f"https://release.capsem.org{source}"] = (
@@ -2700,7 +2626,7 @@ def test_remote_readiness_rejects_profile_catalog_content_drift() -> None:
 
     assert not result.ok
     assert (
-        f"profile co-work architecture arm64 evidence {source} software inventory schema mismatch"
+        f"runtime architecture arm64 evidence {source} software inventory schema mismatch"
         in result.detail
     )
 
@@ -2710,8 +2636,7 @@ def test_remote_readiness_rejects_asset_file_metadata_drift() -> None:
     asset_path = "/assets/releases/2030.0101.1/arm64-rootfs.erofs"
 
     def stale_rootfs_size(manifest: dict[str, object]) -> None:
-        profile = manifest["profiles"]["co-work"]
-        architecture = profile["architectures"][0]
+        architecture = manifest["runtime"]["architectures"][0]
         rootfs = next(item for item in architecture["images"] if item["kind"] == "rootfs")
         rootfs["bytes"] = 4
 
@@ -2723,7 +2648,7 @@ def test_remote_readiness_rejects_asset_file_metadata_drift() -> None:
     result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert f"profile co-work architecture arm64 image {asset_path} size mismatch" in result.detail
+    assert f"runtime architecture arm64 image {asset_path} size mismatch" in result.detail
 
 
 def test_remote_readiness_rejects_cache_header_drift() -> None:
@@ -2885,21 +2810,16 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     assert "cache/target/release/distribution/assets/<channel>/manifest.json" in asset_skill
     assert "`channels.json`" in asset_skill
     assert "package artifacts separate from per-binary inventory" in asset_skill_text
-    assert (
-        "Profiles own profile images, config files, software inventory, ABOM/OBOM evidence"
-        in asset_skill_text
-    )
+    assert "The one `runtime` document owns the runtime images" in asset_skill_text
     assert "channels/stable/index.json" not in asset_skill
 
     assert "https://release.capsem.org/assets/stable/manifest.json" in release_skill
     assert "cache/target/release/distribution/assets/<channel>/manifest.json" in release_skill
     assert "`channels.json`" in release_skill
-    assert "Profiles belong to channels" in release_skill
+    assert "Each channel carries at most one runtime" in release_skill_text
     assert "Packages are delivery containers" in release_skill_text
     assert "binary inventory is nested under it" in release_skill_text.lower()
-    assert (
-        "owns its config, images, software inventory, obom/evidence" in release_skill_text.lower()
-    )
+    assert "owns its images, software inventory, obom/evidence" in release_skill_text.lower()
     assert "channels/stable/index.json" not in release_skill
 
 
@@ -2908,9 +2828,9 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     release_skill_text = " ".join(release_skill.split())
 
     assert "`just release-binaries <channel> <source-commit>`" in release_skill
-    assert "`just release-profile <channel> <profile> <source-commit>`" in release_skill
+    assert "`just release-assets <channel> <source-commit>`" in release_skill
     assert "binary lane builds packages only" in release_skill_text
-    assert "profile lane builds exactly one channel/profile" in release_skill_text
+    assert "runtime lane builds the runtime for one channel" in release_skill_text
     assert "Neither artifact family is rebuilt twice" in release_skill
     assert (
         "selected channel source manifest is the sole mutable release authority"
@@ -2925,9 +2845,7 @@ def test_release_process_skill_documents_multi_channel_graph() -> None:
     release_skill_text = " ".join(release_skill.split())
 
     for required in [
-        "Profiles belong to channels",
-        "a profile may exist in stable and nightly independently",
-        "a profile may exist only in nightly",
+        "Each channel carries at most one runtime",
         "`current`, `supported`, `deprecated`, or `revoked`",
         "Packages are delivery containers",
         "binary inventory is nested under it",
@@ -2935,12 +2853,12 @@ def test_release_process_skill_documents_multi_channel_graph() -> None:
         "`https://release.capsem.org/assets/stable/manifest.json`",
         "`https://release.capsem.org/assets/nightly/manifest.json`",
         "`release-channel.yaml` deploys a generated distribution",
-        "Dependent profile then binary",
+        "Dependent runtime then binary",
     ]:
         assert required.lower() in release_skill_text.lower(), required
 
     assert "Binary lane" in release_skill
-    assert "Profile lane" in release_skill
+    assert "Runtime lane" in release_skill
     assert "Corporate authoring" in release_skill
     assert (
         "same revision label in two channels cannot alias or overwrite bytes" in release_skill_text
@@ -2969,8 +2887,8 @@ def test_docs_describe_multi_channel_release_graph() -> None:
         "SHA-256, and BLAKE3",
         "HMAC fields are not published",
         "`min_capsem_version`",
-        "Profiles own profile images, config files, software inventory, and ABOM/OBOM",
-        "profile-owned config, image, ABOM, and OBOM files",
+        "The runtime owns the VM images, software inventory, and OBOM evidence",
+        "runtime-owned image, software inventory, and OBOM records",
         "https://release.capsem.org/assets/stable/manifest.json",
         "https://release.capsem.org/assets/nightly/manifest.json",
         "stable-to-nightly acceptance gate",
@@ -2998,7 +2916,7 @@ def test_asset_and_install_skills_document_channel_switching() -> None:
         "one status enum value",
         "`current`, `supported`, `deprecated`, or `revoked`",
         "package artifacts separate from per-binary inventory",
-        "Profiles own profile images, config files, software inventory, ABOM/OBOM evidence",
+        "The one `runtime` document owns the runtime images",
         "`min_capsem_version`",
         "`--manifest` must be a URL",
         "`--manifest` and `--corp` are URL-only inputs",
@@ -3006,8 +2924,8 @@ def test_asset_and_install_skills_document_channel_switching() -> None:
         "`https://release.capsem.org/assets/stable/manifest.json`",
         "`https://release.capsem.org/assets/nightly/manifest.json`",
         "single metadata file records the installed manifest URL separately",
-        "Updating the co-work nightly profile",
-        "must not mutate stable, packages, per-binary inventory, or other profiles",
+        "Updating the nightly runtime",
+        "must not mutate stable, packages, or per-binary inventory",
     ]:
         assert required in combined_text, required
 
@@ -3088,7 +3006,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     normalized_docs = " ".join(docs.split())
 
     assert (
-        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, then dispatch both profile commands and the binary command; each hosted lane qualifies the exact artifacts it may publish |"
+        "| `release-nightly.yaml` | Daily schedule or manual dispatch | Freeze `${{ github.sha }}`, then dispatch the runtime asset command and the binary command; each hosted lane qualifies the exact artifacts it may publish |"
         in docs
     )
     assert (
@@ -3096,7 +3014,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `release-assets.yaml` | Correlated dispatch from `capsem-admin release` with `source_commit` | Build exactly one channel/profile's images, config, and evidence from that commit against the existing channel package; the public command watches that exact run through success |"
+        "| `release-assets.yaml` | Correlated dispatch from `capsem-admin release` with `{channel, dispatch_id, dry_run, source_commit}` | Build the channel's VM runtime (kernel, initrd, and rootfs for every architecture) and its evidence from that commit against the existing channel package; the public command watches that exact run through success |"
         in docs
     )
     assert (
@@ -3104,7 +3022,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |"
+        "| `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove runtime image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |"
         in docs
     )
     assert (
@@ -3130,7 +3048,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "`/channels.json`, and" in docs
     assert "`/assets/<channel>/manifest.json` before the workflow can pass" in normalized_docs
     assert (
-        "`docs.yaml` and `site.yaml` are independent from binary and profile image release" in docs
+        "`docs.yaml` and `site.yaml` are independent from binary and runtime asset release" in docs
     )
     assert "`https://docs.capsem.org/`, content type `text/html`" in docs
     assert "`https://capsem.org/`, content type `text/html`" in docs
@@ -3598,10 +3516,10 @@ def test_dependent_release_activation_order_is_documented() -> None:
 
     for text in (docs, release_skill):
         normalized = " ".join(text.split())
-        assert "release-profile" in normalized
+        assert "release-assets" in normalized
         assert "release-binaries" in normalized
         assert "capsem-release-" in normalized
-        assert "profile" in normalized.lower()
+        assert "runtime" in normalized.lower()
         assert "binary" in normalized.lower()
         assert "without rebuilding" in normalized.lower() or "rebuilt twice" in normalized.lower()
         assert "complete" in normalized.lower()
@@ -4509,10 +4427,7 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     assert "max-age=31536000" in script
     assert "Cache-Control" in docs
     assert "mutable release-channel pointers" in docs_text
-    assert (
-        "immutable asset and profile artifacts" in docs_text
-        or "immutable profile release artifacts" in docs_text
-    )
+    assert "immutable asset and runtime release artifacts" in docs_text
 
 
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
@@ -4932,7 +4847,6 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         "capsem-service",
         "capsem-process",
         "capsem-tui",
-
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
         "capsem-gateway",
@@ -5461,45 +5375,41 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     assert "build_system/scripts/release/generate-host-binary-sbom.py" in release
 
 
-def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
+def test_release_packages_use_exact_manifest_selected_runtime_inputs() -> None:
     release = _source_text(".github/workflows/release.yaml")
     mac_job = _workflow_job_block("build-app-macos", "release.yaml")
     linux_job = _workflow_job_block("build-app-linux", "release.yaml")
     materializer = _source_text("build_system/scripts/build/materialize-config.sh")
 
-    assert 'manifest_schema="release"' in materializer
-    assert 'profile_path="$CONFIG_ROOT/profiles/$profile_id/profile.toml"' in materializer
-    assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in materializer
+    assert 'manifest.get("runtime")' in materializer
     assert "name: binary-channel-source" in mac_job
-    assert "Fetch exact selected arm64 profiles" in mac_job
+    assert "Fetch exact selected arm64 runtime" in mac_job
     assert "uses: ./.github/actions/fetch-release-inputs" in mac_job
+    assert "kind: runtime" in mac_job
     assert "architecture: arm64" in mac_job
-    assert "output: cache/target/binary-selected-profiles" in mac_job
-    assert "--input-dir cache/target/binary-selected-profiles" in mac_job
+    assert "output: cache/target/binary-selected-runtime" in mac_job
+    assert "--input-dir cache/target/binary-selected-runtime" in mac_job
     assert "--assets-dir cache/target/release/staging/assets" in mac_job
-    assert "--config-root cache/target/release/staging/config" in mac_job
     assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in mac_job
-    assert 'CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config"' in mac_job
     assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/release/staging/assets"' in mac_job
     assert "CAPSEM_ARCH=arm64" in mac_job
     assert "bash build_system/scripts/build/materialize-config.sh" in mac_job
-    assert mac_job.index("Fetch exact selected arm64 profiles") < mac_job.index(
+    assert mac_job.index("Fetch exact selected arm64 runtime") < mac_job.index(
         "bash build_system/scripts/build/materialize-config.sh"
     )
     assert '--manifest "$ASSET_MANIFEST_URL"' in mac_job
     assert "name: binary-channel-source" in linux_job
-    assert "Fetch exact selected ${{ matrix.arch }} profiles" in linux_job
+    assert "Fetch exact selected ${{ matrix.arch }} runtime" in linux_job
     assert "uses: ./.github/actions/fetch-release-inputs" in linux_job
+    assert "kind: runtime" in linux_job
     assert "architecture: ${{ matrix.arch }}" in linux_job
-    assert "output: cache/target/binary-selected-profiles" in linux_job
-    assert "--input-dir cache/target/binary-selected-profiles" in linux_job
+    assert "output: cache/target/binary-selected-runtime" in linux_job
+    assert "--input-dir cache/target/binary-selected-runtime" in linux_job
     assert "--assets-dir cache/target/package-content/assets" in linux_job
-    assert "--config-root cache/target/package-source-config" in linux_job
     assert (
         'CAPSEM_ASSET_MANIFEST="$PWD/cache/target/package-content/assets/manifest.json"'
         in linux_job
     )
-    assert 'CAPSEM_CONFIG_ROOT="$PWD/cache/target/package-source-config"' in linux_job
     assert 'CAPSEM_ASSETS_PATH="$PWD/cache/target/package-content/assets"' in linux_job
     assert 'CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/package-content/config"' in linux_job
     assert "bash build_system/scripts/build/materialize-config.sh --pair-content" in linux_job
@@ -5510,8 +5420,7 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
         "Materialize runtime config",
     )
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in linux_job
-    assert "bash build_system/scripts/build/materialize-config.sh" in linux_job
-    assert linux_job.index("Fetch exact selected ${{ matrix.arch }} profiles") < linux_job.index(
+    assert linux_job.index("Fetch exact selected ${{ matrix.arch }} runtime") < linux_job.index(
         "bash build_system/scripts/build/materialize-config.sh"
     )
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in linux_job
@@ -5520,15 +5429,9 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/" in linux_job
     for mutable in ("sudo apt-get", "pnpm install", "cargo install", "cargo tauri build"):
         assert mutable not in linux_job
-    assert "--profile config/profiles/code/profile.toml" not in release
-    for assembler in (
-        "build_system/packaging/macos/build-pkg.sh",
-        "build_system/packaging/linux/repack-deb.sh",
-    ):
-        source = _source_text(assembler)
-        assert 'for profile_path in "$CONFIG_ROOT"/profiles/*/profile.toml' in source
-        assert 'profile validate "$profile_path"' in source
-        assert '--config-root "$CONFIG_ROOT" --materialized' in source
+    # The runtime is the only VM input: no package lane selects a profile.
+    assert "--profile" not in release
+    assert "--config-root" not in mac_job + linux_job
 
 
 def test_linux_release_always_retains_full_per_arch_gate_evidence() -> None:
@@ -5907,23 +5810,23 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     changelog.unlink()
     assert historical.returncode == 0, historical.stderr
 
-    profile_workflow = tmp_path / ".github/workflows/release-assets.yaml"
-    original_profile_workflow = profile_workflow.read_text()
-    profile_workflow.write_text(
-        original_profile_workflow.replace(
+    runtime_workflow = tmp_path / ".github/workflows/release-assets.yaml"
+    original_runtime_workflow = runtime_workflow.read_text()
+    runtime_workflow.write_text(
+        original_runtime_workflow.replace(
             "group: capsem-release-${{ inputs.channel }}",
-            "group: capsem-profile-${{ inputs.channel }}",
+            "group: capsem-runtime-${{ inputs.channel }}",
             1,
         )
     )
     rejected = run_guard()
-    profile_workflow.write_text(original_profile_workflow)
+    runtime_workflow.write_text(original_runtime_workflow)
     assert rejected.returncode != 0
     assert "shared per-channel release lock" in rejected.stderr
 
     rogue_writer = tmp_path / ".github/workflows/rogue-writer.yaml"
     rogue_writer.write_text(
-        "steps:\n  - run: python build_system/scripts/release/stage-profile-publication.py\n"
+        "steps:\n  - run: python build_system/scripts/release/stage-runtime-publication.py\n"
     )
     rejected = run_guard()
     rogue_writer.unlink()
@@ -6440,19 +6343,13 @@ def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
 
     forbidden_fragments = [
         "pip install six",
-        "uv pip install wheel",
-        "uv pip install humanize",
-        "npm install -g cowsay",
-        "npm install lodash",
         "apt-get install -y -qq htop",
     ]
     for fragment in forbidden_fragments:
         assert fragment not in source
 
     assert "--no-index" in source
-    assert "file:" in source
     assert "dpkg-deb --build" in source
-    assert "--python /root/.venv/bin/python" in source
 
 
 def test_capsem_init_keeps_default_venv_out_of_workspace() -> None:
@@ -6476,8 +6373,7 @@ def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
         {"name": "erofs", "duration_ms": 30},
         {"name": "virtiofs", "duration_ms": 30},
         {"name": "overlayfs", "duration_ms": 60},
-        {"name": "workspace", "duration_ms": 60},
-        {"name": "profile_root_seed", "duration_ms": 210},
+        {"name": "workspace", "duration_ms": 270},
         {"name": "network", "duration_ms": 270},
         {"name": "net_proxy", "duration_ms": 120},
         {"name": "dns_proxy", "duration_ms": 130},
@@ -6511,15 +6407,15 @@ def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
 def test_boot_timing_budget_excludes_host_steal() -> None:
     """A stage is budgeted on guest work: host steal during it is not its cost.
 
-    Release run 36351667646 failed profile_root_seed at 510ms on a shared
-    nested-virt runner; the stage copies sixteen small files and measured 40ms
-    on the previous run. The vCPU was descheduled, and the guest's steal
+    Release run 36351667646 failed the (since removed) profile_root_seed stage
+    at 510ms on a shared nested-virt runner; the stage copied sixteen small
+    files and measured 40ms on the previous run. The vCPU was descheduled, and the guest's steal
     counter is the record of that.
     """
     module = _boot_timing_module()
     budget = module.MAX_BOOT_STAGE_MS
 
-    descheduled = {"name": "profile_root_seed", "duration_ms": 510, "steal_ms": 470}
+    descheduled = {"name": "workspace", "duration_ms": 510, "steal_ms": 470}
     assessment = module.assess_boot_timing([descheduled])
     assert assessment.slow_stages == (), "wall time over budget only through steal"
     assert assessment.total_ms == 510, "the aggregate still reports wall time"
@@ -6555,9 +6451,12 @@ def test_boot_timing_steal_is_capped_at_the_stage_duration() -> None:
     assert assessment.slow_stages == ()
     assert assessment.total_ms == budget * 3
     # A numeric string is what a hand-edited or re-encoded line would carry.
-    assert module.assess_boot_timing(
-        [{"name": "network", "duration_ms": budget + 10, "steal_ms": "20"}]
-    ).slow_stages == ()
+    assert (
+        module.assess_boot_timing(
+            [{"name": "network", "duration_ms": budget + 10, "steal_ms": "20"}]
+        ).slow_stages
+        == ()
+    )
 
 
 def test_capsem_init_records_steal_per_boot_stage() -> None:
@@ -6628,7 +6527,9 @@ def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
     service = PROJECT_ROOT / "crates" / "capsem-service" / "src"
     parent = (service / "vm_files.rs").read_text()
     fork = (service / "vm_files" / "fork.rs").read_text()
-    owner = (PROJECT_ROOT / "crates" / "capsem-process" / "src" / "vsock" / "clone_state.rs").read_text()
+    owner = (
+        PROJECT_ROOT / "crates" / "capsem-process" / "src" / "vsock" / "clone_state.rs"
+    ).read_text()
 
     assert "pub(crate) use fork::{clone_session_state, handle_fork};" in parent
     assert "ServiceToProcess::CloneState {" in fork
@@ -6638,7 +6539,9 @@ def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
     # copies every row the source accepted, and a failed flush fails the fork.
     assert "flush_then_clone(" in owner.split("with_quiescence(", 1)[1]
     flush_then_clone = owner.split("async fn flush_then_clone(", 1)[1].split("\n}\n", 1)[0]
-    assert flush_then_clone.index("flush_checked()") < flush_then_clone.index("clone_sandbox_state(")
+    assert flush_then_clone.index("flush_checked()") < flush_then_clone.index(
+        "clone_sandbox_state("
+    )
 
 
 def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
@@ -6693,7 +6596,9 @@ def test_create_route_does_not_wait_for_full_guest_readiness() -> None:
         "\n#[cfg(unix)]", maxsplit=1
     )[0]
 
-    launch = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "vm_files" / "launch.rs").read_text()
+    launch = (
+        PROJECT_ROOT / "crates" / "capsem-service" / "src" / "vm_files" / "launch.rs"
+    ).read_text()
 
     assert "LAUNCH_CEILING: Duration = Duration::from_millis(500)" in launch
     assert "launch::LAUNCH_CEILING" in provision_attempt
@@ -6715,30 +6620,32 @@ def test_guest_runtime_doctor_apt_https_trust_probe_is_hermetic_release_gate() -
     assert "apt-get update" not in source
 
 
-def test_capsem_init_recreates_user_local_ai_cli_shims() -> None:
-    """Curl-installed AI CLIs must keep the user-local shim expected by doctors."""
+def test_capsem_init_carries_no_profile_tooling() -> None:
+    """Applications come from OCI images; the runtime rootfs has no profile seed.
+
+    capsem-init once projected a profile root seed and recreated AI CLI shims
+    from /opt/ai-clis. Images own both now (tests/images/), and a runtime that
+    quietly regained either would be a second, untested application path.
+    """
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
 
-    assert "for cli in claude agy; do" in init
-    assert 'ln -sf "/opt/ai-clis/bin/$cli" "/newroot/usr/local/bin/$cli"' in init
-    assert 'rm -f "/newroot/root/.local/bin/$cli"' in init
-    assert 'ln -sf "/usr/local/bin/$cli" "/newroot/root/.local/bin/$cli"' in init
-    assert 'chroot /newroot /bin/chmod 555 "/root/.local/bin/$cli"' in init
+    assert "profile-root" not in init
+    assert "profile_root_seed" not in init
+    assert "for cli in claude agy; do" not in init
+    assert 'ln -sf "/opt/ai-clis/bin/$cli"' not in init
 
 
 def test_capsem_init_keeps_etc_traversable_for_apt_sandbox() -> None:
     """The `_apt` sandbox must be able to read the TLS trust bundle under /etc."""
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
 
-    profile_seed_pos = init.find("projecting profile root seed")
-    final_etc_chmod_pos = init.rfind("chmod 755 /newroot/etc")
+    etc_chmod_pos = init.find("chmod 755 /newroot/etc")
     launch_pos = init.find('chroot /newroot "$AGENT_PATH"')
 
     assert "chmod 755 /newroot" in init
-    assert profile_seed_pos != -1
-    assert final_etc_chmod_pos != -1
+    assert etc_chmod_pos != -1
     assert launch_pos != -1
-    assert profile_seed_pos < final_etc_chmod_pos < launch_pos
+    assert etc_chmod_pos < launch_pos
     assert "TLS trust lives under `/etc/ssl/certs`" in init
 
 
@@ -6808,7 +6715,7 @@ def test_parallel_asset_primitive_does_not_run_docker_gc() -> None:
     from capsem_builder.gate.imagebuild import build_argv
 
     config = gate_config.load(PROJECT_ROOT)
-    argv = " ".join(build_argv(config, profile="code", arch="arm64", template="all"))
+    argv = " ".join(build_argv(config, arch="arm64", template="all"))
     assert "docker-gc" not in argv
     assert "gc" not in argv.split()
 
@@ -6822,7 +6729,7 @@ def test_parallel_asset_primitive_does_not_run_docker_gc() -> None:
 def test_release_recipes_forward_the_explicit_source_commit_to_the_gate() -> None:
     """Just dispatches; the gate owns evidence and remote-main validation."""
     justfile = _source_text("justfile")
-    for recipe in ("release-binaries", "release-profile"):
+    for recipe in ("release-binaries", "release-assets"):
         declaration = next(line for line in justfile.splitlines() if line.startswith(f"{recipe} "))
         body = _recipe_body(recipe)
 

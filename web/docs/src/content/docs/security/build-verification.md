@@ -80,7 +80,7 @@ cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 VM base images publish an Operations Bill of Materials as CycloneDX JSON. CI
 generates it with pinned cdxgen `-t os` against the extracted exported Linux
 rootfs directory (never the build host `/`) before EROFS cleanup, pins it in
-`manifest.json`, and publishes it with the profile assets. That exact invocation
+`manifest.json`, and publishes it with the runtime assets. That exact invocation
 is qualified against the complete Capsem filesystem, not only a tiny fixture.
 
 | Field | Value |
@@ -88,8 +88,8 @@ is qualified against the complete Capsem filesystem, not only a tiny fixture.
 | Format | CycloneDX OBOM JSON |
 | Scope | Base Linux VM image only |
 | Excludes | User session mutations, workspace writes, and post-boot state |
-| Published as | `<arch>-obom.cdx.json` with profile assets |
-| Integrity | BLAKE3 hash stored in the materialized profile |
+| Published as | `<arch>-obom.cdx.json` with the runtime assets |
+| Integrity | SHA-256 and BLAKE3 recorded in the channel manifest's `runtime` evidence |
 | Runtime API | `GET /profiles/{profile_id}/info` and `GET /profiles/{profile_id}/obom` |
 
 The profile OBOM descriptor records the OBOM file URL, BLAKE3 hash, size,
@@ -100,8 +100,8 @@ served only after size and BLAKE3 verification.
 The per-architecture `build-ledger.log` is separate debug evidence. It records
 the inputs that produced the assets, including the exact kernel version and
 source SHA-256, rendered Dockerfiles, build context hashes, EROFS settings,
-git/project version, profile root and install-script inputs, and declared
-package config. The kernel archive is verified against that SHA-256 before
+git/project version, and the declared runtime package set
+(`runtime_apt_packages`). The kernel archive is verified against that SHA-256 before
 extraction. The ledger is not uploaded as the
 release inventory and must not claim installed package state; installed
 component names and versions come from the OBOM.
@@ -128,9 +128,9 @@ future release intentionally publishes them as separate evidence artifacts.
 
 VM assets (kernel, initrd, rootfs) are recorded with BLAKE3 and SHA-256 at the
 asset build boundary and verified via BLAKE3 identity at every stage
-from build to boot. The checked-in profile is materialized into
-`cache/target/config/` before runtime, so the service boots from a generated profile
-whose asset URLs, hashes, and sizes come directly from `cache/target/assets/manifest.json`.
+from build to boot. Asset URLs, hashes, and sizes come directly from
+`cache/target/assets/manifest.json` locally and from the selected channel
+manifest's `runtime` document once released.
 Published GitHub Release blob names are arch-prefixed, for example
 `arm64-rootfs.erofs`; inside the manifest they remain bare names such as
 `rootfs.erofs` under the owning architecture.
@@ -146,7 +146,7 @@ supported public path.
 graph TD
     A["Build assets<br/>capsem-admin manifest generate"] --> B["manifest.json<br/>(BLAKE3 + SHA-256 + sizes)"]
     B --> C["Release<br/>packages + arch-prefixed VM assets"]
-    C --> D["Download<br/>profile/corp selected URL"]
+    C --> D["Download<br/>channel manifest runtime URL"]
     D --> E["Verify hashes<br/>BLAKE3 per-file check"]
     E --> F["Boot<br/>assets loaded from verified dir"]
 ```
@@ -161,8 +161,8 @@ manifest records, and every record has exactly one `status` enum value:
 auditability; absence from the channel list is removal.
 
 The selected manifest is the compatibility and hash authority for one channel.
-It lists package artifacts separately from the per-binary inventory and points
-to profile catalogs:
+It lists package artifacts separately from the per-binary inventory and
+carries one `runtime` document for the VM assets:
 
 ```json
 {
@@ -190,29 +190,40 @@ to profile catalogs:
       "sbom_component": "SPDXRef-File-capsem"
     }
   ],
-  "profiles": [
-    {
-      "id": "co-work",
-      "revision": "1.0.0-stable.20260702",
-      "sha256": "<sha256>",
-      "blake3": "<blake3>",
-    }
-  ]
+  "runtime": {
+    "revision": "1.4.0-0123456789ab",
+    "status": "current",
+    "min_capsem_version": "1.4.0",
+    "architectures": [
+      {
+        "architecture": "arm64",
+        "image_revision": "1.4.0-0123456789ab",
+        "software": [],
+        "images": [
+          {"kind": "rootfs", "name": "rootfs.erofs", "url": "...", "bytes": 12345678,
+           "digest": {"sha256": "<sha256>", "blake3": "<blake3>"}, "status": "current"}
+        ],
+        "evidence": []
+      }
+    ]
+  }
 }
 ```
 
-Profiles own profile images, config files, software inventory, and ABOM/OBOM
-evidence. A profile may declare `min_capsem_version` when its config or image
-requires newer client behavior, but it does not select the Capsem binary. The
-manifest selects package and binary metadata; profile entries inside that
-manifest select profile-owned image/config/evidence metadata.
+The runtime owns the VM images, software inventory, and OBOM evidence for each
+architecture. It may declare `min_capsem_version` when its images require newer
+client behavior, but it does not select the Capsem binary. The manifest selects
+package and binary metadata; the `runtime` document inside that manifest
+selects image and evidence metadata. There is no `profiles` key and no
+published config file: applications reach a session as OCI images resolved
+through the image catalog, not through the release manifest.
 
 Stable and nightly are independent channels. A stable-to-nightly switch is just
 choosing a different manifest URL, for example
 `https://release.capsem.org/assets/stable/manifest.json` or
 `https://release.capsem.org/assets/nightly/manifest.json`, and the release gate
-proves package, per-binary, profile image, config, and evidence data do not
-cross between channels.
+proves package, per-binary, runtime image, and evidence data do not cross
+between channels.
 
 ### Hash verification
 
@@ -239,17 +250,17 @@ Validation rules:
 ### Multi-version channels
 
 Channels accumulate versioned manifest records across releases. Adding a new
-stable or nightly manifest does not require mutating profiles, packages, or
-other channels. Deprecating or revoking a manifest changes the record status;
+stable or nightly manifest does not require mutating the runtime, packages,
+or other channels. Deprecating or revoking a manifest changes the record status;
 publishing no record at all means that manifest is removed from the public
 channel list. Runtime selection ignores revoked records.
 
 ## Manifest Role
 
 `manifest.json` is channel metadata: package artifacts, per-binary inventory,
-profile catalog references, hashes, and compatibility. It is published
+the runtime document, hashes, and compatibility. It is published
 with SBOM and provenance attestations. Runtime trust comes from the selected
-manifest URL, profile-owned file metadata, SHA-256/BLAKE3 verification of the
+manifest URL, runtime-owned file metadata, SHA-256/BLAKE3 verification of the
 downloaded bytes, and immutable release provenance. Channel assembly reuses
 the complete asset digests recorded at build time instead of reopening the
 same rootfs for each channel. Local blob copies hash and validate in their
@@ -276,7 +287,7 @@ corporate channels use `https://` or `http://`.
 |---------|---------------|
 | Rust toolchain | Rust 1.97.1, pinned consistently in the workspace, workflows, bootstrap, and host builder |
 | Dependency audit | Pinned OSV-Scanner checks every Python and Node lockfile first; only a clean result unlocks the stricter RustSec vulnerability, unsoundness, and yank policy. Exact clean OSV verdicts are reused for one hour when every lockfile and policy byte still matches. |
-| Docker base images | Resolved by the profile-derived Docker template rail |
+| Docker base images | Pinned by exact child-manifest digest in `config/docker/image/build.toml` |
 | Compiler warnings | Treated as errors, with workspace `dbg_macro` and `todo` lints denied |
 | Auditable builds | `cargo-auditable` embeds dependency info in binaries |
 | Build context validation | `capsem.builder.doctor.check_source_files()` verifies completeness before release |

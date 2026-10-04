@@ -119,7 +119,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
 }
 
 #[test]
-fn current_asset_state_keeps_independent_release_graph_profiles() {
+fn current_asset_state_is_the_release_graph_runtime_revision() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     std::fs::create_dir_all(&assets_dir).unwrap();
@@ -131,25 +131,18 @@ fn current_asset_state_keeps_independent_release_graph_profiles() {
         ])
     };
     let manifest = serde_json::json!({
-        "profiles": {
-            "co-work": {
-                "revision": "2030.0101.1",
-                "status": "current",
-                "architectures": [{"architecture":"arm64","image_revision":"2030.0101.10","images":images('a')}]
-            },
-            "code": {
-                "revision": "2030.0101.2",
-                "status": "current",
-                "architectures": [{"architecture":"arm64","image_revision":"2030.0101.20","images":images('9')}]
-            }
+        "packages": [],
+        "runtime": {
+            "revision": "0.7.0-0123456789ab",
+            "status": "current",
+            "architectures": [{"architecture":"arm64","image_revision":"0.7.0-0123456789ab","images":images('a')}]
         }
     });
     std::fs::write(assets_dir.join("manifest.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
-    let expected = capsem_assets::asset_manager::release_graph_profile_state(&manifest).unwrap();
 
     assert_eq!(
-        current_asset_version_from_manifest(&assets_dir),
-        Some(expected.images_revision)
+        current_asset_version_from_manifest(&assets_dir).as_deref(),
+        Some("0.7.0-0123456789ab")
     );
 }
 

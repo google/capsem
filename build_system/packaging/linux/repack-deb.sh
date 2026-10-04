@@ -1,12 +1,11 @@
 #!/bin/bash
 # repack-deb.sh -- Repack a Tauri .deb with companion binaries and preinst plus postinst scripts.
 #
-# Usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]
+# Usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> [assets_dir] [output.deb]
 #
 # Arguments:
 #   input.deb   Path to the Tauri-built .deb package
 #   bin_dir     Directory containing companion binaries (capsem, capsem-service, etc.)
-#   config_root Materialized runtime config root (usually cache/target/config)
 #   assets_dir  Optional assets dir containing manifest.json when --manifest is omitted.
 #   output.deb  Optional output path (defaults to overwriting input)
 #   --manifest  Optional manifest URL to record for postinstall hydration.
@@ -22,7 +21,6 @@
 #   /usr/bin/capsem-mock-server
 #   /usr/bin/capsem-bench-rs
 #   /usr/share/capsem/assets/manifest-metadata.json
-#   /usr/share/capsem/profiles/
 #   DEBIAN/preinst script
 #   DEBIAN/postinst script
 set -euo pipefail
@@ -49,7 +47,7 @@ embed_native_cohort_retirement() {
     embed_pkg_script retire-cohort "$1"
 }
 usage() {
-    echo "usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]" >&2
+    echo "usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> [assets_dir] [output.deb]" >&2
 }
 
 MANIFEST_PATH=""
@@ -83,16 +81,15 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-if [ "${#POSITIONAL[@]}" -lt 3 ] || [ "${#POSITIONAL[@]}" -gt 5 ]; then
+if [ "${#POSITIONAL[@]}" -lt 2 ] || [ "${#POSITIONAL[@]}" -gt 4 ]; then
     usage
     exit 2
 fi
 
 INPUT_DEB="${POSITIONAL[0]}"
 BIN_DIR="${POSITIONAL[1]}"
-CONFIG_ROOT="${POSITIONAL[2]}"
-ASSETS_DIR="${POSITIONAL[3]:-}"
-OUTPUT_DEB="${POSITIONAL[4]:-$INPUT_DEB}"
+ASSETS_DIR="${POSITIONAL[2]:-}"
+OUTPUT_DEB="${POSITIONAL[3]:-$INPUT_DEB}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR=$(mktemp -d)
@@ -260,21 +257,6 @@ embed_pkg_script service-owned-update "$WORK_DIR/deb/DEBIAN/postinst"
 embed_pkg_script install-vm-device-access "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
 install -Dm0644 "$SCRIPT_DIR/99-capsem-vm-devices.rules" "$WORK_DIR/deb/usr/lib/udev/rules.d/99-capsem-vm-devices.rules"
-if [ ! -d "$CONFIG_ROOT/profiles" ]; then
-    echo "ERROR: materialized profiles not found: $CONFIG_ROOT/profiles" >&2
-    echo "Run: just _materialize-config" >&2
-    exit 1
-fi
-for profile_path in "$CONFIG_ROOT"/profiles/*/profile.toml; do
-    [ -f "$profile_path" ] || {
-        echo "ERROR: no materialized profiles found under $CONFIG_ROOT/profiles" >&2
-        exit 1
-    }
-    "$BIN_DIR/capsem-admin" profile validate "$profile_path" --config-root "$CONFIG_ROOT" --materialized
-done
-echo "=== Adding materialized profiles ==="
-mkdir -p "$WORK_DIR/deb/usr/share/capsem/profiles"
-cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"
 
 PACKAGE_VERSION="$(dpkg-deb -f "$INPUT_DEB" Version)"
 if [ -n "$MANIFEST_PATH" ]; then

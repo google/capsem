@@ -94,20 +94,17 @@ def test_tart_commands_are_headless_isolated_and_share_only_gate_inputs(
     module = _load_harness()
     share = tmp_path / "share"
     asset_share = tmp_path / "asset-share"
-    profile_share = tmp_path / "profile-share"
 
     assert module.tart_run_command(
         "capsem-glowup-123",
         share,
         asset_share,
-        profile_share,
     ) == [
         "tart",
         "run",
         "--no-graphics",
         f"--dir=capsem-release:{share}",
         f"--dir=capsem-assets:{asset_share}",
-        f"--dir=capsem-profiles:{profile_share}",
         "capsem-glowup-123",
     ]
     assert module.tart_clone_command(
@@ -411,11 +408,11 @@ def test_guest_activates_update_then_rejects_both_adversarial_candidates() -> No
     assert 'release_transition.py"' in source
     assert "candidate-manifest-sha256" in source
     assert "automatic release update failed" not in source
-    assert "profile_only activated" in source
-    assert "incompatible_profile" in source
+    assert "runtime_only activated" in source
+    assert "incompatible_runtime" in source
     assert "manifest-before-rejection.json" in source
     assert "manifest-metadata-before-rejection.json" in source
-    assert "profile_tree_digest" in source
+    assert "$CAPSEM_HOME/profiles" not in source
     assert "assert-url" in source
     assert 'STATUS_OUTPUT=$("$CAPSEM" status 2>/dev/null || true)' in source
     assert "preserved-installed-evidence.json" in source
@@ -460,22 +457,21 @@ def test_macos_glowup_stages_complete_candidates_without_mutating_authority(
                 "digest": {"sha256": digest},
             }
         ],
-        "profiles": {
-            "code": {
-                "description": "Code profile",
-                "architectures": [
-                    {
-                        "architecture": "arm64",
-                        "images": [
-                            {
-                                "kind": "rootfs",
-                                "status": "current",
-                                "digest": {"sha256": "a" * 64},
-                            }
-                        ],
-                    }
-                ],
-            }
+        "runtime": {
+            "revision": "1.2.3-0123456789ab",
+            "status": "current",
+            "architectures": [
+                {
+                    "architecture": "arm64",
+                    "images": [
+                        {
+                            "kind": "rootfs",
+                            "status": "current",
+                            "digest": {"sha256": "a" * 64},
+                        }
+                    ],
+                }
+            ],
         },
     }
     original = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
@@ -487,12 +483,11 @@ def test_macos_glowup_stages_complete_candidates_without_mutating_authority(
     tampered = json.loads(candidates.tampered.read_text())
     incompatible = json.loads(candidates.incompatible.read_text())
     assert tampered["packages"] == manifest["packages"]
-    assert updated["profiles"]["code"]["description"].endswith("[installed transition proof]")
+    assert updated["runtime"] != manifest["runtime"]
     assert (
-        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"]["sha256"]
-        != "a" * 64
+        tampered["runtime"]["architectures"][0]["images"][0]["digest"]["sha256"] != "a" * 64
     )
-    assert incompatible["profiles"]["code"]["min_capsem_version"] == "9999.0.0"
+    assert incompatible["runtime"]["min_capsem_version"] == "9999.0.0"
 
 
 def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None:
@@ -517,22 +512,20 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
                         "digest": {"sha256": artifact.sha256},
                     }
                 ],
-                "profiles": {
-                    "code": {
-                        "revision": "code-1",
-                        "description": "Code profile",
-                        "architectures": [
-                            {
-                                "architecture": "arm64",
-                                "images": [
-                                    {
-                                        "kind": "rootfs",
-                                        "digest": {"sha256": "a" * 64},
-                                    }
-                                ],
-                            }
-                        ],
-                    }
+                "runtime": {
+                    "revision": "1.2.3-0123456789ab",
+                    "status": "current",
+                    "architectures": [
+                        {
+                            "architecture": "arm64",
+                            "images": [
+                                {
+                                    "kind": "rootfs",
+                                    "digest": {"sha256": "a" * 64},
+                                }
+                            ],
+                        }
+                    ],
                 },
             },
             sort_keys=True,
@@ -548,8 +541,6 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
         "running": True,
         "service": "ok",
         "gateway": "ok",
-        "profiles_ready": 1,
-        "profiles_total": 1,
     }
     report_path = tmp_path / "report.json"
     candidates = module.stage_transition_candidates(manifest_path, tmp_path / "transitions")
@@ -574,14 +565,14 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
         return row
 
     fresh_verdict = verdict("fresh_install", "activated", manifest_sha256)
-    update_verdict = verdict("profile_only", "activated", updated_sha256)
+    update_verdict = verdict("runtime_only", "activated", updated_sha256)
     tamper_verdict = verdict(
         "tampered_artifact",
         "rejected",
         hashlib.sha256(candidates.tampered.read_bytes()).hexdigest(),
     )
     incompatible_verdict = verdict(
-        "incompatible_profile",
+        "incompatible_runtime",
         "rejected",
         hashlib.sha256(candidates.incompatible.read_bytes()).hexdigest(),
     )
@@ -631,7 +622,7 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
         channel="nightly",
     )
 
-    assert report["transition_scope"] == ["fresh_install", "profile_only", "tamper_rejection"]
+    assert report["transition_scope"] == ["fresh_install", "runtime_only", "tamper_rejection"]
     assert [row["kind"] for row in report["transitions"]] == report["transition_scope"]
     assert report["transitions"][-1]["preserved_previous"] is True
 
@@ -691,7 +682,7 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
                 "persistent_pin_resume": True,
             }
         },
-        "transition_scope": ["fresh_install", "profile_only", "tamper_rejection"],
+        "transition_scope": ["fresh_install", "runtime_only", "tamper_rejection"],
         "transitions": [
             {
                 "kind": "fresh_install",
@@ -702,27 +693,27 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
                     "manifest_sha256": "b" * 64,
                     "package_version": "1.2.3",
                     "package_sha256": "a" * 64,
-                    "profiles_sha256": "c" * 64,
+                    "runtime_sha256": "c" * 64,
                 },
                 "probes": {"doctor": True, "winterfell": True},
                 "preserved_previous": False,
             },
             {
-                "kind": "profile_only",
+                "kind": "runtime_only",
                 "result": "activated",
                 "before": {
                     "channel": "stable",
                     "manifest_sha256": "b" * 64,
                     "package_version": "1.2.3",
                     "package_sha256": "a" * 64,
-                    "profiles_sha256": "c" * 64,
+                    "runtime_sha256": "c" * 64,
                 },
                 "after": {
                     "channel": "stable",
                     "manifest_sha256": "d" * 64,
                     "package_version": "1.2.3",
                     "package_sha256": "a" * 64,
-                    "profiles_sha256": "e" * 64,
+                    "runtime_sha256": "e" * 64,
                 },
                 "probes": {"doctor": True, "winterfell": True},
                 "preserved_previous": False,
@@ -735,14 +726,14 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
                     "manifest_sha256": "d" * 64,
                     "package_version": "1.2.3",
                     "package_sha256": "a" * 64,
-                    "profiles_sha256": "e" * 64,
+                    "runtime_sha256": "e" * 64,
                 },
                 "after": {
                     "channel": "stable",
                     "manifest_sha256": "d" * 64,
                     "package_version": "1.2.3",
                     "package_sha256": "a" * 64,
-                    "profiles_sha256": "e" * 64,
+                    "runtime_sha256": "e" * 64,
                 },
                 "probes": {"doctor": True, "winterfell": True},
                 "preserved_previous": True,
@@ -779,7 +770,6 @@ def test_installed_winterfell_does_not_write_pytest_state_to_source(
     roots = SimpleNamespace(
         assets_dir=tmp_path / "assets",
         binary_dir=tmp_path / "bin",
-        profiles_dir=tmp_path / "profiles",
     )
     monkeypatch.setattr(module, "_resolve_winterfell_artifact_roots", lambda _overrides: roots)
 
@@ -795,8 +785,6 @@ def test_installed_winterfell_does_not_write_pytest_state_to_source(
             str(roots.binary_dir),
             "--assets-dir",
             str(roots.assets_dir),
-            "--profiles-dir",
-            str(roots.profiles_dir),
             "--evidence-out",
             str(tmp_path / "evidence.json"),
         ]
@@ -868,7 +856,7 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke(
     macos_glowup = next(line for line in issues.splitlines() if "macos_release_glowup.py" in line)
     assert "[outside kernel sandbox]" in macos_glowup
     config = gate_config.load(PROJECT_ROOT)
-    content_root = Path(config.assets.test_root) / config.suites.pytest.base_profile
+    content_root = Path(config.assets.test_root)
     assert "--content-root " in issues
     assert f"/{content_root}" in issues
     assert "macos_release_glowup.py" not in _gate_issues("test-fast")
@@ -885,7 +873,9 @@ def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
     assert 'str(Path(__file__).resolve().parent / "prove-macos-package-boot.sh")' in source
     assert '"build_system/scripts/build/materialize-config.sh"' not in source
     assert '"--content-root"' in source
-    assert '"--assets-dir"' in source and '"--config-root"' in source
+    assert '"--assets-dir"' in source
+    assert '"--config-root"' not in source
+    assert '"--profile-share"' not in source
     assert '"$ROOT/assets"' not in build
     assert '"$ROOT/cache/target/config"' not in build
     assert '"$ROOT/assets"' not in physical
@@ -929,4 +919,4 @@ def test_public_release_dispatch_recipe_is_gone() -> None:
     assert '\nrelease tag="" channel="stable":' not in f"\n{justfile}"
     assert "    release " not in listed
     assert "release-binaries" in listed
-    assert "release-profile" in listed
+    assert "release-assets" in listed

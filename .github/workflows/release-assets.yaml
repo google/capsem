@@ -1,5 +1,5 @@
 name: Release VM Assets
-run-name: Release profile ${{ inputs.channel }}/${{ inputs.profile }} ${{ inputs.dispatch_id }}
+run-name: Release runtime ${{ inputs.channel }} ${{ inputs.dispatch_id }}
 
 on:
   workflow_dispatch:
@@ -11,9 +11,6 @@ on:
         options:
           - stable
           - nightly
-      profile:
-        description: Profile id that owns the VM image build.
-        required: true
       dispatch_id:
         description: Correlation id supplied by capsem-admin.
         required: true
@@ -70,6 +67,9 @@ jobs:
     with:
       source_commit: ${{ inputs.source_commit }}
 
+  # Everything that decides whether this commit's runtime is released at all
+  # runs before any image is built: a runtime revision is per commit, so a
+  # channel whose source manifest already carries it has nothing to build.
   resolve-current-binary:
     needs: runtime-preflight
     runs-on: ubuntu-latest
@@ -77,6 +77,9 @@ jobs:
     outputs:
       functional_ready: ${{ steps.functional-cohort.outputs.functional-ready }}
       baseline_channel: ${{ steps.public-before.outputs.manifest-channel }}
+      runtime_revision: ${{ steps.selection.outputs.runtime_revision }}
+      publication_identity: ${{ steps.selection.outputs.publication_identity }}
+      release_needed: ${{ steps.runtime-delta.outputs.release_needed }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -86,7 +89,7 @@ jobs:
           toolchain: 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
-          key: profile-release-selection
+          key: runtime-release-selection
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --project build_system --frozen
 
@@ -98,30 +101,43 @@ jobs:
             --bootstrap-missing-first-party \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Validate selected channel profile through capsem-admin
+      - name: Validate the runtime release through capsem-admin
+        id: selection
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
-          RELEASE_PROFILE: ${{ inputs.profile }}
         run: |
+          set -euo pipefail
           mkdir -p cache/target
           cargo run -p capsem-admin -- validate \
             --channel "$RELEASE_CHANNEL" \
-            --profile "$RELEASE_PROFILE" \
-            --json > cache/target/profile-release-selection.json
+            --source-commit "$SOURCE_COMMIT" \
+            --json > cache/target/runtime-release-selection.json
+          selection=cache/target/runtime-release-selection.json
+          echo "runtime_revision=$(jq -er .runtime_revision "$selection")" >> "$GITHUB_OUTPUT"
+          echo "publication_identity=$(jq -er .publication_identity "$selection")" >> "$GITHUB_OUTPUT"
 
       - name: Fetch latest selected channel source manifest
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
-          RELEASE_PROFILE: ${{ inputs.profile }}
-          RELEASE_SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           python3 build_system/scripts/release/fetch-channel-source-manifest.py \
             --channel "$RELEASE_CHANNEL" \
-            --profile "$RELEASE_PROFILE" \
-            --source-commit "$RELEASE_SOURCE_COMMIT" \
+            --source-commit "$SOURCE_COMMIT" \
             --bootstrap-missing-first-party \
             --output cache/target/channel-source/manifest.json
+
+      - name: Check whether this commit's runtime is already authored
+        id: runtime-delta
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RUNTIME_REVISION: ${{ steps.selection.outputs.runtime_revision }}
+        run: |
+          uv run --project build_system --frozen python build_system/scripts/release/check-runtime-release-delta.py \
+            --source-manifest cache/target/channel-source/manifest.json \
+            --channel "$RELEASE_CHANNEL" \
+            --runtime-revision "$RUNTIME_REVISION" \
+            --json-output cache/target/runtime-release-delta/delta.json
 
       - name: Project inactive first-channel public-before state
         if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
@@ -156,49 +172,57 @@ jobs:
           manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
           allow-empty-packages: ${{ steps.public-before.outputs.bootstrap }}
           kind: packages
-          output: cache/target/profile-public-before/packages
+          output: cache/target/runtime-public-before/packages
 
       - name: Check pulled package functional binary cohort
         id: functional-cohort
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir cache/target/profile-public-before/packages \
+            --input-dir cache/target/runtime-public-before/packages \
             --check-functional-cohort \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Fetch exact deployed public-before profiles
+      # A channel that has published no runtime yet (a first channel, or the
+      # first runtime after the per-profile graphs it replaced) has none to
+      # pull. That is the only empty set accepted: a runtime the manifest names
+      # must still resolve every one of its artifacts.
+      - name: Fetch exact deployed public-before runtime
         uses: ./.github/actions/fetch-release-inputs
         with:
           manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
-          allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}
-          kind: profiles
+          allow-empty-runtime: true
+          kind: runtime
           architecture: x86_64
-          output: cache/target/profile-public-before/profiles
+          output: cache/target/runtime-public-before/runtime
 
       - name: Prove public-before cohorts use one manifest
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
-            --input-dir cache/target/profile-public-before/profiles
+            --input-dir cache/target/runtime-public-before/runtime
           cmp \
-            cache/target/profile-public-before/packages/manifest.json \
-            cache/target/profile-public-before/profiles/manifest.json
+            cache/target/runtime-public-before/packages/manifest.json \
+            cache/target/runtime-public-before/runtime/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: profile-public-before-packages
-          path: cache/target/profile-public-before/packages/
+          name: runtime-public-before-packages
+          path: cache/target/runtime-public-before/packages/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: profile-public-before-profiles
-          path: cache/target/profile-public-before/profiles/
+          name: runtime-public-before-runtime
+          path: cache/target/runtime-public-before/runtime/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: profile-channel-source
+          name: runtime-channel-source
           path: cache/target/channel-source/manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: profile-release-selection
-          path: cache/target/profile-release-selection.json
+          name: runtime-release-selection
+          path: cache/target/runtime-release-selection.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: runtime-release-delta
+          path: cache/target/runtime-release-delta/
 
   cloudflare-release-site-preflight:
     runs-on: ubuntu-latest
@@ -223,40 +247,9 @@ jobs:
           python build_system/scripts/web/check-cloudflare-pages-project.py \
             --project "$RELEASE_CHANNEL_PROJECT"
 
-  resolve-profile-assets:
-    needs: resolve-current-binary
-    if: ${{ inputs.channel == 'stable' }}
-    runs-on: ubuntu-latest
-    name: Resolve reusable profile assets
-    outputs:
-      reuse_run_id: ${{ steps.resolve.outputs.run_id }}
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-        with:
-          ref: ${{ inputs.source_commit }}
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: profile-release-selection
-          path: cache/target/
-
-      - name: Resolve exact prior profile asset cohort
-        id: resolve
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          RELEASE_REPOSITORY: ${{ github.repository }}
-          RELEASE_RUN_ID: ${{ github.run_id }}
-        run: |
-          python3 build_system/scripts/build/resolve-reusable-profile-assets.py \
-            --repository "$RELEASE_REPOSITORY" \
-            --workflow release-assets.yaml \
-            --current-run-id "$RELEASE_RUN_ID" \
-            --source-commit "$SOURCE_COMMIT" \
-            --selection cache/target/profile-release-selection.json \
-            --github-output "$GITHUB_OUTPUT"
-
   build-assets:
-    needs: [cloudflare-release-site-preflight, resolve-current-binary, fast-gate, resolve-profile-assets]
-    if: ${{ always() && needs.cloudflare-release-site-preflight.result == 'success' && needs.resolve-current-binary.result == 'success' && needs.fast-gate.result == 'success' && (inputs.channel == 'nightly' || needs.resolve-profile-assets.outputs.reuse_run_id == '') }}
+    needs: [cloudflare-release-site-preflight, resolve-current-binary, fast-gate]
+    if: ${{ needs.resolve-current-binary.outputs.release_needed == 'true' }}
     strategy:
       matrix:
         include:
@@ -295,42 +288,18 @@ jobs:
       - name: Build VM assets (kernel + rootfs)
         env:
           ASSET_ARCH: ${{ matrix.arch }}
-          RELEASE_PROFILE: ${{ inputs.profile }}
         run: |
-          just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"
+          just build-assets "$ASSET_ARCH"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: vm-assets-${{ matrix.arch }}
           path: cache/target/assets/${{ matrix.arch }}/
 
-  reuse-assets:
-    needs: [cloudflare-release-site-preflight, fast-gate, resolve-profile-assets]
-    if: ${{ always() && inputs.channel == 'stable' && needs.cloudflare-release-site-preflight.result == 'success' && needs.fast-gate.result == 'success' && needs.resolve-profile-assets.result == 'success' && needs.resolve-profile-assets.outputs.reuse_run_id != '' }}
-    strategy:
-      matrix:
-        arch: [arm64, x86_64]
-    runs-on: ubuntu-latest
-    name: Reuse VM assets (${{ matrix.arch }})
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: vm-assets-${{ matrix.arch }}
-          path: cache/target/assets/${{ matrix.arch }}/
-          repository: ${{ github.repository }}
-          run-id: ${{ needs.resolve-profile-assets.outputs.reuse_run_id }}
-          github-token: ${{ github.token }}
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: vm-assets-${{ matrix.arch }}
-          path: cache/target/assets/${{ matrix.arch }}/
-
-  test-profile-pairing:
-    needs: [author-profile-release, resolve-current-binary]
-    if: ${{ always() && needs.author-profile-release.result == 'success' && needs.resolve-current-binary.result == 'success' && needs.author-profile-release.outputs.release_needed == 'true' }}
+  test-runtime-pairing:
+    needs: [author-runtime-release, resolve-current-binary]
     runs-on: ubuntu-24.04
-    name: Complete profile pairing gate
+    name: Complete runtime pairing gate
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -389,19 +358,19 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: profile-public-before-packages
-          path: cache/target/profile-public-before/packages/
+          name: runtime-public-before-packages
+          path: cache/target/runtime-public-before/packages/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: profile-public-before-profiles
-          path: cache/target/profile-public-before/profiles/
+          name: runtime-public-before-runtime
+          path: cache/target/runtime-public-before/runtime/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: authored-profile-channel-source
+          name: authored-runtime-channel-source
           path: cache/target/source-channel/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: authored-profile-publication
+          name: authored-runtime-publication
           path: cache/target/asset-release/
 
       - name: Enable KVM for complete functional proof
@@ -409,64 +378,59 @@ jobs:
           set -euo pipefail
           sudo bash build_system/packaging/shared/install-vm-device-access "$USER" build_system/packaging/linux/99-capsem-vm-devices.rules
 
-      - name: Prepare exact profile and pulled binary pairing
+      - name: Prepare exact runtime and pulled binary pairing
         env:
-          PUBLICATION_IDENTITY: ${{ needs.author-profile-release.outputs.publication_identity }}
+          PUBLICATION_IDENTITY: ${{ needs.author-runtime-release.outputs.publication_identity }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_BASELINE_CHANNEL: ${{ needs.resolve-current-binary.outputs.baseline_channel }}
-          RELEASE_PROFILE: ${{ inputs.profile }}
-          ACTIVATION_READY: ${{ needs.author-profile-release.outputs.activation_ready }}
-        run: bash build_system/scripts/release/stage-profile-pairing.sh
+          ACTIVATION_READY: ${{ needs.author-runtime-release.outputs.activation_ready }}
+        run: bash build_system/scripts/release/stage-runtime-pairing.sh
 
-      # A channel with no package cohort yet proves the profile alone. Which
+      # A channel with no package cohort yet proves the runtime alone. Which
       # shape that is belongs to the lane, so the flag is passed rather than
       # branched on here.
-      - name: Qualify the profile assets
+      - name: Qualify the runtime assets
         env:
-          ACTIVATION_READY: ${{ needs.author-profile-release.outputs.activation_ready }}
-          RELEASE_PROFILE: ${{ inputs.profile }}
+          ACTIVATION_READY: ${{ needs.author-runtime-release.outputs.activation_ready }}
         run: >
           just qualify-assets
-          "$PWD/cache/target/candidate-profile-inputs"
-          "$RELEASE_PROFILE"
+          "$PWD/cache/target/candidate-runtime-inputs"
           "$PWD"
           "$ACTIVATION_READY"
 
-      - name: Record deferred profile staging boundary
-        if: ${{ needs.author-profile-release.outputs.activation_ready != 'true' }}
+      - name: Record deferred runtime staging boundary
+        if: ${{ needs.author-runtime-release.outputs.activation_ready != 'true' }}
         env:
-          FUNCTIONAL_READY: ${{ needs.author-profile-release.outputs.functional_ready }}
-          PRODUCT_COMPATIBLE: ${{ needs.author-profile-release.outputs.product_compatible }}
+          FUNCTIONAL_READY: ${{ needs.author-runtime-release.outputs.functional_ready }}
+          PRODUCT_COMPATIBLE: ${{ needs.author-runtime-release.outputs.product_compatible }}
         run: |
           set -euo pipefail
           [[ "$PRODUCT_COMPATIBLE" == "true" || "$PRODUCT_COMPATIBLE" == "false" ]]
           [[ "$FUNCTIONAL_READY" == "true" || "$FUNCTIONAL_READY" == "false" ]]
           [[ "$PRODUCT_COMPATIBLE" != "true" || "$FUNCTIONAL_READY" != "true" ]]
-          echo "::notice::Profile assets passed static, integrity, isolation, and x86_64 KVM boot gates."
+          echo "::notice::Runtime assets passed static, integrity, isolation, and x86_64 KVM boot gates."
           if [[ "$PRODUCT_COMPATIBLE" == "false" ]]; then
-            echo "::notice::The manifest-selected binary is outside this profile's declared compatibility range."
+            echo "::notice::The manifest-selected binary is outside this runtime's declared compatibility range."
           fi
           if [[ "$FUNCTIONAL_READY" == "false" ]]; then
             echo "::notice::The pulled package does not contain the complete functional release binary cohort."
           fi
-          echo "::notice::An activation-ready profile cannot defer complete pairing gates."
+          echo "::notice::An activation-ready runtime cannot defer complete pairing gates."
           echo "::notice::Functional and glow-up gates are deferred to release-binaries; public activation remains blocked."
 
-  author-profile-release:
-    needs: [build-assets, reuse-assets, resolve-current-binary]
-    if: ${{ always() && needs.resolve-current-binary.result == 'success' && ((needs.build-assets.result == 'success' && needs.reuse-assets.result == 'skipped') || (needs.build-assets.result == 'skipped' && needs.reuse-assets.result == 'success')) }}
+  author-runtime-release:
+    needs: [build-assets, resolve-current-binary]
     runs-on: ubuntu-latest
-    name: Author selected profile release
+    name: Author the runtime release
     outputs:
-      source_changed: ${{ steps.profile-delta.outputs.source_changed }}
-      activation_needed: ${{ steps.profile-delta.outputs.activation_needed }}
-      release_needed: ${{ steps.profile-delta.outputs.release_needed }}
       product_compatible: ${{ steps.author-release.outputs.product_compatible }}
-      functional_ready: ${{ steps.author-release.outputs.functional_ready }}
+      functional_ready: ${{ needs.resolve-current-binary.outputs.functional_ready }}
       activation_ready: ${{ steps.author-release.outputs.activation_ready }}
-      publication_identity: ${{ steps.author-release.outputs.publication_identity }}
+      publication_identity: ${{ needs.resolve-current-binary.outputs.publication_identity }}
     env:
       CHANNEL: ${{ inputs.channel }}
+      PUBLICATION_IDENTITY: ${{ needs.resolve-current-binary.outputs.publication_identity }}
+      RUNTIME_REVISION: ${{ needs.resolve-current-binary.outputs.runtime_revision }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -503,156 +467,103 @@ jobs:
           path: cache/target/assets/x86_64/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: profile-channel-source
+          name: runtime-channel-source
           path: cache/target/source-channel/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: profile-public-before-profiles
-          path: cache/target/profile-public-before/profiles/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: profile-release-selection
-          path: cache/target/
 
+      # The revision is this commit's own identity, so a re-release of an
+      # unchanged workspace version never collides with an earlier one.
       - name: Generate asset manifest
         run: |
-          cargo run -p capsem-admin -- manifest generate cache/target/assets
+          cargo run -p capsem-admin -- manifest generate cache/target/assets \
+            --version "$RUNTIME_REVISION"
 
-      - name: Verify profile release lane policy
+      - name: Verify runtime release lane policy
         run: |
           uv run --project build_system --frozen pytest \
-            tests/capsem-release/test_profile_lane_gate.py \
+            tests/capsem-release/test_runtime_lane_gate.py \
             tests/capsem-release/test_release_lane_diff_policy.py -q
 
       - name: Build complete asset channel preview
         run: |
-          PROFILE_IDENTITY=$(python3 -c 'import json; print(json.load(open("cache/target/profile-release-selection.json"))["publication_identity"])')
-          ASSET_BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$PROFILE_IDENTITY"
-          MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("cache/target/source-channel/manifest.json"))["version"])')
+          ASSET_BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$PUBLICATION_IDENTITY"
+          MANIFEST_VERSION=$(jq -er .version cache/target/source-channel/manifest.json)
           uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/cache/target/assets/manifest.json" \
             --primary-channel "$CHANNEL" \
             --assets-dir cache/target/assets \
             --asset-source-base "$ASSET_BASE" \
             --manifest-version "$MANIFEST_VERSION" \
-            --out-dir cache/target/profile-candidate \
+            --out-dir cache/target/runtime-candidate \
             --allow-mirror-missing
 
-      - name: Check selected channel profile delta
-        id: profile-delta
-        env:
-          RELEASE_PROFILE: ${{ inputs.profile }}
-        run: |
-          uv run --project build_system --frozen python build_system/scripts/release/check-profile-release-delta.py \
-            --source-manifest cache/target/source-channel/manifest.json \
-            --candidate-manifest "cache/target/profile-candidate/assets/$CHANNEL/manifest.json" \
-            --public-manifest cache/target/profile-public-before/profiles/manifest.json \
-            --channel "$CHANNEL" \
-            --profile "$RELEASE_PROFILE" \
-            --json-output cache/target/profile-release-delta/delta.json
-
-      - name: Author selected channel profile in the source manifest
+      - name: Author the runtime in the channel source manifest
         id: author-release
-        if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         env:
           FUNCTIONAL_READY: ${{ needs.resolve-current-binary.outputs.functional_ready }}
-          RELEASE_PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
-          MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("cache/target/source-channel/manifest.json"))["version"])')
-          PUBLICATION_IDENTITY=$(python3 -c 'import json; print(json.load(open("cache/target/profile-release-selection.json"))["publication_identity"])')
-          PUBLICATION_BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$PUBLICATION_IDENTITY"
-          PROFILE_VERSION=$(python3 - <<'PY'
-          import json
-          import os
-
-          channel = os.environ["CHANNEL"]
-          profile = os.environ["RELEASE_PROFILE"]
-          manifest = json.load(open(f"cache/target/profile-candidate/assets/{channel}/manifest.json"))
-          print(manifest["profiles"][profile]["revision"])
-          PY
-          )
+          MANIFEST_VERSION=$(jq -er .version cache/target/source-channel/manifest.json)
           cargo run -p capsem-admin -- release \
-            --channel "$CHANNEL" \
-            --profile "$RELEASE_PROFILE" --source-commit "$SOURCE_COMMIT" \
+            --channel "$CHANNEL" --source-commit "$SOURCE_COMMIT" \
             --manifest-path cache/target/source-channel/manifest.json \
-            --candidate-manifest "cache/target/profile-candidate/assets/$CHANNEL/manifest.json" \
-            --publication-base "$PUBLICATION_BASE" \
+            --candidate-manifest "cache/target/runtime-candidate/assets/$CHANNEL/manifest.json" \
+            --publication-base "https://github.com/$GITHUB_REPOSITORY/releases/download/$PUBLICATION_IDENTITY" \
             --manifest-version "$MANIFEST_VERSION" \
-            --profile-version "$PROFILE_VERSION" \
-            --json > cache/target/profile-release.json
-          test "$(python3 -c 'import json; print(json.load(open("cache/target/profile-release.json"))["publication_identity"])')" = "$PUBLICATION_IDENTITY"
-          PRODUCT_COMPATIBLE=$(python3 -c 'import json; print(str(json.load(open("cache/target/profile-release.json"))["compatible_with_current_binary"]).lower())')
+            --runtime-revision "$RUNTIME_REVISION" \
+            --json > cache/target/runtime-release.json
+          test "$(jq -er .publication_identity cache/target/runtime-release.json)" = "$PUBLICATION_IDENTITY"
+          PRODUCT_COMPATIBLE=$(jq -er .compatible_with_current_binary cache/target/runtime-release.json)
           ACTIVATION_READY=false
           if [[ "$PRODUCT_COMPATIBLE" == "true" && "$FUNCTIONAL_READY" == "true" ]]; then
             ACTIVATION_READY=true
           fi
           echo "product_compatible=$PRODUCT_COMPATIBLE" >> "$GITHUB_OUTPUT"
-          echo "functional_ready=$FUNCTIONAL_READY" >> "$GITHUB_OUTPUT"
           echo "activation_ready=$ACTIVATION_READY" >> "$GITHUB_OUTPUT"
-          echo "publication_identity=$PUBLICATION_IDENTITY" >> "$GITHUB_OUTPUT"
 
-      - name: Stage and verify immutable profile publication once
-        if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
-        env:
-          PUBLICATION_IDENTITY: ${{ steps.author-release.outputs.publication_identity }}
-          RELEASE_PROFILE: ${{ inputs.profile }}
+      - name: Stage and verify immutable runtime publication once
         run: |
           set -euo pipefail
-          PUBLICATION_BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$PUBLICATION_IDENTITY"
           RELEASE_DIR="cache/target/asset-release/$PUBLICATION_IDENTITY"
-          uv run --project build_system --frozen python build_system/scripts/release/stage-profile-publication.py \
+          uv run --project build_system --frozen python build_system/scripts/release/stage-runtime-publication.py \
             --manifest cache/target/source-channel/manifest.json \
-            --profile "$RELEASE_PROFILE" \
             --assets-dir cache/target/assets \
-            --config-root config \
             --release-dir "$RELEASE_DIR"
-          uv run --project build_system --frozen python build_system/scripts/release/verify-profile-publication.py \
+          uv run --project build_system --frozen python build_system/scripts/release/verify-runtime-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
-            --profile "$RELEASE_PROFILE" \
-            --publication-base "$PUBLICATION_BASE" \
+            --publication-base "https://github.com/$GITHUB_REPOSITORY/releases/download/$PUBLICATION_IDENTITY" \
             --release-dir "$RELEASE_DIR"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: authored-profile-channel-source
+          name: authored-runtime-channel-source
           path: cache/target/source-channel/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: authored-profile-candidate
-          path: cache/target/profile-candidate/
+          name: authored-runtime-candidate
+          path: cache/target/runtime-candidate/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         with:
-          name: authored-profile-publication
+          name: authored-runtime-publication
           path: cache/target/asset-release/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: profile-release-delta
-          path: cache/target/profile-release-delta/
+          name: authored-runtime-release-report
+          path: cache/target/runtime-release.json
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
-        with:
-          name: authored-profile-release-report
-          path: cache/target/profile-release.json
-
-  publish-profile-release:
-    needs: [author-profile-release, test-profile-pairing]
-    if: ${{ always() && needs.author-profile-release.outputs.release_needed == 'true' && needs.test-profile-pairing.result == 'success' }}
+  publish-runtime-release:
+    needs: [author-runtime-release, test-runtime-pairing, resolve-current-binary]
     runs-on: ubuntu-latest
-    name: Publish verified profile assets
+    name: Publish verified runtime assets
     permissions:
       actions: read
       attestations: write
       contents: write
       id-token: write
     outputs:
-      release_needed: ${{ needs.author-profile-release.outputs.release_needed }}
-      activation_ready: ${{ needs.author-profile-release.outputs.activation_ready }}
+      activation_ready: ${{ needs.author-runtime-release.outputs.activation_ready }}
     env:
       CHANNEL: ${{ inputs.channel }}
     steps:
@@ -690,65 +601,50 @@ jobs:
           path: cache/target/assets/x86_64/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: authored-profile-channel-source
+          name: authored-runtime-channel-source
           path: cache/target/source-channel/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: authored-profile-candidate
-          path: cache/target/profile-candidate/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: authored-profile-publication
+          name: authored-runtime-publication
           path: cache/target/asset-release/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: profile-release-selection
-          path: cache/target/
 
       - name: Build deployable channel from authored source manifest
-        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
+        if: ${{ needs.author-runtime-release.outputs.activation_ready == 'true' }}
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/cache/target/source-channel/manifest.json" \
             --primary-channel "$CHANNEL" \
             --assets-dir cache/target/assets \
-            --manifest-version "$(python3 -c 'import json; print(json.load(open("cache/target/source-channel/manifest.json"))["version"])')" \
-            --profile-source-root cache/target/profile-candidate \
+            --manifest-version "$(jq -er .version cache/target/source-channel/manifest.json)" \
             --out-dir cache/target/release/distribution
 
       - name: Attest VM asset provenance
         if: ${{ inputs.dry_run == false }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
-          subject-path: cache/target/asset-release/profile-*/*
+          subject-path: cache/target/asset-release/runtime-*/*
 
-      - name: Publish immutable GitHub profile release
+      - name: Publish immutable GitHub runtime release
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           GH_TOKEN: ${{ github.token }}
-          PUBLICATION_IDENTITY: ${{ needs.author-profile-release.outputs.publication_identity }}
-          RELEASE_PROFILE: ${{ inputs.profile }}
+          TAG: ${{ needs.author-runtime-release.outputs.publication_identity }}
+          RUNTIME_REVISION: ${{ needs.resolve-current-binary.outputs.runtime_revision }}
         run: |
           set -euo pipefail
-          TAG="$PUBLICATION_IDENTITY"
-          PROFILE_REVISION=$(python3 -c 'import json; print(json.load(open("cache/target/profile-release-selection.json"))["profile_revision"])')
           RELEASE_DIR="cache/target/asset-release/$TAG"
-          NOTES_FILE="cache/target/asset-release/profile-release-notes.md"
-          PUBLICATION_BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
-          uv run --project build_system --frozen python build_system/scripts/release/verify-profile-publication.py \
+          NOTES_FILE="cache/target/asset-release/runtime-release-notes.md"
+          uv run --project build_system --frozen python build_system/scripts/release/verify-runtime-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
-            --profile "$RELEASE_PROFILE" \
-            --publication-base "$PUBLICATION_BASE" \
+            --publication-base "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG" \
             --release-dir "$RELEASE_DIR"
 
           files=("$RELEASE_DIR"/*)
           test "${#files[@]}" -gt 0
-          printf '%s\n' \
-            "Immutable Capsem profile release for $CHANNEL/$RELEASE_PROFILE." \
-            > "$NOTES_FILE"
+          printf '%s\n' "Immutable Capsem $CHANNEL runtime $RUNTIME_REVISION." > "$NOTES_FILE"
 
           {
-            echo "## Immutable VM profile release"
+            echo "## Immutable VM runtime release"
             echo
             echo "- Tag: \`$TAG\`"
             echo "- Dry run: \`$DRY_RUN\`"
@@ -758,9 +654,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "$DRY_RUN" == "true" ]]; then
-            echo "Dry run: would publish immutable VM profile release $TAG"
+            echo "Dry run: would publish immutable VM runtime release $TAG"
           else
-            CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/$RELEASE_PROFILE $PROFILE_REVISION ($SOURCE_COMMIT)" \
+            CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL runtime $RUNTIME_REVISION ($SOURCE_COMMIT)" \
             CAPSEM_RELEASE_CREATE_NOTES_FILE="$NOTES_FILE" \
             CAPSEM_RELEASE_CREATE_TARGET="$SOURCE_COMMIT" \
               build_system/scripts/release/publish-immutable-release-assets.sh \
@@ -779,14 +675,14 @@ jobs:
           path: cache/target/asset-release/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
+        if: ${{ needs.author-runtime-release.outputs.activation_ready == 'true' }}
         with:
           name: asset-channel-preview
           path: cache/target/release/distribution/
 
   deploy-channel:
-    needs: publish-profile-release
-    if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.release_needed == 'true' && needs.publish-profile-release.outputs.activation_ready == 'true' }}
+    needs: publish-runtime-release
+    if: ${{ inputs.dry_run == false && needs.publish-runtime-release.outputs.activation_ready == 'true' }}
     permissions:
       actions: read
       contents: read

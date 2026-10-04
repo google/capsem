@@ -1,11 +1,10 @@
-"""Build every profile's VM assets, then boot each one and prove it works.
+"""Build the VM runtime assets, then boot them and prove they work.
 
 Building is `assetlanes`; this is what happens either side of it. Before: check
 that Docker can execute the *other* architecture at all, because discovering
-otherwise an hour in wastes the whole matrix. After, per profile: merge both
-lanes into one asset tree, generate and check its manifest, materialize the
-runtime profiles against it, and boot a real VM through
-`prove-installed-shell.py`.
+otherwise an hour in wastes the whole matrix. After: merge both lanes into one
+asset tree, generate and check its manifest, materialize the runtime
+configuration against it, and boot a real VM through `prove-installed-shell.py`.
 
 Two details are load-bearing and neither is obvious.
 
@@ -28,7 +27,7 @@ from pathlib import Path
 
 from . import assetevidence, crossexec, imagebases, pidfiles
 from . import config as gate_config
-from .assetlanes import AssetLanes, Profile, discover_profiles, prepare_workspace
+from .assetlanes import AssetLanes, prepare_workspace
 from .cachecontrol import CacheControl
 from .context import Context
 from .errors import GateError
@@ -47,7 +46,7 @@ from .service import launch as launch_service
 
 
 class AssetGate:
-    """One run of the VM asset build and boot proof, for every profile."""
+    """One run of the VM runtime asset build and boot proof."""
 
     def __init__(self, runner: Runner, *, sleep=None) -> None:
         self._runner = runner
@@ -60,19 +59,16 @@ class AssetGate:
 
     @property
     def build_config(self):
-        """The exact image inputs copied into every materialized profile."""
+        """The exact image inputs the runtime is built from."""
         return imagebases.build_config(self._config)
 
     # -- preflight ---------------------------------------------------------
 
-    def _profile_root(self, profile: Profile) -> Path:
-        return self.test_root / profile.name
-
-    def _merge_lanes(self, profile: Profile, lanes: AssetLanes) -> Path:
-        assets = self._profile_root(profile) / self._assets.merged_assets_dir
+    def _merge_lanes(self, lanes: AssetLanes) -> Path:
+        assets = self.test_root / self._assets.merged_assets_dir
         make_dir(assets)
         for arch in self._config.architectures.values():
-            built = lanes.lane_assets(profile, arch) / arch.name
+            built = lanes.lane_assets(arch) / arch.name
             merge_tree(built, assets / arch.name)
         return assets
 
@@ -96,16 +92,22 @@ class AssetGate:
         self._runner.run(self._admin("manifest", "check", str(manifest)))
         return manifest.resolve().as_uri()
 
-    def _materialize(self, profile: Profile, assets: Path, manifest_uri: str) -> Path:
-        """Materialize every runtime profile against this profile's assets."""
-        output = self._profile_root(profile) / self._assets.merged_config_dir
-        for runtime in discover_profiles(self._config):
+    def _materialize(self, assets: Path, manifest_uri: str) -> Path:
+        """Materialize the service's runtime configuration against these assets.
+
+        The service still reads a pinned catalog under `profiles/` until it
+        resolves the runtime from the manifest alone; removing the catalog
+        and `capsem-admin profile materialize` together is the last step of
+        the profile removal (#289).
+        """
+        output = self.test_root / self._assets.merged_config_dir
+        for manifest in sorted(self._config.root.glob(self._assets.profiles_glob)):
             self._runner.run(
                 self._admin(
                     "profile",
                     "materialize",
                     "--profile",
-                    str(runtime.manifest),
+                    str(manifest),
                     "--config-root",
                     self._assets.merged_config_dir,
                     "--manifest",
@@ -122,12 +124,8 @@ class AssetGate:
 
     # -- the boot proof ----------------------------------------------------
 
-    def _prove(self, profile: Profile, assets: Path, config_root: Path) -> None:
-        home = (
-            self._profile_root(profile)
-            / self._assets.profile_home_dir
-            / self._config.install.capsem_home
-        )
+    def _prove(self, assets: Path, config_root: Path) -> None:
+        home = self.test_root / self._assets.profile_home_dir / self._config.install.capsem_home
         make_dir(home)
         # AF_UNIX paths must stay under macOS SUN_LEN once a VM owner appends
         # `instances/<uuid>-handoff.sock` -- 59 characters -- and test_root is
@@ -136,7 +134,7 @@ class AssetGate:
         # `/var/folders/<11>/<24>/T/` and blows the 104-byte limit on its own.
         template = Path(self._assets.run_dir_template)
         run_dir = scratch_dir(template.name.split(".")[0] + ".", template.parent)
-        marker = f"CAPSEM_ASSET_{profile.name.replace('-', '_')}_{self.host_arch.name}_SHELL_OK"
+        marker = f"CAPSEM_ASSET_RUNTIME_{self.host_arch.name}_SHELL_OK"
 
         names = self._config.environment
         environment = {
@@ -168,9 +166,7 @@ class AssetGate:
                 "--marker",
                 marker,
                 "--session-name",
-                f"asset-{profile.name}-{self.host_arch.name}",
-                "--profile",
-                profile.name,
+                f"asset-runtime-{self.host_arch.name}",
                 "--timeout",
                 self._assets.shell_proof_timeout_seconds,
                 env=environment,
@@ -183,7 +179,7 @@ class AssetGate:
             assetevidence.preserve(
                 self._runner,
                 self._config,
-                destination=self._profile_root(profile) / self._assets.failure_evidence_dir,
+                destination=self.test_root / self._assets.failure_evidence_dir,
                 run_dir=run_dir,
             )
             raise
@@ -191,41 +187,33 @@ class AssetGate:
             pidfiles.stop_gate_service(run_dir, self._config.pidfiles)
             discard(run_dir)
 
-    def _select_base(self, profiles: list[Profile]) -> None:
-        """Make later local phases consume the base profile IronBank proved.
+    def _select(self) -> None:
+        """Make later local phases consume the runtime IronBank proved.
 
-        The per-profile trees stay private so functional can select each one.
-        The canonical asset root is only a relative selector while this private
-        checkout is alive; prefix export materializes it back into the caller.
-        Generated profile configuration is small and copied, so it never
-        becomes a dangling link when the private asset tree is reclaimed.
+        The lane trees stay private. The canonical asset root is only a
+        relative selector while this private checkout is alive; prefix export
+        materializes it back into the caller. Generated configuration is small
+        and copied, so it never becomes a dangling link when the private asset
+        tree is reclaimed.
         """
-        base_name = self._config.suites.pytest.base_profile
-        base = next((profile for profile in profiles if profile.name == base_name), None)
-        if base is None:
-            raise GateError(f"base profile {base_name!r} was not built by the asset gate")
-
-        profile_root = self._profile_root(base)
-        assets = profile_root / self._assets.merged_assets_dir
-        config_root = profile_root / self._assets.merged_config_dir
+        assets = self.test_root / self._assets.merged_assets_dir
+        config_root = self.test_root / self._assets.merged_config_dir
         profiles_dir = config_root / self._assets.materialized_profiles_dir
         manifest = assets / self._config.install.manifest_name
         config_manifest = (
             config_root / self._assets.merged_assets_dir / self._config.install.manifest_name
         )
         if not manifest.is_file():
-            raise GateError(f"verified base asset manifest is missing: {manifest}")
+            raise GateError(f"verified asset manifest is missing: {manifest}")
         if not profiles_dir.is_dir():
-            raise GateError(f"verified base profile catalog is missing: {profiles_dir}")
+            raise GateError(f"verified runtime configuration is missing: {profiles_dir}")
         if not config_manifest.is_file():
-            raise GateError(f"verified base config manifest is missing: {config_manifest}")
+            raise GateError(f"verified config manifest is missing: {config_manifest}")
         if config_manifest.read_bytes() != manifest.read_bytes():
-            raise GateError(
-                f"verified base config manifest {config_manifest} does not match {manifest}"
-            )
+            raise GateError(f"verified config manifest {config_manifest} does not match {manifest}")
         for arch in self._config.architectures:
             if not (assets / arch).is_dir():
-                raise GateError(f"verified base assets are missing architecture {arch}: {assets}")
+                raise GateError(f"verified assets are missing architecture {arch}: {assets}")
 
         canonical_assets = self._config.path(self._config.functional.assets_dir)
         relative = os.path.relpath(assets, canonical_assets.parent)
@@ -238,9 +226,7 @@ class AssetGate:
 
         canonical_config = self._config.path(self._config.functional.config_root)
         copy_tree(config_root, canonical_config)
-        self._runner.note(
-            f"Selected Ironbank profile {base_name} for build-chain, packaging, and glow-up."
-        )
+        self._runner.note("Selected the Ironbank runtime for build-chain, packaging, and glow-up.")
 
     def preflight(self) -> None:
         """Refuse an impossible build and clear derived output, retaining lane caches."""
@@ -248,7 +234,7 @@ class AssetGate:
         # Enforce the checked-in Docker contract while retaining the warm,
         # protected dual-architecture BuildKit cohort.
         self._cache.enforce("docker", "assets")
-        prepare_workspace(self._config, discover_profiles(self._config))
+        prepare_workspace(self._config)
         self._cache.enforce("assets", "active VM asset generations")
 
     def prefetch(self) -> None:
@@ -256,10 +242,8 @@ class AssetGate:
         imagebases.prefetch(self._runner, self._config)
 
     def lane(self, arch_name: str) -> None:
-        """One architecture's builds, across every profile."""
-        AssetLanes(self._runner, self._config, discover_profiles(self._config)).build(
-            self._config.arch(arch_name)
-        )
+        """One architecture's build."""
+        AssetLanes(self._runner, self._config).build(self._config.arch(arch_name))
 
     def sweep(self) -> None:
         """Containers the lanes may have left behind."""
@@ -273,17 +257,9 @@ class AssetGate:
         )
 
     def assemble(self) -> None:
-        """Merge each profile's lanes, publish, materialise, and boot it."""
-        profiles = discover_profiles(self._config)
-        lanes = AssetLanes(self._runner, self._config, profiles)
-        for profile in profiles:
-            assets = self._merge_lanes(profile, lanes)
-            manifest_uri = self._publish(assets)
-            config_root = self._materialize(profile, assets, manifest_uri)
-            self._prove(profile, assets, config_root)
-
-        self._select_base(profiles)
-
-        self._runner.note(
-            "Ironbank VM asset build and boot gate passed for every profile and architecture."
-        )
+        """Merge both lanes, publish, materialise, and boot the runtime."""
+        assets = self._merge_lanes(AssetLanes(self._runner, self._config))
+        config_root = self._materialize(assets, self._publish(assets))
+        self._prove(assets, config_root)
+        self._select()
+        self._runner.note("Ironbank VM asset build and boot gate passed for every architecture.")

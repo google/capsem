@@ -214,16 +214,14 @@ def test_a_resumable_receipt_symlink_is_refused(tmp_path: Path) -> None:
         buildcache.salvage(config, prefix_root)
 
 
-def test_vm_cache_identity_and_profile_cannot_escape_the_typed_asset_store(
-    tmp_path: Path,
-) -> None:
+def test_vm_cache_identity_cannot_escape_the_typed_asset_store(tmp_path: Path) -> None:
     from capsem_builder.gate import assetstore
 
     config = _config(tmp_path)
     with pytest.raises(GateError, match="canonical digest"):
-        assetstore.lane(config, "../outside", profile="code", arch=config.arch("x86_64"))
-    with pytest.raises(GateError, match="plain name"):
-        assetstore.lane(config, "a" * 64, profile="../outside", arch=config.arch("x86_64"))
+        assetstore.lane(config, "../outside", arch=config.arch("x86_64"))
+    lane = assetstore.lane(config, "a" * 64, arch=config.arch("x86_64"))
+    assert lane.is_relative_to(assetstore.root(config))
 
 
 def test_common_registry_evicts_old_asset_generation_but_preserves_selector(
@@ -241,12 +239,12 @@ def test_common_registry_evicts_old_asset_generation_but_preserves_selector(
     old = generations / ("a" * 64)
     current = generations / ("b" * 64)
     for path in (old, current):
-        payload = path / "code" / "build-x86_64" / "rootfs.erofs"
+        payload = path / "build-x86_64" / "rootfs.erofs"
         payload.parent.mkdir(parents=True)
         payload.write_bytes(b"vm")
-    selector = paths.root / "target" / "tests" / "ironbank" / "code" / "build-x86_64"
+    selector = paths.root / "target" / "tests" / "ironbank" / "build-x86_64"
     selector.parent.mkdir(parents=True)
-    selector.symlink_to(current / "code" / "build-x86_64")
+    selector.symlink_to(current / "build-x86_64")
 
     registry = CacheRegistry(paths, configured)
     (result,) = registry.mutate(
@@ -279,7 +277,6 @@ def test_an_asset_selector_outside_the_vm_cache_has_no_valid_metadata(
         json.dumps(
             {
                 "schema": assetreceipt.SCHEMA,
-                "profile": "code",
                 "architecture": arch.name,
                 "stage": assetreceipt.BUILD_STAGE,
                 "input_digest": identity,
@@ -291,7 +288,7 @@ def test_an_asset_selector_outside_the_vm_cache_has_no_valid_metadata(
         ),
         encoding="utf-8",
     )
-    selector = config.path(config.assets.test_root) / "code" / "build-x86_64"
+    selector = config.path(config.assets.test_root) / "build-x86_64"
     selector.parent.mkdir(parents=True)
     selector.symlink_to(outside)
 
@@ -315,13 +312,13 @@ def test_equal_inputs_in_two_prefixes_select_one_vm_image_generation(
             (tmp_path / "config" / "cache.toml").read_bytes()
         )
         config = base.model_copy(update={"root": checkout})
-        assetstore.materialize(config, ("code",), identity)
-        selected.append(config.path(config.assets.test_root) / "code" / "build-x86_64")
+        assetstore.materialize(config, identity)
+        selected.append(config.path(config.assets.test_root) / "build-x86_64")
 
     assert selected[0].resolve() == selected[1].resolve()
     assert (
         selected[0].resolve()
-        == assetstore.lane(base, identity, profile="code", arch=base.arch("x86_64")).resolve()
+        == assetstore.lane(base, identity, arch=base.arch("x86_64")).resolve()
     )
 
 

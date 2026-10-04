@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PROFILE_BASE = "https://releases.acme.test/acme/"
+RUNTIME_BASE = "https://releases.acme.test/acme/"
 SOURCE_COMMIT = "1" * 40
 FIXTURE_GRAPH = (
     PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
@@ -33,41 +33,43 @@ def _write_authoring_inputs(tmp_path: Path) -> tuple[Path, dict, Path, dict, dic
         "version": "1.0.0",
         "status": "current",
         "packages": stable["packages"] + nightly["packages"],
-        "profiles": {},
     }
-    corporate_profiles = deepcopy(stable["profiles"])
-    _rewrite_profile_references(corporate_profiles)
-    profile_source = {
+    corporate_runtime = deepcopy(stable["runtime"])
+    _rewrite_runtime_references(corporate_runtime)
+    runtime_source = {
         "version": "1.0.0",
         "status": "current",
         "packages": deepcopy(nightly["packages"]),
-        "profiles": corporate_profiles,
+        "runtime": corporate_runtime,
     }
     official_path = tmp_path / "official-capsem.json"
-    profile_path = tmp_path / "acme-profiles.json"
+    runtime_path = tmp_path / "acme-runtime.json"
     official_path.write_text(json.dumps(official), encoding="utf-8")
-    profile_path.write_text(json.dumps(profile_source), encoding="utf-8")
-    return official_path, official, profile_path, profile_source, stable
+    runtime_path.write_text(json.dumps(runtime_source), encoding="utf-8")
+    return official_path, official, runtime_path, runtime_source, stable
 
 
-def _rewrite_profile_references(value: object) -> None:
+def _rewrite_runtime_references(value: object) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
             if key in {"url", "evidence"} and isinstance(child, str):
-                value[key] = PROFILE_BASE + Path(child).name
+                # Keep the architecture directory: a runtime URL names its arch.
+                value[key] = RUNTIME_BASE + "/".join(Path(child).parts[-2:])
             else:
-                _rewrite_profile_references(child)
+                _rewrite_runtime_references(child)
     elif isinstance(value, list):
         for child in value:
-            _rewrite_profile_references(child)
+            _rewrite_runtime_references(child)
 
 
-def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Path) -> None:
-    official_path, official, profile_path, profile_source, stable = _write_authoring_inputs(
+def test_corporate_manifest_contract_supports_latest_and_exact_pin(
+    tmp_path: Path,
+) -> None:
+    official_path, official, runtime_path, runtime_source, stable = _write_authoring_inputs(
         tmp_path
     )
     official_before = official_path.read_bytes()
-    profile_before = profile_path.read_bytes()
+    runtime_before = runtime_path.read_bytes()
     output_root = tmp_path / "corporate"
 
     latest = _run_admin(
@@ -79,10 +81,10 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
         "engineering",
         "--official-manifest",
         str(official_path),
-        "--profile-manifest",
-        str(profile_path),
-        "--profile-base",
-        PROFILE_BASE,
+        "--runtime-manifest",
+        str(runtime_path),
+        "--runtime-base",
+        RUNTIME_BASE,
         "--binary",
         "latest",
         "--source-commit",
@@ -103,17 +105,17 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
     assert {package["version"] for package in latest_manifest["packages"]} == {
         "1.5.0-nightly.20260702"
     }
-    expected_profiles = deepcopy(profile_source["profiles"])
-    for profile in expected_profiles.values():
-        profile["source_commit"] = SOURCE_COMMIT
-    assert latest_manifest["profiles"] == expected_profiles
+    expected_runtime = deepcopy(runtime_source["runtime"])
+    expected_runtime["source_commit"] = SOURCE_COMMIT
+    assert latest_manifest["runtime"] == expected_runtime
+    assert latest_report["runtime_revision"] == expected_runtime["revision"]
     assert "source_commit" not in latest_manifest
     assert all("source_commit" not in package for package in latest_manifest["packages"])
 
-    pinned_profile_source = deepcopy(profile_source)
-    pinned_profile_source["packages"] = deepcopy(stable["packages"])
-    pinned_profile_path = tmp_path / "acme-pinned-profiles.json"
-    pinned_profile_path.write_text(json.dumps(pinned_profile_source), encoding="utf-8")
+    pinned_runtime_source = deepcopy(runtime_source)
+    pinned_runtime_source["packages"] = deepcopy(stable["packages"])
+    pinned_runtime_path = tmp_path / "acme-pinned-runtime.json"
+    pinned_runtime_path.write_text(json.dumps(pinned_runtime_source), encoding="utf-8")
     pinned = _run_admin(
         "manifest",
         "corporate",
@@ -123,10 +125,10 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
         "production",
         "--official-manifest",
         str(official_path),
-        "--profile-manifest",
-        str(pinned_profile_path),
-        "--profile-base",
-        PROFILE_BASE,
+        "--runtime-manifest",
+        str(pinned_runtime_path),
+        "--runtime-base",
+        RUNTIME_BASE,
         "--binary",
         "1.4.0",
         "--source-commit",
@@ -145,17 +147,17 @@ def test_corporate_manifest_contract_supports_latest_and_exact_pin(tmp_path: Pat
     assert pinned_report["resolved_binary_version"] == "1.4.0"
     assert pinned_manifest["packages"] == stable["packages"]
     assert official_path.read_bytes() == official_before
-    assert profile_path.read_bytes() == profile_before
-    assert official["profiles"] == {}
+    assert runtime_path.read_bytes() == runtime_before
+    assert "runtime" not in official
 
 
 def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> None:
-    official_path, _, profile_path, profile_source, _ = _write_authoring_inputs(tmp_path)
+    official_path, _, runtime_path, runtime_source, _ = _write_authoring_inputs(tmp_path)
     output_root = tmp_path / "corporate"
 
-    tampered = deepcopy(profile_source)
+    tampered = deepcopy(runtime_source)
     tampered["packages"][0]["digest"]["sha256"] = "f" * 64
-    tampered_path = tmp_path / "tampered-profiles.json"
+    tampered_path = tmp_path / "tampered-runtime.json"
     tampered_path.write_text(json.dumps(tampered), encoding="utf-8")
     binary_write = _run_admin(
         "manifest",
@@ -166,10 +168,10 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
         "engineering",
         "--official-manifest",
         str(official_path),
-        "--profile-manifest",
+        "--runtime-manifest",
         str(tampered_path),
-        "--profile-base",
-        PROFILE_BASE,
+        "--runtime-base",
+        RUNTIME_BASE,
         "--binary",
         "latest",
         "--source-commit",
@@ -181,7 +183,11 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
     assert "may reference only the selected official packages" in binary_write.stderr
     assert not (output_root / "acme" / "engineering" / "manifest.json").exists()
 
-    for corporation, channel in (("acme", "stable"), ("acme", "nightly"), ("capsem", "corp")):
+    for corporation, channel in (
+        ("acme", "stable"),
+        ("acme", "nightly"),
+        ("capsem", "corp"),
+    ):
         first_party_write = _run_admin(
             "manifest",
             "corporate",
@@ -191,10 +197,10 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
             channel,
             "--official-manifest",
             str(official_path),
-            "--profile-manifest",
-            str(profile_path),
-            "--profile-base",
-            PROFILE_BASE,
+            "--runtime-manifest",
+            str(runtime_path),
+            "--runtime-base",
+            RUNTIME_BASE,
             "--binary",
             "latest",
             "--source-commit",
@@ -214,10 +220,10 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
         "engineering",
         "--official-manifest",
         str(official_path),
-        "--profile-manifest",
-        str(profile_path),
-        "--profile-base",
-        PROFILE_BASE,
+        "--runtime-manifest",
+        str(runtime_path),
+        "--runtime-base",
+        RUNTIME_BASE,
         "--binary",
         "9.9.9",
         "--source-commit",
@@ -228,13 +234,13 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
     assert unsupported_pin.returncode != 0
     assert "official manifest does not publish Capsem 9.9.9" in unsupported_pin.stderr
 
-    foreign_profile = deepcopy(profile_source)
-    foreign_profile["profiles"]["code"]["architectures"][0]["config"][0]["url"] = (
-        "https://release.capsem.org/profiles/code.toml"
+    foreign_runtime = deepcopy(runtime_source)
+    foreign_runtime["runtime"]["architectures"][0]["images"][0]["url"] = (
+        "https://release.capsem.org/runtime/vmlinuz"
     )
-    foreign_profile_path = tmp_path / "foreign-profile.json"
-    foreign_profile_path.write_text(json.dumps(foreign_profile), encoding="utf-8")
-    foreign_profile_write = _run_admin(
+    foreign_runtime_path = tmp_path / "foreign-runtime.json"
+    foreign_runtime_path.write_text(json.dumps(foreign_runtime), encoding="utf-8")
+    foreign_runtime_write = _run_admin(
         "manifest",
         "corporate",
         "--corporation",
@@ -243,10 +249,10 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
         "security",
         "--official-manifest",
         str(official_path),
-        "--profile-manifest",
-        str(foreign_profile_path),
-        "--profile-base",
-        PROFILE_BASE,
+        "--runtime-manifest",
+        str(foreign_runtime_path),
+        "--runtime-base",
+        RUNTIME_BASE,
         "--binary",
         "latest",
         "--source-commit",
@@ -254,13 +260,13 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
         "--output-root",
         str(output_root),
     )
-    assert foreign_profile_write.returncode != 0
-    assert "outside the owned profile base" in foreign_profile_write.stderr
+    assert foreign_runtime_write.returncode != 0
+    assert "outside the owned runtime base" in foreign_runtime_write.stderr
     assert not (output_root / "acme" / "security" / "manifest.json").exists()
 
-    incompatible = deepcopy(profile_source)
-    incompatible["profiles"]["code"]["min_capsem_version"] = "9.0.0"
-    incompatible_path = tmp_path / "incompatible-profile.json"
+    incompatible = deepcopy(runtime_source)
+    incompatible["runtime"]["min_capsem_version"] = "9.0.0"
+    incompatible_path = tmp_path / "incompatible-runtime.json"
     incompatible_path.write_text(json.dumps(incompatible), encoding="utf-8")
     incompatible_selection = _run_admin(
         "manifest",
@@ -271,10 +277,10 @@ def test_corporate_manifest_contract_rejects_foreign_writes(tmp_path: Path) -> N
         "research",
         "--official-manifest",
         str(official_path),
-        "--profile-manifest",
+        "--runtime-manifest",
         str(incompatible_path),
-        "--profile-base",
-        PROFILE_BASE,
+        "--runtime-base",
+        RUNTIME_BASE,
         "--binary",
         "latest",
         "--source-commit",

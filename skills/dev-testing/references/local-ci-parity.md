@@ -7,7 +7,7 @@ Reference for /dev-testing: every portable release gate must be owned by just te
 ### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate must be owned by
-`just test`. Local development rebuilds every package and every profile, then
+`just test`. Local development rebuilds every package and the runtime, then
 runs the complete gate. Release CI calls the same checked-in modules while
 building only the lane-owned artifact family and resolving the unchanged
 family from the selected channel manifest. Specialized CI jobs may provide
@@ -58,7 +58,7 @@ This source guard is a release contract, not a style check: user-facing and
 profile-scoped requests must obtain profile ids from arguments or the installed
 catalog, package rails must materialize the catalog, native installers must use
 packaged manifest metadata without a stable/nightly fallback, and both release
-commands must bind selection to explicit channel/profile inputs. Extend the
+commands must bind selection to an explicit channel input. Extend the
 guarded profile terms during renames; keep `code`, `co-work`, `cowork`,
 `terminal`, `termional`, and `gui` until every migration path is complete.
 Because it runs before the expensive test stages, the guard must use only
@@ -79,9 +79,9 @@ distinct schemas even when they share the name `manifest.json`.
 This includes workspace/runtime tests, Rust and Python coverage floors,
 `capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
 web app, docs, marketing, and release-site validation, and the Docker/systemd Linux
-package install and guest-shell proof. It also includes the full profile-owned
-VM asset matrix: `just test` calls `just _gate-assets`, which rebuilds every
-checked-in profile for arm64 and x86_64 through `just _build-kernel` and
+package install and guest-shell proof. It also includes the full
+VM runtime asset matrix: `just test` calls `just _gate-assets`, which rebuilds
+the runtime for arm64 and x86_64 through `just _build-kernel` and
 `just _build-rootfs`, validates the release payload and manifest, and boots each
 host-architecture result to a real guest-shell marker. Truly non-portable
 boundaries remain explicit final gates: Apple signing/notarization, hosted KVM,
@@ -94,7 +94,7 @@ similar commands. If CI calls a `just` recipe or checked-in script, local proof
 must call that same recipe or script; if a requirement is implemented as a
 shared shell function, both paths must execute that function.
 
-Generated release graphs and their materialized profile artifacts must come
+Generated release graphs and their runtime artifacts must come
 from the same source snapshot. The local gate qualifies uncommitted candidate
 bytes from the worktree; it must never generate descriptors from the worktree
 and then fetch artifact bytes from `HEAD`. Production release workflows keep

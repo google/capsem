@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn assets_channel_build_externalizes_shared_blobs_but_owns_profile_blobs() {
+fn assets_channel_build_externalizes_runtime_blobs() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let out_dir = temp.path().join("cache/target/release/distribution");
@@ -10,7 +10,6 @@ fn assets_channel_build_externalizes_shared_blobs_but_owns_profile_blobs() {
     let report = build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -21,7 +20,11 @@ fn assets_channel_build_externalizes_shared_blobs_but_owns_profile_blobs() {
 
     assert_eq!(report.copied_assets, 0);
     assert!(!out_dir.join("assets/releases").exists());
-    assert!(out_dir.join("profiles/releases/stable").is_dir());
+    assert!(
+        !out_dir.join("runtime/releases").exists(),
+        "an externalized runtime publishes no local blobs and no profile config"
+    );
+    assert!(!out_dir.join("profiles").exists());
     let channel_manifest: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out_dir.join("assets/stable/manifest.json")).unwrap())
             .expect("channel manifest parses");
@@ -31,11 +34,10 @@ fn assets_channel_build_externalizes_shared_blobs_but_owns_profile_blobs() {
     assert_eq!(health["urls"]["asset_base"].as_str(), Some(asset_base));
     let health_files = health["assets"]["files"].as_array().expect("asset files");
     assert!(health_files.iter().any(|file| file["url"].as_str() == Some(rootfs_url)));
-    assert!(
-        serde_json::to_string(&channel_manifest)
-            .expect("serialize channel manifest")
-            .contains("/profiles/releases/stable/code/"),
-        "selected channel manifest should carry channel/profile-owned URLs"
+    assert_eq!(
+        channel_manifest["runtime"]["architectures"][0]["images"][2]["url"].as_str(),
+        Some(rootfs_url),
+        "the runtime names the externally published image"
     );
     check_assets_channel(&out_dir, "stable").expect("externalized channel checks");
 }
@@ -45,12 +47,10 @@ fn assets_channel_check_rejects_bad_health_schema() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let assets_dir = temp.path().join("assets");
-    let profiles_dir = repo_config_profiles_dir();
     let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &assets_dir,
-        &profiles_dir,
         "stable",
         "1.0.2",
         &out_dir,
@@ -81,7 +81,6 @@ fn assets_channel_check_allows_package_owned_sbom_without_host_sbom_summary() {
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -113,7 +112,6 @@ fn assets_channel_check_rejects_missing_asset_release_date() {
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -148,7 +146,6 @@ fn assets_channel_check_rejects_missing_evidence_vm_obom() {
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -179,7 +176,6 @@ fn assets_channel_check_rejects_missing_evidence_vm_attestation() {
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -220,7 +216,6 @@ fn assets_channel_check_rejects_missing_vm_attestation_predicate() {
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -261,7 +256,6 @@ fn assets_channel_check_rejects_missing_host_sbom_attestation() {
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -328,7 +322,6 @@ fn assets_channel_check_rejects_host_sbom_attestation_missing_package_subject() 
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -371,7 +364,6 @@ fn assets_channel_check_rejects_attestation_without_verification_metadata() {
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -404,12 +396,10 @@ fn assets_channel_check_rejects_missing_current_asset_blob() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let assets_dir = temp.path().join("assets");
-    let profiles_dir = repo_config_profiles_dir();
     let out_dir = temp.path().join("cache/target/release/distribution");
     build_assets_channel(
         &file_url(&manifest_path),
         &assets_dir,
-        &profiles_dir,
         "stable",
         "1.0.2",
         &out_dir,
@@ -430,12 +420,10 @@ fn assets_channel_rejects_unsafe_channel_names() {
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let manifest_url = file_url(&manifest_path);
     let assets_dir = temp.path().join("assets");
-    let profiles_dir = repo_config_profiles_dir();
     for channel in ["../stable", "stable.v1", "stable channel", "<stable>"] {
         let error = build_assets_channel(
             &manifest_url,
             &assets_dir,
-            &profiles_dir,
             channel,
             "1.0.2",
             &temp.path().join("cache/target/release/distribution"),
@@ -455,7 +443,6 @@ fn assets_channel_manifest_source_must_be_url() {
     let error = build_assets_channel(
         &manifest_path.display().to_string(),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &temp.path().join("cache/target/release/distribution"),

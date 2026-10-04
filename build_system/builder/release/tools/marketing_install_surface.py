@@ -51,9 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 1:
         raise SystemExit(f"usage: {Path(sys.argv[0]).name} <rendered-homepage>")
-    validate_rendered_marketing_install_surface(
-        Path(args[0]).read_text(encoding="utf-8")
-    )
+    validate_rendered_marketing_install_surface(Path(args[0]).read_text(encoding="utf-8"))
     return 0
 
 

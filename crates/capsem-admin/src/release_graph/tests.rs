@@ -24,7 +24,7 @@ fn software_row() -> SoftwareInventoryRow {
         version: "3.12.11".to_string(),
         source: "apt".to_string(),
         architecture: Architecture::Arm64,
-        evidence: "/profiles/releases/1.0.0/co-work/apt-packages.txt".to_string(),
+        evidence: "/runtime/releases/stable/1.0.0/arm64/software-inventory.json".to_string(),
         digest: digest_set(),
     }
 }
@@ -179,19 +179,19 @@ fn release_graph_channels_catalog_rejects_bad_digest_shape() {
 }
 
 #[test]
-fn release_graph_digest_verifier_rejects_tampered_profile_ref() {
-    let bytes = br#"{"id":"co-work","version":"1.2.0"}"#;
+fn release_graph_digest_verifier_rejects_tampered_runtime_ref() {
+    let bytes = br#"{"revision":"1.2.0"}"#;
     let digest = DigestSet {
         sha256: format!("{:x}", Sha256::digest(bytes)),
         blake3: blake3::hash(bytes).to_hex().to_string(),
     };
 
     digest
-        .verify_bytes(bytes, "profile co-work")
+        .verify_bytes(bytes, "runtime 1.2.0")
         .expect("original bytes verify");
     let error = digest
-        .verify_bytes(br#"{"id":"co-work","version":"1.2.1"}"#, "profile co-work")
-        .expect_err("tampered profile ref is rejected");
+        .verify_bytes(br#"{"revision":"1.2.1"}"#, "runtime 1.2.0")
+        .expect_err("tampered runtime ref is rejected");
     assert!(error.to_string().contains("sha256 mismatch"), "{error}");
 }
 
@@ -281,8 +281,10 @@ fn package_inventory_rows_are_separate_from_binary_rows() {
     };
     let manifest = ReleaseManifest {
         version: "1.4.0".to_string(),
+        channel: "stable".to_string(),
         status: Status::Current,
         packages: vec![PackageInventoryRow {
+            id: "capsem-package".to_string(),
             name: "Capsem-1.4.0.pkg".to_string(),
             version: "1.4.0".to_string(),
             source_commit: None,
@@ -296,11 +298,14 @@ fn package_inventory_rows_are_separate_from_binary_rows() {
             binaries: vec![binary],
             evidence: vec![EvidenceRef {
                 kind: "sbom".to_string(),
+                name: None,
                 url: "/packages/stable/1.4.0/capsem-1-4-0-pkg-sbom.spdx.json".to_string(),
+                bytes: 1,
                 digest: digest_set(),
+                status: Status::Current,
             }],
         }],
-        profiles: BTreeMap::new(),
+        runtime: None,
     };
 
     manifest
@@ -311,54 +316,9 @@ fn package_inventory_rows_are_separate_from_binary_rows() {
 }
 
 #[test]
-fn release_graph_source_commit_is_optional_for_legacy_graphs_but_strict_when_present() {
+fn release_graph_source_commit_belongs_only_to_package_and_runtime_families() {
     let package = PackageInventoryRow {
-        name: "Capsem-1.4.0.pkg".to_string(),
-        version: "1.4.0".to_string(),
-        source_commit: None,
-        kind: PackageKind::MacosPkg,
-        platform: "macos".to_string(),
-        architecture: PackageArchitecture::Arm64,
-        url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
-        bytes: 42,
-        digest: digest_set(),
-        status: Status::Current,
-        binaries: Vec::new(),
-        evidence: Vec::new(),
-    };
-    let profile = profile_with_image_artifacts("1.0.0", Vec::new());
-
-    let package_legacy = serde_json::to_value(&package).expect("serialize package");
-    let profile_legacy = serde_json::to_value(&profile).expect("serialize profile");
-    assert!(package_legacy.get("source_commit").is_none());
-    assert!(profile_legacy.get("source_commit").is_none());
-    serde_json::from_value::<PackageInventoryRow>(package_legacy.clone())
-        .expect("legacy package without source commit remains readable");
-    serde_json::from_value::<ProfileDocument>(profile_legacy.clone())
-        .expect("legacy profile without source commit remains readable");
-
-    for invalid in [
-        serde_json::Value::Null,
-        serde_json::json!("A".repeat(40)),
-        serde_json::json!("a".repeat(39)),
-        serde_json::json!("main"),
-        serde_json::json!(format!("{} ", "a".repeat(40))),
-    ] {
-        let mut package_value = package_legacy.clone();
-        package_value["source_commit"] = invalid.clone();
-        serde_json::from_value::<PackageInventoryRow>(package_value)
-            .expect_err("malformed package source commit must fail");
-
-        let mut profile_value = profile_legacy.clone();
-        profile_value["source_commit"] = invalid;
-        serde_json::from_value::<ProfileDocument>(profile_value)
-            .expect_err("malformed profile source commit must fail");
-    }
-}
-
-#[test]
-fn release_graph_source_commit_belongs_only_to_package_and_profile_families() {
-    let package = PackageInventoryRow {
+        id: "capsem-package".to_string(),
         name: "Capsem-1.4.0.pkg".to_string(),
         version: "1.4.0".to_string(),
         source_commit: None,
@@ -374,9 +334,10 @@ fn release_graph_source_commit_belongs_only_to_package_and_profile_families() {
     };
     let manifest = ReleaseManifest {
         version: "1.4.0".to_string(),
+        channel: "stable".to_string(),
         status: Status::Current,
         packages: vec![package],
-        profiles: BTreeMap::new(),
+        runtime: None,
     };
     let mut top_level = serde_json::to_value(&manifest).expect("serialize manifest");
     top_level["source_commit"] = serde_json::json!("a".repeat(40));
@@ -410,7 +371,7 @@ fn package_and_machine_architecture_enums_reject_each_others_vocabulary() {
     serde_json::from_str::<PackageArchitecture>(r#""x86_64""#)
         .expect_err("machine architecture must not enter package rows");
     serde_json::from_str::<Architecture>(r#""amd64""#)
-        .expect_err("package architecture must not enter VM/profile rows");
+        .expect_err("package architecture must not enter VM/runtime rows");
     assert_eq!(
         serde_json::from_str::<Architecture>(r#""x86_64""#).expect("machine architecture"),
         Architecture::X86_64
@@ -432,6 +393,7 @@ fn package_architecture_parser_rejects_aliases_and_filename_lies() {
     PackageArchitecture::from_package_name("Capsem_1.4.0.deb").expect_err("missing Debian architecture is rejected");
 
     let package = PackageInventoryRow {
+        id: "capsem-package".to_string(),
         name: "Capsem_1.4.0_amd64.deb".to_string(),
         version: "1.4.0".to_string(),
         source_commit: None,
@@ -455,8 +417,10 @@ fn package_architecture_parser_rejects_aliases_and_filename_lies() {
 fn package_inventory_requires_package_sbom() {
     let manifest = ReleaseManifest {
         version: "1.4.0".to_string(),
+        channel: "stable".to_string(),
         status: Status::Current,
         packages: vec![PackageInventoryRow {
+            id: "capsem-package".to_string(),
             name: "Capsem-1.4.0.pkg".to_string(),
             version: "1.4.0".to_string(),
             source_commit: None,
@@ -481,7 +445,7 @@ fn package_inventory_requires_package_sbom() {
             }],
             evidence: Vec::new(),
         }],
-        profiles: BTreeMap::new(),
+        runtime: None,
     };
 
     let error = manifest
@@ -497,8 +461,10 @@ fn package_inventory_requires_package_sbom() {
 fn package_inventory_requires_sha256_and_blake3() {
     let manifest = ReleaseManifest {
         version: "1.4.0".to_string(),
+        channel: "stable".to_string(),
         status: Status::Current,
         packages: vec![PackageInventoryRow {
+            id: "capsem-package".to_string(),
             name: "capsem_1.4.0_arm64.deb".to_string(),
             version: "1.4.0".to_string(),
             source_commit: None,
@@ -526,7 +492,7 @@ fn package_inventory_requires_sha256_and_blake3() {
             }],
             evidence: Vec::new(),
         }],
-        profiles: BTreeMap::new(),
+        runtime: None,
     };
 
     let error = manifest
@@ -538,6 +504,7 @@ fn package_inventory_requires_sha256_and_blake3() {
 #[test]
 fn executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs() {
     let package = PackageInventoryRow {
+        id: "capsem-package".to_string(),
         name: "Capsem-1.4.0.pkg".to_string(),
         version: "1.4.0".to_string(),
         source_commit: None,
@@ -587,6 +554,7 @@ fn executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs(
 #[test]
 fn executable_inventory_rejects_missing_sbom_component_ref() {
     let package = PackageInventoryRow {
+        id: "capsem-package".to_string(),
         name: "capsem_1.4.0_arm64.deb".to_string(),
         version: "1.4.0".to_string(),
         source_commit: None,
@@ -619,6 +587,7 @@ fn executable_inventory_rejects_missing_sbom_component_ref() {
 #[test]
 fn executable_inventory_matches_macos_and_deb_package_contents() {
     let macos_package = PackageInventoryRow {
+        id: "capsem-package".to_string(),
         name: "Capsem-1.4.0.pkg".to_string(),
         version: "1.4.0".to_string(),
         source_commit: None,
@@ -662,6 +631,7 @@ fn executable_inventory_matches_macos_and_deb_package_contents() {
         .expect("macOS package contents match manifest inventory");
 
     let deb_package = PackageInventoryRow {
+        id: "capsem-package".to_string(),
         name: "Capsem_1.4.0_arm64.deb".to_string(),
         version: "1.4.0".to_string(),
         source_commit: None,
@@ -705,6 +675,7 @@ fn executable_inventory_matches_macos_and_deb_package_contents() {
 #[test]
 fn executable_inventory_rejects_package_content_hash_drift() {
     let package = PackageInventoryRow {
+        id: "capsem-package".to_string(),
         name: "Capsem_1.4.0_arm64.deb".to_string(),
         version: "1.4.0".to_string(),
         source_commit: None,
@@ -734,120 +705,223 @@ fn executable_inventory_rejects_package_content_hash_drift() {
     assert!(format!("{error:#}").contains("sha256 mismatch"), "{error:#}");
 }
 
-fn profile_with_image_artifacts(revision: &str, artifacts: Vec<ProfileImageArtifactRef>) -> ProfileDocument {
-    ProfileDocument {
-        version: revision.to_string(),
-        id: "co-work".to_string(),
-        name: "Co-work".to_string(),
-        revision: revision.to_string(),
-        source_commit: None,
+fn runtime_url(revision: &str, file: &str) -> String {
+    format!("/runtime/releases/stable/{revision}/arm64/{file}")
+}
+
+fn runtime_evidence(kind: &str, file: &str, revision: &str, digest: DigestSet) -> EvidenceRef {
+    EvidenceRef {
+        kind: kind.to_string(),
+        name: None,
+        url: runtime_url(revision, file),
+        bytes: 12,
+        digest,
         status: Status::Current,
-        min_capsem_version: Some("1.4.0".to_string()),
-        max_capsem_version: None,
-        architectures: vec![profile_architecture(revision, artifacts)],
     }
 }
 
-fn profile_architecture(revision: &str, artifacts: Vec<ProfileImageArtifactRef>) -> ProfileArchitectureImages {
-    ProfileArchitectureImages {
-        architecture: Architecture::Arm64,
-        software: vec![software_row()],
-        config: vec![ProfileConfigRef {
-            kind: ProfileConfigKind::Mcp,
-            path: "profiles/co-work/mcp.json".to_string(),
-            url: format!("/profiles/releases/{revision}/co-work/arm64/mcp.json"),
-            bytes: 12,
-            digest: digest_set(),
-            status: Status::Current,
-        }],
-        artifacts,
-        evidence: vec![
-            EvidenceRef {
-                kind: "abom".to_string(),
-                url: format!("/profiles/releases/{revision}/co-work/arm64/abom.cdx.json"),
-                digest: digest_set(),
-            },
-            EvidenceRef {
-                kind: "obom".to_string(),
-                url: format!("/profiles/releases/{revision}/co-work/arm64/obom.cdx.json"),
-                digest: digest_set(),
-            },
-            EvidenceRef {
-                kind: "software_inventory".to_string(),
-                url: format!("/profiles/releases/{revision}/co-work/arm64/software-inventory.json"),
-                digest: digest_set_with('c', 'd'),
-            },
-        ],
-    }
-}
-
-fn profile_image_artifact(kind: ProfileImageArtifactKind, name: &str, revision: &str) -> ProfileImageArtifactRef {
-    ProfileImageArtifactRef {
+fn runtime_image(kind: RuntimeImageArtifactKind, name: &str, revision: &str) -> RuntimeImageArtifactRef {
+    RuntimeImageArtifactRef {
         kind,
         name: name.to_string(),
-        url: format!("/profiles/releases/{revision}/co-work/arm64/{name}"),
+        url: runtime_url(revision, name),
         bytes: 42,
         digest: digest_set(),
         status: Status::Current,
     }
 }
 
-fn profile_image_artifact_set(revision: &str) -> Vec<ProfileImageArtifactRef> {
+fn runtime_image_set(revision: &str) -> Vec<RuntimeImageArtifactRef> {
     vec![
-        profile_image_artifact(ProfileImageArtifactKind::Kernel, "vmlinuz", revision),
-        profile_image_artifact(ProfileImageArtifactKind::Initrd, "initrd.img", revision),
-        profile_image_artifact(ProfileImageArtifactKind::Rootfs, "rootfs.erofs", revision),
+        runtime_image(RuntimeImageArtifactKind::Kernel, "vmlinuz", revision),
+        runtime_image(RuntimeImageArtifactKind::Initrd, "initrd.img", revision),
+        runtime_image(RuntimeImageArtifactKind::Rootfs, "rootfs.erofs", revision),
     ]
 }
 
-#[test]
-fn profile_image_versions_append_without_deprecating_previous() {
-    let first = profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
-    let second = profile_with_image_artifacts("1.0.1", profile_image_artifact_set("1.0.1"));
-    let mut history = ProfileVersionHistory::new("nightly", first).expect("first profile version");
-
-    history
-        .append_version(second)
-        .expect("new profile image version appends");
-
-    assert_eq!(history.versions.len(), 2);
-    assert_eq!(history.versions[0].revision, "1.0.0");
-    assert!(history.versions[0].architectures[0]
-        .artifacts
-        .iter()
-        .all(|artifact| artifact.status == Status::Current));
-    assert_eq!(history.versions[1].revision, "1.0.1");
+fn runtime_document(revision: &str) -> RuntimeDocument {
+    RuntimeDocument {
+        revision: revision.to_string(),
+        source_commit: None,
+        status: Status::Current,
+        min_capsem_version: Some("1.4.0".to_string()),
+        max_capsem_version: None,
+        architectures: vec![RuntimeArchitecture {
+            architecture: Architecture::Arm64,
+            package_inventory_revision: revision.to_string(),
+            image_revision: revision.to_string(),
+            software: vec![software_row()],
+            images: runtime_image_set(revision),
+            evidence: vec![
+                runtime_evidence("abom", "abom.cdx.json", revision, digest_set()),
+                runtime_evidence("obom", "obom.cdx.json", revision, digest_set()),
+                runtime_evidence(
+                    "software_inventory",
+                    "software-inventory.json",
+                    revision,
+                    digest_set_with('c', 'd'),
+                ),
+            ],
+        }],
+    }
 }
 
 #[test]
-fn profile_image_artifact_sets_require_kernel_initrd_and_rootfs() {
-    let profile = profile_with_image_artifacts(
-        "1.0.0",
-        vec![
-            profile_image_artifact(ProfileImageArtifactKind::Initrd, "initrd.img", "1.0.0"),
-            profile_image_artifact(ProfileImageArtifactKind::Rootfs, "rootfs.erofs", "1.0.0"),
-        ],
-    );
+fn runtime_document_validates_and_carries_min_capsem_not_current_binary() {
+    let runtime = runtime_document("0.7.0-0123456789ab");
 
-    let error = profile
-        .validate_profile_ownership()
-        .expect_err("profile image sets must include every required image kind");
+    runtime.validate().expect("runtime graph validates");
+    assert_eq!(runtime.min_capsem_version.as_deref(), Some("1.4.0"));
+    assert_eq!(runtime.architectures[0].evidence.len(), 3);
+}
+
+#[test]
+fn runtime_source_commit_is_optional_but_strict_when_present() {
+    let runtime = serde_json::to_value(runtime_document("1.0.0")).expect("serialize runtime");
+    assert!(runtime.get("source_commit").is_none());
+    serde_json::from_value::<RuntimeDocument>(runtime.clone()).expect("runtime without source commit parses");
+
+    let mut with_commit = runtime.clone();
+    with_commit["source_commit"] = serde_json::json!("a".repeat(40));
+    serde_json::from_value::<RuntimeDocument>(with_commit).expect("runtime with source commit parses");
+
+    for invalid in [
+        serde_json::Value::Null,
+        serde_json::json!("A".repeat(40)),
+        serde_json::json!("main"),
+    ] {
+        let mut value = runtime.clone();
+        value["source_commit"] = invalid;
+        serde_json::from_value::<RuntimeDocument>(value).expect_err("malformed runtime source commit must fail");
+    }
+}
+
+#[test]
+fn runtime_document_has_no_profile_identity_or_config_refs() {
+    let runtime = serde_json::to_value(runtime_document("1.0.0")).expect("serialize runtime");
+    for (field, value) in [
+        ("id", serde_json::json!("co-work")),
+        ("name", serde_json::json!("Co-work")),
+        ("description", serde_json::json!("A profile")),
+        ("version", serde_json::json!("1.0.0")),
+        ("current_binary", serde_json::json!("1.4.0")),
+    ] {
+        let mut value_with_field = runtime.clone();
+        value_with_field[field] = value;
+        let error = serde_json::from_value::<RuntimeDocument>(value_with_field)
+            .expect_err("a runtime carries no profile identity");
+        assert!(error.to_string().contains(field), "{error}");
+    }
+
+    let mut with_config = runtime;
+    with_config["architectures"][0]["config"] = serde_json::json!([{
+        "kind": "profile",
+        "path": "profiles/co-work/profile.toml",
+        "url": "/runtime/releases/stable/1.0.0/arm64/profile.toml",
+        "bytes": 12,
+        "digest": digest_json(),
+        "status": "current"
+    }]);
+    let error =
+        serde_json::from_value::<RuntimeDocument>(with_config).expect_err("a runtime publishes no profile config refs");
+    assert!(error.to_string().contains("config"), "{error}");
+}
+
+#[test]
+fn release_graph_refuses_a_profiles_map() {
+    let graph = serde_json::json!({
+        "version": "1.0.0",
+        "channel": "stable",
+        "status": "current",
+        "packages": [],
+        "profiles": {}
+    });
+
+    let error = serde_json::from_value::<ReleaseManifest>(graph).expect_err("profiles are no release unit");
+
+    assert!(error.to_string().contains("profiles"), "{error}");
+}
+
+#[test]
+fn runtime_image_sets_require_kernel_initrd_and_rootfs() {
+    let mut runtime = runtime_document("1.0.0");
+    runtime.architectures[0]
+        .images
+        .retain(|image| image.kind != RuntimeImageArtifactKind::Kernel);
+
+    let error = runtime
+        .validate()
+        .expect_err("runtime image sets must include every required image kind");
 
     assert!(error.to_string().contains("images missing kernel"), "{error}");
+
+    let invalid_removed_status = serde_json::json!({
+        "kind": "initrd",
+        "name": "initrd.img",
+        "url": runtime_url("1.0.0", "initrd.img"),
+        "bytes": 42,
+        "digest": digest_json(),
+        "status": "removed"
+    });
+    serde_json::from_value::<RuntimeImageArtifactRef>(invalid_removed_status)
+        .expect_err("removed is represented by absence, not by a status enum");
 }
 
 #[test]
-fn profile_image_evidence_must_match_owning_architecture() {
-    let mut profile = profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
-    let abom = profile.architectures[0]
+fn runtime_architecture_revisions_must_be_the_runtime_revision() {
+    for field in ["image_revision", "package_inventory_revision"] {
+        let mut runtime = serde_json::to_value(runtime_document("1.0.0")).expect("serialize runtime");
+        runtime["architectures"][0][field] = serde_json::json!("1.0.1");
+        let runtime: RuntimeDocument = serde_json::from_value(runtime).expect("shape parses");
+
+        let error = runtime.validate().expect_err("one runtime has one revision");
+
+        assert!(error.to_string().contains(field), "{error}");
+    }
+}
+
+#[test]
+fn runtime_refuses_repeated_architectures_and_unsafe_revisions() {
+    let mut repeated = runtime_document("1.0.0");
+    repeated.architectures.push(repeated.architectures[0].clone());
+    let error = repeated.validate().expect_err("one image set per architecture");
+    assert!(error.to_string().contains("repeats architecture arm64"), "{error}");
+
+    for revision in ["", "..", "1.0.0/../x", "1.0 0"] {
+        let error = runtime_document(revision)
+            .validate()
+            .expect_err("revision is a path component");
+        assert!(error.to_string().contains("URL-path-safe"), "{revision:?}: {error}");
+    }
+    runtime_document("0.7.0-0123456789ab")
+        .validate()
+        .expect("workspace version plus commit is a revision");
+}
+
+#[test]
+fn runtime_capsem_window_must_be_semver_and_ordered() {
+    let mut runtime = runtime_document("1.0.0");
+    runtime.min_capsem_version = Some("not-a-version".to_string());
+    assert!(runtime.validate().is_err());
+
+    runtime.min_capsem_version = Some("2.0.0".to_string());
+    runtime.max_capsem_version = Some("1.0.0".to_string());
+    let error = runtime.validate().expect_err("minimum above maximum");
+    assert!(error.to_string().contains("exceeds maximum"), "{error}");
+}
+
+#[test]
+fn runtime_image_evidence_must_match_owning_architecture() {
+    let mut runtime = runtime_document("1.0.0");
+    let abom = runtime.architectures[0]
         .evidence
         .iter_mut()
         .find(|evidence| evidence.kind == "abom")
         .expect("abom evidence");
     abom.url = abom.url.replace("/arm64/", "/x86_64/");
 
-    let error = profile
-        .validate_profile_ownership()
+    let error = runtime
+        .validate()
         .expect_err("image evidence must stay scoped to its owning architecture");
 
     assert!(
@@ -857,226 +931,45 @@ fn profile_image_evidence_must_match_owning_architecture() {
 }
 
 #[test]
-fn profile_image_versions_removed_image_is_absent_not_status_removed() {
-    let previous = profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
-    let next = profile_with_image_artifacts(
-        "1.0.1",
-        vec![
-            profile_image_artifact(ProfileImageArtifactKind::Kernel, "vmlinuz", "1.0.1"),
-            profile_image_artifact(ProfileImageArtifactKind::Rootfs, "rootfs.erofs", "1.0.1"),
-        ],
-    );
+fn runtime_rejects_unversioned_software_rows() {
+    let mut runtime = runtime_document("1.0.0");
+    runtime.architectures[0].software[0].version = "unversioned".to_string();
 
-    let error = diff_profile_image_artifacts(&previous, &next)
-        .expect_err("required image artifacts cannot be omitted from a profile revision");
-
-    assert!(error.to_string().contains("images missing initrd"), "{error}");
-
-    let invalid_removed_status = serde_json::json!({
-        "kind": "initrd",
-        "name": "initrd.img",
-        "url": "/profiles/releases/1.0.1/co-work/arm64/initrd.img",
-        "bytes": 42,
-        "digest": digest_json(),
-        "status": "removed"
-    });
-    serde_json::from_value::<ProfileImageArtifactRef>(invalid_removed_status)
-        .expect_err("removed is represented by absence, not by a status enum");
-}
-
-#[test]
-fn profile_config_kind_rejects_unknown_values() {
-    for kind in [
-        "apt_packages",
-        "python_requirements",
-        "python_requirements_lock",
-        "npm_packages",
-        "npm_package_lock",
-    ] {
-        let value = serde_json::json!({
-            "kind": kind,
-            "path": format!("profiles/co-work/{kind}"),
-            "url": format!("/profiles/releases/1.0.0/co-work/arm64/{kind}"),
-            "bytes": 42,
-            "digest": digest_json(),
-            "status": "current"
-        });
-        serde_json::from_value::<ProfileConfigRef>(value)
-            .unwrap_or_else(|error| panic!("profile config kind {kind} must deserialize: {error}"));
-    }
-
-    let invalid_kind = serde_json::json!({
-        "kind": "misc",
-        "path": "profiles/co-work/misc.json",
-        "url": "/profiles/releases/1.0.0/co-work/arm64/misc.json",
-        "bytes": 42,
-        "digest": digest_json(),
-        "status": "current"
-    });
-
-    serde_json::from_value::<ProfileConfigRef>(invalid_kind)
-        .expect_err("profile config kind must be a release graph enum");
-}
-
-#[test]
-fn profile_json_ownership_has_min_capsem_not_current_binary() {
-    let profile = ProfileDocument {
-        version: "1.0.0".to_string(),
-        id: "co-work".to_string(),
-        name: "Co-work".to_string(),
-        revision: "1.0.0".to_string(),
-        source_commit: None,
-        status: Status::Current,
-        min_capsem_version: Some("1.4.0".to_string()),
-        max_capsem_version: None,
-        architectures: vec![ProfileArchitectureImages {
-            architecture: Architecture::Arm64,
-            software: vec![software_row()],
-            config: vec![ProfileConfigRef {
-                kind: ProfileConfigKind::Mcp,
-                path: "profiles/co-work/mcp.json".to_string(),
-                url: "/profiles/releases/1.0.0/co-work/arm64/mcp.json".to_string(),
-                bytes: 12,
-                digest: digest_set(),
-                status: Status::Current,
-            }],
-            artifacts: vec![
-                ProfileImageArtifactRef {
-                    kind: ProfileImageArtifactKind::Kernel,
-                    name: "vmlinuz".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/vmlinuz".to_string(),
-                    bytes: 42,
-                    digest: digest_set(),
-                    status: Status::Current,
-                },
-                ProfileImageArtifactRef {
-                    kind: ProfileImageArtifactKind::Initrd,
-                    name: "initrd.img".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/initrd.img".to_string(),
-                    bytes: 42,
-                    digest: digest_set(),
-                    status: Status::Current,
-                },
-                ProfileImageArtifactRef {
-                    kind: ProfileImageArtifactKind::Rootfs,
-                    name: "rootfs.erofs".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs".to_string(),
-                    bytes: 42,
-                    digest: digest_set(),
-                    status: Status::Current,
-                },
-            ],
-            evidence: vec![
-                EvidenceRef {
-                    kind: "abom".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json".to_string(),
-                    digest: digest_set(),
-                },
-                EvidenceRef {
-                    kind: "obom".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json".to_string(),
-                    digest: digest_set(),
-                },
-                EvidenceRef {
-                    kind: "software_inventory".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json".to_string(),
-                    digest: digest_set_with('c', 'd'),
-                },
-            ],
-        }],
-    };
-
-    profile
-        .validate_profile_ownership()
-        .expect("profile-owned graph validates");
-    assert_eq!(profile.min_capsem_version.as_deref(), Some("1.4.0"));
-    assert_eq!(profile.architectures[0].evidence.len(), 3);
-}
-
-#[test]
-fn profile_json_ownership_rejects_unversioned_software_rows() {
-    let mut profile = profile_with_image_artifacts(
-        "1.0.0",
-        vec![profile_image_artifact(
-            ProfileImageArtifactKind::Rootfs,
-            "rootfs.erofs",
-            "1.0.0",
-        )],
-    );
-    profile.architectures[0].software[0].version = "unversioned".to_string();
-
-    let error = profile
-        .validate_profile_ownership()
-        .expect_err("profile software rows must use real versions");
+    let error = runtime.validate().expect_err("software rows must use real versions");
 
     assert!(error.to_string().contains("unversioned"), "{error}");
 }
 
 #[test]
-fn profile_json_ownership_rejects_software_machine_architecture_mismatch() {
-    let mut profile = profile_with_image_artifacts(
-        "1.0.0",
-        vec![profile_image_artifact(
-            ProfileImageArtifactKind::Rootfs,
-            "rootfs.erofs",
-            "1.0.0",
-        )],
-    );
-    profile.architectures[0].software[0].architecture = Architecture::X86_64;
+fn runtime_rejects_software_machine_architecture_mismatch() {
+    let mut runtime = runtime_document("1.0.0");
+    runtime.architectures[0].software[0].architecture = Architecture::X86_64;
 
-    let error = profile
-        .validate_profile_ownership()
+    let error = runtime
+        .validate()
         .expect_err("software rows must use their owning machine architecture");
 
     assert!(error.to_string().contains("architecture mismatch"), "{error}");
 }
 
 #[test]
-fn profile_json_ownership_rejects_reused_software_inventory_digest() {
-    let mut profile = profile_with_image_artifacts(
-        "1.0.0",
-        vec![profile_image_artifact(
-            ProfileImageArtifactKind::Rootfs,
-            "rootfs.erofs",
-            "1.0.0",
-        )],
-    );
-    let inventory_digest = profile.architectures[0]
+fn runtime_rejects_reused_software_inventory_digest() {
+    let mut runtime = runtime_document("1.0.0");
+    let inventory_digest = runtime.architectures[0]
         .evidence
         .iter()
         .find(|evidence| evidence.kind == "software_inventory")
         .expect("software inventory evidence")
         .digest
         .clone();
-    profile.architectures[0].software[0].digest = inventory_digest;
+    runtime.architectures[0].software[0].digest = inventory_digest;
 
-    let error = profile
-        .validate_profile_ownership()
+    let error = runtime
+        .validate()
         .expect_err("software rows must not reuse inventory file digests");
 
     assert!(
         error.to_string().contains("reuses software_inventory evidence digest"),
-        "{error}"
-    );
-}
-
-#[test]
-fn profile_json_ownership_rejects_current_binary_and_assets() {
-    let invalid = serde_json::json!({
-        "version": "1.0.0",
-        "id": "co-work",
-        "name": "Co-work",
-        "revision": "1.0.0",
-        "status": "current",
-        "min_capsem_version": "1.4.0",
-        "current_binary": "1.4.0",
-        "current_assets": "2026.0627.8"
-    });
-
-    let error = serde_json::from_value::<ProfileDocument>(invalid)
-        .expect_err("profile JSON must not contain channel-owned current binary/assets");
-    assert!(
-        error.to_string().contains("current_binary") || error.to_string().contains("current_assets"),
         "{error}"
     );
 }
@@ -1113,58 +1006,6 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
     }))
     .expect("catalog shape");
 
-    let mut profiles = BTreeMap::new();
-    profiles.insert(
-        "co-work".to_string(),
-        ProfileDocument {
-            version: "1.0.0".to_string(),
-            id: "co-work".to_string(),
-            name: "Co-work".to_string(),
-            revision: "1.0.0".to_string(),
-            source_commit: None,
-            status: Status::Current,
-            min_capsem_version: Some("1.4.0".to_string()),
-            max_capsem_version: None,
-            architectures: vec![ProfileArchitectureImages {
-                architecture: Architecture::Arm64,
-                software: vec![software_row()],
-                config: vec![ProfileConfigRef {
-                    kind: ProfileConfigKind::Mcp,
-                    path: "profiles/co-work/mcp.json".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/mcp.json".to_string(),
-                    bytes: 12,
-                    digest: digest_set(),
-                    status: Status::Current,
-                }],
-                artifacts: vec![ProfileImageArtifactRef {
-                    kind: ProfileImageArtifactKind::Rootfs,
-                    name: "rootfs.erofs".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs".to_string(),
-                    bytes: 42,
-                    digest: digest_set(),
-                    status: Status::Current,
-                }],
-                evidence: vec![
-                    EvidenceRef {
-                        kind: "abom".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json".to_string(),
-                        digest: digest_set(),
-                    },
-                    EvidenceRef {
-                        kind: "obom".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json".to_string(),
-                        digest: digest_set(),
-                    },
-                    EvidenceRef {
-                        kind: "software_inventory".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json".to_string(),
-                        digest: digest_set_with('c', 'd'),
-                    },
-                ],
-            }],
-        },
-    );
-
     let mut manifests = BTreeMap::new();
     manifests.insert(
         "stable".to_string(),
@@ -1172,8 +1013,10 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
             "1.4.0".to_string(),
             ReleaseManifest {
                 version: "1.4.0".to_string(),
+                channel: "stable".to_string(),
                 status: Status::Current,
                 packages: vec![PackageInventoryRow {
+                    id: "capsem-1-4-0-pkg".to_string(),
                     name: "Capsem-1.4.0.pkg".to_string(),
                     version: "1.4.0".to_string(),
                     source_commit: None,
@@ -1198,7 +1041,7 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
                     }],
                     evidence: Vec::new(),
                 }],
-                profiles,
+                runtime: Some(runtime_document("1.0.0")),
             },
         )]),
     );
@@ -1211,113 +1054,25 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
         entry.channel == "stable" && entry.kind == ReleaseLedgerKind::Binary && entry.name == "capsem"
     }));
     assert!(ledger.entries.iter().any(|entry| {
-        entry.channel == "stable"
-            && entry.kind == ReleaseLedgerKind::Profile
-            && entry.profile.as_deref() == Some("co-work")
+        entry.channel == "stable" && entry.kind == ReleaseLedgerKind::Runtime && entry.version == "1.0.0"
     }));
-    assert!(ledger.entries.iter().any(|entry| {
-        entry.channel == "stable"
-            && entry.kind == ReleaseLedgerKind::ProfileImage
-            && entry.profile.as_deref() == Some("co-work")
-            && entry.architecture == Some(ReleaseLedgerArchitecture::Machine(Architecture::Arm64))
-    }));
+    assert_eq!(
+        ledger
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.channel == "stable"
+                    && entry.kind == ReleaseLedgerKind::RuntimeImage
+                    && entry.architecture == Some(ReleaseLedgerArchitecture::Machine(Architecture::Arm64))
+            })
+            .count(),
+        3
+    );
     assert!(ledger
         .entries
         .iter()
         .any(|entry| { entry.channel == "nightly" && entry.kind == ReleaseLedgerKind::Manifest }));
-}
-
-// -- Profile revision semver discipline -------------------------------------
-//
-// A profile's revision is its tag: the thing a corp operator reads, a
-// compatibility window is written against, and asset reuse is keyed on. Date
-// strings like "2026.06.08.9" cannot carry ordering a resolver can use -- the
-// date said June while the build was July, and the trailing counter counted
-// hand-edits rather than publications. These tests specify strict semver,
-// independently versioned per profile, enforced for first-party and
-// corp-authored profiles alike.
-
-#[test]
-fn profile_revision_must_be_semver() {
-    assert!(parse_profile_revision("0.6.0").is_ok());
-    assert!(parse_profile_revision("1.2.3").is_ok());
-}
-
-#[test]
-fn dated_profile_revisions_are_rejected() {
-    // The scheme this replaces. Four components is not semver, and the
-    // leading date lied about when the assets were built.
-    let error = parse_profile_revision("2026.06.08.9").unwrap_err().to_string();
-    assert!(
-        error.contains("2026.06.08.9"),
-        "rejection must name the offending revision: {error}"
-    );
-}
-
-#[test]
-fn only_the_historical_four_numeric_component_shape_is_legacy() {
-    assert!(is_legacy_profile_revision("2026.06.08.7"));
-    assert!(!is_legacy_profile_revision("0.6.0"));
-    assert!(!is_legacy_profile_revision("legacy"));
-    assert!(!is_legacy_profile_revision("2026.06.08.7/escape"));
-}
-
-#[test]
-fn a_two_component_revision_is_rejected() {
-    assert!(parse_profile_revision("0.6").is_err());
-}
-
-#[test]
-fn an_empty_revision_is_rejected() {
-    assert!(parse_profile_revision("").is_err());
-}
-
-#[test]
-fn profile_revisions_order_numerically_not_lexically() {
-    // The bug a string compare hides: "0.10.0" sorts before "0.9.0" as text.
-    let ten = parse_profile_revision("0.10.0").unwrap();
-    let nine = parse_profile_revision("0.9.0").unwrap();
-    assert!(ten > nine, "0.10.0 must outrank 0.9.0");
-}
-
-#[test]
-fn semver_may_replace_a_published_legacy_revision_once() {
-    assert!(ensure_revision_advances("2026.06.08.7", "0.6.0").is_ok());
-    assert!(ensure_revision_advances("2026.06.08.7", "2026.06.08.8").is_err());
-}
-
-#[test]
-fn republishing_the_same_revision_is_rejected() {
-    let error = ensure_revision_advances("0.6.0", "0.6.0").unwrap_err().to_string();
-    assert!(
-        error.contains("0.6.0"),
-        "rejection must name the revision that failed to advance: {error}"
-    );
-}
-
-#[test]
-fn a_revision_that_goes_backwards_is_rejected() {
-    assert!(ensure_revision_advances("0.6.1", "0.6.0").is_err());
-}
-
-#[test]
-fn an_advancing_revision_is_accepted() {
-    assert!(ensure_revision_advances("0.6.0", "0.6.1").is_ok());
-    assert!(ensure_revision_advances("0.6.9", "0.10.0").is_ok());
-}
-
-#[test]
-fn profiles_version_independently_of_each_other() {
-    // Profiles are orthogonal: co-work moving does not constrain code.
-    assert!(ensure_revision_advances("0.3.2", "0.3.3").is_ok());
-    assert!(ensure_revision_advances("1.4.0", "1.4.1").is_ok());
-}
-
-#[test]
-fn a_profile_revision_is_not_a_capsem_version() {
-    // The profile's own version and the binary window it declares are
-    // separate axes. A profile at 0.3.2 may require capsem >= 0.6.0.
-    let revision = parse_profile_revision("0.3.2").unwrap();
-    let minimum = semver::Version::parse("0.6.0").unwrap();
-    assert!(revision < minimum, "these are different axes, not comparable state");
+    let serialized = serde_json::to_value(&ledger).expect("serialize ledger");
+    assert!(serialized.to_string().contains("\"runtime_image\""));
+    assert!(!serialized.to_string().contains("\"profile"));
 }

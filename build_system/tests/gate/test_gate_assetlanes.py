@@ -1,8 +1,8 @@
 """Two architecture lanes, built at once, reported together.
 
 A hosted release runner has an observed hard lifetime below the workflow's
-nominal timeout, so the four-cell profile/architecture matrix only fits if both
-architectures build concurrently. That is where the shell version was weakest:
+nominal timeout, so the build only fits if both architectures build
+concurrently. That is where the shell version was weakest:
 each lane's status came back through `wait` into a variable, and a variable
 that goes unread turns a failed build into a passing gate.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.assetlanes import AssetLanes, Profile, discover_profiles
+from capsem_builder.gate.assetlanes import AssetLanes
 from capsem_builder.gate.errors import GateError
 from helpers.gate import RecordingRunner
 
@@ -34,7 +34,7 @@ def _build_all(lanes) -> None:
         lanes.build(arch)
 
 
-def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code", "co-work")) -> Path:
+def _checkout(tmp_path: Path) -> Path:
     (tmp_path / "config").mkdir()
     gate = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     (tmp_path / "config" / "gate.toml").write_text(
@@ -44,10 +44,6 @@ def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code", "co-work")
         (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    for name in profiles:
-        directory = tmp_path / "config" / "profiles" / name
-        directory.mkdir(parents=True)
-        (directory / "profile.toml").write_text(f'id = "{name}"\n')
     for relative in CONFIG.assets.identity_roots:
         source = PROJECT_ROOT / relative
         target = tmp_path / relative
@@ -115,29 +111,7 @@ class Building(RecordingRunner):
 
 def _lanes(runner: RecordingRunner, root: Path) -> AssetLanes:
     config = gate_config.for_root(root)
-    return AssetLanes(runner, config, discover_profiles(config))
-
-
-# ---------------------------------------------------------------------------
-# Discovery
-# ---------------------------------------------------------------------------
-
-
-def test_profiles_come_from_the_glob_the_config_declares(tmp_path: Path) -> None:
-    root = _checkout(tmp_path, profiles=("code", "co-work"))
-
-    found = discover_profiles(gate_config.for_root(root))
-
-    assert [profile.name for profile in found] == ["co-work", "code"]
-
-
-def test_a_checkout_with_no_profiles_says_which_pattern_matched_nothing(
-    tmp_path: Path,
-) -> None:
-    root = _checkout(tmp_path, profiles=())
-
-    with pytest.raises(GateError, match="no profiles matched"):
-        discover_profiles(gate_config.for_root(root))
+    return AssetLanes(runner, config)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +119,7 @@ def test_a_checkout_with_no_profiles_says_which_pattern_matched_nothing(
 # ---------------------------------------------------------------------------
 
 
-def test_every_profile_is_built_for_every_architecture(tmp_path: Path) -> None:
+def test_the_runtime_is_built_for_every_architecture(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
     runner = Building(root)
 
@@ -155,15 +129,16 @@ def test_every_profile_is_built_for_every_architecture(tmp_path: Path) -> None:
     # dispatcher is gone, and matching it would have kept passing while the
     # build reached the wrong directory.
     for arch in ARCHES:
-        for profile in ("code", "co-work"):
-            for stage in CONFIG.imagebuild.lane_templates:
-                assert runner.matching(
-                    rf"--profile \S*{profile}\S* .*--template {stage}.*--arch {arch.name}"
-                ), f"{profile}/{arch.name}/{stage} was never built"
+        for stage in CONFIG.imagebuild.lane_templates:
+            assert runner.matching(rf"--template {stage}.*--arch {arch.name}"), (
+                f"{arch.name}/{stage} was never built"
+            )
+    # One runtime: nothing reaching the builder selects a profile.
+    assert not runner.matching(r"--profile")
 
 
 def test_a_second_lane_run_reuses_the_exact_receipted_output(tmp_path: Path) -> None:
-    root = _checkout(tmp_path, profiles=("code",))
+    root = _checkout(tmp_path)
     arch = ARCHES[0]
 
     first = Building(root)
@@ -195,14 +170,8 @@ def test_asset_plan_builds_and_signs_host_binaries_before_assembly() -> None:
         "assets.build-host-binaries"
     ).produces
     packed = plan.step_named("assets.pack-initrds")
-    profiles = {path.parent.name for path in CONFIG.root.glob(CONFIG.assets.profiles_glob)}
     expected = {
-        CONFIG.path(CONFIG.assets.test_root)
-        / profile
-        / f"build-{arch}"
-        / arch
-        / CONFIG.artifacts.initrd
-        for profile in profiles
+        CONFIG.path(CONFIG.assets.test_root) / f"build-{arch}" / arch / CONFIG.artifacts.initrd
         for arch in CONFIG.architectures
     }
     assert set(packed.produces) == expected
@@ -221,8 +190,7 @@ def test_each_lane_writes_to_its_own_output_root(tmp_path: Path) -> None:
     lanes = _lanes(runner, root)
     _build_all(lanes)
 
-    profile = Profile(name="code", manifest=root / "config/profiles/code/profile.toml")
-    outputs = {lanes.lane_assets(profile, arch) for arch in ARCHES}
+    outputs = {lanes.lane_assets(arch) for arch in ARCHES}
     assert len(outputs) == len(ARCHES)
 
 
@@ -348,15 +316,14 @@ def test_each_lane_tells_the_builder_where_to_write(tmp_path: Path) -> None:
     lane hands to a dispatcher: the defect lived precisely in the layer between
     those two, which is why every existing test walked straight past it.
     """
-    root = _checkout(tmp_path, profiles=("code",))
+    root = _checkout(tmp_path)
     runner = Building(root)
     lanes = _lanes(runner, root)
-    (profile,) = discover_profiles(gate_config.for_root(root))
 
     _build_all(lanes)
 
     for arch in ARCHES:
-        expected = str(lanes.lane_assets(profile, arch))
+        expected = str(lanes.lane_assets(arch))
         issued = [c for c in runner.commands if "--output" in c.argv]
         assert any(c.argv[c.argv.index("--output") + 1] == expected for c in issued), (
             f"the {arch.name} lane did not tell the builder to write to "
@@ -366,7 +333,7 @@ def test_each_lane_tells_the_builder_where_to_write(tmp_path: Path) -> None:
 
 def test_two_lanes_never_name_the_same_output_root(tmp_path: Path) -> None:
     """The property the isolation exists for, stated directly."""
-    root = _checkout(tmp_path, profiles=("code",))
+    root = _checkout(tmp_path)
     runner = Building(root)
     lanes = _lanes(runner, root)
 

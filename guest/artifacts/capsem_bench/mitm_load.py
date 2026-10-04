@@ -40,9 +40,12 @@ CI gate (T5): >2x p99 regression vs. baseline at any concurrency
 level fails the build.
 """
 
+import http.client
 import os
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urlsplit
 
 from .helpers import console
 from .load_harness import (
@@ -58,14 +61,55 @@ DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
 
 
-def _do_request(url, session):
+class _Session:
+    """One keep-alive connection per worker, reopened after a failure.
+
+    The standard library rather than `requests`: the runtime carries no pip
+    packages, and a pooled session per worker is all the measurement needs.
+    """
+
+    def __init__(self, url):
+        parts = urlsplit(url)
+        self._https = parts.scheme == "https"
+        self._host = parts.hostname
+        self._port = parts.port
+        self._path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        self._context = ssl.create_default_context() if self._https else None
+        self._connection = None
+
+    def _connect(self):
+        if self._https:
+            return http.client.HTTPSConnection(
+                self._host, self._port, timeout=30, context=self._context
+            )
+        return http.client.HTTPConnection(self._host, self._port, timeout=30)
+
+    def get(self):
+        if self._connection is None:
+            self._connection = self._connect()
+        try:
+            self._connection.request("GET", self._path)
+            response = self._connection.getresponse()
+            response.read()
+            return response.status
+        except Exception:
+            self.close()
+            raise
+
+    def close(self):
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+
+
+def _do_request(session):
     """Single HTTP GET; latency in ms, with non-2xx responses counted as errors."""
     start = time.monotonic()
     try:
-        resp = session.get(url, timeout=30)
+        status = session.get()
         elapsed_ms = (time.monotonic() - start) * 1000
-        error = None if 200 <= resp.status_code < 300 else f"HTTP {resp.status_code}"
-        return (elapsed_ms, resp.status_code, error)
+        error = None if 200 <= status < 300 else f"HTTP {status}"
+        return (elapsed_ms, status, error)
     except Exception as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
         return (elapsed_ms, 0, str(exc))
@@ -74,19 +118,17 @@ def _do_request(url, session):
 def _drive_at_concurrency(url, concurrency, duration_s):
     """Spawn `concurrency` workers, each looping `duration_s`.
 
-    Each worker holds its own requests Session so connection-pool
-    behavior matches a real client. Returns a list of (latency_ms,
-    status, error) tuples.
+    Each worker holds its own keep-alive connection so connection reuse
+    matches a real client. Returns a list of (latency_ms, status, error)
+    tuples.
     """
-    import requests as req
-
     deadline = time.monotonic() + duration_s
 
     def worker():
-        session = req.Session()
+        session = _Session(url)
         out = []
         while time.monotonic() < deadline:
-            out.append(_do_request(url, session))
+            out.append(_do_request(session))
         session.close()
         return out
 

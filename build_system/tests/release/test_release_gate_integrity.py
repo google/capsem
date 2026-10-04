@@ -95,7 +95,7 @@ def test_every_fresh_ci_test_runner_preinstalls_the_exact_nextest() -> None:
         ),
         (
             "release-assets.yaml",
-            "test-profile-pairing",
+            "test-runtime-pairing",
             "Prove Linux sandbox boundary",
             "just qualify-assets",
         ),
@@ -125,7 +125,7 @@ def test_every_runner_of_the_broad_suite_installs_what_that_suite_shells_out_to(
         ("fast-gate.yaml", "static"),
         ("ci.yaml", "test"),
         ("release.yaml", "test-binary-pairing"),
-        ("release-assets.yaml", "test-profile-pairing"),
+        ("release-assets.yaml", "test-runtime-pairing"),
     )
     missing = []
     for workflow_name, job_name in runners:
@@ -257,24 +257,17 @@ def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
     assert cleared < _step_at(labels, "glowup.")
 
 
-def test_full_gate_runs_capsem_bench_baseline_for_every_selected_profile() -> None:
-    """One recorded baseline per selected profile, and exactly one.
+def test_full_gate_runs_capsem_bench_baseline_exactly_once() -> None:
+    """One recorded baseline for the runtime, and exactly one.
 
     Two files launching VMs at once measure each other rather than Capsem,
     which is why the baseline claims `apple_vz` and runs alone.
     """
-    from capsem_builder.gate import config as gate_config
-    from capsem_builder.gate import profiles
+    plan = _gate_plan()
+    matching = [label for label in plan.labels if label.endswith("pytest.benchmark")]
 
-    root = Path(__file__).resolve().parents[3]
-    config = gate_config.load(root)
-    labels = list(_gate_plan().labels)
-
-    for profile in profiles.selected(config):
-        matching = [label for label in labels if label.endswith(f"pytest.benchmark.{profile}")]
-        assert len(matching) == 1, f"{profile} has {len(matching)} recorded baselines, expected one"
-
-    step = _gate_plan().step_named(next(label for label in labels if "pytest.benchmark." in label))
+    assert len(matching) == 1, f"{len(matching)} recorded baselines, expected one"
+    step = plan.step_named(matching[0])
     assert {e.name: e.shared for e in step.contends}["apple_vz"] is False, "the baseline runs alone"
 
 
@@ -290,10 +283,9 @@ def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() ->
 
     root = Path(__file__).resolve().parents[3]
     config = gate_config.load(root)
-    base = config.suites.pytest.base_profile
 
-    broad = pytestsuite.broad(config, profile=base).argv(config)
-    snapshot = pytestsuite.host_snapshot(config, profile=base)
+    broad = pytestsuite.broad(config).argv(config)
+    snapshot = pytestsuite.host_snapshot(config)
 
     for path in config.suites.pytest.host_snapshot_serial:
         assert f"--ignore={path}" in broad, f"{path} runs twice"
@@ -301,15 +293,17 @@ def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() ->
 
     assert config.suites.pytest.stop_at_first in broad
     assert {e.name: e.shared for e in snapshot.contends} == {
-        "host_service": False, "apple_vz": False, "workspace_binaries": True,
+        "host_service": False,
+        "apple_vz": False,
+        "workspace_binaries": True,
     }
     assert not snapshot.parallel
 
     labels = list(_gate_plan().labels)
     assert (
-        _step_at(labels, f"pytest.broad.{base}")
-        < _step_at(labels, f"pytest.host-snapshot.{base}")
-        < _step_at(labels, f"pytest.timing.{base}")
+        _step_at(labels, "pytest.broad")
+        < _step_at(labels, "pytest.host-snapshot")
+        < _step_at(labels, "pytest.timing")
     )
 
 
@@ -568,6 +562,8 @@ def test_deployment_recovery_reuses_verified_site_without_rebuilding_or_vm_tests
     assert jobs["deploy-release-channel"]["needs"] == ["recover-release-channel"]
     assert jobs["verify-release-downloads"]["needs"] == ["deploy-release-channel"]
     assert set(jobs) == {
-        "recover-release-channel", "deploy-release-channel",
-        "verify-release-downloads", "deploy-qualified-channel",
+        "recover-release-channel",
+        "deploy-release-channel",
+        "verify-release-downloads",
+        "deploy-qualified-channel",
     }

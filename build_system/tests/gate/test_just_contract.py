@@ -129,20 +129,20 @@ def test_public_runtime_entrypoints_cross_one_gate_boundary() -> None:
         assert "just " not in lines[0]
 
 
-def test_justfile_routes_assets_through_profile_admin_rail() -> None:
+def test_justfile_routes_assets_through_the_admin_rail() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     materialize_config = (
         PROJECT_ROOT / "build_system" / "scripts" / "build" / "materialize-config.sh"
     ).read_text()
 
-    # An image build without a profile is unrepresentable now: the argv is
-    # built from one, so there is nothing to guard against with an `echo`.
+    # One runtime (#289): an image build names an architecture and a
+    # template, never a profile.
     from capsem_builder.gate import config as gate_config
     from capsem_builder.gate.imagebuild import build_argv
 
     config = gate_config.load(PROJECT_ROOT)
-    argv = " ".join(build_argv(config, profile="code", arch="arm64", template="all"))
-    assert "--profile config/profiles/code/profile.toml" in argv
+    argv = " ".join(build_argv(config, arch="arm64", template="all"))
+    assert "--profile" not in argv
     assert "--config-root config" in argv
     assert "capsem-admin -- image build" in argv
     assert "capsem-admin -- manifest generate" in " ".join(config.initrd.manifest)

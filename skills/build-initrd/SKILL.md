@@ -47,9 +47,9 @@ Update this table and add the relevant unit, archive, and in-VM behavior tests.
 | Guest binary source (Rust agent code) | `just exec` | Auto-repacks initrd with new binary |
 | `capsem-init` script | `just exec` | Init script is repacked into initrd |
 | `guest/artifacts/diagnostics/*.py` | `just exec "capsem-doctor"` | Test files repacked into initrd |
-| `guest/artifacts/capsem-bashrc` | `just _build-assets <profile>` | Baked into rootfs, not initrd |
-| Profile package/root/build inputs (`config/profiles/<id>/`) | `just _build-assets <profile>` | Affects profile-derived rootfs rendering |
-| Installed packages (apt, pip) | `just _build-assets <profile>` | Baked into the profile rootfs asset |
+| `guest/artifacts/capsem-bashrc` | `just build-assets [arch]` | Baked into rootfs, not initrd |
+| Runtime package set (`config/docker/image/build.toml` `runtime_apt_packages`) | `just build-assets [arch]` | Baked into the runtime rootfs asset |
+| Application tools (AI CLIs, language toolchains) | an OCI image under `images/` | Not part of the runtime; see `/build-images` |
 
 ## Guest binary security
 
@@ -60,7 +60,7 @@ All guest binaries are deployed read-only:
 
 ## How initrd repack works
 
-The initrd is a gzip+cpio archive. `src/capsem/gate/initrd.py`:
+The initrd is a gzip+cpio archive. `build_system/builder/gate/initrd.py`:
 
 1. Resolves the exact content-addressed Rust payload generation under the
    configured `cache/target/build/linux-agent/<arch>/` tree. Source bytes,
@@ -74,7 +74,7 @@ The initrd is a gzip+cpio archive. `src/capsem/gate/initrd.py`:
 
 The complete IronBank asset graph has a visible `assets.pack-initrds` frontier
 after both architecture lanes and before merge/boot. It repacks every
-profile/architecture private target. The CI-facing `build-assets rootfs|all`
+architecture's private target. The CI-facing `build-assets rootfs|all`
 rail uses the same primitive before upload; `kernel` intentionally keeps its
 minimal initrd until the following rootfs step.
 
@@ -84,7 +84,7 @@ At boot, `capsem-init` checks if a binary exists in the initrd bundle (`/binary`
 
 Guest binary permissions must be 555 (read+execute, no write). There are two independent places that set permissions and both must agree:
 
-1. **Dockerfile.rootfs.j2** -- `chmod 555` when copying into the profile rootfs asset
+1. **Dockerfile.rootfs.j2** -- `chmod 555` when copying into the runtime rootfs asset
 2. **`[initrd].binary_mode` through the gate repacker** -- mode on the initrd copy
 
 The initrd copy wins at runtime because it overlays the rootfs. Keep both

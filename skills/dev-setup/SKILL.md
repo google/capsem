@@ -164,10 +164,11 @@ architecture-matched helper; do not install a parallel global cdxgen.
 
 ### Kernel version
 
-Kernel selection is part of the profile-derived image build, not a standalone
+Kernel selection is part of the runtime image build, not a standalone
 developer setting. The build backend reads the exact kernel release and
-SHA-256 from the checked-in build contract, then verifies the source archive
-before extraction while building profile assets through `capsem-admin`/`just`.
+SHA-256 from `config/docker/image/build.toml [build.kernel]`, then verifies the
+source archive before extraction while building the runtime through
+`capsem-admin`/`just`.
 Do not add a parallel kernel setting or a mutable latest-release lookup.
 
 Or step by step:
@@ -278,7 +279,7 @@ The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Unt
 
 ### `just _build-assets` fails (other)
 - Check Docker is running: `docker info`
-- Check the profile contract is valid: `capsem-admin profile check config/profiles/code/profile.toml --config-root config`
+- Check the runtime source is valid: `config/docker/image/build.toml` fails closed on an empty or duplicated `runtime_apt_packages` list or an EROFS budget above the tar budget
 - On first run, Docker image pulls can be slow
 
 ### `just exec` fails with "assets not found"

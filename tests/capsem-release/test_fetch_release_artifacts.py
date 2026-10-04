@@ -2,24 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import blake3
 import pytest
-from capsem_builder.image.tools.build import stage_profile_assets as PROFILE_STAGE
 from capsem_builder.release.tools import fetch_channel_source_manifest as SOURCE
 from capsem_builder.release.tools import fetch_release_artifacts as FETCH
-from capsem_builder.release.tools import prove_release_profile_assets as BOOT
-from capsem_builder.release.tools import release_test_profiles as PROFILE_AXIS
+from capsem_builder.release.tools import prove_release_runtime_assets as BOOT
 from capsem_builder.release.tools import stage_release_test_inputs as STAGE
 from capsem_builder.release.tools import verify_release_inputs as VERIFY
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SCRIPT = ROOT / "build_system" / "scripts" / "release" / "fetch-channel-source-manifest.py"
+RUNTIME_REVISION = "0.7.0-0123456789ab"
 
 
 def _digest(payload: bytes) -> dict[str, str]:
@@ -106,7 +103,7 @@ def test_source_selection_uses_asset_mutation_time_for_resumed_publication() -> 
                     "name": "channel-source-nightly.json",
                     "created_at": "2026-07-26T12:00:00Z",
                     "updated_at": "2026-07-26T12:00:00Z",
-                    "url": "https://api.github.test/assets/resumed-profile",
+                    "url": "https://api.github.test/assets/resumed-runtime",
                 }
             ],
         },
@@ -195,7 +192,7 @@ def test_channel_source_discovery_rejects_malformed_later_page(
 
 
 def test_channel_source_manifest_validation_is_channel_scoped() -> None:
-    payload = json.dumps({"channel": "nightly", "profiles": {"code": {}}, "packages": []}).encode()
+    payload = json.dumps({"channel": "nightly", "runtime": {}, "packages": []}).encode()
 
     assert SOURCE.validate_source_manifest(payload, "nightly")["channel"] == "nightly"
     with pytest.raises(ValueError, match="expected 'stable'"):
@@ -222,7 +219,7 @@ def test_invalid_serialized_source_never_falls_back_to_channel_bootstrap(
     monkeypatch.setattr(
         SOURCE,
         "_read_url",
-        lambda *_args, **_kwargs: b'{"channel":"wrong","profiles":{},"packages":[]}',
+        lambda *_args, **_kwargs: b'{"channel":"wrong","packages":[]}',
     )
 
     with pytest.raises(ValueError, match="expected 'nightly'") as error:
@@ -245,7 +242,7 @@ def test_missing_first_party_channel_bootstraps_through_capsem_admin(
             "channel": "stable",
             "status": "current",
             "packages": [{"name": "Capsem.pkg"}],
-            "profiles": {"code": {"revision": "stable-only"}},
+            "runtime": {"revision": "stable-only"},
         }
     ).encode()
     output = tmp_path / "nightly.json"
@@ -264,7 +261,6 @@ def test_missing_first_party_channel_bootstraps_through_capsem_admin(
                     "channel": "nightly",
                     "status": "current",
                     "packages": [{"name": "Capsem.pkg"}],
-                    "profiles": {},
                 }
             ),
             encoding="utf-8",
@@ -273,19 +269,18 @@ def test_missing_first_party_channel_bootstraps_through_capsem_admin(
 
     payload = SOURCE.bootstrap_source_manifest(
         channel=SOURCE.FirstPartyChannel.NIGHTLY,
-        profile="code",
         source_commit=SOURCE.SourceCommit("a" * 40),
         input_payload=donor,
         output=output,
         runner=run,
     )
 
-    assert SOURCE.validate_source_manifest(payload, "nightly")["profiles"] == {}
+    assert "runtime" not in SOURCE.validate_source_manifest(payload, "nightly")
     assert len(calls) == 1
     command = calls[0]
     assert command[:6] == ["cargo", "run", "-p", "capsem-admin", "--", "release"]
     assert command[command.index("--channel") + 1] == "nightly"
-    assert command[command.index("--profile") + 1] == "code"
+    assert "--profile" not in command
     assert command[command.index("--source-commit") + 1] == "a" * 40
 
 
@@ -298,7 +293,7 @@ def test_exact_retired_public_graph_uses_the_same_channel_admin_author(
             "channel": "stable",
             "status": "current",
             "packages": [{"name": "dead.deb"}],
-            "profiles": {"code": {"revision": "legacy"}},
+            "runtime": {"revision": "retired"},
         }
     ).encode()
     digest = hashlib.sha256(retired).hexdigest()
@@ -318,7 +313,6 @@ def test_exact_retired_public_graph_uses_the_same_channel_admin_author(
                     "channel": "stable",
                     "status": "current",
                     "packages": [],
-                    "profiles": {},
                 }
             ),
             encoding="utf-8",
@@ -327,7 +321,6 @@ def test_exact_retired_public_graph_uses_the_same_channel_admin_author(
 
     payload = SOURCE.bootstrap_source_manifest(
         channel=SOURCE.FirstPartyChannel.STABLE,
-        profile="code",
         source_commit=SOURCE.SourceCommit("b" * 40),
         input_payload=retired,
         output=output,
@@ -345,7 +338,7 @@ def test_exact_retired_public_graph_uses_the_same_channel_admin_author(
 
 
 def test_retired_fallback_requires_config_catalog_and_payload_digest() -> None:
-    payload = b'{"channel":"stable","packages":[],"profiles":{}}'
+    payload = b'{"channel":"stable","packages":[]}'
     digest = hashlib.sha256(payload).hexdigest()
     catalog = json.dumps(
         {
@@ -392,7 +385,7 @@ def test_missing_channel_bootstrap_requires_absence_from_public_catalog() -> Non
         )
 
 
-def test_bootstrap_baseline_allows_only_explicit_empty_profile_membership(
+def test_bootstrap_baseline_allows_only_an_explicitly_absent_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -404,16 +397,15 @@ def test_bootstrap_baseline_allows_only_explicit_empty_profile_membership(
                 "channel": "nightly",
                 "status": "current",
                 "packages": [],
-                "profiles": {},
             }
         ),
         encoding="utf-8",
     )
-    output = tmp_path / "profiles"
+    output = tmp_path / "runtime"
     url = manifest.as_uri()
 
-    with pytest.raises(ValueError, match="contains no profiles"):
-        FETCH.fetch_release_inputs(url, "profiles", output)
+    with pytest.raises(ValueError, match="contains no runtime"):
+        FETCH.fetch_release_inputs(url, "runtime", output)
 
     primary_url = "https://release.example/assets/nightly/manifest.json"
     original_read = FETCH._read_url
@@ -428,14 +420,14 @@ def test_bootstrap_baseline_allows_only_explicit_empty_profile_membership(
     monkeypatch.setattr(FETCH, "_read_url", read_url)
     report = FETCH.fetch_release_inputs(
         primary_url,
-        "profiles",
+        "runtime",
         output,
-        allow_empty_profiles=True,
+        allow_empty_runtime=True,
         bootstrap_manifest_url=url,
     )
 
     assert report["artifacts"] == []
-    assert report["allow_empty_profiles"] is True
+    assert report["allow_empty_runtime"] is True
     assert report["manifest_url"] == url
     verification = VERIFY.verify_release_inputs(output)
     assert verification["verified"] == []
@@ -453,7 +445,6 @@ def test_bootstrap_release_inputs_reject_existing_public_channel(
                 "channel": "nightly",
                 "status": "current",
                 "packages": [],
-                "profiles": {},
             }
         ),
         encoding="utf-8",
@@ -472,9 +463,9 @@ def test_bootstrap_release_inputs_reject_existing_public_channel(
     with pytest.raises(ValueError, match="exists but its manifest could not be resolved"):
         FETCH.fetch_release_inputs(
             primary_url,
-            "profiles",
-            tmp_path / "profiles",
-            allow_empty_profiles=True,
+            "runtime",
+            tmp_path / "runtime",
+            allow_empty_runtime=True,
             bootstrap_manifest_url=bootstrap.as_uri(),
         )
 
@@ -492,7 +483,6 @@ def _write_manifest(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
     artifacts = {
         "capsem.deb": b"package",
         "package.spdx.json": b'{"spdxVersion":"SPDX-2.3"}',
-        "profile.toml": b"[profile]\nid='code'\n",
         "vmlinuz": b"kernel",
         "initrd.img": b"initrd",
         "rootfs.erofs": b"rootfs",
@@ -522,56 +512,44 @@ def _write_manifest(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
                 ],
             )
         ],
-        "profiles": {
-            "code": {
-                "version": "code-1",
-                "id": "code",
-                "name": "Code",
-                "revision": "code-1",
-                "status": "current",
-                "architectures": [
-                    {
-                        "architecture": "x86_64",
-                        "config": [
-                            _record(
-                                "profile.toml",
-                                artifacts["profile.toml"],
-                                kind="profile",
-                                path="profiles/code/profile.toml",
-                                status="current",
-                            )
-                        ],
-                        "images": [
-                            _record(
-                                name,
-                                artifacts[name],
-                                kind=kind,
-                                name=name,
-                                status="current",
-                            )
-                            for name, kind in (
-                                ("vmlinuz", "kernel"),
-                                ("initrd.img", "initrd"),
-                                ("rootfs.erofs", "rootfs"),
-                            )
-                        ],
-                        "evidence": [
-                            _record(
-                                "obom.cdx.json",
-                                artifacts["obom.cdx.json"],
-                                kind="obom",
-                                status="current",
-                            ),
-                            _record(
-                                "software-inventory.json",
-                                artifacts["software-inventory.json"],
-                                kind="software_inventory",
-                                status="current",
-                            ),
-                        ],
-                    }
-                ],
-            }
+        "runtime": {
+            "revision": RUNTIME_REVISION,
+            "status": "current",
+            "architectures": [
+                {
+                    "architecture": "x86_64",
+                    "package_inventory_revision": RUNTIME_REVISION,
+                    "image_revision": RUNTIME_REVISION,
+                    "images": [
+                        _record(
+                            name,
+                            artifacts[name],
+                            kind=kind,
+                            name=name,
+                            status="current",
+                        )
+                        for name, kind in (
+                            ("vmlinuz", "kernel"),
+                            ("initrd.img", "initrd"),
+                            ("rootfs.erofs", "rootfs"),
+                        )
+                    ],
+                    "evidence": [
+                        _record(
+                            "obom.cdx.json",
+                            artifacts["obom.cdx.json"],
+                            kind="obom",
+                            status="current",
+                        ),
+                        _record(
+                            "software-inventory.json",
+                            artifacts["software-inventory.json"],
+                            kind="software_inventory",
+                            status="current",
+                        ),
+                    ],
+                }
+            ],
         },
     }
     path = tmp_path / "manifest.json"
@@ -579,12 +557,10 @@ def _write_manifest(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
     return path, artifacts
 
 
-def test_profile_fetch_can_limit_downloads_to_one_native_architecture(
-    tmp_path: Path,
-) -> None:
-    manifest, _ = _write_manifest(tmp_path)
+def _add_arm64(manifest: Path, tmp_path: Path) -> None:
+    """Give the runtime a second architecture with its own distinct bytes."""
     document = json.loads(manifest.read_text(encoding="utf-8"))
-    x86 = document["profiles"]["code"]["architectures"][0]
+    x86 = document["runtime"]["architectures"][0]
     arm = json.loads(json.dumps(x86))
     arm["architecture"] = "arm64"
     for section in ("images", "evidence"):
@@ -602,25 +578,32 @@ def test_profile_fetch_can_limit_downloads_to_one_native_architecture(
                     if key not in {"url", "bytes", "digest"}
                 },
             )
-    document["profiles"]["code"]["architectures"].append(arm)
+    document["runtime"]["architectures"].append(arm)
     manifest.write_text(json.dumps(document), encoding="utf-8")
 
-    output = tmp_path / "x86-profile-inputs"
+
+def test_runtime_fetch_can_limit_downloads_to_one_native_architecture(
+    tmp_path: Path,
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    _add_arm64(manifest, tmp_path)
+
+    output = tmp_path / "x86-runtime-inputs"
     report = FETCH.fetch_release_inputs(
         manifest.as_uri(),
-        "profiles",
+        "runtime",
         output,
         architecture="x86_64",
     )
 
     assert report["architecture"] == "x86_64"
     assert report["artifacts"]
-    assert all("/x86_64/" in row["path"] for row in report["artifacts"])
+    assert all(row["path"].startswith("runtime/x86_64/") for row in report["artifacts"])
     assert not any("arm64-" in row["url"] for row in report["artifacts"])
     VERIFY.verify_release_inputs(output)
 
 
-def test_profile_fetch_reuses_manifest_digest_cache_and_prunes_old_blobs(
+def test_runtime_fetch_reuses_manifest_digest_cache_and_prunes_old_blobs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -636,7 +619,7 @@ def test_profile_fetch_reuses_manifest_digest_cache_and_prunes_old_blobs(
     monkeypatch.setattr(FETCH, "_read_url", read_url)
     first = FETCH.fetch_release_inputs(
         manifest.as_uri(),
-        "profiles",
+        "runtime",
         tmp_path / "first",
         architecture="x86_64",
         cache_dir=cache,
@@ -650,7 +633,7 @@ def test_profile_fetch_reuses_manifest_digest_cache_and_prunes_old_blobs(
 
     second = FETCH.fetch_release_inputs(
         manifest.as_uri(),
-        "profiles",
+        "runtime",
         tmp_path / "second",
         architecture="x86_64",
         cache_dir=cache,
@@ -716,7 +699,7 @@ def test_corrupt_manifest_digest_cache_entry_is_replaced(
     cache = tmp_path / "artifact-cache"
     first = FETCH.fetch_release_inputs(
         manifest.as_uri(),
-        "profiles",
+        "runtime",
         tmp_path / "first",
         architecture="x86_64",
         cache_dir=cache,
@@ -734,7 +717,7 @@ def test_corrupt_manifest_digest_cache_entry_is_replaced(
     monkeypatch.setattr(FETCH, "_read_url", read_url)
     second = FETCH.fetch_release_inputs(
         manifest.as_uri(),
-        "profiles",
+        "runtime",
         tmp_path / "second",
         architecture="x86_64",
         cache_dir=cache,
@@ -770,34 +753,46 @@ def test_fetches_only_current_packages_and_verifies_both_digests(
     ]
 
 
-def test_fetches_every_profile_owned_input(tmp_path: Path) -> None:
+def test_fetches_every_runtime_input(tmp_path: Path) -> None:
     manifest, artifacts = _write_manifest(tmp_path)
-    output = tmp_path / "profiles"
+    output = tmp_path / "runtime"
 
-    report = FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", output)
+    report = FETCH.fetch_release_inputs(manifest.as_uri(), "runtime", output)
 
     paths = {row["path"] for row in report["artifacts"]}
     assert paths == {
-        "profiles/code/x86_64/config/profile.toml",
-        "profiles/code/x86_64/images/vmlinuz",
-        "profiles/code/x86_64/images/initrd.img",
-        "profiles/code/x86_64/images/rootfs.erofs",
-        "profiles/code/x86_64/evidence/obom.cdx.json",
-        "profiles/code/x86_64/evidence/software-inventory.json",
+        "runtime/x86_64/images/vmlinuz",
+        "runtime/x86_64/images/initrd.img",
+        "runtime/x86_64/images/rootfs.erofs",
+        "runtime/x86_64/evidence/obom.cdx.json",
+        "runtime/x86_64/evidence/software-inventory.json",
     }
-    assert (output / "profiles/code/x86_64/images/rootfs.erofs").read_bytes() == artifacts[
-        "rootfs.erofs"
-    ]
+    assert (output / "runtime/x86_64/images/rootfs.erofs").read_bytes() == artifacts["rootfs.erofs"]
 
 
-def test_profile_boot_proof_uses_exact_manifest_selected_images_without_builders(
+def test_revoked_runtime_contributes_no_inputs(tmp_path: Path) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document["runtime"]["status"] = "revoked"
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="resolved no runtime"):
+        FETCH.fetch_release_inputs(manifest.as_uri(), "runtime", tmp_path / "out")
+    # An explicitly absent runtime is the only empty shape, never a revoked one.
+    with pytest.raises(ValueError, match="resolved no runtime"):
+        FETCH.fetch_release_inputs(
+            manifest.as_uri(), "runtime", tmp_path / "out", allow_empty_runtime=True
+        )
+
+
+def test_runtime_boot_proof_uses_exact_manifest_selected_images_without_builders(
     tmp_path: Path,
 ) -> None:
     manifest, artifacts = _write_manifest(tmp_path)
-    output = tmp_path / "profiles"
+    output = tmp_path / "runtime"
     FETCH.fetch_release_inputs(
         manifest.as_uri(),
-        "profiles",
+        "runtime",
         output,
         architecture="x86_64",
     )
@@ -808,9 +803,8 @@ def test_profile_boot_proof_uses_exact_manifest_selected_images_without_builders
         calls.append(command)
         return subprocess.CompletedProcess(command, 0)
 
-    BOOT.prove_profile_assets(
+    BOOT.prove_runtime_assets(
         output,
-        "code",
         architecture="x86_64",
         timeout=41,
         runner=run,
@@ -818,17 +812,7 @@ def test_profile_boot_proof_uses_exact_manifest_selected_images_without_builders
 
     assert len(calls) == 1
     command = calls[0]
-    assert command[:8] == [
-        "cargo",
-        "run",
-        "--locked",
-        "-p",
-        "capsem-core",
-        "--example",
-        "release_profile_boot",
-        "--",
-    ]
-    assert command[command.index("--profile") + 1] == "code"
+    assert command[:6] == ["cargo", "run", "--locked", "-p", "capsem-core", "--example"]
     assert command[command.index("--timeout") + 1] == "41"
     for kind, filename in (
         ("kernel", "vmlinuz"),
@@ -840,48 +824,57 @@ def test_profile_boot_proof_uses_exact_manifest_selected_images_without_builders
         assert path.read_bytes() == artifacts[filename]
         assert digest == blake3.blake3(artifacts[filename]).hexdigest()
     joined = " ".join(command)
-    for forbidden in ("capsem-admin", "_build-assets", "_build-kernel", "_build-rootfs"):
+    for forbidden in (
+        "capsem-admin",
+        "_build-assets",
+        "_build-kernel",
+        "_build-rootfs",
+    ):
         assert forbidden not in joined
 
 
-def test_profile_boot_proof_rejects_profile_absent_from_manifest(tmp_path: Path) -> None:
+def test_runtime_boot_proof_rejects_inputs_for_another_architecture(
+    tmp_path: Path,
+) -> None:
     manifest, _ = _write_manifest(tmp_path)
-    output = tmp_path / "profiles"
+    output = tmp_path / "runtime"
     FETCH.fetch_release_inputs(
         manifest.as_uri(),
-        "profiles",
+        "runtime",
         output,
         architecture="x86_64",
     )
 
-    with pytest.raises(ValueError, match="does not select profile missing"):
-        BOOT.resolve_profile_boot_inputs(output, "missing", "x86_64")
+    with pytest.raises(ValueError, match="select x86_64, not host arm64"):
+        BOOT.resolve_runtime_boot_inputs(output, "arm64")
 
 
-def test_profile_boot_proof_rejects_duplicate_boot_image_kind(tmp_path: Path) -> None:
+def test_runtime_boot_proof_rejects_duplicate_boot_image_kind(tmp_path: Path) -> None:
     manifest, _ = _write_manifest(tmp_path)
     document = json.loads(manifest.read_text(encoding="utf-8"))
-    images = document["profiles"]["code"]["architectures"][0]["images"]
+    images = document["runtime"]["architectures"][0]["images"]
     images.append(dict(images[0]))
     manifest.write_text(json.dumps(document), encoding="utf-8")
-    output = tmp_path / "profiles"
+    output = tmp_path / "runtime"
     FETCH.fetch_release_inputs(
         manifest.as_uri(),
-        "profiles",
+        "runtime",
         output,
         architecture="x86_64",
     )
 
     with pytest.raises(ValueError, match="repeats kernel image"):
-        BOOT.resolve_profile_boot_inputs(output, "code", "x86_64")
+        BOOT.resolve_runtime_boot_inputs(output, "x86_64")
 
 
-def test_profile_boot_proof_rejects_transport_missing_manifest_image(tmp_path: Path) -> None:
+def test_runtime_boot_proof_rejects_transport_missing_manifest_image(
+    tmp_path: Path,
+) -> None:
     manifest, _ = _write_manifest(tmp_path)
-    output = tmp_path / "profiles"
+    output = tmp_path / "runtime"
     FETCH.fetch_release_inputs(
         manifest.as_uri(),
-        "profiles",
+        "runtime",
         output,
         architecture="x86_64",
     )
@@ -892,20 +885,19 @@ def test_profile_boot_proof_rejects_transport_missing_manifest_image(tmp_path: P
     (output / "release-inputs.json").write_text(json.dumps(report), encoding="utf-8")
 
     with pytest.raises(ValueError, match="does not match the resolved manifest artifact set"):
-        BOOT.resolve_profile_boot_inputs(output, "code", "x86_64")
+        BOOT.resolve_runtime_boot_inputs(output, "x86_64")
 
 
-def _stage_local_profile_publication(
+def _stage_local_runtime_publication(
     manifest_path: Path,
     publication_dir: Path,
 ) -> str:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    publication_base = "https://github.test/releases/download/profile-nightly-code-code-1"
+    publication_base = f"https://github.test/releases/download/runtime-nightly-{RUNTIME_REVISION}"
     publication_dir.mkdir()
-    profile = manifest["profiles"]["code"]
-    for architecture in profile["architectures"]:
+    for architecture in manifest["runtime"]["architectures"]:
         arch = architecture["architecture"]
-        for section in ("config", "images", "evidence"):
+        for section in ("images", "evidence"):
             for row in architecture[section]:
                 source = manifest_path.parent / Path(row["url"]).name
                 name = f"{arch}-{source.name}"
@@ -916,20 +908,20 @@ def _stage_local_profile_publication(
     return publication_base
 
 
-def test_candidate_profile_inputs_mix_staged_publication_with_manifest_urls(
+def test_candidate_runtime_inputs_mix_staged_publication_with_manifest_urls(
     tmp_path: Path,
 ) -> None:
     manifest_path, artifacts = _write_manifest(tmp_path)
     publication_dir = tmp_path / "publication"
-    publication_base = _stage_local_profile_publication(
+    publication_base = _stage_local_runtime_publication(
         manifest_path,
         publication_dir,
     )
-    output = tmp_path / "candidate-profiles"
+    output = tmp_path / "candidate-runtime"
 
     report = FETCH.fetch_release_inputs(
         manifest_path.as_uri(),
-        "profiles",
+        "runtime",
         output,
         local_publication_base=publication_base,
         local_publication_dir=publication_dir,
@@ -937,31 +929,30 @@ def test_candidate_profile_inputs_mix_staged_publication_with_manifest_urls(
 
     assert (output / "manifest.json").read_bytes() == manifest_path.read_bytes()
     assert {row["url"] for row in report["artifacts"]} == {
-        f"{publication_base}/x86_64-profile.toml",
         f"{publication_base}/x86_64-vmlinuz",
         f"{publication_base}/x86_64-initrd.img",
         f"{publication_base}/x86_64-rootfs.erofs",
         f"{publication_base}/x86_64-obom.cdx.json",
         f"{publication_base}/x86_64-software-inventory.json",
     }
-    assert (output / "profiles/code/x86_64/images/x86_64-rootfs.erofs").read_bytes() == artifacts[
+    assert (output / "runtime/x86_64/images/x86_64-rootfs.erofs").read_bytes() == artifacts[
         "rootfs.erofs"
     ]
     VERIFY.verify_release_inputs(output)
 
 
-def test_candidate_profile_architecture_filter_accepts_manifest_owned_siblings_only(
+def test_candidate_runtime_architecture_filter_accepts_manifest_owned_siblings_only(
     tmp_path: Path,
 ) -> None:
     manifest_path, _ = _write_manifest(tmp_path)
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
-    x86 = document["profiles"]["code"]["architectures"][0]
+    x86 = document["runtime"]["architectures"][0]
     arm = json.loads(json.dumps(x86))
     arm["architecture"] = "arm64"
-    document["profiles"]["code"]["architectures"].append(arm)
+    document["runtime"]["architectures"].append(arm)
     manifest_path.write_text(json.dumps(document), encoding="utf-8")
     publication_dir = tmp_path / "publication"
-    publication_base = _stage_local_profile_publication(
+    publication_base = _stage_local_runtime_publication(
         manifest_path,
         publication_dir,
     )
@@ -969,7 +960,7 @@ def test_candidate_profile_architecture_filter_accepts_manifest_owned_siblings_o
     output = tmp_path / "candidate-arm64"
     report = FETCH.fetch_release_inputs(
         manifest_path.as_uri(),
-        "profiles",
+        "runtime",
         output,
         architecture="arm64",
         local_publication_base=publication_base,
@@ -978,15 +969,14 @@ def test_candidate_profile_architecture_filter_accepts_manifest_owned_siblings_o
 
     assert report["architecture"] == "arm64"
     assert report["artifacts"]
-    assert all("/arm64/" in row["path"] for row in report["artifacts"])
-    assert not any("/x86_64/" in row["path"] for row in report["artifacts"])
+    assert all(row["path"].startswith("runtime/arm64/") for row in report["artifacts"])
     VERIFY.verify_release_inputs(output)
 
     (publication_dir / "not-selected-by-manifest").write_bytes(b"extra")
     with pytest.raises(ValueError, match="file set mismatch"):
         FETCH.fetch_release_inputs(
             manifest_path.as_uri(),
-            "profiles",
+            "runtime",
             tmp_path / "candidate-with-extra",
             architecture="arm64",
             local_publication_base=publication_base,
@@ -994,12 +984,12 @@ def test_candidate_profile_architecture_filter_accepts_manifest_owned_siblings_o
         )
 
 
-def test_candidate_profile_override_is_all_or_nothing_and_exact(
+def test_candidate_runtime_override_is_all_or_nothing_and_exact(
     tmp_path: Path,
 ) -> None:
     manifest_path, _ = _write_manifest(tmp_path)
     publication_dir = tmp_path / "publication"
-    publication_base = _stage_local_profile_publication(
+    publication_base = _stage_local_runtime_publication(
         manifest_path,
         publication_dir,
     )
@@ -1007,7 +997,7 @@ def test_candidate_profile_override_is_all_or_nothing_and_exact(
     with pytest.raises(ValueError, match="supplied together"):
         FETCH.fetch_release_inputs(
             manifest_path.as_uri(),
-            "profiles",
+            "runtime",
             tmp_path / "partial",
             local_publication_base=publication_base,
         )
@@ -1016,7 +1006,7 @@ def test_candidate_profile_override_is_all_or_nothing_and_exact(
     with pytest.raises(ValueError, match="file set mismatch"):
         FETCH.fetch_release_inputs(
             manifest_path.as_uri(),
-            "profiles",
+            "runtime",
             tmp_path / "extra",
             local_publication_base=publication_base,
             local_publication_dir=publication_dir,
@@ -1027,7 +1017,7 @@ def test_candidate_profile_override_is_all_or_nothing_and_exact(
     with pytest.raises(ValueError, match="byte size mismatch"):
         FETCH.fetch_release_inputs(
             manifest_path.as_uri(),
-            "profiles",
+            "runtime",
             tmp_path / "tampered",
             local_publication_base=publication_base,
             local_publication_dir=publication_dir,
@@ -1035,24 +1025,26 @@ def test_candidate_profile_override_is_all_or_nothing_and_exact(
 
 
 @pytest.mark.parametrize("field", ["sha256", "blake3"])
-def test_rejects_tampered_profile_digest(tmp_path: Path, field: str) -> None:
+def test_rejects_tampered_runtime_digest(tmp_path: Path, field: str) -> None:
     manifest, _ = _write_manifest(tmp_path)
     document = json.loads(manifest.read_text(encoding="utf-8"))
-    document["profiles"]["code"]["architectures"][0]["images"][0]["digest"][field] = "0" * 64
+    document["runtime"]["architectures"][0]["images"][0]["digest"][field] = "0" * 64
     manifest.write_text(json.dumps(document), encoding="utf-8")
 
     with pytest.raises(
         ValueError, match=field.replace("sha256", "SHA-256").replace("blake3", "BLAKE3")
     ):
-        FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", tmp_path / "out")
+        FETCH.fetch_release_inputs(manifest.as_uri(), "runtime", tmp_path / "out")
 
 
 def test_rejects_manifest_without_owned_inputs(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.json"
-    manifest.write_text('{"packages":[],"profiles":{}}', encoding="utf-8")
+    manifest.write_text('{"packages":[]}', encoding="utf-8")
 
     with pytest.raises(ValueError, match="no packages"):
         FETCH.fetch_release_inputs(manifest.as_uri(), "packages", tmp_path / "out")
+    with pytest.raises(ValueError, match="contains no runtime"):
+        FETCH.fetch_release_inputs(manifest.as_uri(), "runtime", tmp_path / "out")
 
 
 def test_verifier_rejects_a_tampered_resolved_input(tmp_path: Path) -> None:
@@ -1069,8 +1061,8 @@ def test_verifier_rejects_an_artifact_omitted_from_its_manifest_derivation(
     tmp_path: Path,
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)
-    output = tmp_path / "profiles"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", output)
+    output = tmp_path / "runtime"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "runtime", output)
     report_path = output / "release-inputs.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["artifacts"].pop()
@@ -1084,8 +1076,8 @@ def test_verifier_rejects_a_report_identity_substituted_after_resolution(
     tmp_path: Path,
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)
-    output = tmp_path / "profiles"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", output)
+    output = tmp_path / "runtime"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "runtime", output)
     report_path = output / "release-inputs.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["artifacts"][0]["url"] = "https://attacker.invalid/substitute"
@@ -1095,322 +1087,115 @@ def test_verifier_rejects_a_report_identity_substituted_after_resolution(
         VERIFY.verify_release_inputs(output)
 
 
-def test_fetch_rejects_profile_identity_path_traversal(tmp_path: Path) -> None:
+def test_fetch_rejects_runtime_architecture_path_traversal(tmp_path: Path) -> None:
     manifest, _ = _write_manifest(tmp_path)
     document = json.loads(manifest.read_text(encoding="utf-8"))
-    document["profiles"]["../../outside"] = document["profiles"].pop("code")
+    document["runtime"]["architectures"][0]["architecture"] = ".."
     manifest.write_text(json.dumps(document), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="unsafe profile identity"):
-        FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", tmp_path / "out")
+    with pytest.raises(ValueError, match="unsafe runtime architecture identity"):
+        FETCH.fetch_release_inputs(manifest.as_uri(), "runtime", tmp_path / "out")
 
-    assert not (tmp_path / "outside").exists()
-
-
-def _add_distinct_profile(
-    manifest: Path,
-    tmp_path: Path,
-) -> dict[str, bytes]:
-    document = json.loads(manifest.read_text(encoding="utf-8"))
-    artifacts = {
-        "co-work.toml": b"[profile]\nid='co-work'\n",
-        "co-work-vmlinuz": b"co-work-kernel",
-        "co-work-initrd.img": b"co-work-initrd",
-        "co-work-rootfs.erofs": b"co-work-rootfs",
-        "co-work-obom.cdx.json": b'{"bomFormat":"CycloneDX","profile":"co-work"}',
-        "co-work-software-inventory.json": b'{"architecture":"x86_64","profile":"co-work"}',
-    }
-    for name, payload in artifacts.items():
-        (tmp_path / name).write_bytes(payload)
-    document["profiles"]["co-work"] = {
-        "version": "co-work-1",
-        "id": "co-work",
-        "name": "Co-work",
-        "revision": "co-work-1",
-        "status": "current",
-        "architectures": [
-            {
-                "architecture": "x86_64",
-                "config": [
-                    _record(
-                        "co-work.toml",
-                        artifacts["co-work.toml"],
-                        kind="profile",
-                        path="profiles/co-work/profile.toml",
-                        status="current",
-                    )
-                ],
-                "images": [
-                    _record(
-                        name,
-                        artifacts[name],
-                        kind=kind,
-                        name=logical_name,
-                        status="current",
-                    )
-                    for name, kind, logical_name in (
-                        ("co-work-vmlinuz", "kernel", "vmlinuz"),
-                        ("co-work-initrd.img", "initrd", "initrd.img"),
-                        ("co-work-rootfs.erofs", "rootfs", "rootfs.erofs"),
-                    )
-                ],
-                "evidence": [
-                    _record(
-                        "co-work-obom.cdx.json",
-                        artifacts["co-work-obom.cdx.json"],
-                        kind="obom",
-                        status="current",
-                    ),
-                    _record(
-                        "co-work-software-inventory.json",
-                        artifacts["co-work-software-inventory.json"],
-                        kind="software_inventory",
-                        status="current",
-                    ),
-                ],
-            }
-        ],
-    }
-    manifest.write_text(json.dumps(document), encoding="utf-8")
-    return artifacts
+    assert not (tmp_path / "out" / "runtime").exists()
 
 
-def test_stages_every_verified_profile_image_and_exact_config(
+def _stage_runtime_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest: Path) -> Path:
+    inputs = tmp_path / "runtime-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "runtime", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    return inputs
+
+
+def test_stages_every_verified_runtime_image_and_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest, artifacts = _write_manifest(tmp_path)
-    co_work = _add_distinct_profile(manifest, tmp_path)
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    _add_arm64(manifest, tmp_path)
+    inputs = _stage_runtime_inputs(tmp_path, monkeypatch, manifest)
     assets = tmp_path / "assets"
-    config_root = tmp_path / "release-config"
+    (assets / "stale").mkdir(parents=True)
 
-    staged_manifest = STAGE.stage_profiles(
-        inputs,
-        assets,
-        config_root,
-        ROOT / "config",
-    )
+    staged_manifest = STAGE.stage_runtime(inputs, assets)
 
+    assert staged_manifest == assets / "manifest.json"
     document = json.loads(staged_manifest.read_text(encoding="utf-8"))
-    image_url = document["profiles"]["code"]["architectures"][0]["images"][0]["url"]
+    image_url = document["runtime"]["architectures"][0]["images"][0]["url"]
     assert image_url.startswith("file://")
-    for relative in (
-        Path("settings/settings.toml"),
-        Path("settings/schema.generated.json"),
-        Path("corp/corp.toml"),
-        Path("corp/enforcement.toml"),
-        Path("corp/detection.yaml"),
+    assert not (assets / "stale").exists()
+    assert not (assets / "arm64").exists()
+    for logical_name in (
+        "vmlinuz",
+        "initrd.img",
+        "rootfs.erofs",
+        "obom.cdx.json",
+        "software-inventory.json",
     ):
-        assert (config_root / relative).read_bytes() == (ROOT / "config" / relative).read_bytes()
-    assert (config_root / "profiles/code/profile.toml").read_bytes() == artifacts["profile.toml"]
-    assert (config_root / "profiles/co-work/profile.toml").read_bytes() == co_work["co-work.toml"]
-    assert (assets / "x86_64/vmlinuz").read_bytes() == artifacts["vmlinuz"]
-    assert (assets / "x86_64/initrd.img").read_bytes() == artifacts["initrd.img"]
-    assert (assets / "x86_64/rootfs.erofs").read_bytes() == artifacts["rootfs.erofs"]
-    assert (assets / "x86_64/obom.cdx.json").read_bytes() == artifacts["obom.cdx.json"]
-    assert (assets / "x86_64/software-inventory.json").read_bytes() == artifacts[
-        "software-inventory.json"
-    ]
-    for logical_name, payload in (
-        ("vmlinuz", artifacts["vmlinuz"]),
-        ("initrd.img", artifacts["initrd.img"]),
-        ("rootfs.erofs", artifacts["rootfs.erofs"]),
-        ("vmlinuz", co_work["co-work-vmlinuz"]),
-        ("initrd.img", co_work["co-work-initrd.img"]),
-        ("rootfs.erofs", co_work["co-work-rootfs.erofs"]),
-        ("obom.cdx.json", artifacts["obom.cdx.json"]),
-        ("software-inventory.json", artifacts["software-inventory.json"]),
-        ("obom.cdx.json", co_work["co-work-obom.cdx.json"]),
-        ("software-inventory.json", co_work["co-work-software-inventory.json"]),
-    ):
+        payload = artifacts[logical_name]
+        assert (assets / "x86_64" / logical_name).read_bytes() == payload
         digest = blake3.blake3(payload).hexdigest()
-        staged = assets / "x86_64" / PROFILE_STAGE.hash_filename(logical_name, digest)
-        assert staged.read_bytes() == payload
+        hashed = assets / "x86_64" / STAGE.hash_filename(logical_name, digest)
+        assert hashed.read_bytes() == payload
 
 
-def _add_python_dependency_pair(
-    manifest: Path,
-    tmp_path: Path,
-    *,
-    declare_lock: bool = True,
-    publish_lock: bool,
-) -> tuple[bytes, bytes]:
-    requirements = b"requests==2.32.5\n"
-    lock = b"requests==2.32.5 --hash=sha256:" + (b"a" * 64) + b"\n"
-    profile = b"""[profile]
-id = "code"
-
-[files.python_requirements]
-path = "profiles/code/python-requirements.txt"
-"""
-    if declare_lock:
-        profile += b"""
-[files.python_requirements_lock]
-path = "profiles/code/python-requirements.lock"
-"""
-    for name, payload in (
-        ("profile.toml", profile),
-        ("python-requirements.txt", requirements),
-        ("python-requirements.lock", lock),
-    ):
-        (tmp_path / name).write_bytes(payload)
-
-    document = json.loads(manifest.read_text(encoding="utf-8"))
-    config = document["profiles"]["code"]["architectures"][0]["config"]
-    config[0] = _record(
-        "profile.toml",
-        profile,
-        kind="profile",
-        path="profiles/code/profile.toml",
-        status="current",
-    )
-    config.append(
-        _record(
-            "python-requirements.txt",
-            requirements,
-            kind="python_requirements",
-            path="profiles/code/python-requirements.txt",
-            status="current",
-        )
-    )
-    if publish_lock:
-        config.append(
-            _record(
-                "python-requirements.lock",
-                lock,
-                kind="python_requirements_lock",
-                path="profiles/code/python-requirements.lock",
-                status="current",
-            )
-        )
-    manifest.write_text(json.dumps(document), encoding="utf-8")
-    return requirements, lock
-
-
-def test_profile_staging_refuses_a_declared_python_lock_missing_from_release_inputs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest, _ = _write_manifest(tmp_path)
-    _add_python_dependency_pair(manifest, tmp_path, publish_lock=False)
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-
-    with pytest.raises(ValueError, match=r"code.*python-requirements\.lock"):
-        STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config", ROOT / "config")
-
-
-def test_profile_staging_warns_about_legacy_unlocked_python_requirements(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    manifest, _ = _write_manifest(tmp_path)
-    _add_python_dependency_pair(
-        manifest,
-        tmp_path,
-        declare_lock=False,
-        publish_lock=False,
-    )
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-
-    # Warns, and stages anyway. Refusing here deadlocks the release lanes
-    # against each other: staging reads the already-published profile, the
-    # published profiles carry no lock, and only a release can produce one --
-    # which is the release this refusal was blocking. Sixteen consecutive
-    # trunk failures made that concrete. See `require_paired_files`.
-    staged = STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config", ROOT / "config")
-    assert staged, "a legacy unlocked profile must still stage"
-
-    warned = capsys.readouterr().err
-    assert "python_requirements without python_requirements_lock" in warned
-    assert "unsealed resolver" in warned
-
-
-def test_profile_staging_refuses_unlocked_requirements_from_a_current_writer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The legacy bridge must close automatically for newly authored profiles."""
-    manifest, _ = _write_manifest(tmp_path)
-    _add_python_dependency_pair(
-        manifest,
-        tmp_path,
-        declare_lock=False,
-        publish_lock=False,
-    )
-    document = json.loads(manifest.read_text(encoding="utf-8"))
-    document["profiles"]["code"]["source_commit"] = "a" * 40
-    manifest.write_text(json.dumps(document), encoding="utf-8")
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-
-    with pytest.raises(ValueError, match="python_requirements without python_requirements_lock"):
-        STAGE.stage_profiles(
-            inputs,
-            tmp_path / "assets",
-            tmp_path / "config",
-            ROOT / "config",
-        )
-
-
-@pytest.mark.parametrize("source_commit", [None, "A" * 40, "a" * 39, "main"])
-def test_profile_staging_rejects_a_malformed_source_commit(
+@pytest.mark.parametrize("source_commit", ["A" * 40, "a" * 39, "main", 7])
+def test_runtime_staging_rejects_a_malformed_source_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     source_commit: object,
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)
     document = json.loads(manifest.read_text(encoding="utf-8"))
-    document["profiles"]["code"]["source_commit"] = source_commit
+    document["runtime"]["source_commit"] = source_commit
     manifest.write_text(json.dumps(document), encoding="utf-8")
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    inputs = _stage_runtime_inputs(tmp_path, monkeypatch, manifest)
 
     with pytest.raises(ValueError, match="malformed source_commit"):
-        STAGE.stage_profiles(
-            inputs,
-            tmp_path / "assets",
-            tmp_path / "config",
-            ROOT / "config",
-        )
+        STAGE.stage_runtime(inputs, tmp_path / "assets")
 
 
-def test_profile_staging_carries_the_exact_python_requirements_and_lock_together(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest, _ = _write_manifest(tmp_path)
-    requirements, lock = _add_python_dependency_pair(manifest, tmp_path, publish_lock=True)
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-    config = tmp_path / "config"
-
-    STAGE.stage_profiles(inputs, tmp_path / "assets", config, ROOT / "config")
-
-    assert (config / "profiles/code/python-requirements.txt").read_bytes() == requirements
-    assert (config / "profiles/code/python-requirements.lock").read_bytes() == lock
-
-
-def test_profile_staging_refuses_missing_configured_evidence_before_package_work(
+def test_runtime_staging_refuses_missing_configured_evidence_before_package_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)
     document = json.loads(manifest.read_text(encoding="utf-8"))
-    evidence = document["profiles"]["code"]["architectures"][0]["evidence"]
-    document["profiles"]["code"]["architectures"][0]["evidence"] = [
+    evidence = document["runtime"]["architectures"][0]["evidence"]
+    document["runtime"]["architectures"][0]["evidence"] = [
         record for record in evidence if record["kind"] != "obom"
     ]
     manifest.write_text(json.dumps(document), encoding="utf-8")
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    inputs = _stage_runtime_inputs(tmp_path, monkeypatch, manifest)
+
+    with pytest.raises(ValueError, match=r"runtime/x86_64.*obom\.cdx\.json"):
+        STAGE.stage_runtime(inputs, tmp_path / "assets")
+
+
+def test_runtime_staging_refuses_a_runtime_without_the_host_architecture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    inputs = _stage_runtime_inputs(tmp_path, monkeypatch, manifest)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "arm64")
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    sentinel = assets / "keep-on-validation-failure"
+    sentinel.write_text("preserved\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="exactly one arm64 architecture"):
+        STAGE.stage_runtime(inputs, assets)
+
+    assert sentinel.read_text(encoding="utf-8") == "preserved\n"
+
+
+def test_runtime_staging_requires_runtime_release_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    inputs = tmp_path / "package-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
     monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
 
-    with pytest.raises(ValueError, match=r"code/x86_64.*obom\.cdx\.json"):
-        STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config", ROOT / "config")
+    with pytest.raises(ValueError, match="requires runtime release inputs"):
+        STAGE.stage_runtime(inputs, tmp_path / "assets")
 
 
 def test_selected_install_transport_keeps_the_verified_source_graph(
@@ -1419,30 +1204,32 @@ def test_selected_install_transport_keeps_the_verified_source_graph(
     """The immutable input report, not generated file URLs, binds its bytes.
 
     The hosted install lane fetches and verifies the public release graph into
-    ``inputs/``. Profile staging rewrites a separate runtime projection to its
-    local immutable payloads. Requiring the original graph itself to contain
-    those generated URLs rejected the real stable channel only after the
-    package and sealed install image had spent nearly an hour building.
+    ``inputs/``. Runtime staging rewrites a separate projection to its local
+    immutable payloads. Requiring the original graph itself to contain those
+    generated URLs rejected the real stable channel only after the package and
+    sealed install image had spent nearly an hour building.
     """
     from capsem_builder.gate import config as gate_config
-    from capsem_builder.gate.content import ProfileContent, SelectedInstallContent
+    from capsem_builder.gate.content import RuntimeContent, SelectedInstallContent
 
     manifest, _ = _write_manifest(tmp_path)
-    _add_distinct_profile(manifest, tmp_path)
     root = tmp_path / "selected-content"
     inputs = root / "inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    FETCH.fetch_release_inputs(manifest.as_uri(), "runtime", inputs)
     original_manifest = (inputs / "manifest.json").read_bytes()
     monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-    assets = root / "assets"
-    config_root = root / "config"
 
-    staged_manifest = STAGE.stage_profiles(inputs, assets, config_root, ROOT / "config")
+    staged_manifest = STAGE.stage_runtime(inputs, root / "assets")
     config = gate_config.load(ROOT)
-    content = ProfileContent.isolated(config, root)
+    content = RuntimeContent.isolated(config, root)
     config_manifest = content.config_manifest(config)
     config_manifest.parent.mkdir(parents=True)
     config_manifest.write_bytes(staged_manifest.read_bytes())
+    # The service catalog is materialized from the checkout, never staged from
+    # release inputs; stand one in so only the runtime projection is under test.
+    catalog_entry = content.profiles(config) / "code" / "profile.toml"
+    catalog_entry.parent.mkdir(parents=True)
+    catalog_entry.write_text('id = "code"\n', encoding="utf-8")
 
     selected = SelectedInstallContent(content)
     selected.require_complete(config, arches=(config.architectures["x86_64"],))
@@ -1451,210 +1238,16 @@ def test_selected_install_transport_keeps_the_verified_source_graph(
     assert b"file://" in staged_manifest.read_bytes()
 
 
-def test_stages_manifest_owned_profile_root_payload_without_checkout_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest, _ = _write_manifest(tmp_path)
-    document = json.loads(manifest.read_text(encoding="utf-8"))
-    root_payload = b"manifest-owned profile payload\n"
-    root_manifest = json.dumps(
-        {
-            "format": "capsem.profile-root.v1",
-            "files": [
-                {
-                    "path": "root/.profile",
-                    "hash": f"blake3:{blake3.blake3(root_payload).hexdigest()}",
-                    "size": len(root_payload),
-                }
-            ],
-        }
-    ).encode()
-    (tmp_path / "root.manifest.json").write_bytes(root_manifest)
-    (tmp_path / "root-payload").write_bytes(root_payload)
-    config = document["profiles"]["code"]["architectures"][0]["config"]
-    config.extend(
-        [
-            _record(
-                "root.manifest.json",
-                root_manifest,
-                kind="root_manifest",
-                path="profiles/code/root.manifest.json",
-                status="current",
-            ),
-            _record(
-                "root-payload",
-                root_payload,
-                kind="root_payload",
-                path="profiles/code/root/root/.profile",
-                status="current",
-            ),
-        ]
-    )
-    manifest.write_text(json.dumps(document), encoding="utf-8")
-    checkout_payload = ROOT / "config/profiles/code/root/root/.profile"
-    assert checkout_payload.read_bytes() != root_payload
-
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-    config_root = tmp_path / "release-config"
-    STAGE.stage_profiles(
-        inputs,
-        tmp_path / "assets",
-        config_root,
-        ROOT / "config",
-    )
-
-    assert (config_root / "profiles/code/root.manifest.json").read_bytes() == root_manifest
-    assert (config_root / "profiles/code/root/root/.profile").read_bytes() == root_payload
-
-
-def test_legacy_root_manifest_rehydrates_only_exact_verified_checkout_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Old stable graphs select root bytes through their nested manifest."""
-    manifest, _ = _write_manifest(tmp_path)
-    document = json.loads(manifest.read_text(encoding="utf-8"))
-    source_profile = ROOT / "config/profiles/code"
-    root_manifest = (source_profile / "root.manifest.json").read_bytes()
-    (tmp_path / "root.manifest.json").write_bytes(root_manifest)
-    document["profiles"]["code"]["architectures"][0]["config"].append(
-        _record(
-            "root.manifest.json",
-            root_manifest,
-            kind="root_manifest",
-            path="profiles/code/root.manifest.json",
-            status="current",
-        )
-    )
-    manifest.write_text(json.dumps(document), encoding="utf-8")
-
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-    config_root = tmp_path / "release-config"
-    STAGE.stage_profiles(inputs, tmp_path / "assets", config_root, ROOT / "config")
-
-    nested = json.loads(root_manifest)
-    for entry in nested["files"]:
-        relative = Path(entry["path"])
-        assert (config_root / "profiles/code/root" / relative).read_bytes() == (
-            source_profile / "root" / relative
-        ).read_bytes()
-
-
-def test_legacy_root_manifest_rejects_a_same_size_checkout_substitution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest, _ = _write_manifest(tmp_path)
-    document = json.loads(manifest.read_text(encoding="utf-8"))
-    source_profile = ROOT / "config/profiles/code"
-    root_manifest = (source_profile / "root.manifest.json").read_bytes()
-    (tmp_path / "root.manifest.json").write_bytes(root_manifest)
-    document["profiles"]["code"]["architectures"][0]["config"].append(
-        _record(
-            "root.manifest.json",
-            root_manifest,
-            kind="root_manifest",
-            path="profiles/code/root.manifest.json",
-            status="current",
-        )
-    )
-    manifest.write_text(json.dumps(document), encoding="utf-8")
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-
-    shared = tmp_path / "shared-config"
-    shutil.copytree(ROOT / "config", shared)
-    first = json.loads(root_manifest)["files"][0]["path"]
-    substitute = shared / "profiles/code/root" / first
-    original = substitute.read_bytes()
-    substitute.write_bytes(bytes([original[0] ^ 1]) + original[1:])
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-
-    with pytest.raises(ValueError, match="BLAKE3 mismatch"):
-        STAGE.stage_profiles(
-            inputs,
-            tmp_path / "assets",
-            tmp_path / "release-config",
-            shared,
-        )
-
-
 def test_staging_reverifies_inputs_instead_of_trusting_the_fetch_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)
-    inputs = tmp_path / "profile-inputs"
-    report = FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    first = inputs / report["artifacts"][0]["path"]
-    first.write_bytes(b"tampered")
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    inputs = _stage_runtime_inputs(tmp_path, monkeypatch, manifest)
+    report = json.loads((inputs / "release-inputs.json").read_text(encoding="utf-8"))
+    (inputs / report["artifacts"][0]["path"]).write_bytes(b"tampered")
 
     with pytest.raises(ValueError, match="byte size mismatch"):
-        STAGE.stage_profiles(
-            inputs,
-            tmp_path / "assets",
-            tmp_path / "config",
-            ROOT / "config",
-        )
-
-
-def test_profile_staging_rejects_missing_shared_config_before_resetting_destination(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest, _ = _write_manifest(tmp_path)
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-    config_root = tmp_path / "release-config"
-    config_root.mkdir()
-    sentinel = config_root / "keep-on-validation-failure"
-    sentinel.write_text("preserved\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="shared config root is missing"):
-        STAGE.stage_profiles(
-            inputs,
-            tmp_path / "assets",
-            config_root,
-            tmp_path / "missing-shared-config",
-        )
-
-    assert sentinel.read_text(encoding="utf-8") == "preserved\n"
-
-
-def test_profile_staging_rejects_symlinked_or_overlapping_shared_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest, _ = _write_manifest(tmp_path)
-    inputs = tmp_path / "profile-inputs"
-    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
-    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
-    shared = tmp_path / "shared"
-    (shared / "settings").mkdir(parents=True)
-    (shared / "corp").mkdir()
-    (shared / "settings/settings.toml").write_text("[app]\n", encoding="utf-8")
-    (shared / "corp/corp.toml").write_text(
-        'refresh_policy = "24h"\n',
-        encoding="utf-8",
-    )
-    (shared / "corp/enforcement.toml").symlink_to(ROOT / "config/corp/enforcement.toml")
-
-    with pytest.raises(ValueError, match="must not contain symlinks"):
-        STAGE.stage_profiles(
-            inputs,
-            tmp_path / "assets",
-            tmp_path / "release-config",
-            shared,
-        )
-
-    with pytest.raises(ValueError, match="must not overlap"):
-        STAGE.stage_profiles(
-            inputs,
-            tmp_path / "assets",
-            shared / "nested-output",
-            shared,
-        )
+        STAGE.stage_runtime(inputs, tmp_path / "assets")
 
 
 def _package_with_binary_inventory(
@@ -1692,9 +1285,13 @@ def test_pulled_binary_package_staging_uses_and_verifies_complete_inventory(
     FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
     monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
 
-    monkeypatch.setattr(STAGE, "deb_payload_files", lambda _path, **_: {
-        f"/usr/bin/{name}": payload for name, payload in binary_payloads.items()
-    })
+    monkeypatch.setattr(
+        STAGE,
+        "deb_payload_files",
+        lambda _path, **_: {
+            f"/usr/bin/{name}": payload for name, payload in binary_payloads.items()
+        },
+    )
     binary_dir = tmp_path / "cache/target/cargo/debug"
     binary_dir.mkdir(parents=True)
     stale = binary_dir / "capsem-source-built"
@@ -1709,7 +1306,7 @@ def test_pulled_binary_package_staging_uses_and_verifies_complete_inventory(
         assert (binary_dir / name).read_bytes() == payload
 
 
-def test_profile_lane_marks_old_binary_cohort_incomplete_without_building(
+def test_runtime_lane_marks_old_binary_cohort_incomplete_without_building(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)
@@ -1732,7 +1329,7 @@ def test_profile_lane_marks_old_binary_cohort_incomplete_without_building(
     }
 
 
-def test_profile_lane_accepts_only_the_complete_manifest_binary_cohort(
+def test_runtime_lane_accepts_only_the_complete_manifest_binary_cohort(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)
@@ -1782,9 +1379,13 @@ def test_package_staging_rejects_inventory_missing_from_the_package(
     FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
     monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
 
-    monkeypatch.setattr(STAGE, "deb_payload_files", lambda _path, **_: {
-        "/usr/bin/capsem": b"resolved-capsem",
-    })
+    monkeypatch.setattr(
+        STAGE,
+        "deb_payload_files",
+        lambda _path, **_: {
+            "/usr/bin/capsem": b"resolved-capsem",
+        },
+    )
 
     with pytest.raises(ValueError, match="capsem-service"):
         STAGE.stage_package_binaries(inputs, tmp_path / "cache/target/cargo/debug")
@@ -1814,88 +1415,6 @@ def test_candidate_package_staging_cannot_fall_back_to_source_binaries(
     assert (binary_dir / "capsem").read_bytes() == payloads["capsem"]
 
 
-def test_release_profile_axis_is_exactly_the_active_manifest_catalog(
-    tmp_path: Path,
-) -> None:
-    profiles_dir = tmp_path / "config/profiles"
-    for profile_id in ("code", "experimental"):
-        path = profiles_dir / profile_id
-        path.mkdir(parents=True)
-        (path / "profile.toml").write_text(
-            f'id = "{profile_id}"\nname = "{profile_id}"\n',
-            encoding="utf-8",
-        )
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "profiles": {
-                    "code": {"status": "current"},
-                    "experimental": {"status": "staged"},
-                    "retired": {"status": "revoked"},
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert PROFILE_AXIS.release_test_profiles(profiles_dir, manifest) == [
-        "code",
-        "experimental",
-    ]
-
-
-def test_release_profile_axis_rejects_source_profile_fallback(
-    tmp_path: Path,
-) -> None:
-    profiles_dir = tmp_path / "config/profiles/code"
-    profiles_dir.mkdir(parents=True)
-    (profiles_dir / "profile.toml").write_text(
-        'id = "code"\nname = "Code"\n',
-        encoding="utf-8",
-    )
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        '{"profiles":{"code":{"status":"current"},"experimental":{"status":"staged"}}}',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="does not match the selected manifest"):
-        PROFILE_AXIS.release_test_profiles(profiles_dir.parent, manifest)
-
-
-def test_staged_profile_keeps_everything_outside_the_architecture_table(
-    tmp_path: Path,
-) -> None:
-    """Scoping must drop unstaged architectures and nothing else -- the profile
-    identity, revision, and rules still have to survive into the package."""
-    profile = tmp_path / "profile.toml"
-    shutil.copy2(ROOT / "config/profiles/co-work/profile.toml", profile)
-    before = tomllib.loads(profile.read_text(encoding="utf-8"))
-    assert {"arm64", "x86_64"} <= set(before["assets"]["arch"])
-
-    PROFILE_STAGE.scope_profile_to_arch(profile, "x86_64", "co-work")
-
-    after = tomllib.loads(profile.read_text(encoding="utf-8"))
-    assert set(after["assets"]["arch"]) == {"x86_64"}
-    assert after["assets"]["arch"]["x86_64"] == before["assets"]["arch"]["x86_64"]
-    assert {key: value for key, value in after.items() if key != "assets"} == {
-        key: value for key, value in before.items() if key != "assets"
-    }
-
-
-def test_staging_refuses_a_profile_without_the_host_architecture(
-    tmp_path: Path,
-) -> None:
-    """A profile that cannot serve this host is a staging error, not something
-    to silently emit an empty architecture table for."""
-    profile = tmp_path / "profile.toml"
-    shutil.copy2(ROOT / "config/profiles/co-work/profile.toml", profile)
-
-    with pytest.raises(ValueError, match="declares no riscv64 assets"):
-        PROFILE_STAGE.scope_profile_to_arch(profile, "riscv64", "co-work")
-
-
 def test_empty_package_cohort_is_permitted_only_when_stated(tmp_path: Path) -> None:
     """A cold-started channel has no package cohort, and says so explicitly.
 
@@ -1912,7 +1431,6 @@ def test_empty_package_cohort_is_permitted_only_when_stated(tmp_path: Path) -> N
                 "channel": "nightly",
                 "status": "current",
                 "packages": [],
-                "profiles": {},
             }
         ),
         encoding="utf-8",
@@ -1934,7 +1452,7 @@ def test_empty_package_cohort_is_permitted_only_when_stated(tmp_path: Path) -> N
     assert VERIFY.verify_release_inputs(tmp_path / "cold")["verified"] == []
 
 
-def test_empty_package_tolerance_is_rejected_for_the_profile_family(
+def test_empty_package_tolerance_is_rejected_for_the_runtime_family(
     tmp_path: Path,
 ) -> None:
     manifest = tmp_path / "nightly.json"
@@ -1945,7 +1463,6 @@ def test_empty_package_tolerance_is_rejected_for_the_profile_family(
                 "channel": "nightly",
                 "status": "current",
                 "packages": [],
-                "profiles": {},
             }
         ),
         encoding="utf-8",
@@ -1954,7 +1471,7 @@ def test_empty_package_tolerance_is_rejected_for_the_profile_family(
     with pytest.raises(ValueError, match=r"package-only|only for packages"):
         FETCH.fetch_release_inputs(
             manifest.as_uri(),
-            "profiles",
-            tmp_path / "profiles",
+            "runtime",
+            tmp_path / "runtime",
             allow_empty_packages=True,
         )

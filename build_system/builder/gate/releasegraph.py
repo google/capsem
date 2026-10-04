@@ -32,7 +32,6 @@ from __future__ import annotations
 from . import config as gate_config
 from .docker import Docker
 from .errors import GateError
-from .productschema import ProfileRevisionPolicy
 from .releaseauthoring import author_binary_graph
 from .sourcecommit import SourceCommit
 
@@ -68,9 +67,7 @@ class ReleaseGraph:
         assets_manifest: str,
         candidate_base: str,
         assets_dir: str,
-        profiles_dir: str,
         channel: str,
-        profile_revision_policy: ProfileRevisionPolicy,
         manifest_version: str,
         out_dir: str,
     ) -> None:
@@ -82,9 +79,7 @@ class ReleaseGraph:
                 admin,
                 manifest=manifest,
                 assets_dir=assets_dir,
-                profiles_dir=profiles_dir,
                 channel=channel,
-                profile_revision_policy=profile_revision_policy,
                 manifest_version=manifest_version,
                 out_dir=out_dir,
             )
@@ -172,9 +167,7 @@ class ReleaseGraph:
         *,
         manifest: str,
         assets_dir: str,
-        profiles_dir: str,
         channel: str,
-        profile_revision_policy: ProfileRevisionPolicy,
         manifest_version: str,
         out_dir: str,
     ) -> str:
@@ -191,12 +184,8 @@ class ReleaseGraph:
                     f'"{self._config.file_url_scheme}{self._mount}/{manifest}"',
                     "--assets-dir",
                     f'"{assets_dir}"',
-                    "--profiles-dir",
-                    f'"{profiles_dir}"',
                     "--channel",
                     channel,
-                    "--profile-revision-policy",
-                    profile_revision_policy.value,
                     "--manifest-version",
                     manifest_version,
                     "--out-dir",

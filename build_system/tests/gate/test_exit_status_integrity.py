@@ -132,15 +132,14 @@ REQUIRED_JUST_STEPS = (
         "release-assets.yaml",
         "build-assets",
         "Build VM assets (kernel + rootfs)",
-        ('just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"',),
+        ('just build-assets "$ASSET_ARCH"',),
     ),
     RequiredJustStep(
         "release-assets.yaml",
-        "test-profile-pairing",
-        "Qualify the profile assets",
+        "test-runtime-pairing",
+        "Qualify the runtime assets",
         (
-            'just qualify-assets "$PWD/cache/target/candidate-profile-inputs" '
-            '"$RELEASE_PROFILE" '
+            'just qualify-assets "$PWD/cache/target/candidate-runtime-inputs" '
             '"$PWD" '
             '"$ACTIVATION_READY"',
         ),
@@ -394,9 +393,12 @@ def test_repository_guard_rejects_the_reviewers_actual_fail_open_mutations() -> 
 
     masked_shell = deepcopy(original)
     step = _asset_build_step(masked_shell)
+    # Each mutation must actually land, or the guard "rejects" an unchanged
+    # workflow and passes for the wrong reason.
+    assert 'just build-assets "$ASSET_ARCH"\n' in step["run"]
     step["run"] = step["run"].replace(
-        'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"',
-        'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE" || true',
+        'just build-assets "$ASSET_ARCH"\n',
+        'just build-assets "$ASSET_ARCH" || true\n',
     )
     with pytest.raises(AssertionError):
         assert_required_just_steps(masked_shell, REQUIRED_JUST_STEPS)
@@ -408,9 +410,8 @@ def test_repository_guard_rejects_the_reviewers_actual_fail_open_mutations() -> 
 
     removed_proof = deepcopy(original)
     step = _asset_build_step(removed_proof)
-    step["run"] = step["run"].replace(
-        'just build-assets "$ASSET_ARCH" "$RELEASE_PROFILE"\n', ""
-    )
+    step["run"] = step["run"].replace('just build-assets "$ASSET_ARCH"\n', "")
+    assert "just build-assets" not in step["run"]
     with pytest.raises(AssertionError):
         assert_required_just_steps(removed_proof, REQUIRED_JUST_STEPS)
 

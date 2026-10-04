@@ -16,17 +16,16 @@ def root(config: GateConfig) -> Path:
     return cachelayout.stage_path(config, "assets") / stage.entry_root
 
 
-def lane(config: GateConfig, identity: str, *, profile: str, arch: Arch) -> Path:
-    """Resolve one content-addressed profile/architecture product."""
+def lane(config: GateConfig, identity: str, *, arch: Arch) -> Path:
+    """Resolve one content-addressed per-architecture runtime product."""
     if len(identity) != 64 or identity.strip("0123456789abcdef"):
         raise GateError(f"VM image cache identity {identity!r} is not a canonical digest")
-    if not profile or Path(profile).name != profile:
-        raise GateError(f"VM image cache profile {profile!r} is not one plain name")
-    return root(config) / identity / profile / f"build-{arch.name}"
+    return root(config) / identity / f"build-{arch.name}"
 
 
-def _local_lane(config: GateConfig, *, profile: str, arch: Arch) -> Path:
-    return config.path(config.assets.test_root) / profile / f"build-{arch.name}"
+def local_lane(config: GateConfig, *, arch: Arch) -> Path:
+    """The checkout selector a lane builds through."""
+    return config.path(config.assets.test_root) / f"build-{arch.name}"
 
 
 def _link_lane(local: Path, cached: Path) -> None:
@@ -38,27 +37,26 @@ def _link_lane(local: Path, cached: Path) -> None:
     link(local, str(cached))
 
 
-def materialize(config: GateConfig, profiles: tuple[str, ...], identity: str) -> None:
+def materialize(config: GateConfig, identity: str) -> None:
     """Point this prefix at its exact generation, migrating old local output."""
-    for profile in profiles:
-        for arch in config.architectures.values():
-            local = _local_lane(config, profile=profile, arch=arch)
-            cached = lane(config, identity, profile=profile, arch=arch)
-            if local.is_dir() and not local.is_symlink() and not cached.exists():
-                make_dir(cached.parent)
-                try:
-                    local.rename(cached)
-                except OSError as error:
-                    raise GateError(
-                        f"cannot migrate VM asset generation {local} to {cached}; "
-                        "both locations must share a filesystem"
-                    ) from error
-            _link_lane(local, cached)
+    for arch in config.architectures.values():
+        local = local_lane(config, arch=arch)
+        cached = lane(config, identity, arch=arch)
+        if local.is_dir() and not local.is_symlink() and not cached.exists():
+            make_dir(cached.parent)
+            try:
+                local.rename(cached)
+            except OSError as error:
+                raise GateError(
+                    f"cannot migrate VM asset generation {local} to {cached}; "
+                    "both locations must share a filesystem"
+                ) from error
+        _link_lane(local, cached)
 
 
-def reset_lane(config: GateConfig, local: Path, identity: str, *, profile: str, arch: Arch) -> None:
+def reset_lane(config: GateConfig, local: Path, identity: str, *, arch: Arch) -> None:
     """Discard one invalid product and recreate its stable selector."""
-    cached = lane(config, identity, profile=profile, arch=arch)
+    cached = lane(config, identity, arch=arch)
     remove(local)
     remove(cached)
     _link_lane(local, cached)

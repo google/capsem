@@ -325,125 +325,15 @@ def _hydrate_asset_sha256_in_manifest(manifest_path: Path) -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-# A profile carries its own semver revision. The old fixture used the
-# collapsed `profiles-<hash>` identifier here, which names a *set* of
-# profiles at differing versions -- not a version any single profile can
-# hold. capsem-admin rejects it now, correctly.
-# Deliberately not the workspace version: a fixture equal to the real one
-# hides whether the code under test depends on it.
-PROFILE_REVISION = "1.4.0"
-
-
-def _write_profile_catalog(root: Path, revision: str = PROFILE_REVISION) -> Path:
-    profiles_dir = root / "config" / "profiles"
-    profile_dir = profiles_dir / "code"
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    (profile_dir / "apt-packages.txt").write_text("zstd\n", encoding="utf-8")
-    (profile_dir / "python-requirements.txt").write_text("pytest==8.0.0\n", encoding="utf-8")
-    (profile_dir / "python-requirements.lock").write_text(
-        "pytest==8.0.0 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-        encoding="utf-8",
-    )
-    (profile_dir / "npm-packages.txt").write_text("@openai/codex@0.147.0\n", encoding="utf-8")
-    (profile_dir / "npm-package-lock.json").write_text(
-        json.dumps(
-            {
-                "name": "capsem-profile-ai-clis",
-                "lockfileVersion": 3,
-                "packages": {
-                    "": {"dependencies": {"@openai/codex": "0.147.0"}},
-                    "node_modules/@openai/codex": {
-                        "version": "0.147.0",
-                        "integrity": "sha512-dGVzdA==",
-                    },
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    root_payload = b"fixture profile root\n"
-    (profile_dir / "root/root").mkdir(parents=True)
-    (profile_dir / "root/root/.profile").write_bytes(root_payload)
-    (profile_dir / "root.manifest.json").write_text(
-        json.dumps(
-            {
-                "format": "capsem.profile-root.v1",
-                "files": [
-                    {
-                        "path": "root/.profile",
-                        "hash": f"blake3:{blake3(root_payload).hexdigest()}",
-                        "size": len(root_payload),
-                    }
-                ],
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (profile_dir / "profile.toml").write_text(
-        f"""
-id = "code"
-name = "Code"
-description = "Profile catalog fixture."
-revision = "{revision}"
-refresh_policy = "24h"
-
-[assets]
-format = "profile-assets.v1"
-refresh_policy = "on_profile_refresh"
-
-[assets.arch.arm64.kernel]
-name = "vmlinuz"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-vmlinuz"
-
-[assets.arch.arm64.initrd]
-name = "initrd.img"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-initrd.img"
-
-[assets.arch.arm64.rootfs]
-name = "rootfs.erofs"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/arm64-rootfs.erofs"
-
-[assets.arch.x86_64.kernel]
-name = "vmlinuz"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-vmlinuz"
-
-[assets.arch.x86_64.initrd]
-name = "initrd.img"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-initrd.img"
-
-[assets.arch.x86_64.rootfs]
-name = "rootfs.erofs"
-url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-rootfs.erofs"
-
-[files.apt_packages]
-path = "profiles/code/apt-packages.txt"
-
-[files.python_requirements]
-path = "profiles/code/python-requirements.txt"
-
-[files.python_requirements_lock]
-path = "profiles/code/python-requirements.lock"
-
-[files.npm_packages]
-path = "profiles/code/npm-packages.txt"
-
-[files.npm_package_lock]
-path = "profiles/code/npm-package-lock.json"
-
-[files.root_manifest]
-path = "profiles/code/root.manifest.json"
-""".strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    return profiles_dir
+# The runtime revision is the asset release the manifest names current
+# (`assets.current`): one kernel/initrd/rootfs set per architecture, with no
+# profile input. Deliberately not the workspace version: a fixture equal to the
+# real one hides whether the code under test depends on it.
+RUNTIME_REVISION = "2030.0101.1"
 
 
 def test_release_index_generator_writes_split_cache_headers(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "cache" / "target" / "release-channel"
 
     _run_admin(
@@ -454,8 +344,6 @@ def test_release_index_generator_writes_split_cache_headers(tmp_path: Path) -> N
         f"file://{manifest_path}",
         "--assets-dir",
         str(manifest_path.parent),
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -470,16 +358,14 @@ def test_release_index_generator_writes_split_cache_headers(tmp_path: Path) -> N
     assert "/index.html\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/health.json\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/assets/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
-    assert "/profiles/stable/*\n  Cache-Control: no-cache" not in headers
     assert "/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
-    assert "/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
+    assert "/runtime/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/assets/*\n  Cache-Control: no-cache" not in headers
-    assert "/profiles/*\n  Cache-Control: no-cache" not in headers
+    assert "/profiles/" not in headers
 
 
 def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path, include_x86_64=True)
-    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "cache" / "target" / "release-channel"
 
     result = _run_admin(
@@ -490,8 +376,6 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
         f"file://{manifest_path}",
         "--assets-dir",
         str(manifest_path.parent),
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -517,47 +401,51 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Current Manifest" in channel_html
     assert "Manifest URL" in channel_html
     assert "Capsem Packages" in channel_html
-    assert "Profile Catalog" not in channel_html
-    assert PROFILE_REVISION in channel_html
+    assert RUNTIME_REVISION in channel_html
     assert "SBOM" in channel_html
     assert "Realm Discipline" not in index_html
     assert 'href="/channels.json"' in index_html
     assert 'href="/assets/stable/manifest.json"' in channel_html
     assert "/assets/stable/manifest.json" in channel_html
-    assert f"/profiles/releases/{PROFILE_REVISION}/catalog.json" not in channel_html
     assert "Capsem-1.4.1.pkg" in channel_html
     assert "capsem-1-4-1-pkg-sbom.spdx.json" in channel_html
     assert "The fastest way to ship with AI securely." not in index_html
-    profile_html = (dist / "channels" / "stable" / "profiles" / "code" / "index.html").read_text(
-        encoding="utf-8"
+    assert not (dist / "channels" / "stable" / "profiles").exists()
+    assert not (dist / "profiles").exists()
+
+    channel_manifest = json.loads(
+        (dist / "assets" / "stable" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert "Architecture arm64" in profile_html
-    assert "Architecture x86_64" in profile_html
-    assert "Profile Evidence" in profile_html
-    assert "ABOM" in profile_html
-    assert (f"/profiles/releases/stable/code/{PROFILE_REVISION}/arm64/rootfs.erofs") in profile_html
+    assert "profiles" not in channel_manifest
+    runtime = channel_manifest["runtime"]
+    assert runtime["revision"] == RUNTIME_REVISION
+    assert runtime["status"] == "current"
+    assert runtime["min_capsem_version"] == "1.4.0"
+    assert {"id", "name", "description", "version"}.isdisjoint(runtime)
+    assert [row["architecture"] for row in runtime["architectures"]] == ["arm64", "x86_64"]
+    for row in runtime["architectures"]:
+        arch = row["architecture"]
+        assert "config" not in row
+        assert row["image_revision"] == RUNTIME_REVISION
+        assert row["package_inventory_revision"] == RUNTIME_REVISION
+        assert {image["kind"] for image in row["images"]} == {"kernel", "initrd", "rootfs"}
+        for record in (*row["images"], *row["evidence"]):
+            assert record["url"].startswith(
+                f"/runtime/releases/stable/{RUNTIME_REVISION}/{arch}/"
+            ), record
+            assert (dist / record["url"].lstrip("/")).is_file(), record
     assert (
-        f"/profiles/releases/stable/code/{PROFILE_REVISION}/arm64/obom.cdx.json"
-    ) in profile_html
-    assert (
-        f"/profiles/releases/stable/code/{PROFILE_REVISION}/x86_64/rootfs.erofs"
-    ) in profile_html
-    assert "APT package list" in profile_html
-    assert "Python requirements" in profile_html
-    assert "Python requirements lock" in profile_html
-    assert "NPM package list" in profile_html
-    assert "NPM package lock" in profile_html
-    assert "Root manifest" in profile_html
+        dist / "runtime" / "releases" / "stable" / RUNTIME_REVISION / "arm64" / "rootfs.erofs"
+    ).read_bytes() == b"rootfs-arm64"
 
     headers = (dist / "_headers").read_text(encoding="utf-8")
     assert "/\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/health.json\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/assets/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
-    assert "/profiles/stable/*\n  Cache-Control: no-cache" not in headers
     assert "/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
-    assert "/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
+    assert "/runtime/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/assets/*\n  Cache-Control: no-cache" not in headers
-    assert "/profiles/*\n  Cache-Control: no-cache" not in headers
+    assert "/profiles/" not in headers
 
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["schema"] == "capsem.assets_channel.health.v1"
@@ -572,22 +460,21 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     }
     assert health["updates"]["binary"]["latest"] == "1.4.1"
     assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
-    assert health["profiles"]["revision"] == PROFILE_REVISION
-    assert health["profiles"]["source"] == "manifest.profiles"
+    assert "profiles" not in health
+    assert "profiles" not in health["updates"]
     assert "profile_catalog" not in health["urls"]
-    assert "hash" not in health["profiles"]
-    assert "compatibility" not in health["profiles"]
-    assert "requires_newer" not in health["profiles"]
-    assert health["profiles"]["min_binary"] == "1.4.0"
-    assert health["profiles"]["requires_newer_binary"] is False
-    assert health["updates"]["profiles"]["latest"] == PROFILE_REVISION
-    assert health["updates"]["profiles"]["current"] == PROFILE_REVISION
-    assert health["updates"]["profiles"]["state"] == "current"
-    assert health["updates"]["profiles"]["source"] == "manifest.profiles"
-    assert "hash" not in health["updates"]["profiles"]
-    assert "compatibility" not in health["updates"]["profiles"]
-    assert "requires_newer" not in health["updates"]["profiles"]
-    assert health["updates"]["images"]["latest"] is None
+    assert health["runtime"]["revision"] == RUNTIME_REVISION
+    assert health["runtime"]["state"] == "current"
+    assert health["runtime"]["source"] == "manifest.runtime"
+    assert health["runtime"]["min_binary"] == "1.4.0"
+    assert health["runtime"]["architectures"] == ["arm64", "x86_64"]
+    assert health["updates"]["runtime"] == {
+        "latest": RUNTIME_REVISION,
+        "current": RUNTIME_REVISION,
+        "state": "current",
+        "source": "manifest.runtime",
+    }
+    assert "images" not in health["updates"]
     assert health["evidence"]["vm_oboms"][0]["url"] == (
         "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
     )
@@ -616,7 +503,6 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
 
 def test_release_index_bootstraps_before_binary_evidence_exists(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path, include_binary_files=False)
-    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "cache" / "target" / "release-channel"
 
     _run_admin(
@@ -627,8 +513,6 @@ def test_release_index_bootstraps_before_binary_evidence_exists(tmp_path: Path) 
         f"file://{manifest_path}",
         "--assets-dir",
         str(manifest_path.parent),
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -652,7 +536,7 @@ def test_release_index_bootstraps_before_binary_evidence_exists(tmp_path: Path) 
         item["name"] == "github_attestations_vm_assets"
         for item in health["evidence"]["attestations"]
     )
-    assert health["profiles"]["min_binary"] == "1.4.0"
+    assert health["runtime"]["min_binary"] == "1.4.0"
 
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
 
@@ -666,7 +550,6 @@ def test_asset_release_updates_release_index_without_moving_binary_pointer(
         binary_version="1.4.1",
         date="2030-01-02",
     )
-    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "cache" / "target" / "release-channel"
 
     _run_admin(
@@ -677,8 +560,6 @@ def test_asset_release_updates_release_index_without_moving_binary_pointer(
         f"file://{manifest_path}",
         "--assets-dir",
         str(manifest_path.parent),
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -702,6 +583,8 @@ def test_asset_release_updates_release_index_without_moving_binary_pointer(
         item for item in health["assets"]["files"] if item["logical_name"] == "initrd.img"
     )
     assert initrd_file["url"] == "/assets/releases/2030.0102.1/arm64-initrd.img"
+    assert health["runtime"]["revision"] == "2030.0102.1"
+    assert health["updates"]["runtime"]["latest"] == "2030.0102.1"
     assert (
         dist / "assets" / "releases" / "2030.0102.1" / "arm64-rootfs.erofs"
     ).read_bytes() == b"rootfs-arm64"
@@ -727,7 +610,6 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
     deprecated_release["deprecated_date"] = "2030-01-03"
     manifest["assets"]["releases"]["2030.0101.1"] = deprecated_release
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "cache" / "target" / "release-channel"
 
     _run_admin(
@@ -738,8 +620,6 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
         f"file://{manifest_path}",
         "--assets-dir",
         str(manifest_path.parent),
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -768,86 +648,83 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
         (dist / "assets" / "stable" / "manifest.json").read_text(encoding="utf-8")
     )
     assert "assets" not in channel_manifest
+    assert channel_manifest["runtime"]["revision"] == "2030.0102.1"
 
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
 
 
-def test_profile_release_deploys_generated_preview_only_when_activation_ready() -> None:
+def _runtime_release_jobs() -> tuple[str, str, str, str, str]:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
-    pairing = workflow.split("  test-profile-pairing:", maxsplit=1)[1].split(
-        "  author-profile-release:", maxsplit=1
+    resolve = workflow.split("  resolve-current-binary:", maxsplit=1)[1].split(
+        "  cloudflare-release-site-preflight:", maxsplit=1
     )[0]
-    author = workflow.split("  author-profile-release:", maxsplit=1)[1].split(
-        "  publish-profile-release:", maxsplit=1
+    pairing = workflow.split("  test-runtime-pairing:", maxsplit=1)[1].split(
+        "  author-runtime-release:", maxsplit=1
     )[0]
-    publish = workflow.split("  publish-profile-release:", maxsplit=1)[1].split(
+    author = workflow.split("  author-runtime-release:", maxsplit=1)[1].split(
+        "  publish-runtime-release:", maxsplit=1
+    )[0]
+    publish = workflow.split("  publish-runtime-release:", maxsplit=1)[1].split(
         "  deploy-channel:", maxsplit=1
     )[0]
     deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
+    return resolve, pairing, author, publish, deploy_channel
 
+
+def test_runtime_release_deploys_generated_preview_only_when_activation_ready() -> None:
+    resolve, pairing, author, publish, deploy_channel = _runtime_release_jobs()
+
+    assert "cargo run -p capsem-admin -- validate" in resolve
+    assert "build_system/scripts/release/check-runtime-release-delta.py" in resolve
+    assert "release_needed: ${{ steps.runtime-delta.outputs.release_needed }}" in resolve
     assert "cargo run -p capsem-admin -- manifest generate cache/target/assets" in author
-    assert "build_system/scripts/release/check-profile-release-delta.py" in author
+    assert '--version "$RUNTIME_REVISION"' in author
     assert "cargo run -p capsem-admin -- release" in author
+    assert '--runtime-revision "$RUNTIME_REVISION"' in author
+    assert "--profile" not in author
     assert "build_system/scripts/release/build-complete-release-channel.py" in author
     assert '--channel-source "$CHANNEL=file://$PWD/cache/target/assets/manifest.json"' in author
     assert '--primary-channel "$CHANNEL"' in author
     assert "--allow-mirror-missing" in author
     assert '--asset-source-base "$ASSET_BASE"' in author
-    assert "releases/download/$PROFILE_IDENTITY" in author
-    assert "--source-manifest cache/target/source-channel/manifest.json" in author
-    assert "--out-dir cache/target/profile-candidate" in author
-    assert "source_changed: ${{ steps.profile-delta.outputs.source_changed }}" in author
-    assert "activation_needed: ${{ steps.profile-delta.outputs.activation_needed }}" in author
-    assert "release_needed: ${{ steps.profile-delta.outputs.release_needed }}" in author
+    assert "releases/download/$PUBLICATION_IDENTITY" in author
+    assert "--manifest-path cache/target/source-channel/manifest.json" in author
+    assert "--out-dir cache/target/runtime-candidate" in author
     assert "product_compatible: ${{ steps.author-release.outputs.product_compatible }}" in author
-    assert "functional_ready: ${{ steps.author-release.outputs.functional_ready }}" in author
+    assert "functional_ready: ${{ needs.resolve-current-binary.outputs.functional_ready }}" in author
     assert "activation_ready: ${{ steps.author-release.outputs.activation_ready }}" in author
-    assert "if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}" in author
 
-    assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     # The activation branch moved inside `qualify-assets`, so the lane passes
     # the flag once instead of guarding three steps with it.
     assert "outputs.activation_ready" in pairing
     assert (
-        pairing.count("if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}")
+        pairing.count("if: ${{ needs.author-runtime-release.outputs.activation_ready == 'true' }}")
         == 0
     )
 
-    assert "needs.test-profile-pairing.result == 'success'" in publish
+    assert "needs: [author-runtime-release, test-runtime-pairing" in publish
     assert "build_system/scripts/release/build-complete-release-channel.py" in publish
     assert "--out-dir cache/target/release/distribution" in publish
     assert "name: asset-channel-preview" in publish
     assert "path: cache/target/release/distribution/" in publish
-    assert "if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}" in publish
+    assert "if: ${{ needs.author-runtime-release.outputs.activation_ready == 'true' }}" in publish
 
     assert (
         "if: ${{ inputs.dry_run == false && "
-        "needs.publish-profile-release.outputs.release_needed == 'true' && "
-        "needs.publish-profile-release.outputs.activation_ready == 'true' }}" in deploy_channel
+        "needs.publish-runtime-release.outputs.activation_ready == 'true' }}" in deploy_channel
     )
     assert "uses: ./.github/workflows/release-channel.yaml" in deploy_channel
     assert "dist_artifact: asset-channel-preview" in deploy_channel
 
 
-def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy() -> None:
-    workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
+def test_runtime_release_publishes_deferred_assets_but_withholds_channel_deploy() -> None:
+    _, pairing, author, publish, deploy_channel = _runtime_release_jobs()
     reusable_fast_gate = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(
         encoding="utf-8"
     )
-    pairing = workflow.split("  test-profile-pairing:", maxsplit=1)[1].split(
-        "  author-profile-release:", maxsplit=1
-    )[0]
-    author = workflow.split("  author-profile-release:", maxsplit=1)[1].split(
-        "  publish-profile-release:", maxsplit=1
-    )[0]
-    publish = workflow.split("  publish-profile-release:", maxsplit=1)[1].split(
-        "  deploy-channel:", maxsplit=1
-    )[0]
-    deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
 
-    assert "build_system/scripts/release/check-profile-release-delta.py" in author
     assert "cargo run -p capsem-admin -- release" in author
-    assert "Qualify the profile assets" in pairing
+    assert "Qualify the runtime assets" in pairing
     assert "Run the complete fast gate" in reusable_fast_gate
     assert "run: just fast-test" in reusable_fast_gate
     assert (
@@ -856,26 +733,25 @@ def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy(
     )
     assert "Run shared release contracts" not in pairing
     # One verb owning both shapes; the lane decides which from this flag.
-    qualify = pairing.split("- name: Qualify the profile assets", maxsplit=1)[1].split(
-        "- name: Record deferred profile staging boundary", maxsplit=1
+    qualify = pairing.split("- name: Qualify the runtime assets", maxsplit=1)[1].split(
+        "- name: Record deferred runtime staging boundary", maxsplit=1
     )[0]
     assert "just qualify-assets" in qualify
     assert "outputs.activation_ready" in qualify
-    assert "needs.author-profile-release.outputs.activation_ready" in qualify
-    assert "activation-ready profile cannot defer complete pairing gates" in pairing
+    assert "needs.author-runtime-release.outputs.activation_ready" in qualify
+    assert "activation-ready runtime cannot defer complete pairing gates" in pairing
     assert "complete functional release binary cohort" in pairing
-    assert "needs.author-profile-release.outputs.activation_ready != 'true'" in pairing
-    assert "Publish immutable GitHub profile release" in publish
+    assert "needs.author-runtime-release.outputs.activation_ready != 'true'" in pairing
+    assert "Publish immutable GitHub runtime release" in publish
     immutable_release = publish.split(
-        "- name: Publish immutable GitHub profile release", maxsplit=1
+        "- name: Publish immutable GitHub runtime release", maxsplit=1
     )[1].split("- uses: actions/upload-artifact@", maxsplit=1)[0]
     assert "outputs.activation_ready" not in immutable_release
-    assert "needs.publish-profile-release.outputs.activation_ready == 'true'" in deploy_channel
+    assert "needs.publish-runtime-release.outputs.activation_ready == 'true'" in deploy_channel
 
 
-def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path) -> None:
+def test_release_index_check_rejects_runtime_index_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
@@ -885,8 +761,6 @@ def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path)
         f"file://{manifest_path}",
         "--assets-dir",
         str(manifest_path.parent),
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -895,7 +769,7 @@ def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path)
 
     health_path = dist / "health.json"
     health = json.loads(health_path.read_text(encoding="utf-8"))
-    health["updates"]["profiles"]["latest"] = "profiles-stale"
+    health["updates"]["runtime"]["latest"] = "2030.0101.0"
     health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
 
     result = _run_admin(
@@ -911,13 +785,12 @@ def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path)
 
     assert result.returncode != 0
     assert (
-        "health.json profile update latest target does not match manifest profiles" in result.stderr
+        "health.json runtime update latest target does not match manifest runtime" in result.stderr
     )
 
 
 def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
@@ -927,8 +800,6 @@ def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> 
         f"file://{manifest_path}",
         "--assets-dir",
         str(manifest_path.parent),
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -958,46 +829,6 @@ def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> 
 
     assert result.returncode != 0
     assert f"asset channel index missing manifest version {manifest_version}" in result.stderr
-
-
-def test_release_index_check_rejects_profile_catalog_url_drift(tmp_path: Path) -> None:
-    manifest_path = _write_release_manifest(tmp_path)
-    profiles_dir = _write_profile_catalog(tmp_path)
-    dist = tmp_path / "cache" / "target" / "release-channel"
-    _run_admin(
-        "assets",
-        "channel",
-        "build",
-        "--manifest",
-        f"file://{manifest_path}",
-        "--assets-dir",
-        str(manifest_path.parent),
-        "--profiles-dir",
-        str(profiles_dir),
-        "--channel",
-        "stable",
-        "--out-dir",
-        str(dist),
-    )
-
-    health_path = dist / "health.json"
-    health = json.loads(health_path.read_text(encoding="utf-8"))
-    health["urls"]["profile_catalog"] = "/profiles/releases/stale/catalog.json"
-    health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
-
-    result = _run_admin(
-        "assets",
-        "channel",
-        "check",
-        "--channel",
-        "stable",
-        "--dist",
-        str(dist),
-        check=False,
-    )
-
-    assert result.returncode != 0
-    assert "health.json profile catalog URL mismatch" in result.stderr
 
 
 def test_release_index_check_rejects_health_manifest_drift(tmp_path: Path) -> None:
@@ -1037,9 +868,8 @@ def test_release_index_check_rejects_health_manifest_drift(tmp_path: Path) -> No
     assert "health.json asset update manifest mismatch" in result.stderr
 
 
-def test_release_index_check_rejects_profile_catalog_content_drift(tmp_path: Path) -> None:
+def test_release_index_check_rejects_runtime_content_drift(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
-    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "cache" / "target" / "release-channel"
     _run_admin(
         "assets",
@@ -1049,8 +879,6 @@ def test_release_index_check_rejects_profile_catalog_content_drift(tmp_path: Pat
         f"file://{manifest_path}",
         "--assets-dir",
         str(manifest_path.parent),
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -1059,8 +887,7 @@ def test_release_index_check_rejects_profile_catalog_content_drift(tmp_path: Pat
 
     manifest_path = dist / "assets" / "stable" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    profile = next(iter(manifest["profiles"].values()))
-    profile["revision"] = "profiles-stale"
+    manifest["runtime"]["revision"] = "2030.0101.0"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     result = _run_admin(
@@ -1446,11 +1273,10 @@ def test_release_index_check_rejects_host_binary_hash_drift(tmp_path: Path) -> N
     assert "health.json host binary sha256 mismatch" in result.stderr
 
 
-def test_binary_release_index_records_source_on_packages_without_changing_profiles(
+def test_binary_release_index_records_source_on_packages_without_changing_runtime(
     tmp_path: Path,
 ) -> None:
     legacy_manifest = _write_release_manifest(tmp_path)
-    profiles_dir = _write_profile_catalog(tmp_path)
     dist = tmp_path / "cache" / "target" / "candidate-channel"
     _run_admin(
         "assets",
@@ -1460,8 +1286,6 @@ def test_binary_release_index_records_source_on_packages_without_changing_profil
         f"file://{legacy_manifest}",
         "--assets-dir",
         str(legacy_manifest.parent),
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -1505,7 +1329,8 @@ def test_binary_release_index_records_source_on_packages_without_changing_profil
     after = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert report["schema"] == "capsem.admin.assets_channel_record_binary.v1"
     assert report["version"] == "1.4.2"
-    assert after["profiles"] == before["profiles"]
+    assert after["runtime"] == before["runtime"]
+    assert "profiles" not in after
     packages = {entry["name"]: entry for entry in after["packages"]}
     assert packages[pkg.name]["source_commit"] == SOURCE_COMMIT
     assert packages[deb.name]["source_commit"] == SOURCE_COMMIT
@@ -1712,12 +1537,11 @@ def test_binary_release_index_rejects_noncanonical_sbom_artifact(tmp_path: Path)
     assert "capsem-sbom.spdx.json" in result.stderr
 
 
-def test_binary_release_profile_catalog_index_builds_release_site_without_rebuilding_vm_assets(
+def test_binary_release_index_builds_release_site_without_rebuilding_vm_assets(
     tmp_path: Path,
 ) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     _hydrate_asset_sha256_in_manifest(manifest_path)
-    profiles_dir = _write_profile_catalog(tmp_path)
     # A tag release runner must not need local VM build outputs.
     for local_asset in (tmp_path / "assets" / "arm64").iterdir():
         if local_asset.name != "software-inventory.json":
@@ -1735,8 +1559,6 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
         str(tmp_path / "assets"),
         "--asset-source-base",
         asset_base,
-        "--profiles-dir",
-        str(profiles_dir),
         "--channel",
         "stable",
         "--out-dir",
@@ -1759,12 +1581,14 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
     assert health["evidence"]["host_binary_files"]
     assert health["evidence"]["host_sboms"]
     assert health["evidence"]["attestations"]
-    assert health["profiles"]["source"] == "manifest.profiles"
-    assert health["updates"]["profiles"]["source"] == "manifest.profiles"
-    assert '"profiles"' in channel_manifest_text
+    assert health["runtime"]["source"] == "manifest.runtime"
+    assert health["updates"]["runtime"]["source"] == "manifest.runtime"
+    assert '"runtime"' in channel_manifest_text
+    assert '"profiles"' not in channel_manifest_text
     assert '"min_capsem_version": "1.4.0"' in channel_manifest_text
     assert "file://" not in channel_manifest_text
     assert str(tmp_path) not in channel_manifest_text
     assert rootfs_url in channel_manifest_text
     assert not (dist / "assets" / "releases").exists()
+    assert not (dist / "runtime" / "releases").exists()
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))

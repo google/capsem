@@ -1,12 +1,12 @@
 # Versions, Changelog, and Commit Discipline
 
-Read this reference before changing release-note validation, binary or profile
-versioning, compatibility bounds, profile revision advancement, release-set
+Read this reference before changing release-note validation, binary or runtime
+versioning, compatibility bounds, runtime revision identity, release-set
 identities, or release commit/staging practice.
 
 ## Documentation, changelog, and versions
 
-Documentation and marketing deploy independently from binary/profile release
+Documentation and marketing deploy independently from binary/runtime release
 rails. Their builds remain mandatory source gates.
 
 Keep user-visible changes under `## [Unreleased]` in `CHANGELOG.md`. Historical
@@ -18,7 +18,7 @@ Do not add a versioned release heading merely to let the gate start. The remote
 immutable version tag is the sole release transition, and the GitHub release
 title records the exact source commit.
 `just release-binaries` never stamps, commits, resets, or pushes `main`.
-Profile releases are independent and do not require binary changelog text.
+Runtime releases are independent and do not require binary changelog text.
 
 Every release command takes the full lowercase source commit explicitly. It
 must already be reachable from local and fresh remote `main`. The full-SHA
@@ -26,35 +26,29 @@ prefix is the qualification subject, `capsem-source-<commit>` is the workflow
 transport ref, and the manifest records that commit only on rows owned by the
 publishing family. Attempt ids remain separate so retries never collide.
 
-Binary and profile versions are orthogonal:
+Binary and runtime versions are orthogonal:
 
 - binary: the Capsem package/application version;
-- profile: the immutable channel/profile publication identity derived and
-  authored by `capsem-admin`.
+- runtime: the immutable runtime revision, `<workspace version>-<first 12 hex
+  of the source commit>`, recorded by `capsem-admin manifest generate` and
+  published as `runtime-<channel>-<revision>`.
 
-Do not infer that a profile change requires a binary rebuild, or that a binary
-change requires rebuilding any profile.
+Do not infer that a runtime change requires a binary rebuild, or that a binary
+change requires rebuilding the runtime.
 
-### Semver is mandatory, and each profile versions independently
+### Semver is mandatory
 
 Every version in the release system is strict semver `MAJOR.MINOR.PATCH`:
 
 - the Capsem binary, whose patch increments -- it is **not** a timestamp;
-- every profile revision, first-party and corp-authored alike;
+- the workspace version the runtime revision starts from (locally the runtime
+  revision is the workspace version alone);
 - `min_capsem_version` / `max_capsem_version`, which bound the **binary** and
-  are a separate axis from the profile's own revision. A profile at `0.3.2` may
-  require capsem `>= 0.6.0`; those numbers are unrelated.
+  are a separate axis from the runtime revision.
 
-Profiles are orthogonal, so each carries its own revision and advances on its
-own schedule. `code` moving to `0.7.0` says nothing about `co-work`. A release
-spanning profiles at different revisions has no single version to name and
-collapses to a `profiles-<hash>` identifier; that identifier names a set, not a
-version, and is deliberately exempt from semver.
-
-`capsem-admin` enforces this: `parse_profile_revision` rejects anything that is
-not semver, and `ensure_revision_advances` rejects a revision that does not move
-past what is already published. Both run before a release is authored, so a corp
-operator meets the same rule.
+The source-commit suffix gives every released commit its own runtime identity,
+so a nightly re-release at an unchanged workspace version never collides with
+the previous one. Reusing an identity for different bytes is refused.
 
 This replaced a date-plus-counter scheme (`2026.06.08.9`) that could not order
 releases. The date recorded when someone last edited the field rather than when

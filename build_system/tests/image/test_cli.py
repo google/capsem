@@ -1,7 +1,6 @@
 """Contract tests for the backend-only capsem-builder CLI.
 
-capsem-admin owns product profile validation, materialization, and image
-builds. capsem-builder remains a backend helper for just/CI tasks only.
+capsem-admin owns image workspace materialization and image builds. capsem-builder remains a backend helper for just/CI tasks only.
 """
 
 from __future__ import annotations
@@ -73,21 +72,23 @@ def test_version() -> None:
     assert "capsem-builder" in result.output.lower()
 
 
-def test_doctor_runs_profile_contract() -> None:
+def test_doctor_runs_the_prerequisite_checks() -> None:
     from capsem_builder.image.doctor import CheckResult
 
     runner = CliRunner()
     with patch("capsem_builder.image.doctor.run_all_checks") as mock:
-        mock.return_value = [
-            CheckResult(name="profile-contract", passed=True, detail="profile code")
-        ]
-        result = runner.invoke(cli, ["doctor", "--profile", "code", "--config-root", "config"])
+        mock.return_value = [CheckResult(name="b3sum", passed=True, detail="b3sum 1.5")]
+        result = runner.invoke(cli, ["doctor"])
 
     assert result.exit_code == 0
     assert "capsem-builder doctor" in result.output
     assert "passed" in result.output
-    mock.assert_called_once()
-    assert mock.call_args.kwargs["profile_id"] == "code"
+    mock.assert_called_once_with(project_root(cli_module.__file__))
+
+
+def test_doctor_has_no_profile_option() -> None:
+    result = CliRunner().invoke(cli, ["doctor", "--profile", "code"])
+    assert result.exit_code == 2
 
 
 def test_doctor_fails_when_any_check_fails() -> None:
@@ -97,17 +98,17 @@ def test_doctor_fails_when_any_check_fails() -> None:
     with patch("capsem_builder.image.doctor.run_all_checks") as mock:
         mock.return_value = [
             CheckResult(
-                name="profile-contract",
+                name="b3sum",
                 passed=False,
-                detail="profile missing",
-                fix="restore config/profiles/code/profile.toml",
+                detail="b3sum not found",
+                fix="cargo install b3sum",
             )
         ]
-        result = runner.invoke(cli, ["doctor", "--profile", "code"])
+        result = runner.invoke(cli, ["doctor"])
 
     assert result.exit_code == 1
-    assert "profile missing" in result.output
-    assert "restore config/profiles/code/profile.toml" in result.output
+    assert "b3sum not found" in result.output
+    assert "cargo install b3sum" in result.output
 
 
 def test_doctor_rejects_positional_guest_dir() -> None:
@@ -156,7 +157,7 @@ def test_validate_skills_reports_validation_error() -> None:
     assert "broken skill contract" in result.output
 
 
-def test_agent_uses_profile_materialized_architecture(tmp_path: Path) -> None:
+def test_agent_uses_the_materialized_architecture(tmp_path: Path) -> None:
     guest = tmp_path / "materialized"
     guest.mkdir()
     arch = SimpleNamespace(rust_target="aarch64-unknown-linux-musl")

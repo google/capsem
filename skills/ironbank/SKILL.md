@@ -21,7 +21,7 @@ missing contract.
 
 The Ironbank parity rule is that every portable release gate belongs in
 `just test`. Local `just test` rebuilds both artifact families and runs the
-complete recipe. Binary and profile release CI reuse the same checked-in
+complete recipe. Binary and runtime release CI reuse the same checked-in
 modules while pulling the unchanged artifact family; green split jobs do not
 replace those modules. The shared entrypoints include workspace/runtime tests,
 coverage floors,
@@ -34,7 +34,7 @@ with its authoritative final gate.
 smaller relevant slice, but no portable artifact may be built only in workflow
 YAML. In particular, VM asset publication uses the same `just _build-kernel`
 and `just _build-rootfs` primitives owned by `just test` through
-`just _gate-assets`; the canonical gate rebuilds every profile for arm64 and
+`just _gate-assets`; the canonical gate rebuilds the runtime for arm64 and
 x86_64, validates every required artifact and manifest, and boots each rebuilt
 host-architecture image to a guest-shell marker. Input-contract tests are not
 a substitute for testing the artifact that was actually built.
@@ -99,7 +99,7 @@ inspect Docker's data root or recreate backend-specific capacity logic.
 
 ## Package Managers
 
-Installing is not proof. For apt, npm, uv, pip, node, or profile package
+Installing is not proof. For apt, npm, uv, pip, node, or OCI image package
 rails, assert binary presence/version/hash where relevant and run a command
 that proves the package does its job. Example: `zstd` must compress and
 decompress known bytes and match the original.

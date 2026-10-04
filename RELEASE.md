@@ -1,9 +1,9 @@
-# Capsem Binary, Profile, Manifest, and Channel Release Specification
+# Capsem Binary, Runtime, Manifest, and Channel Release Specification
 
 ## Status
 
 This root document is the normative product and CI specification for separating
-Capsem binary releases from profile releases while preserving complete
+Capsem binary releases from VM runtime releases while preserving complete
 compatibility, package, integrity, update, and deployment proof.
 
 It defines what the release system must guarantee. It does not prescribe the
@@ -18,17 +18,23 @@ specification governs. The release implementation, tests, `AGENTS.md`, checked-i
 skills, and developer documentation MUST be changed together so two release
 models are never simultaneously described as authoritative.
 
+Capsem 0.7 is a clean break from the 0.6 profile release model. No profile
+ledger, channel/profile pair, profile tag, or profile configuration is
+published, and no compatibility shim serves 0.6 field binaries. Applications
+are OCI images resolved through the image catalog; they are not part of the VM
+runtime and are not authored by the release lanes in this document.
+
 ## 1. Purpose
 
 Capsem has two independently moving product dimensions:
 
 1. The Capsem host binary and its native packages.
-2. Channel-scoped profiles, where each profile contains its complete VM asset
-   set and configuration.
+2. The channel-scoped VM runtime: one kernel, initrd, and rootfs set per
+   architecture, with its evidence.
 
 The release system MUST let these dimensions move independently. A Capsem bug
-fix must not force profile rebuilding, large asset transfers, or VM
-invalidation. A profile change must not force a Capsem binary rebuild when the
+fix must not force a runtime rebuild, large asset transfers, or VM
+invalidation. A runtime change must not force a Capsem binary rebuild when the
 currently selected binary remains compatible.
 
 This independence must not reduce confidence. Local development qualification
@@ -46,12 +52,12 @@ The first-party operator surface has exactly two release commands:
 
 ```text
 just release-binaries <channel> <source-commit>
-just release-profile <channel> <profile> <source-commit>
+just release-assets <channel> <source-commit>
 ```
 
 There is no generic release command and no combined release command. When a
-profile requires new Capsem code, the operator runs `release-profile` first and
-`release-binaries` second. The profile assets are built once, remain inactive
+runtime requires new Capsem code, the operator runs `release-assets` first and
+`release-binaries` second. The runtime assets are built once, remain inactive
 while incompatible with the public binary, and are pulled as immutable inputs
 by the following binary release.
 
@@ -59,28 +65,29 @@ by the following binary release.
 
 The release system MUST provide all of the following:
 
-- Independent versioning and publication of Capsem binaries and profiles.
-- Profiles scoped to channels, with no assumption that the same profile exists
-  in every channel.
-- Independent channel/profile instances when a profile name exists in more
-  than one channel.
-- Daily, scheduled nightly rebuilds of the binary family and every selected
-  profile/asset family from one full commit snapshot of current `main`, through
-  their independent public commands rather than publication after every push.
-- Manually initiated stable binary and profile publication.
-- Targeted profile publication for exactly one channel/profile pair.
-- An ordered `release-profile` then `release-binaries` path when a new or
-  changed profile requires a new Capsem binary, without rebuilding the profile.
+- Independent versioning and publication of Capsem binaries and the runtime.
+- A runtime scoped to each channel, with no assumption that every channel has
+  published one.
+- Independent channel runtimes: the nightly and stable runtimes are separate
+  instances even when built from the same source.
+- Daily, scheduled nightly rebuilds of the binary family and the runtime from
+  one full commit snapshot of current `main`, through their independent public
+  commands rather than publication after every push.
+- Manually initiated stable binary and runtime publication.
+- Targeted runtime publication for exactly one channel.
+- An ordered `release-assets` then `release-binaries` path when a new or
+  changed runtime requires a new Capsem binary, without rebuilding the runtime.
 - One shared per-channel concurrency lock covering both release commands from
   manifest read through generated-distribution deployment.
-- Exclusive manifest and profile authoring through `capsem-admin`.
-- Corporate manifests and profiles authored through `capsem-admin` with the
-  profile source commit, without requiring corporations to build Capsem binaries.
+- Exclusive manifest and runtime authoring through `capsem-admin`.
+- Corporate manifests with a corporation-owned runtime, authored through
+  `capsem-admin` with the runtime source commit, without requiring
+  corporations to build Capsem binaries.
 - Regular manifest polling and automatic, verified Capsem updates.
 - Native package proof through the installed-product glow-up suite.
 - Integrity, compatibility, provenance, and rollback safety before any channel
   becomes visible to installed Capsem instances.
-- Reusable CI modules shared by nightly, stable, profile-only, combined, and
+- Reusable CI modules shared by nightly, stable, runtime-only, combined, and
   corporate validation paths.
 - Named contract tests that prove each CI lane's write boundary.
 
@@ -88,28 +95,30 @@ The release system MUST provide all of the following:
 
 The following are explicitly outside the intended model:
 
-- Rebuilding every profile because a Capsem binary changed.
-- Rebuilding Capsem binaries because a compatible profile changed.
-- Treating an asset as an independently authored release unit outside its
-  profile.
-- Assuming that a profile exists in all channels.
-- Implicitly propagating a profile update from one channel to another.
+- Rebuilding the runtime because a Capsem binary changed.
+- Rebuilding Capsem binaries because a compatible runtime changed.
+- Treating an asset as an independently authored release unit outside the
+  runtime.
+- Assuming that every channel has published a runtime.
+- Implicitly propagating a runtime update from one channel to another.
+- Publishing per-application VM images, configuration, or package lists as
+  runtime data; applications ship as OCI images.
 - Publishing a binary on every push to `main`.
 - Providing corporations with a path to build or replace official Capsem
   binaries.
-- Supporting hand-written manifests or an alternate manifest/profile authoring
+- Supporting hand-written manifests or an alternate manifest/runtime authoring
   tool.
 - Relying on users to manually download releases or manually keep components
   synchronized.
 - Treating a successful build, checksum calculation, package expansion, or
   mocked install as proof that a release works.
-- Duplicating build, package, profile, manifest, glow-up, or deployment logic
+- Duplicating build, package, runtime, manifest, glow-up, or deployment logic
   across workflow files.
 - A standalone commit-SHA qualification workflow or checker separate from the
   two release commands. The explicit commit argument is part of each command.
 - A second release-history, transaction-state, recovery-state, or result
   document beside the manifest.
-- A caller-authored profile tag or publication identity.
+- A caller-authored runtime revision or publication identity.
 
 ## 4. Terminology
 
@@ -138,47 +147,51 @@ lane.
 The software bill of materials and provenance evidence for Capsem host
 packages and binaries. These belong to the binary release lane.
 
-### 4.5 Profile
+### 4.5 Runtime
 
-The complete authorable VM definition. A profile includes its configuration,
-images, evidence, revision, integrity metadata, and every asset required to
-instantiate and run it.
+The one VM runtime Capsem boots. A runtime includes, for every published
+architecture, its kernel, initrd, and rootfs images, their evidence (OBOM and
+software inventory), its revision, and the integrity metadata required to
+instantiate and run it. It is built from `config/docker/image` and
+`guest/artifacts` with no per-application input.
 
-A profile is not a pointer to a separately mutable bag of assets. Changing a
-profile means rebuilding the affected channel/profile and its contained assets.
+The runtime carries no policy, MCP, settings, package-list, or root-payload
+configuration. Changing the runtime means rebuilding the complete runtime
+asset set for the affected channel.
 
-### 4.6 Profile assets
+### 4.6 Runtime assets
 
-All immutable build outputs contained in a profile, including its VM images and
-profile-owned configuration and evidence. Assets are outputs of a profile
-build; they are not independently authored release units.
+All immutable build outputs contained in the runtime: its VM images and their
+evidence. Assets are outputs of a runtime build; they are not independently
+authored release units.
 
 ### 4.7 Channel
 
 A named update stream defined by a manifest. Examples include `nightly`,
 `stable`, and corporation-defined channels.
 
-A channel selects a Capsem binary policy and contains zero or more profiles.
-Channel membership is explicit.
+A channel selects a Capsem binary policy and at most one runtime. A channel
+that has published only binaries has no runtime yet.
 
-### 4.8 Channel/profile
+### 4.8 Channel runtime
 
-The independently releasable profile instance identified by the ordered pair:
+The independently releasable runtime instance identified by its channel name.
 
-```text
-(channel name, profile name)
-```
-
-For example, `nightly/default` and `stable/default` are independent instances.
+For example, the `nightly` and `stable` runtimes are independent instances.
 They may contain identical bytes at one moment, but neither is an alias for the
 other and neither may be mutated as a side effect of updating the other.
 
-### 4.9 Profile tag
+### 4.9 Runtime revision and publication identity
 
-The immutable publication identity derived by `capsem-admin` from the selected
-channel, profile, and declared profile revision. Callers MUST NOT compose or
-supply the identity. `capsem-admin` MUST reject reuse of an existing identity
-for different bytes.
+The runtime revision is the asset version `capsem-admin` records when it
+generates the runtime. A release lane derives it as
+`<workspace version>-<first 12 hex of the source commit>`, so every released
+commit has its own immutable identity and a nightly re-release at an unchanged
+workspace version does not collide. The immutable publication identity is
+`runtime-<channel>-<revision>`.
+
+Callers MUST NOT compose or supply either value. `capsem-admin` MUST reject
+reuse of an existing identity for different bytes.
 
 ### 4.10 Manifest
 
@@ -187,10 +200,9 @@ The authoritative update and integrity document authored through
 
 - The selected Capsem binary version or resolution policy.
 - Any minimum and maximum Capsem version constraints.
-- The profiles belonging to that channel.
-- The selected revision of each channel/profile.
-- Integrity metadata for packages, binaries, profiles, and profile assets.
-- Compatibility relationships needed to prevent invalid binary/profile
+- The channel's selected runtime revision, if any.
+- Integrity metadata for packages, binaries, and runtime assets.
+- Compatibility relationships needed to prevent invalid binary/runtime
   combinations.
 - Evidence needed to verify the origin and contents of referenced artifacts.
 
@@ -224,7 +236,7 @@ deployment lane.
 
 ### 4.13 Existing artifact
 
-An immutable binary, package, profile, or profile asset that was built and
+An immutable binary, package, runtime, or runtime asset that was built and
 qualified previously and is available as a read-only compatibility input.
 
 “Existing” means selected by the manifest and verified by immutable version and
@@ -258,46 +270,42 @@ The release graph has this hierarchy:
 Manifest
 ├── Channel A
 │   ├── Capsem binary selection and compatibility policy
-│   ├── Profile A1
-│   │   ├── configuration
-│   │   ├── images/assets
-│   │   ├── integrity metadata
-│   │   ├── evidence
-│   │   └── revision
-│   └── Profile A2
-│       └── ...
+│   └── Runtime
+│       ├── images/assets per architecture
+│       ├── integrity metadata
+│       ├── evidence
+│       └── revision
 └── Channel B
     ├── Capsem binary selection and compatibility policy
-    └── Profile B1
-        └── ...
+    └── (no runtime published yet)
 ```
 
 The following invariants are absolute:
 
 1. The manifest defines channels.
-2. A channel owns its profile membership.
-3. A profile may be absent from any channel.
-4. A profile name may exist in multiple channels.
-5. Each channel/profile pair is independent.
-6. A channel/profile update MUST NOT alter any other channel/profile.
-7. A profile contains its assets.
-8. A profile change MUST rebuild that channel/profile's complete required asset
-   set.
-9. A binary release MUST NOT rewrite profile data.
-10. A profile release MUST NOT build or rewrite Capsem binaries or packages.
-11. All manifest and profile authoring MUST go through `capsem-admin`.
-12. Installed Capsem instances update by polling manifests and verifying the
+2. A channel selects at most one runtime.
+3. A channel may have no runtime.
+4. Each channel's runtime is independent.
+5. A runtime update in one channel MUST NOT alter any other channel.
+6. The runtime contains its assets.
+7. A runtime change MUST rebuild that channel's complete required runtime asset
+   set for every published architecture.
+8. A binary release MUST NOT rewrite runtime data.
+9. A runtime release MUST NOT build or rewrite Capsem binaries or packages.
+10. All manifest and runtime authoring MUST go through `capsem-admin`.
+11. Installed Capsem instances update by polling manifests and verifying the
     selected graph.
 
 ## 6. Version and compatibility model
 
 ### 6.1 Independent versions
 
-Capsem binary versions and profile revisions are orthogonal. Neither version
-may be inferred from the other.
+Capsem binary versions and runtime revisions are orthogonal. Neither version
+may be inferred from the other: the workspace version inside a runtime
+revision is part of its identity, not a compatibility claim.
 
-A manifest connects them by declaring which binary selection and profile
-revisions form a valid channel state.
+A manifest connects them by declaring which binary selection and runtime
+revision form a valid channel state.
 
 ### 6.2 Binary selection
 
@@ -319,11 +327,10 @@ system MUST NOT invent a maximum merely to make validation appear complete.
 
 Compatibility validation MUST determine whether:
 
-- The selected binary can consume the selected profile revision.
-- Every profile in the channel can run with the selected binary.
-- A candidate binary remains compatible with the existing profiles it is
+- The selected binary can consume the selected runtime revision.
+- A candidate binary remains compatible with the existing runtime it is
   expected to preserve.
-- A candidate profile remains compatible with every existing binary version
+- A candidate runtime remains compatible with every existing binary version
   that the channel continues to declare supported.
 
 An empty or contradictory compatibility intersection is a hard validation
@@ -331,25 +338,23 @@ failure.
 
 ### 6.4 Release compatibility cohort
 
-For a profile release, CI MUST pull and test the channel's currently selected
-released binary. It MUST NOT rebuild a binary for a compatible profile release.
-When a profile intentionally requires newer code, the existing binary/profile
-pair is rejected by the declared minimum and the profile remains staged until
+For a runtime release, CI MUST pull and test the channel's currently selected
+released binary. It MUST NOT rebuild a binary for a compatible runtime release.
+When a runtime intentionally requires newer code, the existing binary/runtime
+pair is rejected by the declared minimum and the runtime remains staged until
 `release-binaries` supplies and tests the required binary.
 
-For a binary release, CI MUST pull and test every channel/profile revision in
-the resulting selected channel, including every profile previously staged by
-one or more `release-profile` runs. It MUST NOT rebuild any of those profiles.
-The composed transition is the complete staged profile set; it MUST NOT impose
-an artificial one-profile activation limit.
+For a binary release, CI MUST pull and test the runtime revision in the
+resulting selected channel, including a runtime previously staged by a
+`release-assets` run. It MUST NOT rebuild that runtime.
 
 These release gates prove the graph being activated. They do not claim that
 every historical binary ever published remains supported.
 
 ### 6.5 Compatibility failure behavior
 
-If a profile requires a binary newer than the selected channel binary, that
-profile MUST remain staged and inactive until the composed profile-then-binary
+If a runtime requires a binary newer than the selected channel binary, that
+runtime MUST remain staged and inactive until the composed runtime-then-binary
 flow completes.
 
 The system MUST NOT temporarily publish an incompatible pair and rely on
@@ -359,7 +364,7 @@ polling order to repair it later.
 
 ### 7.1 Exclusive authoring tool
 
-All first-party and corporate manifest/profile authoring MUST occur through
+All first-party and corporate manifest/runtime authoring MUST occur through
 `capsem-admin`.
 
 There MUST NOT be:
@@ -367,7 +372,7 @@ There MUST NOT be:
 - A hand-written production manifest path.
 - A second manifest generator in CI.
 - A workflow-specific manifest editor.
-- A script that bypasses `capsem-admin` for profile membership, bounds,
+- A script that bypasses `capsem-admin` for runtime selection, bounds,
   versions, revisions, or digests.
 - A corporate-only shortcut with different validation semantics.
 
@@ -380,43 +385,40 @@ The Capsem project uses `capsem-admin` to:
 
 - Define first-party channels.
 - Set the binary version or policy for each channel.
-- Define channel-specific profile membership.
-- Build targeted channel/profile instances.
+- Build and select each channel's runtime.
 - Set compatibility bounds.
 - Generate integrity and evidence metadata.
 - Generate validated manifest and public distribution inputs.
 
 First-party release entrypoints are deliberately asymmetric:
 
-- `just release-profile <channel> <profile> <source-commit>` calls `capsem-admin release`
-  directly for the selected channel/profile. The command gives the workflow a
-  unique correlation identity, discovers that exact run, and waits for its
-  terminal status before returning. `<profile>` may be `all`: the source
-  proof and source-ref publication run once, then every profile is dispatched
-  and awaited in turn, and the first failed run stops the rest.
+- `just release-assets <channel> <source-commit>` calls `capsem-admin release`
+  directly for the selected channel. The command gives the workflow a unique
+  correlation identity, discovers that exact run, and waits for its terminal
+  status before returning.
 - `just release-binaries <channel> <source-commit>` calls one checked-in, adversarially tested
   binary-release script.
 
-Dispatch acceptance is not release completion. A successful profile command
-MUST mean that its exact profile workflow succeeded; it MUST NOT return after
+Dispatch acceptance is not release completion. A successful runtime command
+MUST mean that its exact runtime workflow succeeded; it MUST NOT return after
 merely adding an unidentified run to the same-channel queue. This is what makes
-sequential profile and binary automation safe even when another release is
+sequential runtime and binary automation safe even when another release is
 already pending.
 
 The first release into a missing first-party channel MUST still obey this
-surface. The serialized profile workflow MAY ask `capsem-admin release` to
+surface. The serialized runtime workflow MAY ask `capsem-admin release` to
 initialize the selected channel from the verified official package cohort of
 the other existing first-party channel. That initial source manifest MUST:
 
 - Be created only after the selected channel lock is held.
 - Contain the selected channel name and the verified existing package cohort.
-- Contain explicit empty profile membership.
-- Copy no profile from the donor channel.
+- Contain no runtime.
+- Copy no runtime from the donor channel.
 - Mutate neither the donor channel nor its source manifest.
 - Be rejected if the public channel catalog already claims that the selected
   channel exists.
 
-The selected profile is then authored through the normal `capsem-admin release`
+The selected runtime is then authored through the normal `capsem-admin release`
 path. Bootstrap is not a third public release command, a generic authoring
 shortcut, or permission to relabel a release graph from another channel.
 
@@ -424,20 +426,20 @@ One migration-only variant replaces a known broken pre-0.6 first-party graph.
 `config/gate.toml` MUST name its channel and exact current-manifest SHA-256.
 The selector MUST require the catalog digest and freshly fetched payload digest
 to equal that configured value before `capsem-admin` may author an inactive
-same-channel source with empty package and profile membership. A 404, a
+same-channel source with empty package membership and no runtime. A 404, a
 different digest, an absent catalog digest, another channel, or a Python-made
 empty graph is never retirement authority. The row becomes inert as soon as a
 new graph is current and can then be removed in an ordinary committed change.
 
-The explicit empty-membership bootstrap manifest is serialized authoring state.
+The explicit empty bootstrap manifest is serialized authoring state.
 It MUST NOT be deployed, installed, described as a working pairing, or given
-synthetic Doctor or Winterfell evidence. For the channel's first profile, there
-is no public-before profile transition to claim. The completed candidate pairing
+synthetic Doctor or Winterfell evidence. For the channel's first runtime, there
+is no public-before runtime transition to claim. The completed candidate pairing
 MUST instead pass a genuine native fresh install, full Doctor, installed
 Winterfell, tamper and incompatibility polling, and preservation proof before
-the channel may become public. Once the channel has an activated profile,
-subsequent profile releases MUST additionally prove the real public-before to
-candidate-after profile transition.
+the channel may become public. Once the channel has an activated runtime,
+subsequent runtime releases MUST additionally prove the real public-before to
+candidate-after runtime transition.
 
 There MUST NOT be a generic release command, a combined command, or a public
 collection of internal release stages.
@@ -448,8 +450,8 @@ Corporations use `capsem-admin` to author:
 
 - Their own manifest.
 - Their own channels.
-- The profiles belonging to those channels.
-- Their profile configuration and contained assets.
+- The runtime each of those channels selects, which the corporation owns and
+  publishes under its own base.
 - Their selection of official Capsem binaries.
 - Exact binary pins or an allowed latest-version policy.
 - Their compatibility bounds and integrity metadata.
@@ -459,12 +461,12 @@ Corporations MUST NOT:
 - Build official Capsem binaries.
 - Replace official Capsem package bytes.
 - Modify first-party Capsem channels.
-- Modify first-party profile instances.
+- Modify first-party runtimes.
 - Publish into first-party namespaces.
 - Bypass `capsem-admin`.
 
 Corporate support therefore separates ownership cleanly: the Capsem project
-publishes binaries; a corporation authors its manifest and profiles and refers
+publishes binaries; a corporation authors its manifest and runtime and refers
 to compatible official binaries.
 
 ## 8. Local qualification
@@ -494,15 +496,14 @@ including:
 
 - Building Capsem binaries.
 - Building native packages.
-- Building the complete configured profile catalog.
-- Rebuilding the assets contained in those profiles.
+- Building the complete runtime for every configured architecture.
 - Generating manifests through `capsem-admin`.
 - Validating channel membership and compatibility bounds.
 - Verifying artifact integrity and evidence.
 - Installing the real locally built packages.
-- Booting representative real VMs from the rebuilt profiles.
+- Booting representative real VMs from the rebuilt runtime.
 - Exercising automatic manifest polling and update planning.
-- Exercising binary-only, profile-only, and combined update compatibility.
+- Exercising binary-only, runtime-only, and combined update compatibility.
 - Running the complete package glow-up suite where the local platform supports
   it.
 - Running all other correctness, security, integration, and regression gates
@@ -569,7 +570,7 @@ non-forced complete proof resets that rail. Failed attempts are spending
 history, never successful qualification evidence. Exact successful journal
 reuse remains available without running the full plan again.
 
-Before starting Docker/Colima, bootstrap, package, profile, asset, or VM work,
+Before starting Docker/Colima, bootstrap, package, runtime, asset, or VM work,
 `just test` MUST run one checked-in private `_test-fast` module. That same
 module MUST be called independently by ordinary CI, both release workflows,
 and `just fast-test`. It MUST own all cheap deterministic failures, including YAML
@@ -607,7 +608,7 @@ lanes own publication qualification.
 ### 8.3 Local construction proof is intentional
 
 Local qualification MUST prove that current authoritative construction inputs
-produce compatible binaries, profiles, assets, packages, and manifests. It MAY
+produce compatible binaries, runtime assets, packages, and manifests. It MAY
 avoid invoking an expensive builder when a prior local product has an exact
 identity over every authoritative source, config, lockfile, toolchain, mode,
 and symlink input and a live receipt revalidates every output path, mode, size,
@@ -630,16 +631,16 @@ images. Explicit aggressive cleanup remains the operator's cold-build escape
 hatch, not an automatic response to cache pressure.
 
 This product-level reuse is distinct from carrying a journal step and from
-release-lane artifact reuse. Nightly profile release CI still rebuilds its
-selected profile; a stable retry may reuse only the immutable completed cohort
-selected by the release workflow. None of these rules justify rebuilding every
-profile inside a selective CI release lane.
+release-lane artifact reuse. Nightly runtime release CI still rebuilds the
+runtime; a stable retry may reuse only the immutable completed cohort
+selected by the release workflow. None of these rules justify rebuilding the
+runtime inside the binary release lane.
 
 ## 9. CI architecture
 
 ### 9.0 Shared per-channel transaction
 
-The binary and profile entry workflows MUST both declare:
+The binary and runtime entry workflows MUST both declare:
 
 ```yaml
 concurrency:
@@ -652,7 +653,7 @@ manifest is fetched and retained through input resolution, construction,
 testing, manifest mutation, generated-distribution assembly, and production
 deployment. A queued run MUST fetch the manifest only after it owns the lock.
 
-Binary and profile releases for the same channel, and two profile releases for
+Binary and runtime releases for the same channel, and two runtime releases for
 the same channel, therefore run in order. Different channels MAY run in
 parallel. Production channel deployment MUST be invoked only by a parent
 release workflow holding this lock.
@@ -671,10 +672,10 @@ to the release.
 
 Examples:
 
-- A binary release builds packages but consumes existing profiles read-only.
-- A profile release builds one channel/profile but consumes existing binaries
+- A binary release builds packages but consumes the existing runtime read-only.
+- A runtime release builds one channel's runtime but consumes existing binaries
   read-only.
-- A composed release builds a profile first, then a binary, while preserving
+- A composed release builds the runtime first, then a binary, while preserving
   both lanes' separate write scopes.
 
 Generated-distribution assembly MUST preserve every non-selected channel from
@@ -692,7 +693,7 @@ implementation of:
 
 - Binary building.
 - Native package assembly.
-- Profile building.
+- Runtime building.
 - Manifest generation.
 - Compatibility selection.
 - Hashing or evidence generation.
@@ -726,13 +727,13 @@ CI SHOULD retain a content-addressed cache for large pulled artifacts. The
 cache is a transport optimization, never authority: the current manifest is
 still fetched on every run, selects the digest set, and is retained with the
 resolved inputs. CI MUST download only missing or corrupt manifest-selected
-blobs, SHOULD limit profile pulls to the runner architecture when the owning
+blobs, SHOULD limit runtime pulls to the runner architecture when the owning
 test consumes one architecture, and MUST re-verify all selected blobs after
 cache restoration.
 
 Before immutable candidate URLs are publicly reachable, an installed test MAY
 use a hermetic URL-only transport projection of the authoritative manifest.
-The projection MUST reuse the exact package and profile bytes, MUST prove that
+The projection MUST reuse the exact package and runtime bytes, MUST prove that
 restoring the original URLs reproduces the authoritative manifest exactly, and
 MUST NOT become a source manifest, public manifest, or alternate authority.
 
@@ -753,11 +754,11 @@ valid.
 
 | Lane | May write | Must never touch | Proving test |
 |---|---|---|---|
-| Binary release | Selected channel's packages, per-binary inventory, host SBOM, host attestations | Any profile data, any other channel | `test_binary_lane_gate` |
-| Profile release | One channel+profile's images, config, evidence, revision, matching digests | Packages, binaries, other profiles, other channels | `test_profile_lane_gate` |
+| Binary release | Selected channel's packages, per-binary inventory, host SBOM, host attestations | Any runtime data, any other channel | `test_binary_lane_gate` |
+| Runtime release | One channel's runtime images, evidence, revision, matching digests | Packages, binaries, other channels | `test_runtime_lane_gate` |
 | Manifest validation | Channel definitions, bounds, membership | Artifact bytes of any kind | `test_release_lane_diff_policy` |
 | Channel deploy | The generated public dist | Source manifests | `test_channel_deploy_contract` |
-| Corporate authoring | The corporation's own manifest and profiles | Our channels, our binaries | `test_corporate_manifest_contract` |
+| Corporate authoring | The corporation's own manifest and runtime | Our channels, our binaries | `test_corporate_manifest_contract` |
 
 ### 10.1 Binary lane invariant
 
@@ -766,33 +767,32 @@ The binary lane:
 - MAY create packages for the selected channel.
 - MAY create or update the selected channel's per-binary inventory.
 - MAY create or update host SBOM and host attestations.
-- MAY read every selected channel profile and its assets.
-- MUST NOT build profile images.
-- MUST NOT modify profile configuration, evidence, revision, or digests.
+- MAY read the selected channel's runtime and its assets.
+- MUST NOT build runtime images.
+- MUST NOT modify runtime evidence, revision, or digests.
 - MUST NOT update another channel, including the other first-party binary
   channel.
 
 `test_binary_lane_gate` MUST compare before/after release state and prove that
-all profile-owned paths and all non-selected channel paths are byte-for-byte
+all runtime-owned paths and all non-selected channel paths are byte-for-byte
 unchanged.
 
-### 10.2 Profile lane invariant
+### 10.2 Runtime lane invariant
 
-The profile lane:
+The runtime lane:
 
-- MUST select exactly one channel and one profile.
-- MAY build all assets contained by that selected channel/profile.
-- MAY update that channel/profile's configuration, evidence, revision, and
-  matching digests.
+- MUST select exactly one channel.
+- MAY build all runtime assets for every published architecture.
+- MAY update that channel's runtime evidence, revision, and matching digests.
 - MAY read existing official binaries and packages for compatibility proof.
 - MUST NOT build or rewrite packages or binaries.
-- MUST NOT modify another profile in the selected channel.
-- MUST NOT modify the same profile name in another channel.
+- MUST NOT modify the runtime of any other channel.
 - MUST NOT modify any other channel.
+- MUST NOT publish policy, MCP, settings, package-list, or root-payload
+  configuration as runtime data.
 
-`test_profile_lane_gate` MUST use fixtures containing multiple channels and
-multiple profiles, including the same profile name in two channels, and prove
-that only the selected pair changes.
+`test_runtime_lane_gate` MUST use fixtures containing multiple channels, each
+with a runtime, and prove that only the selected channel's runtime changes.
 
 ### 10.3 Manifest validation lane invariant
 
@@ -818,7 +818,7 @@ The channel deploy lane:
 - MUST verify the distribution before activation.
 - MUST NOT read source manifests as an alternate deployment input.
 - MUST NOT edit source manifests.
-- MUST NOT rebuild packages, binaries, profiles, or assets.
+- MUST NOT rebuild packages, binaries, runtimes, or assets.
 - MUST NOT repair or fill missing generated output during deployment.
 
 `test_channel_deploy_contract` MUST prove that deployment accepts a complete
@@ -830,14 +830,14 @@ digest drift, and attempts to synthesize missing files.
 The corporate lane:
 
 - MAY use `capsem-admin` to write only the corporation's manifest, channels,
-  profiles, and profile-owned assets.
+  runtime, and runtime-owned assets.
 - MAY reference supported official Capsem binary artifacts read-only.
 - MUST NOT build or overwrite official Capsem binaries.
-- MUST NOT mutate first-party manifests, channels, or profiles.
+- MUST NOT mutate first-party manifests, channels, or runtimes.
 - MUST enforce namespace and destination ownership before any write.
 
 `test_corporate_manifest_contract` MUST prove exact pins, supported latest
-selection, corporation-owned channel/profile authoring, rejection of official
+selection, corporation-owned channel/runtime authoring, rejection of official
 binary writes, rejection of first-party channel writes, and rejection of any
 authoring path that bypasses `capsem-admin`.
 
@@ -851,7 +851,7 @@ capabilities. Workflow names are deliberately unspecified.
 Inputs:
 
 - Selected channel.
-- Optional selected profile.
+- Release kind: binaries or runtime.
 - Binary version or approved resolver policy.
 - Manifest identity.
 
@@ -874,10 +874,10 @@ This module MUST:
 - Record the binary version and selected source commit on every package row in
   the manifest; GitHub also records the source in the ordinary run log.
 - Produce per-binary inventory inputs.
-- Avoid reading profile source inputs except where package assembly needs
-  immutable, already-selected profile references.
+- Avoid reading runtime source inputs except where package assembly needs
+  immutable, already-selected runtime references.
 
-It MUST NOT build profile assets.
+It MUST NOT build runtime assets.
 
 ### 11.3 Assemble native packages
 
@@ -887,7 +887,7 @@ This module MUST:
 - Include the exact binary cohort selected for the release.
 - Produce package hashes and metadata.
 - Produce the host SBOM and required attestations.
-- Preserve referenced profile data rather than regenerating it.
+- Preserve referenced runtime data rather than regenerating it.
 
 ### 11.4 Install and verify exact packages
 
@@ -904,44 +904,45 @@ This module MUST:
 Source-layout checks, archive expansion, or package-manager exit status alone
 do not satisfy this module.
 
-### 11.5 Build one channel/profile
+### 11.5 Build one channel runtime
 
 Inputs MUST include:
 
 - Exactly one channel.
-- Exactly one profile.
-- The declared profile revision from which `capsem-admin` derives the immutable
-  publication identity.
+- The source commit from which `capsem-admin` derives the runtime revision and
+  immutable publication identity.
 - Required platform and architecture targets.
 
 This module MUST:
 
-- Build the profile's complete required assets.
-- Generate profile configuration, evidence, revision, and matching digests.
+- Build the runtime's complete required assets for every published
+  architecture.
+- Generate runtime evidence, revision, and matching digests.
 - Record immutable output identities.
 - Produce no package or binary output.
-- Fail if output escapes the selected channel/profile namespace.
+- Fail if output escapes the selected channel's runtime namespace
+  (`/runtime/releases/<channel>/<revision>/<architecture>/`).
 
 ### 11.6 Generate and validate manifests
 
 This module MUST invoke `capsem-admin` and MUST:
 
 - Define or update channel membership.
-- Select immutable binary and profile artifacts.
+- Select immutable binary and runtime artifacts.
 - Apply minimum and maximum compatibility constraints.
 - Verify all references and digests.
 - Reject missing or contradictory relationships.
 - Generate the manifest output used by distribution assembly.
 - Produce no artifact bytes.
 
-### 11.7 Run binary/profile compatibility
+### 11.7 Run binary/runtime compatibility
 
 This module MUST support:
 
-- Candidate binary against existing profiles.
-- Candidate profile against the channel's existing selected binary.
-- Candidate binary against a staged candidate profile.
-- Existing binary against existing profiles as the preserved baseline.
+- Candidate binary against the existing runtime.
+- Candidate runtime against the channel's existing selected binary.
+- Candidate binary against a staged candidate runtime.
+- Existing binary against the existing runtime as the preserved baseline.
 
 It MUST exercise real runtime behavior where the compatibility claim includes
 runtime operation. Parser-only checks are insufficient.
@@ -952,8 +953,8 @@ Glow-up MUST operate on an installed product and MUST exercise the state
 transitions relevant to the release, including:
 
 - Fresh installation from an exact package.
-- Binary upgrade while preserving compatible profile/VM state.
-- Profile refresh without unnecessary binary replacement.
+- Binary upgrade while preserving compatible runtime/VM state.
+- Runtime refresh without unnecessary binary replacement.
 - Channel transition where supported.
 - Integrity failure with preservation of the previously working state.
 - Service and command functionality after every transition.
@@ -968,7 +969,7 @@ This module MUST:
 
 - Snapshot all lane-visible release state before execution.
 - Snapshot it again after candidate construction.
-- Classify every change by owner, channel, profile, and artifact type.
+- Classify every change by owner, channel, and artifact type.
 - Reject any write not explicitly allowed by the selected lane.
 
 The named lane contract tests MUST exercise this behavior in isolated temporary
@@ -1004,20 +1005,20 @@ This module MUST:
 
 ### 12.1 Binary-only release
 
-Use this flow when Capsem changes but no profile needs rebuilding.
+Use this flow when Capsem changes but the runtime does not need rebuilding.
 
 1. Run `just release-binaries <channel> <source-commit>`.
 2. Acquire the shared per-channel lock.
-3. Resolve the selected channel's existing profile set and immutable assets.
+3. Resolve the selected channel's existing runtime and immutable assets.
 4. Build the binary cohort.
 5. Assemble exact native packages.
 6. Produce per-binary inventory, host SBOM, and host attestations.
-7. Test the candidate binary against every existing channel/profile that will
-   remain published in that channel.
+7. Test the candidate binary against the runtime that will remain published in
+   that channel.
 8. Install and verify every exact publishable native package on its required
    platform.
-9. Run the applicable glow-up transitions using existing profile assets.
-10. Prove with `test_binary_lane_gate` that no profile data and no other
+9. Run the applicable glow-up transitions using existing runtime assets.
+10. Prove with `test_binary_lane_gate` that no runtime data and no other
     channel changed.
 11. Generate the updated manifest through `capsem-admin`.
 12. Run manifest validation and `test_release_lane_diff_policy`.
@@ -1026,102 +1027,102 @@ Use this flow when Capsem changes but no profile needs rebuilding.
 15. Deploy through the reusable channel deploy lane.
 16. Verify the public channel before reporting success.
 
-The binary lane MUST NOT invoke profile, kernel, initrd, rootfs, or image
-builders. A failure against pulled assets is a binary compatibility failure.
+The binary lane MUST NOT invoke kernel, initrd, rootfs, or image builders. A
+failure against pulled assets is a binary compatibility failure.
 
-### 12.2 Profile-only release
+### 12.2 Runtime-only release
 
-Use this flow when one profile changes and existing channel binaries remain
+Use this flow when the runtime changes and existing channel binaries remain
 compatible.
 
-1. Run `just release-profile <channel> <profile> <source-commit>`.
+1. Run `just release-assets <channel> <source-commit>`.
 2. Acquire the shared per-channel lock.
 3. Pull the channel's currently selected released binary and package.
-4. Build the selected profile and all assets contained by it.
-5. Generate its configuration, evidence, revision, and matching digests.
-6. Test the candidate profile against the pulled existing binary.
-7. Boot and exercise the candidate profile through the real Capsem runtime on
+4. Build the runtime and all assets contained by it for every published
+   architecture.
+5. Generate its evidence, revision, and matching digests.
+6. Test the candidate runtime against the pulled existing binary.
+7. Boot and exercise the candidate runtime through the real Capsem runtime on
    required host architectures.
-8. Prove with `test_profile_lane_gate` that packages, binaries, other profiles,
-   and other channels are unchanged.
+8. Prove with `test_runtime_lane_gate` that packages, binaries, and other
+   channels are unchanged.
 9. Generate the updated manifest through `capsem-admin`.
 10. Validate membership, bounds, artifact identities, and digests.
 11. Assemble the generated public distribution.
 12. Deploy through the reusable channel deploy lane.
-13. Verify the public channel and automatic profile refresh behavior.
+13. Verify the public channel and automatic runtime refresh behavior.
 14. Report success to the caller only after the exact correlated workflow run
     has succeeded.
 
 This flow MUST NOT invoke Rust release-binary or native-package construction.
 
-### 12.3 Composed profile-then-binary release
+### 12.3 Composed runtime-then-binary release
 
 Use this flow when:
 
-- A new profile requires a Capsem capability not present in the channel's
+- A runtime change requires a Capsem capability not present in the channel's
   existing binary.
-- A changed profile legitimately raises its minimum binary requirement.
-- A compatible channel state requires both profile and binary movement.
+- A changed runtime legitimately raises its minimum binary requirement.
+- A compatible channel state requires both runtime and binary movement.
 
 This is an ordered composition of the two public commands, not a new lane,
 command, or expanded permission set:
 
 ```text
-just release-profile <channel> <profile> <source-commit>
+just release-assets <channel> <source-commit>
 just release-binaries <channel> <source-commit>
 ```
 
-#### Phase A: build the profile candidate
+#### Phase A: build the runtime candidate
 
-1. Select exactly one channel/profile.
-2. Build its complete asset set.
-3. Produce configuration, evidence, revision, and matching digests.
-4. Run all profile self-consistency, integrity, architecture, and boot proofs
+1. Select exactly one channel.
+2. Build its complete runtime asset set.
+3. Produce evidence, revision, and matching digests.
+4. Run all runtime self-consistency, integrity, architecture, and boot proofs
    possible with the declared compatibility relation.
 5. If the pulled existing binary is intentionally too old, express the unmet
-   dependency through the profile's minimum binary bound.
-6. Keep the profile candidate staged and inactive.
-7. Prove that only the selected channel/profile candidate state was written.
+   dependency through the runtime's minimum binary bound.
+6. Keep the runtime candidate staged and inactive.
+7. Prove that only the selected channel's runtime candidate state was written.
 
-The profile candidate MUST NOT be activated while the selected public channel
+The runtime candidate MUST NOT be activated while the selected public channel
 still points to an incompatible binary.
 
 #### Phase B: build the binary candidate
 
-1. Reacquire the same channel lock and consume every already-published
-   immutable staged profile candidate as a read-only compatibility input.
+1. Reacquire the same channel lock and consume the already-published immutable
+   staged runtime candidate as a read-only compatibility input.
 2. Build the binary and exact native packages.
 3. Test the candidate binary against:
-   - Every staged candidate profile.
-   - Every unchanged existing profile in the selected channel.
-   - Any existing profile revision that must remain valid during update.
+   - The staged candidate runtime.
+   - Any existing runtime revision that must remain valid during update.
 4. Install and verify the exact packages.
 5. Run the composed glow-up path.
-6. Prove that the binary phase wrote no profile data.
+6. Prove that the binary phase wrote no runtime data.
 
 #### Phase C: validate the combined channel state
 
 The compatibility matrix MUST explicitly cover:
 
-| Binary | Profile | Expected result |
+| Binary | Runtime | Expected result |
 |---|---|---|
-| Existing binary | Existing profiles | Remains valid until activation |
-| Candidate binary | Existing unchanged profiles | Must pass |
-| Candidate binary | Candidate profile | Must pass |
-| Existing binary | Candidate profile requiring the new binary | Must be rejected by compatibility bounds |
+| Existing binary | Existing runtime | Remains valid until activation |
+| Candidate binary | Existing runtime that must remain valid during update | Must pass |
+| Candidate binary | Candidate runtime | Must pass |
+| Existing binary | Candidate runtime requiring the new binary | Must be rejected by compatibility bounds |
 
-The rejected old-binary/new-profile pair is not a test failure when the
+The rejected old-binary/new-runtime pair is not a test failure when the
 manifest intentionally excludes it. Failure to reject that pair is a manifest
 validation failure.
 
 #### Phase D: generate and activate
 
 1. Use `capsem-admin` to validate the source manifest state already authored by
-   the profile command plus the binary selection authored by the binary lane.
+   the runtime command plus the binary selection authored by the binary lane.
 2. Validate all bounds, membership, identities, and digests.
 3. Run every lane diff contract.
 4. Assemble one complete generated public distribution.
-5. Activate it only after all binary, profile, manifest, package, glow-up, and
+5. Activate it only after all binary, runtime, manifest, package, glow-up, and
    deployment prerequisites pass.
 
 There MUST NOT be an intermediate public state that exposes only half of the
@@ -1137,21 +1138,20 @@ A manifest-only release MAY:
 - Change channel membership.
 - Change selected immutable versions.
 - Tighten or widen compatibility bounds when evidence supports the claim.
-- Add or remove references to already-built channel/profile instances.
+- Select or deselect an already-built runtime revision of the same channel.
 
 It MUST NOT:
 
-- Change any profile definition.
-- Change profile or package bytes.
+- Change runtime or package bytes.
 - Recalculate digests to conceal changed bytes.
-- Treat a profile content change as metadata-only.
+- Treat a runtime content change as metadata-only.
 
-If profile content changes, the operation is a profile release. If binary or
+If runtime content changes, the operation is a runtime release. If binary or
 package content changes, the operation is a binary release.
 
 ### 12.5 Channel deploy
 
-Both binary and profile flows end by invoking the same reusable deploy lane.
+Both binary and runtime flows end by invoking the same reusable deploy lane.
 
 The deploy lane:
 
@@ -1168,14 +1168,13 @@ The corporate flow is:
 
 1. The corporation uses `capsem-admin` to define its manifest and channels.
 2. It selects exact or policy-resolved official Capsem binary versions.
-3. It defines the profiles belonging to each corporate channel.
-4. It builds its channel/profile instances and contained assets through
-   `capsem-admin`.
-5. It validates compatibility, integrity, and ownership.
-6. It generates its corporate manifest and distribution.
-7. Installed corporate Capsem instances poll that manifest.
+3. It builds the runtime for each corporate channel through `capsem-admin` and
+   publishes it under its own base.
+4. It validates compatibility, integrity, and ownership.
+5. It generates its corporate manifest and distribution.
+6. Installed corporate Capsem instances poll that manifest.
 
-The corporate release path MUST reuse the same profile, manifest,
+The corporate release path MUST reuse the same runtime, manifest,
 compatibility, integrity, and diff-policy modules as first-party release paths.
 It MUST add ownership enforcement; it MUST NOT replace those modules with a
 less strict corporate implementation.
@@ -1193,7 +1192,7 @@ policy.
 
 ### 13.2 Nightly orthogonal schedule
 
-Nightly binary and selected profile/asset rebuilds SHOULD run once daily.
+Nightly binary and runtime rebuilds SHOULD run once daily.
 
 Each run MUST:
 
@@ -1201,20 +1200,18 @@ Each run MUST:
   by the scheduler, and use that same full SHA for every checkout and lane even
   if `main` advances during the run.
 - Target only the nightly channel.
-- Invoke `just release-profile nightly <profile> <source-commit>` separately
-  for every selected profile, then invoke
+- Invoke `just release-assets nightly <source-commit>`, then invoke
   `just release-binaries nightly <source-commit>`; it MUST NOT dispatch a
   downstream workflow or combine artifact ownership itself.
-- Wait for each exact correlated profile run before starting another
-  same-channel command. Profile commands MAY be ordered serially while each
-  profile workflow keeps its independent artifact ownership.
-- Run the binary command after all scheduled profile commands have terminated,
-  even when one profile lane failed, so one orthogonal family cannot suppress
-  the other family's daily rebuild.
-- Rebuild nightly profile assets rather than resolving a prior workflow's build
+- Wait for the exact correlated runtime run before starting another
+  same-channel command.
+- Run the binary command after the runtime command has terminated, even when
+  the runtime lane failed, so one orthogonal family cannot suppress the other
+  family's daily rebuild.
+- Rebuild nightly runtime assets rather than resolving a prior workflow's build
   artifacts. Stable retry MAY reuse one exact verified prior artifact cohort.
 - Rebuild and test binary packages against the manifest-selected nightly
-  profiles every day.
+  runtime every day.
 - Publish and activate only when the current version introduces a new immutable
   release identity. When that identity already exists, run the same package,
   native-install, functional, Winterfell, IronBank, and glow-up proof with
@@ -1222,7 +1219,7 @@ Each run MUST:
   tag.
 
 The scheduler has its own non-cancelling lock to prevent overlapping daily
-orchestrators. The downstream binary and profile workflows retain the shared
+orchestrators. The downstream binary and runtime workflows retain the shared
 `capsem-release-nightly` transaction lock from manifest resolution through
 deployment. The daily schedule rebuilds current `main` without converting
 every push into a publication.
@@ -1242,27 +1239,23 @@ Stable MUST use the same reusable binary, package, compatibility, glow-up,
 manifest, distribution, and deploy modules as nightly. It MAY have stricter
 approval requirements, but MUST NOT use duplicated build or test logic.
 
-### 13.4 Profile trigger
+### 13.4 Runtime trigger
 
-A profile release MUST be explicitly targeted with:
+A runtime release MUST be explicitly targeted with:
 
 - One channel.
-- One profile.
 - One full source commit already on `main`.
 
 The trigger MUST reject:
 
-- Missing channel or profile.
-- Wildcard profile selection.
+- A missing channel.
 - “All channels” as an implicit convenience.
-- A profile that is not a member of the selected channel unless the same
-  `capsem-admin` operation explicitly and validly adds that membership.
-- Any attempt to mutate the same profile name in another channel.
+- Any attempt to mutate the runtime of a channel other than the selected one.
 
-### 13.5 Profile-then-binary trigger
+### 13.5 Runtime-then-binary trigger
 
 There is no composed-release trigger. The administrator invokes the two public
-commands in order. The staged profile remains inert until the following binary
+commands in order. The staged runtime remains inert until the following binary
 release validates the completed graph and performs one final activation.
 
 ## 14. Automatic client update behavior
@@ -1279,7 +1272,7 @@ MUST:
 - Fetch the selected manifest safely.
 - Verify manifest identity and integrity before trusting references.
 - Resolve the current channel.
-- Compare installed and selected binary/profile state.
+- Compare installed and selected binary/runtime state.
 - Verify compatibility before mutation.
 - Fetch only required changed artifacts.
 - Preserve the working installed state on any failure.
@@ -1289,45 +1282,44 @@ MUST:
 When only the selected binary changes:
 
 - Capsem updates the verified package/binary state.
-- Unchanged profile assets MUST remain unchanged.
-- Compatible VM/profile state MUST not be invalidated merely because host code
+- Unchanged runtime assets MUST remain unchanged.
+- Compatible VM/runtime state MUST not be invalidated merely because host code
   was fixed.
-- Post-update checks MUST prove the package, service, and existing profiles
+- Post-update checks MUST prove the package, service, and existing runtime
   remain functional.
 
-### 14.3 Profile-only update
+### 14.3 Runtime-only update
 
-When one selected channel/profile changes:
+When the selected channel's runtime changes:
 
-- Capsem fetches and verifies that profile's new complete asset set.
-- Other profiles remain unchanged.
-- The same profile name in another channel remains unchanged.
+- Capsem fetches and verifies the runtime's new complete asset set.
+- The runtime of another channel remains unchanged.
 - The Capsem binary remains unchanged when it satisfies the new compatibility
   constraints.
-- Any necessary profile-specific VM replacement or migration is confined to
-  that channel/profile.
+- Any necessary VM replacement or migration is confined to that channel's
+  runtime.
 
 ### 14.4 Combined update
 
-When a manifest advances both binary and profile:
+When a manifest advances both binary and runtime:
 
 - Capsem MUST compute a safe ordered update plan.
 - It MUST verify all required bytes before discarding the working state.
-- It MUST never boot the new profile with a binary that the manifest declares
+- It MUST never boot the new runtime with a binary that the manifest declares
   incompatible.
 - It MUST never finalize the new binary while leaving an incompatible selected
-  profile.
+  runtime.
 - Failure MUST preserve or restore the last complete compatible state.
 
 ### 14.5 Fail-closed integrity
 
-Digest mismatch, missing evidence, incompatible versions, incomplete profile
+Digest mismatch, missing evidence, incompatible versions, incomplete runtime
 assets, invalid membership, or a partial package cohort MUST prevent mutation.
 
 The updater MUST NOT:
 
 - Fall back silently to another channel.
-- Substitute another profile.
+- Substitute another channel's runtime.
 - accept mutable bytes under a previously verified identity.
 - Treat missing integrity data as an empty or unchanged result.
 - Partially apply an update and report success.
@@ -1357,8 +1349,8 @@ At minimum, package proof MUST verify:
 - Required service registration and startup.
 - A functional Capsem command.
 - Manifest installation and polling state.
-- Existing profile readiness.
-- Real profile boot or guest command where the platform provides the required
+- Existing runtime readiness.
+- Real runtime boot or guest command where the platform provides the required
   virtualization capability.
 
 ### 15.3 Glow-up transitions
@@ -1369,11 +1361,11 @@ upgrade.
 
 Required scenarios include:
 
-- Existing supported binary plus existing profiles to candidate binary plus
-  unchanged profiles.
-- Existing profile revision to candidate profile revision with unchanged
+- Existing supported binary plus existing runtime to candidate binary plus
+  unchanged runtime.
+- Existing runtime revision to candidate runtime revision with unchanged
   compatible binary.
-- Combined binary/profile movement where required.
+- Combined binary/runtime movement where required.
 - Supported channel switching and return switching.
 - Rejection of tampered manifest or artifact bytes.
 - Preservation of the prior installed state after rejection.
@@ -1381,9 +1373,9 @@ Required scenarios include:
 
 An empty first-party bootstrap source is not a successful installed state and
 MUST NOT be inserted into this transition list merely to manufacture an upgrade.
-The first activated profile is proved as a fresh candidate pairing; later
-profile releases retain the required existing-profile to candidate-profile
-transition.
+The first activated runtime of a channel is proved as a fresh candidate
+pairing; later runtime releases retain the required existing-runtime to
+candidate-runtime transition.
 
 ## 16. Integrity, provenance, and evidence
 
@@ -1393,7 +1385,7 @@ Every persistent release artifact MUST have:
 - A cryptographic digest.
 - A byte size where relevant.
 - An owning lane.
-- An owning channel and, for profile data, profile.
+- An owning channel.
 - Compatibility metadata where relevant.
 
 Manifest references MUST match the artifact evidence exactly.
@@ -1401,7 +1393,7 @@ Manifest references MUST match the artifact evidence exactly.
 The system MUST distinguish:
 
 - Host package and binary evidence.
-- Profile and VM asset evidence.
+- Runtime and VM asset evidence.
 - Manifest validation evidence.
 - Deployment evidence.
 
@@ -1409,16 +1401,16 @@ One lane MUST NOT regenerate another lane's evidence. Preservation is by exact
 reference or exact unchanged bytes, not by lossy conversion.
 
 The manifest is the release authority. Every newly authored package row MUST
-record its family's exact `source_commit`; every newly authored selected
-profile document MUST record its family's exact `source_commit`. These fields
-are optional on read so legacy and gradual mixed graphs remain readable, but a
+record its family's exact `source_commit`; every newly authored runtime
+document MUST record its family's exact `source_commit`. These fields
+are optional on read so gradual mixed graphs remain readable, but a
 present value is exactly 40 lowercase hexadecimal characters and explicit null
 is invalid. Source commit MUST NOT appear at graph top level or per-binary:
 those placements imply ownership wider or narrower than the publishing family.
 Status-only updates preserve existing provenance, and one lane preserves the
 other family's fields unchanged.
 
-Existing host SBOMs, profile OBOMs, attestations, structured gate run logs, and
+Existing host SBOMs, runtime OBOMs, attestations, structured gate run logs, and
 GitHub workflow logs supply the remaining evidence. The system MUST NOT add a
 parallel state, history, transaction, recovery, or result document. Run id is
 attempt identity and remains distinct from source commit.
@@ -1427,7 +1419,7 @@ attempt identity and remains distinct from source commit.
 
 ### 17.1 Candidate bytes are inert
 
-Immutable packages, profiles, or assets MAY be uploaded before activation.
+Immutable packages, runtimes, or assets MAY be uploaded before activation.
 They MUST remain inert until a validated generated public distribution
 references them.
 
@@ -1439,11 +1431,11 @@ graph.
 The following states MUST never be observable as the selected public state:
 
 - New binary with missing required package architecture.
-- New binary with profiles it cannot run.
-- New profile with an incompatible selected binary.
+- New binary with a runtime it cannot run.
+- New runtime with an incompatible selected binary.
+- New runtime with a missing required architecture.
 - Manifest references to assets not yet available.
 - Mixed digests from two candidate runs.
-- Updated membership with stale profile data.
 
 ### 17.3 Concurrency
 
@@ -1453,7 +1445,7 @@ isolated.
 Activation affecting the same channel MUST be serialized. Two jobs MUST NOT
 race to merge independently generated partial channel state.
 
-Builds for different channel/profile pairs MAY run concurrently, but their
+Runtime builds for different channels MAY run concurrently, but their
 eventual channel activation still requires a fresh validated distribution
 assembled from the intended complete state.
 
@@ -1483,37 +1475,34 @@ staged, activated, rejected, or superseded.
 
 This test MUST:
 
-- Construct at least two channels.
-- Place multiple profiles in the selected channel.
-- Place at least one profile in another channel.
+- Construct at least two channels, each with a runtime.
 - Run a binary-lane fixture for one selected channel.
 - Prove packages, per-binary inventory, host SBOM, and host attestations may
   change only in that channel.
-- Prove all profile config, images, evidence, revisions, and digests remain
+- Prove all runtime images, evidence, revisions, and digests remain
   byte-for-byte unchanged.
 - Prove the other channel remains byte-for-byte unchanged.
-- Fail on profile rebuilding, profile metadata normalization, or cross-channel
+- Fail on runtime rebuilding, runtime metadata normalization, or cross-channel
   package writes.
 
-### 18.2 `test_profile_lane_gate`
+### 18.2 `test_runtime_lane_gate`
 
 This test MUST:
 
-- Construct at least two channels and multiple profiles.
-- Include the same profile name in two channels.
-- Select exactly one channel/profile.
-- Prove that selected profile images, config, evidence, revision, and matching
-  digests may change.
+- Construct at least two channels, each with a runtime.
+- Select exactly one channel.
+- Prove that the selected channel's runtime images, evidence, revision, and
+  matching digests may change.
 - Prove packages and binaries remain unchanged.
-- Prove sibling profiles remain unchanged.
-- Prove the same profile name in the other channel remains unchanged.
-- Fail on wildcard or implicit multi-profile output.
+- Prove the other channel's runtime remains unchanged.
+- Fail on implicit multi-channel output or on configuration published as
+  runtime data.
 
 ### 18.3 `test_release_lane_diff_policy`
 
 This test MUST:
 
-- Classify changes by lane owner, channel, profile, and artifact type.
+- Classify changes by lane owner, channel, and artifact type.
 - Accept every explicitly allowed write.
 - Reject every forbidden write.
 - Prove manifest validation can change channel definitions, bounds, and
@@ -1538,12 +1527,12 @@ This test MUST:
 
 This test MUST:
 
-- Author the corporation's manifest and profiles through `capsem-admin`.
+- Author the corporation's manifest and runtime through `capsem-admin`.
 - Prove exact official binary pins.
 - Prove an allowed latest policy resolves to an immutable official binary.
-- Prove corporation-owned channel/profile independence.
+- Prove corporation-owned channel/runtime independence.
 - Reject attempts to write official binaries or packages.
-- Reject attempts to write first-party channels or profiles.
+- Reject attempts to write first-party channels or runtimes.
 - Reject namespace escape.
 - Reject hand-written or alternate authoring paths.
 - Prove integrity and compatibility validation uses the same production
@@ -1557,9 +1546,9 @@ The release architecture is not complete until all scenarios below pass.
 
 Given:
 
-- Stable and nightly each contain existing profiles.
-- The profile bytes are known and immutable.
-- A Capsem code fix changes no profile requirements.
+- Stable and nightly each contain an existing runtime.
+- The runtime bytes are known and immutable.
+- A Capsem code fix changes no runtime requirements.
 
 When:
 
@@ -1568,12 +1557,12 @@ When:
 Then:
 
 - Only nightly packages and binary-owned evidence change.
-- Nightly profiles are not rebuilt.
+- The nightly runtime is not rebuilt.
 - Stable is unchanged.
 - The candidate package installs successfully.
-- Existing nightly profiles boot and function.
+- The existing nightly runtime boots and functions.
 - Polling Capsem installations update automatically.
-- Compatible VM/profile state is preserved.
+- Compatible VM/runtime state is preserved.
 
 ### Scenario B: Stable manual binary release
 
@@ -1584,59 +1573,49 @@ state.
 
 No push or nightly schedule may implicitly trigger this stable activation.
 
-### Scenario C: One nightly-only experimental profile
+### Scenario C: Nightly-only runtime change
 
-Given:
+Given a runtime change released to nightly, then:
 
-- `experimental` belongs to nightly.
-- `experimental` does not belong to stable.
-
-When:
-
-- `nightly/experimental` is released.
-
-Then:
-
-- Its complete assets are rebuilt.
+- Its complete assets are rebuilt for every published architecture.
 - The currently selected nightly binary is pulled and tested with it.
 - No stable data changes.
-- No stable membership is invented.
+- The stable runtime is not invented, replaced, or aliased to the nightly one.
 
-### Scenario D: Same profile name in two channels
+### Scenario D: Same source, two channels
 
-Given `default` exists in both stable and nightly, when `nightly/default`
-changes, then `stable/default` remains byte-for-byte unchanged and retains its
-own revision and digests.
+Given the nightly and stable runtimes were built from the same source, when the
+nightly runtime changes, then the stable runtime remains byte-for-byte
+unchanged and retains its own revision, publication identity, and digests.
 
-### Scenario E: Profile-only compatible update
+### Scenario E: Runtime-only compatible update
 
-Given a profile change remains compatible with the channel's currently
-selected binary, when that channel/profile is released, then only its
-profile-owned outputs and manifest references change. No package is rebuilt.
-If this is the channel's first profile, the empty bootstrap source remains
+Given a runtime change remains compatible with the channel's currently
+selected binary, when that channel's runtime is released, then only its
+runtime-owned outputs and manifest references change. No package is rebuilt.
+If this is the channel's first runtime, the empty bootstrap source remains
 non-public and the candidate passes complete fresh-install, Doctor, Winterfell,
 rejection, and preservation proof. Otherwise the installed glow-up also proves
-the exact public-before profile to candidate-profile transition.
-The same rule applies when the first 0.6 profile replaces the one explicitly
+the exact public-before runtime to candidate-runtime transition.
+The same rule applies when the first runtime replaces the one explicitly
 digest-retired pre-0.6 graph: retirement authorizes only the empty before-state,
 never publication or a reduced pairing proof.
 
-### Scenario F: Profile requires a new binary
+### Scenario F: Runtime requires a new binary
 
-Given a new profile revision requires a newer Capsem capability, when the
+Given a new runtime revision requires a newer Capsem capability, when the
 composed release runs, then:
 
-- The profile is built first and remains staged.
-- The binary is built second against the staged profile.
-- The candidate binary also passes unchanged profiles.
-- The manifest excludes the incompatible old-binary/new-profile pair.
+- The runtime is built first and remains staged.
+- The binary is built second against the staged runtime.
+- The manifest excludes the incompatible old-binary/new-runtime pair.
 - One complete compatible graph is activated.
 - No intermediate incompatible graph becomes public.
 
 ### Scenario G: Corporate exact pin
 
 Given a corporation authors its manifest through `capsem-admin` and pins an
-official Capsem version, then its profiles build and validate against that
+official Capsem version, then its runtime builds and validates against that
 version without building a Capsem binary or changing any first-party channel.
 
 ### Scenario H: Corporate latest policy
@@ -1649,7 +1628,7 @@ validates compatibility, and produces a reproducible manifest.
 
 Given a working installed state and a polled manifest or artifact with invalid
 integrity metadata, the update fails closed, no partial state becomes active,
-and the previously working binary/profile pair remains usable.
+and the previously working binary/runtime pair remains usable.
 
 ### Scenario J: Failed deployment
 
@@ -1665,7 +1644,8 @@ logs MUST together answer:
 - Which lane ran?
 - Which exact committed source did that lane qualify and build?
 - Which channel was selected?
-- Which profile and derived publication identity were selected, if any?
+- Which runtime revision and derived publication identity were selected, if
+  any?
 - Which immutable existing artifacts were consumed?
 - Which candidate artifacts were produced?
 - Which compatibility cohort was tested?
@@ -1685,11 +1665,11 @@ No additional evidence ledger or result document is introduced.
 An implementation conforming to this specification MUST demonstrate:
 
 - [ ] Local `just test` constructs and validates the complete pipeline.
-- [ ] Nightly binary and selected profile/asset rebuilds are scheduled daily
-      through separate public commands rather than per push.
+- [ ] Nightly binary and runtime rebuilds are scheduled daily through separate
+      public commands rather than per push.
 - [ ] Existing nightly identities are rebuilt and tested without overwriting
       immutable publications.
-- [ ] Stable binary and profile publication is manual.
+- [ ] Stable binary and runtime publication is manual.
 - [ ] `just test <source-commit>` requires one canonical full commit already
       on local `main`, diagnoses its detached full-SHA prefix once, reuses or
       structurally resumes its journal, and remains valid while the outer
@@ -1698,33 +1678,33 @@ An implementation conforming to this specification MUST demonstrate:
       for the release commit or an identical tree, dispatch hosted
       qualification, and never repeat the local candidate.
 - [ ] Binary release accepts exactly one channel and one source commit.
-- [ ] Profile release accepts exactly one channel, profile, and source commit and derives its
-      immutable publication identity.
+- [ ] Runtime release accepts exactly one channel and source commit and derives
+      its runtime revision and immutable publication identity.
 - [ ] Every release workflow checkout and correlated run uses that exact
       source commit and derived immutable transport ref.
-- [ ] Newly authored package rows and selected profile documents record their
+- [ ] Newly authored package rows and runtime documents record their
       family-owned source commit without a graph-wide provenance field.
-- [ ] A profile can exist in zero, one, or multiple channels.
-- [ ] Same-named profiles in different channels remain independent.
-- [ ] Profile changes rebuild the selected profile's complete asset set.
-- [ ] Binary releases test against existing profiles without rebuilding them.
-- [ ] Profile releases test against the existing selected binary without
-      rebuilding them.
-- [ ] A composed profile-then-binary flow exists.
+- [ ] A channel can have no runtime or exactly one.
+- [ ] The runtimes of different channels remain independent.
+- [ ] Runtime changes rebuild the complete runtime asset set.
+- [ ] Binary releases test against the existing runtime without rebuilding it.
+- [ ] Runtime releases test against the existing selected binary without
+      rebuilding it.
+- [ ] A composed runtime-then-binary flow exists.
 - [ ] The composed flow has one final activation and no incompatible
       intermediate public state.
 - [ ] All first-party authoring goes through `capsem-admin`.
 - [ ] All corporate authoring goes through `capsem-admin`.
 - [ ] Corporations cannot build or mutate official Capsem binaries.
-- [ ] CI build, package, profile, manifest, compatibility, glow-up, diff,
+- [ ] CI build, package, runtime, manifest, compatibility, glow-up, diff,
       distribution, and deploy logic is reusable rather than duplicated.
 - [ ] Exact publishable native packages are installed and functionally tested.
 - [ ] Capsem automatically polls and applies verified manifest updates.
-- [ ] Unchanged profiles and VM state survive compatible binary updates.
-- [ ] Unchanged binaries survive compatible profile updates.
+- [ ] An unchanged runtime and VM state survive compatible binary updates.
+- [ ] Unchanged binaries survive compatible runtime updates.
 - [ ] Every update fails closed on integrity or compatibility failure.
 - [ ] `test_binary_lane_gate` passes.
-- [ ] `test_profile_lane_gate` passes.
+- [ ] `test_runtime_lane_gate` passes.
 - [ ] `test_release_lane_diff_policy` passes.
 - [ ] `test_channel_deploy_contract` passes.
 - [ ] `test_corporate_manifest_contract` passes.
@@ -1737,10 +1717,10 @@ This specification does not choose:
 
 - Workflow filenames.
 - The exact binary version syntax.
-- The storage provider for immutable packages and profile assets.
+- The storage provider for immutable packages and runtime assets.
 - The CI vendor.
 - The manifest polling interval and backoff.
-- The UI used to trigger manual stable or profile releases.
+- The UI used to trigger manual stable or runtime releases.
 - The internal language used for reusable CI modules.
 - The retention duration for staged or superseded candidates.
 
@@ -1749,20 +1729,20 @@ normative invariant and contract test in this document remains satisfied.
 
 ## 23. Summary of the governing contract
 
-Capsem binaries and profiles are independently releasable but jointly tested.
-A manifest authored through `capsem-admin` defines channels, each channel's
-binary policy, and the profiles belonging to that channel. Profiles contain
-their assets. The same profile name may exist independently in multiple
-channels, and a profile need not exist in every channel.
+Capsem binaries and the VM runtime are independently releasable but jointly
+tested. A manifest authored through `capsem-admin` defines channels, each
+channel's binary policy, and the one runtime that channel selects, if any. The
+runtime contains its assets. Each channel's runtime is independent, and a
+channel need not have published one.
 
 Local `just test` verifies the complete world and reuses exact validated build
 products. It is required before publication (section 8.1). CI release lanes
 also qualify what they build, and are selective:
-the binary lane builds binaries and packages and tests them against existing
-profiles; the profile lane rebuilds exactly one channel/profile and tests it
-against the channel's existing selected binary. When both must move, CI builds
-the profile first, builds the binary against it second, and activates one
-compatible manifest state only after both independent lanes pass.
+the binary lane builds binaries and packages and tests them against the
+existing runtime; the runtime lane rebuilds exactly one channel's runtime and
+tests it against the channel's existing selected binary. When both must move,
+CI builds the runtime first, builds the binary against it second, and activates
+one compatible manifest state only after both independent lanes pass.
 
 All release orchestration reuses the same checked-in modules. Lane write scopes
 are enforced by named contract tests. Exact packages are installed and proven

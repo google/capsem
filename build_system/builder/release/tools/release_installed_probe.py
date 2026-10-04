@@ -15,7 +15,6 @@ HOST_BINARIES = (
     "capsem-service",
     "capsem-process",
     "capsem-tui",
-
     "capsem-router",
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
@@ -37,7 +36,9 @@ def packaged_host_binaries(deb: Path) -> tuple[str, ...]:
     """
     shipped = {
         Path(name).name
-        for name in deb_payload_files(deb, select=lambda name: Path(name).parent.as_posix().endswith("usr/bin"))
+        for name in deb_payload_files(
+            deb, select=lambda name: Path(name).parent.as_posix().endswith("usr/bin")
+        )
     }
     return tuple(binary for binary in HOST_BINARIES if binary in shipped)
 
@@ -53,9 +54,13 @@ def packaged_manifest_metadata(deb: Path) -> dict[str, str]:
 
     # Repacked and native packages use different prefixes. Select the one
     # package-owned metadata member without extracting executables or paths.
-    found = deb_payload_files(deb, select=lambda name: name.endswith("/assets/manifest-metadata.json"))
+    found = deb_payload_files(
+        deb, select=lambda name: name.endswith("/assets/manifest-metadata.json")
+    )
     if len(found) != 1:
-        raise SystemExit(f"package must declare exactly one manifest metadata, found {len(found)} in {deb}")
+        raise SystemExit(
+            f"package must declare exactly one manifest metadata, found {len(found)} in {deb}"
+        )
     packaged = json.loads(next(iter(found.values())))
     url = packaged.get("manifest_url")
     channel = packaged.get("channel")
@@ -194,7 +199,6 @@ probe_installed_transition() {{
   {shlex.quote(sys.executable)} build_system/scripts/build/run-installed-winterfell.py \
     --bin-dir "$CAPSEM_HOME_DIR/bin" \
     --assets-dir "$CAPSEM_HOME_DIR/assets" \
-    --profiles-dir "$CAPSEM_HOME_DIR/profiles" \
     --evidence-out "$EVIDENCE_DIR/$label-winterfell.json"
 }}
 observe_update_transition() {{
@@ -224,10 +228,12 @@ observe_update_transition() {{
     return 1
   }}
 }}
-installed_profile_tree_digest() {{
-  find "$CAPSEM_HOME_DIR/profiles" -type f -print0 \
-    | sort -z \
-    | xargs -0 sha256sum \
+# Path and size of every installed runtime file: a rejected candidate must not
+# add, drop or resize one. The manifest is compared byte for byte by its caller,
+# and the metadata records the rejection itself, so neither belongs here.
+installed_runtime_digest() {{
+  find "$CAPSEM_HOME_DIR/assets" -type f -not -name 'manifest*.json' -printf '%P %s\\n' \
+    | sort \
     | sha256sum \
     | cut -d' ' -f1
 }}

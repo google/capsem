@@ -139,10 +139,7 @@ def main() -> int:
         for field, expected in expected_identity.items():
             actual = actual_identity[field]
             if actual != expected:
-                fail(
-                    f"manifest-selected package {field} is {actual!r}, "
-                    f"expected {expected!r}"
-                )
+                fail(f"manifest-selected package {field} is {actual!r}, expected {expected!r}")
 
     expected_metadata = {
         "schema": METADATA_SCHEMA,
@@ -152,9 +149,7 @@ def main() -> int:
     }
     for field, expected in expected_metadata.items():
         if metadata.get(field) != expected:
-            fail(
-                f"manifest-metadata {field} is {metadata.get(field)!r}, expected {expected!r}"
-            )
+            fail(f"manifest-metadata {field} is {metadata.get(field)!r}, expected {expected!r}")
     validation_status = metadata.get("validation_status")
     validation_error = metadata.get("validation_error")
     split_provenance = args.manifest_url != metadata_manifest_url
@@ -183,9 +178,7 @@ def main() -> int:
         if not isinstance(validation_error, str) or not validation_error.strip():
             fail("manifest-metadata fetch_error requires a non-empty validation_error")
     else:
-        fail(
-            f"manifest-metadata validation_status is {validation_status!r}, expected 'valid'"
-        )
+        fail(f"manifest-metadata validation_status is {validation_status!r}, expected 'valid'")
     if not isinstance(metadata.get("channel_locked"), bool):
         fail("manifest-metadata channel_locked must be boolean")
     if not isinstance(metadata.get("update_available"), bool):
@@ -230,27 +223,9 @@ def main() -> int:
     version_match = re.search(r"(?m)^Version:\s+(\S+)$", status)
     if version_match is None or version_match.group(1) != args.package_version:
         fail(f"capsem status does not report package version {args.package_version}")
-    profile_match = re.search(r"(?m)^Profiles:\s+(\d+)/(\d+) ready\b", status)
-    if profile_match is None:
-        fail("capsem status has no profile readiness count")
-    ready, total = (int(value) for value in profile_match.groups())
-    if total <= 0 or ready != total:
-        fail(f"profiles are not all ready: {ready}/{total}")
-    manifest_profiles = manifest.get("profiles")
-    if not isinstance(manifest_profiles, dict) or not manifest_profiles:
-        fail("selected release manifest has no profiles")
-    if total != len(manifest_profiles):
-        fail(
-            f"status reports {total} profiles but selected manifest declares "
-            f"{len(manifest_profiles)}"
-        )
-    # Failed-session ID lookup was added for 0.6.3. The immutable 0.6.2
-    # upgrade baseline cannot acquire that fix; its exact identity, metadata,
-    # service and profiles have still been verified above.
-    if args.package_version == "0.6.2":
-        print("failed-session log proof: not applicable to released 0.6.2")
-    else:
-        verify_failed_session_logs(args.capsem, args.capsem_home)
+    if not isinstance(manifest.get("runtime"), dict):
+        fail("selected release manifest has no runtime")
+    verify_failed_session_logs(args.capsem, args.capsem_home)
     if args.evidence_out is not None:
         args.evidence_out.parent.mkdir(parents=True, exist_ok=True)
         args.evidence_out.write_text(
@@ -264,8 +239,6 @@ def main() -> int:
                     "running": True,
                     "service": "ok",
                     "gateway": "ok",
-                    "profiles_ready": ready,
-                    "profiles_total": total,
                 },
                 indent=2,
                 sort_keys=True,
@@ -276,7 +249,7 @@ def main() -> int:
 
     print(
         f"verified installed {args.channel} release {args.package_version}: "
-        f"{ready}/{total} profiles ready, exact manifest, canonical metadata"
+        "exact manifest, canonical metadata"
     )
     return 0
 

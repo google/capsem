@@ -99,7 +99,6 @@ pub(super) fn bootstrap_first_party_channel_source(channel: &str, donor: &Value)
     bootstrapped.insert("channel".to_string(), Value::String(channel.as_str().to_string()));
     bootstrapped.insert("status".to_string(), Value::String("current".to_string()));
     bootstrapped.insert("packages".to_string(), Value::Array(packages.clone()));
-    bootstrapped.insert("profiles".to_string(), Value::Object(Map::new()));
     Ok(Value::Object(bootstrapped))
 }
 
@@ -120,7 +119,6 @@ pub(super) fn bootstrap_retired_first_party_channel_source(channel: &str, retire
     bootstrapped.insert("channel".to_string(), Value::String(channel.as_str().to_string()));
     bootstrapped.insert("status".to_string(), Value::String("current".to_string()));
     bootstrapped.insert("packages".to_string(), Value::Array(Vec::new()));
-    bootstrapped.insert("profiles".to_string(), Value::Object(Map::new()));
     Ok(Value::Object(bootstrapped))
 }
 

@@ -123,41 +123,12 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.rootfs.j2."""
     arch = config.build.architectures[arch_name]
 
-    runtime = list(config.build.rootfs.runtime_apt_packages)
-    profile: list[str] = []
-    if "apt" in config.package_sets:
-        profile = list(config.package_sets["apt"].packages)
-    claimed = sorted(set(runtime) & set(profile))
-    if claimed:
-        raise ValueError(
-            f"profile apt packages {claimed} belong to the runtime ([build.rootfs] "
-            "runtime_apt_packages); an environment cannot own the container launcher's tools"
-        )
-    apt_packages = runtime + profile
-
-    python_packages: list[str] = []
-    python_install_cmd = "uv pip install --system --break-system-packages"
-    if "python" in config.package_sets:
-        python_packages = list(config.package_sets["python"].packages)
-        python_install_cmd = config.package_sets["python"].install_cmd
-
-    npm_packages: list[str] = []
-    npm_prefix = "/opt/ai-clis"
-    if "npm" in config.package_sets:
-        npm_packages.extend(config.package_sets["npm"].packages)
     return {
         **_debian_snapshot_context(config),
         "arch": arch,
         "arch_name": arch_name,
-        "apt_packages": apt_packages,
-        "python_packages": python_packages,
-        "python_install_cmd": python_install_cmd,
-        "npm_packages": npm_packages,
-        "npm_prefix": npm_prefix,
-        "dependency_artifacts": config.build.asset_dependencies.architectures[arch_name],
+        "apt_packages": list(config.build.rootfs.runtime_apt_packages),
         "guest_binaries": GUEST_BINARIES,
-        "profile_root_seed": config.profile_root_seed,
-        "profile_build_script": config.profile_build_script,
     }
 
 
@@ -660,7 +631,7 @@ def create_erofs(
 
 
 def validate_rootfs_export(tar_path: Path, limits: RootfsConfig) -> None:
-    """Reject an oversized or compositionally forbidden exported rootfs."""
+    """Reject an oversized exported rootfs or one with an unsafe member path."""
     size = tar_path.stat().st_size
     if size > limits.max_uncompressed_bytes:
         raise ValueError(
@@ -675,9 +646,6 @@ def validate_rootfs_export(tar_path: Path, limits: RootfsConfig) -> None:
             path = PurePosixPath(name)
             if path.is_absolute() or any(part == ".." for part in path.parts):
                 raise ValueError(f"unsafe rootfs archive member: {member.name}")
-            for prefix in limits.forbidden_path_prefixes:
-                if name.startswith(prefix):
-                    raise ValueError(f"forbidden rootfs payload survived cleanup: {name}")
 
 
 def validate_erofs_size(image_path: Path, limits: RootfsConfig) -> None:
@@ -900,79 +868,6 @@ def cross_compile_agent(
     return container_compile_agent(build, arch_name, repo_root, output_dir)
 
 
-def build_version_script(config: GuestImageConfig) -> str:
-    """Build a shell script that extracts tool versions from config.
-
-    Returns a bash script that prints grouped key=value lines to stdout.
-    The script is assembled from version_commands in build config and package
-    sets. Profile-owned build scripts install agent CLIs; they are not authored
-    through builder config.
-    """
-    lines: list[str] = []
-
-    # -- System: build-level tools (node, npm, uv, pip) + apt packages --
-    system_cmds: list[tuple[str, str]] = []
-    for key, cmd in config.build.version_commands.items():
-        system_cmds.append((key, cmd))
-    if "apt" in config.package_sets:
-        for key, cmd in config.package_sets["apt"].version_commands.items():
-            system_cmds.append((key, cmd))
-    if system_cmds:
-        lines.append('echo "# System";')
-        for key, cmd in system_cmds:
-            lines.append(f"echo \"{key}=$({cmd} || echo 'N/A')\";")
-
-    # -- Python packages --
-    if "python" in config.package_sets:
-        py_cmds = config.package_sets["python"].version_commands
-        if py_cmds:
-            lines.append('echo "# Python";')
-            for key, cmd in py_cmds.items():
-                lines.append(f"echo \"{key}=$({cmd} || echo 'N/A')\";")
-
-    return "\n".join(lines)
-
-
-def _validate_tool_versions(
-    content: str,
-    config: GuestImageConfig,
-) -> None:
-    """Reserved hook for version-output validation."""
-    versions: dict[str, str] = {}
-    for line in content.splitlines():
-        if line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        versions[key.strip()] = val.strip()
-
-
-def extract_tool_versions(
-    runtime: str,
-    image_tag: str,
-    platform: str,
-    output_dir: Path,
-    config: GuestImageConfig,
-    *,
-    validate: bool = True,
-) -> None:
-    """Extract tool versions from rootfs image using config-driven script."""
-    version_script = build_version_script(config)
-    if not version_script:
-        return
-    output = _container_output(
-        runtime,
-        image_tag,
-        platform,
-        version_script,
-        probe="tool versions",
-        shell_option="-c",
-    )
-    versions_path = output_dir / "tool-versions.txt"
-    versions_path.write_text(output)
-    if validate:
-        _validate_tool_versions(output, config)
-
-
 def _container_output(
     runtime: str,
     image_tag: str,
@@ -1046,26 +941,7 @@ def extract_software_inventory(
         "dpkg-query -W -f='${Package}\\t${Version}\\t${Architecture}\\n'",
         probe="dpkg inventory",
     )
-    pip_output = _container_output(
-        runtime,
-        image_tag,
-        platform,
-        "python3 -m pip list --format json",
-        probe="Python inventory",
-    )
-    npm_output = _container_output(
-        runtime,
-        image_tag,
-        platform,
-        "npm ls --json --depth=0 --prefix /opt/ai-clis",
-        probe="npm inventory",
-    )
-    manifest = collect_bom(
-        arch=arch_name,
-        dpkg_output=dpkg_output,
-        pip_output=pip_output,
-        npm_output=npm_output,
-    )
+    manifest = collect_bom(arch=arch_name, dpkg_output=dpkg_output)
     rows = [
         {
             "name": package.name,
@@ -1442,37 +1318,6 @@ def _build_input_record(
     }
 
 
-def _path_input_record(path_value: str | None) -> dict[str, Any] | None:
-    """Return debug identity for a profile-provided path when it exists."""
-    if not path_value:
-        return None
-    path = Path(path_value)
-    record: dict[str, Any] = {"path": path.as_posix()}
-    if path.is_file():
-        record["file"] = _file_ledger_entry(path)
-    elif path.is_dir():
-        record["directory"] = {
-            "hash": _directory_tree_hash(path),
-            "files": _directory_file_entries(path),
-        }
-    else:
-        record["exists"] = False
-    return record
-
-
-def _package_config_record(config: GuestImageConfig) -> dict[str, Any]:
-    """Record declared package config inputs, not installed package state."""
-    package_inputs: dict[str, Any] = {}
-    for key, package_set in sorted(config.package_sets.items()):
-        package_inputs[key] = {
-            "manager": package_set.manager.value,
-            "install_cmd": package_set.install_cmd,
-            "packages": list(package_set.packages),
-            "version_commands": dict(sorted(package_set.version_commands.items())),
-        }
-    return package_inputs
-
-
 def _rootfs_config_input_record(
     config: GuestImageConfig,
     arch_name: str,
@@ -1481,34 +1326,16 @@ def _rootfs_config_input_record(
 
     This record is intentionally not an installed-package ledger. Installed
     package/component truth belongs to the CycloneDX OBOM generated from the
-    produced rootfs. The build ledger records the config and profile inputs we
-    fed into the build so failures can be retraced.
+    produced rootfs. The build ledger records the config inputs we fed into the
+    build so failures can be retraced.
     """
     ctx = _rootfs_context(config, arch_name)
     erofs = config.build.erofs
     return {
         "stage": "rootfs.config_inputs",
         "arch": arch_name,
-        "package_inputs": _package_config_record(config),
         "rendered_rootfs_inputs": {
             "apt_packages": list(ctx["apt_packages"]),
-            "python_packages": list(ctx["python_packages"]),
-            "python_install_cmd": ctx["python_install_cmd"],
-            "npm_packages": list(ctx["npm_packages"]),
-            "npm_prefix": ctx["npm_prefix"],
-            "dependency_artifacts": config.build.asset_dependencies.architectures[
-                arch_name
-            ].model_dump(mode="json"),
-        },
-        "profile_inputs": {
-            "root_seed": {
-                "enabled": config.profile_root_seed,
-                "source": _path_input_record(config.profile_root_seed_path),
-            },
-            "build_script": {
-                "enabled": config.profile_build_script,
-                "source": _path_input_record(config.profile_build_script_path),
-            },
         },
         "erofs": {
             "enabled": erofs.enabled,
@@ -1818,27 +1645,7 @@ def prepare_build_context(
     dockerfile_path = context_dir / "Dockerfile"
     dockerfile_path.write_text(dockerfile_content)
 
-    if template_name == config.build.asset_dependencies.rootfs_template:
-        packages_dir = guest_dir / "config" / "packages"
-        if "python" in config.package_sets:
-            python_lock = packages_dir / "python-requirements.lock"
-            if not python_lock.is_file():
-                raise FileNotFoundError(python_lock)
-            shutil.copy2(str(python_lock), str(context_dir / python_lock.name))
-        if "npm" in config.package_sets:
-            for name in ("npm-package.json", "npm-package-lock.json"):
-                source = packages_dir / name
-                if not source.is_file():
-                    raise FileNotFoundError(source)
-                shutil.copy2(str(source), str(context_dir / name))
-        if config.profile_build_script:
-            if not config.profile_build_script_path:
-                raise FileNotFoundError("profile_build_script_path")
-            profile_build = Path(config.profile_build_script_path)
-            if not profile_build.is_file():
-                raise FileNotFoundError(profile_build)
-            shutil.copy2(str(profile_build), str(context_dir / "profile-build.sh"))
-    elif template_name == "Dockerfile.rootfs.j2":
+    if template_name == "Dockerfile.rootfs.j2":
         # CA cert
         shutil.copy2(
             str(
@@ -1872,17 +1679,6 @@ def prepare_build_context(
             src = artifacts / name
             if src.is_dir():
                 shutil.copytree(str(src), str(context_dir / name), dirs_exist_ok=True)
-        if config.profile_root_seed:
-            if not config.profile_root_seed_path:
-                raise FileNotFoundError("profile_root_seed_path")
-            profile_root = Path(config.profile_root_seed_path)
-            if not profile_root.is_dir():
-                raise FileNotFoundError(profile_root)
-            shutil.copytree(
-                str(profile_root),
-                str(context_dir / "profile-root"),
-                dirs_exist_ok=True,
-            )
         # Agent binaries (if they exist in context already from cross_compile_agent)
         # They may have been copied to context_dir by the pipeline before this call
 
@@ -2199,18 +1995,6 @@ def build_image(
             )
             tar_path.unlink(missing_ok=True)
 
-            print("Extracting tool versions...")
-            extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
-            versions_path = arch_output / "tool-versions.txt"
-            if versions_path.is_file():
-                _append_build_ledger(
-                    arch_output,
-                    {
-                        "stage": "rootfs.tool_versions",
-                        "inputs": build_inputs,
-                        "outputs": [_file_ledger_entry(versions_path, base=arch_output)],
-                    },
-                )
             componentcache.store(
                 repo_root,
                 "rootfs",
@@ -2222,7 +2006,6 @@ def build_image(
                         "rootfs.erofs",
                         SOFTWARE_INVENTORY_ASSET,
                         OBOM_ASSET,
-                        "tool-versions.txt",
                     )
                     if (arch_output / name).is_file()
                 ),

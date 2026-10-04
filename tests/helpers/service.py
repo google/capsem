@@ -37,7 +37,6 @@ LINUX_TEST_TMP_PARENT = Path("/var/tmp/capsem-tests")
 WINTERFELL_ROOT_ENV = {
     "binary_dir": "CAPSEM_WINTERFELL_BIN_DIR",
     "assets_dir": "CAPSEM_WINTERFELL_ASSETS_DIR",
-    "profiles_dir": "CAPSEM_WINTERFELL_PROFILES_DIR",
 }
 WINTERFELL_REQUIRED_BINARIES = (
     "capsem-service",
@@ -86,11 +85,15 @@ def test_rust_log_filter(environ: Mapping[str, str] = os.environ) -> str:
 
 @dataclass(frozen=True)
 class WinterfellArtifactRoots:
-    """One coherent binary/profile/asset cohort for Winterfell."""
+    """One coherent binary/asset cohort for Winterfell.
+
+    An installed cohort has no profile catalog: packages ship none, so the
+    installed service runs on what it carries itself.
+    """
 
     binary_dir: Path
     assets_dir: Path
-    profiles_dir: Path
+    profiles_dir: Path | None
     installed: bool
 
     def binary(self, name: str) -> Path:
@@ -134,9 +137,8 @@ def resolve_winterfell_artifact_roots(
         not configured[field] for field in WINTERFELL_ROOT_ENV
     ):
         raise RuntimeError(
-            "Winterfell requires all three installed artifact roots: "
-            "CAPSEM_WINTERFELL_BIN_DIR, CAPSEM_WINTERFELL_ASSETS_DIR, and "
-            "CAPSEM_WINTERFELL_PROFILES_DIR"
+            "Winterfell requires both installed artifact roots: "
+            "CAPSEM_WINTERFELL_BIN_DIR and CAPSEM_WINTERFELL_ASSETS_DIR"
         )
 
     def configured_path(field: str) -> Path:
@@ -147,15 +149,9 @@ def resolve_winterfell_artifact_roots(
 
     binary_dir = configured_path("binary_dir")
     assets_dir = configured_path("assets_dir")
-    profiles_dir = configured_path("profiles_dir")
     source_roots = (
         (binary_dir, host_bin_root(environment).resolve(), "binary"),
         (assets_dir, (PROJECT_ROOT / "cache" / "target" / "assets").resolve(), "asset"),
-        (
-            profiles_dir,
-            (PROJECT_ROOT / "cache" / "target" / "config" / "profiles").resolve(),
-            "profile",
-        ),
     )
     for selected, source, family in source_roots:
         if _path_is_within(selected, source):
@@ -166,7 +162,6 @@ def resolve_winterfell_artifact_roots(
     for directory, family in (
         (binary_dir, "binary"),
         (assets_dir, "asset"),
-        (profiles_dir, "profile"),
     ):
         if not directory.is_dir():
             raise RuntimeError(
@@ -175,10 +170,6 @@ def resolve_winterfell_artifact_roots(
     if not (assets_dir / "manifest.json").is_file():
         raise RuntimeError(
             f"installed Winterfell asset root has no manifest.json: {assets_dir}"
-        )
-    if not _contains_profile_toml(profiles_dir):
-        raise RuntimeError(
-            f"installed Winterfell profile root has no profile.toml: {profiles_dir}"
         )
     for name in WINTERFELL_REQUIRED_BINARIES:
         binary = binary_dir / name
@@ -197,7 +188,7 @@ def resolve_winterfell_artifact_roots(
     return WinterfellArtifactRoots(
         binary_dir=binary_dir,
         assets_dir=assets_dir,
-        profiles_dir=profiles_dir,
+        profiles_dir=None,
         installed=True,
     )
 
@@ -499,6 +490,8 @@ class ServiceInstance:
         self.assets_dir = assets_dir
         self.sign_binaries = sign_binaries
         self.profiles_dir = None
+        # An installed cohort carries no catalog; the service runs on its own.
+        self.uses_profile_catalog = True
         self.gateway_port = 0
         self.proc = None
         self._log_file = None
@@ -514,9 +507,9 @@ class ServiceInstance:
             sign_binary(TRAY_BINARY)
 
         assets_dir = self.assets_dir or ASSETS_DIR
-        if self.profiles_dir is None:
+        if self.uses_profile_catalog and self.profiles_dir is None:
             self.profiles_dir = materialize_test_profiles(self.tmp_dir)
-        if not self.profiles_dir.exists():
+        if self.profiles_dir is not None and not self.profiles_dir.exists():
             raise RuntimeError(
                 f"generated profile directory missing: {self.profiles_dir}. "
                 "Run `just _materialize-config` or a just recipe that depends on it."
@@ -526,7 +519,10 @@ class ServiceInstance:
         env["RUST_LOG"] = test_rust_log_filter()
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.home_dir)
-        env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
+        if self.profiles_dir is not None:
+            env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
+        else:
+            env.pop("CAPSEM_PROFILES_DIR", None)
         env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
             self.home_dir / "credential-store.json"
         )

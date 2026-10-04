@@ -25,7 +25,7 @@ Package architecture and machine architecture are different vocabularies.
 They overlap on `arm64` and disagree on the other one, which is exactly what
 makes crossing them survivable long enough to ship. The failure modes are a
 `capsem_0.6.0_x86_64.deb` that no Debian tool will install, an `amd64` entry in
-a profile's architecture list that matches no asset, and a release graph whose
+the runtime's architecture list that matches no asset, and a release graph whose
 packages and binaries disagree about what they are.
 
 The rule is typed domains, not string conversion. `capsem-core` owns both
@@ -66,16 +66,12 @@ def test_package_and_machine_architecture_vocabularies_never_cross() -> None:
                     assert architecture == "arm64"
                     assert package["name"].endswith(".pkg")
 
-            for profile in release["profiles"].values():
-                for architecture in profile["architectures"]:
-                    assert architecture["architecture"] in {"arm64", "x86_64"}, (
-                        ARCHITECTURE_DOMAIN_RATIONALE + f"\n{architecture}"
-                    )
-                    assert architecture["architecture"] != "amd64", (
-                        ARCHITECTURE_DOMAIN_RATIONALE
-                        + "\na profile architecture used the package vocabulary: "
-                        + f"{architecture}"
-                    )
+            for architecture in (release.get("runtime") or {}).get("architectures", []):
+                assert architecture["architecture"] in {"arm64", "x86_64"}, (
+                    ARCHITECTURE_DOMAIN_RATIONALE
+                    + "\na runtime architecture used the package vocabulary: "
+                    + f"{architecture}"
+                )
 
 
 def test_rust_graph_uses_distinct_typed_architecture_domains() -> None:

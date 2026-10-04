@@ -109,8 +109,7 @@ def _warm_checkout(tmp_path: Path):
     return config
 
 
-def _recovery_plan(config, monkeypatch) -> Plan:
-    monkeypatch.setattr(imagebuild, "profiles", lambda _config: ["code"])
+def _recovery_plan(config) -> Plan:
     plan = Plan("asset-recovery")
     assetrecovery.check_assets(plan, config)
     return plan
@@ -121,10 +120,10 @@ def test_warm_and_cold_checkouts_describe_the_same_recovery_graph(
 ) -> None:
     config = gate_config.load(PROJECT_ROOT)
     monkeypatch.setattr(imagebuild, "missing", lambda *_args: [])
-    warm_plan = _recovery_plan(config, monkeypatch)
+    warm_plan = _recovery_plan(config)
 
     monkeypatch.setattr(imagebuild, "missing", lambda *_args: ["initrd.img"])
-    cold_plan = _recovery_plan(config, monkeypatch)
+    cold_plan = _recovery_plan(config)
 
     assert warm_plan.labels == cold_plan.labels
     assert warm_plan.edges == cold_plan.edges
@@ -139,7 +138,7 @@ def test_describing_recovery_never_reads_asset_presence(monkeypatch) -> None:
 
     monkeypatch.setattr("capsem_builder.gate.assetcondition.missing", refuse_plan_time_read)
 
-    plan = _recovery_plan(config, monkeypatch)
+    plan = _recovery_plan(config)
 
     assert "assets.asset-tools" in plan.labels
 
@@ -379,12 +378,12 @@ def test_a_completed_build_records_the_identity_it_was_built_from(tmp_path: Path
 
 def test_the_identity_is_recorded_after_the_last_image_build(monkeypatch) -> None:
     config = gate_config.load(PROJECT_ROOT)
-    plan = _recovery_plan(config, monkeypatch)
+    plan = _recovery_plan(config)
     recorded = plan.step_named("assets.record-identity")
     (action,) = recorded.actions
     assert action.name == "when-host-assets-stale"
     assert action.render() == "when host assets are missing or stale: record host asset identity"
-    last_image = f"assets.image.code.all.{config.host_arch().name}"
+    last_image = f"assets.image.all.{config.host_arch().name}"
     assert (last_image, recorded.label) in plan.edges
 
 
@@ -464,20 +463,20 @@ def test_one_cold_decision_covers_every_action_in_the_recovery(tmp_path: Path) -
     assert calls == ["performed", "performed"]
 
 
-def test_profile_recovery_builds_are_ordered_and_invalidate_completion_first(
-    monkeypatch,
-) -> None:
+def test_the_one_recovery_build_invalidates_completion_first() -> None:
+    """There is one runtime, so recovery is one build -- and it removes the
+    manifest before building, so an interrupted build cannot leave a tree
+    that still reads as complete."""
     config = gate_config.load(PROJECT_ROOT)
-    monkeypatch.setattr(imagebuild, "profiles", lambda _config: ["code", "co-work"])
 
     plan = Plan("asset-recovery-order")
-    images = assetrecovery.check_assets(plan, config)
+    (image,) = assetrecovery.check_assets(plan, config)
 
-    first, second = images
-    assert (first.label, second.label) in plan.edges
+    assert image.label == f"assets.image.all.{config.host_arch().name}"
     manifest = config.path(config.imagebuild.output) / config.install.manifest_name
-    assert first.actions[0].render() == f"when host assets are missing or stale: rm -rf {manifest}"
-    assert "capsem-admin" in first.actions[1].render()
+    assert image.actions[0].render() == f"when host assets are missing or stale: rm -rf {manifest}"
+    assert "capsem-admin" in image.actions[1].render()
+    assert "--profile" not in image.actions[1].render()
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +551,7 @@ def test_building_assets_is_still_skipped_on_a_warm_checkout() -> None:
     """The shortcut is the point; only the tool leaves it."""
     steps = _candidate_steps()
     arch = gate_config.load(PROJECT_ROOT).host_arch().name
-    for label in (f"assets.image.code.all.{arch}", "assets.recovery-dependencies"):
+    for label in (f"assets.image.all.{arch}", "assets.recovery-dependencies"):
         subject = steps.get(label)
         assert subject is not None, sorted(steps)
         assert _is_conditional(subject), f"{label} lost the warm-asset shortcut"
@@ -561,8 +560,8 @@ def test_building_assets_is_still_skipped_on_a_warm_checkout() -> None:
 # ---------------------------------------------------------------------------
 # Rebuilding assets nothing changed.
 #
-# `AssetLanes._build` shells into `capsem-admin image build` for every profile
-# and every stage, every run, with no check of any kind. Four consecutive
+# `AssetLanes._build` shells into `capsem-admin image build` for every
+# architecture and every stage, every run, with no check of any kind. Four consecutive
 # qualifications of one release spent about 25 minutes each rebuilding both
 # architectures' assets from sources none of them had touched -- the last
 # three changed only test files and a shell function.
@@ -586,10 +585,10 @@ def test_the_lane_identity_covers_everything_an_asset_is_built_from() -> None:
     covered = set(assetidentity.roots(gate_config.load(PROJECT_ROOT)))
     for required in (
         "guest",  # guest scripts and files the images contain
-        "config",  # profiles, packages, VM values, and templates
+        "config",  # packages, VM values, and templates
         "build_system/builder/image",  # the image build implementation
-        "crates/capsem-admin",  # the profile-owned public build rail
-        "crates/capsem-core",  # profile/config semantics used by admin
+        "crates/capsem-admin",  # the public image build rail
+        "crates/capsem-core",  # config semantics used by admin
         "crates/capsem-logger",  # capsem-core's local dependency closure
         "crates/capsem-agent",  # the guest agent binary
         "crates/capsem-proto",  # the agent/core shared protocol
@@ -697,7 +696,7 @@ def _seed_lane_receipt(tmp_path: Path, *, identity: str = "a" * 64):
     )
     config = base.model_copy(update={"root": tmp_path, "prefix": prefix})
     arch = config.arch("x86_64")
-    output = config.path(config.assets.test_root) / "code" / f"build-{arch.name}"
+    output = config.path(config.assets.test_root) / f"build-{arch.name}"
     produced = output / arch.name
     produced.mkdir(parents=True)
     for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
@@ -707,7 +706,6 @@ def _seed_lane_receipt(tmp_path: Path, *, identity: str = "a" * 64):
         config,
         output,
         identity,
-        profile="code",
         arch=arch,
         stage="packed",
     )
@@ -725,9 +723,11 @@ def test_the_lane_skips_a_build_only_when_its_receipt_and_bytes_match(tmp_path: 
 
     config, arch, output, _produced = _seed_lane_receipt(tmp_path)
 
-    assert assetreceipt.validates(config, output, "a" * 64, profile="code", arch=arch)
-    assert not assetreceipt.validates(config, output, "b" * 64, profile="code", arch=arch)
-    assert not assetreceipt.validates(config, output, "a" * 64, profile="co-work", arch=arch)
+    assert assetreceipt.validates(config, output, "a" * 64, arch=arch)
+    assert not assetreceipt.validates(config, output, "b" * 64, arch=arch)
+    # A receipt names the architecture it was built for; the other one's
+    # lane cannot borrow it.
+    assert not assetreceipt.validates(config, output, "a" * 64, arch=config.arch("arm64"))
 
 
 @pytest.mark.parametrize("mutation", ["change", "delete", "add"])
@@ -744,7 +744,7 @@ def test_a_receipt_never_accepts_mutated_or_partial_output(tmp_path: Path, mutat
     else:
         (produced / "unrecorded").write_bytes(b"extra")
 
-    assert not assetreceipt.validates(config, output, "a" * 64, profile="code", arch=arch)
+    assert not assetreceipt.validates(config, output, "a" * 64, arch=arch)
 
 
 def test_preflight_keeps_only_reusable_lane_roots(
@@ -752,30 +752,27 @@ def test_preflight_keeps_only_reusable_lane_roots(
 ) -> None:
     """The cache is not real if preflight deletes it before the hit check."""
     from capsem_builder.gate import assetlanes
-    from capsem_builder.gate.assetlanes import Profile
 
     config, arch, output, _produced = _seed_lane_receipt(tmp_path)
     # A complete gate exports the outer checkout for its private prefix. This
     # unit owns a temporary repository and must not inherit that cache owner,
     # or its fixture in /tmp is incorrectly paired with the live cache.
     monkeypatch.delenv(CACHE_POLICY.authority_environment, raising=False)
-    profile_root = output.parent
-    (profile_root / config.assets.merged_assets_dir).mkdir()
-    (profile_root / config.assets.merged_config_dir).mkdir()
-    obsolete = config.path(config.assets.test_root) / "deleted-profile"
+    test_root = output.parent
+    (test_root / config.assets.merged_assets_dir).mkdir()
+    (test_root / config.assets.merged_config_dir).mkdir()
+    # A profile-era tree (`<profile>/build-<arch>`) is obsolete output now.
+    obsolete = test_root / "code"
     obsolete.mkdir()
     log = config.path(config.assets.test_root) / f"build-{arch.name}.log"
     log.write_text("old", encoding="utf-8")
     monkeypatch.setattr("capsem_builder.gate.assetidentity.lane_identity", lambda _config: "a" * 64)
 
-    assetlanes.prepare_workspace(
-        config,
-        [Profile(name="code", manifest=tmp_path / "config/profiles/code/profile.toml")],
-    )
+    assetlanes.prepare_workspace(config)
 
     assert output.is_dir()
-    assert not (profile_root / config.assets.merged_assets_dir).exists()
-    assert not (profile_root / config.assets.merged_config_dir).exists()
+    assert not (test_root / config.assets.merged_assets_dir).exists()
+    assert not (test_root / config.assets.merged_config_dir).exists()
     assert not obsolete.exists()
     assert not log.exists()
 

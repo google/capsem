@@ -71,39 +71,34 @@ def test_full_machine_digests() -> None:
                     )
                     categories.add("package_evidence")
 
-            for profile in manifest["profiles"].values():
-                for architecture in profile["architectures"]:
-                    label = f"{channel}.profiles.{profile['id']}.{architecture['architecture']}"
-                    for config in architecture["config"]:
-                        _assert_full_digest(config["digest"], f"{label}.config.{config['kind']}")
-                        categories.add("profile_config")
-                    for image in architecture["images"]:
-                        _assert_full_digest(image["digest"], f"{label}.images.{image['kind']}")
-                        categories.add("profile_image")
-                    for software in architecture["software"]:
-                        _assert_full_digest(
-                            software["digest"],
-                            f"{label}.software.{software['name']}",
-                        )
-                        categories.add("software")
-                    for evidence in architecture["evidence"]:
-                        _assert_full_digest(
-                            evidence["digest"],
-                            f"{label}.evidence.{evidence['kind']}",
-                        )
-                        categories.add(f"profile_evidence_{evidence['kind']}")
+            for architecture in manifest["runtime"]["architectures"]:
+                label = f"{channel}.runtime.{architecture['architecture']}"
+                for image in architecture["images"]:
+                    _assert_full_digest(image["digest"], f"{label}.images.{image['kind']}")
+                    categories.add("runtime_image")
+                for software in architecture["software"]:
+                    _assert_full_digest(
+                        software["digest"],
+                        f"{label}.software.{software['name']}",
+                    )
+                    categories.add("software")
+                for evidence in architecture["evidence"]:
+                    _assert_full_digest(
+                        evidence["digest"],
+                        f"{label}.evidence.{evidence['kind']}",
+                    )
+                    categories.add(f"runtime_evidence_{evidence['kind']}")
 
     assert {
         "manifest_record",
         "package",
         "binary",
         "package_evidence",
-        "profile_config",
-        "profile_image",
+        "runtime_image",
         "software",
-        "profile_evidence_abom",
-        "profile_evidence_obom",
-        "profile_evidence_software_inventory",
+        "runtime_evidence_abom",
+        "runtime_evidence_obom",
+        "runtime_evidence_software_inventory",
     } <= categories
 
 
@@ -136,8 +131,8 @@ def test_reject_placeholder_hashes() -> None:
 def test_repeated_row_digest_theater(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]))
-    architecture = profile["architectures"][0]
+    runtime = json.loads(json.dumps(graph["manifests"]["stable"]["1.0.2"]["runtime"]))
+    architecture = runtime["architectures"][0]
     assert len(architecture["software"]) >= 2
 
     first = architecture["software"][0]
@@ -149,28 +144,18 @@ def test_repeated_row_digest_theater(monkeypatch) -> None:
 
     monkeypatch.setattr(
         checker,
-        "fetch_text",
-        lambda _url: checker.FetchText(text="co-work Co-work 1.0.0-stable.20260702 arm64"),
-    )
-    monkeypatch.setattr(
-        checker,
         "check_release_graph_artifact",
         lambda *_args, **_kwargs: [],
     )
 
-    failures = checker.check_release_graph_profile(
-        "https://release.capsem.test",
-        "stable",
-        "co-work",
-        profile,
-    )
+    failures = checker.check_release_graph_runtime("https://release.capsem.test", runtime)
 
     assert (
-        f"profile co-work architecture arm64 software digest {first['digest']['sha256']} "
+        f"runtime architecture arm64 software digest {first['digest']['sha256']} "
         f"is reused by {first['name']} and {second['name']}"
     ) in failures
     assert (
-        f"profile co-work architecture arm64 image digest {first_image['digest']['sha256']} "
+        f"runtime architecture arm64 image digest {first_image['digest']['sha256']} "
         f"is reused by {first_image['url']} and {second_image['url']}"
     ) in failures
 
@@ -178,22 +163,6 @@ def test_repeated_row_digest_theater(monkeypatch) -> None:
 def test_no_repeated_digest_for_distinct_files() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     assert _unexpected_digest_reuse(graph) == []
-
-
-def test_profile_config_digest_reuse_requires_the_same_kind() -> None:
-    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    config = graph["manifests"]["stable"]["1.0.2"]["profiles"]["code"]["architectures"][0]["config"]
-    python_lock = next(row for row in config if row["kind"] == "python_requirements_lock")
-    npm_lock = next(row for row in config if row["kind"] == "npm_package_lock")
-    npm_lock["digest"] = python_lock["digest"]
-
-    collisions = _unexpected_digest_reuse(graph)
-
-    assert any(
-        "profile_config:python_requirements_lock" in collision
-        and "profile_config:npm_package_lock" in collision
-        for collision in collisions
-    )
 
 
 def _unexpected_digest_reuse(graph: dict) -> list[str]:
@@ -204,12 +173,9 @@ def _unexpected_digest_reuse(graph: dict) -> list[str]:
         key = (digest["sha256"], digest["blake3"])
         existing = seen.get(key)
         if existing is not None and existing != (category, subject):
-            same_config_kind = category.startswith("profile_config:") and (existing[0] == category)
-            if not same_config_kind:
-                collisions.append(
-                    f"{digest['sha256']} reused by {existing[0]} {existing[1]} "
-                    f"and {category} {subject}"
-                )
+            collisions.append(
+                f"{digest['sha256']} reused by {existing[0]} {existing[1]} and {category} {subject}"
+            )
         else:
             seen[key] = (category, subject)
 
@@ -327,19 +293,16 @@ def _assert_software_rows_do_not_reuse_inventory_digest() -> None:
     for channel, record in graph["channels"].items():
         current = next(item for item in record["manifests"] if item["status"] == "current")
         manifest = graph["manifests"][channel][current["version"]]
-        for profile_id, profile in manifest["profiles"].items():
-            for architecture in profile["architectures"]:
-                evidence_digests = {
-                    item["digest"]["sha256"]
-                    for item in architecture["evidence"]
-                    if item.get("kind") == "software_inventory"
-                }
-                for software in architecture["software"]:
-                    label = (
-                        f"{channel}:{profile_id}:{architecture['architecture']}:{software['name']}"
-                    )
-                    assert software["digest"] == _software_row_digest(software), label
-                    assert software["digest"]["sha256"] not in evidence_digests, label
+        for architecture in manifest["runtime"]["architectures"]:
+            evidence_digests = {
+                item["digest"]["sha256"]
+                for item in architecture["evidence"]
+                if item.get("kind") == "software_inventory"
+            }
+            for software in architecture["software"]:
+                label = f"{channel}:{architecture['architecture']}:{software['name']}"
+                assert software["digest"] == _software_row_digest(software), label
+                assert software["digest"]["sha256"] not in evidence_digests, label
 
 
 def _software_row_digest(software: dict) -> dict[str, str]:
@@ -375,24 +338,17 @@ def _digest_subjects(graph: dict):
                 for evidence in package.get("evidence", []):
                     yield "package_evidence", evidence["url"], evidence["digest"]
 
-            for _profile_id, profile in manifest["profiles"].items():
-                for architecture in profile["architectures"]:
-                    for config in architecture["config"]:
-                        yield (
-                            f"profile_config:{config['kind']}",
-                            config["path"],
-                            config["digest"],
-                        )
-                    for image in architecture["images"]:
-                        yield "profile_image", image["url"], image["digest"]
-                    for software in architecture["software"]:
-                        subject = (
-                            f"{software['source']}/{software['architecture']}/"
-                            f"{software['name']}@{software['version']}:{software['evidence']}"
-                        )
-                        yield "software", subject, software["digest"]
-                    for evidence in architecture["evidence"]:
-                        yield "profile_evidence", evidence["url"], evidence["digest"]
+            for architecture in manifest["runtime"]["architectures"]:
+                for image in architecture["images"]:
+                    yield "runtime_image", image["url"], image["digest"]
+                for software in architecture["software"]:
+                    subject = (
+                        f"{software['source']}/{software['architecture']}/"
+                        f"{software['name']}@{software['version']}:{software['evidence']}"
+                    )
+                    yield "software", subject, software["digest"]
+                for evidence in architecture["evidence"]:
+                    yield "runtime_evidence", evidence["url"], evidence["digest"]
 
 
 def _assert_full_digest(digest: dict, label: str) -> None:

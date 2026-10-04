@@ -545,7 +545,7 @@ jobs:
               python3 build_system/scripts/release/fetch-channel-source-manifest.py \
                 --channel stable \
                 --repository "$GITHUB_REPOSITORY" \
-                --require-profile-membership \
+                --require-runtime \
                 --output "$output"
               echo "manifest-url=file://$output" >> "$GITHUB_OUTPUT"
               ;;
@@ -555,11 +555,11 @@ jobs:
               ;;
           esac
 
-      - name: Pull exact stable profile assets
+      - name: Pull exact stable runtime assets
         uses: ./.github/actions/fetch-release-inputs
         with:
           manifest-url: ${{ steps.install-manifest.outputs.manifest-url }}
-          kind: profiles
+          kind: runtime
           architecture: x86_64
           output: cache/target/ci-install-content/inputs
 
@@ -567,12 +567,9 @@ jobs:
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
             --input-dir cache/target/ci-install-content/inputs \
-            --assets-dir cache/target/ci-install-content/assets \
-            --config-root cache/target/ci-install-source-config \
-            --shared-config-root config
+            --assets-dir cache/target/ci-install-content/assets
           CAPSEM_ASSET_MANIFEST="$PWD/cache/target/ci-install-content/assets/manifest.json" \
           CAPSEM_ASSETS_PATH="$PWD/cache/target/ci-install-content/assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/cache/target/ci-install-source-config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/ci-install-content/config" \
           CAPSEM_ARCH=x86_64 \
             bash build_system/scripts/build/materialize-config.sh --pair-content

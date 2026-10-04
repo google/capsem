@@ -1,5 +1,5 @@
 //! The GitHub side of `capsem-admin release`: the `gh` runner that dispatches
-//! and watches profile workflows, and the check that a publication identity is
+//! and watches the runtime release workflow, and the check that a publication identity is
 //! still free before any of that starts.
 
 use std::process::Command;
@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 
 use crate::source_commit::SourceCommit;
 
-pub(crate) trait ProfileWorkflowRunner {
+pub(crate) trait ReleaseWorkflowRunner {
     fn run(&mut self, args: &[String]) -> Result<()>;
     fn output(&mut self, args: &[String]) -> Result<String>;
     fn wait_before_poll(&mut self);
@@ -26,7 +26,7 @@ pub(crate) trait ReleaseLookup {
 ///
 /// Releases are immutable, so the hosted lane would build and verify every
 /// asset and only then refuse at publication, forty minutes in:
-/// `stable/code 0.6.2` had been published from an earlier commit and never
+/// a profile revision had been published from an earlier commit and never
 /// activated, and a release of the same revision from main found out at its
 /// last step. The same commit is a resume, which publication supports.
 pub(crate) fn ensure_publication_identity_is_free(
@@ -39,14 +39,14 @@ pub(crate) fn ensure_publication_identity_is_free(
         Some(existing) if existing == source_commit.to_string() => Ok(()),
         Some(existing) => bail!(
             "{publication_identity} is already published from {existing}; releases are immutable, \
-             so advance the profile's `revision` in its profile.toml before releasing {source_commit}"
+             and a runtime revision names exactly one source commit, so {source_commit} cannot reuse it"
         ),
     }
 }
 
-pub(crate) struct GhProfileWorkflowRunner;
+pub(crate) struct GhReleaseWorkflowRunner;
 
-impl ProfileWorkflowRunner for GhProfileWorkflowRunner {
+impl ReleaseWorkflowRunner for GhReleaseWorkflowRunner {
     fn run(&mut self, args: &[String]) -> Result<()> {
         let status = Command::new("gh")
             .args(args)
@@ -82,7 +82,7 @@ impl ProfileWorkflowRunner for GhProfileWorkflowRunner {
 /// What `gh release view` prints when the tag has no release.
 const RELEASE_NOT_FOUND: &str = "release not found";
 
-impl ReleaseLookup for GhProfileWorkflowRunner {
+impl ReleaseLookup for GhReleaseWorkflowRunner {
     fn release_commit(&mut self, tag: &str) -> Result<Option<String>> {
         let output = Command::new("gh")
             .args([

@@ -34,11 +34,7 @@ COMPLETE_GATE = {
 #: Both release commands consume a local `just test` journal, then dispatch.
 RELEASES = {
     "release-binaries": {"channel": "stable", "source_commit": SOURCE_COMMIT},
-    "release-profile": {
-        "channel": "stable",
-        "profile": "code",
-        "source_commit": SOURCE_COMMIT,
-    },
+    "release-assets": {"channel": "stable", "source_commit": SOURCE_COMMIT},
 }
 ENFORCED = {**COMPLETE_GATE, **RELEASES}
 
@@ -386,7 +382,7 @@ def test_linux_candidate_gets_the_kernel_enforced_network_wrapper(monkeypatch) -
     assert "--unshare-net" in replacement
 
 
-@pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
+@pytest.mark.parametrize("name", ["release-binaries", "release-assets"])
 def test_linux_release_dispatch_gets_the_kernel_wrapper(name, monkeypatch) -> None:
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/bwrap")
@@ -426,7 +422,7 @@ def test_the_policy_is_stated_as_policy_not_as_one_command_name() -> None:
     )
 
 
-@pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
+@pytest.mark.parametrize("name", ["release-binaries", "release-assets"])
 def test_a_public_release_cannot_carry_its_publication_prerequisites(name: str) -> None:
     """Only candidate qualification has recursively verified resume evidence.
 

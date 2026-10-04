@@ -20,7 +20,7 @@ from . import (
 from .actions import Call, Script
 from .command import GateCommand
 from .config import GateConfig
-from .content import LocalInstallContent, ProfileContent
+from .content import LocalInstallContent, RuntimeContent
 from .execution import Kind, Needs, Speed, Step, step
 from .opacity import CallJustification, OpaqueKind, machine_effects
 from .plan import Plan
@@ -59,9 +59,7 @@ class GlowupModule(
                 runtime = runtimeprepare.prepare(plan, self._config, guest=False, after=(built,)).ready
             glowup(
                 plan, self._config, qualification=self.qualification, after=(built,),
-                local_content=ProfileContent.built_profile(
-                    self._config, self._config.suites.pytest.base_profile,
-                ),
+                local_content=RuntimeContent.built(self._config),
                 materialized=built, runtime=runtime,
             )
         return plan
@@ -73,17 +71,17 @@ def glowup(
     *,
     qualification: Qualification,
     after: tuple[Step, ...] = (),
-    staged: ProfileContent | None = None,
-    local_content: ProfileContent | None = None,
+    staged: RuntimeContent | None = None,
+    local_content: RuntimeContent | None = None,
     materialized: Step | None = None,
     runtime: Step | None = None,
 ) -> Step:
     """Build the release packages and prove an install upgrades cleanly."""
     phase = plan.phase("glowup")
     if qualification.pulled:
-        content = staged or ProfileContent.standalone(config)
+        content = staged or RuntimeContent.standalone(config)
         return pulled_package(phase, config, qualification, after, content)
-    content = local_content or ProfileContent.standalone(config)
+    content = local_content or RuntimeContent.standalone(config)
     return _build_and_prove(
         plan,
         phase,
@@ -95,7 +93,7 @@ def glowup(
     )
 
 
-def _content_step(config: GateConfig, content: ProfileContent, *, arches: tuple | None = None) -> Step:
+def _content_step(config: GateConfig, content: RuntimeContent, *, arches: tuple | None = None) -> Step:
     """Validate the complete paired cohort before spending time packaging it."""
     targets = tuple(config.architectures.values()) if arches is None else arches
     return step(
@@ -123,7 +121,7 @@ def pulled_package(
     config: GateConfig,
     qualification: Qualification,
     after: tuple,
-    content: ProfileContent,
+    content: RuntimeContent,
     *,
     work_dir: str | None = None,
     skip_install: bool = False,
@@ -170,7 +168,7 @@ def _glowup_step(
     label: str,
     qualification: Qualification,
     work_dir: str,
-    content: ProfileContent,
+    content: RuntimeContent,
     *,
     clear: tuple = (),
     skip_install: bool = False,
@@ -200,8 +198,6 @@ def _glowup_step(
             work_dir,
             "--evidence-dir",
             f"{config.workspace.evidence_dir}/{label}",
-            "--profile-revision-policy",
-            config.install.profile_revision_policy.value,
             "--package-ready",
             *(("--skip-install",) if skip_install else ()),
             # A workflow exports the pairing; a rehearsal passes it, because it
@@ -237,7 +233,7 @@ def _build_and_prove(
     config: GateConfig,
     after: tuple,
     *,
-    content: ProfileContent,
+    content: RuntimeContent,
     materialized: Step | None,
     runtime: Step | None = None,
 ) -> Step:

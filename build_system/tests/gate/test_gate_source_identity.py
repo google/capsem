@@ -44,7 +44,14 @@ def _observed(directory: Path, environment: dict[str, str] | None = None) -> str
         text=True,
         timeout=60,
         env={
-            **{k: v for k, v in os.environ.items() if k != "PYTHONPYCACHEPREFIX"},
+            # The reproduction needs CPython's ordinary bytecode cache, so an
+            # inherited cache prefix or `PYTHONDONTWRITEBYTECODE` (set by some
+            # agent and CI shells) must not decide the outcome.
+            **{
+                k: v
+                for k, v in os.environ.items()
+                if k not in {"PYTHONPYCACHEPREFIX", "PYTHONDONTWRITEBYTECODE"}
+            },
             "PYTHONPATH": str(directory),
             **(environment or {}),
         },

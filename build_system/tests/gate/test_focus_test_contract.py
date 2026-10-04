@@ -11,7 +11,7 @@ import pytest
 import variables
 from capsem_builder.gate import cli, focus, module_contracts
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.context import Context
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.module_glowup import glowup
@@ -121,15 +121,15 @@ def test_rust_focus_uses_the_configured_affected_selector() -> None:
 
 def test_install_focus_produces_the_complete_cohort_before_packaging(monkeypatch) -> None:
     """A native recovery manifest cost an ARM package build before x86 failed."""
-    selected: list[ProfileContent] = []
-    original = ProfileContent.built_profile.__func__
+    selected: list[RuntimeContent] = []
+    original = RuntimeContent.built.__func__
 
-    def observed(cls, config, profile):
-        content = original(cls, config, profile)
+    def observed(cls, config):
+        content = original(cls, config)
         selected.append(content)
         return content
 
-    monkeypatch.setattr(ProfileContent, "built_profile", classmethod(observed))
+    monkeypatch.setattr(RuntimeContent, "built", classmethod(observed))
     plan = focus.FocusTestCommand(
         RecordingRunner(ROOT),
         _args("install"),
@@ -137,7 +137,7 @@ def test_install_focus_produces_the_complete_cohort_before_packaging(monkeypatch
     ).plan()
 
     config = gate_config.load(ROOT)
-    expected = original(ProfileContent, config, config.suites.pytest.base_profile)
+    expected = original(RuntimeContent, config)
     assert selected == [expected]
     assert plan.after_of("glowup.content") == {"artifacts.build-chain"}
     assert str(expected.root) in "\n".join(plan.step_named("glowup.content").render())
@@ -151,7 +151,7 @@ def test_install_focus_produces_the_complete_cohort_before_packaging(monkeypatch
 
 def test_glowup_rejects_native_only_content_before_any_package_build(tmp_path: Path) -> None:
     config = gate_config.load(ROOT)
-    content = ProfileContent.isolated(config, tmp_path)
+    content = RuntimeContent.isolated(config, tmp_path)
     content.assets.mkdir(parents=True)
     manifest = {"assets": {"current": "test", "releases": {"test": {"arches": {}}}}}
     manifest["assets"]["releases"]["test"]["arches"][config.host_arch().name] = {}
@@ -240,7 +240,7 @@ def test_kingslanding_is_a_hermetic_owned_suite_after_fixture_preparation() -> N
     )
     plan = command.plan()
     prepared = "kingslanding.prefetch"
-    label = "kingslanding.pytest.kingslanding.code"
+    label = "kingslanding.pytest.kingslanding"
     assert prepared in plan.after_of(label)
     rendered = plan.describe()
     assert "tests/ironbank/kingslanding" in rendered
@@ -248,13 +248,15 @@ def test_kingslanding_is_a_hermetic_owned_suite_after_fixture_preparation() -> N
     assert command.private_checkout and command.exclusive
 
 
-def test_functional_owns_kingslanding_once_per_profile() -> None:
+def test_functional_owns_kingslanding_once() -> None:
     command = focus.FocusTestCommand(
         RecordingRunner(ROOT),
         _args("functional"),
         qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
     )
-    rendered = command.plan().describe()
-    for profile in ("code", "co-work"):
-        assert f"pytest.kingslanding.{profile}" in rendered
-    assert "--ignore=tests/ironbank/kingslanding" in rendered
+    plan = command.plan()
+    assert {label for label in plan.labels if "pytest.kingslanding" in label} == {
+        "functional.pytest.kingslanding",
+        "functional.pytest.kingslanding-benchmark",
+    }
+    assert "--ignore=tests/ironbank/kingslanding" in plan.describe()

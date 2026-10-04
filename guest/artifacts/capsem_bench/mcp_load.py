@@ -4,7 +4,7 @@ Drives `local__echo` (the diagnostic builtin tool that returns input
 verbatim with zero I/O) at multiple concurrency levels so we can
 characterize the MCP transport overhead end-to-end:
 
-    Python fastmcp.Client (in guest)
+    the stdlib JSON-RPC client in mcp_transport (in guest)
       -> stdio -> /run/capsem-mcp-server (guest agent's MCP server)
       -> framed MCP over vsock:5002 -> capsem-process MITM MCP endpoint
       -> capsem-mcp-aggregator (host)
@@ -29,7 +29,7 @@ from .load_harness import (
     render_load_table,
     summarize_load_level,
 )
-from .mcp_transport import Client, StdioTransport
+from .mcp_transport import StdioClient
 
 MCP_SERVER = "/run/capsem-mcp-server"
 DEFAULT_CONCURRENCY = (1, 10, 50, 200)
@@ -71,12 +71,10 @@ def _summarize(latencies, errors, concurrency, duration_s):
 
 async def _run_async(concurrency_levels, duration_s, payload):
     rows = []
-    # FastMCP's stdio transport treats `env` as the subprocess
-    # environment. Pass the current env through explicitly so benchmark
-    # gates can select duration/payload knobs without losing the guest
-    # default framed transport.
-    transport = StdioTransport(command=MCP_SERVER, args=[], env=dict(os.environ))
-    async with Client(transport) as client:
+    # Pass the current env through explicitly so benchmark gates can select
+    # duration/payload knobs without losing the guest default framed
+    # transport.
+    async with StdioClient(MCP_SERVER, env=dict(os.environ)) as client:
         # Warm-up call so subprocess/handshake cost doesn't pollute the
         # first concurrency level.
         await client.call_tool("local__echo", {"text": "warmup"})

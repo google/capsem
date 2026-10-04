@@ -1,56 +1,51 @@
-"""The runtime owns the container launcher's tools; no profile may.
+"""The runtime rootfs installs exactly its declared Debian packages.
 
-runc, umoci, python3, iptables and iproute2 came from the profiles' apt lists,
-so the runtime could run an image only while some profile happened to install
-them. Deleting profiles (#289) would have removed the container path with
-them. The runtime now declares them in `[build.rootfs] runtime_apt_packages`
-and the builder refuses a profile that lists one.
+Applications come from OCI images (#289), so `[build.rootfs]
+runtime_apt_packages` is the whole package set of the VM runtime: the
+container launcher's tools, what capsem-init needs, the system trust store
+and what the in-guest diagnostics run with. Nothing else may reach the
+rendered dependency Dockerfile.
 """
 
+import re
 import tomllib
 from pathlib import Path
 
 import pytest
-from capsem_builder.image.docker import _rootfs_context
-
-from .test_docker import _profile_guest_config
+from capsem_builder.image.config import load_guest_config
+from capsem_builder.image.docker import render_dockerfile
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+IMAGE_CONFIG = PROJECT_ROOT / "config" / "docker" / "image"
 LAUNCHER_TOOLS = {"runc", "umoci", "python3", "iptables", "iproute2"}
+INIT_TOOLS = {"auditd", "e2fsprogs"}
 
 
-def test_the_runtime_declares_the_launchers_tools():
-    build = tomllib.loads((PROJECT_ROOT / "config/docker/image/build.toml").read_text())
-    assert set(build["build"]["rootfs"]["runtime_apt_packages"]) >= LAUNCHER_TOOLS
+def _declared() -> list[str]:
+    build = tomllib.loads((IMAGE_CONFIG / "build.toml").read_text())
+    return build["build"]["rootfs"]["runtime_apt_packages"]
 
 
-@pytest.mark.parametrize("profile", sorted(p.name for p in (PROJECT_ROOT / "config/profiles").iterdir()))
-def test_no_profile_lists_a_runtime_package(profile):
-    listed = PROJECT_ROOT / "config/profiles" / profile / "apt-packages.txt"
-    if not listed.is_file():
-        return
-    packages = {line.strip() for line in listed.read_text().splitlines() if line.strip()}
-    assert not packages & LAUNCHER_TOOLS, f"{profile} lists runtime packages"
+def test_the_runtime_declares_the_launcher_and_init_tools():
+    assert set(_declared()) >= LAUNCHER_TOOLS | INIT_TOOLS | {"ca-certificates"}
 
 
-def test_the_rootfs_installs_the_runtime_packages_first(tmp_path):
-    config = _profile_guest_config(tmp_path, "code")
-    packages = _rootfs_context(config, "arm64")["apt_packages"]
-    runtime = list(config.build.rootfs.runtime_apt_packages)
-    assert packages[: len(runtime)] == runtime
-    assert len(packages) == len(set(packages))
-
-
-def test_a_profile_claiming_a_runtime_package_is_refused(tmp_path):
-    config = _profile_guest_config(tmp_path, "code")
-    apt = config.package_sets["apt"]
-    claimed = config.model_copy(
-        update={
-            "package_sets": {
-                **config.package_sets,
-                "apt": apt.model_copy(update={"packages": [*apt.packages, "runc"]}),
-            }
-        }
+@pytest.mark.parametrize("arch", ["arm64", "x86_64"])
+def test_the_dependency_dockerfile_installs_exactly_the_runtime_packages(arch):
+    config = load_guest_config(IMAGE_CONFIG)
+    rendered = render_dockerfile(config.build.asset_dependencies.rootfs_template, config, arch)
+    install = re.search(
+        r"apt-get install -y --no-install-recommends \\\n(?P<body>.*?) && \\\n",
+        rendered,
+        re.DOTALL,
     )
-    with pytest.raises(ValueError, match="belong to the runtime"):
-        _rootfs_context(claimed, "arm64")
+    assert install is not None, rendered
+    packages = [
+        token
+        for line in install.group("body").splitlines()
+        for token in line.replace("\\", " ").split()
+    ]
+    assert packages == _declared()
+    assert rendered.count("apt-get install") == 1
+    for retired in ("npm", "uv pip", "node", "profile-build", "python-requirements", "vim"):
+        assert retired not in rendered, retired

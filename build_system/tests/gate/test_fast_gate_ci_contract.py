@@ -79,7 +79,7 @@ def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
     assert "uv run --project build_system --frozen capsem-gate test-fast" in fast_test
     assert "incomplete" in fast_test
     assert "just focus-test" in fast_test
-    assert "just release-profile" in fast_test
+    assert "just release-assets" in fast_test
     assert "just release-binaries" in fast_test
     assert fast_test.strip().count("\n") == 1, (
         f"{variables.FAST_TEST} is one message plus one fast-gate dispatch: {fast_test!r}"
@@ -110,18 +110,20 @@ def test_fast_release_contracts_do_not_depend_on_ignored_build_outputs() -> None
     """The cheap contract module must not need what the artifacts module makes.
 
     `test_materialized_profile_payload.py` reads a materialized catalog, so it
-    belongs to the artifacts module. Its source-only counterpart must not reach
-    for the same directory, or the cheap gate starts depending on a build.
+    belongs to the artifacts module. No other build-chain test may reach for
+    the same directory, or the cheap gate starts depending on a build.
     """
     materialized = "tests/capsem-build-chain/test_materialized_profile_payload.py"
-    source_contract = (
-        ROOT / "tests/capsem-build-chain/test_profile_payload_contract.py"
-    ).read_text(encoding="utf-8")
 
     assert (ROOT / materialized).is_file()
     assert f"--ignore={materialized}" in _planned("test-release-contracts")
     assert materialized in _planned("test-artifacts")
-    assert "MATERIALIZED_PROFILES_DIR" not in source_contract
+    readers = {
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "tests/capsem-build-chain").glob("test_*.py")
+        if "MATERIALIZED_PROFILES_DIR" in path.read_text(encoding="utf-8")
+    }
+    assert readers == {materialized}
 
 
 def test_every_pnpm_cache_owner_materializes_its_store() -> None:

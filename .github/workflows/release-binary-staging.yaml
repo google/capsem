@@ -73,7 +73,7 @@ jobs:
           uv run --project build_system --frozen python build_system/scripts/release/fetch-channel-source-manifest.py \
             --channel "$ASSET_CHANNEL" \
             --source-commit "${{ github.sha }}" \
-            --require-profile-membership \
+            --require-runtime \
             --output "$RUNNER_TEMP/binary-channel-dry-run/manifest.json"
           cp "$RUNNER_TEMP/binary-channel-dry-run/manifest.json" \
             "$RUNNER_TEMP/binary-channel-dry-run/manifest.before.json"

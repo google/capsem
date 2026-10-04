@@ -81,61 +81,29 @@ else:
     content = Path(source).read_text()
 manifest = json.loads(content)
 if "assets" in manifest:
-    print("SCHEMA\tlegacy")
     current = manifest["assets"]["current"]
     arches = set(manifest["assets"]["releases"][current]["arches"])
-elif "profiles" in manifest:
-    profiles = manifest["profiles"]
-    if not isinstance(profiles, dict) or not profiles:
-        raise SystemExit("release manifest profiles must be a non-empty object")
-    print("SCHEMA\trelease")
-    active_profiles = []
-    for profile_id, profile in sorted(profiles.items()):
-        if (
-            not isinstance(profile_id, str)
-            or not profile_id
-            or profile_id in {".", ".."}
-            or "/" in profile_id
-            or "\\" in profile_id
-            or "\n" in profile_id
-            or "\r" in profile_id
-        ):
-            raise SystemExit(f"release manifest contains unsafe profile identity: {profile_id!r}")
-        if not isinstance(profile, dict):
-            raise SystemExit(f"release manifest profile {profile_id} must be an object")
-        if str(profile.get("status", "")).lower() == "revoked":
-            continue
-        active_profiles.append((profile_id, profile))
-    if not active_profiles:
-        raise SystemExit("release manifest profiles contain no active profiles")
+elif isinstance(manifest.get("runtime"), dict):
+    runtime = manifest["runtime"]
+    if str(runtime.get("status", "")).lower() == "revoked":
+        raise SystemExit("release manifest runtime is revoked")
     arches = {
         entry["architecture"]
-        for _, profile in active_profiles
-        for entry in profile.get("architectures", [])
+        for entry in runtime.get("architectures", [])
         if isinstance(entry, dict) and isinstance(entry.get("architecture"), str)
     }
     if not arches:
-        raise SystemExit("release manifest profiles contain no architectures")
-    for profile_id, _ in active_profiles:
-        print(f"PROFILE\t{profile_id}")
+        raise SystemExit("release manifest runtime contains no architectures")
 else:
-    raise SystemExit("manifest must contain legacy assets or release profiles")
+    raise SystemExit("manifest must contain legacy assets or a release runtime")
 for arch in sorted(arches):
     print(f"ARCH\t{arch}")
 PY
 )"
 
-manifest_schema="release"
-if printf '%s\n' "$manifest_selection" | grep -Fqx $'SCHEMA\tlegacy'; then
-    manifest_schema="legacy"
-fi
 manifest_arches="$(
     printf '%s\n' "$manifest_selection" |
         awk -F '\t' '$1 == "ARCH" { print substr($0, index($0, "\t") + 1) }'
-)"
-profile_ids="$(
-    printf '%s\n' "$manifest_selection" |
-        awk -F '\t' '$1 == "PROFILE" { print substr($0, index($0, "\t") + 1) }'
 )"
 
 arch_source="host"
@@ -162,27 +130,11 @@ fi
 
 echo "=== Materialize runtime config ==="
 
-profile_paths=()
-if [ "$manifest_schema" = "release" ]; then
-    while IFS= read -r profile_id; do
-        [ -n "$profile_id" ] || continue
-        profile_path="$CONFIG_ROOT/profiles/$profile_id/profile.toml"
-        if [ ! -f "$profile_path" ]; then
-            echo "ERROR: selected release profile source is missing: $profile_path" >&2
-            exit 1
-        fi
-        profile_paths+=("$profile_path")
-    done <<< "$profile_ids"
-else
-    profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)
-    if [ "${#profile_paths[@]}" -eq 0 ] || [ ! -f "${profile_paths[0]}" ]; then
-        echo "ERROR: no profile inputs found under $CONFIG_ROOT/profiles" >&2
-        exit 1
-    fi
-fi
-
-if [ "${#profile_paths[@]}" -eq 0 ]; then
-    echo "ERROR: selected release manifest contains no materializable profiles" >&2
+# The service still reads a pinned catalog until it resolves the runtime from
+# the manifest alone (#289); every checked-in catalog entry pins the one runtime.
+profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)
+if [ "${#profile_paths[@]}" -eq 0 ] || [ ! -f "${profile_paths[0]}" ]; then
+    echo "ERROR: no profile inputs found under $CONFIG_ROOT/profiles" >&2
     exit 1
 fi
 

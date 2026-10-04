@@ -3,20 +3,20 @@
 Read this reference before changing either public release command, Python plan
 composition, candidate/source guards, sandbox or egress behavior, fail-stop
 ordering, local/release-CI test composition, complementary artifact staging,
-or the paired `ProfileContent` boundary.
+or the paired `RuntimeContent` boundary.
 
 ## Python owns release orchestration
 
 The Justfile is only the public command and argv boundary: each release recipe
 dispatches its arguments once to the matching `uv run --project build_system --frozen capsem-gate` subcommand.
 
-Python under `src/capsem/gate/` owns the release graph:
+Python under `build_system/builder/gate/` owns the release graph:
 
 - `candidateplan.py` composes reusable complete local verification;
   `release.py` declares the short source-validation and lane-dispatch graph.
 - `qualificationevidence.py` validates exact complete and partial journal
   chains; `qualificationflow.py` is their one command-lifecycle seam.
-- `qualification.py` parses one legal local/binary/profile state.
+- `qualification.py` parses one legal local/binary/runtime state.
 - `command.py` validates, inspects, locks, holds, records, and executes.
 - Actions perform work, resources own lifecycle/evidence, and
   `config/gate.toml` owns values.
@@ -40,7 +40,7 @@ The public release command forms are defined by root `RELEASE.md`:
 
 ```bash
 just release-binaries <channel> <source-commit>
-just release-profile <channel> <profile> <source-commit>
+just release-assets <channel> <source-commit>
 ```
 
 These are the sole publication entrypoints for humans and checked-in
@@ -52,15 +52,15 @@ just release-binaries <channel> <source-commit>
      (skipped only for `[release].unattended_channels`, i.e. nightly)
   1. require the detached source commit on fresh origin/main and fetch the
      serialized channel source manifest read-only; fail immediately if the
-     manifest has no staged channel/profile authority
+     manifest has no staged channel runtime authority
   2. publish the immutable source ref and dispatch the binary lane, which
-     qualifies its exact package/profile pairing before publication
+     qualifies its exact package/runtime pairing before publication
 
-just release-profile <channel> <profile> <source-commit>
+just release-assets <channel> <source-commit>
   0. refuse unless `just test <source-commit>` passed on this machine
      (skipped only for `[release].unattended_channels`, i.e. nightly)
   1. require the detached source commit on fresh origin/main and publish its ref
-  2. invoke capsem-admin and watch the exact profile workflow, which qualifies
+  2. invoke capsem-admin and watch the exact runtime workflow, which qualifies
      its artifacts before publication
 ```
 
@@ -96,7 +96,7 @@ content identity and install-image receipts bind exact source, helper, Docker
 runtime, platform, image ID/reference, size, and lifetime. Count, age, and byte
 bounds use deterministic LRU, keep active/resumable selectors and receipts
 pinned, and fail closed when those pins make a bound impossible. Nightly
-profile release CI always rebuilds its selected profile; only a stable retry
+runtime release CI always rebuilds the runtime; only a stable retry
 may reuse the workflow's immutable completed artifact cohort.
 
 The complete executor is also kernel-isolated for the entire candidate graph:
@@ -131,8 +131,8 @@ the first consequential publication command. Cheap read-only checks may precede 
 serialized channel source, wrong-case paths, invalid workflow syntax, and
 similar deterministic failures stop before hours of local work. The binary
 preflight must fetch the mutable manifest/source
-fresh and may not bootstrap profile state. If the staged channel/profile source
-does not exist, the operator must use `release-profile` first. A failed local
+fresh and may not bootstrap runtime state. If the staged channel runtime source
+does not exist, the operator must use `release-assets` first. A failed local
 diagnostic is still a release hold until understood, but it is not a journal
 edge in the dispatcher. The dispatcher never changes
 tracked files, commits, or pushes `main`. Test this fail-stop behavior by executing the public recipes with
@@ -160,19 +160,19 @@ Do not introduce a skip flag, release-only reduced gate, preparation recipe,
 environment-variable bypass, or direct checked-in caller of:
 
 - `build_system/scripts/release/release-binaries.py`;
-- `capsem-admin release` for a first-party public profile;
+- `capsem-admin release` for a first-party public runtime;
 - `release.yaml` or `release-assets.yaml`.
 
 Daily nightly automation snapshots `${{ github.sha }}`, calls
-`just release-profile nightly <profile> ${{ github.sha }}` once for each
-selected profile, then `just release-binaries nightly ${{ github.sha }}`. It never
+`just release-assets nightly ${{ github.sha }}`, then
+`just release-binaries nightly ${{ github.sha }}`. It never
 dispatches either downstream workflow directly. It runs unattended on a fresh
 runner that has no journal, which is why nightly is the one entry in
 `[release].unattended_channels`. Direct GitHub UI dispatch is
 not the documented or tested release path.
 
 Each command owns one artifact family. There is no combined release command.
-The commands may run sequentially when a profile requires new code, but neither
+The commands may run sequentially when the runtime requires new code, but neither
 may rebuild the other command's artifact family.
 
 `config/public-surface.toml` locks this command surface. Treat any change as an
@@ -187,9 +187,9 @@ complementary artifact family. The local and hosted paths
 reuse the same checked-in private modules so test quality cannot drift.
 
 `just test` is the complete local CI-equivalent proof, not a smaller developer
-smoke test. Before any Docker/Colima, bootstrap, package, profile, asset, or VM
+smoke test. Before any Docker/Colima, bootstrap, package, asset, or VM
 work, it runs the independently executable `_test-fast` module. It then
-rebuilds every package and every checked-in profile and runs all six checked-in
+rebuilds every package and the runtime and runs all six checked-in
 modules:
 
 - `_test-fast`
@@ -218,9 +218,9 @@ package installation, and glow-up transitions. None is advisory.
 Release automation uses the same public commands. The dispatched release
 workflows save construction time, never test quality:
 
-- the binary lane builds packages only and resolves every selected-channel
-  profile by manifest-recorded digest;
-- the profile lane builds exactly one channel/profile and resolves the
+- the binary lane builds packages only and resolves the selected channel's
+  runtime by manifest-recorded digest;
+- the runtime lane builds the runtime for one channel and resolves the
   selected channel's current package by manifest-recorded digest;
 - both lanes stage those exact resolved artifacts into the same test modules
   used locally;
@@ -254,7 +254,7 @@ or YAML flow-to-block style do not change a release contract and must not spend
 a hosted dispatch. Add the shared semantic reader first, then a Citadel guard
 that prevents a second textual parser.
 
-Assets and materialized configuration travel as one `ProfileContent` root.
+Assets and materialized configuration travel as one `RuntimeContent` root.
 Package construction, Debian proof, macOS Tart/physical-VZ proof, and final
 install/glow-up must derive both paths from that one value and validate it
 before Docker or Colima. Release CI stages raw manifest inputs into the paired
@@ -264,7 +264,7 @@ checkout `assets`/`cache/target/config` selectors.
 Before public activation, the resulting pairing must pass manifest/artifact
 integrity, every VM suite, Winterfell and MCP lifecycle, IronBank, injection,
 integration, benchmarks, full `capsem-doctor`, native install, and update
-glow-up. A staged incompatible profile may run only static, self-consistency,
+glow-up. A staged incompatible runtime may run only static, self-consistency,
 integrity, isolation, and boot gates; the following binary lane must run the
 complete functional and glow-up proof before activation.
 

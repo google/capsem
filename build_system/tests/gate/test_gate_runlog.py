@@ -670,7 +670,7 @@ class _Recording(Runner):
     "raw",
     (
         ["release-binaries", "nightly", "0" * 40],
-        ["release-profile", "candidate", "code", "0" * 40],
+        ["release-assets", "candidate", "0" * 40],
         ["logs", "service"],
         ["candidate", "--timing"],
         ["cross-compile", "arm64"],

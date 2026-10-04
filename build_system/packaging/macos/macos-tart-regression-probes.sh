@@ -60,7 +60,6 @@ capsem_finish_install_hydration() {
         return 1
     fi
     capsem_wait_for_profile_assets code "$SHARE/code-assets-after-install.json"
-    capsem_wait_for_profile_assets co-work "$SHARE/co-work-assets-after-install.json"
 }
 
 capsem_probe_asset_hydration() {

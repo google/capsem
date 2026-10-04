@@ -167,7 +167,7 @@ Every hardening property is verified at runtime by `capsem-doctor` tests. If any
 
 | Property | capsem-doctor test | What it checks |
 |----------|-------------------|----------------|
-| No kernel modules | `test_no_kernel_modules` | `modprobe` fails |
+| No kernel modules | `test_no_kernel_modules` | `/proc/modules` and the `kernel/modprobe` sysctl are absent |
 | No `/dev/mem` | `test_no_dev_mem` | File does not exist |
 | No `/dev/port` | `test_no_dev_port` | File does not exist |
 | No `/proc/kcore` | `test_no_proc_kcore` | File absent or unreadable |

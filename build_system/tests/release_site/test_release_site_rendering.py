@@ -19,7 +19,7 @@ def test_site_loader_reads_channels_not_health() -> None:
         encoding="utf-8"
     )
     index = (RELEASE_SITE_SRC / "pages" / "index.astro").read_text(encoding="utf-8")
-    profile = (RELEASE_SITE_SRC / "pages" / "profiles" / "[id].astro").read_text(
+    runtime = (RELEASE_SITE_SRC / "pages" / "channels" / "[channel]" / "runtime.astro").read_text(
         encoding="utf-8"
     )
 
@@ -28,7 +28,7 @@ def test_site_loader_reads_channels_not_health() -> None:
     assert "selectManifestRecord" in loader
     assert "health.json" not in loader
     assert "data.health" not in index
-    assert "data.health" not in profile
+    assert "data.health" not in runtime
 
 
 def test_root_lists_stable_nightly_and_manifest_statuses() -> None:
@@ -74,24 +74,19 @@ def test_human_pages_truncate_hashes_but_machine_graph_keeps_full_hashes() -> No
     stable_package_digest = graph["manifests"]["stable"]["1.0.2"]["packages"][0][
         "digest"
     ]["blake3"]
-    profile_config_digest = graph["manifests"]["stable"]["1.0.2"]["profiles"][
-        "co-work"
-    ]["architectures"][0]["config"][0]["digest"]["sha256"]
+    runtime_image_digest = graph["manifests"]["stable"]["1.0.2"]["runtime"]["architectures"][0][
+        "images"
+    ][0]["digest"]["sha256"]
     pages = [
         RELEASE_SITE_DIST / "index.html",
         RELEASE_SITE_DIST / "channels" / "stable" / "index.html",
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html",
+        RELEASE_SITE_DIST / "channels" / "stable" / "runtime" / "index.html",
     ]
 
     for full_hash in (
         stable_manifest_digest,
         stable_package_digest,
-        profile_config_digest,
+        runtime_image_digest,
     ):
         assert len(full_hash) == 64
         assert full_hash in FIXTURE_GRAPH.read_text(encoding="utf-8")
@@ -115,9 +110,8 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "Manifest History" in stable
     assert "Packages" in stable
     assert "Capsem Binaries" not in stable
-    assert "Profile References" in stable
-    assert "Profile Catalog" not in stable
-    assert "/profiles/releases/" not in stable
+    assert ">Runtime</h2>" in stable
+    assert "/runtime/releases/" not in stable
     assert "/assets/stable/manifest.json" in stable
     assert "/manifests/stable/" not in stable
     assert "Capsem-1.4.0.pkg" in stable
@@ -125,7 +119,7 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "macos_pkg" in stable
     assert "debian_package" in stable
     stable_package_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Profile References",
+        ">Runtime</h2>",
         maxsplit=1,
     )[0]
     stable_sbom = _fixture()["manifests"]["stable"]["1.0.2"]["packages"][0][
@@ -140,8 +134,8 @@ def test_channel_page_lists_packages_and_binaries() -> None:
             assert binary["sbom_component_ref"] not in stable
     assert "HMAC" not in stable
     assert "hmac" not in stable
-    assert "co-work" in stable
-    assert "code" in stable
+    assert "/channels/stable/runtime/" in stable
+    assert "1.0.0-stable.20260702" in stable
 
     assert "1.5.0-nightly.20260702" in nightly
     assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
@@ -156,8 +150,8 @@ def test_channel_page_lists_packages_and_binaries() -> None:
             assert binary["sbom_component_ref"] not in nightly
     assert "HMAC" not in nightly
     assert "hmac" not in nightly
-    assert "co-work" in nightly
-    assert "code" in nightly
+    assert "/channels/nightly/runtime/" in nightly
+    assert "1.0.0-nightly.20260702" in nightly
 
 
 def test_channel_page_has_one_manifest_url() -> None:
@@ -171,7 +165,7 @@ def test_channel_page_has_one_manifest_url() -> None:
 
         assert canonical_url in page
         assert f"/manifests/{channel}/" not in page
-        assert "/profiles/releases/" not in page
+        assert "/runtime/releases/" not in page
         assert "catalog.json" not in page
         assert "profile_catalog" not in page
 
@@ -248,81 +242,36 @@ def test_package_sbom_link_not_repeated_on_binaries() -> None:
         assert binary["sbom_component_ref"] in binary_section
 
 
-def test_channel_page_has_no_detached_profile_image_evidence() -> None:
+def test_channel_page_has_no_detached_runtime_image_evidence() -> None:
     build_release_site_from_fixture()
 
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     assert "Current VM Assets" not in stable
     assert "VM OBOM" not in stable
     assert "rootfs.erofs" not in stable
 
 
-def test_profile_page_renders_profile_owned_images_and_configs() -> None:
+def test_runtime_page_renders_runtime_images_evidence_and_software() -> None:
     build_release_site_from_fixture()
 
-    stable_co_work = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html"
-    ).read_text(encoding="utf-8")
-    stable_code = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "code"
-        / "index.html"
-    ).read_text(encoding="utf-8")
-    nightly_co_work = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "nightly"
-        / "profiles"
-        / "co-work"
-        / "index.html"
-    ).read_text(encoding="utf-8")
-    nightly_code = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "nightly"
-        / "profiles"
-        / "code"
-        / "index.html"
-    ).read_text(encoding="utf-8")
-
     graph = _fixture()
-    pages = {
-        ("stable", "co-work"): stable_co_work,
-        ("stable", "code"): stable_code,
-        ("nightly", "co-work"): nightly_co_work,
-        ("nightly", "code"): nightly_code,
-    }
-    versions = {
-        "stable": "1.0.2",
-        "nightly": "1.0.2",
-    }
-    for (channel, profile_id), page in pages.items():
-        profile = graph["manifests"][channel][versions[channel]]["profiles"][profile_id]
+    for channel in ("stable", "nightly"):
+        page = (RELEASE_SITE_DIST / "channels" / channel / "runtime" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        runtime = graph["manifests"][channel]["1.0.2"]["runtime"]
         assert "Installed Software" in page
-        assert "Config Files" in page
-        assert "Profile Images" in page
-        assert "Profile Evidence" in page
+        assert "Runtime Images" in page
+        assert "Runtime Evidence" in page
+        assert "Config Files" not in page
         assert "HMAC" not in page
         assert "hmac" not in page
-        assert profile["revision"] in page
-        for architecture in profile["architectures"]:
+        assert runtime["revision"] in page
+        for architecture in runtime["architectures"]:
             assert f"Architecture {architecture['architecture']}" in page
-            for item in architecture["config"]:
-                assert item["path"] in page
-                assert item["url"] in page
-                assert _hash_label(item["digest"]["sha256"]) in page
-                assert _hash_label(item["digest"]["blake3"]) in page
             for artifact in architecture["images"]:
                 assert artifact["name"] in page
                 assert artifact["url"] in page
@@ -340,64 +289,45 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
                 assert _hash_label(software["digest"]["blake3"]) in page
 
 
-def test_profile_architecture_blocks() -> None:
-    test_profile_page_renders_profile_owned_images_and_configs()
-
-
-def test_profile_evidence_not_repeated_per_row() -> None:
+def test_runtime_evidence_not_repeated_per_row() -> None:
     build_release_site_from_fixture()
     graph = _fixture()
-    page = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html"
-    ).read_text(encoding="utf-8")
-    profile = graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]
+    page = (RELEASE_SITE_DIST / "channels" / "stable" / "runtime" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    runtime = graph["manifests"]["stable"]["1.0.2"]["runtime"]
 
-    for architecture in profile["architectures"]:
+    for architecture in runtime["architectures"]:
         section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
             1
         ].split("</section>", maxsplit=1)[0]
-        evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
-            "Installed Software",
-            maxsplit=1,
+        image_block = section.split("Runtime Images", maxsplit=1)[1].split(
+            "Runtime Evidence", maxsplit=1
         )[0]
-        software_block = section.split("Installed Software", maxsplit=1)[1].split(
-            "Config Files",
-            maxsplit=1,
+        evidence_block = section.split("Runtime Evidence", maxsplit=1)[1].split(
+            "Installed Software", maxsplit=1
         )[0]
-        image_block = section.split("Profile Images", maxsplit=1)[1]
+        software_block = section.split("Installed Software", maxsplit=1)[1]
 
         for evidence in architecture["evidence"]:
-            if evidence["kind"] == "software_inventory":
-                assert evidence["url"] in evidence_block
-            elif evidence["kind"] in {"abom", "obom"}:
-                assert evidence["url"] in image_block
+            assert evidence["url"] in evidence_block
+            assert evidence["url"] not in image_block
             assert evidence["url"] not in software_block
 
 
-def test_profile_page_forbids_current_binary_and_current_assets() -> None:
+def test_runtime_page_forbids_current_binary_and_packages() -> None:
     build_release_site_from_fixture()
 
-    stable = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html"
-    ).read_text(encoding="utf-8")
+    page = (RELEASE_SITE_DIST / "channels" / "stable" / "runtime" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
-    assert "Current binary" not in stable
-    assert "current_binary" not in stable
-    assert "Current assets" not in stable
-    assert "current_assets" not in stable
-    assert "VM asset revision" not in stable
-    assert "Capsem Binaries" not in stable
-    assert "Capsem-1.4.0.pkg" not in stable
+    assert "Current binary" not in page
+    assert "current_binary" not in page
+    assert "Current assets" not in page
+    assert "current_assets" not in page
+    assert "Capsem Binaries" not in page
+    assert "Capsem-1.4.0.pkg" not in page
 
 
 def _fixture() -> dict:

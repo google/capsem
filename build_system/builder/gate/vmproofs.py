@@ -2,8 +2,8 @@
 
 `injection_test.py` and `integration_test.py` predate the pytest suites and
 still own proofs nothing else makes. Both take the same three coordinates --
-the binary, the assets, the materialized profiles -- and both were spelled out
-at four call sites each, once per profile in the matrix.
+the binary, the assets, the materialized runtime configuration -- and both
+were spelled out at four call sites each before this module named them once.
 
 Each coordinate has an environment override, because a release lane runs the
 same proof against pulled artifacts rather than source-built ones. Resolved
@@ -41,14 +41,13 @@ def _profiles_dir(config: GateConfig) -> str:
 def injection(
     config: GateConfig,
     *,
-    profile: str,
     assets: str | None = None,
     profiles_dir: str | None = None,
 ) -> Step:
     """Prove the guest refuses what it is supposed to refuse."""
     settings = config.functional
     return step(
-        f"injection.{profile}",
+        "injection",
         Script(
             config,
             settings.injection_script,
@@ -58,8 +57,6 @@ def injection(
             assets or _assets(config),
             "--profiles-dir",
             profiles_dir or _profiles_dir(config),
-            "--profile",
-            profile,
         ),
         contends=pytestsuite.sharing(config),
         kind=Kind.CAPSEM,
@@ -71,14 +68,13 @@ def injection(
 def integration(
     config: GateConfig,
     *,
-    profile: str,
     assets: str | None = None,
     profiles_dir: str | None = None,
 ) -> Step:
     """Boot a real VM and drive it the way a user would."""
     settings = config.functional
     return step(
-        f"integration.{profile}",
+        "integration",
         Script(
             config,
             settings.integration_script,
@@ -86,8 +82,6 @@ def integration(
             _binary(config),
             "--assets",
             assets or _assets(config),
-            "--profile",
-            profile,
             env=config.environment.content(profiles=profiles_dir or _profiles_dir(config)),
         ),
         contends=pytestsuite.sharing(config),

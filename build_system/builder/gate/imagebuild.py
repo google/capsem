@@ -1,4 +1,9 @@
-"""Build profile-owned VM assets through the one config-owned image rail."""
+"""Build the VM runtime assets through the one config-owned image rail.
+
+There is one runtime: no profile selects what goes into it. Applications come
+from OCI images, so the only thing a build varies is the architecture and the
+template.
+"""
 
 from __future__ import annotations
 
@@ -19,18 +24,9 @@ BUILDS = frozenset({Needs.DOCKER, Needs.DISK})
 PULLS = frozenset({Needs.DOCKER, Needs.NETWORK})
 
 
-def profiles(config: GateConfig) -> list[str]:
-    """Every checked-in profile, by directory name."""
-    found = sorted(path.parent.name for path in config.root.glob(config.imagebuild.profiles_glob))
-    if not found:
-        raise GateError(f"no profiles under {config.imagebuild.profiles_glob}")
-    return found
-
-
 def build_argv(
     config: GateConfig,
     *,
-    profile: str,
     arch: str | None,
     template: str,
     output: str | None = None,
@@ -44,8 +40,6 @@ def build_argv(
 
     argv = [
         *settings.admin,
-        "--profile",
-        settings.profile_manifest.format(profile=profile),
         "--config-root",
         settings.config_root,
         "--output",
@@ -62,16 +56,15 @@ def build_argv(
 def build(
     config: GateConfig,
     *,
-    profile: str,
     arch: str | None,
     template: str,
     output: str | None = None,
 ) -> Step:
     """One image build. The template is the only thing that varies."""
-    label = f"image.{profile}.{template}" + (f".{arch}" if arch else "")
+    label = f"image.{template}" + (f".{arch}" if arch else "")
     return step(
         label,
-        Run(build_argv(config, profile=profile, arch=arch, template=template, output=output)),
+        Run(build_argv(config, arch=arch, template=template, output=output)),
         contends=(config.exclusive("docker_daemon"),),
         kind=Kind.PACKAGE,
         needs=BUILDS,
@@ -82,20 +75,18 @@ def build(
 class BuildAssetsCommand(
     GateCommand,
     name="build-assets",
-    help="build one profile's VM assets, or every profile's",
+    help="build the VM runtime assets for one architecture, or every one",
 ):
     exclusive = True
 
     @classmethod
     def add_arguments(cls, parser) -> None:
-        parser.add_argument("profile", nargs="?", help="defaults to every profile")
         parser.add_argument("arch", nargs="?", help="defaults to every architecture")
         parser.add_argument("--template", default="all", help="kernel, rootfs, or all")
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
         config = self._config
-        wanted = [self._args.profile] if self._args.profile else profiles(config)
         names = (
             (config.arch(self._args.arch).name,) if self._args.arch else tuple(config.architectures)
         )
@@ -154,24 +145,16 @@ class BuildAssetsCommand(
                 after=(ready,),
             )
         ready = plan.add(
-            assetdependencies.request_step(config, wanted, names, self._args.template),
+            assetdependencies.request_step(config, names, self._args.template),
             after=(ready,),
         )
-        images = tuple(
-            plan.add(
-                build(
-                    config,
-                    profile=profile,
-                    arch=self._args.arch,
-                    template=self._args.template,
-                ),
-                after=(ready,),
-            )
-            for profile in wanted
+        image = plan.add(
+            build(config, arch=self._args.arch, template=self._args.template),
+            after=(ready,),
         )
         if self._args.template != "kernel":
             assets = config.path(config.imagebuild.output)
             targets = {name: (assets / name / config.artifacts.initrd,) for name in names}
-            packed = plan.add(initrd.repack_step(config, targets), after=images)
+            packed = plan.add(initrd.repack_step(config, targets), after=(image,))
             initrd.finalize(plan, config, assets=assets, arches=names, after=(packed,))
         return plan

@@ -22,7 +22,6 @@ on:
         options:
           - nightly
           - stable
-        default: nightly
 
 # Publication is serialized with itself and with nothing else: a trunk run
 # never waits on an image build, and two image runs never race one catalog.

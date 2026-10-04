@@ -22,7 +22,6 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     suite = pytestsuite.Suite(
         label="pytest.managed-restart",
         paths=(settings.managed_restart,),
-        profile=settings.base_profile,
     )
     return plan.phase("glowup").add(
         step(

@@ -32,6 +32,15 @@ def _argv(suite) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+#: Every functional pytest suite the gate composes from this module.
+_EVERY_SUITE = (
+    pytestsuite.broad,
+    pytestsuite.host_snapshot,
+    pytestsuite.timing,
+    pytestsuite.benchmark,
+)
+
+
 def _claims(suite) -> dict[str, str]:
     return {e.name: "shared" if e.shared else "alone" for e in suite.contends}
 
@@ -40,7 +49,7 @@ def test_host_snapshot_tests_claim_the_one_service() -> None:
     """Production has one service and one service-scoped save/restore lock.
     An xdist worker per service does not reproduce that, and neither does
     another suite's service running beside it."""
-    suite = pytestsuite.host_snapshot(CONFIG, profile="code")
+    suite = pytestsuite.host_snapshot(CONFIG)
 
     assert _claims(suite) == {"host_service": "alone", "apple_vz": "alone", "workspace_binaries": "shared"}
     assert not suite.parallel
@@ -49,39 +58,37 @@ def test_host_snapshot_tests_claim_the_one_service() -> None:
 def test_benchmarks_claim_the_vz_launch_budget() -> None:
     """Two files launching VMs at once measure each other, not Capsem."""
     for suite in (
-        pytestsuite.timing(CONFIG, profile="code"),
-        pytestsuite.benchmark(CONFIG, profile="code"),
-        kingslanding.benchmark_suite(CONFIG, profile="code"),
+        pytestsuite.timing(CONFIG),
+        pytestsuite.benchmark(CONFIG),
+        kingslanding.benchmark_suite(CONFIG),
     ):
         assert _claims(suite) == {"apple_vz": "alone", "workspace_binaries": "shared"}
         assert not suite.parallel
 
 
 def test_suites_that_need_answers_not_quiet_share_the_machine() -> None:
-    """Profile lanes overlap only through shared claims; the two four-VM xdist
-    suites still exclude each other, and no suite may rebuild binaries."""
+    """VM suites overlap only through shared claims; the four-VM xdist fleet
+    still excludes any other fleet, and no suite may rebuild binaries."""
     for suite in (
-        kingslanding.suite(CONFIG, profile="code", benchmark=False),
-        kingslanding.greyjoy_suite(CONFIG, profile="code"),
+        kingslanding.suite(CONFIG, benchmark=False),
+        kingslanding.greyjoy_suite(CONFIG),
     ):
         assert _claims(suite) == {"apple_vz": "shared", "workspace_binaries": "shared"}
-    for fleet in (pytestsuite.broad, pytestsuite.compatibility):
-        assert _claims(fleet(CONFIG, profile="code")) == {
-            "apple_vz": "shared", "workspace_binaries": "shared", "vm_fleet": "alone",
-        }
+    assert _claims(pytestsuite.broad(CONFIG)) == {
+        "apple_vz": "shared", "workspace_binaries": "shared", "vm_fleet": "alone",
+    }
     # With its measurement files, the whole suite needs the machine alone.
-    assert _claims(kingslanding.suite(CONFIG, profile="code"))["apple_vz"] == "alone"
+    assert _claims(kingslanding.suite(CONFIG))["apple_vz"] == "alone"
 
 
 def test_every_pytest_step_namespaces_the_leak_ledger() -> None:
     """Concurrent suites shared tests/leak-report.log: each erased the other's
     attribution at session start and could fail on the other's services."""
-    labels = {
-        pytestsuite.broad(CONFIG, profile="code").environment(CONFIG)[CONFIG.suites.pytest.run_id_variable],
-        kingslanding.suite(CONFIG, profile="code").environment(CONFIG)[CONFIG.suites.pytest.run_id_variable],
-        kingslanding.suite(CONFIG, profile="co-work").environment(CONFIG)[CONFIG.suites.pytest.run_id_variable],
-    }
-    assert len(labels) == 3
+    suites = (*_EVERY_SUITE, kingslanding.greyjoy_suite, kingslanding.benchmark_suite)
+    variable = CONFIG.suites.pytest.run_id_variable
+    labels = {build(CONFIG).environment(CONFIG)[variable] for build in suites}
+    labels.add(kingslanding.suite(CONFIG).environment(CONFIG)[variable])
+    assert len(labels) == len(suites) + 1
 
 
 def test_timing_rail_owns_the_route_health_probe_once() -> None:
@@ -96,7 +103,7 @@ def test_timing_rail_owns_the_route_health_probe_once() -> None:
 def test_the_broad_suite_claims_the_binaries_it_runs_against() -> None:
     """`cargo build --workspace` atomically replaces the codesigned binaries a
     concurrent VM test is using, so anything that rebuilds must not overlap."""
-    suite = pytestsuite.broad(CONFIG, profile="code")
+    suite = pytestsuite.broad(CONFIG)
 
     # Shared: readers of the binaries overlap, and any build holds it alone.
     assert _claims(suite)["workspace_binaries"] == "shared"
@@ -104,14 +111,8 @@ def test_the_broad_suite_claims_the_binaries_it_runs_against() -> None:
 
 def test_every_exclusive_a_suite_claims_is_declared() -> None:
     """A step that invents its own contends with nothing."""
-    for build in (
-        pytestsuite.broad,
-        pytestsuite.host_snapshot,
-        pytestsuite.timing,
-        pytestsuite.benchmark,
-        pytestsuite.compatibility,
-    ):
-        for exclusive in build(CONFIG, profile="code").contends:
+    for build in (*_EVERY_SUITE, kingslanding.suite, kingslanding.greyjoy_suite):
+        for exclusive in build(CONFIG).contends:
             assert CONFIG.exclusive(exclusive.name).name == exclusive.name
             assert exclusive in (CONFIG.exclusive(exclusive.name), CONFIG.shared(exclusive.name))
 
@@ -124,11 +125,11 @@ def test_every_exclusive_a_suite_claims_is_declared() -> None:
 def test_the_broad_suite_runs_four_at_a_time_by_file() -> None:
     """`--dist=loadfile` keeps per-file fixtures on one worker, which matters
     when the fixtures build VMs."""
-    argv = _argv(pytestsuite.broad(CONFIG, profile="code"))
+    argv = _argv(pytestsuite.broad(CONFIG))
 
     assert "-n" in argv
     assert "--dist=loadfile" in argv
-    assert pytestsuite.broad(CONFIG, profile="code").as_step(CONFIG).concurrency == (
+    assert pytestsuite.broad(CONFIG).as_step(CONFIG).concurrency == (
         CONFIG.suites.pytest.parallel_workers
     )
 
@@ -148,7 +149,7 @@ def test_the_citadel_uses_the_configured_source_parallelism() -> None:
 def test_the_broad_suite_skips_what_rebuilds_the_binaries_under_it() -> None:
     """`capsem-recipes` invokes `cargo build --workspace` from inside pytest,
     which replaces the binaries the concurrent VM tests are running."""
-    argv = _argv(pytestsuite.broad(CONFIG, profile="code"))
+    argv = _argv(pytestsuite.broad(CONFIG))
 
     assert "--ignore=tests/capsem-recipes" in argv
     assert "--ignore=tests/capsem_install" in argv
@@ -157,14 +158,14 @@ def test_the_broad_suite_skips_what_rebuilds_the_binaries_under_it() -> None:
 def test_the_serial_snapshot_files_are_excluded_from_the_parallel_run() -> None:
     """Otherwise they run twice, once in the way that does not reproduce
     production."""
-    broad = _argv(pytestsuite.broad(CONFIG, profile="code"))
+    broad = _argv(pytestsuite.broad(CONFIG))
 
     for path in CONFIG.suites.pytest.host_snapshot_serial:
         assert f"--ignore={path}" in broad
 
 
 def test_the_snapshot_suite_runs_exactly_those_files() -> None:
-    argv = _argv(pytestsuite.host_snapshot(CONFIG, profile="code"))
+    argv = _argv(pytestsuite.host_snapshot(CONFIG))
 
     for path in CONFIG.suites.pytest.host_snapshot_serial:
         assert path in argv
@@ -176,20 +177,20 @@ def test_every_suite_fails_closed_without_artifacts() -> None:
     variable = CONFIG.suites.pytest.require_artifacts
 
     for build in (pytestsuite.broad, pytestsuite.host_snapshot, pytestsuite.timing):
-        assert build(CONFIG, profile="code").environment(CONFIG)[variable] == "1"
+        assert build(CONFIG).environment(CONFIG)[variable] == "1"
 
 
-def test_every_suite_carries_the_profile_it_is_proving() -> None:
-    variable = CONFIG.suites.pytest.profile_variable
-
-    for build in (pytestsuite.broad, pytestsuite.compatibility):
-        assert build(CONFIG, profile="co-work").environment(CONFIG)[variable] == "co-work"
+def test_no_suite_selects_a_profile() -> None:
+    """There is one runtime (#289): a suite may name the content it reads,
+    never a profile lane to prove."""
+    for build in (*_EVERY_SUITE, kingslanding.suite, kingslanding.greyjoy_suite):
+        assert "CAPSEM_TEST_PROFILE" not in build(CONFIG).environment(CONFIG)
 
 
 def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
     """Every VM fixture runs in a subprocess with CAPSEM_ASSETS_DIR and
     CAPSEM_PROFILES_DIR. A module-level checkout literal silently opts that
-    fixture out and makes a profile lane boot the stale canonical tree."""
+    fixture out and makes the suite boot the stale canonical tree."""
     roots = (
         "capsem-bootstrap",
         "capsem-e2e",
@@ -218,40 +219,26 @@ def test_vm_suites_do_not_bypass_the_manifest_content_selector() -> None:
 def test_only_the_broad_suite_measures_coverage() -> None:
     """Four suites all writing one Python Codecov XML would each overwrite the
     last, and the file would report whichever finished last."""
-    measured = [
-        build
-        for build in (
-            pytestsuite.broad,
-            pytestsuite.host_snapshot,
-            pytestsuite.timing,
-            pytestsuite.benchmark,
-            pytestsuite.compatibility,
-        )
-        if build(CONFIG, profile="code").coverage
-    ]
+    measured = [build for build in _EVERY_SUITE if build(CONFIG).coverage]
 
     assert measured == [pytestsuite.broad]
 
 
-def test_the_compatibility_run_skips_the_contracts_already_proved() -> None:
-    """The broad suite proves every source contract once. Repeating them per
-    profile would triple the slowest part of the gate to re-prove a constant."""
-    argv = _argv(pytestsuite.compatibility(CONFIG, profile="co-work"))
+def test_a_broad_run_after_the_source_proof_skips_the_contracts_already_proved() -> None:
+    """The source-contract cohort proves them once; the broad VM run must not
+    re-prove a constant inside the slowest part of the gate."""
+    argv = _argv(pytestsuite.broad(CONFIG, source_contracts_proved=True))
 
-    assert "--ignore=build_system/tests/gate/test_gate_plan.py" in argv
-    assert "--ignore-glob=tests/test_*contract.py" in argv
-
-
-def test_the_compatibility_run_keeps_the_vm_owned_markers() -> None:
-    argv = _argv(pytestsuite.compatibility(CONFIG, profile="co-work"))
-
-    assert "(integration or mcp or e2e) and not serial" in argv
+    for path in CONFIG.suites.source_contract:
+        assert f"--ignore={path}" in argv
+    for pattern in CONFIG.modules.contract_globs:
+        assert f"--ignore-glob={pattern}" in argv
 
 
 def test_the_timing_suite_leaves_the_recorded_baseline_to_its_own_step() -> None:
     """It is the one whose numbers get published, so it runs by itself."""
-    timing = _argv(pytestsuite.timing(CONFIG, profile="code"))
-    baseline = _argv(pytestsuite.benchmark(CONFIG, profile="code"))
+    timing = _argv(pytestsuite.timing(CONFIG))
+    baseline = _argv(pytestsuite.benchmark(CONFIG))
 
     assert CONFIG.suites.pytest.benchmark_deselect in timing
     assert CONFIG.suites.pytest.benchmark_baseline in baseline
@@ -260,8 +247,8 @@ def test_the_timing_suite_leaves_the_recorded_baseline_to_its_own_step() -> None
 def test_a_timing_suite_does_not_stop_at_the_first_failure() -> None:
     """One slow probe should not hide the other five."""
     budget = CONFIG.suites.pytest.stop_at_first
-    assert budget not in _argv(pytestsuite.timing(CONFIG, profile="code"))
-    assert budget in _argv(pytestsuite.broad(CONFIG, profile="code"))
+    assert budget not in _argv(pytestsuite.timing(CONFIG))
+    assert budget in _argv(pytestsuite.broad(CONFIG))
 
 
 def test_collection_is_cache_contained_strict_and_artifact_independent() -> None:
@@ -378,19 +365,11 @@ def test_every_serial_node_has_a_non_broad_execution_rail() -> None:
     )
 
 
-def test_every_suite_is_labelled_by_what_it_proves_and_for_which_profile() -> None:
+def test_every_suite_is_labelled_by_what_it_proves() -> None:
     """The label is what the run log and the timing report show, so
-    `pytest` five times would make the summary useless."""
-    labels = {
-        build(CONFIG, profile="code").label
-        for build in (
-            pytestsuite.broad,
-            pytestsuite.host_snapshot,
-            pytestsuite.timing,
-            pytestsuite.benchmark,
-            pytestsuite.compatibility,
-        )
-    }
+    `pytest` four times would make the summary useless. One runtime, so no
+    label carries a profile suffix."""
+    labels = {build(CONFIG).label for build in _EVERY_SUITE}
 
-    assert len(labels) == 5
-    assert all(label.endswith(".code") for label in labels)
+    assert len(labels) == len(_EVERY_SUITE)
+    assert all(label.startswith("pytest.") and label.count(".") == 1 for label in labels)

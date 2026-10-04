@@ -459,14 +459,6 @@ def test_the_default_channel_is_one_of_the_declared_channels() -> None:
     assert CONFIG.package.default_channel in CONFIG.package.channels
 
 
-def test_the_base_profile_is_a_checked_in_profile() -> None:
-    """The broad suite runs against it, so a name nobody built is a gate that
-    proves nothing about anything."""
-    from capsem_builder.gate import imagebuild
-
-    assert CONFIG.suites.pytest.base_profile in imagebuild.profiles(CONFIG)
-
-
 def test_no_two_architectures_claim_the_same_alias() -> None:
     """`uname -m` is resolved through these, so a collision resolves the wrong
     way exactly once and silently."""

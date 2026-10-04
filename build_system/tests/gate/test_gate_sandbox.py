@@ -209,7 +209,7 @@ def test_fast_gate_warms_sdk_python_in_the_policy_owned_cache() -> None:
 
 
 def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first() -> None:
-    """A package/profile pairing job is just as sandboxed as the fast gate.
+    """A package/runtime pairing job is just as sandboxed as the fast gate.
 
     Installing Bubblewrap does not prove that an Ubuntu runner may create the
     namespace or configure loopback.  GitHub's AppArmor restriction can allow
@@ -269,7 +269,7 @@ def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first
 
     assert callers == {
         ("fast-gate.yaml", "static"),
-        ("release-assets.yaml", "test-profile-pairing"),
+        ("release-assets.yaml", "test-runtime-pairing"),
         ("release.yaml", "test-binary-pairing"),
     }
 
@@ -870,10 +870,7 @@ def test_parallel_egress_callers_queue_before_the_single_command_broker(
         ("test-static", ()),
         ("candidate", ()),
         ("release-binaries", (("channel", "nightly"),)),
-        (
-            "release-profile",
-            (("channel", "nightly"), ("profile", "code")),
-        ),
+        ("release-assets", (("channel", "nightly"),)),
     ],
 )
 def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
@@ -902,7 +899,7 @@ def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
         expected = (
             ONLINE_FAST if name != "test-static" else {"static.toolchain.node"}
         )
-    if name not in {"test-fast", "release-binaries", "release-profile"}:
+    if name not in {"test-fast", "release-binaries", "release-assets"}:
         expected |= {
             "host-image",
             "install.materialize",
@@ -922,10 +919,7 @@ def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
         ("test-fast", ()),
         ("candidate", ()),
         ("release-binaries", (("channel", "nightly"),)),
-        (
-            "release-profile",
-            (("channel", "nightly"), ("profile", "code")),
-        ),
+        ("release-assets", (("channel", "nightly"),)),
     ],
 )
 def test_every_fast_gate_entrypoint_prepares_one_scoped_egress_capability(

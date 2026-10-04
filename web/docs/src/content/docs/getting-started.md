@@ -13,8 +13,9 @@ sidebar:
 | Ubuntu | 24.04 or later | x86_64 or arm64, KVM capable |
 | Debian | 13 or later | x86_64 or arm64, KVM capable |
 
-Disk use is roughly 40 MB of binaries plus whatever the selected profile's VM
-assets need, which is much the larger of the two and varies by profile.
+Disk use is roughly 40 MB of binaries plus the VM runtime assets (kernel,
+initrd, and rootfs) and the OCI images your sessions pull; the assets and
+images are much the larger part.
 
 macOS uses Apple's Virtualization.framework (Apple Silicon only). Linux uses KVM.
 Intel Macs are not supported.

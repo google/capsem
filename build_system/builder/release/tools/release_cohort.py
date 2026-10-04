@@ -29,7 +29,6 @@ REQUIRED_LINUX_RELEASE_BINARIES = frozenset(
         "capsem-app",
         "capsem-bench-rs",
         "capsem-gateway",
-
         "capsem-router",
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
@@ -58,14 +57,14 @@ def unpublished_before(channel: str, directory: Path) -> Path:
     """The public before-state of a channel nobody has released into.
 
     A first release pairs the candidate against nothing, and nothing still has
-    to arrive as a verified cohort: an empty profile set the fetcher was told to
+    to arrive as a verified cohort: an absent runtime the fetcher was told to
     accept, and a report that reproduces it.
 
     This shape is not invented. `select-runtime-preflight-manifest.py` reports
     `bootstrap=true` for the live stable channel, so the lane projects its
     before-state with `project-first-channel-before.py`, and that projection was
-    run against the live channel and returns exactly `packages: []` and
-    `profiles: {}`. That is what makes the pairing `FRESH_INSTALL`, which is the
+    run against the live channel and returns exactly `packages: []` and no
+    `runtime`. That is what makes the pairing `FRESH_INSTALL`, which is the
     pairing a first release makes and the one nothing had ever exercised.
     """
 
@@ -75,16 +74,16 @@ def unpublished_before(channel: str, directory: Path) -> Path:
         return path
 
     directory.mkdir(parents=True, exist_ok=True)
-    manifest = write("manifest.json", {"channel": channel, "profiles": {}, "packages": []})
+    manifest = write("manifest.json", {"channel": channel, "packages": []})
     write(
         "release-inputs.json",
         {
             "schema": "capsem.release_inputs.v1",
-            "kind": "profiles",
+            "kind": "runtime",
             "manifest_url": manifest.as_uri(),
             "output": str(directory),
             "artifacts": [],
-            "allow_empty_profiles": True,
+            "allow_empty_runtime": True,
         },
     )
     return manifest
@@ -139,8 +138,8 @@ def build_cohort(args) -> dict[str, str]:
         ]
     )
 
-    # Over loopback rather than `file://`: a graph records profile config as
-    # site-absolute `/profiles/releases/...` paths, and `urljoin` resolves those
+    # Over loopback rather than `file://`: a graph records runtime images as
+    # site-absolute `/runtime/releases/...` paths, and `urljoin` resolves those
     # against the manifest's own URL -- under `file://` that is the root of the
     # filesystem. An HTTP root is the only way to say "the site root is here".
     with helpers.local_release_server(dist) as base_url:
@@ -162,10 +161,6 @@ def build_cohort(args) -> dict[str, str]:
             str(inputs),
             "--assets-dir",
             str(workspace / config.functional.assets_dir),
-            "--config-root",
-            str(work / "release-config"),
-            "--shared-config-root",
-            "config",
         ]
     )
     run(
@@ -183,7 +178,7 @@ def build_cohort(args) -> dict[str, str]:
                 workspace / config.functional.assets_dir / config.install.manifest_name
             ),
             "CAPSEM_ASSETS_PATH": str(workspace / config.functional.assets_dir),
-            "CAPSEM_CONFIG_ROOT": str(work / "release-config"),
+            "CAPSEM_CONFIG_ROOT": str(PROJECT_ROOT / "config"),
             "CAPSEM_CONFIG_OUTPUT_ROOT": str(workspace / config.functional.config_root),
         },
     )
@@ -192,7 +187,7 @@ def build_cohort(args) -> dict[str, str]:
     before = unpublished_before(args.channel, args.before_inputs)
     return {
         "before_manifest": str(before),
-        "before_profile_inputs": str(args.before_inputs),
+        "before_release_inputs": str(args.before_inputs),
         "schema": "capsem.release_rehearsal.v1",
         "channel": args.channel,
         "version": helpers.deb_version(exact),

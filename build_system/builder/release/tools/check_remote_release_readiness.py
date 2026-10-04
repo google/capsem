@@ -35,23 +35,9 @@ else:
     BLAKE3_IMPORT_ERROR = None
 
 
-ALLOWED_PROFILE_CONFIG_KINDS = {
-    "profile",
-    "mcp",
-    "enforcement",
-    "detection",
-    "apt_packages",
-    "python_requirements",
-    "python_requirements_lock",
-    "npm_packages",
-    "npm_package_lock",
-    "build",
-    "tips",
-    "root_manifest",
-    "root_payload",
-}
 ALLOWED_RELEASE_STATUSES = {"current", "supported", "deprecated", "revoked"}
-REQUIRED_PROFILE_IMAGE_KINDS = {"kernel", "initrd", "rootfs"}
+REQUIRED_RUNTIME_IMAGE_KINDS = {"kernel", "initrd", "rootfs"}
+RUNTIME_ARTIFACT_PREFIXES = ("/assets/releases/", "/runtime/releases/")
 RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"
 _FETCH_BYTES_CACHE: dict[str, FetchBytes] = {}
 
@@ -290,7 +276,7 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
         return CheckResult(
             "release.capsem.org contract",
             True,
-            "index, channels.json, graph manifest, profile artifacts, and cache headers agree",
+            "index, channels.json, graph manifest, runtime artifacts, and cache headers agree",
         )
 
     if release_url_path(manifest_path) != f"/assets/{channel}/manifest.json":
@@ -394,9 +380,7 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
 
 
 def is_release_graph_manifest(manifest_data: dict[str, Any]) -> bool:
-    return isinstance(manifest_data.get("packages"), list) and isinstance(
-        manifest_data.get("profiles"), dict
-    )
+    return isinstance(manifest_data.get("packages"), list) and "assets" not in manifest_data
 
 
 def check_release_graph_manifest_contract(
@@ -438,18 +422,13 @@ def check_release_graph_manifest_contract(
 
     if "binaries" in manifest_data:
         failures.append("manifest must not publish top-level binaries")
+    if "profiles" in manifest_data:
+        failures.append("manifest must not publish profiles")
     packages = require_list(manifest_data, "packages", failures)
-    profiles = require_object(manifest_data, "profiles", "manifest profiles", failures)
+    runtime = require_object(manifest_data, "runtime", "manifest runtime", failures)
     if not packages:
         failures.append("manifest packages empty")
-    if not profiles:
-        failures.append("manifest profiles empty")
-    failures.extend(
-        check_release_graph_runtime_asset_pointer(
-            manifest=manifest_data,
-            profiles=profiles,
-        )
-    )
+    failures.extend(check_release_graph_runtime_asset_pointer(runtime))
 
     for package in packages:
         failures.extend(check_release_graph_file_descriptor(package, "package"))
@@ -492,7 +471,7 @@ def check_release_graph_manifest_contract(
             channel_data,
             manifest_record,
             packages,
-            profiles,
+            runtime,
         )
     )
     for label, value in (
@@ -504,17 +483,14 @@ def check_release_graph_manifest_contract(
         elif value not in index_text and (channel_page.error or value not in channel_page_text):
             failures.append(f"release pages missing {label} {value}")
 
-    for profile_id, profile in profiles.items():
-        if not isinstance(profile_id, str) or not isinstance(profile, dict):
-            failures.append("manifest profile entry malformed")
-            continue
-        failures.extend(check_release_graph_profile(site, channel, profile_id, profile))
+    if runtime:
+        failures.extend(check_release_graph_runtime(site, runtime))
 
     failures.extend(
         check_release_graph_cache_headers(
             site=site,
             manifest_path=manifest_path,
-            profiles=profiles,
+            runtime=runtime,
         )
     )
     return failures
@@ -543,13 +519,15 @@ def check_release_graph_channel_page(
     channel_data: dict[str, Any],
     manifest_record: dict[str, Any],
     packages: list[Any],
-    profiles: dict[str, Any],
+    runtime: dict[str, Any],
 ) -> list[str]:
     failures: list[str] = []
     for label, value in (
         ("channel label", channel_data.get("label")),
         ("manifest version", manifest_record.get("version")),
         ("manifest URL", manifest_record.get("url")),
+        ("runtime revision", runtime.get("revision")),
+        ("runtime minimum Capsem", runtime.get("min_capsem_version")),
     ):
         require_rendered_value(page_text, f"channel page {channel}", label, value, failures)
     for package in packages:
@@ -569,16 +547,6 @@ def check_release_graph_channel_page(
             package.get("version"),
             failures,
         )
-    for profile_id, profile in profiles.items():
-        if not isinstance(profile_id, str) or not isinstance(profile, dict):
-            continue
-        for label, value in (
-            ("profile id", profile_id),
-            ("profile name", profile.get("name")),
-            ("profile revision", profile.get("revision")),
-            ("profile minimum Capsem", profile.get("min_capsem_version")),
-        ):
-            require_rendered_value(page_text, f"channel page {channel}", label, value, failures)
     return failures
 
 
@@ -663,28 +631,19 @@ def require_rendered_value(
         failures.append(f"{page_label} missing {value_label} {value}")
 
 
-def check_release_graph_runtime_asset_pointer(
-    *,
-    manifest: dict[str, Any],
-    profiles: dict[str, Any],
-) -> list[str]:
+def check_release_graph_runtime_asset_pointer(runtime: dict[str, Any]) -> list[str]:
     failures: list[str] = []
-    for profile_id, profile in profiles.items():
-        if not isinstance(profile, dict):
-            continue
-        for architecture in profile_architectures(profile):
-            for item in architecture.get("images", []) + architecture.get("evidence", []):
-                if not isinstance(item, dict):
-                    continue
-                url = item.get("url")
-                if (
-                    isinstance(url, str)
-                    and url.startswith("/assets/releases/")
-                    and len(url.split("/")) < 5
-                ):
-                    failures.append(
-                        f"profile {profile_id} asset artifact URL is not versioned: {url}"
-                    )
+    for architecture in runtime_architectures(runtime):
+        for item in architecture.get("images", []) + architecture.get("evidence", []):
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if (
+                isinstance(url, str)
+                and url.startswith("/assets/releases/")
+                and len(url.split("/")) < 5
+            ):
+                failures.append(f"runtime asset artifact URL is not versioned: {url}")
     return failures
 
 
@@ -706,61 +665,41 @@ def check_release_graph_file_descriptor(item: Any, label: str) -> list[str]:
     return failures
 
 
-def check_release_graph_profile(
-    site: str,
-    channel: str,
-    profile_id: str,
-    profile: dict[str, Any],
-) -> list[str]:
+def check_release_graph_runtime(site: str, runtime: dict[str, Any]) -> list[str]:
     failures: list[str] = []
-    profile_page = fetch_text(f"{site}/channels/{channel}/profiles/{profile_id}/")
-    if profile_page.error:
-        failures.append(profile_page.error)
-        page_text = ""
-    else:
-        page_text = profile_page.text
+    if not isinstance(runtime.get("revision"), str):
+        failures.append("runtime revision missing")
+    if runtime.get("status") not in ALLOWED_RELEASE_STATUSES:
+        failures.append(f"runtime status {runtime.get('status')} is not allowed")
+    for field in ("id", "name"):
+        if field in runtime:
+            failures.append(f"runtime must not declare {field}")
 
-    for field in ("id", "revision", "min_capsem_version"):
-        if not isinstance(profile.get(field), str):
-            failures.append(f"profile {profile_id} {field} missing")
-    if profile.get("id") != profile_id:
-        failures.append(f"profile {profile_id} id mismatch")
-
-    architectures = profile_architectures(profile)
+    architectures = runtime_architectures(runtime)
     if not architectures:
-        failures.append(f"profile {profile_id} architectures empty")
-
-    for value in (profile.get("revision"), profile.get("name"), profile.get("id")):
-        if isinstance(value, str) and page_text and value not in page_text:
-            failures.append(f"profile page {profile_id} missing {value}")
+        failures.append("runtime architectures empty")
 
     for architecture in architectures:
-        if not isinstance(architecture, dict):
-            failures.append(f"profile {profile_id} architecture entry is not an object")
-            continue
         arch = architecture.get("architecture")
         if not isinstance(arch, str):
-            failures.append(f"profile {profile_id} architecture missing")
+            failures.append("runtime architecture missing")
             arch = "<unknown>"
-        config_entries = require_list(architecture, "config", failures)
+        if "config" in architecture:
+            failures.append(f"runtime architecture {arch} must not publish config")
         software_entries = require_list(architecture, "software", failures)
         images = require_list(architecture, "images", failures)
         evidence_entries = require_list(architecture, "evidence", failures)
         if not software_entries:
-            failures.append(f"profile {profile_id} architecture {arch} software empty")
-        if not config_entries:
-            failures.append(f"profile {profile_id} architecture {arch} config empty")
+            failures.append(f"runtime architecture {arch} software empty")
         if not images:
-            failures.append(f"profile {profile_id} architecture {arch} images empty")
+            failures.append(f"runtime architecture {arch} images empty")
         image_kinds = {
             str(artifact.get("kind", "")).lower()
             for artifact in images
             if isinstance(artifact, dict)
         }
-        for required_kind in sorted(REQUIRED_PROFILE_IMAGE_KINDS - image_kinds):
-            failures.append(
-                f"profile {profile_id} architecture {arch} images missing {required_kind}"
-            )
+        for required_kind in sorted(REQUIRED_RUNTIME_IMAGE_KINDS - image_kinds):
+            failures.append(f"runtime architecture {arch} images missing {required_kind}")
         software_inventory_digests = [
             evidence.get("digest")
             for evidence in evidence_entries
@@ -769,81 +708,29 @@ def check_release_graph_profile(
             and isinstance(evidence.get("digest"), dict)
         ]
 
+        label = f"runtime architecture {arch}"
         for software in software_entries:
-            failures.extend(
-                check_release_graph_software_row(
-                    software,
-                    f"profile {profile_id} architecture {arch} software",
-                    arch,
-                )
-            )
+            failures.extend(check_release_graph_software_row(software, f"{label} software", arch))
             if isinstance(software, dict) and software.get("digest") in software_inventory_digests:
                 name = (
                     software.get("name") if isinstance(software.get("name"), str) else "<unknown>"
                 )
                 failures.append(
-                    f"profile {profile_id} architecture {arch} software {name} "
-                    "digest reuses software_inventory evidence digest"
+                    f"{label} software {name} digest reuses software_inventory evidence digest"
                 )
-        failures.extend(
-            check_release_graph_unique_digests(
-                software_entries,
-                f"profile {profile_id} architecture {arch} software",
-                identity_key="name",
-            )
-        )
-        failures.extend(
-            check_release_graph_unique_digests(
-                config_entries,
-                f"profile {profile_id} architecture {arch} config",
-                identity_key="url",
-            )
-        )
-        failures.extend(
-            check_release_graph_unique_digests(
-                images,
-                f"profile {profile_id} architecture {arch} image",
-                identity_key="url",
-            )
-        )
-        failures.extend(
-            check_release_graph_unique_digests(
-                evidence_entries,
-                f"profile {profile_id} architecture {arch} evidence",
-                identity_key="url",
-            )
-        )
-        for item in config_entries:
-            kind = item.get("kind") if isinstance(item, dict) else None
-            if kind not in ALLOWED_PROFILE_CONFIG_KINDS:
-                failures.append(
-                    f"profile {profile_id} architecture {arch} config kind {kind} is not allowed"
-                )
+        for entries, section, identity_key in (
+            (software_entries, "software", "name"),
+            (images, "image", "url"),
+            (evidence_entries, "evidence", "url"),
+        ):
             failures.extend(
-                check_release_graph_artifact(
-                    site,
-                    item,
-                    f"profile {profile_id} architecture {arch} config",
-                    page_text,
-                    allowed_prefixes=("/profiles/releases/",),
+                check_release_graph_unique_digests(
+                    entries, f"{label} {section}", identity_key=identity_key
                 )
             )
         for artifact in images:
-            failures.extend(
-                check_release_graph_status(
-                    artifact,
-                    f"profile {profile_id} architecture {arch} image",
-                )
-            )
-            failures.extend(
-                check_release_graph_artifact(
-                    site,
-                    artifact,
-                    f"profile {profile_id} architecture {arch} image",
-                    page_text,
-                    allowed_prefixes=("/assets/releases/", "/profiles/releases/"),
-                )
-            )
+            failures.extend(check_release_graph_status(artifact, f"{label} image"))
+            failures.extend(check_release_graph_artifact(site, artifact, f"{label} image"))
         for evidence in evidence_entries:
             evidence_kind = (
                 str(evidence.get("kind", "")).lower() if isinstance(evidence, dict) else ""
@@ -857,8 +744,7 @@ def check_release_graph_profile(
                     and expected_arch_prefix not in evidence_url
                 ):
                     failures.append(
-                        f"profile {profile_id} architecture {arch} evidence {evidence_kind} "
-                        f"url must include {expected_arch_segment}"
+                        f"{label} evidence {evidence_kind} url must include {expected_arch_segment}"
                     )
             expected_document = (
                 "software_inventory"
@@ -873,9 +759,7 @@ def check_release_graph_profile(
                 check_release_graph_artifact(
                     site,
                     evidence,
-                    f"profile {profile_id} architecture {arch} evidence",
-                    page_text,
-                    allowed_prefixes=("/assets/releases/", "/profiles/releases/"),
+                    f"{label} evidence",
                     expected_document=expected_document,
                 )
             )
@@ -955,9 +839,7 @@ def check_release_graph_artifact(
     site: str,
     item: Any,
     label: str,
-    page_text: str,
     *,
-    allowed_prefixes: tuple[str, ...],
     expected_document: str | None = None,
 ) -> list[str]:
     if not isinstance(item, dict):
@@ -970,16 +852,14 @@ def check_release_graph_artifact(
         failures.append(f"{label} {url} must not use file://")
     if url.startswith(("http://", "https://")):
         pass
-    elif not url.startswith(allowed_prefixes):
-        failures.append(f"{label} {url} must be under one of {', '.join(allowed_prefixes)}")
+    elif not url.startswith(RUNTIME_ARTIFACT_PREFIXES):
+        failures.append(
+            f"{label} {url} must be under one of {', '.join(RUNTIME_ARTIFACT_PREFIXES)}"
+        )
     digest = item.get("digest")
     if not isinstance(digest, dict):
         return [*failures, f"{label} {url} digest missing"]
     failures.extend(check_release_graph_digest(digest, f"{label} {url}"))
-    for key in ("sha256", "blake3"):
-        value = digest.get(key)
-        if isinstance(value, str) and page_text and hash_label(value) not in page_text:
-            failures.append(f"profile page missing {label} {key} for {url}")
     expected_bytes = item.get("bytes")
     if not isinstance(expected_bytes, int):
         failures.append(f"{label} {url} bytes missing")
@@ -1018,7 +898,7 @@ def check_release_graph_cache_headers(
     *,
     site: str,
     manifest_path: str,
-    profiles: dict[str, Any],
+    runtime: dict[str, Any],
 ) -> list[str]:
     if urlparse(site).scheme == "file":
         return []
@@ -1031,18 +911,9 @@ def check_release_graph_cache_headers(
             ("no-cache", "must-revalidate"),
         ),
     ]
-    for profile in profiles.values():
-        if not isinstance(profile, dict):
-            continue
-        for architecture in profile_architectures(profile):
-            if not isinstance(architecture, dict):
-                continue
-            for item in architecture.get("config", []):
-                add_release_artifact_cache_check(site, checks, item)
-            for artifact in architecture.get("images", []):
-                add_release_artifact_cache_check(site, checks, artifact)
-            for evidence in architecture.get("evidence", []):
-                add_release_artifact_cache_check(site, checks, evidence)
+    for architecture in runtime_architectures(runtime):
+        for item in architecture.get("images", []) + architecture.get("evidence", []):
+            add_release_artifact_cache_check(site, checks, item)
 
     failures: list[str] = []
     for label, url, required_directives in checks:
@@ -1065,10 +936,10 @@ def add_release_artifact_cache_check(
     if not isinstance(item, dict):
         return
     url = item.get("url")
-    if isinstance(url, str) and (url.startswith(("/profiles/releases/", "/assets/releases/"))):
+    if isinstance(url, str) and url.startswith(RUNTIME_ARTIFACT_PREFIXES):
         checks.append(
             (
-                "immutable profile artifact",
+                "immutable runtime artifact",
                 resolve_release_url(site, url),
                 ("public", "max-age=31536000", "immutable"),
             )
@@ -1324,8 +1195,8 @@ def require_list(root: Any, key: str, failures: list[str]) -> list[Any]:
     return value
 
 
-def profile_architectures(profile: dict[str, Any]) -> list[dict[str, Any]]:
-    architectures = profile.get("architectures")
+def runtime_architectures(runtime: dict[str, Any]) -> list[dict[str, Any]]:
+    architectures = runtime.get("architectures")
     if not isinstance(architectures, list):
         return []
     return [architecture for architecture in architectures if isinstance(architecture, dict)]

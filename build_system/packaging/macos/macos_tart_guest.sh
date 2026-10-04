@@ -200,10 +200,6 @@ echo "=== Reinstalling over a live native helper cohort ==="
 capsem_probe_stale_helper_replacement
 verify_binary_cohort
 
-profile_tree_digest() {
-    python3 "$TRANSITION_SUPPORT" tree-digest "$CAPSEM_HOME/profiles"
-}
-
 audit_line() {
     test -f "$CAPSEM_HOME/logs/update.log" \
         && wc -l < "$CAPSEM_HOME/logs/update.log" || printf '0\n'
@@ -244,21 +240,19 @@ UPDATE_AUDIT_FIRST_LINE=$(audit_line)
 promote_candidate "$UPDATED_MANIFEST"
 launchctl kickstart -k "gui/$(id -u)/com.capsem.service"
 UPDATED_MANIFEST_SHA=$(python3 "$TRANSITION_SUPPORT" sha256 "$UPDATED_MANIFEST")
-observe_update_transition profile_only activated "$UPDATED_MANIFEST_SHA" \
+observe_update_transition runtime_only activated "$UPDATED_MANIFEST_SHA" \
     "$UPDATE_AUDIT_FIRST_LINE" "$UPDATE_TRANSITION_EVIDENCE"
 verify_channel "$CHANNEL" "$MANIFEST_URL" "$INSTALLED_EVIDENCE"
 
 echo "=== Capturing the activated state before rejection candidates ==="
 cp "$INSTALLED_MANIFEST" "$MANIFEST_BEFORE_REJECTION"
 cp "$INSTALLED_METADATA" "$METADATA_BEFORE_REJECTION"
-PROFILE_DIGEST_BEFORE=$(profile_tree_digest)
 mkdir -p "$SERVICE_LOG_DIR"
 PREVIOUS_MANIFEST_SHA=$(python3 "$TRANSITION_SUPPORT" sha256 "$MANIFEST_BEFORE_REJECTION")
 
 assert_activated_state_preserved() {
     cmp -s "$MANIFEST_BEFORE_REJECTION" "$INSTALLED_MANIFEST"
     cmp -s "$METADATA_BEFORE_REJECTION" "$INSTALLED_METADATA"
-    test "$(profile_tree_digest)" = "$PROFILE_DIGEST_BEFORE"
     /usr/sbin/pkgutil --pkg-info com.capsem.pkg | grep -Fx "version: $VERSION"
     verify_binary_cohort
 }
@@ -277,7 +271,7 @@ reject_candidate() {
 
 echo "=== Rejecting tampered and incompatible candidates ==="
 reject_candidate tampered_artifact "$TAMPERED_MANIFEST" "$TAMPER_REJECTION_EVIDENCE"
-reject_candidate incompatible_profile "$INCOMPATIBLE_MANIFEST" \
+reject_candidate incompatible_runtime "$INCOMPATIBLE_MANIFEST" \
     "$INCOMPATIBLE_REJECTION_EVIDENCE"
 
 echo "=== Restoring the exact source and reproving the installed product ==="

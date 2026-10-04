@@ -9,9 +9,8 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use capsem_assets::asset_manager::{BinaryExecutable, BinaryFile, ManifestV2};
 use capsem_core::net::policy_config::{
-    resolve_profile_rule_file_path, validate_corp_toml_contract, CompiledSecurityRule, ProfileCatalog,
-    ProfileConfigFile, ProfileObomConfig, ProfileObomDescriptor, SecurityRuleProfile, SecurityRuleSet,
-    SecurityRuleSource, SettingsFile,
+    validate_corp_toml_contract, CompiledSecurityRule, ProfileCatalog, ProfileConfigFile, ProfileObomConfig,
+    ProfileObomDescriptor, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
 };
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -22,6 +21,7 @@ mod assets_channel_build;
 mod assets_channel_render;
 mod assets_channel_validation;
 mod channel_bootstrap;
+mod image_build;
 mod manifest_generation;
 mod package_inspection;
 mod profile_images;
@@ -33,17 +33,18 @@ mod source_commit;
 use assets_channel_build::*;
 use assets_channel_render::*;
 use assets_channel_validation::*;
+use image_build::*;
 use manifest_generation::*;
 use profile_images::*;
 
 use package_inspection::binary_files_from_artifacts;
-use release_github::{ensure_publication_identity_is_free, GhProfileWorkflowRunner, ProfileWorkflowRunner};
+use release_github::{ensure_publication_identity_is_free, GhReleaseWorkflowRunner, ReleaseWorkflowRunner};
 use source_commit::SourceCommit;
 
 #[derive(Debug, Parser)]
 #[command(name = "capsem-admin")]
 #[command(version)]
-#[command(about = "Capsem profile and asset administration")]
+#[command(about = "Capsem runtime, asset, and profile administration")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -51,9 +52,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Validate a channel/profile release selection without publishing it.
+    /// Validate a channel runtime release selection without publishing it.
     Validate(ReleaseValidateArgs),
-    /// Publish one channel/profile through the serialized release workflow.
+    /// Publish one channel's runtime through the serialized release workflow.
     Release(ReleaseArgs),
     Profile(ProfileCommand),
     Settings(SettingsCommand),
@@ -109,7 +110,7 @@ struct ManifestCommand {
 enum ManifestSubcommand {
     Check(ManifestCheckArgs),
     Generate(ManifestGenerateArgs),
-    /// Author a corporation-owned manifest from official packages and owned profiles.
+    /// Author a corporation-owned manifest from official packages and an owned runtime.
     Corporate(ManifestCorporateArgs),
 }
 
@@ -209,15 +210,12 @@ struct ProfileMaterializeArgs {
 
 #[derive(Debug, Args, Clone)]
 struct ReleaseValidateArgs {
-    /// Channel that owns the profile.
+    /// Channel that publishes the runtime.
     #[arg(long)]
     channel: String,
-    /// Profile id to validate.
+    /// Exact committed source the runtime is built from.
     #[arg(long)]
-    profile: String,
-    /// Source config root containing the profile definition.
-    #[arg(long, default_value = "config")]
-    config_root: PathBuf,
+    source_commit: SourceCommit,
     /// Emit a machine-readable validation report.
     #[arg(long)]
     json: bool,
@@ -225,36 +223,30 @@ struct ReleaseValidateArgs {
 
 #[derive(Debug, Args, Clone)]
 struct ReleaseArgs {
-    /// Channel that owns this independently releasable profile instance.
+    /// Channel whose runtime this release publishes.
     #[arg(long)]
     channel: String,
-    /// Profile id to publish.
-    #[arg(long)]
-    profile: String,
     /// Exact committed source qualified before this release dispatch.
     #[arg(long)]
     source_commit: SourceCommit,
-    /// Source config root containing the profile definition.
-    #[arg(long, default_value = "config")]
-    config_root: PathBuf,
     /// Manifest JSON file to update inside the serialized workflow.
-    #[arg(long, hide = true, requires_all = ["manifest_version", "profile_version"])]
+    #[arg(long, hide = true, requires_all = ["manifest_version", "runtime_revision"])]
     manifest_path: Option<PathBuf>,
-    /// Candidate manifest containing the newly built selected profile.
+    /// Candidate manifest containing the newly built runtime.
     #[arg(long, hide = true, requires = "manifest_path")]
     candidate_manifest: Option<PathBuf>,
-    /// Immutable release base containing the selected profile's published files.
+    /// Immutable release base containing the runtime's published files.
     #[arg(long, hide = true, requires = "candidate_manifest")]
     publication_base: Option<String>,
     /// Manifest version expected in the JSON file.
     #[arg(long, hide = true, requires = "manifest_path")]
     manifest_version: Option<String>,
-    /// Profile revision/version expected in the manifest.
+    /// Runtime revision expected in the manifest.
     #[arg(long, hide = true, requires = "manifest_path")]
-    profile_version: Option<String>,
+    runtime_revision: Option<String>,
     /// Publication state written by the serialized workflow.
-    #[arg(long, value_enum, default_value_t = ProfileReleaseStatusArg::Current, hide = true)]
-    status: ProfileReleaseStatusArg,
+    #[arg(long, value_enum, default_value_t = ReleaseStatusArg::Current, hide = true)]
+    status: ReleaseStatusArg,
     /// Existing first-party channel source used only to initialize a missing channel.
     #[arg(long, hide = true, requires = "bootstrap_output", conflicts_with = "manifest_path")]
     bootstrap_from_manifest: Option<PathBuf>,
@@ -324,16 +316,16 @@ struct ManifestCorporateArgs {
     /// Read-only official Capsem release manifest containing selectable packages.
     #[arg(long)]
     official_manifest: PathBuf,
-    /// Read-only capsem-admin-generated manifest containing corporation-owned profiles.
+    /// Read-only capsem-admin-generated manifest containing the corporation-owned runtime.
     #[arg(long)]
-    profile_manifest: PathBuf,
-    /// HTTPS base that must own every profile config, image, inventory, and evidence URL.
+    runtime_manifest: PathBuf,
+    /// HTTPS base that must own every runtime image, inventory, and evidence URL.
     #[arg(long)]
-    profile_base: String,
+    runtime_base: String,
     /// Official Capsem version to pin, or "latest" for the highest selectable version.
     #[arg(long)]
     binary: String,
-    /// Exact source commit that built the corporation-owned profiles.
+    /// Exact source commit that built the corporation-owned runtime.
     #[arg(long)]
     source_commit: SourceCommit,
     /// Root below which capsem-admin owns corporation/channel manifest destinations.
@@ -360,22 +352,9 @@ struct AssetsChannelBuildArgs {
     /// records external blob URLs instead of copying blobs into the Pages dist.
     #[arg(long)]
     asset_source_base: Option<String>,
-    /// Source profile directory to publish in the channel manifest.
-    #[arg(long, default_value = "config/profiles")]
-    profiles_dir: PathBuf,
     /// Channel name to publish under assets/<channel>/manifest.json.
     #[arg(long, default_value = "stable")]
     channel: String,
-    /// Revision validation for the profile bytes being assembled. Release
-    /// authoring is always strict; the sealed install proof may explicitly
-    /// import an already-published legacy profile into its local graph.
-    #[arg(
-        long,
-        value_enum,
-        default_value_t = ProfileRevisionPolicyArg::Strict,
-        hide = true
-    )]
-    profile_revision_policy: ProfileRevisionPolicyArg,
     /// Release graph manifest version for this channel pointer.
     #[arg(long, default_value = "1.0.0")]
     manifest_version: String,
@@ -430,10 +409,7 @@ struct AssetsChannelRecordBinaryArgs {
 
 #[derive(Debug, Parser)]
 struct ImageBuildArgs {
-    /// Profile TOML that owns the asset build.
-    #[arg(long)]
-    profile: PathBuf,
-    /// Config root used to validate profile rule files.
+    /// Config root holding the image build contract under docker/image.
     #[arg(long, default_value = "config")]
     config_root: PathBuf,
     /// Guest image source directory consumed by capsem-builder.
@@ -442,8 +418,8 @@ struct ImageBuildArgs {
     /// Output directory for built assets.
     #[arg(long, default_value = "assets")]
     output: PathBuf,
-    /// Restrict the build to one profile architecture.
-    #[arg(long)]
+    /// Restrict the build to one architecture.
+    #[arg(long, value_parser = RUNTIME_ARCHES)]
     arch: Option<String>,
     /// Build only kernel, only rootfs, or both.
     #[arg(long, value_enum, default_value_t = ImageBuildTemplate::All)]
@@ -458,10 +434,7 @@ struct ImageBuildArgs {
 
 #[derive(Debug, Parser)]
 struct ImageWorkspaceArgs {
-    /// Profile TOML that owns the image workspace.
-    #[arg(long)]
-    profile: PathBuf,
-    /// Config root used to resolve profile rule files.
+    /// Config root holding the image build contract under docker/image.
     #[arg(long, default_value = "config")]
     config_root: PathBuf,
     /// Guest image source directory consumed by capsem-builder.
@@ -470,8 +443,8 @@ struct ImageWorkspaceArgs {
     /// Directory to materialize the image workspace into.
     #[arg(long)]
     output: PathBuf,
-    /// Restrict the workspace build plan to one profile architecture.
-    #[arg(long)]
+    /// Restrict the workspace build plan to one architecture.
+    #[arg(long, value_parser = RUNTIME_ARCHES)]
     arch: Option<String>,
     /// Emit a machine-readable workspace report.
     #[arg(long)]
@@ -493,20 +466,14 @@ enum RuleFileSourceArg {
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
-enum ProfileReleaseStatusArg {
+enum ReleaseStatusArg {
     Current,
     Supported,
     Deprecated,
     Revoked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum ProfileRevisionPolicyArg {
-    Strict,
-    SelectedInput,
-}
-
-impl ProfileReleaseStatusArg {
+impl ReleaseStatusArg {
     const fn into_status(self) -> release_graph::Status {
         match self {
             Self::Current => release_graph::Status::Current,
@@ -572,21 +539,18 @@ struct ProfileMaterializeReport {
 }
 
 #[derive(Debug, Serialize)]
-struct ProfileReleaseReport {
+struct RuntimeReleaseReport {
     schema: &'static str,
     ok: bool,
     action: &'static str,
     channel: String,
     manifest: String,
     manifest_version: String,
-    profile: String,
-    profile_version: String,
+    runtime_revision: String,
     publication_identity: String,
     status: release_graph::Status,
     changed_channels: Vec<String>,
     changed_manifests: Vec<String>,
-    changed_profiles: Vec<String>,
-    changed_config_refs: usize,
     changed_image_artifacts: usize,
     compatible_with_current_binary: bool,
 }
@@ -596,10 +560,8 @@ struct ReleaseSelectionReport {
     schema: &'static str,
     ok: bool,
     channel: String,
-    profile: String,
-    profile_revision: String,
+    runtime_revision: String,
     publication_identity: String,
-    profile_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -607,8 +569,7 @@ struct ReleaseDispatchReport {
     schema: &'static str,
     ok: bool,
     channel: String,
-    profile: String,
-    profile_revision: String,
+    runtime_revision: String,
     publication_identity: String,
     source_commit: SourceCommit,
     workflow: &'static str,
@@ -617,7 +578,7 @@ struct ReleaseDispatchReport {
 }
 
 #[derive(Debug, Deserialize)]
-struct ProfileWorkflowRun {
+struct ReleaseWorkflowRun {
     #[serde(rename = "databaseId")]
     database_id: u64,
     #[serde(rename = "displayTitle")]
@@ -630,11 +591,10 @@ struct ProfileWorkflowRun {
     conclusion: String,
 }
 
-fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
+fn dispatch_release_workflow<R: ReleaseWorkflowRunner>(
     runner: &mut R,
     workflow: &str,
     channel: &str,
-    profile: &str,
     source_commit: &SourceCommit,
     dispatch_id: &str,
 ) -> Result<u64> {
@@ -643,9 +603,9 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || ".-_".contains(character))
     {
-        return Err(anyhow!("profile workflow dispatch id is unsafe"));
+        return Err(anyhow!("runtime workflow dispatch id is unsafe"));
     }
-    let title = format!("Release profile {channel}/{profile} {dispatch_id}");
+    let title = format!("Release runtime {channel} {dispatch_id}");
     let source_ref = format!("capsem-source-{source_commit}");
     runner.run(&[
         "workflow".to_string(),
@@ -655,8 +615,6 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
         source_ref.clone(),
         "-f".to_string(),
         format!("channel={channel}"),
-        "-f".to_string(),
-        format!("profile={profile}"),
         "-f".to_string(),
         "dry_run=false".to_string(),
         "-f".to_string(),
@@ -682,26 +640,26 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
             "--json".to_string(),
             "databaseId,displayTitle,headSha,headBranch,status,conclusion".to_string(),
         ])?;
-        let runs: Vec<ProfileWorkflowRun> =
-            serde_json::from_str(&raw).context("GitHub returned invalid profile workflow run JSON")?;
+        let runs: Vec<ReleaseWorkflowRun> =
+            serde_json::from_str(&raw).context("GitHub returned invalid runtime workflow run JSON")?;
         let matches = runs
             .into_iter()
             .filter(|run| run.display_title == title)
             .collect::<Vec<_>>();
         if matches.len() > 1 {
             return Err(anyhow!(
-                "GitHub returned multiple profile workflow runs for correlation {dispatch_id}"
+                "GitHub returned multiple runtime workflow runs for correlation {dispatch_id}"
             ));
         }
         if let Some(run) = matches.first() {
             if run.head_sha != source_commit.as_str() || run.head_branch != source_ref {
                 return Err(anyhow!(
-                    "profile workflow correlation matched the wrong source: {run:?}"
+                    "runtime workflow correlation matched the wrong source: {run:?}"
                 ));
             }
             if run.status == "completed" && run.conclusion != "success" {
                 return Err(anyhow!(
-                    "profile workflow run {} completed with {}",
+                    "runtime workflow run {} completed with {}",
                     run.database_id,
                     run.conclusion
                 ));
@@ -719,8 +677,8 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
                 "--json".to_string(),
                 "databaseId,displayTitle,headSha,headBranch,status,conclusion".to_string(),
             ])?;
-            let completed: ProfileWorkflowRun =
-                serde_json::from_str(&viewed).context("GitHub returned invalid completed profile workflow JSON")?;
+            let completed: ReleaseWorkflowRun =
+                serde_json::from_str(&viewed).context("GitHub returned invalid completed runtime workflow JSON")?;
             if completed.database_id != run.database_id
                 || completed.display_title != title
                 || completed.head_sha != source_commit.as_str()
@@ -728,7 +686,7 @@ fn dispatch_profile_workflow<R: ProfileWorkflowRunner>(
                 || completed.status != "completed"
                 || completed.conclusion != "success"
             {
-                return Err(anyhow!("completed profile workflow identity changed: {completed:?}"));
+                return Err(anyhow!("completed runtime workflow identity changed: {completed:?}"));
             }
             return Ok(run.database_id);
         }
@@ -750,9 +708,9 @@ struct CorporateManifestReport {
     binary_policy: String,
     resolved_binary_version: String,
     official_manifest: String,
-    profile_manifest: String,
+    runtime_manifest: String,
     output_manifest: String,
-    profiles: Vec<String>,
+    runtime_revision: String,
     packages: usize,
 }
 
@@ -884,8 +842,6 @@ struct ManifestAssetReport {
 #[derive(Debug, Serialize)]
 struct ImageBuildPlan {
     schema: &'static str,
-    profile_id: String,
-    profile_revision: String,
     guest_dir: String,
     output: String,
     clean: bool,
@@ -894,47 +850,13 @@ struct ImageBuildPlan {
     commands: Vec<CommandReport>,
 }
 
-#[cfg(test)]
-#[derive(Debug, Serialize)]
-struct ImageVerifyReport {
-    schema: &'static str,
-    ok: bool,
-    profile_id: String,
-    profile_revision: String,
-    output: String,
-    manifest: String,
-    arches: Vec<ImageVerifyArchReport>,
-}
-
 #[derive(Debug, Serialize)]
 struct ImageWorkspaceReport {
     schema: &'static str,
     ok: bool,
-    profile_id: String,
-    profile_revision: String,
     workspace: String,
-    config_root: String,
-    profile_path: String,
-    profile_blake3: String,
     build_plan_path: String,
-    rule_files: Vec<ImageWorkspaceRuleFileReport>,
     arches: Vec<ImageBuildArchPlan>,
-}
-
-#[derive(Debug, Serialize)]
-struct ImageWorkspaceRuleFileReport {
-    kind: &'static str,
-    source: String,
-    path: String,
-    blake3: String,
-    size: u64,
-}
-
-#[cfg(test)]
-#[derive(Debug, Serialize)]
-struct ImageVerifyArchReport {
-    arch: String,
-    assets: Vec<LocalAssetCheckReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -990,8 +912,7 @@ struct AssetsChannelIndex {
     host_sboms: Vec<AssetsChannelBinaryFile>,
     attestations: Vec<AssetsChannelAttestation>,
     vm_oboms: Vec<AssetsChannelAssetFile>,
-    profiles: AssetsChannelProfilesSummary,
-    image_update_state: String,
+    runtime: Option<AssetsChannelRuntimeSummary>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1006,13 +927,10 @@ struct AssetsChannelAssetRelease {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct AssetsChannelProfilesSummary {
+struct AssetsChannelRuntimeSummary {
     revision: String,
-    profile_count: usize,
-    profile_ids: Vec<String>,
-    refresh_policy: String,
     min_binary: String,
-    requires_newer_binary: bool,
+    architectures: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1043,13 +961,13 @@ struct AssetsChannelsCatalogDigest {
     blake3: String,
 }
 
-struct PublishableProfiles {
-    summary: AssetsChannelProfilesSummary,
-    profiles: Vec<serde_json::Value>,
-    file_copies: Vec<ProfileReleaseFileCopy>,
+struct PublishableRuntime {
+    summary: AssetsChannelRuntimeSummary,
+    runtime: serde_json::Value,
+    file_copies: Vec<RuntimeReleaseFileCopy>,
 }
 
-struct ProfileReleaseFileCopy {
+struct RuntimeReleaseFileCopy {
     source: PathBuf,
     url: String,
 }
@@ -1102,7 +1020,7 @@ struct AssetsChannelRecordBinaryReport {
     schema: &'static str,
     manifest: String,
     version: String,
-    min_assets: String,
+    min_assets: Option<String>,
     files: Vec<BinaryFile>,
 }
 
@@ -1200,52 +1118,31 @@ fn profile_materialize_command(args: ProfileMaterializeArgs) -> Result<()> {
     Ok(())
 }
 
-fn validate_release_selection(args: &ReleaseValidateArgs) -> Result<ReleaseSelectionReport> {
-    validate_channel_name(&args.channel)?;
-    let profiles_dir = args.config_root.join("profiles");
-    let catalog = ProfileCatalog::load_from_dir(&profiles_dir)
-        .map_err(|error| anyhow!("load profile directory {}: {error}", profiles_dir.display()))?;
-    let profile = catalog.get(&args.profile).ok_or_else(|| {
-        anyhow!(
-            "profile {} does not exist below {}",
-            args.profile,
-            profiles_dir.display()
-        )
-    })?;
-    let profile_path = profiles_dir.join(&profile.id).join("profile.toml");
-    validate_profile(&profile_path, Some(&args.config_root))?;
-    let publication_identity = profile_publication_identity(&args.channel, &profile.id, &profile.revision)?;
+fn validate_release_selection(channel: &str, source_commit: &SourceCommit) -> Result<ReleaseSelectionReport> {
+    validate_channel_name(channel)?;
+    let runtime_revision = source_commit.runtime_revision();
+    let publication_identity = runtime_publication_identity(channel, &runtime_revision)?;
     Ok(ReleaseSelectionReport {
         schema: "capsem.admin.release_validate.v1",
         ok: true,
-        channel: args.channel.clone(),
-        profile: profile.id.clone(),
-        profile_revision: profile.revision.clone(),
+        channel: channel.to_string(),
+        runtime_revision,
         publication_identity,
-        profile_path: profile_path.display().to_string(),
     })
 }
 
 fn release_validate_command(args: ReleaseValidateArgs) -> Result<()> {
-    let report = validate_release_selection(&args)?;
+    let report = validate_release_selection(&args.channel, &args.source_commit)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        println!(
-            "valid: {}/{} revision {}",
-            report.channel, report.profile, report.profile_revision
-        );
+        println!("valid: {} runtime {}", report.channel, report.runtime_revision);
     }
     Ok(())
 }
 
 fn release_command(args: ReleaseArgs) -> Result<()> {
-    let selection = validate_release_selection(&ReleaseValidateArgs {
-        channel: args.channel.clone(),
-        profile: args.profile.clone(),
-        config_root: args.config_root.clone(),
-        json: args.json,
-    })?;
+    let selection = validate_release_selection(&args.channel, &args.source_commit)?;
     let bootstrap = match (
         args.bootstrap_from_manifest.as_deref(),
         args.bootstrap_retired_manifest.as_deref(),
@@ -1269,7 +1166,11 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
             .get("channel")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| anyhow!("bootstrap input is missing its channel"))?;
-        validate_assets_channel_graph_manifest(&input, input_channel)?;
+        // A retired graph is authorized by its exact bytes, not by its shape:
+        // it is the old public document this release replaces.
+        if retired_sha256.is_none() {
+            validate_assets_channel_graph_manifest(&input, input_channel)?;
+        }
         let bootstrapped = if retired_sha256.is_some() {
             channel_bootstrap::bootstrap_retired_first_party_channel_source(&args.channel, &input)?
         } else {
@@ -1286,8 +1187,7 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
             "schema": "capsem.admin.release_bootstrap.v1",
             "ok": true,
             "channel": args.channel,
-            "profile": selection.profile,
-            "profile_revision": selection.profile_revision,
+            "runtime_revision": selection.runtime_revision,
             "publication_identity": selection.publication_identity,
             "input_channel": input_channel,
             "donor_channel": if retired_sha256.is_none() {
@@ -1308,22 +1208,21 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
             println!(
-                "bootstrapped {}/{} source manifest from verified {} input",
+                "bootstrapped {} source manifest from verified {} input",
                 report["channel"].as_str().unwrap_or("channel"),
-                report["profile"].as_str().unwrap_or("profile"),
                 input_channel
             );
         }
         return Ok(());
     }
     if args.manifest_path.is_some() {
-        let report = apply_profile_release_status(&args)?;
+        let report = apply_runtime_release_status(&args)?;
         if args.json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
             println!(
-                "release: profile {} {} in channel {} manifest {}",
-                report.profile,
+                "release: runtime {} {} in channel {} manifest {}",
+                report.runtime_revision,
                 serde_json::to_value(report.status)?.as_str().unwrap_or("status"),
                 report.channel,
                 report.manifest_version
@@ -1337,17 +1236,16 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
         None
     } else {
         let identity = &selection.publication_identity;
-        ensure_publication_identity_is_free(&mut GhProfileWorkflowRunner, identity, &args.source_commit)?;
+        ensure_publication_identity_is_free(&mut GhReleaseWorkflowRunner, identity, &args.source_commit)?;
         let dispatch_id = format!(
             "capsem-admin-{}-{}",
             std::process::id(),
             OffsetDateTime::now_utc().unix_timestamp_nanos()
         );
-        Some(dispatch_profile_workflow(
-            &mut GhProfileWorkflowRunner,
+        Some(dispatch_release_workflow(
+            &mut GhReleaseWorkflowRunner,
             workflow,
             &args.channel,
-            &args.profile,
             &args.source_commit,
             &dispatch_id,
         )?)
@@ -1356,8 +1254,7 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
         schema: "capsem.admin.release_dispatch.v1",
         ok: true,
         channel: args.channel,
-        profile: args.profile,
-        profile_revision: selection.profile_revision,
+        runtime_revision: selection.runtime_revision,
         publication_identity: selection.publication_identity,
         source_commit: args.source_commit.clone(),
         workflow,
@@ -1368,11 +1265,10 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "{}: {}/{} revision {} via {}{}",
+            "{}: {} runtime {} via {}{}",
             if report.dispatched { "dispatched" } else { "validated" },
             report.channel,
-            report.profile,
-            report.profile_revision,
+            report.runtime_revision,
             report.workflow,
             report.run_id.map(|run_id| format!(" run {run_id}")).unwrap_or_default()
         );
@@ -1391,27 +1287,27 @@ fn verify_retired_graph_sha256(bytes: &[u8], expected: &channel_bootstrap::Retir
     Ok(())
 }
 
-fn apply_profile_release_status(args: &ReleaseArgs) -> Result<ProfileReleaseReport> {
+fn apply_runtime_release_status(args: &ReleaseArgs) -> Result<RuntimeReleaseReport> {
     let manifest_path = args
         .manifest_path
         .as_ref()
-        .ok_or_else(|| anyhow!("internal profile publication requires --manifest-path"))?;
+        .ok_or_else(|| anyhow!("internal runtime publication requires --manifest-path"))?;
     let manifest_version = args
         .manifest_version
         .as_deref()
-        .ok_or_else(|| anyhow!("internal profile publication requires --manifest-version"))?;
-    let profile_version = args
-        .profile_version
+        .ok_or_else(|| anyhow!("internal runtime publication requires --manifest-version"))?;
+    let runtime_revision = args
+        .runtime_revision
         .as_deref()
-        .ok_or_else(|| anyhow!("internal profile publication requires --profile-version"))?;
+        .ok_or_else(|| anyhow!("internal runtime publication requires --runtime-revision"))?;
     let status = args.status.into_status();
     if let Some(candidate_manifest) = args.candidate_manifest.as_deref() {
-        return merge_graph_profile_release(
+        return merge_graph_runtime_release(
             args,
             manifest_path,
             candidate_manifest,
             manifest_version,
-            profile_version,
+            runtime_revision,
             status,
         );
     }
@@ -1427,74 +1323,64 @@ fn apply_profile_release_status(args: &ReleaseArgs) -> Result<ProfileReleaseRepo
             manifest_version
         ));
     }
-    let profile = manifest.profiles.get_mut(&args.profile).ok_or_else(|| {
-        anyhow!(
-            "manifest {} does not list profile {}",
-            manifest_path.display(),
-            args.profile
-        )
-    })?;
-    if profile.revision != profile_version {
+    let runtime = manifest
+        .runtime
+        .as_mut()
+        .ok_or_else(|| anyhow!("manifest {} does not publish a runtime", manifest_path.display()))?;
+    if runtime.revision != runtime_revision {
         return Err(anyhow!(
-            "profile {} has revision {}, expected {}",
-            args.profile,
-            profile.revision,
-            profile_version
+            "runtime has revision {}, expected {}",
+            runtime.revision,
+            runtime_revision
         ));
     }
 
-    profile.validate_profile_ownership()?;
-    profile.status = status;
-    let mut changed_config_refs = 0;
+    runtime.validate()?;
+    runtime.status = status;
     let mut changed_image_artifacts = 0;
-    for architecture in &mut profile.architectures {
-        for config in &mut architecture.config {
-            if config.status != status {
-                changed_config_refs += 1;
-            }
-            config.status = status;
-        }
-        for artifact in &mut architecture.artifacts {
-            if artifact.status != status {
+    for architecture in &mut runtime.architectures {
+        for image in &mut architecture.images {
+            if image.status != status {
                 changed_image_artifacts += 1;
             }
-            artifact.status = status;
+            image.status = status;
         }
     }
-    profile.validate_profile_ownership()?;
+    runtime.validate()?;
 
     let updated = serde_json::to_vec_pretty(&manifest)?;
     fs::write(manifest_path, [&updated[..], b"\n"].concat())
         .with_context(|| format!("write release manifest {}", manifest_path.display()))?;
 
-    Ok(ProfileReleaseReport {
-        schema: "capsem.admin.profile_release.v1",
+    Ok(RuntimeReleaseReport {
+        schema: "capsem.admin.runtime_release.v1",
         ok: true,
         action: "release",
         channel: args.channel.clone(),
         manifest: manifest_path.display().to_string(),
         manifest_version: manifest_version.to_string(),
-        profile: args.profile.clone(),
-        profile_version: profile_version.to_string(),
-        publication_identity: profile_publication_identity(&args.channel, &args.profile, profile_version)?,
+        runtime_revision: runtime_revision.to_string(),
+        publication_identity: runtime_publication_identity(&args.channel, runtime_revision)?,
         status,
         changed_channels: vec![args.channel.clone()],
         changed_manifests: vec![manifest_version.to_string()],
-        changed_profiles: vec![args.profile.clone()],
-        changed_config_refs,
         changed_image_artifacts,
         compatible_with_current_binary: true,
     })
 }
 
-fn merge_graph_profile_release(
+/// Publish the candidate's runtime into the channel source manifest.
+///
+/// A channel carries one runtime, so the candidate's replaces whatever the
+/// source manifest held; the package cohort is left exactly as it was.
+fn merge_graph_runtime_release(
     args: &ReleaseArgs,
     manifest_path: &Path,
     candidate_manifest: &Path,
     manifest_version: &str,
-    profile_version: &str,
+    runtime_revision: &str,
     status: release_graph::Status,
-) -> Result<ProfileReleaseReport> {
+) -> Result<RuntimeReleaseReport> {
     let mut base: serde_json::Value = serde_json::from_slice(
         &fs::read(manifest_path).with_context(|| format!("read release manifest {}", manifest_path.display()))?,
     )
@@ -1506,122 +1392,103 @@ fn merge_graph_profile_release(
     .with_context(|| format!("parse candidate manifest {}", candidate_manifest.display()))?;
     validate_assets_channel_graph_manifest(&base, &args.channel)?;
     validate_assets_channel_graph_manifest(&candidate, &args.channel)?;
-    let mut profile = candidate
-        .get("profiles")
-        .and_then(|value| value.get(&args.profile))
-        .cloned()
-        .ok_or_else(|| {
-            anyhow!(
-                "candidate manifest {} does not list profile {}",
-                candidate_manifest.display(),
-                args.profile
-            )
-        })?;
+    let mut runtime = graph_runtime(&candidate).cloned().ok_or_else(|| {
+        anyhow!(
+            "candidate manifest {} does not publish a runtime",
+            candidate_manifest.display()
+        )
+    })?;
     if let Some(publication_base) = args.publication_base.as_deref() {
-        rewrite_profile_publication_urls(&mut profile, publication_base)?;
+        rewrite_runtime_publication_urls(&mut runtime, publication_base)?;
     }
-    let revision = profile
+    let revision = runtime
         .get("revision")
         .and_then(|value| value.as_str())
-        .ok_or_else(|| anyhow!("candidate profile {} has no revision", args.profile))?;
-    if revision != profile_version {
+        .ok_or_else(|| anyhow!("candidate runtime has no revision"))?;
+    if revision != runtime_revision {
         return Err(anyhow!(
-            "profile {} has revision {}, expected {}",
-            args.profile,
-            revision,
-            profile_version
+            "candidate runtime has revision {revision}, expected {runtime_revision}"
         ));
     }
-    if let Some(existing) = profile.get("source_commit") {
+    if let Some(existing) = runtime.get("source_commit") {
         let existing = existing
             .as_str()
-            .ok_or_else(|| anyhow!("candidate profile source_commit must be a string"))?
+            .ok_or_else(|| anyhow!("candidate runtime source_commit must be a string"))?
             .parse::<SourceCommit>()?;
         if existing.as_str() != args.source_commit.as_str() {
             return Err(anyhow!(
-                "candidate profile {} was built from {}, not selected source {}",
-                args.profile,
-                existing,
+                "candidate runtime {runtime_revision} was built from {existing}, not selected source {}",
                 args.source_commit
             ));
         }
     }
-    let compatible = graph_profile_matches_current_binary(&profile, &base)?;
-    profile["source_commit"] = serde_json::to_value(&args.source_commit)?;
+    let compatible = graph_runtime_matches_current_binary(&runtime, &base)?;
+    runtime["source_commit"] = serde_json::to_value(&args.source_commit)?;
     let status_value = serde_json::to_value(status)?;
-    profile["status"] = status_value.clone();
-    let mut changed_config_refs = 0;
+    runtime["status"] = status_value.clone();
     let mut changed_image_artifacts = 0;
-    if let Some(architectures) = profile
+    for architecture in runtime
         .get_mut("architectures")
         .and_then(serde_json::Value::as_array_mut)
+        .into_iter()
+        .flatten()
     {
-        for architecture in architectures {
-            for (field, changed) in [
-                ("config", &mut changed_config_refs),
-                ("images", &mut changed_image_artifacts),
-            ] {
-                if let Some(rows) = architecture.get_mut(field).and_then(serde_json::Value::as_array_mut) {
-                    for row in rows {
-                        if row.get("status") != Some(&status_value) {
-                            *changed += 1;
-                        }
-                        row["status"] = status_value.clone();
-                    }
-                }
+        for image in architecture
+            .get_mut("images")
+            .and_then(serde_json::Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if image.get("status") != Some(&status_value) {
+                changed_image_artifacts += 1;
             }
+            image["status"] = status_value.clone();
         }
     }
     base["version"] = serde_json::Value::String(manifest_version.to_string());
-    base["profiles"]
-        .as_object_mut()
-        .ok_or_else(|| anyhow!("base manifest profiles must be an object"))?
-        .insert(args.profile.clone(), profile);
+    base["runtime"] = runtime;
     validate_assets_channel_graph_manifest(&base, &args.channel)?;
-    let mut bytes = serde_json::to_vec_pretty(&base).context("serialize merged profile manifest")?;
+    let mut bytes = serde_json::to_vec_pretty(&base).context("serialize merged runtime manifest")?;
     bytes.push(b'\n');
     fs::write(manifest_path, bytes).with_context(|| format!("write release manifest {}", manifest_path.display()))?;
-    Ok(ProfileReleaseReport {
-        schema: "capsem.admin.profile_release.v1",
+    Ok(RuntimeReleaseReport {
+        schema: "capsem.admin.runtime_release.v1",
         ok: true,
         action: "release",
         channel: args.channel.clone(),
         manifest: manifest_path.display().to_string(),
         manifest_version: manifest_version.to_string(),
-        profile: args.profile.clone(),
-        profile_version: profile_version.to_string(),
-        publication_identity: profile_publication_identity(&args.channel, &args.profile, profile_version)?,
+        runtime_revision: runtime_revision.to_string(),
+        publication_identity: runtime_publication_identity(&args.channel, runtime_revision)?,
         status,
         changed_channels: vec![args.channel.clone()],
         changed_manifests: vec![manifest_version.to_string()],
-        changed_profiles: vec![args.profile.clone()],
-        changed_config_refs,
         changed_image_artifacts,
         compatible_with_current_binary: compatible,
     })
 }
 
-fn graph_profile_matches_current_binary(profile: &serde_json::Value, manifest: &serde_json::Value) -> Result<bool> {
-    let minimum = profile
+fn graph_runtime_matches_current_binary(runtime: &serde_json::Value, manifest: &serde_json::Value) -> Result<bool> {
+    let minimum = runtime
         .get("min_capsem_version")
         .and_then(serde_json::Value::as_str)
         .map(|minimum| {
             semver::Version::parse(minimum)
-                .with_context(|| format!("profile minimum Capsem version is invalid: {minimum}"))
+                .with_context(|| format!("runtime minimum Capsem version is invalid: {minimum}"))
         })
         .transpose()?;
-    let maximum = profile
+    let maximum = runtime
         .get("max_capsem_version")
         .and_then(serde_json::Value::as_str)
         .map(|maximum| {
             semver::Version::parse(maximum)
-                .with_context(|| format!("profile maximum Capsem version is invalid: {maximum}"))
+                .with_context(|| format!("runtime maximum Capsem version is invalid: {maximum}"))
         })
         .transpose()?;
     if let (Some(minimum), Some(maximum)) = (&minimum, &maximum) {
         if minimum > maximum {
             return Err(anyhow!(
-                "profile minimum Capsem version {minimum} exceeds maximum {maximum}"
+                "runtime minimum Capsem version {minimum} exceeds maximum {maximum}"
             ));
         }
     }
@@ -1648,54 +1515,56 @@ fn graph_profile_matches_current_binary(profile: &serde_json::Value, manifest: &
     }))
 }
 
-fn validate_graph_profiles_match_current_binary(manifest: &serde_json::Value) -> Result<()> {
-    let profiles = manifest
-        .get("profiles")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| anyhow!("graph manifest profiles must be an object"))?;
-    for (profile_id, profile) in profiles {
-        if profile.get("status").and_then(serde_json::Value::as_str) == Some("revoked") {
-            continue;
-        }
-        if !graph_profile_matches_current_binary(profile, manifest)? {
-            let minimum = profile
-                .get("min_capsem_version")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unbounded");
-            let maximum = profile
-                .get("max_capsem_version")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unbounded");
-            return Err(anyhow!(
-                "profile {profile_id} is incompatible with current packages \
-                 (minimum Capsem {minimum}, maximum Capsem {maximum})"
-            ));
-        }
+/// A public graph's runtime must boot with the package cohort it ships beside.
+fn validate_graph_runtime_matches_current_binary(manifest: &serde_json::Value) -> Result<()> {
+    let Some(runtime) = graph_runtime(manifest) else {
+        return Ok(());
+    };
+    if runtime.get("status").and_then(serde_json::Value::as_str) == Some("revoked") {
+        return Ok(());
+    }
+    if !graph_runtime_matches_current_binary(runtime, manifest)? {
+        let minimum = runtime
+            .get("min_capsem_version")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unbounded");
+        let maximum = runtime
+            .get("max_capsem_version")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unbounded");
+        let revision = runtime
+            .get("revision")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        return Err(anyhow!(
+            "runtime {revision} is incompatible with current packages \
+             (minimum Capsem {minimum}, maximum Capsem {maximum})"
+        ));
     }
     Ok(())
 }
 
-fn rewrite_profile_publication_urls(profile: &mut serde_json::Value, publication_base: &str) -> Result<()> {
+fn rewrite_runtime_publication_urls(runtime: &mut serde_json::Value, publication_base: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(publication_base)
-        .with_context(|| format!("profile publication base is not a URL: {publication_base}"))?;
+        .with_context(|| format!("runtime publication base is not a URL: {publication_base}"))?;
     if parsed.scheme() != "https" {
-        return Err(anyhow!("profile publication base must use HTTPS"));
+        return Err(anyhow!("runtime publication base must use HTTPS"));
     }
-    let architectures = profile
+    let architectures = runtime
         .get_mut("architectures")
         .and_then(serde_json::Value::as_array_mut)
-        .ok_or_else(|| anyhow!("candidate profile architectures must be an array"))?;
+        .ok_or_else(|| anyhow!("candidate runtime architectures must be an array"))?;
     for architecture in architectures {
         let arch = architecture
             .get("architecture")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow!("candidate profile architecture has no name"))?
+            .ok_or_else(|| anyhow!("candidate runtime architecture has no name"))?
             .to_string();
-        for field in ["config", "images", "evidence"] {
+        for field in ["images", "evidence"] {
             let rows = architecture
                 .get_mut(field)
                 .and_then(serde_json::Value::as_array_mut)
-                .ok_or_else(|| anyhow!("candidate profile architecture has no {field} array"))?;
+                .ok_or_else(|| anyhow!("candidate runtime architecture has no {field} array"))?;
             for row in rows {
                 let file_name = row
                     .get("name")
@@ -1705,19 +1574,13 @@ fn rewrite_profile_publication_urls(profile: &mut serde_json::Value, publication
                             .and_then(serde_json::Value::as_str)
                             .and_then(|url| url.rsplit('/').next())
                     })
-                    .or_else(|| {
-                        row.get("path")
-                            .and_then(serde_json::Value::as_str)
-                            .and_then(|path| Path::new(path).file_name())
-                            .and_then(|name| name.to_str())
-                    })
-                    .ok_or_else(|| anyhow!("candidate profile {field} row has no publication file name"))?;
+                    .ok_or_else(|| anyhow!("candidate runtime {field} row has no publication file name"))?;
                 if file_name.is_empty()
                     || !file_name
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
                 {
-                    return Err(anyhow!("candidate profile {field} file name is unsafe: {file_name}"));
+                    return Err(anyhow!("candidate runtime {field} file name is unsafe: {file_name}"));
                 }
                 let publication_name = if file_name.starts_with(&format!("{arch}-")) {
                     file_name.to_string()
@@ -1734,30 +1597,30 @@ fn rewrite_profile_publication_urls(profile: &mut serde_json::Value, publication
         let software_inventory_urls = architecture
             .get("evidence")
             .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| anyhow!("candidate profile architecture has no evidence array"))?
+            .ok_or_else(|| anyhow!("candidate runtime architecture has no evidence array"))?
             .iter()
             .filter(|row| row.get("kind").and_then(serde_json::Value::as_str) == Some("software_inventory"))
             .map(|row| {
                 row.get("url")
                     .and_then(serde_json::Value::as_str)
                     .map(ToOwned::to_owned)
-                    .ok_or_else(|| anyhow!("candidate profile software_inventory evidence has no publication URL"))
+                    .ok_or_else(|| anyhow!("candidate runtime software_inventory evidence has no publication URL"))
             })
             .collect::<Result<Vec<_>>>()?;
         let software = architecture
             .get_mut("software")
             .and_then(serde_json::Value::as_array_mut)
-            .ok_or_else(|| anyhow!("candidate profile architecture has no software array"))?;
+            .ok_or_else(|| anyhow!("candidate runtime architecture has no software array"))?;
         if !software.is_empty() {
             let [software_inventory_url] = software_inventory_urls.as_slice() else {
                 return Err(anyhow!(
-                    "candidate profile architecture must have exactly one software_inventory \
+                    "candidate runtime architecture must have exactly one software_inventory \
                      evidence URL for its software rows"
                 ));
             };
             for row in software {
                 if !row.is_object() || row.get("evidence").and_then(serde_json::Value::as_str).is_none() {
-                    return Err(anyhow!("candidate profile software row has no evidence URL"));
+                    return Err(anyhow!("candidate runtime software row has no evidence URL"));
                 }
                 row["evidence"] = serde_json::Value::String(software_inventory_url.to_string());
             }
@@ -1891,54 +1754,48 @@ fn corporate_manifest_command(args: ManifestCorporateArgs) -> Result<()> {
 
 fn author_corporate_manifest(args: &ManifestCorporateArgs) -> Result<CorporateManifestReport> {
     validate_corporate_namespace(&args.corporation, &args.channel)?;
-    validate_corporate_profile_base(&args.profile_base)?;
+    validate_corporate_runtime_base(&args.runtime_base)?;
 
     let official_bytes = fs::read(&args.official_manifest)
         .with_context(|| format!("read official Capsem manifest {}", args.official_manifest.display()))?;
     let official: serde_json::Value = serde_json::from_slice(&official_bytes)
         .with_context(|| format!("parse official Capsem manifest {}", args.official_manifest.display()))?;
 
-    let profile_bytes = fs::read(&args.profile_manifest)
-        .with_context(|| format!("read corporate profile manifest {}", args.profile_manifest.display()))?;
-    let mut profile_source: serde_json::Value = serde_json::from_slice(&profile_bytes)
-        .with_context(|| format!("parse corporate profile manifest {}", args.profile_manifest.display()))?;
+    let runtime_bytes = fs::read(&args.runtime_manifest)
+        .with_context(|| format!("read corporate runtime manifest {}", args.runtime_manifest.display()))?;
+    let runtime_source: serde_json::Value = serde_json::from_slice(&runtime_bytes)
+        .with_context(|| format!("parse corporate runtime manifest {}", args.runtime_manifest.display()))?;
     let (resolved_version, packages) = select_official_packages(&official, &args.binary)?;
-    let referenced_packages = profile_source
+    let referenced_packages = runtime_source
         .get("packages")
         .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow!("corporate profile manifest packages must be an array"))?;
+        .ok_or_else(|| anyhow!("corporate runtime manifest packages must be an array"))?;
     if !referenced_packages.is_empty() && referenced_packages != &packages {
         return Err(anyhow!(
-            "corporate profile manifest may reference only the selected official packages"
+            "corporate runtime manifest may reference only the selected official packages"
         ));
     }
-    let profiles = profile_source
-        .get_mut("profiles")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| anyhow!("corporate profile manifest profiles must be an object"))?;
-    if profiles.is_empty() {
-        return Err(anyhow!("corporate profile manifest must contain at least one profile"));
-    }
-    for (profile_id, profile) in profiles.iter_mut() {
-        profile["source_commit"] = serde_json::to_value(&args.source_commit)?;
-        validate_corporate_profile_document(profile_id, profile, &args.profile_base, &resolved_version)?;
-    }
+    let mut runtime = graph_runtime(&runtime_source)
+        .cloned()
+        .ok_or_else(|| anyhow!("corporate runtime manifest must contain a runtime"))?;
+    runtime["source_commit"] = serde_json::to_value(&args.source_commit)?;
+    let runtime_revision = validate_corporate_runtime_document(&runtime, &args.runtime_base, &resolved_version)?;
 
     let manifest = serde_json::json!({
         "version": args.manifest_version,
         "channel": args.channel,
         "status": "current",
         "packages": packages,
-        "profiles": profiles,
+        "runtime": runtime,
     });
     validate_assets_channel_graph_manifest(&manifest, &args.channel)?;
     let output_dir = corporate_manifest_output_dir(args)?;
     let output_path = output_dir.join("manifest.json");
     let official_canonical = fs::canonicalize(&args.official_manifest)
         .with_context(|| format!("resolve official Capsem manifest {}", args.official_manifest.display()))?;
-    let profile_canonical = fs::canonicalize(&args.profile_manifest)
-        .with_context(|| format!("resolve corporate profile manifest {}", args.profile_manifest.display()))?;
-    if output_path == official_canonical || output_path == profile_canonical {
+    let runtime_canonical = fs::canonicalize(&args.runtime_manifest)
+        .with_context(|| format!("resolve corporate runtime manifest {}", args.runtime_manifest.display()))?;
+    if output_path == official_canonical || output_path == runtime_canonical {
         return Err(anyhow!("corporate output must not overwrite an authoring input"));
     }
 
@@ -1958,9 +1815,9 @@ fn author_corporate_manifest(args: &ManifestCorporateArgs) -> Result<CorporateMa
         binary_policy: args.binary.clone(),
         resolved_binary_version: resolved_version.to_string(),
         official_manifest: args.official_manifest.display().to_string(),
-        profile_manifest: args.profile_manifest.display().to_string(),
+        runtime_manifest: args.runtime_manifest.display().to_string(),
         output_manifest: output_path.display().to_string(),
-        profiles: profiles.keys().cloned().collect(),
+        runtime_revision,
         packages: packages.len(),
     })
 }
@@ -1974,68 +1831,63 @@ fn validate_corporate_namespace(corporation: &str, channel: &str) -> Result<()> 
     Ok(())
 }
 
-fn validate_corporate_profile_base(profile_base: &str) -> Result<()> {
-    if !profile_base.starts_with("https://") || !profile_base.ends_with('/') {
+fn validate_corporate_runtime_base(runtime_base: &str) -> Result<()> {
+    if !runtime_base.starts_with("https://") || !runtime_base.ends_with('/') {
         return Err(anyhow!(
-            "corporate profile base must be an HTTPS directory URL ending in '/'"
+            "corporate runtime base must be an HTTPS directory URL ending in '/'"
         ));
     }
     Ok(())
 }
 
-fn validate_corporate_profile_document(
-    profile_id: &str,
-    profile: &serde_json::Value,
-    profile_base: &str,
+/// Check the corporation's runtime against the selected Capsem and its owned
+/// base, returning its revision.
+fn validate_corporate_runtime_document(
+    runtime: &serde_json::Value,
+    runtime_base: &str,
     selected_version: &semver::Version,
-) -> Result<()> {
-    let embedded_id = require_json_string(profile, &["id"])?;
-    if embedded_id != profile_id {
-        return Err(anyhow!(
-            "corporate profile key {profile_id} does not match profile id {embedded_id}"
-        ));
-    }
-    require_json_string(profile, &["revision"])?;
-    let architectures = profile
+) -> Result<String> {
+    let revision = require_json_string(runtime, &["revision"])?;
+    let architectures = runtime
         .get("architectures")
         .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow!("corporate profile {profile_id} architectures must be an array"))?;
+        .ok_or_else(|| anyhow!("corporate runtime {revision} architectures must be an array"))?;
     if architectures.is_empty() {
-        return Err(anyhow!("corporate profile {profile_id} must list architectures"));
+        return Err(anyhow!("corporate runtime {revision} must list architectures"));
     }
-    if let Some(minimum) = profile.get("min_capsem_version").and_then(serde_json::Value::as_str) {
+    if let Some(minimum) = runtime.get("min_capsem_version").and_then(serde_json::Value::as_str) {
         let minimum = semver::Version::parse(minimum)
-            .with_context(|| format!("corporate profile {profile_id} minimum Capsem version is invalid: {minimum}"))?;
+            .with_context(|| format!("corporate runtime {revision} minimum Capsem version is invalid: {minimum}"))?;
         if selected_version < &minimum {
             return Err(anyhow!(
-                "corporate profile {profile_id} requires Capsem {minimum} or newer, selected {selected_version}"
+                "corporate runtime {revision} requires Capsem {minimum} or newer, selected {selected_version}"
             ));
         }
     }
-    if let Some(maximum) = profile.get("max_capsem_version").and_then(serde_json::Value::as_str) {
+    if let Some(maximum) = runtime.get("max_capsem_version").and_then(serde_json::Value::as_str) {
         let maximum = semver::Version::parse(maximum)
-            .with_context(|| format!("corporate profile {profile_id} maximum Capsem version is invalid: {maximum}"))?;
+            .with_context(|| format!("corporate runtime {revision} maximum Capsem version is invalid: {maximum}"))?;
         if selected_version > &maximum {
             return Err(anyhow!(
-                "corporate profile {profile_id} supports at most Capsem {maximum}, selected {selected_version}"
+                "corporate runtime {revision} supports at most Capsem {maximum}, selected {selected_version}"
             ));
         }
     }
-    validate_corporate_reference_tree(profile_id, profile, None, profile_base)?;
-    Ok(())
+    validate_corporate_reference_tree(&revision, runtime, None, runtime_base)?;
+    Ok(revision)
 }
 
 fn validate_corporate_reference_tree(
-    profile_id: &str,
+    revision: &str,
     value: &serde_json::Value,
     key: Option<&str>,
-    profile_base: &str,
+    runtime_base: &str,
 ) -> Result<()> {
     if matches!(key, Some("url" | "evidence")) {
         if let Some(reference) = value.as_str() {
-            if !reference.starts_with(profile_base) {
+            if !reference.starts_with(runtime_base) {
                 return Err(anyhow!(
-                    "corporate profile {profile_id} reference is outside the owned profile base: {reference}"
+                    "corporate runtime {revision} reference is outside the owned runtime base: {reference}"
                 ));
             }
             return Ok(());
@@ -2044,12 +1896,12 @@ fn validate_corporate_reference_tree(
     match value {
         serde_json::Value::Array(rows) => {
             for row in rows {
-                validate_corporate_reference_tree(profile_id, row, key, profile_base)?;
+                validate_corporate_reference_tree(revision, row, key, runtime_base)?;
             }
         }
         serde_json::Value::Object(fields) => {
             for (field, child) in fields {
-                validate_corporate_reference_tree(profile_id, child, Some(field), profile_base)?;
+                validate_corporate_reference_tree(revision, child, Some(field), runtime_base)?;
             }
         }
         _ => {}
@@ -2133,12 +1985,3 @@ fn corporate_manifest_output_dir(args: &ManifestCorporateArgs) -> Result<PathBuf
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-#[derive(Debug)]
-struct ImageVerifyArgs {
-    profile: PathBuf,
-    config_root: PathBuf,
-    output: PathBuf,
-    manifest: Option<PathBuf>,
-    arch: Option<String>,
-}

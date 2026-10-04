@@ -14,7 +14,7 @@ Never fix code before you understand why it broke. The temptation to "just make 
 Capsem now has two distinct execution surfaces:
 
 - Just exposes the small public product interface.
-- Python under `src/capsem/gate/` owns build/test/release plans, graph edges,
+- Python under `build_system/builder/gate/` owns build/test/release plans, graph edges,
   locking, resources, evidence, and cleanup.
 
 For a gate failure, debug the Python step and action that failed; do not infer
@@ -73,7 +73,7 @@ outputs with current source and therefore answers only whether the new segment
 can proceed. It does not prove the complete current tree.
 
 Never use diagnostic continuation with `release-binaries` or
-`release-profile`, and never let it authorize publication. After the fix, use
+`release-assets`, and never let it authorize publication. After the fix, use
 the smallest owning `focus-test` group. Run `just test <commit>` when complete
 local whole-system proof is useful. It is not required before release: the
 hosted release lane owns qualification and never consumes the local journal.

@@ -103,7 +103,8 @@ def test_reinstall_updates_initrd_when_only_initrd_hash_changes(tmp_path: Path) 
         ["bash", str(SCRIPT), str(bin_src), str(assets_v1), str(config)], env=env, check=True
     )
     assert (capsem_home / "assets" / arch / initrd_v1).exists()
-    assert (capsem_home / "profiles" / "code" / "profile.toml").exists()
+    # Installs carry no profile catalog: the VM assets are one runtime.
+    assert not (capsem_home / "profiles").exists()
 
     subprocess.run(
         ["bash", str(SCRIPT), str(bin_src), str(assets_v2), str(config)], env=env, check=True

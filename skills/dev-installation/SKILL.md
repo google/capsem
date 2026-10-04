@@ -75,7 +75,8 @@ and development installs, records that URL in packaged
 `manifest-metadata.json`, hydrates the live manifest through
 `capsem update --assets --manifest <URL>` during postinstall, installs/restarts
 service files, and writes timestamped install logs. Packages do not carry a
-`~/.capsem/assets/manifest.json` payload. They do not run an AI-provider setup wizard and
+`~/.capsem/assets/manifest.json` payload, and they ship no profile catalog: VM
+assets are the channel's one runtime, hydrated from the manifest. They do not run an AI-provider setup wizard and
 they do not create a user policy file.
 
 Postinstall writes the selected verified release document unchanged to
@@ -129,14 +130,14 @@ retry after failure; postinstall removes both only after success.
 - `read_cached_update_notice()` -> sync file read on every command
 - `refresh_update_cache_if_stale()` -> background 24h-cached check merged atomically into the installed `manifest-metadata.json` sidecar
 - `run_update()` -> check the selected manifest URL and stage one complete compatible release transaction before mutating the installation
-- `capsem update --yes` -> verifies every changed package/profile artifact, prints the tested package-manager apply command for audit, executes it through `sudo` when the native package changes, and atomically activates the selected profile graph; this is the one ordinary update path used by the installed service
+- `capsem update --yes` -> verifies every changed package/runtime artifact, prints the tested package-manager apply command for audit, executes it through `sudo` when the native package changes, and atomically activates the selected release graph; this is the one ordinary update path used by the installed service
 - `capsem update --assets` -> low-level diagnostic/repair rail for hydrating the locally installed manifest or an explicit `--manifest` URL; normal product surfaces never direct users to apply assets separately
 - Corporate VM asset channels use `capsem update --assets --manifest <URL>`; `--corp <URL>` provisions policy config and must not be combined with `--assets`
 - `--manifest` and `--corp` are URL-only inputs. Local files must use `file:///absolute/path`, while hosted release and corporate channels use `https://...` or `http://...`; bare paths are rejected so update checks share one URL-based mechanism.
 - Stable/nightly switching uses the one complete installed transaction: `capsem update --yes --channel <stable|nightly>`. Explicit channel transitions may downgrade; Linux uses `apt-get --allow-downgrades`. The single metadata file records the installed manifest URL separately from the most recently checked URL.
 - An explicit corporate asset manifest moves the installation into a one-way locked channel. Persist `channel_kind=corporate` and `channel_locked=true`; later public-channel or different-manifest selections must fail before fetch or mutation.
-- Profile-owned images/configs/evidence belong to the selected channel/profile. Updating the co-work nightly profile can refresh only nightly co-work image/config refs and matching digests; it must not mutate stable, packages, per-binary inventory, or other profiles.
-- Profiles may set `min_capsem_version` when a profile requires newer client behavior. That is the compatibility hook; profiles must not point at the selected Capsem binary.
+- Runtime images/evidence belong to the selected channel's one `runtime` document. Updating the nightly runtime can refresh only nightly runtime image refs and matching digests; it must not mutate stable, packages, or per-binary inventory.
+- The runtime may set `min_capsem_version` when it requires newer client behavior. That is the compatibility hook; the runtime must not point at the selected Capsem binary.
 - Layout detection: MacosPkg, LinuxDeb, UserDir, Development (development bails with "build from source")
 - Pre-updater installed binaries cannot be retrofitted through the release
   channel. If a shipped binary prints "Binary self-update is not yet wired up",
@@ -182,7 +183,7 @@ macOS, run `python3 build_system/packaging/macos/macos_release_glowup.py` for th
 install, receipt/app/binary verification, and service health. Because Tart
 macOS guests cannot expose nested virtualization, the recipe then extracts the
 same package on the physical Mac and boots a real Capsem guest from its exact
-binary/profile payload to a shell marker. Both focused scripts remain
+binary/runtime payload to a shell marker. Both focused scripts remain
 debugging tools; `just test` is the release gate that owns them.
 
 The Linux qualification image is a visible four-step graph: capacity,
@@ -195,10 +196,10 @@ exact platform-child ID before use; the child ID is evidence but is not itself
 runnable on every containerd store. Do not repair a failure with runtime apt,
 pnpm, uv sync --project build_system, a second build, or an unverified image tag.
 
-Manifest-selected profile content includes a verified immutable input subtree
-under the same `ProfileContent` root as assets and materialized config. Mount
+Manifest-selected runtime content includes a verified immutable input subtree
+under the same `RuntimeContent` root as assets and materialized config. Mount
 that root read-only, reverify it inside the container, and use the extracted
-`capsem-admin` from the exact package to author the checked local package/profile
+`capsem-admin` from the exact package to author the checked local package/runtime
 graph before the single `dpkg -i`. The narrower Debian proof uses the same graph
 primitive and secure handoff; neither proof may fall back to a public URL.
 

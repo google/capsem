@@ -16,7 +16,6 @@ from .models import (
     GuestImageConfig,
     ImageManifestConfig,
     McpServerConfig,
-    PackageSetConfig,
     VmEnvironmentConfig,
     VmResourcesConfig,
     WebSecurityConfig,
@@ -41,17 +40,6 @@ def _load_manifest(config_dir: Path) -> ImageManifestConfig | None:
         return None
     data = parse_toml(manifest_path)
     return ImageManifestConfig.model_validate(data["image"])
-
-
-def _load_package_sets(config_dir: Path) -> dict[str, PackageSetConfig]:
-    pkg_dir = config_dir / "packages"
-    sets: dict[str, PackageSetConfig] = {}
-    if pkg_dir.is_dir():
-        for path in sorted(pkg_dir.glob("*.toml")):
-            data = parse_toml(path)
-            for key, value in data.items():
-                sets[key] = PackageSetConfig.model_validate(value)
-    return sets
 
 
 def _load_mcp_servers(config_dir: Path) -> dict[str, McpServerConfig]:
@@ -113,21 +101,14 @@ def load_guest_config(guest_dir: Path) -> GuestImageConfig:
         pydantic.ValidationError: If any TOML file fails validation.
     """
     config_dir = _resolve_config_dir(guest_dir)
-    profile_root = guest_dir / "profile-root"
-    profile_build = guest_dir / "profile-build.sh"
     return GuestImageConfig(
         build=_load_build(config_dir),
         manifest=_load_manifest(config_dir),
         guest_dir_path=str(guest_dir),
-        package_sets=_load_package_sets(config_dir),
         mcp_servers=_load_mcp_servers(config_dir),
         web_security=_load_web_security(config_dir),
         vm_resources=_load_vm_resources(config_dir),
         vm_environment=_load_vm_environment(config_dir),
-        profile_root_seed=profile_root.is_dir(),
-        profile_root_seed_path=str(profile_root) if profile_root.is_dir() else None,
-        profile_build_script=profile_build.is_file(),
-        profile_build_script_path=str(profile_build) if profile_build.is_file() else None,
     )
 
 

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from capsem_builder.cache.config import load_policy
-from capsem_builder.gate import assetrecovery, imagebases, imagebuild, initrd
+from capsem_builder.gate import assetrecovery, imagebases, initrd
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.plan import Plan
@@ -367,11 +367,8 @@ def test_macos_check_assets_proves_execution_before_materializing_helper(
     assert plan.step_named("assets.guest-builders").carry_checks
     assert plan.step_named("assets.asset-tools").carry_checks
     assert plan.step_named("assets.recovery-dependencies").carry_checks
-    previous = "assets.recovery-dependencies"
-    for profile in imagebuild.profiles(config):
-        label = f"assets.image.{profile}.all.{config.host_arch().name}"
-        assert plan.after_of(label) == {previous}
-        previous = label
+    image = f"assets.image.all.{config.host_arch().name}"
+    assert plan.after_of(image) == {"assets.recovery-dependencies"}
 
 
 @patch("capsem_builder.image.docker.run_cmd")

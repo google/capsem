@@ -44,7 +44,7 @@ def _run_all(gate) -> None:
     gate.assemble()
 
 
-def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code",)) -> Path:
+def _checkout(tmp_path: Path, *, catalog: tuple[str, ...] = ("code",)) -> Path:
     (tmp_path / "config").mkdir(parents=True)
     gate = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     (tmp_path / "config" / "gate.toml").write_text(
@@ -65,7 +65,9 @@ def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code",)) -> Path:
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(PROJECT_ROOT / relative, destination)
-    for name in profiles:
+    # The service still reads a pinned catalog under `profiles/` (#289 removes
+    # it last), so the gate materializes every checked-in entry.
+    for name in catalog:
         directory = tmp_path / "config" / "profiles" / name
         directory.mkdir(parents=True)
         (directory / "profile.toml").write_text(f'id = "{name}"\n')
@@ -141,13 +143,13 @@ def _gate(
     monkeypatch: pytest.MonkeyPatch,
     *,
     runner_class: type[Gating] = Gating,
-    profiles: tuple[str, ...] = ("code",),
+    catalog: tuple[str, ...] = ("code",),
     **kwargs,
 ) -> tuple[AssetGate, Gating]:
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("capsem_builder.gate.pidfiles.stop_gate_service", lambda *_a: None)
     monkeypatch.setattr("capsem_builder.gate.assets.WaitForSocket.perform", lambda _self, _context: None)
-    runner = runner_class(_checkout(tmp_path, profiles=profiles), **kwargs)
+    runner = runner_class(_checkout(tmp_path, catalog=catalog), **kwargs)
     return AssetGate(runner), runner
 
 
@@ -265,7 +267,7 @@ def test_both_architectures_are_merged_into_one_asset_tree(
 
     _run_all(gate)
 
-    assets = gate.test_root / "code" / "assets"
+    assets = gate.test_root / "assets"
     for arch in CONFIG.architectures:
         assert (assets / arch).is_dir(), f"{arch} never reached the merged tree"
 
@@ -279,7 +281,7 @@ def test_current_is_restored_to_the_host_architecture_after_generation(
 
     _run_all(gate)
 
-    current = gate.test_root / "code" / "assets" / "current"
+    current = gate.test_root / "assets" / "current"
     assert current.readlink().name == gate.host_arch.name
     runner.assert_order(r"manifest generate", r"create_hash_assets\.py")
 
@@ -296,22 +298,23 @@ def test_hash_aliases_are_materialized_before_the_manifest_is_checked(
     runner.assert_order(r"create_hash_assets\.py", r"manifest check")
 
 
-def test_every_runtime_profile_is_materialized_against_the_generated_manifest(
+def test_the_runtime_configuration_is_materialized_against_the_generated_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gate, runner = _gate(tmp_path, monkeypatch)
+    gate, runner = _gate(tmp_path, monkeypatch, catalog=("co-work", "code"))
 
     _run_all(gate)
 
     materialized = runner.matching(r"profile materialize")
-    assert materialized
+    assert len(materialized) == 2, "every catalog entry the service reads is materialized"
     assert all("file://" in line for line in materialized), (
-        "the profile must be materialized against the manifest just generated, "
-        "not against a channel URL"
+        "the configuration must be materialized against the manifest just "
+        "generated, not against a channel URL"
     )
+    assert all(f"--output-root {gate.test_root}/config" in line for line in materialized)
 
 
-def test_the_boot_proof_runs_after_the_profile_is_materialized(
+def test_the_boot_proof_runs_after_the_configuration_is_materialized(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gate, runner = _gate(tmp_path, monkeypatch)
@@ -337,35 +340,39 @@ def test_the_boot_service_is_detached_owned_and_ready_before_the_shell_proof(
 
     launched = runner.matching(r"capsem-service .*--foreground")
     assert len(launched) == 1
-    assert f"--assets-dir {gate.test_root}/code/assets" in launched[0]
-    assert f"CAPSEM_PROFILES_DIR={gate.test_root}/code/config/profiles" in launched[0]
+    assert f"--assets-dir {gate.test_root}/assets" in launched[0]
+    assert f"CAPSEM_PROFILES_DIR={gate.test_root}/config/profiles" in launched[0]
     runner.assert_order(r"capsem-service .*--foreground", r"prove-installed-shell\.py")
 
 
-def test_the_boot_proof_runs_against_this_profile_s_own_assets(
+def test_the_boot_proof_runs_against_the_merged_runtime_assets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A proof reading the shared assets tree would pass for a profile whose
+    """A proof reading the shared assets tree would pass for a runtime whose
     own build was broken."""
     gate, runner = _gate(tmp_path, monkeypatch)
 
     _run_all(gate)
 
-    proof = runner.matching(r"prove-installed-shell\.py")[0]
-    assert f"CAPSEM_ASSETS_DIR={gate.test_root}/code/assets" in proof
+    (proof,) = runner.matching(r"prove-installed-shell\.py")
+    assert f"CAPSEM_ASSETS_DIR={gate.test_root}/assets" in proof
     assert "CAPSEM_RUN_DIR=/" in proof
+    arch = gate.host_arch.name
+    assert f"--marker CAPSEM_ASSET_RUNTIME_{arch}_SHELL_OK" in proof
+    assert f"--session-name asset-runtime-{arch}" in proof
+    assert "--profile" not in proof, "there is one runtime; the proof selects no profile"
 
 
-def test_verified_base_profile_becomes_the_canonical_following_input(
+def test_the_verified_runtime_becomes_the_canonical_following_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Build-chain, packaging and glow-up must consume the bytes IronBank booted.
 
-    A warm canonical tree used to survive the private profile build. IronBank
-    proved ``cache/target/tests/ironbank/code`` and the following modules silently
-    opened the older ``assets/`` and ``cache/target/config/profiles`` instead.
+    A warm canonical tree used to survive the private build. IronBank proved
+    ``cache/target/tests/ironbank`` and the following modules silently opened
+    the older ``assets/`` and ``cache/target/config/profiles`` instead.
     """
-    gate, _ = _gate(tmp_path, monkeypatch, profiles=("co-work", "code"))
+    gate, _ = _gate(tmp_path, monkeypatch, catalog=("co-work", "code"))
     root = gate.root
     stale_assets = root / CONFIG.functional.assets_dir
     stale_assets.mkdir(parents=True)
@@ -384,7 +391,7 @@ def test_verified_base_profile_becomes_the_canonical_following_input(
     stale_sibling.write_text("stale = true\n")
     _run_all(gate)
 
-    selected_assets = gate.test_root / CONFIG.suites.pytest.base_profile / "assets"
+    selected_assets = gate.test_root / CONFIG.assets.merged_assets_dir
     assert stale_assets.is_symlink()
     assert stale_assets.resolve() == selected_assets.resolve()
     assert (stale_assets / "manifest.json").read_text() == "{}"
@@ -431,7 +438,7 @@ def test_a_failed_boot_preserves_its_evidence(
     with pytest.raises(GateError):
         _run_all(gate)
 
-    preserved = gate.test_root / "code" / "run-failure"
+    preserved = gate.test_root / CONFIG.assets.failure_evidence_dir
     assert (preserved / "serial.log").is_file()
     assert (preserved / "vm" / "active_profile.toml").is_file()
     assert not (preserved / "guest").exists(), (

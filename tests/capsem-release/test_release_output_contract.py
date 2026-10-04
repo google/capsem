@@ -1,7 +1,7 @@
 """Release output contract tests.
 
-These tests intentionally assert the documented public graph shape. They are
-expected to fail while the generator still emits legacy asset-channel output.
+These tests assert the documented public graph shape: packages own the binary
+inventory, and one runtime document owns the VM images per architecture.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ import hashlib
 import importlib.util
 import json
 import sys
-import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -22,33 +21,26 @@ from capsem_builder.release.tools import check_remote_release_readiness as READI
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
-PROFILE_CONFIG_ROOT = PROJECT_ROOT / "config" / "profiles"
-FORBIDDEN_PROFILE_FIELDS = {
-    "current_binary",
-    "current_assets",
-    "asset_version",
-    "binary_version",
+RELEASE_SITE_PAGES = PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages"
+RUNTIME_FIELDS = {
+    "revision",
+    "source_commit",
+    "status",
+    "min_capsem_version",
+    "max_capsem_version",
+    "architectures",
 }
-REQUIRED_PROFILE_CONFIG_FILES = {
-    "apt-packages.txt",
-    "build.sh",
-    "detection.yaml",
-    "enforcement.toml",
-    "mcp.json",
-    "npm-package-lock.json",
-    "npm-packages.txt",
-    "profile.toml",
-    "python-requirements.lock",
-    "python-requirements.txt",
-    "root.manifest.json",
-    "tips.txt",
+RUNTIME_ARCHITECTURE_FIELDS = {
+    "architecture",
+    "package_inventory_revision",
+    "image_revision",
+    "software",
+    "images",
+    "evidence",
 }
+FORBIDDEN_PAGE_FIELDS = {"current_binary", "current_assets", "asset_version", "binary_version"}
 REQUIRED_IMAGE_ARTIFACT_KINDS = {"kernel", "initrd", "rootfs"}
 REQUIRED_PACKAGE_KINDS = {"macos_pkg", "debian_package"}
 REQUIRED_BINARY_NAMES = {"capsem-app", "capsem-tray"}
@@ -85,7 +77,6 @@ def test_channel_manifest_records_are_versioned_graph_files(
     manifest_url = current["url"]
 
     assert manifest_url == f"/assets/{CHANNEL}/manifest.json"
-    assert "profile_catalog" not in channel
     _assert_no_hmac(current, f"channels.{CHANNEL}.manifests.current")
 
     manifest_bytes = _read_bytes(generated_release_dist, manifest_url)
@@ -109,9 +100,7 @@ def test_manifest_uses_package_owned_binary_graph(
     assert {package.get("kind") for package in packages} >= REQUIRED_PACKAGE_KINDS
 
     binary_names = {
-        binary.get("name")
-        for package in packages
-        for binary in package.get("binaries", [])
+        binary.get("name") for package in packages for binary in package.get("binaries", [])
     }
     assert binary_names >= REQUIRED_BINARY_NAMES
 
@@ -141,42 +130,19 @@ def test_manifest_uses_package_owned_binary_graph(
             _assert_no_hmac(binary, binary_context)
 
 
-def test_manifest_profiles_are_the_profile_contract(
+def test_manifest_runtime_is_the_runtime_contract(
     generated_release_dist: Path,
 ) -> None:
     manifest = _selected_manifest(generated_release_dist)
 
-    manifest_profiles = manifest["profiles"]
-    assert isinstance(manifest_profiles, dict)
-    assert manifest_profiles
-    assert "profile_catalog" not in manifest
-    assert "catalog" not in manifest
-
-    for profile_id, manifest_profile in manifest_profiles.items():
-        _assert_profile_shape(profile_id, manifest_profile, f"manifest.profiles.{profile_id}")
+    assert set(manifest) == {"version", "channel", "status", "packages", "runtime"}
+    _assert_runtime_shape(manifest["runtime"], "manifest.runtime")
 
 
-def test_generated_release_has_no_public_profile_catalog_primitive(
+def test_generated_release_publishes_no_catalog_or_config(
     generated_release_dist: Path,
 ) -> None:
-    forbidden_tokens = ("profile_catalog", "catalog.json", "capsem.profile_catalog")
-    files_to_check = [
-        generated_release_dist / "channels.json",
-        generated_release_dist / "health.json",
-        generated_release_dist / "assets" / CHANNEL / "manifest.json",
-        generated_release_dist / "index.html",
-        generated_release_dist / "channels" / CHANNEL / "index.html",
-    ]
-    files_to_check.extend(
-        generated_release_dist
-        / "channels"
-        / CHANNEL
-        / "profiles"
-        / profile_id
-        / "index.html"
-        for profile_id in _selected_manifest(generated_release_dist)["profiles"]
-    )
-
+    """The runtime is images and evidence; no catalog or config is public."""
     catalog_files = [
         path.relative_to(generated_release_dist).as_posix()
         for path in generated_release_dist.rglob("catalog.json")
@@ -184,47 +150,47 @@ def test_generated_release_has_no_public_profile_catalog_primitive(
     assert catalog_files == []
 
     hits: list[str] = []
-    for path in files_to_check:
+    for path in (
+        generated_release_dist / "channels.json",
+        generated_release_dist / "health.json",
+        generated_release_dist / "assets" / CHANNEL / "manifest.json",
+        generated_release_dist / "index.html",
+        generated_release_dist / "channels" / CHANNEL / "index.html",
+        _runtime_page_path(generated_release_dist),
+    ):
         text = path.read_text(encoding="utf-8")
-        for token in forbidden_tokens:
+        for token in ("catalog.json", '"profiles"', "/profiles/", '"config"'):
             if token in text:
                 hits.append(f"{path.relative_to(generated_release_dist)} contains {token}")
     assert hits == []
 
 
-def test_release_readiness_checker_uses_profile_contract_not_catalog() -> None:
+def test_release_readiness_checker_publishes_no_catalog() -> None:
     checker = Path(READINESS.__file__).read_text(encoding="utf-8")
-    forbidden_tokens = ("profile_catalog", "catalog.json", "capsem.profile_catalog")
-    hits = [token for token in forbidden_tokens if token in checker]
-    assert hits == []
+    assert "catalog.json" not in checker
 
 
-def test_profile_owned_artifact_digests_match_files(
+def test_runtime_artifact_digests_match_files(
     generated_release_dist: Path,
 ) -> None:
-    manifest = _selected_manifest(generated_release_dist)
-    profiles = manifest["profiles"]
-    assert isinstance(profiles, dict)
-    assert profiles
+    runtime = _selected_manifest(generated_release_dist)["runtime"]
 
-    for profile_id, profile in profiles.items():
-        for item in _profile_artifact_descriptors(profile):
-            url = item["url"]
-            payload = _read_bytes(generated_release_dist, url)
-            digest = item["digest"]
-            assert item["bytes"] == len(payload), f"{profile_id} {url} bytes"
-            assert digest == {
-                "sha256": hashlib.sha256(payload).hexdigest(),
-                "blake3": blake3.blake3(payload).hexdigest(),
-            }, f"{profile_id} {url} digest"
+    for item in _runtime_artifact_descriptors(runtime):
+        url = item["url"]
+        payload = _read_bytes(generated_release_dist, url)
+        assert item["bytes"] == len(payload), f"{url} bytes"
+        assert item["digest"] == {
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "blake3": blake3.blake3(payload).hexdigest(),
+        }, f"{url} digest"
 
 
 def test_pages_only_render_owned_release_facts(generated_release_dist: Path) -> None:
-    manifest = _selected_manifest(generated_release_dist)
+    runtime = _selected_manifest(generated_release_dist)["runtime"]
     root_page = (generated_release_dist / "index.html").read_text(encoding="utf-8")
-    channel_page = (
-        generated_release_dist / "channels" / CHANNEL / "index.html"
-    ).read_text(encoding="utf-8")
+    channel_page = (generated_release_dist / "channels" / CHANNEL / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     for page_name, page in (("root", root_page), ("channel", channel_page)):
         assert "HMAC" not in page, page_name
@@ -235,67 +201,49 @@ def test_pages_only_render_owned_release_facts(generated_release_dist: Path) -> 
         assert "Asset Release History" not in page, page_name
         assert "Current VM Assets" not in page, page_name
         assert "Software Inventory" not in page, page_name
-        assert "VM OBOM" not in page, page_name
         assert "current_binary" not in page, page_name
         assert "current_assets" not in page, page_name
 
-    profiles = manifest.get("profiles", {})
-    assert isinstance(profiles, dict)
-    assert profiles
-    for profile_id, profile in profiles.items():
-        profile_page = (
-            generated_release_dist
-            / "channels"
-            / CHANNEL
-            / "profiles"
-            / profile_id
-            / "index.html"
-        ).read_text(encoding="utf-8")
-        assert "HMAC" not in profile_page
-        assert "hmac" not in profile_page
-        assert "Capsem Binaries" not in profile_page
-        assert "Current VM Assets" not in profile_page
-        for field in FORBIDDEN_PROFILE_FIELDS:
-            assert field not in profile_page
-        for item in _profile_artifact_descriptors(profile):
-            assert item["url"] in profile_page
-            assert _hash_label(item["digest"]["sha256"]) in profile_page
-            assert _hash_label(item["digest"]["blake3"]) in profile_page
+    runtime_page = _runtime_page(generated_release_dist)
+    assert "HMAC" not in runtime_page
+    assert "hmac" not in runtime_page
+    assert "Capsem Binaries" not in runtime_page
+    assert "Current VM Assets" not in runtime_page
+    for field in FORBIDDEN_PAGE_FIELDS:
+        assert field not in runtime_page
+    for item in _runtime_artifact_descriptors(runtime):
+        assert item["url"] in runtime_page
+        assert _hash_label(item["digest"]["sha256"]) in runtime_page
+        assert _hash_label(item["digest"]["blake3"]) in runtime_page
 
 
-def test_profile_software_inventory_is_complete_and_hashed(
+def test_runtime_software_inventory_is_complete_and_hashed(
     generated_release_dist: Path,
 ) -> None:
-    manifest = _selected_manifest(generated_release_dist)
-    profiles = manifest["profiles"]
-    assert isinstance(profiles, dict)
-    assert profiles
+    runtime = _selected_manifest(generated_release_dist)["runtime"]
+    revision = runtime["revision"]
 
-    for profile_id, profile in profiles.items():
-        seen_digests: dict[tuple[str, str], str] = {}
-        for arch, architecture in _profile_architectures(profile).items():
-            software = architecture["software"]
-            assert isinstance(software, list), profile_id
-            assert software, f"{profile_id}:{arch}"
-            for index, package in enumerate(software):
-                context = f"profiles.{profile_id}.architectures.{arch}.software[{index}]"
-                assert isinstance(package["name"], str), context
-                assert isinstance(package["version"], str), context
-                assert package["version"] != "unversioned", context
-                assert isinstance(package["source"], str), context
-                assert package["architecture"] == arch, context
-                assert isinstance(package["evidence"], str), context
-                assert package["evidence"].startswith(
-                    f"/profiles/releases/{CHANNEL}/{profile_id}/"
-                ), context
-                assert package["evidence"].endswith("/software-inventory.json"), context
-                assert set(package["digest"]) == {"sha256", "blake3"}, context
-                _assert_no_hmac(package, context)
-                for digest_name, digest_value in package["digest"].items():
-                    previous = seen_digests.setdefault((digest_name, digest_value), package["name"])
-                    assert previous == package["name"], (
-                        f"{context} shares {digest_name} digest with {previous}"
-                    )
+    seen_digests: dict[tuple[str, str], str] = {}
+    for arch, architecture in _runtime_architectures(runtime).items():
+        software = architecture["software"]
+        assert software, arch
+        for index, package in enumerate(software):
+            context = f"runtime.architectures.{arch}.software[{index}]"
+            assert isinstance(package["name"], str), context
+            assert isinstance(package["version"], str), context
+            assert package["version"] != "unversioned", context
+            assert isinstance(package["source"], str), context
+            assert package["architecture"] == arch, context
+            assert package["evidence"] == (
+                f"/runtime/releases/{CHANNEL}/{revision}/{arch}/software-inventory.json"
+            ), context
+            assert set(package["digest"]) == {"sha256", "blake3"}, context
+            _assert_no_hmac(package, context)
+            for digest_name, digest_value in package["digest"].items():
+                previous = seen_digests.setdefault((digest_name, digest_value), package["name"])
+                assert previous == package["name"], (
+                    f"{context} shares {digest_name} digest with {previous}"
+                )
 
 
 def test_deterministic_graph_fixture_matches_release_contract() -> None:
@@ -307,6 +255,7 @@ def test_deterministic_graph_fixture_matches_release_contract() -> None:
         for version, manifest in manifests.items():
             context = f"manifests.{channel}.{version}"
             assert "binaries" not in manifest, context
+            assert "profiles" not in manifest, context
             assert isinstance(manifest["packages"], list), context
             assert manifest["packages"], context
             for package in manifest["packages"]:
@@ -320,37 +269,28 @@ def test_deterministic_graph_fixture_matches_release_contract() -> None:
                     assert set(binary["digest"]) == {"sha256", "blake3"}, context
 
 
-def test_deterministic_graph_profile_software_inventory_is_hashed() -> None:
+def test_deterministic_graph_runtime_software_inventory_is_hashed() -> None:
     graph = _read_json(FIXTURE_GRAPH)
     for channel, manifests in graph["manifests"].items():
         for version, manifest in manifests.items():
-            for profile_id, profile in manifest["profiles"].items():
-                for arch, architecture in _profile_architectures(profile).items():
-                    software = architecture["software"]
-                    assert software, f"{channel}.{version}.{profile_id}.{arch}"
-                    for index, package in enumerate(software):
-                        context = (
-                            f"manifests.{channel}.{version}.profiles.{profile_id}"
-                            f".architectures.{arch}.software[{index}]"
-                        )
-                        assert package.get("architecture") == arch, context
-                        assert isinstance(package.get("evidence"), str), context
-                        assert set(package["digest"]) == {"sha256", "blake3"}, context
-                        _assert_no_hmac(package, context)
+            runtime = manifest["runtime"]
+            _assert_runtime_shape(runtime, f"manifests.{channel}.{version}.runtime")
+            for arch, architecture in _runtime_architectures(runtime).items():
+                software = architecture["software"]
+                assert software, f"{channel}.{version}.{arch}"
+                for index, package in enumerate(software):
+                    context = f"manifests.{channel}.{version}.runtime.architectures.{arch}.software[{index}]"
+                    assert package.get("architecture") == arch, context
+                    assert isinstance(package.get("evidence"), str), context
+                    assert set(package["digest"]) == {"sha256", "blake3"}, context
+                    _assert_no_hmac(package, context)
 
 
 def test_release_site_source_does_not_render_fields_missing_from_contract() -> None:
     all_release_site_sources = [
-        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "index.astro",
-        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "channels" / "[id].astro",
-        PROJECT_ROOT
-        / "build_system" / "release_site"
-        / "src"
-        / "pages"
-        / "channels"
-        / "[channel]"
-        / "profiles"
-        / "[id].astro",
+        RELEASE_SITE_PAGES / "index.astro",
+        RELEASE_SITE_PAGES / "channels" / "[id].astro",
+        RELEASE_SITE_PAGES / "channels" / "[channel]" / "runtime.astro",
         PROJECT_ROOT / "build_system" / "release_site" / "src" / "lib" / "release-data.ts",
     ]
     forbidden_everywhere = {
@@ -368,10 +308,6 @@ def test_release_site_source_does_not_render_fields_missing_from_contract() -> N
             if token in text:
                 hits.append(f"{source.relative_to(PROJECT_ROOT)} contains {token}")
 
-    channel_sources = [
-        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "index.astro",
-        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "channels" / "[id].astro",
-    ]
     forbidden_on_channel_pages = {
         "Evidence",
         "Host SBOM",
@@ -380,7 +316,10 @@ def test_release_site_source_does_not_render_fields_missing_from_contract() -> N
         "Current VM Assets",
         "Software Inventory",
     }
-    for source in channel_sources:
+    for source in (
+        RELEASE_SITE_PAGES / "index.astro",
+        RELEASE_SITE_PAGES / "channels" / "[id].astro",
+    ):
         text = source.read_text(encoding="utf-8")
         for token in sorted(forbidden_on_channel_pages):
             if token in text:
@@ -393,7 +332,10 @@ def test_release_site_source_does_not_render_fields_missing_from_contract() -> N
     [
         ("channel records use status enum only", lambda dist: _check_channel_status_enum(dist)),
         ("channel records have no hmac", lambda dist: _check_channel_no_hmac(dist)),
-        ("manifest record digests are real", lambda dist: _check_manifest_record_digests_real(dist)),
+        (
+            "manifest record digests are real",
+            lambda dist: _check_manifest_record_digests_real(dist),
+        ),
         ("selected manifest has no hmac", lambda dist: _check_selected_manifest_no_hmac(dist)),
         ("manifest has no top-level binaries", lambda dist: _check_no_top_level_binaries(dist)),
         ("manifest packages have urls", lambda dist: _check_packages_have_urls(dist)),
@@ -401,21 +343,36 @@ def test_release_site_source_does_not_render_fields_missing_from_contract() -> N
         ("manifest packages have real digests", lambda dist: _check_package_digests_real(dist)),
         ("packages own binary inventory", lambda dist: _check_packages_own_binaries(dist)),
         ("binary digests are real", lambda dist: _check_binary_digests_real(dist)),
-        ("binaries do not repeat package field", lambda dist: _check_binaries_do_not_repeat_package(dist)),
+        (
+            "binaries do not repeat package field",
+            lambda dist: _check_binaries_do_not_repeat_package(dist),
+        ),
         ("binaries have installed paths", lambda dist: _check_binaries_have_installed_paths(dist)),
         ("binaries have sbom refs", lambda dist: _check_binaries_have_sbom_refs(dist)),
-        ("profiles have no current binary", lambda dist: _check_profiles_do_not_select_binary(dist)),
-        ("profile config list is complete", lambda dist: _check_profile_config_complete(dist)),
-        ("profile config digests are real", lambda dist: _check_profile_config_digests_real(dist)),
-        ("profile images include kernel initrd rootfs", lambda dist: _check_profile_images_complete(dist)),
-        ("profile image digests are real", lambda dist: _check_profile_image_digests_real(dist)),
-        ("profile evidence digests are real", lambda dist: _check_profile_evidence_digests_real(dist)),
+        ("runtime selects no binary", lambda dist: _check_runtime_does_not_select_binary(dist)),
+        (
+            "runtime images include kernel initrd rootfs",
+            lambda dist: _check_runtime_images_complete(dist),
+        ),
+        ("runtime image digests are real", lambda dist: _check_runtime_image_digests_real(dist)),
+        (
+            "runtime evidence digests are real",
+            lambda dist: _check_runtime_evidence_digests_real(dist),
+        ),
         ("software inventory is hashed", lambda dist: _check_software_inventory_hashed(dist)),
-        ("root page has no profile-owned facts", lambda dist: _check_root_page_ownership(dist)),
-        ("channel page has no profile-owned facts", lambda dist: _check_channel_page_ownership(dist)),
-        ("profile pages render all config entries", lambda dist: _check_profile_pages_render_config(dist)),
-        ("profile pages render all image artifacts", lambda dist: _check_profile_pages_render_images(dist)),
-        ("profile pages render software hashes", lambda dist: _check_profile_pages_render_software(dist)),
+        ("root page has no runtime-owned facts", lambda dist: _check_root_page_ownership(dist)),
+        (
+            "channel page has no runtime-owned facts",
+            lambda dist: _check_channel_page_ownership(dist),
+        ),
+        (
+            "runtime page renders all image artifacts",
+            lambda dist: _check_runtime_page_renders_images(dist),
+        ),
+        (
+            "runtime page renders software hashes",
+            lambda dist: _check_runtime_page_renders_software(dist),
+        ),
     ],
 )
 def test_release_output_theater_regressions_are_caught(
@@ -447,27 +404,41 @@ def _read_bytes(dist: Path, release_url: str) -> bytes:
     return path.read_bytes()
 
 
-def _assert_profile_shape(profile_id: str, profile: dict[str, Any], context: str) -> None:
-    assert profile["id"] == profile_id
-    assert FORBIDDEN_PROFILE_FIELDS.isdisjoint(profile), context
-    assert isinstance(profile["revision"], str)
-    assert isinstance(profile["min_capsem_version"], str)
-    assert "config" not in profile
-    assert "images" not in profile
-    assert "software" not in profile
-    architectures = _profile_architectures(profile)
+def _assert_runtime_shape(runtime: dict[str, Any], context: str) -> None:
+    assert isinstance(runtime, dict), context
+    assert set(runtime) <= RUNTIME_FIELDS, (
+        f"{context} carries {sorted(set(runtime) - RUNTIME_FIELDS)}"
+    )
+    assert isinstance(runtime["revision"], str), context
+    assert runtime["status"] in ALLOWED_RELEASE_STATUSES, context
+    assert isinstance(runtime["min_capsem_version"], str), context
+    for arch, architecture in _runtime_architectures(runtime).items():
+        assert set(architecture) == RUNTIME_ARCHITECTURE_FIELDS, f"{context}.{arch}"
+        assert architecture["image_revision"] == runtime["revision"], f"{context}.{arch}"
+        assert architecture["package_inventory_revision"] == runtime["revision"], (
+            f"{context}.{arch}"
+        )
+    _assert_no_hmac(runtime, context)
+
+
+def _runtime_artifact_descriptors(runtime: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    for architecture in _runtime_architectures(runtime).values():
+        yield from architecture["images"]
+        yield from architecture["evidence"]
+
+
+def _runtime_architectures(runtime: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    architectures = runtime["architectures"]
+    assert isinstance(architectures, list)
     assert architectures
-    _assert_no_hmac(profile, context)
-
-
-def _profile_artifact_descriptors(profile: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    for architecture in _profile_architectures(profile).values():
-        for item in architecture["config"]:
-            yield item
-        for item in architecture["images"]:
-            yield item
-        for item in architecture["evidence"]:
-            yield item
+    by_arch = {architecture["architecture"]: architecture for architecture in architectures}
+    assert len(by_arch) == len(architectures)
+    for arch, architecture in by_arch.items():
+        assert isinstance(arch, str)
+        assert isinstance(architecture["software"], list), arch
+        assert isinstance(architecture["images"], list), arch
+        assert isinstance(architecture["evidence"], list), arch
+    return by_arch
 
 
 def _assert_no_hmac(value: Any, context: str) -> None:
@@ -547,9 +518,7 @@ def _check_packages_own_binaries(dist: Path) -> None:
     packages = _selected_manifest(dist)["packages"]
     assert {package.get("kind") for package in packages} >= REQUIRED_PACKAGE_KINDS
     binary_names = {
-        binary.get("name")
-        for package in packages
-        for binary in package.get("binaries", [])
+        binary.get("name") for package in packages for binary in package.get("binaries", [])
     }
     assert binary_names >= REQUIRED_BINARY_NAMES
     for package in packages:
@@ -584,113 +553,92 @@ def _check_binaries_have_sbom_refs(dist: Path) -> None:
             assert binary["sbom_component_ref"].startswith("SPDXRef-"), binary
 
 
-def _check_profiles_do_not_select_binary(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        assert FORBIDDEN_PROFILE_FIELDS.isdisjoint(profile), profile_id
+def _check_runtime_does_not_select_binary(dist: Path) -> None:
+    runtime = _selected_manifest(dist)["runtime"]
+    assert FORBIDDEN_PAGE_FIELDS.isdisjoint(runtime)
+    for architecture in _runtime_architectures(runtime).values():
+        assert FORBIDDEN_PAGE_FIELDS.isdisjoint(architecture)
 
 
-def _check_profile_config_complete(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        expected = _expected_profile_config_files(profile_id)
-        actual = {
-            item["path"]
-            for architecture in _profile_architectures(profile).values()
-            for item in architecture["config"]
-        }
-        assert expected <= actual, f"{profile_id} missing {sorted(expected - actual)}"
+def _check_runtime_images_complete(dist: Path) -> None:
+    runtime = _selected_manifest(dist)["runtime"]
+    for arch, architecture in _runtime_architectures(runtime).items():
+        kinds = {artifact["kind"] for artifact in architecture["images"]}
+        assert kinds >= REQUIRED_IMAGE_ARTIFACT_KINDS, (
+            f"{arch} missing {sorted(REQUIRED_IMAGE_ARTIFACT_KINDS - kinds)}"
+        )
 
 
-def _check_profile_config_digests_real(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        for arch, architecture in _profile_architectures(profile).items():
-            for item in architecture["config"]:
-                _assert_digest_real(item["digest"], f"{profile_id}:{arch}:{item['path']}")
-
-
-def _check_profile_images_complete(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        for arch, image in _profile_images(profile).items():
-            kinds = {artifact["kind"] for artifact in image["artifacts"]}
-            assert kinds >= REQUIRED_IMAGE_ARTIFACT_KINDS, (
-                f"{profile_id}/{arch} missing "
-                f"{sorted(REQUIRED_IMAGE_ARTIFACT_KINDS - kinds)}"
+def _check_runtime_image_digests_real(dist: Path) -> None:
+    runtime = _selected_manifest(dist)["runtime"]
+    for arch, architecture in _runtime_architectures(runtime).items():
+        for artifact in architecture["images"]:
+            assert artifact["url"].startswith(
+                f"/runtime/releases/{CHANNEL}/{runtime['revision']}/{arch}/"
             )
+            _assert_digest_real(artifact["digest"], f"{arch}:{artifact['kind']}")
 
 
-def _check_profile_image_digests_real(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        for arch, image in _profile_images(profile).items():
-            for artifact in image["artifacts"]:
-                _assert_digest_real(artifact["digest"], f"{profile_id}:{arch}:{artifact['kind']}")
-
-
-def _check_profile_evidence_digests_real(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        for arch, image in _profile_images(profile).items():
-            evidence = image.get("evidence")
-            assert isinstance(evidence, list) and evidence, f"{profile_id}:{arch}"
-            for item in evidence:
-                _assert_digest_real(item["digest"], f"{profile_id}:{arch}:{item['kind']}")
+def _check_runtime_evidence_digests_real(dist: Path) -> None:
+    runtime = _selected_manifest(dist)["runtime"]
+    for arch, architecture in _runtime_architectures(runtime).items():
+        evidence = architecture["evidence"]
+        assert evidence, arch
+        for item in evidence:
+            assert item["url"].startswith(
+                f"/runtime/releases/{CHANNEL}/{runtime['revision']}/{arch}/"
+            )
+            _assert_digest_real(item["digest"], f"{arch}:{item['kind']}")
 
 
 def _check_software_inventory_hashed(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        seen_digests: dict[tuple[str, str], str] = {}
-        for arch, architecture in _profile_architectures(profile).items():
-            software = architecture["software"]
-            assert software, f"{profile_id}:{arch}"
-            for item in software:
-                assert item.get("architecture") == arch, item
-                assert isinstance(item.get("evidence"), str), item
-                assert isinstance(item.get("version"), str), item
-                assert item["version"] != "unversioned", item
-                _assert_digest_real(item["digest"], f"{profile_id}:{arch}:{item['name']}")
-                for digest_name, digest_value in item["digest"].items():
-                    previous = seen_digests.setdefault((digest_name, digest_value), item["name"])
-                    assert previous == item["name"], (
-                        f"{profile_id}:{item['name']} shares {digest_name} digest with {previous}"
-                    )
+    runtime = _selected_manifest(dist)["runtime"]
+    seen_digests: dict[tuple[str, str], str] = {}
+    for arch, architecture in _runtime_architectures(runtime).items():
+        software = architecture["software"]
+        assert software, arch
+        for item in software:
+            assert item.get("architecture") == arch, item
+            assert isinstance(item.get("evidence"), str), item
+            assert isinstance(item.get("version"), str), item
+            assert item["version"] != "unversioned", item
+            _assert_digest_real(item["digest"], f"{arch}:{item['name']}")
+            for digest_name, digest_value in item["digest"].items():
+                previous = seen_digests.setdefault((digest_name, digest_value), item["name"])
+                assert previous == item["name"], (
+                    f"{item['name']} shares {digest_name} digest with {previous}"
+                )
 
 
 def _check_root_page_ownership(dist: Path) -> None:
     page = (dist / "index.html").read_text(encoding="utf-8")
-    _assert_page_excludes(page, _profile_owned_page_tokens(), "root")
+    _assert_page_excludes(page, _runtime_owned_page_tokens(), "root")
 
 
 def _check_channel_page_ownership(dist: Path) -> None:
     page = (dist / "channels" / CHANNEL / "index.html").read_text(encoding="utf-8")
-    _assert_page_excludes(page, _profile_owned_page_tokens(), "channel")
+    _assert_page_excludes(page, _runtime_owned_page_tokens(), "channel")
 
 
-def _check_profile_pages_render_config(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        page = _channel_profile_page(dist, profile_id)
-        for architecture in _profile_architectures(profile).values():
-            for item in architecture["config"]:
-                assert item["url"] in page, f"{profile_id}:{item['url']}"
-                assert _hash_label(item["digest"]["sha256"]) in page, f"{profile_id}:{item['url']}"
-                assert _hash_label(item["digest"]["blake3"]) in page, f"{profile_id}:{item['url']}"
+def _check_runtime_page_renders_images(dist: Path) -> None:
+    runtime = _selected_manifest(dist)["runtime"]
+    page = _runtime_page(dist)
+    for architecture in _runtime_architectures(runtime).values():
+        for artifact in architecture["images"]:
+            assert artifact["url"] in page, artifact["url"]
+            assert _hash_label(artifact["digest"]["sha256"]) in page, artifact["url"]
+            assert _hash_label(artifact["digest"]["blake3"]) in page, artifact["url"]
 
 
-def _check_profile_pages_render_images(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        page = _channel_profile_page(dist, profile_id)
-        for image in _profile_images(profile).values():
-            for artifact in image["artifacts"]:
-                assert artifact["url"] in page, f"{profile_id}:{artifact['url']}"
-                assert _hash_label(artifact["digest"]["sha256"]) in page, f"{profile_id}:{artifact['url']}"
-                assert _hash_label(artifact["digest"]["blake3"]) in page, f"{profile_id}:{artifact['url']}"
-
-
-def _check_profile_pages_render_software(dist: Path) -> None:
-    for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        page = _channel_profile_page(dist, profile_id)
-        for architecture in _profile_architectures(profile).values():
-            for item in architecture["software"]:
-                assert item["name"] in page, f"{profile_id}:{item}"
-                assert item["version"] in page, f"{profile_id}:{item}"
-                assert _hash_label(item["digest"]["sha256"]) in page, f"{profile_id}:{item}"
-                assert _hash_label(item["digest"]["blake3"]) in page, f"{profile_id}:{item}"
+def _check_runtime_page_renders_software(dist: Path) -> None:
+    runtime = _selected_manifest(dist)["runtime"]
+    page = _runtime_page(dist)
+    for architecture in _runtime_architectures(runtime).values():
+        for item in architecture["software"]:
+            assert item["name"] in page, item
+            assert item["version"] in page, item
+            assert _hash_label(item["digest"]["sha256"]) in page, item
+            assert _hash_label(item["digest"]["blake3"]) in page, item
 
 
 def _assert_digest_real(digest: dict[str, Any], context: str) -> None:
@@ -707,76 +655,19 @@ def _hash_label(value: str) -> str:
     return f"{value[:8]}..." if len(value) > 12 else value
 
 
-def _expected_profile_config_files(profile_id: str) -> set[str]:
-    profile_dir = PROFILE_CONFIG_ROOT / profile_id
-    profile_toml = tomllib.loads((profile_dir / "profile.toml").read_text(encoding="utf-8"))
-    declared = {
-        value["path"]
-        for value in profile_toml.get("files", {}).values()
-        if isinstance(value, dict) and isinstance(value.get("path"), str)
-    }
-    rule_files = {
-        value
-        for value in profile_toml.get("rule_files", {}).values()
-        if isinstance(value, str)
-    }
-    existing_required = {
-        f"profiles/{profile_id}/{name}"
-        for name in REQUIRED_PROFILE_CONFIG_FILES
-        if (profile_dir / name).is_file()
-    }
-    root_manifest = json.loads(
-        (profile_dir / "root.manifest.json").read_text(encoding="utf-8")
-    )
-    root_payloads = {
-        f"profiles/{profile_id}/root/{entry['path']}"
-        for entry in root_manifest["files"]
-    }
-    return existing_required | declared | rule_files | root_payloads
+def _runtime_page_path(dist: Path) -> Path:
+    return dist / "channels" / CHANNEL / "runtime" / "index.html"
 
 
-def _profile_images(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {
-        arch: {
-            "architecture": arch,
-            "artifacts": architecture["images"],
-            "evidence": architecture["evidence"],
-        }
-        for arch, architecture in _profile_architectures(profile).items()
-    }
+def _runtime_page(dist: Path) -> str:
+    return _runtime_page_path(dist).read_text(encoding="utf-8")
 
 
-def _profile_architectures(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    architectures = profile["architectures"]
-    assert isinstance(architectures, list), profile["id"]
-    by_arch = {architecture["architecture"]: architecture for architecture in architectures}
-    assert len(by_arch) == len(architectures), profile["id"]
-    for arch, architecture in by_arch.items():
-        assert isinstance(arch, str), profile["id"]
-        assert isinstance(architecture["software"], list), f"{profile['id']}:{arch}"
-        assert isinstance(architecture["config"], list), f"{profile['id']}:{arch}"
-        assert isinstance(architecture["images"], list), f"{profile['id']}:{arch}"
-        assert isinstance(architecture["evidence"], list), f"{profile['id']}:{arch}"
-    return by_arch
-
-
-def _channel_profile_page(dist: Path, profile_id: str) -> str:
-    return (
-        dist
-        / "channels"
-        / CHANNEL
-        / "profiles"
-        / profile_id
-        / "index.html"
-    ).read_text(encoding="utf-8")
-
-
-def _profile_owned_page_tokens() -> set[str]:
+def _runtime_owned_page_tokens() -> set[str]:
     return {
         "Installed Software",
-        "Config Files",
-        "Profile Images",
-        "Profile Evidence",
+        "Runtime Images",
+        "Runtime Evidence",
         "Host SBOM",
         "VM OBOM",
         "Asset Release History",

@@ -38,7 +38,6 @@ from capsem_builder.image.docker import (
     _validate_cyclonedx_obom,
     build_all_architectures,
     build_image,
-    build_version_script,
     container_compile_agent,
     create_erofs,
     cross_compile_agent,
@@ -48,7 +47,6 @@ from capsem_builder.image.docker import (
     export_container_fs,
     extract_kernel_assets,
     extract_software_inventory,
-    extract_tool_versions,
     generate_build_context,
     generate_checksums,
     generate_cyclonedx_obom,
@@ -64,17 +62,8 @@ from capsem_builder.image.docker import (
     validate_rootfs_export,
 )
 from capsem_builder.image.models import (
-    AssetDependencyArchitectureConfig,
-    AssetDependencyConfig,
-    AssetToolBinaryConfig,
-    AssetToolsArchitectureConfig,
-    AssetToolsConfig,
     ErofsConfig,
-    GuestRustBuilderConfig,
-    KernelConfig,
-    NodeDownloadConfig,
     RootfsConfig,
-    VersionedDownloadConfig,
 )
 from capsem_builder.policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from capsem_builder.release.obom import ObomSubject
@@ -138,11 +127,11 @@ def test_run_cmd_surfaces_captured_subprocess_stderr(monkeypatch, capsys):
     assert "Unable to find image 'missing-image' locally" in captured.err
 
 
-def test_software_inventory_uses_one_profile_local_npm_document(tmp_path):
-    npm_document = json.dumps({"dependencies": {"fixture": {"version": "1.2.3"}}})
+def test_software_inventory_records_the_runtime_debian_packages(tmp_path):
+    dpkg = "runc\t1.1.5\tarm64\npython3\t3.11.2\tarm64\n"
     with patch(
         "capsem_builder.image.docker._container_output",
-        side_effect=["", "[]", npm_document],
+        side_effect=[dpkg],
     ) as container_output:
         extract_software_inventory(
             "docker",
@@ -152,18 +141,13 @@ def test_software_inventory_uses_one_profile_local_npm_document(tmp_path):
             tmp_path,
         )
 
-    npm_command = container_output.call_args_list[2].args[3]
-    assert npm_command == "npm ls --json --depth=0 --prefix /opt/ai-clis"
-    assert "||" not in npm_command
-    assert "--global" not in npm_command
+    assert container_output.call_count == 1
+    assert container_output.call_args.args[3].startswith("dpkg-query -W")
     inventory = json.loads((tmp_path / "software-inventory.json").read_text())
+    assert inventory["schema"] == "capsem.profile_software_inventory.v1"
     assert inventory["packages"] == [
-        {
-            "architecture": "all",
-            "name": "fixture",
-            "source": "npm",
-            "version": "1.2.3",
-        }
+        {"architecture": "arm64", "name": "python3", "source": "dpkg", "version": "3.11.2"},
+        {"architecture": "arm64", "name": "runc", "source": "dpkg", "version": "1.1.5"},
     ]
 
 
@@ -175,7 +159,7 @@ def test_software_inventory_uses_one_profile_local_npm_document(tmp_path):
 @pytest.fixture
 def real_config(tmp_path):
     """Load the generated backend image spec used by Docker rendering tests."""
-    return _profile_guest_config(tmp_path, "code")
+    return _runtime_guest_config(tmp_path)
 
 
 @pytest.fixture
@@ -198,81 +182,11 @@ def _rootfs_lineage(config, arch: str) -> str:
     )
 
 
-def _profile_guest_config(tmp_path: Path, profile_id: str):
+def _runtime_guest_config(tmp_path: Path):
+    """The workspace capsem-admin materializes: image config plus guest artifacts."""
     guest = tmp_path / "guest"
-    config = guest / "config"
-    shutil.copytree(PROJECT_ROOT / "config" / "docker" / "image", config)
-
-    profile_root = PROJECT_ROOT / "config" / "profiles" / profile_id
-    profile = tomllib.loads((profile_root / "profile.toml").read_text())
-
-    packages = config / "packages"
-    packages.mkdir()
-    _write_package_toml(
-        packages / "apt.toml",
-        "apt",
-        "System Packages",
-        "apt",
-        "apt-get install -y --no-install-recommends",
-        _package_lines(profile_root / "apt-packages.txt"),
-    )
-    _write_package_toml(
-        packages / "python.toml",
-        "python",
-        "Python Packages",
-        "uv",
-        "uv pip install --system --break-system-packages",
-        _package_lines(profile_root / "python-requirements.txt"),
-    )
-    _write_package_toml(
-        packages / "npm.toml",
-        "npm",
-        "Node Packages",
-        "npm",
-        "npm install -g --prefix /opt/ai-clis",
-        _package_lines(profile_root / "npm-packages.txt"),
-    )
-
-    vm = profile["vm"]
-    (config / "vm" / "resources.toml").write_text(
-        "\n".join(
-            [
-                "[resources]",
-                f"cpu_count = {vm['cpu_count']}",
-                f"ram_gb = {vm['ram_gb']}",
-                f"scratch_disk_size_gb = {vm['scratch_disk_size_gb']}",
-                "log_bodies = false",
-                "max_body_capture = 4096",
-                "retention_days = 30",
-                "max_sessions = 100",
-                "min_content_sessions = 25",
-                "max_disk_gb = 100",
-                "",
-            ]
-        )
-    )
-
+    shutil.copytree(PROJECT_ROOT / "config" / "docker" / "image", guest / "config")
     shutil.copytree(PROJECT_ROOT / "guest" / "artifacts", guest / "artifacts")
-    shutil.copytree(profile_root / "root", guest / "profile-root")
-    shutil.copy2(profile_root / "build.sh", guest / "profile-build.sh")
-    shutil.copy2(
-        profile_root / "python-requirements.lock",
-        packages / "python-requirements.lock",
-    )
-    npm_lock = json.loads((profile_root / "npm-package-lock.json").read_text())
-    shutil.copy2(profile_root / "npm-package-lock.json", packages / "npm-package-lock.json")
-    (packages / "npm-package.json").write_text(
-        json.dumps(
-            {
-                "name": "capsem-profile-ai-clis",
-                "private": True,
-                "dependencies": npm_lock["packages"][""]["dependencies"],
-            },
-            indent=2,
-        )
-        + "\n"
-    )
-    shutil.copy2(profile_root / "tips.txt", guest / "artifacts" / "tips.txt")
     return load_guest_config(guest)
 
 
@@ -284,48 +198,6 @@ def _seed_guest_rust_builder_inputs(repo_root: Path, config) -> None:
         destination = repo_root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(PROJECT_ROOT / relative, destination)
-
-
-@pytest.fixture
-def generated_profile_guest(tmp_path):
-    return _profile_guest_config(tmp_path, "code")
-
-
-def _package_lines(path: Path) -> list[str]:
-    return [
-        line.strip()
-        for line in path.read_text().splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-
-
-def _write_package_toml(
-    path: Path,
-    key: str,
-    name: str,
-    manager: str,
-    install_cmd: str,
-    packages: list[str],
-) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                f"[{key}]",
-                f'name = "{name}"',
-                f'manager = "{manager}"',
-                f'install_cmd = "{install_cmd}"',
-                "packages = [",
-                *[f'  "{package}",' for package in packages],
-                "]",
-                "",
-            ]
-        )
-    )
-
-
-@pytest.fixture
-def rendered_profile_arm64(generated_profile_guest):
-    return _rootfs_lineage(generated_profile_guest, "arm64")
 
 
 # ---------------------------------------------------------------------------
@@ -345,46 +217,8 @@ class TestRenderRootfs:
         assert "FROM --platform=" not in rendered_x86
 
     def test_apt_packages_present(self, real_config, rendered_arm64):
-        for pkg in real_config.package_sets["apt"].packages:
+        for pkg in real_config.build.rootfs.runtime_apt_packages:
             assert pkg in rendered_arm64, f"apt package '{pkg}' missing"
-
-    def test_python_packages_are_consumed_from_the_hashed_lock(self, real_config, rendered_arm64):
-        lock = Path(real_config.guest_dir_path) / "config/packages/python-requirements.lock"
-        payload = lock.read_text()
-        for package in real_config.package_sets["python"].packages:
-            assert package in payload
-        assert "COPY python-requirements.lock" in rendered_arm64
-        assert "--require-hashes" in rendered_arm64
-
-    def test_python_install_cmd(self, real_config, rendered_arm64):
-        cmd = real_config.package_sets["python"].install_cmd
-        assert cmd in rendered_arm64
-
-    def test_npm_packages_are_consumed_from_the_integrity_lock(
-        self, generated_profile_guest, rendered_profile_arm64
-    ):
-        lock = (
-            Path(generated_profile_guest.guest_dir_path) / "config/packages/npm-package-lock.json"
-        )
-        dependencies = json.loads(lock.read_text())["packages"][""]["dependencies"]
-        assert dependencies == {
-            package.rsplit("@", 1)[0]: package.rsplit("@", 1)[1]
-            for package in generated_profile_guest.package_sets["npm"].packages
-        }
-        assert "COPY npm-package-lock.json" in rendered_profile_arm64
-        assert "npm ci" in rendered_profile_arm64
-
-    def test_npm_prefix(self, rendered_profile_arm64):
-        assert "npm config set prefix /opt/ai-clis --global" in rendered_profile_arm64
-
-    def test_npm_global_bin_remains_a_real_directory(self, rendered_profile_arm64):
-        assert "mkdir -p /opt/ai-clis/bin" in rendered_profile_arm64
-        assert "ln -s /opt/ai-clis/node_modules/.bin /opt/ai-clis/bin" not in (
-            rendered_profile_arm64
-        )
-        assert (
-            'ln -s "../node_modules/.bin/$(basename "$cli")" "/opt/ai-clis/bin/$(basename "$cli")"'
-        ) in rendered_profile_arm64
 
     def test_guest_binaries(self, rendered_arm64):
         for binary in GUEST_BINARIES:
@@ -396,8 +230,9 @@ class TestRenderRootfs:
         assert "capsem-ca.crt" in rendered_arm64
         assert "update-ca-certificates" in rendered_arm64
 
-    def test_certifi_patch(self, rendered_arm64):
-        assert "certifi" in rendered_arm64
+    def test_system_trust_store_is_the_only_trust_store(self, rendered_arm64):
+        assert "import certifi" not in rendered_arm64
+        assert "CERTIFI_BUNDLE" not in rendered_arm64
 
     def test_shell_config(self, rendered_arm64):
         assert "capsem-bashrc" in rendered_arm64
@@ -419,17 +254,6 @@ class TestRenderRootfs:
                 f"{artifact} missing from rootfs Dockerfile"
             )
 
-    def test_node_version(self, rendered_arm64):
-        assert "node-v24.19.0-linux-arm64.tar.xz" in rendered_arm64
-        assert "test \"$(npm --version)\" = '11.17.0'" in rendered_arm64
-
-    def test_uv_installed(self, rendered_arm64):
-        assert "uv-aarch64-unknown-linux-gnu.tar.gz" in rendered_arm64
-        assert 'uv_version="$(uv --version)"' in rendered_arm64
-        assert 'test "$1" = uv' in rendered_arm64
-        assert "test \"$2\" = '0.12.3'" in rendered_arm64
-        assert 'test "$(uv --version)"' not in rendered_arm64
-
     def test_pep668_removal(self, rendered_arm64):
         assert "EXTERNALLY-MANAGED" in rendered_arm64
 
@@ -448,11 +272,8 @@ class TestRenderRootfs:
 
     def test_x86_64_has_same_packages(self, real_config, rendered_x86):
         """x86_64 gets the same packages as arm64 (arch-agnostic)."""
-        for pkg in real_config.package_sets["apt"].packages:
+        for pkg in real_config.build.rootfs.runtime_apt_packages:
             assert pkg in rendered_x86
-        assert "COPY python-requirements.lock" in rendered_x86
-        assert "COPY npm-package-lock.json" in rendered_x86
-        assert "node-v24.19.0-linux-x64.tar.xz" in rendered_x86
 
 
 # ---------------------------------------------------------------------------
@@ -475,34 +296,6 @@ class TestRootfsLayerOrdering:
         assert pos != -1, f"Expected to find {label or repr(needle)} in Dockerfile"
         return pos
 
-    def test_env_path_includes_npm_prefix(self, rendered_profile_arm64):
-        """Regression: v0.14.18 -- /opt/ai-clis/bin not on PATH, gemini/codex
-        returned N/A, build-time validator rejected the rootfs."""
-        assert 'ENV PATH="/opt/ai-clis/bin:$PATH"' in rendered_profile_arm64, (
-            "Dockerfile.rootfs.j2 must set ENV PATH to include /opt/ai-clis/bin "
-            "so version extraction can find npm-installed CLIs"
-        )
-
-    def test_env_path_after_npm_install(self, rendered_profile_arm64):
-        npm_pos = self._pos(rendered_profile_arm64, "npm ci --prefix", "npm install")
-        path_pos = self._pos(rendered_profile_arm64, 'ENV PATH="/opt/ai-clis/bin', "ENV PATH")
-        assert npm_pos < path_pos, "ENV PATH must come after npm install"
-
-    def test_ca_cert_before_certifi_patch(self, rendered_arm64):
-        """certifi patch appends our CA to certifi's bundle -- cert must exist first."""
-        copy_ca = self._pos(rendered_arm64, "COPY capsem-ca.crt", "COPY CA cert")
-        update_ca = self._pos(rendered_arm64, "update-ca-certificates", "update-ca-certificates")
-        certifi_patch = self._pos(rendered_arm64, "certifi.where()", "certifi patch")
-        assert copy_ca < update_ca < certifi_patch, (
-            "Order must be: COPY cert -> update-ca-certificates -> certifi patch"
-        )
-
-    def test_node_before_npm_install(self, rendered_profile_arm64):
-        """npm install requires node to be installed first."""
-        node_pos = self._pos(rendered_profile_arm64, "node.tar.xz", "node install")
-        npm_pos = self._pos(rendered_profile_arm64, "npm ci --prefix", "npm install")
-        assert node_pos < npm_pos, "Node.js must be installed before npm install"
-
     def test_guest_binaries_before_root_cleanup(self, rendered_arm64):
         """Guest binaries are COPYed into /usr/local/bin -- must happen before
         /root cleanup which wipes the build context landing area."""
@@ -510,18 +303,11 @@ class TestRootfsLayerOrdering:
         cleanup_pos = rendered_arm64.rfind("rm -rf /root")
         assert binary_pos < cleanup_pos, "Guest binaries must be COPYed before /root cleanup"
 
-    def test_profile_downloads_are_verified_before_root_cleanup(self, rendered_profile_arm64):
-        profile = self._pos(rendered_profile_arm64, "CAPSEM_CLAUDE_SHA256", "profile build")
-        cleanup = rendered_profile_arm64.rfind("rm -rf /root")
-        assert profile < cleanup
-        assert "claude.ai/install.sh" not in rendered_profile_arm64
-        assert "ollama.com/install.sh" not in rendered_profile_arm64
-
     def test_dependency_helper_drops_reacquirable_package_indexes_and_temp_files(
-        self, rendered_profile_arm64
+        self, rendered_arm64
     ):
         cleanup = "rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/*"
-        assert cleanup in rendered_profile_arm64
+        assert cleanup in rendered_arm64
 
     def test_snapshot_sources_replace_inherited_sources_before_apt(self, real_config):
         """Every apt resolution must consume the checked-in HTTPS snapshot."""
@@ -536,29 +322,20 @@ class TestRootfsLayerOrdering:
         update = self._pos(rendered_arm64, "apt-get -o", "apt update")
         assert sources < update
 
-    def test_setuid_strip_after_all_installs(self, rendered_profile_arm64):
+    def test_setuid_strip_after_all_installs(self, rendered_arm64):
         """Setuid strip must come after all package installs so no new
         setuid binaries sneak in after the strip."""
-        strip_pos = self._pos(rendered_profile_arm64, "-4000", "setuid strip")
-        # Must be after npm, python, and guest binary installs
-        npm_pos = self._pos(rendered_profile_arm64, "npm ci --prefix", "npm install")
-        assert strip_pos > npm_pos, "setuid strip must come after npm install"
-        if "uv pip install --system" in rendered_profile_arm64:
-            # Find the LAST uv pip install (python packages, not certifi)
-            last_pip = rendered_profile_arm64.rfind(
-                "uv pip install --system --break-system-packages"
-            )
-            assert strip_pos > last_pip, "setuid strip must come after python packages"
+        strip_pos = self._pos(rendered_arm64, "-4000", "setuid strip")
+        apt_pos = self._pos(rendered_arm64, "apt-get install", "apt install")
+        binary_pos = self._pos(rendered_arm64, "COPY capsem-pty-agent", "guest binary")
+        assert strip_pos > apt_pos, "setuid strip must come after the apt install"
+        assert strip_pos > binary_pos, "setuid strip must come after guest binaries"
 
     def test_x86_64_has_same_ordering(self, rendered_arm64, rendered_x86):
         """Both architectures must have the same layer ordering."""
         key_markers = [
             "apt-get",
-            "node.tar.xz",
-            "npm ci --prefix",
-            "ENV PATH",
             "capsem-ca.crt",
-            "certifi",
             "capsem-pty-agent",
             "capsem-bashrc",
             "EXTERNALLY-MANAGED",
@@ -619,33 +396,6 @@ class TestRootfsSecurityInvariants:
         """The guest uses iptables-nft only; strip Debian's legacy frontend."""
         assert "rm -f /usr/sbin/iptables-legacy" in rendered_arm64
         assert "/usr/sbin/ip6tables-legacy" in rendered_arm64
-
-
-class TestRootfsVersionExtractability:
-    """Every tool with a version_command in config must be findable in the
-    built image. This class validates that the Dockerfile installs them
-    in locations that will be on PATH when extract_tool_versions runs."""
-
-    def test_npm_install_prefix_on_path(self, rendered_profile_arm64):
-        assert "/opt/ai-clis/bin" in rendered_profile_arm64
-
-    def test_curl_installed_clis_copied_to_usr_local(self, real_config, rendered_arm64):
-        """Curl-installed CLIs write to ~/.local/bin which is tmpfs at runtime.
-        The Dockerfile must copy them to /usr/local/bin."""
-        has_curl = "curl" in real_config.package_sets
-        if has_curl:
-            assert 'install -m 555 "$bin" /usr/local/bin/' in rendered_arm64, (
-                "Curl-installed CLIs must be copied to /usr/local/bin so they "
-                "survive boot (tmpfs wipes /root/.local/bin)"
-            )
-
-    def test_system_tools_on_default_path(self, real_config, rendered_arm64):
-        """System tools (node, npm, uv, git, etc.) must be symlinked or
-        installed into /usr/local/bin which is on the default PATH."""
-        # node/npm are linked from the exact verified Node archive.
-        assert 'ln -s "/usr/local/lib/node/bin/$bin"' in rendered_arm64
-        # uv is explicitly installed to /usr/local/bin
-        assert "install -m 555 /tmp/uv/uv /usr/local/bin/uv" in rendered_arm64
 
 
 _NETWORK_ACQUISITION = re.compile(
@@ -741,9 +491,15 @@ def test_asset_dependency_materializers_bootstrap_https_trust_before_apt(
 
 def test_asset_dependency_identity_changes_with_every_executable_input(real_config):
     original = _asset_dependency_tag(real_config, "arm64", "rootfs")
-    script = Path(real_config.profile_build_script_path)
-    script.write_bytes(script.read_bytes() + b"\n# changed\n")
-    assert _asset_dependency_tag(real_config, "arm64", "rootfs") != original
+    rootfs = real_config.build.rootfs.model_copy(
+        update={
+            "runtime_apt_packages": (*real_config.build.rootfs.runtime_apt_packages, "jq")
+        }
+    )
+    more_packages = real_config.model_copy(
+        update={"build": real_config.build.model_copy(update={"rootfs": rootfs})}
+    )
+    assert _asset_dependency_tag(more_packages, "arm64", "rootfs") != original
 
     assert assetdependencies.image_tag(
         real_config, "arm64", "kernel", b"first rendered materializer"
@@ -764,17 +520,6 @@ def test_asset_dependency_identity_changes_with_every_executable_input(real_conf
     ) != assetdependencies.image_tag(
         changed_config, "arm64", "kernel", b"same rendered materializer"
     )
-
-
-@pytest.mark.parametrize(
-    "name",
-    ("python-requirements.lock", "npm-package.json", "npm-package-lock.json"),
-)
-def test_rootfs_dependency_identity_changes_with_each_profile_lock(real_config, name):
-    original = _asset_dependency_tag(real_config, "arm64", "rootfs")
-    lock = Path(real_config.guest_dir_path) / "config/packages" / name
-    lock.write_bytes(lock.read_bytes() + b"\n")
-    assert _asset_dependency_tag(real_config, "arm64", "rootfs") != original
 
 
 def test_asset_dependency_require_returns_only_exact_matching_platform_image(
@@ -932,12 +677,9 @@ class TestGenerateBuildContext:
         assert "arch" in ctx
         assert "arch_name" in ctx
         assert "apt_packages" in ctx
-        assert "python_packages" in ctx
-        assert "npm_packages" in ctx
-        assert "npm_prefix" in ctx
         assert "guest_binaries" in ctx
-        assert "profile_build_script" in ctx
-        assert "profile_install_script" not in ctx
+        for retired in ("python_packages", "npm_packages", "npm_prefix", "profile_build_script"):
+            assert retired not in ctx
 
     def test_kernel_keys(self, real_config):
         ctx = generate_build_context("Dockerfile.kernel.j2", real_config, "arm64")
@@ -946,33 +688,9 @@ class TestGenerateBuildContext:
         assert "kernel_version" in ctx
         assert "kernel_sha256" in ctx
 
-    def test_rootfs_without_npm_package_set(self, real_config):
-        package_sets = {
-            key: value for key, value in real_config.package_sets.items() if key != "npm"
-        }
-        config = real_config.model_copy(update={"package_sets": package_sets})
-        ctx = generate_build_context("Dockerfile.rootfs.j2", config, "arm64")
-        assert ctx["npm_packages"] == []
-
-    def test_rootfs_npm_packages_can_come_from_profile_package_set(self, generated_profile_guest):
-        ctx = generate_build_context("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
-        assert ctx["npm_packages"] == [
-            "@openai/codex@0.147.0",
-            "@google/gemini-cli@0.55.1",
-        ]
-        rendered = render_dockerfile("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
-        dependencies = render_dockerfile(
-            "Dockerfile.rootfs-dependencies.j2", generated_profile_guest, "arm64"
-        )
-        assert "COPY npm-package-lock.json" in dependencies
-        assert "npm ci" in dependencies
-        assert "profile-build.sh" in dependencies
-        assert "profile-root/" in rendered
-
     def test_rootfs_has_no_generic_curl_installer_rail(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
         assert "curl_installs" not in ctx
-        assert "curl" not in real_config.package_sets
 
     def test_rootfs_arch_config(self, real_config):
         ctx = generate_build_context("Dockerfile.rootfs.j2", real_config, "arm64")
@@ -1000,34 +718,6 @@ class TestGenerateBuildContext:
 
 class TestEdgeCases:
     """Edge cases and minimal configs."""
-
-    def test_no_python_packages(self, real_config):
-        """Removing python package set still renders."""
-        from capsem_builder.image.models import GuestImageConfig
-
-        minimal = GuestImageConfig(
-            build=real_config.build,
-            package_sets={"apt": real_config.package_sets["apt"]},
-        )
-        result = _rootfs_lineage(minimal, "arm64")
-        assert result.count("FROM ${BASE}") == 2
-        assert "FROM --platform=" not in result
-        # Should not have python install section
-        assert "uv pip install --system" not in result or "certifi" in result
-
-    def test_no_npm_package_set(self, real_config):
-        """No npm package set means no npm install section."""
-        from capsem_builder.image.models import GuestImageConfig
-
-        minimal = GuestImageConfig(
-            build=real_config.build,
-            package_sets={"apt": real_config.package_sets["apt"]},
-        )
-        result = _rootfs_lineage(minimal, "arm64")
-        assert result.count("FROM ${BASE}") == 2
-        assert "FROM --platform=" not in result
-        # npm install section should be absent
-        assert "npm install -g --prefix" not in result
 
     def test_unknown_template_render_raises(self, real_config):
         with pytest.raises(ValueError, match="Unknown template"):
@@ -1231,174 +921,6 @@ class TestExportContainerFs:
 
 
 # ---------------------------------------------------------------------------
-# Build execution: version script generation
-# ---------------------------------------------------------------------------
-
-
-class TestBuildVersionScript:
-    """build_version_script() assembles a shell script from config."""
-
-    def test_real_config_has_all_sections(self, real_config):
-        script = build_version_script(real_config)
-        assert "# System" in script
-        assert "# Python" not in script
-
-    def test_real_config_has_build_tools(self, real_config):
-        script = build_version_script(real_config)
-        assert "node=" in script
-        assert "npm=" in script
-        assert "uv=" in script
-        assert "pip=" in script
-
-    def test_real_config_uses_build_tool_version_commands_only(self, real_config):
-        script = build_version_script(real_config)
-        assert "git=" not in script
-        assert "python3=" not in script
-        assert "pytest=" not in script
-
-    def test_empty_config_produces_empty_script(self):
-        from capsem_builder.image.models import BuildConfig, GuestImageConfig
-
-        config = GuestImageConfig(
-            build=BuildConfig(
-                materialize_network=BuildNetwork.DEFAULT,
-                rootfs=RootfsConfig(
-                    max_uncompressed_bytes=2_500_000_000,
-                    max_erofs_bytes=900_000_000,
-                    forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
-                    runtime_apt_packages=("runc",),
-                ),
-                asset_dependencies=AssetDependencyConfig(
-                    tag_template="capsem-{template}-dependencies-{arch}:{digest}",
-                    rootfs_template="Dockerfile.rootfs-dependencies.j2",
-                    kernel_template="Dockerfile.kernel-dependencies.j2",
-                    source_build_network=BuildNetwork.NONE,
-                    architectures={"arm64": dependency_architecture()},
-                ),
-                kernel=KernelConfig(version="9.9.9", sha256="a" * 64),
-                guest_rust_builder=GuestRustBuilderConfig(
-                    dockerfile="build_system/docker/Dockerfile.guest-rust-builder",
-                    tag_template="capsem-guest-rust-{arch}:{digest}",
-                    identity_inputs=("Cargo.lock", "rust-toolchain.toml"),
-                    source_roots=(
-                        "Cargo.toml",
-                        "Cargo.lock",
-                        "rust-toolchain.toml",
-                        "crates",
-                    ),
-                    cross_packages=("clang21=21.1.2-r2",),
-                    runtime_network=ContainerNetwork.NONE,
-                ),
-                asset_tools=AssetToolsConfig(
-                    dockerfile="build_system/docker/Dockerfile.asset-tools",
-                    tag_template="capsem-asset-tools-{arch}:{digest}",
-                    debian_snapshot_base="http://snapshot.example/debian",
-                    debian_security_snapshot_base="http://snapshot.example/debian-security",
-                    debian_snapshot_id="20260810T000000Z",
-                    materialize_network=BuildNetwork.DEFAULT,
-                    runtime_network=ContainerNetwork.NONE,
-                    architectures={
-                        "arm64": AssetToolsArchitectureConfig(
-                            cdxgen=AssetToolBinaryConfig(
-                                url="https://example.test/cdxgen",
-                                sha256="d" * 64,
-                            ),
-                            cdx_validate=AssetToolBinaryConfig(
-                                url="https://example.test/cdx-validate",
-                                sha256="e" * 64,
-                            ),
-                        )
-                    },
-                ),
-                architectures={"arm64": real_arch()},
-            ),
-        )
-        script = build_version_script(config)
-        assert script == ""
-
-
-def dependency_architecture() -> AssetDependencyArchitectureConfig:
-    download = VersionedDownloadConfig(
-        version="1.2.3",
-        url="https://example.test/tool-1.2.3-linux-arm64",
-        sha256="f" * 64,
-    )
-    return AssetDependencyArchitectureConfig(
-        node=NodeDownloadConfig(
-            version="24.19.0",
-            url="https://example.test/node-v24.19.0-linux-arm64.tar.xz",
-            sha256="e" * 64,
-            npm_version="11.17.0",
-        ),
-        uv=download,
-        claude=download,
-        ollama=download,
-    )
-
-
-def real_arch():
-    """Minimal ArchConfig for test configs."""
-    from capsem_builder.image.models import ArchConfig
-
-    return ArchConfig(
-        base_image="registry.example/debian@sha256:" + "a" * 64,
-        rust_builder_base_image="registry.example/rust@sha256:" + "c" * 64,
-        docker_platform="linux/arm64",
-        rust_target="aarch64-unknown-linux-musl",
-        kernel_image="arch/arm64/boot/Image",
-        defconfig="kernel/defconfig.arm64",
-    )
-
-
-class TestExtractToolVersionsValidation:
-    """extract_tool_versions() writes version output from configured commands."""
-
-    @patch("capsem_builder.image.docker.run_cmd")
-    def test_valid_output_passes(self, mock_run, real_config):
-        mock_run.return_value = MagicMock(
-            stdout=(
-                "# System\n"
-                "node=24.1.0\nnpm=10.9.2\nuv=0.7.12\npip=24.0\n"
-                "python3=3.11.2\ngit=2.39.5\ngh=2.67.0\ntmux=3.4\ncurl=7.88.1\n"
-                "# Python\n"
-                "pytest=8.3.4\nnumpy=2.2.3\nrequests=2.32.3\npandas=2.2.3\n"
-            )
-        )
-        # Should not raise
-        extract_tool_versions(
-            "docker",
-            "test-image",
-            "linux/arm64",
-            Path("/tmp"),
-            real_config,
-        )
-
-    @patch("capsem_builder.image.docker.run_cmd")
-    def test_na_values_do_not_raise(self, mock_run, real_config):
-        mock_run.return_value = MagicMock(stdout=("# System\nnode=24.1.0\n# Python\npytest=N/A\n"))
-        extract_tool_versions(
-            "docker",
-            "test-image",
-            "linux/arm64",
-            Path("/tmp"),
-            real_config,
-        )
-
-    @patch("capsem_builder.image.docker.run_cmd")
-    def test_validate_false_skips_check(self, mock_run, real_config):
-        mock_run.return_value = MagicMock(stdout=("# Python\npytest=N/A\n"))
-        # Should not raise when validate=False
-        extract_tool_versions(
-            "docker",
-            "test-image",
-            "linux/arm64",
-            Path("/tmp"),
-            real_config,
-            validate=False,
-        )
-
-
-# ---------------------------------------------------------------------------
 # Clock-skew resilience: apt-get must bypass both date checks
 # ---------------------------------------------------------------------------
 
@@ -1455,7 +977,6 @@ class TestCreateErofs:
         values = {
             "max_uncompressed_bytes": 1_024,
             "max_erofs_bytes": 512,
-            "forbidden_path_prefixes": ("usr/lib/ollama/cuda_",),
             "runtime_apt_packages": ("runc",),
             **updates,
         }
@@ -1467,19 +988,6 @@ class TestCreateErofs:
 
         with pytest.raises(ValueError, match=r"uncompressed rootfs.*1025.*1024"):
             validate_rootfs_export(archive, self._rootfs_limits())
-
-    def test_rootfs_export_rejects_forbidden_ollama_payload(self, tmp_path: Path):
-        payload = tmp_path / "libcublas.so"
-        payload.write_bytes(b"gpu")
-        archive = tmp_path / "rootfs.tar"
-        with tarfile.open(archive, "w") as output:
-            output.add(payload, arcname="usr/lib/ollama/cuda_v13/libcublas.so")
-
-        with pytest.raises(ValueError, match=r"forbidden rootfs payload.*cuda_v13"):
-            validate_rootfs_export(
-                archive,
-                self._rootfs_limits(max_uncompressed_bytes=10_240),
-            )
 
     def test_rootfs_export_rejects_unsafe_member_before_container_extract(self, tmp_path: Path):
         payload = tmp_path / "payload"
@@ -1493,18 +1001,6 @@ class TestCreateErofs:
                 archive,
                 self._rootfs_limits(max_uncompressed_bytes=10_240),
             )
-
-    def test_rootfs_export_accepts_bounded_cpu_only_payload(self, tmp_path: Path):
-        payload = tmp_path / "libggml-cpu.so"
-        payload.write_bytes(b"cpu")
-        archive = tmp_path / "rootfs.tar"
-        with tarfile.open(archive, "w") as output:
-            output.add(payload, arcname="usr/lib/ollama/libggml-cpu.so")
-
-        validate_rootfs_export(
-            archive,
-            self._rootfs_limits(max_uncompressed_bytes=10_240),
-        )
 
     def test_erofs_rejects_compressed_growth(self, tmp_path: Path):
         image = tmp_path / "rootfs.erofs"
@@ -1721,30 +1217,22 @@ class TestBuildLedger:
         assert records[0]["outputs"][0]["path"] == "rootfs.erofs"
 
     def test_rootfs_config_input_record_tracks_declared_inputs_not_installed_state(
-        self, generated_profile_guest
+        self, real_config
     ):
-        record = _rootfs_config_input_record(generated_profile_guest, "arm64")
+        record = _rootfs_config_input_record(real_config, "arm64")
 
         assert record["stage"] == "rootfs.config_inputs"
         assert record["arch"] == "arm64"
-        assert "curl" in record["package_inputs"]["apt"]["packages"]
-        assert "zstd" in record["package_inputs"]["apt"]["packages"]
-        assert "pytest==9.1.1" in record["package_inputs"]["python"]["packages"]
-        assert "openai==2.54.0" in record["package_inputs"]["python"]["packages"]
-        assert record["package_inputs"]["npm"]["packages"] == [
-            "@openai/codex@0.147.0",
-            "@google/gemini-cli@0.55.1",
-        ]
-        assert record["package_inputs"]["python"]["install_cmd"] == (
-            "uv pip install --system --break-system-packages"
-        )
-        assert record["profile_inputs"]["root_seed"]["enabled"] is True
-        assert record["profile_inputs"]["build_script"]["enabled"] is True
+        assert record["rendered_rootfs_inputs"] == {
+            "apt_packages": list(real_config.build.rootfs.runtime_apt_packages),
+        }
+        assert "package_inputs" not in record
+        assert "profile_inputs" not in record
         assert record["erofs"] == {
             "enabled": True,
             "compression": "lz4hc",
             "compression_level": 12,
-            "cluster_size": generated_profile_guest.build.erofs.cluster_size,
+            "cluster_size": real_config.build.erofs.cluster_size,
         }
         assert "installed_packages" not in record
         assert "installed_versions" not in record
@@ -2038,7 +1526,6 @@ class TestBuildLedger:
 
     @patch("capsem_builder.image.docker.remove_image")
     @patch("capsem_builder.image.docker.extract_software_inventory")
-    @patch("capsem_builder.image.docker.extract_tool_versions")
     @patch("capsem_builder.image.docker.generate_cyclonedx_obom")
     @patch("capsem_builder.image.docker.create_erofs")
     @patch("capsem_builder.image.docker.export_container_fs")
@@ -2046,7 +1533,7 @@ class TestBuildLedger:
     @patch("capsem_builder.image.guestbinarycache.materialize")
     @patch("capsem_builder.image.docker.sync_container_clock")
     @patch("capsem_builder.image.docker.detect_runtime")
-    def test_rootfs_build_records_export_erofs_and_versions(
+    def test_rootfs_build_records_export_erofs_and_inventory(
         self,
         mock_runtime,
         _mock_sync,
@@ -2055,7 +1542,6 @@ class TestBuildLedger:
         mock_export,
         mock_create_erofs,
         mock_generate_obom,
-        mock_extract_versions,
         mock_extract_inventory,
         _mock_remove,
         real_config,
@@ -2093,9 +1579,6 @@ class TestBuildLedger:
                 )
             )
 
-        def fake_versions(_runtime, _tag, _platform, output_dir, _config):
-            (output_dir / "tool-versions.txt").write_text("codex=1.0.0\n")
-
         def fake_inventory(_runtime, _tag, _platform, _arch_name, output_dir):
             path = output_dir / "software-inventory.json"
             path.write_text(
@@ -2113,7 +1596,6 @@ class TestBuildLedger:
         mock_export.side_effect = fake_export
         mock_create_erofs.side_effect = fake_erofs
         mock_generate_obom.side_effect = fake_obom
-        mock_extract_versions.side_effect = fake_versions
         mock_extract_inventory.side_effect = fake_inventory
 
         dependency_id = "sha256:" + "d" * 64
@@ -2144,11 +1626,10 @@ class TestBuildLedger:
             "rootfs.export",
             "rootfs.erofs",
             "rootfs.obom",
-            "rootfs.tool_versions",
         ]
         config_record = records[0]
-        assert config_record["package_inputs"]["apt"]["packages"]
-        assert config_record["profile_inputs"]["root_seed"]["enabled"] is True
+        assert config_record["rendered_rootfs_inputs"]["apt_packages"]
+        assert "profile_inputs" not in config_record
         assert "installed_packages" not in config_record
         inventory_record = records[1]
         assert inventory_record["inputs"]["dependency_image"] == {
@@ -2433,7 +1914,6 @@ class TestKernelConfig:
         watchdog = watchdog.split('init_log "starting PTY agent', 1)[0]
         assert watchdog.rstrip().endswith(") >&2 &"), watchdog[-80:]
         assert 'init_log "PTY agent exited with status $AGENT_STATUS" >&2' in content
-        assert "cp -a /newroot/usr/local/share/capsem/profile-root/. /newroot/ 2>&1" in content
 
     def test_init_uses_iptables_nft_only(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
@@ -2534,60 +2014,29 @@ class TestPrepareBuildContext:
             assert (context_dir / kernel_patch).is_file()
         assert (context_dir / "capsem-init").is_file()
 
-    def test_rootfs_context_copies_profile_root_and_build_script(
-        self, generated_profile_guest, tmp_path
-    ):
+    def test_rootfs_context_carries_only_runtime_inputs(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"
         context_dir.mkdir()
         prepare_build_context(
-            generated_profile_guest,
+            real_config,
             "arm64",
             "Dockerfile.rootfs.j2",
             context_dir,
             PROJECT_ROOT,
         )
-        assert (context_dir / "profile-root/root/.antigravity/config.json").is_file()
-        assert (context_dir / "profile-root/root/.gemini/config/config.json").is_file()
-        assert (context_dir / "profile-root/root/.gemini/antigravity-cli/settings.json").is_file()
-        assert (context_dir / "profile-root/root/.codex/config.toml").is_file()
+        assert not (context_dir / "profile-root").exists()
         assert "Credentials are brokered by Capsem" in (context_dir / "tips.txt").read_text()
 
         dependency_context = tmp_path / "dependency"
         dependency_context.mkdir()
         prepare_build_context(
-            generated_profile_guest,
+            real_config,
             "arm64",
             "Dockerfile.rootfs-dependencies.j2",
             dependency_context,
             PROJECT_ROOT,
         )
-        assert (dependency_context / "profile-build.sh").is_file()
-        assert sorted(path.name for path in dependency_context.iterdir()) == [
-            "Dockerfile",
-            "npm-package-lock.json",
-            "npm-package.json",
-            "profile-build.sh",
-            "python-requirements.lock",
-        ]
-
-        forbidden_fragments = (
-            "127.0.0.1:11434",
-            "localhost:11434",
-            "CAPSEM_MOCK_SERVER",
-            '"provider": "ollama"',
-            '"baseUrl": "http://127.0.0.1:11434"',
-        )
-        leaked = []
-        for payload in sorted((context_dir / "profile-root").rglob("*")):
-            if not payload.is_file():
-                continue
-            text = payload.read_text(errors="ignore")
-            for fragment in forbidden_fragments:
-                if fragment in text:
-                    leaked.append(
-                        f"{payload.relative_to(context_dir / 'profile-root')}: {fragment}"
-                    )
-        assert leaked == []
+        assert sorted(path.name for path in dependency_context.iterdir()) == ["Dockerfile"]
 
     def test_rootfs_dockerfile_content(self, real_config, tmp_path):
         context_dir = tmp_path / "ctx"

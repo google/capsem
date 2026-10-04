@@ -13,10 +13,8 @@ from capsem_bench import load_harness, mitm_load
 
 @pytest.mark.parametrize("status", [200, 204, 302, 403, 500])
 def test_mitm_load_counts_http_failures(status):
-    session = types.SimpleNamespace(
-        get=lambda *args, **kwargs: types.SimpleNamespace(status_code=status),
-    )
-    elapsed, observed_status, error = mitm_load._do_request("https://fixture.test/tiny", session)
+    session = types.SimpleNamespace(get=lambda: status)
+    elapsed, observed_status, error = mitm_load._do_request(session)
     assert elapsed >= 0
     assert observed_status == status
     assert error == (None if 200 <= status < 300 else f"HTTP {status}")

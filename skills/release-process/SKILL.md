@@ -1,6 +1,6 @@
 ---
 name: release-process
-description: Capsem's release process: orthogonal binary/profile CI, signing, notarization, channel deployment. Use for release commands, failures, manifests, or anything affecting what ships.
+description: Capsem's release process: orthogonal binary/runtime CI, signing, notarization, channel deployment. Use for release commands, failures, manifests, or anything affecting what ships.
 ---
 
 # Release Process
@@ -23,10 +23,10 @@ lessons; it does not restate product policy.
 
 - Read `references/qualification-and-test-composition.md` before changing public
   release commands, source guards, sandbox/egress, execution-envelope or
-  workflow/shell parity, test composition, artifact staging, `ProfileContent`, or
+  workflow/shell parity, test composition, artifact staging, `RuntimeContent`, or
   `--force` (dirty outer checkout only; never the `just test` journal).
 - Read `references/lane-workflows.md` before changing channel locking, preview
-  deployment, profile/binary ownership, nightly sequencing, staged activation,
+  deployment, runtime/binary ownership, nightly sequencing, staged activation,
   base-image materialization, or corporate authoring.
 - Read `references/release-graph.md` before changing graph generation, channel
   membership, manifest authoring, immutable identity, or public activation.
@@ -42,8 +42,8 @@ lessons; it does not restate product policy.
 - Read `references/post-release-verification.md` after any public deployment
   and before changing the public installer, transition, or glow-up proof.
 - Read `references/versions-and-commit-discipline.md` before changing release
-  notes, binary/profile versions, compatibility bounds, profile revision
-  advancement, release-set identities, or release commit practice.
+  notes, binary/runtime versions, compatibility bounds, runtime revision
+  identity, release-set identities, or release commit practice.
 
 ## Operational entrypoints
 
@@ -51,7 +51,7 @@ Use the public command forms defined by `RELEASE.md`:
 
 ```bash
 just release-binaries <channel> <source-commit>
-just release-profile <channel> <profile> <source-commit>
+just release-assets <channel> <source-commit>
 ```
 
 Do not dispatch downstream workflows or author source manifests by hand.
@@ -85,7 +85,7 @@ reconcile it against `RELEASE.md` and the executable contract tests first.
 
 ## Tested operational handoffs
 
-Assets and materialized configuration travel as one `ProfileContent` root.
+Assets and materialized configuration travel as one `RuntimeContent` root.
 Package construction, Debian proof, macOS Tart/physical-VZ proof, and final
 install/glow-up must derive both paths from that one value and validate it
 before Docker or Colima. Release CI stages raw manifest inputs into the paired

@@ -6,13 +6,11 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let manifest_url = file_url(&manifest_path);
     let assets_dir = temp.path().join("assets");
-    let profiles_dir = repo_config_profiles_dir();
     let out_dir = temp.path().join("cache/target/release/distribution");
 
     let report = build_assets_channel(
         &manifest_url,
         &assets_dir,
-        &profiles_dir,
         "stable",
         "1.0.2",
         &out_dir,
@@ -57,20 +55,27 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
     let source_manifest_json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&manifest_path).expect("source manifest"))
             .expect("source manifest json");
-    let kernel_artifact = channel_manifest_json["profiles"]
-        .as_object()
-        .expect("profiles object")
-        .values()
-        .flat_map(|profile| {
-            profile["architectures"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|image| image["architecture"].as_str() == Some("arm64"))
-                .flat_map(|image| image["images"].as_array().into_iter().flatten())
-        })
+    assert!(channel_manifest_json.get("profiles").is_none());
+    let runtime = &channel_manifest_json["runtime"];
+    assert_eq!(runtime["revision"].as_str(), Some("2030.0101.1"));
+    assert_eq!(runtime["min_capsem_version"].as_str(), Some("1.0.0"));
+    for retired in ["id", "name", "description", "version"] {
+        assert!(runtime.get(retired).is_none(), "a runtime carries no {retired}");
+    }
+    assert!(runtime["architectures"][0].get("config").is_none());
+    let kernel_artifact = runtime["architectures"]
+        .as_array()
+        .expect("runtime architectures")
+        .iter()
+        .filter(|architecture| architecture["architecture"].as_str() == Some("arm64"))
+        .flat_map(|architecture| architecture["images"].as_array().into_iter().flatten())
         .find(|artifact| artifact["kind"].as_str() == Some("kernel"))
         .expect("arm64 kernel artifact");
+    assert_eq!(
+        kernel_artifact["url"].as_str(),
+        Some("/runtime/releases/stable/2030.0101.1/arm64/vmlinuz")
+    );
+    assert!(!out_dir.join("profiles").exists(), "no profile config is published");
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -199,37 +204,25 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
         health["updates"]["assets"]["requires_newer"]["binary"].as_bool(),
         Some(false)
     );
+    assert_eq!(health["runtime"]["revision"].as_str(), Some("2030.0101.1"));
     assert_eq!(
-        health["profiles"]["revision"].as_str(),
-        health["updates"]["profiles"]["latest"].as_str()
+        health["runtime"]["revision"].as_str(),
+        health["updates"]["runtime"]["latest"].as_str()
+    );
+    assert_eq!(health["runtime"]["min_binary"].as_str(), Some("1.0.0"));
+    assert_eq!(health["runtime"]["architectures"], serde_json::json!(["arm64"]));
+    assert_eq!(health["runtime"]["source"].as_str(), Some("manifest.runtime"));
+    assert_eq!(health["updates"]["runtime"]["state"].as_str(), Some("current"));
+    assert_eq!(
+        health["updates"]["runtime"]["source"].as_str(),
+        Some("manifest.runtime")
     );
     assert!(
-        health["profiles"]["compatibility"].is_null(),
-        "profiles must not publish channel compatibility"
+        health.get("profiles").is_none(),
+        "health.json no longer publishes profiles"
     );
-    assert_eq!(health["profiles"]["min_binary"].as_str(), Some("1.0.0"));
-    assert!(
-        health["updates"]["profiles"]["compatibility"].is_null(),
-        "profile update metadata must not publish channel compatibility"
-    );
-    assert_eq!(health["updates"]["profiles"]["state"].as_str(), Some("current"));
-    assert_eq!(health["profiles"]["source"].as_str(), Some("manifest.profiles"));
-    assert!(health["profiles"]["hash"].is_null());
-    assert_eq!(
-        health["updates"]["profiles"]["source"].as_str(),
-        Some("manifest.profiles")
-    );
-    assert!(health["updates"]["profiles"]["hash"].is_null());
-    assert_eq!(health["updates"]["images"]["latest"].as_str(), None);
-    assert!(
-        health["updates"]["images"]["latest"].is_null(),
-        "unpublished image latest should be explicit null"
-    );
-    assert_eq!(health["updates"]["images"]["state"].as_str(), Some("not_published"));
-    assert_eq!(
-        health["updates"]["images"]["source"].as_str(),
-        Some("manifest.profiles.images")
-    );
+    assert!(health["updates"].get("profiles").is_none());
+    assert!(health["updates"].get("images").is_none());
 
     let check = check_assets_channel(&out_dir, "stable").expect("asset channel checks");
     assert_eq!(check.channel, "stable");
@@ -245,7 +238,6 @@ fn release_graph_manifest_version_is_independent_from_package_and_assets() {
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -267,9 +259,81 @@ fn release_graph_manifest_version_is_independent_from_package_and_assets() {
     assert_eq!(manifest["version"].as_str(), Some("1.0.2"));
     assert_eq!(manifest["packages"][0]["version"].as_str(), Some("1.0.0"));
     assert_eq!(
-        manifest["profiles"]["code"]["architectures"][0]["image_revision"].as_str(),
+        manifest["runtime"]["architectures"][0]["image_revision"].as_str(),
         Some("2030.0101.1")
     );
+}
+
+#[test]
+fn a_mirrored_graph_channel_carries_its_runtime_bytes_into_the_new_dist() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+    let source_dist = temp.path().join("source-dist");
+    build_assets_channel(
+        &file_url(&manifest_path),
+        &temp.path().join("assets"),
+        "stable",
+        "1.0.2",
+        &source_dist,
+        "2030-01-01T00:00:00Z",
+        None,
+    )
+    .expect("source channel builds");
+    let source_graph = source_dist.join("assets/stable/manifest.json");
+    let mirror_dist = temp.path().join("mirror-dist");
+
+    build_assets_channel(
+        &file_url(&source_graph),
+        &temp.path().join("unused-assets"),
+        "stable",
+        "1.0.3",
+        &mirror_dist,
+        "2030-01-02T00:00:00Z",
+        None,
+    )
+    .expect("graph-sourced channel builds");
+
+    let relative = "runtime/releases/stable/2030.0101.1/arm64/vmlinuz";
+    assert_eq!(
+        fs::read(mirror_dist.join(relative)).expect("mirrored kernel"),
+        fs::read(source_dist.join(relative)).expect("source kernel")
+    );
+    assert!(mirror_dist
+        .join("runtime/releases/stable/2030.0101.1/arm64/obom.cdx.json")
+        .is_file());
+    check_assets_channel(&mirror_dist, "stable").expect("mirrored channel checks with its own bytes");
+
+    fs::write(source_dist.join(relative), b"tampered").expect("tamper source kernel");
+    let error = build_assets_channel(
+        &file_url(&source_graph),
+        &temp.path().join("unused-assets"),
+        "stable",
+        "1.0.4",
+        &temp.path().join("tampered-dist"),
+        "2030-01-03T00:00:00Z",
+        None,
+    )
+    .expect_err("mirrored bytes must match the graph");
+    assert!(format!("{error:#}").contains("does not match"), "{error:#}");
+
+    // A graph copied away from its site carries no bytes; the build leaves
+    // staging to its caller and the check refuses the dist until it happens.
+    let detached = temp.path().join("detached/manifest.json");
+    fs::create_dir_all(detached.parent().unwrap()).expect("detached dir");
+    fs::copy(&source_graph, &detached).expect("detached graph");
+    let detached_dist = temp.path().join("detached-dist");
+    build_assets_channel(
+        &file_url(&detached),
+        &temp.path().join("unused-assets"),
+        "stable",
+        "1.0.5",
+        &detached_dist,
+        "2030-01-04T00:00:00Z",
+        None,
+    )
+    .expect("a detached graph builds");
+    assert!(!detached_dist.join(relative).exists());
+    check_assets_channel(&detached_dist, "stable").expect_err("missing runtime bytes are refused by the check");
 }
 
 #[test]
@@ -306,13 +370,11 @@ fn assets_channel_build_preserves_existing_channels_when_adding_nightly() {
     let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
     let manifest_url = file_url(&manifest_path);
     let assets_dir = temp.path().join("assets");
-    let profiles_dir = repo_config_profiles_dir();
     let out_dir = temp.path().join("cache/target/release/distribution");
 
     build_assets_channel(
         &manifest_url,
         &assets_dir,
-        &profiles_dir,
         "stable",
         "1.0.2",
         &out_dir,
@@ -331,7 +393,6 @@ fn assets_channel_build_preserves_existing_channels_when_adding_nightly() {
     build_assets_channel(
         &manifest_url,
         &assets_dir,
-        &profiles_dir,
         "nightly",
         "1.0.2",
         &out_dir,
@@ -386,7 +447,6 @@ fn assets_channel_build_bootstraps_without_binary_files() {
     build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,
@@ -418,11 +478,10 @@ fn assets_channel_headers_split_mutable_and_immutable_paths() {
     assert!(headers.contains("/404.html\n  Cache-Control: no-cache, must-revalidate"));
     assert!(headers.contains("/health.json\n  Cache-Control: no-cache, must-revalidate"));
     assert!(headers.contains("/assets/stable/*\n  Cache-Control: no-cache, must-revalidate"));
-    assert!(!headers.contains("/profiles/stable/*\n  Cache-Control: no-cache"));
     assert!(headers.contains("/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
-    assert!(headers.contains("/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
+    assert!(headers.contains("/runtime/releases/*\n  Cache-Control: public, max-age=31536000, immutable"));
+    assert!(!headers.contains("/profiles/"), "no profile release tree is published");
     assert!(!headers.contains("/assets/*\n  Cache-Control: no-cache"));
-    assert!(!headers.contains("/profiles/*\n  Cache-Control: no-cache"));
 }
 
 #[test]
@@ -508,7 +567,7 @@ fn assets_channel_record_binary_rejects_legacy_manifest_without_package_provenan
 }
 
 #[test]
-fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles() {
+fn assets_channel_record_binary_updates_graph_manifest_without_changing_runtime() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_release_graph_manifest(temp.path());
     let original: serde_json::Value =
@@ -542,10 +601,10 @@ fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles
     .expect("record graph binary release");
 
     assert_eq!(report.version, "1.4.1234567890");
-    assert_eq!(report.min_assets, "2030.0101.1");
+    assert_eq!(report.min_assets.as_deref(), Some("2030.0101.1"));
     let updated: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("json");
-    assert_eq!(updated["profiles"], original["profiles"]);
+    assert_eq!(updated["runtime"], original["runtime"]);
     assert!(updated.get("assets").is_none());
     assert!(updated.get("binaries").is_none());
     assert_eq!(updated["packages"].as_array().expect("packages").len(), 2);
@@ -583,13 +642,14 @@ fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles
 }
 
 #[test]
-fn release_graph_health_uses_profile_obom_as_vm_attestation_predicate() {
+fn release_graph_health_uses_runtime_obom_as_vm_attestation_predicate() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_release_graph_manifest(temp.path());
     let mut manifest: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("json");
-    let predicate_url = "/profiles/releases/stable/co-work/2030.0101.1/arm64/obom.cdx.json";
-    manifest["profiles"]["co-work"]["architectures"][0]["evidence"] = serde_json::json!([
+    let predicate_url =
+        "https://github.com/google/capsem/releases/download/runtime-stable-2030.0101.1/arm64-obom.cdx.json";
+    manifest["runtime"]["architectures"][0]["evidence"] = serde_json::json!([
         {
             "kind": "obom",
             "url": predicate_url,
@@ -619,26 +679,24 @@ fn release_graph_health_uses_profile_obom_as_vm_attestation_predicate() {
 }
 
 #[test]
-fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_profile() {
+fn staged_runtime_then_binary_activation_enforces_bounds_without_rebuilding_runtime() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manifest_path = write_test_release_graph_manifest(temp.path());
     let mut staged: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest")).expect("json");
-    staged["profiles"]["co-work"]["version"] = serde_json::Value::String("2030.0203.1".to_string());
-    staged["profiles"]["co-work"]["revision"] = serde_json::Value::String("2030.0203.1".to_string());
-    staged["profiles"]["co-work"]["min_capsem_version"] = serde_json::Value::String("1.4.1234567890".to_string());
-    staged["profiles"]["co-work"]["max_capsem_version"] = serde_json::Value::String("1.4.1234567890".to_string());
+    staged["runtime"]["min_capsem_version"] = serde_json::Value::String("1.4.1234567890".to_string());
+    staged["runtime"]["max_capsem_version"] = serde_json::Value::String("1.4.1234567890".to_string());
     fs::write(
         &manifest_path,
         format!("{}\n", serde_json::to_string_pretty(&staged).expect("staged manifest")),
     )
     .expect("write staged manifest");
     let staged_bytes = fs::read(&manifest_path).expect("staged bytes");
-    let staged_profile = staged["profiles"]["co-work"].clone();
+    let staged_runtime = staged["runtime"].clone();
 
     assert!(
-        !graph_profile_matches_current_binary(&staged_profile, &staged).expect("old binary compatibility"),
-        "the staged profile must remain private while the public binary is too old"
+        !graph_runtime_matches_current_binary(&staged_runtime, &staged).expect("old binary compatibility"),
+        "the staged runtime must remain private while the public binary is too old"
     );
     let error = build_assets_channel_from_graph(
         staged.clone(),
@@ -649,8 +707,8 @@ fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_prof
     )
     .expect_err("incompatible staged source cannot become a public distribution");
     assert!(
-        format!("{error:#}").contains("co-work"),
-        "the rejection must identify the incompatible profile: {error:#}"
+        format!("{error:#}").contains("runtime 2030.0101.1"),
+        "the rejection must identify the incompatible runtime: {error:#}"
     );
 
     let too_new_dir = temp.path().join("too-new-binary");
@@ -678,10 +736,10 @@ fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_prof
         &[too_new_pkg, too_new_deb, too_new_sbom],
         "2030-02-03",
     )
-    .expect_err("binary newer than the staged profile maximum must be rejected");
+    .expect_err("binary newer than the staged runtime maximum must be rejected");
     assert!(
-        format!("{error:#}").contains("co-work"),
-        "the rejection must identify the incompatible profile: {error:#}"
+        format!("{error:#}").contains("runtime 2030.0101.1"),
+        "the rejection must identify the incompatible runtime: {error:#}"
     );
     assert_eq!(
         fs::read(&manifest_path).expect("manifest after rejected binary"),
@@ -714,18 +772,15 @@ fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_prof
         &[compatible_pkg, compatible_deb, compatible_sbom],
         "2030-02-03",
     )
-    .expect("compatible binary activates staged profile");
+    .expect("compatible binary activates staged runtime");
 
     let activated: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&manifest_path).expect("activated manifest")).expect("activated json");
     assert_eq!(
-        activated["profiles"]["co-work"], staged_profile,
-        "binary activation must reuse the exact staged profile instead of rebuilding it"
+        activated["runtime"], staged_runtime,
+        "binary activation must reuse the exact staged runtime instead of rebuilding it"
     );
-    assert!(
-        graph_profile_matches_current_binary(&activated["profiles"]["co-work"], &activated)
-            .expect("activated compatibility")
-    );
+    assert!(graph_runtime_matches_current_binary(&activated["runtime"], &activated).expect("activated compatibility"));
     build_assets_channel_from_graph(
         activated,
         "stable",
@@ -733,7 +788,7 @@ fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_prof
         &temp.path().join("activated-dist"),
         "2030-02-03T04:05:06Z",
     )
-    .expect("compatible staged profile and binary can become public");
+    .expect("compatible staged runtime and binary can become public");
 }
 
 #[test]

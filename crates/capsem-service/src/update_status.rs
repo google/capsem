@@ -237,8 +237,8 @@ fn read_update_check_cache(path: &Path) -> std::result::Result<Option<UpdateChec
 fn current_asset_version_from_manifest(assets_dir: &Path) -> Option<String> {
     let content = std::fs::read_to_string(assets_dir.join("manifest.json")).ok()?;
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
-        if let Ok(state) = capsem_assets::asset_manager::release_graph_profile_state(&value) {
-            return Some(state.images_revision);
+        if let Ok(Some(state)) = capsem_assets::asset_manager::release_graph_runtime_state(&value) {
+            return Some(state.revision);
         }
     }
     capsem_assets::asset_manager::ManifestV2::from_json(&content)

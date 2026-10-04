@@ -1,73 +1,81 @@
 ---
 title: Customizing VM Images
-description: How to edit profile-owned image inputs, rebuild images, and test your changes.
+description: How to change the official OCI images or the VM runtime, rebuild, and test your changes.
 sidebar:
   order: 15
 ---
 
-The VM image is defined by a profile. To change what is installed in the VM,
-edit the profile-owned package files, root seed, MCP config, or install script
-under `config/profiles/<profile_id>/`, then rebuild through `capsem-admin`.
-Enforcement, detection, provider access, plugins, credentials, VM resources,
-and UI settings are profile/corp/settings runtime truth, not backend image
-workspace truth.
+A session is a VM runtime running an application. To change what an agent or
+developer gets in a session, edit an OCI image under `images/`. To change the
+VM itself -- Capsem's own guest machinery -- edit the runtime inputs under
+`config/docker/image/` and `guest/artifacts/`, then rebuild with
+`just build-assets`. Enforcement, detection, provider access, plugins,
+credentials, VM resources, and UI settings are corp/settings runtime truth,
+not image truth.
 
-## The config directory
+## The source directories
 
 ```
-config/
-    profiles/
-        code/
-            profile.toml              Profile ledger
-            apt-packages.txt          System packages
-            python-requirements.txt   Python packages
-            npm-packages.txt          Node CLI packages
-            build.sh                  Profile image build hook
-            mcp.json                  Profile MCP config
-            enforcement.toml          Profile enforcement rules
-            detection.yaml            Profile Sigma detection rules
-            tips.txt                  Login tips
-            root/                     Files projected into the guest rootfs
-            root.manifest.json        Hashes for files under root/
+images/
+    catalog.toml                      Official image catalog descriptions
+    base/                             Capsem base image (every official image builds FROM it)
+    dev/  claude-code/  codex-cli/  agy/  claude-desktop/
+                                      One Dockerfile per official image
+    smoke.sh                          Per-image smoke check
+config/docker/
+    image/
+        build.toml                    Kernel, architectures, EROFS, runtime_apt_packages
+        manifest.toml                 Image identity and changelog
+        kernel/                       Defconfigs and patches
+        vm/environment.toml           Guest shell environment
+        security/web.toml             Web domain lists
+    Dockerfile.rootfs-dependencies.j2 Runtime package layer template
+    Dockerfile.rootfs.j2              Runtime rootfs assembly template
+    Dockerfile.kernel.j2              Kernel template
 guest/
     artifacts/
         capsem-init                   PID 1 init script
         capsem-doctor                 In-VM diagnostic suite
         capsem-bench                  In-VM benchmarks
         diagnostics/                  Test scripts for capsem-doctor
-config/docker/
-    Dockerfile.rootfs.j2              Backend rootfs template
-    Dockerfile.kernel.j2              Backend kernel template
+        tips.txt                      Login tips
 ```
 
 ## Common changes
 
-### Add a system package
+### Add a tool for agents or developers
 
-Edit `config/profiles/code/apt-packages.txt`:
+Add it to the relevant OCI image under `images/` -- `images/base/` when every
+official image needs it, otherwise the one image that does:
 
-```text
-your-package
+```dockerfile
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends your-package && \
+    rm -rf /var/lib/apt/lists/*
+USER capsem
 ```
 
-### Add a Python package
-
-Edit `config/profiles/code/python-requirements.txt`:
-
-```text
-your-package
-```
+This installs the binary into the image; it does not grant network access or
+inject credentials. Add provider behavior through corp enforcement rules and
+the credential broker plugin.
 
 ### Add a guest AI CLI
 
-Add the package to `config/profiles/code/npm-packages.txt` or the build hook to
-`config/profiles/code/build.sh`. This installs the binary into the base image;
-it does not grant network access or inject credentials. Add provider behavior
-through profile/corp enforcement rules and the credential broker plugin.
+Add a new directory under `images/` with a `Dockerfile` that builds
+`FROM ${BASE}`, list it in `images/catalog.toml`, and add it to the publication
+matrix in `.github/workflows/images.yaml`; `tests/images/test_image_ci.py`
+holds the three to the same set of names.
+
+### Add a runtime package
+
+Only when Capsem's own guest machinery needs it (the container launcher,
+`capsem-init`, `capsem-doctor`, `capsem-bench`, network diagnostics), add it to
+`runtime_apt_packages` in `config/docker/image/build.toml`. Everything else
+belongs in an OCI image.
 
 ### Change network policy
 
-Add allow/block behavior as profile or corp security rules:
+Add allow/block behavior as corp security rules:
 
 ```toml
 [profiles.rules.allow_corp_http]
@@ -83,79 +91,68 @@ match = 'http.host.matches("(^|.*\\.)banned-domain\\.com$")'
 
 ### Customize login tips
 
-Edit `config/profiles/code/tips.txt` -- one tip per line, `#` lines are ignored. A random tip is shown each time a user opens a session:
+Edit `guest/artifacts/tips.txt` -- one tip per line, `#` lines are ignored. A random tip is shown each time a user opens a session:
 
 ```
 pip install and uv pip install work out of the box.
-npm install -g works -- packages go to your scratch disk.
 Run capsem-doctor to verify sandbox integrity.
 Your custom tip here.
 ```
 
 ### Change VM resources
 
-VM resources are profile/runtime configuration, not rootfs build configuration.
-Change the VM defaults through the profile/runtime API or profile-owned VM
-defaults when that profile schema is active:
-
-```toml
-[resources]
-cpu_count = 8
-ram_gb = 8
-scratch_disk_size_gb = 32
-```
+VM resources are runtime configuration, not rootfs build configuration. Set
+them per session (`capsem create --ram <GB> --cpu <CORES>`) or through
+settings.
 
 ## Rebuild and test
 
-After editing profile files:
+After editing an OCI image, push it to a registry the service can pull from and
+run it in a session:
 
 ```bash
-# 1. Validate your changes (fast, catches typos)
-cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config
+docker buildx build --push --build-arg BASE=<base image by digest> \
+  -t registry.internal.corp/capsem/corp-dev:test images/corp-dev
+capsem run --image registry.internal.corp/capsem/corp-dev:test sh -c 'your-package --version'
+```
 
-# 2. Rebuild the rootfs (kernel rebuild only needed if you changed backend kernel inputs)
-just build-rootfs arm64 code
+`tests/images/test_official_images_boot.py` boots the official images the same
+way.
 
-# 3. Boot and verify
+After editing runtime inputs:
+
+```bash
+# Rebuild the runtime for the host architecture
+just build-assets arm64
+
+# Boot and verify
 just exec "capsem-doctor"
 ```
 
-If you changed kernel config, rebuild everything:
-
-```bash
-just build-assets code
-just exec "capsem-doctor"
-```
-
-### What triggers a full rebuild?
+### What triggers a rebuild?
 
 | What you changed | Rebuild command |
 |-----------------|----------------|
-| `config/profiles/code/apt-packages.txt` | `just build-rootfs <arch> code` |
-| `config/profiles/code/python-requirements.txt` | `just build-rootfs <arch> code` |
-| `config/profiles/code/npm-packages.txt` | `just build-rootfs <arch> code` |
-| `config/profiles/code/build.sh` | `just build-rootfs <arch> code` |
-| `config/profiles/code/root/**` | `just build-rootfs <arch> code` |
-| `config/profiles/code/mcp.json` | No rootfs rebuild unless it changes projected root seed files |
-| `config/profiles/code/enforcement.toml` | No rootfs rebuild |
-| `config/profiles/code/detection.yaml` | No rootfs rebuild |
-| `kernel/defconfig.*` | `just build-kernel <arch> code` |
-| backend build spec/templates | `just build-assets code [arch]` (full rebuild) |
-| `config/profiles/code/tips.txt` | `just build-rootfs <arch> code` |
-| `guest/artifacts/capsem-init` | `just run` (repacks initrd automatically) |
+| `images/<name>/**` | Rebuild that image (and its dependents, for `images/base/`) |
+| `config/docker/image/build.toml` `runtime_apt_packages` | `just _build-rootfs <arch>` |
+| `guest/artifacts/diagnostics/**`, `tips.txt`, `capsem-bashrc` | `just _build-rootfs <arch>` |
+| `config/docker/image/kernel/**` | `just _build-kernel <arch>` |
+| backend build spec/templates | `just build-assets [arch]` (full rebuild) |
+| `guest/artifacts/capsem-init` | `just shell` (repacks initrd automatically) |
+| corp enforcement/detection rules | No rebuild |
 
-Settings-only changes take effect through the settings/profile route path and
-do not rebuild the rootfs.
+Settings-only changes take effect through the settings route path and do not
+rebuild the rootfs.
 
 ## Builder CLI reference
 
 ```bash
-cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config
-cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
+just build-assets [arch]
+cargo run -p capsem-admin -- image build --config-root config --arch arm64
 ```
 
 ## Further reading
 
 - [Build System Architecture](/architecture/build-system/) -- how capsem-builder works internally (Pydantic models, Jinja2 templates, Docker pipeline)
-- [Custom Images Reference](/architecture/custom-images/) -- full config schema, corporate deployment, install methods, manifest format
+- [Custom Images Reference](/architecture/custom-images/) -- OCI application images, the runtime package set, corporate deployment, manifest format
 - [Life of a Build](./stack) -- how image assets flow into the boot pipeline

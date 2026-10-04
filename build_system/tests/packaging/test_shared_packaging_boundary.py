@@ -20,7 +20,6 @@ EXPECTED_RESOURCE_MODES = {
     "install-manifest-request.sh": 0o644,
     "package_payload.py": 0o644,
     "prepare-install-vm-devices.sh": 0o644,
-    "profile_root_payload.py": 0o644,
     "retire-cohort": 0o755,
     "service-owned-update": 0o644,
 }
@@ -128,17 +127,8 @@ def test_python_consumers_import_shared_helpers_from_their_owner() -> None:
     release_check = (
         ROOT / "build_system/builder/release/tools/check_public_binary_release.py"
     ).read_text(encoding="utf-8")
-    profile_staging = (
-        ROOT / "build_system/builder/release/tools/stage_release_test_inputs.py"
-    ).read_text(encoding="utf-8")
 
     assert (
         "from .package_payload import package_payload_files"
         in release_check
     )
-    assert (
-        "from .profile_root_payload import stage_legacy_root"
-        in profile_staging
-    )
-    compatibility = (SHARED / "profile_root_payload.py").read_text(encoding="utf-8")
-    assert "from capsem_builder.release.tools.profile_root_payload import *" in compatibility

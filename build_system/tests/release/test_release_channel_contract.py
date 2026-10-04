@@ -7,11 +7,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
 
 
@@ -22,25 +18,17 @@ def test_manifest_version_independent() -> None:
         current = next(item for item in record["manifests"] if item["status"] == "current")
         manifest = graph["manifests"][channel][current["version"]]
         package_versions = {package["version"] for package in manifest["packages"]}
-        profile_versions = {
-            profile["revision"] for profile in manifest["profiles"].values()
-        }
 
         assert current["version"] == manifest["version"], channel
         assert "+assets." not in manifest["version"], channel
         assert manifest["version"] not in package_versions, channel
-        assert manifest["version"] not in profile_versions, channel
+        assert manifest["version"] != manifest["runtime"]["revision"], channel
 
-    admin_module = (
-        PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "assets_channel_render.rs"
-    )
+    admin_module = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "assets_channel_render.rs"
     admin_source = admin_module.read_text(encoding="utf-8")
     assert "fn validate_graph_manifest_version" in admin_source
     assert 'version.contains("+assets.")' in admin_source
     assert "manifest version must be independent from asset and binary versions" in admin_source
-    assert (
-        "release_graph_manifest_version_is_independent_from_package_and_assets"
-        in (
-            PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "tests" / "channel_build.rs"
-        ).read_text(encoding="utf-8")
-    )
+    assert "release_graph_manifest_version_is_independent_from_package_and_assets" in (
+        PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "tests" / "channel_build.rs"
+    ).read_text(encoding="utf-8")
