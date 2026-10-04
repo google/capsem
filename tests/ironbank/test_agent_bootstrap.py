@@ -47,6 +47,7 @@ EXPECTED_EXEC_COLUMNS = {
     "stdout_bytes",
     "stderr_bytes",
     "source",
+    "target",
     "trace_id",
     "process_name",
     "pid",
@@ -345,6 +346,7 @@ def test_profile_agent_bootstrap_pays_ledger_debt_blackbox():
                 timeout_s=15,
             )
             assert exec_row["source"] == "api"
+            assert exec_row["target"] == "vm"
             assert re.fullmatch(r"[0-9a-f]{12}", exec_row["event_id"])
             assert exec_row["stdout_bytes"] >= len("IRONBANK_AGENT_BOOTSTRAP_RESULT")
             assert exec_row["stderr_bytes"] >= 0

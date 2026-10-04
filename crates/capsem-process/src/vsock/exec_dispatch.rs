@@ -40,6 +40,7 @@ impl ExecDispatch {
                 exec_id: id,
                 command: command.clone(),
                 source: "api".into(),
+                target: capsem_proto::ipc::ExecTarget::Vm,
                 trace_id,
                 process_name: None,
                 credential_ref: None,

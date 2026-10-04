@@ -280,6 +280,8 @@ pub const CREATE_SCHEMA: &str = "
         stdout_bytes INTEGER DEFAULT 0,
         stderr_bytes INTEGER DEFAULT 0,
         source TEXT NOT NULL DEFAULT 'api',
+        -- Where it ran. No default: a row that does not say is a writer bug.
+        target TEXT NOT NULL CHECK (target IN ('vm', 'workload')),
         trace_id TEXT,
         turn_id TEXT,
         process_name TEXT,

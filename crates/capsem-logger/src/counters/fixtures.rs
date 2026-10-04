@@ -59,7 +59,7 @@ pub(crate) fn file(action: &str, path: &str) -> WriteOp {
 
 pub(crate) fn exec(exec_id: u64) -> WriteOp {
     WriteOp::ExecEvent(from::<ExecEvent>(json!({
-        "timestamp": 1_700_000_000.0, "exec_id": exec_id, "command": "true", "source": "api",
+        "timestamp": 1_700_000_000.0, "exec_id": exec_id, "command": "true", "source": "api", "target": "vm",
     })))
 }
 

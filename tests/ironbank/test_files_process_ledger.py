@@ -62,6 +62,7 @@ EXPECTED_EXEC_COLUMNS = {
     "stdout_bytes",
     "stderr_bytes",
     "source",
+    "target",
     "trace_id",
     "process_name",
     "pid",
@@ -331,6 +332,7 @@ def test_file_process_routes_pay_full_ledger_debt_blackbox():
             )
             _assert_ledger_id(exec_row["event_id"])
             assert exec_row["source"] == "api"
+            assert exec_row["target"] == "vm"
             assert exec_row["stdout_bytes"] >= len("IRONBANK_FILE_PROCESS=")
             assert "IRONBANK_FILE_PROCESS=" in exec_row["stdout_preview"]
             assert exec_row["stderr_preview"] in {None, ""}

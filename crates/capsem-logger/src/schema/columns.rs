@@ -176,6 +176,7 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "source",
             "stderr_preview",
             "stdout_preview",
+            "target",
             "timestamp",
             "trace_id",
             "turn_id",

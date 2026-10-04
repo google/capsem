@@ -817,6 +817,7 @@ fn exec_event_insert_then_update_roundtrip() {
                     exec_id: 42,
                     command: "ls -la".into(),
                     source: "mcp".into(),
+                    target: capsem_proto::ipc::ExecTarget::Workload,
                     trace_id: Some("t1".into()),
                     process_name: Some("capsem".into()),
                     credential_ref: None,
@@ -839,41 +840,26 @@ fn exec_event_insert_then_update_roundtrip() {
     }
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let (command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid) = conn
+    let row = conn
         .query_row(
-            "SELECT command, source, exit_code, duration_ms, stdout_preview, stderr_preview, stdout_bytes, pid
+            "SELECT command, source, target, exit_code, duration_ms, stdout_preview, stderr_preview, stdout_bytes, pid
          FROM exec_events WHERE exec_id = 42",
             [],
-            |r| {
-                let command: String = r.get(0)?;
-                let source: String = r.get(1)?;
-                let exit: i64 = r.get(2)?;
-                let duration: i64 = r.get(3)?;
-                let stdout_preview: Option<String> = r.get(4)?;
-                let stderr_preview: Option<String> = r.get(5)?;
-                let stdout_bytes: i64 = r.get(6)?;
-                let pid: Option<i64> = r.get(7)?;
-                Ok((
-                    command,
-                    source,
-                    exit,
-                    duration,
-                    stdout_preview,
-                    stderr_preview,
-                    stdout_bytes,
-                    pid,
-                ))
-            },
+            |r| (0..9).map(|i| r.get::<_, Value>(i)).collect::<Result<Vec<_>, _>>(),
         )
         .unwrap();
-    assert_eq!(command, "ls -la");
-    assert_eq!(source, "mcp");
-    assert_eq!(exit, 0);
-    assert_eq!(duration, 120);
-    assert_eq!(stdout_preview.as_deref(), Some("out"));
-    assert_eq!(stderr_preview.as_deref(), Some(""), "silent, not missing");
-    assert_eq!(stdout_bytes, 128);
-    assert_eq!(pid, Some(1234));
+    use rusqlite::types::Value::{self, Integer, Text};
+    // `target` is where it ran, beside what was asked rather than folded into
+    // it; an empty stderr preview is a silent lane, not a missing one.
+    let expected = [
+        Text("ls -la".into()),
+        Text("mcp".into()),
+        Text("workload".into()),
+        Integer(0),
+        Integer(120),
+    ];
+    let output = [Text("out".into()), Text(String::new()), Integer(128), Integer(1234)];
+    assert_eq!(row, [expected.as_slice(), output.as_slice()].concat());
 }
 
 #[test]

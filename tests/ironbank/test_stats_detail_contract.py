@@ -174,8 +174,8 @@ def _seed_session_db(db_path: Path) -> None:
             INSERT INTO exec_events (
                 event_id, timestamp, exec_id, command, exit_code, duration_ms,
                 stdout_preview, stderr_preview, stdout_bytes, stderr_bytes,
-                source, trace_id, process_name, pid, credential_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source, target, trace_id, process_name, pid, credential_ref
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'vm', ?, ?, ?, ?)
             """,
             (
                 EXEC_EVENT_ID,

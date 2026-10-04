@@ -156,6 +156,7 @@ fn exec_event(exec_id: u64, command: &str) -> ExecEvent {
         exec_id,
         command: command.to_string(),
         source: "api".to_string(),
+        target: capsem_proto::ipc::ExecTarget::Vm,
         trace_id: Some("trace_exec".to_string()),
         process_name: None,
         credential_ref: None,

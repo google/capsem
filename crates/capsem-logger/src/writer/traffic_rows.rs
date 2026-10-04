@@ -233,9 +233,9 @@ pub(super) fn insert_exec_event(conn: &Connection, event: &ExecEvent, target: Wr
         conn,
         &format!(
             "INSERT INTO {} (
-            event_id, timestamp, exec_id, command, source, trace_id, turn_id, process_name, credential_ref
+            event_id, timestamp, exec_id, command, source, target, trace_id, turn_id, process_name, credential_ref
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             target.table("exec_events")
         ),
         params![
@@ -244,6 +244,7 @@ pub(super) fn insert_exec_event(conn: &Connection, event: &ExecEvent, target: Wr
             event.exec_id as i64,
             event.command,
             event.source,
+            event.target.as_str(),
             event.trace_id,
             event.trace_id,
             event.process_name,

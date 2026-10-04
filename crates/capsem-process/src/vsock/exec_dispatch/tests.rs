@@ -30,15 +30,15 @@ fn bridge() -> Bridge {
     }
 }
 
-/// The command of every exec_events row, read the way a route reads the
-/// ledger: through the DB handle after the writer's flush barrier.
-async fn ledger_rows(bridge: &Bridge) -> Vec<String> {
+/// `(command, target)` of every exec_events row, read the way a route reads
+/// the ledger: through the DB handle after the writer's flush barrier.
+async fn ledger_rows(bridge: &Bridge) -> Vec<(String, String)> {
     bridge.dispatch.db.flush().await;
     let handle = DbHandle::open_external_reader(&bridge.path).unwrap();
     handle.ready().await.unwrap();
     let rows: serde_json::Value = serde_json::from_str(
         &handle
-            .query("SELECT command FROM exec_events ORDER BY id", &[])
+            .query("SELECT command, target FROM exec_events ORDER BY id", &[])
             .await
             .unwrap(),
     )
@@ -47,7 +47,7 @@ async fn ledger_rows(bridge: &Bridge) -> Vec<String> {
         .as_array()
         .unwrap()
         .iter()
-        .map(|row| row[0].as_str().unwrap().to_owned())
+        .map(|row| (row[0].as_str().unwrap().to_owned(), row[1].as_str().unwrap().to_owned()))
         .collect()
 }
 
@@ -64,5 +64,8 @@ async fn an_allowed_exec_is_recorded_then_dispatched() {
     let mut bridge = bridge();
     bridge.dispatch.dispatch(8, "test -f /var/tmp/x".into()).await;
     assert_eq!(dispatched(&mut bridge.guest), (8, "test -f /var/tmp/x".to_string()));
-    assert_eq!(ledger_rows(&bridge).await, vec!["test -f /var/tmp/x".to_string()]);
+    assert_eq!(
+        ledger_rows(&bridge).await,
+        vec![("test -f /var/tmp/x".to_string(), "vm".to_string())]
+    );
 }

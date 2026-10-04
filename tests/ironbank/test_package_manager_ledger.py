@@ -364,6 +364,7 @@ def test_package_managers_pay_their_ledger_debt_blackbox():
             )
             _assert_ledger_id(exec_row["event_id"])
             assert exec_row["source"] == "api"
+            assert exec_row["target"] == "vm"
             assert exec_row["stdout_bytes"] >= sum(len(line) for line in expected_lines)
             assert "IRONBANK:complete" in exec_row["stdout_preview"]
             assert exec_row["stderr_bytes"] >= 0

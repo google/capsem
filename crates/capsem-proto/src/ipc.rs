@@ -8,6 +8,37 @@ pub enum FileBoundaryAction {
     Export,
 }
 
+/// Where a guest exec runs; the session ledger records which one ran.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecTarget {
+    /// The VM itself, as VM root in the agent's environment.
+    Vm,
+    /// The session's running OCI workload, through `runc exec` as the image's
+    /// own process user.
+    Workload,
+}
+
+impl ExecTarget {
+    /// The ledger's spelling, identical to the wire's.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vm => "vm",
+            Self::Workload => "workload",
+        }
+    }
+}
+
+impl std::str::FromStr for ExecTarget {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        [Self::Vm, Self::Workload]
+            .into_iter()
+            .find(|target| target.as_str() == value)
+            .ok_or_else(|| format!("unknown exec target {value:?}"))
+    }
+}
+
 /// Messages sent from capsem-service to capsem-process over the per-VM Unix Domain Socket.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServiceToProcess {

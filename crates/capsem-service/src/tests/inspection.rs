@@ -99,8 +99,8 @@ async fn stats_detail_has_typed_nullable_events_and_captured_bodies() {
         VALUES('2026-09-10T00:00:00Z','example.test',28,1,0,'redirected','udp');
         INSERT INTO fs_events(timestamp,action,path,size)
         VALUES('2026-09-10T00:00:00Z','import','/workspace/large',7000000000);
-        INSERT INTO exec_events(timestamp,exec_id,command,exit_code)
-        VALUES('2026-09-10T00:00:00Z',4294967296,'false',-9);
+        INSERT INTO exec_events(timestamp,exec_id,command,target,exit_code)
+        VALUES('2026-09-10T00:00:00Z',4294967296,'false','vm',-9);
         INSERT INTO audit_events(timestamp,pid,ppid,uid,exe,argv,exit_code)
         VALUES('2026-09-10T00:00:00Z',42,1,4294967295,'/bin/false','["false"]',1);
         INSERT INTO substitution_events(timestamp,material_class,source,event_type,algorithm,substitution_ref,outcome)

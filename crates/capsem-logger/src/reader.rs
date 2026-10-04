@@ -532,6 +532,12 @@ impl DbReader {
                 exec_id: row.get::<_, i64>(1)? as u64,
                 command: row.get(2)?,
                 source: row.get(3)?,
+                target: row
+                    .get::<_, String>(8)?
+                    .parse::<capsem_proto::ipc::ExecTarget>()
+                    .map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, error.into())
+                    })?,
                 trace_id: row.get(4)?,
                 process_name: row.get(5)?,
                 credential_ref: row.get(6)?,

@@ -789,6 +789,10 @@ pub struct ExecEvent {
     pub command: String,
     /// Request origin: "mcp", "cli", "api", "frontend".
     pub source: String,
+    /// Where it ran: the VM, or the session's container workload.
+    /// is what the caller asked for in either case, never the launcher that
+    /// carries it into the workload.
+    pub target: capsem_proto::ipc::ExecTarget,
     pub trace_id: Option<String>,
     pub process_name: Option<String>,
     #[serde(default)]

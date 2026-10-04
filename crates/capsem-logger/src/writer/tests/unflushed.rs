@@ -42,6 +42,7 @@ fn exec_start(exec_id: u64, command: &str) -> WriteOp {
         exec_id,
         command: command.into(),
         source: "api".into(),
+        target: capsem_proto::ipc::ExecTarget::Vm,
         trace_id: Some("trace-package".into()),
         process_name: None,
         credential_ref: None,

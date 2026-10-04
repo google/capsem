@@ -70,6 +70,16 @@ fn exec_roundtrip() {
     }
 }
 
+/// The ledger's spelling is the wire's, and reads back as the same target.
+#[test]
+fn exec_target_is_spelled_like_the_ledger() {
+    for target in [ExecTarget::Vm, ExecTarget::Workload] {
+        assert_eq!(serde_json::to_value(target).unwrap(), target.as_str());
+        assert_eq!(target.as_str().parse::<ExecTarget>(), Ok(target));
+    }
+    assert!("container".parse::<ExecTarget>().is_err());
+}
+
 #[test]
 fn write_file_roundtrip() {
     let msg = ServiceToProcess::WriteFile {
