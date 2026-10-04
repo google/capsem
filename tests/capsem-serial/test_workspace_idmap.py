@@ -53,7 +53,8 @@ else:
     print("IDMAPPED", os.stat("/tmp/idmapped/idmap-probe/file").st_uid)
     os.chown("/tmp/idmapped/idmap-probe/file", 100000, 100000)
     print("CHOWN ok")
-    subprocess.run(["umount", "/tmp/idmapped"], check=True)
+    if libc.umount2(b"/tmp/idmapped", 0) < 0:
+        print("UMOUNT", errno.errorcode[ctypes.get_errno()])
 print("PLAIN", os.stat("/root/idmap-probe/file").st_uid)
 holder.kill()
 """
@@ -74,7 +75,9 @@ def test_the_workspace_can_be_idmapped_for_a_user_namespace(serial_env):
     lines = out.split()
     assert "IDMAP ok" in out, out
     # VM uid 0 shows as 100000 -- container root -- through the idmapped mount.
+    assert "IDMAPPED" in lines, out
     assert lines[lines.index("IDMAPPED") + 1] == "100000", out
     assert "CHOWN ok" in out, out
     # The share's own mount keeps the identity mapping.
+    assert "PLAIN" in lines, out
     assert lines[lines.index("PLAIN") + 1] == "0", out
