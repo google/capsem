@@ -4,7 +4,8 @@
 
 - `guest/artifacts/capsem-init` -- PID 1 init script. Sets up networking, mounts, launches daemons.
 - `guest/artifacts/capsem-bashrc` -- guest shell config (baked into rootfs)
-- `config/profiles/<id>/` -- profile-owned packages, rules, MCP declarations, tips, and root seed files
+- `config/docker/image/build.toml` -- VM runtime package set, kernel pin, EROFS settings and size budgets
+- `images/` -- OCI application images and `catalog.toml`
 - `crates/capsem-agent/src/main.rs` -- PTY agent (vsock bridge, cross-compiled)
 - `crates/capsem-agent/src/net_proxy.rs` -- TCP-to-vsock relay (cross-compiled)
 

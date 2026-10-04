@@ -14,7 +14,7 @@ sidebar:
 | **macOS 13+** (Ventura) | Required for Virtualization.framework |
 | **Apple Silicon** (arm64) | Intel Macs are not supported |
 | **Xcode Command Line Tools** | Provides `codesign`, `cc`, and system headers. Install: `xcode-select --install` |
-| **Docker (via Colima on macOS)** | Needed for `just build-assets code` (kernel + rootfs builds) |
+| **Docker (via Colima on macOS)** | Needed for `just build-assets` (kernel + rootfs builds) |
 
 ### Linux
 
@@ -23,7 +23,7 @@ sidebar:
 | **Debian/Ubuntu** | apt-based distro (for .deb install) |
 | **x86_64 or arm64** | Both architectures supported |
 | **KVM + vhost-vsock** | `/dev/kvm` and `/dev/vhost-vsock` must be accessible. Bootstrap loads and provisions both. |
-| **Docker** | Installed/started by bootstrap; needed for `just build-assets code` |
+| **Docker** | Installed/started by bootstrap; needed for `just build-assets` |
 | **Bubblewrap** | Installed/proved by bootstrap; gives `just test` a loopback-only host network namespace |
 | **QEMU user/binfmt** | Installed and registration-proved by bootstrap; executes the non-host asset architecture |
 
@@ -55,7 +55,7 @@ lifecycles in the bootstrap run.
 | 2 | `uv` | `astral.sh/uv` installer → `~/.local/bin` | Python deps for `capsem-builder` |
 | 2 | Python deps | `uv sync --project build_system` | Locked via `uv.lock` |
 | 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |
-| 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets code` |
+| 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets` |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128` | Runs Docker; Rosetta enables x86_64 cross-builds and the disk retains release caches |
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `web/app/`) | Tauri UI dependencies |
 | 3 | Doctor `--fix` | `build_system/scripts/doctor/doctor-common.sh --fix` | Installs Rust targets and exact config-owned Cargo tools (`cargo-nextest`, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri`, `cargo-sbom`), builds VM assets, packs initrd |
@@ -68,21 +68,23 @@ Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n
 ## Build VM assets
 
 ```bash
-just build-assets code
+just build-assets
 ```
 
-Builds the Linux kernel and rootfs via Docker (~10 min on first run). The code
-profile builds one exact, checksum-verified kernel source and the EROFS/LZ4HC
-rootfs contract. Kernel source changes are backend image-spec changes made
-through the profile-derived build rail, then verified by `capsem-admin image
-build` and the Linux handoff gate. Assets are gitignored and must be built
+Builds the VM runtime -- the Linux kernel and rootfs -- via Docker (~10 min on
+first run). It builds one exact, checksum-verified kernel source and the
+EROFS/LZ4HC rootfs contract from `config/docker/image/` and
+`guest/artifacts/`. Kernel source changes are backend image-spec changes made
+in `config/docker/image/`, then verified by `capsem-admin image build` and the
+Linux handoff gate. Assets are gitignored and must be built
 locally. See [Life of a Build > Container runtime](./stack#container-runtime)
 if you need to retune Colima resources.
 
-The build is profile-derived. `code` is the default coding-agent profile, and
-the runtime profile for the current local build is generated under
-`cache/target/config/` by `capsem-admin profile materialize` during `just shell`,
-`just exec`, `just fast-test`, `just test`, and release packaging.
+The runtime has no profile input. Agents and developer tools come from OCI
+images under `images/`, run per session with `--image`. The catalog the local
+development service reads is generated under `cache/target/config/` by
+`capsem-admin profile materialize` during `just shell`, `just exec`,
+`just fast-test`, and `just test`; no package ships it.
 
 ## Verify
 
@@ -128,9 +130,10 @@ No Apple Developer ID certificate is needed for local development -- ad-hoc sign
 
 ## Customizing the VM image
 
-To add packages or guest tools, edit the profile-owned files under
-`config/profiles/code/` and rebuild through `just build-assets code`.
-Profile/corp files own security rules and provider access. See
+To add tools for agents or developers, add them to an OCI image under
+`images/`. Change `runtime_apt_packages` in `config/docker/image/build.toml`
+and rebuild through `just build-assets` only when Capsem's own guest machinery
+needs a package. Corp files own security rules and provider access. See
 [Customizing VM Images](./custom-images) for the workflow.
 
 ## API keys (optional)
@@ -157,11 +160,11 @@ If `just run` or `just doctor` reports a codesign failure:
    - Check SIP status: `csrutil status` (should be "enabled")
    - Verify `cc` works: `echo 'int main(){return 0;}' | cc -x c -o /tmp/test -` -- if this fails, reinstall CLTools: `sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install`
 
-### `just build-assets code` or `just test-install` fails with exit 137 (or 143 mid-cargo-build)
+### `just build-assets` or `just test-install` fails with exit 137 (or 143 mid-cargo-build)
 
 The container runtime ran out of memory. The Tauri install-test cold build needs >12GB. See [Life of a Build > Container runtime](./stack#container-runtime) for how to bump Colima to 16GB.
 
-### `just build-assets code` fails with "Release file not valid yet"
+### `just build-assets` fails with "Release file not valid yet"
 
 The container VM's clock has drifted:
 - Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128`
@@ -169,6 +172,6 @@ The container VM's clock has drifted:
 
 ### `just run` fails with "assets not found"
 
-Run `just build-assets code` first. Assets are gitignored and must be built locally.
+Run `just build-assets` first. Assets are gitignored and must be built locally.
 
 For runtime issues (disk full, boot hangs, cross-compile errors, network problems), see [Troubleshooting](/debugging/troubleshooting/).

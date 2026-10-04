@@ -1,7 +1,7 @@
 # Release-Channel Publication Contract
 
 Read this reference before changing release-channel graph generation, binary
-or profile publication, channel switching, deployment, Cloudflare readiness,
+or runtime publication, channel switching, deployment, Cloudflare readiness,
 evidence and attestation validation, or public cache headers.
 
 The public asset channel is generated from that manifest with
@@ -11,14 +11,13 @@ source tree or alternate manifest format. The generated deploy root is
 `assets/<channel>/manifest.json` under that root, so the stable public URL is
 `https://release.capsem.org/assets/stable/manifest.json`.
 `capsem-admin` writes the machine channel artifacts only: root `channels.json`,
-per-channel manifest JSON, profile-owned image/config/evidence files,
+per-channel manifest JSON, runtime image/evidence files,
 `_headers`, and `robots.txt`. The human release pages are built by the
 `build_system/release_site/` Astro
 app from those JSON files with
 `CAPSEM_RELEASE_GRAPH=/path/to/cache/target/release/distribution CAPSEM_RELEASE_CHANNEL_DIST=/path/to/cache/target/release/distribution pnpm run
-build:channel`, which overlays the root channel list, per-channel pages, and
-per-profile pages into the same deploy root before channel validation or
-deployment.
+build:channel`, which overlays the root channel list and per-channel pages
+into the same deploy root before channel validation or deployment.
 
 The graph hierarchy is strict:
 
@@ -34,15 +33,17 @@ The graph hierarchy is strict:
    Packages are delivery containers; binaries are the executable files inside
    those packages and must carry SHA-256, BLAKE3, version, package
    provenance, and SBOM component reference.
-5. Profiles own profile images, config files, software inventory, ABOM/OBOM
-   evidence, and `min_capsem_version`. Profiles never advertise the selected
-   Capsem binary; they only declare the minimum Capsem version needed to use
-   that profile.
+5. The one `runtime` document owns the runtime images (kernel, initrd,
+   rootfs per architecture), software inventory, OBOM evidence, and the
+   optional `min_capsem_version`/`max_capsem_version`. It never advertises the
+   selected Capsem binary. A channel that has published no runtime yet has no
+   `runtime` key; there is no `profiles` key and no published profile config.
 
-Immutable profile image blobs are referenced by instantiated URLs in the
+Immutable runtime image blobs are referenced by instantiated URLs in the
 selected channel manifest. Public releases may store large blobs in GitHub
-Releases, but the release graph must publish concrete URLs for each profile
-image artifact and evidence file. When a local or corporate manifest is used,
+Releases, but the release graph must publish concrete URLs for each runtime
+image artifact and evidence file, under
+`/runtime/releases/<channel>/<revision>/<arch>/<file>`. When a local or corporate manifest is used,
 the same update mechanism applies: `--manifest` must be a URL, with
 `file:///absolute/path/to/manifest.json` for local fixtures and `https://...`
 or `http://...` for hosted corporate channels.
@@ -59,50 +60,52 @@ back. If that stable baseline is unavailable or invalid, nightly fails closed.
 Package postinstall and glow-up tests must use those URL-shaped inputs directly;
 do not add package-time manifest converters or compatibility adapters for old
 manifest shapes.
-Updating the co-work nightly profile image/config must change only the nightly
-channel/profile records and matching digests; stable, packages, per-binary
-inventory, and other profiles must stay byte-for-byte unchanged. Use
-`min_capsem_version` on a profile only when profile behavior requires a newer
-client.
+Updating the nightly runtime must change only the nightly `runtime` record and
+matching digests; stable, packages, and per-binary inventory must stay
+byte-for-byte unchanged. Use `min_capsem_version` on the runtime only when
+runtime behavior requires a newer client.
 
-Profile publication is owned by:
+Runtime publication is owned by:
 
 ```bash
-just release-profile <channel> <profile> <source-commit>
+just release-assets <channel> <source-commit>
 ```
 
-That command calls `capsem-admin release`. The shared
-`capsem-release-<channel>` lock is acquired before the source manifest is read.
-The profile workflow then resolves the existing package by recorded digest,
-builds exactly the selected channel/profile for arm64 and x86_64, validates the
-pairing, and mutates only that profile entry. It never builds a package and
-never edits another profile or channel.
+That command calls `capsem-admin release`, which dispatches
+`release-assets.yaml`. The shared `capsem-release-<channel>` lock is acquired
+before the source manifest is read. The runtime workflow then resolves the
+existing package by recorded digest, builds the runtime for arm64 and x86_64,
+validates the pairing, and mutates only the channel's `runtime` entry. It never
+builds a package and never edits another channel.
 
-Profile config, images, software inventory, OBOM, evidence, and revision are
-published under an immutable identity containing channel and profile identity.
-This prevents the same profile/revision label in stable and nightly from
+The runtime revision is `<workspace version>-<first 12 hex of the source
+commit>`, so every released commit has its own identity even when nightly
+re-releases at an unchanged workspace version. Images, software inventory,
+OBOM and evidence are published under the immutable identity
+`runtime-<channel>-<revision>`; reusing an identity for different bytes is
+refused. This prevents the same revision label in stable and nightly from
 aliasing or overwriting bytes.
 
 When `min_capsem_version` is newer than the public package, the immutable
-profile publication is staged but not deployed. The following
+runtime publication is staged but not deployed. The following
 `just release-binaries <channel> <source-commit>` resolves those exact staged digests, builds
 packages only, runs the complete functional/native/glow-up proof, and activates
-the completed pairing. The profile bytes are not rebuilt.
+the completed pairing. The runtime bytes are not rebuilt.
 
 The selected channel source manifest is the sole mutable authority. SBOM,
 OBOM, existing attestations, and GitHub logs are the evidence; do not add a
-parallel result or provenance file. Corporate manifest/profile authoring also
+parallel result or provenance file. Corporate manifest/runtime authoring also
 goes through `capsem-admin`; corporations do not build Capsem binaries.
 
 The deploy workflow runs `build_system/release_site/scripts/check-release-site-contract.py` against
 `https://release.capsem.org` after Cloudflare publishes the generated site. That
 Python validator reuses the remote release readiness contract and must validate
-the root channel catalog, selected manifest, profile-owned
-image/config/evidence files, package metadata, per-binary metadata,
+the root channel catalog, selected manifest, runtime
+image/evidence files, package metadata, per-binary metadata,
 BLAKE3/SHA-256 content, attestation references, and cache headers rather than
 only checking that files exist. The deploy smoke rejects stale public HTML: the
 root and channel pages must show the same generated timestamp, manifest URL,
-manifest version, package inventory, per-binary inventory, profile revision,
+manifest version, package inventory, per-binary inventory, runtime revision,
 image artifact URLs, and evidence URLs as the fetched JSON
 graph. It validates host SBOM and VM OBOM evidence document shape (SPDX 2.3 for
 the host SBOM and CycloneDX for VM OBOMs). VM OBOM validation is provenance
@@ -116,12 +119,12 @@ published VM OBOM evidence for the current asset release.
 The deploy smoke must also verify public `Cache-Control` headers: mutable
 release-channel pointers (`/`, `/channels.json`, and
 `/assets/<channel>/manifest.json`) stay `no-cache, must-revalidate`, while
-immutable asset and profile release artifacts stay
+immutable asset and runtime release artifacts stay
 `public, max-age=31536000, immutable`.
 
 ### Release-channel Cloudflare prerequisites
 
-Before running a live binary or profile channel deploy, create or verify the
+Before running a live binary or runtime channel deploy, create or verify the
 Cloudflare Pages project serving `release.capsem.org`, attach the `release.capsem.org`
 custom domain, and configure `CLOUDFLARE_ACCOUNT_ID` plus
 `CLOUDFLARE_API_TOKEN` in GitHub Actions secrets. `release-channel.yaml` fails
@@ -131,7 +134,7 @@ the configured account/token, then runs `build_system/release_site/scripts/check
 and smokes `https://release.capsem.org/`, `/channels.json`, and the channel
 manifest through the public custom domain after Cloudflare publishes the
 generated site. `release-channel-staging.yaml` proves this reusable deploy path
-on a preview branch without invoking profile builders or package builders.
+on a preview branch without invoking VM asset builds or package builders.
 
 Asset-channel blobs are arch-prefixed (`arm64-vmlinuz`,
 `arm64-initrd.img`, `arm64-rootfs.erofs`, `arm64-obom.cdx.json`,

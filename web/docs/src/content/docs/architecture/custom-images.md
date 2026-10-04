@@ -1,26 +1,45 @@
 ---
 title: Custom Images
-description: Build custom Capsem VM images from profile-owned packages, rules, MCP config, and assets.
+description: Customize what runs in a Capsem session with OCI images, and the VM runtime itself with the image contract.
 sidebar:
   order: 40
 ---
 
-Capsem images are defined by profiles. Organizations create custom images by
-shipping profile-owned package files, root seed files, MCP config, enforcement
-rules, detection rules, and plugin policy. Provider access and credentials
-remain runtime rule/plugin truth, not image-builder truth.
+Capsem separates the VM from what runs in it. The **runtime** is one minimal
+kernel, initrd, and rootfs per architecture, built from `config/docker/image/`
+and `guest/artifacts/`; it carries only Capsem's own guest machinery.
+**Applications** -- agents, toolchains, internal tools -- are OCI images, run
+as the session's workload with `--image`. Organizations customize Capsem by
+publishing OCI images, and only rarely by rebuilding the runtime. Provider
+access and credentials remain runtime rule/plugin truth, not image truth.
 
 ## Quick Start
 
+A custom application image, on the Capsem base:
+
 ```bash
-cargo run -p capsem-admin -- profile check config/profiles/code/profile.toml --config-root config
-cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
-cargo run -p capsem-admin -- manifest generate assets --version 1.3.corp.1 --json
+docker buildx build --platform linux/arm64,linux/amd64 \
+  --build-arg BASE=ghcr.io/<owner>/<base-image>@sha256:<digest> \
+  -t registry.internal.corp/capsem/corp-dev:1 --push images/corp-dev
+capsem create -n work --image registry.internal.corp/capsem/corp-dev:1
+```
+
+A custom VM runtime:
+
+```bash
+just build-assets arm64
+cargo run -p capsem-admin -- manifest generate cache/target/assets --version 1.3.corp.1 --json
 ```
 
 ## Directory Structure
 
 ```
+images/
+    catalog.toml              Official image catalog descriptions
+    base/                     Capsem base image every official image builds FROM
+    dev/  claude-code/  codex-cli/  agy/  claude-desktop/
+                              One Dockerfile per official image
+    ci/                       Catalog and rootfs publication helpers
 config/
     settings/
         settings.toml             UI/application preferences only
@@ -30,23 +49,17 @@ config/
         corp.toml                 Corp locks and reporting endpoints
         enforcement.toml          Corp enforcement rules
         detection.yaml            Corp Sigma detection rules
-    profiles/
-        corp-code/
-            profile.toml              Profile ledger
-            apt-packages.txt          System packages
-            python-requirements.txt   Python packages
-            npm-packages.txt          Node CLI packages
-            build.sh                  Profile image build hook
-            mcp.json                  Profile MCP config
-            enforcement.toml          Enforcement rules
-            detection.yaml            Sigma detection rules
-            tips.txt                  Login tips
-            root/                     Guest root seed
-            root.manifest.json        Guest root seed integrity manifest
     docker/
+        image/
+            build.toml            Kernel, architectures, EROFS, runtime_apt_packages
+            manifest.toml         Image identity and changelog
+            kernel/               Defconfigs and patches
+            vm/  security/        Guest environment and web domain lists
+        Dockerfile.rootfs-dependencies.j2
         Dockerfile.rootfs.j2
         Dockerfile.kernel.j2
-cache/target/config/                        Generated runtime config
+guest/
+    artifacts/                    capsem-init, bashrc, tips, diagnostics, capsem-bench
 ```
 
 ## Configuration Reference
@@ -54,47 +67,63 @@ cache/target/config/                        Generated runtime config
 ### Guest Tools
 
 Images may install guest tools, but provider access, credentials, rules, and
-tool configuration are not image-owned. Provider/network control is profile/corp
+tool configuration are not image-owned. Provider/network control is corp
 rule truth. Credentials are captured and materialized by the credential broker
 plugin at runtime, and logged only as BLAKE3 references.
 
-### Package Sets
+### Application Images
 
-Each profile-owned package file defines desired packages for one manager.
+An application image is an ordinary OCI image. The official ones under
+`images/` build `FROM` the Capsem base by digest, so its layers are stored and
+pulled once, and run as the unprivileged `capsem` user:
 
-```text
-# config/profiles/corp-code/apt-packages.txt
-coreutils
-util-linux
-git
-curl
-python3
-python3-pip
-python3-venv
+```dockerfile
+# images/corp-dev/Dockerfile
+ARG BASE
+FROM ${BASE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential postgresql-client && \
+    rm -rf /var/lib/apt/lists/*
+USER capsem
+CMD ["bash"]
 ```
 
-```text
-# config/profiles/corp-code/python-requirements.txt
-numpy
-pandas
-requests
-pytest
-```
+`capsem create --image` accepts a catalog name, `docker://IMAGE`, or
+`registry/repository:tag`. The service pulls, verifies, and stages the image,
+and records the session's `repository@digest`. See the
+[CLI reference](/usage/cli/) for the flags and the image policy.
 
-### MCP Servers
+The official images are published by `images.yaml` to ghcr.io with their OBOM,
+EROFS rootfs, and build provenance, and are appended to the channel's image
+catalog; a catalog name resolves to the newest version this host can run,
+pinned by digest.
 
-```json
-{
-  "servers": [
-    {
-      "id": "capsem",
-      "name": "Capsem",
-      "transport": "stdio",
-      "command": "/run/capsem-mcp-server",
-      "enabled": true
-    }
-  ]
-}
+### Runtime Packages
+
+The runtime's whole package set is `runtime_apt_packages` in
+`config/docker/image/build.toml`. Add a package there only when Capsem's own
+guest machinery needs it -- the container launcher, `capsem-init`,
+`capsem-doctor`, `capsem-bench`, or the network diagnostics. Anything an
+application or agent needs belongs in an OCI image.
+
+```toml
+[build.rootfs]
+runtime_apt_packages = [
+    "runc",
+    "umoci",
+    "python3",
+    "iptables",
+    "iproute2",
+    "ca-certificates",
+    "curl",
+    "procps",
+    "python3-pytest",
+    "python3-rich",
+    "python3-venv",
+    "auditd",
+    "e2fsprogs",
+]
 ```
 
 ### Network Mechanics And Security Rules
@@ -113,20 +142,19 @@ match = 'http.host.matches("(^|.*\\.)(google\\.com|bing\\.com|duckduckgo\\.com)$
 
 ### Build Configuration
 
-Backend build parameters are implementation inputs to the profile-derived build
-rail and Docker templates. Do not put rootfs compression levels, Docker
-platforms, kernel image paths, or defconfig paths in source profiles. The
-release rail owns those image mechanics; profiles own which packages, root
-seed files, rules, MCP declarations, and plugins are part of the image.
+Backend build parameters -- rootfs compression levels, Docker platforms,
+kernel image paths, defconfig paths -- live in `config/docker/image/` and the
+Docker templates. They are image mechanics owned by the runtime build rail,
+not runtime policy.
 
 ## CLI Reference
 
 | Command | What it does |
 |---------|-------------|
-| `capsem-admin profile check` | Validate profile ledger, referenced files, rules, MCP, and root seed |
-| `capsem-admin image build` | Build profile-derived kernel/rootfs assets |
+| `just build-assets [arch]` | Build the runtime's kernel, initrd, and rootfs |
+| `capsem-admin image build` | Build the runtime's kernel/rootfs assets directly |
 | `capsem-admin manifest generate` | Generate manifest and B3SUMS for assets |
-| `capsem-admin profile materialize` | Generate runtime `cache/target/config` from profile and manifest |
+| `capsem-admin manifest corporate` | Author a corporate channel manifest from an official one plus a corporation-built runtime |
 
 ## Manifest
 
@@ -167,25 +195,21 @@ Every repository build produces `cache/target/assets/manifest.json` (format 2) -
 ```
 
 The runtime boots only when the asset hashes match. `min_binary`/`min_assets`
-gate which binary and asset versions are compatible with each other.
+gate which binary and asset versions are compatible with each other. The asset
+version recorded here (`assets.current`) is the runtime revision a release
+publishes; a release lane generates it as
+`<workspace version>-<first 12 hex of the source commit>`.
 
-Source profiles do not hand-author asset hashes. `capsem-admin profile
-materialize` combines source profile/corp/settings config with the generated
-asset manifest into `cache/target/config` for local builds, CI, packages, and
-installed runtime config.
-
-The source profile is the ledger, not a generated evidence file. Do not add
-asset hashes, sibling-file hashes, package hashes, or build-output hashes to
-checked-in `profile.toml`. Evidence belongs in root seed manifests, asset
-manifests, OBOMs, build ledgers, and generated `cache/target/config`.
+Nothing checked in hand-authors asset hashes. Evidence belongs in asset
+manifests, OBOMs, and build ledgers.
 
 ## Corporate Deployment
 
 ### Admin Provisioning Trust Chain
 
-Corporate provisioning is profile/corp driven. Do not put signing keys,
-catalog channels, build knobs, or release-process metadata inside `corp.toml`
-or `profile.toml`; those payloads should only describe runtime behavior.
+Corporate provisioning is corp-config driven. Do not put signing keys,
+catalog channels, build knobs, or release-process metadata inside `corp.toml`;
+it should only describe runtime behavior.
 
 The release and runtime evidence chain is:
 
@@ -193,31 +217,17 @@ The release and runtime evidence chain is:
 |-------|------|
 | Release artifacts | SBOM and provenance attestations |
 | Corp config | Corp locks, endpoints, enforcement files, detection files, and `refresh_policy` |
-| Profile config | VM defaults, rule files, MCP/profile metadata, asset selection, and `refresh_policy` |
-| Profile assets | Kernel, initrd, and rootfs bytes verified by BLAKE3 |
+| Channel manifest `runtime` | Kernel, initrd, and rootfs URLs, sizes, SHA-256 and BLAKE3, OBOM evidence |
+| Application images | OCI images pinned by `repository@digest` |
 
-At runtime Capsem verifies BLAKE3 hashes and refresh policy before marking a
-profile launchable. A missing, stale, or mismatched profile/asset contract must
-fail closed.
+At runtime Capsem verifies BLAKE3 hashes and refresh policy before booting the
+runtime. A missing, stale, or mismatched runtime asset must fail closed.
 
-Example materialized profile payload:
-
-```toml
-id = "code"
-name = "Code"
-revision = "2026.06.08.7"
-refresh_policy = "24h"
-
-[assets]
-format = "profile-assets.v1"
-refresh_policy = "on_profile_refresh"
-
-[assets.arch.arm64.rootfs]
-name = "rootfs.erofs"
-url = "https://releases.capsem.dev/assets/arm64/rootfs.erofs"
-hash = "blake3:..."
-size = 12345678
-```
+A corporation that builds its own runtime publishes it under its own HTTPS base
+and authors its channel with `capsem-admin manifest corporate`, which takes
+the official manifest for packages plus `--runtime-manifest` (the
+corporation-built runtime) and `--runtime-base` (the HTTPS base that must own
+every runtime image and evidence URL).
 
 Example corp payload:
 
@@ -234,24 +244,23 @@ remote_enforcement = "https://security.example.invalid/capsem/enforcement"
 
 ### Workflow
 
-1. Copy `config/profiles/code/` to a new profile id.
-2. Edit the new `profile.toml` name, description, icon, and file references.
-3. Edit profile/corp security rules to allow, ask, or block network/model/MCP
+1. Put the tools your users need in an OCI image, built `FROM` the Capsem base.
+2. Push it to a registry your hosts can reach, and allow that registry in
+   corp enforcement rules.
+3. Edit corp security rules to allow, ask, or block network/model/MCP
    boundaries.
-4. Add internal guest tools only if they must be baked into the image, using
-   profile package files or `build.sh`.
-5. Keep credentials brokered at runtime; do not add them to image config.
-6. Validate with `capsem-admin profile check`.
-7. Build with `capsem-admin image build`.
-8. Generate the manifest with `capsem-admin manifest generate`.
-9. Materialize runtime config with `capsem-admin profile materialize`.
-10. Distribute the package plus selected manifest and profile assets.
+4. Keep credentials brokered at runtime; do not bake them into an image.
+5. Create sessions with `capsem create --image <reference>`.
+6. Rebuild the runtime only when Capsem's own guest machinery must change:
+   edit `config/docker/image/`, build with `just build-assets`, generate the
+   manifest with `capsem-admin manifest generate`, and publish it through
+   `capsem-admin manifest corporate`.
 
 ### Lockdown Example
 
 Block external search and allow only internal registries:
 
-Edit the profile or corp enforcement rule file:
+Edit the corp enforcement rule file:
 
 ```toml
 [profiles.rules.allow_internal_registry]
@@ -267,33 +276,28 @@ match = 'http.host.matches("(^|.*\\.)(google\\.com|bing\\.com|duckduckgo\\.com)$
 
 ## Install Inputs
 
-Use profile-owned package files for normal package managers:
+Install application tooling in the OCI image's Dockerfile, with whatever
+package manager the image uses. The runtime installs only
+`runtime_apt_packages`.
 
-- `apt-packages.txt` for apt packages
-- `python-requirements.txt` for Python packages
-- `npm-packages.txt` for Node CLI packages
-- `build.sh` for build-time installers that cannot be expressed as a package list
-
-The build ledger records these declared inputs for debugging. The CI/release
-asset rail publishes the CycloneDX OBOM, which records the installed base-image
-component names and versions after the rootfs is produced.
+The build ledger records the runtime's declared inputs for debugging. The
+CI/release asset rail publishes the CycloneDX OBOM, which records the installed
+base-image component names and versions after the rootfs is produced.
 
 :::caution[/root is runtime overlay state]
-Anything installed under `/root/` during the Docker build can be hidden at
-runtime by the tmpfs overlay. If a manual installer puts binaries in
-`~/.local/bin/` or a tool-specific home directory, copy them to a stable system
-path from `build.sh` and verify with `capsem-doctor`.
+Anything installed under `/root/` in the runtime rootfs is hidden at runtime by
+the tmpfs overlay. Install runtime files at a stable system path and verify
+with `capsem-doctor`.
 :::
 
 ## Troubleshooting
 
 | Diagnostic | Cause | Fix |
 |-----------|-------|-----|
-| `error[E001] missing required field` | TOML config missing a schema field | Check file:line in error, compare against examples above |
-| `error[E304] defconfig missing` | Kernel config for declared arch doesn't exist | Add `config/kernel/defconfig.{arch}` |
-| `warn[W001] no npm registry` | npm packages declared but no registry config | Add a registry entry to the profile build config |
-| `warn[W005] API key in config` | Hardcoded key in TOML | Remove it; credentials must be brokered at runtime |
+| `error[E001] Missing required file: build.toml` | Image contract not found | Check `--config-root` points at the directory holding `docker/image/` |
+| `error[E300] Missing kernel defconfig` | Kernel config for declared arch doesn't exist | Add `config/docker/image/kernel/defconfig.{arch}` |
+| `warn[W003] Potential secret` | Hardcoded key in image config | Remove it; credentials must be brokered at runtime |
 | Build fails: "container runtime not found" | No Docker | Install Docker (`brew install colima docker` on macOS, `sudo apt install docker.io` on Linux) |
-| Build fails: exit 137 (OOM), exit 143, or ENOSPC | Container runtime is below the release-gate memory/disk profile | Run `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128` |
+| Build fails: exit 137 (OOM), exit 143, or ENOSPC | Container runtime is below the release-gate memory/disk floor | Run `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128` |
 | Build fails: "Release file not valid yet" | Container VM clock drift | Builder handles this automatically via `Acquire::Check-Valid-Until=false` |
-| CLI not found at runtime | Installer put binary in `/root/` which is tmpfs | Copy binary to `/usr/local/bin/` in the Dockerfile template |
+| Tool not found in a session | It is installed in neither the runtime nor the session's image | Add it to the session's OCI image |

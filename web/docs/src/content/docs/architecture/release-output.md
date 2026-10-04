@@ -16,9 +16,9 @@ The release graph has three independent rails:
 
 | Rail | Owner in the graph | May change without |
 | --- | --- | --- |
-| Channel discovery | `channels.json` | Rebuilding binaries or profile images |
-| Host install | Manifest `packages[]` | Rebuilding profile images |
-| Profile assets | Manifest `profiles{}` | Rebuilding host packages |
+| Channel discovery | `channels.json` | Rebuilding binaries or runtime images |
+| Host install | Manifest `packages[]` | Rebuilding runtime images |
+| VM runtime | Manifest `runtime` | Rebuilding host packages |
 
 The graph is hierarchical:
 
@@ -33,10 +33,10 @@ channels.json
 assets/<channel>/manifest.json
   packages[]
     binaries[]
-  profiles.<profile>
-    config[]
-    images.<architecture>
-      artifacts[]
+  runtime
+    architectures[]
+      software[]
+      images[]
       evidence[]
 ```
 
@@ -45,29 +45,34 @@ The canonical ownership paths are:
 ```text
 channels.json -> /assets/<channel>/manifest.json
 channel -> packages -> binaries
-channel -> profiles -> architecture -> config/software/images
+channel -> runtime -> architectures -> software/images/evidence
 ```
 
 The path tells readers who owns a fact. Package facts do not repeat in binary
-records. Profile image facts do not appear in channel summaries. If the owning
+records. Runtime image facts do not appear in channel summaries. If the owning
 JSON object for a path does not contain a fact, the HTML page for that path
 must not display that fact.
 
 ## Independent Version Surfaces
 
-Manifest versions, package versions, profile revisions, and profile image revisions are independent.
+Manifest versions, package versions, and runtime revisions are independent.
 
-A package release may change without changing profile revisions or profile images.
+A package release may change without changing the runtime revision or runtime images.
 That is the fast binary-update rail.
 
-A profile revision may change without changing package versions or other profiles.
-That is the profile/config/software rail.
+A runtime revision may change without changing package versions.
+That is the runtime asset rail. Every released commit has its own runtime
+revision, `<workspace version>-<first 12 hex of the source commit>`, so a
+nightly re-release at an unchanged workspace version never collides with an
+earlier one.
 
-A profile image revision may change for one profile and architecture without changing other profiles, other architectures, or packages.
+The runtime may declare `min_capsem_version`; it must not select the current Capsem binary.
+The channel selects the manifest. The manifest lists packages and the runtime.
+The runtime only states the Capsem version range it supports.
 
-A profile may declare `min_capsem_version`; it must not select the current Capsem binary.
-The channel selects the manifest. The manifest lists packages and profiles.
-Profiles only state the minimum Capsem version they require.
+Applications are not part of the release graph. They are OCI images published
+by `images.yaml` to ghcr.io and resolved through the image catalog, on their own
+cadence.
 
 ## Channels
 
@@ -109,9 +114,9 @@ in `channels.json` for auditability, but they must not create alternate public
 manifest URLs that compete with `/assets/<channel>/manifest.json`.
 
 The manifest record `version` is the manifest contract version. It is
-independent from Capsem package versions, profile revisions, and profile image
-revisions. Human channel lists display this manifest version, not the host
-package version or profile revision selected by that manifest.
+independent from Capsem package versions and runtime revisions. Human channel
+lists display this manifest version, not the host package version or runtime
+revision selected by that manifest.
 
 Do not publish HMAC fields in the graph. SHA-256 is the compliance digest.
 BLAKE3 is the fast content digest. Digests must be computed over bytes.
@@ -121,16 +126,20 @@ invalid release facts.
 ## Manifests
 
 A manifest is a channel/version contract. It contains host install packages and
-profile asset references:
+one VM runtime document:
 
 ```json
 {
   "version": "1.0.2",
+  "channel": "stable",
   "status": "current",
   "packages": [],
-  "profiles": {}
+  "runtime": {}
 }
 ```
+
+`runtime` is absent (or null) for a channel that has published no runtime yet,
+such as a binary-only first release. There is no `profiles` key.
 
 The manifest must not use the legacy asset-channel shape as its public graph
 shape:
@@ -143,7 +152,7 @@ shape:
 ```
 
 That legacy shape is an internal compatibility input until the runtime selector
-migrates. The public release graph uses packages and profiles.
+migrates. The public release graph uses packages and the runtime.
 
 ## Packages And Binaries
 
@@ -191,27 +200,40 @@ include an installed path, byte count, SHA-256, BLAKE3, and SBOM component
 reference. `not published` and `unknown` are not valid values for a package or
 binary row that is present in the manifest.
 
-## Profiles
+## Runtime
 
-Profiles own config files, profile images, evidence, software inventory, and
-minimum Capsem compatibility:
+The runtime owns the VM images, evidence, software inventory, and Capsem
+compatibility range. It is one kernel, initrd, and rootfs set per architecture,
+built from `config/docker/image` and `guest/artifacts` with no other input:
 
 ```json
 {
-  "id": "code",
-  "name": "Code",
-  "revision": "1.0.0-stable.20260702",
+  "revision": "1.4.0-0123456789ab",
+  "source_commit": "0123456789abcdef0123456789abcdef01234567",
+  "status": "current",
   "min_capsem_version": "1.4.0",
-  "software": [],
-  "config": [],
-  "images": {}
+  "architectures": [
+    {
+      "architecture": "arm64",
+      "package_inventory_revision": "1.4.0-0123456789ab",
+      "image_revision": "1.4.0-0123456789ab",
+      "software": [],
+      "images": [],
+      "evidence": []
+    }
+  ]
 }
 ```
 
-Profiles do not select a current Capsem binary. A profile may declare
+`source_commit`, `min_capsem_version`, and `max_capsem_version` are optional.
+The runtime has no `id`, `name`, `description`, or second `version`, and no
+config references: no profile, MCP, rule, package-list, or root-seed file is
+published.
+
+The runtime does not select a current Capsem binary. It may declare
 `min_capsem_version` when it requires newer client behavior.
 
-Forbidden profile fields:
+Forbidden runtime fields:
 
 ```text
 current_binary
@@ -222,9 +244,9 @@ binary_version
 
 ## Software Inventory
 
-Software inventory is profile-owned image content. It must be complete for the
-profile image it describes and must be generated from the same profile/image
-build evidence as the image artifacts.
+Software inventory is runtime-owned image content. It must be complete for the
+runtime image it describes and must be generated from the same image build
+evidence as the image artifacts.
 
 Every software entry must include:
 
@@ -238,54 +260,34 @@ Every software entry must include:
     "sha256": "...",
     "blake3": "..."
   },
-  "evidence": "/assets/releases/1.0.0-stable.20260702/arm64-software-inventory.json"
+  "evidence": "/runtime/releases/stable/1.4.0-0123456789ab/arm64/software-inventory.json"
 }
 ```
 
-The profile page may render software inventory only from the profile JSON. It
+A runtime view may render software inventory only from the runtime JSON. It
 must not display sample rows, inferred package names, or a partial hand-written
-summary. Release profiles with image artifacts must publish
-`software-inventory.json`; missing inventory is a release-blocking generator
-failure, not a page-level fallback.
+summary. A runtime with image artifacts must publish `software-inventory.json`;
+missing inventory is a release-blocking generator failure, not a page-level
+fallback.
 
-## Config Files
+## Runtime Images
 
-Config files are profile-owned and must be generated from the profile source
-directory, not hand-written into the release page. For the built-in profiles,
-the profile release must publish every file that defines the profile contract:
-
-```text
-profile.toml
-mcp.json
-enforcement.toml
-detection.yaml
-apt-packages.txt
-python-requirements.txt
-npm-packages.txt
-build.sh
-tips.txt
-root.manifest.json
-```
-
-The config list may include additional files declared by `profile.toml`, but it
-must not silently omit one of the files above when that file exists in
-`config/profiles/<profile>/`. Every config entry must include `kind`, `path`,
-`url`, `bytes`, and a `digest` object with `sha256` and `blake3`.
-
-## Profile Images
-
-Images are profile-owned and architecture-scoped. Evidence attaches to the
-image set it describes:
+Images are runtime-owned and architecture-scoped. Evidence attaches to the
+image set it describes. Published files live under
+`/runtime/releases/<channel>/<revision>/<architecture>/<file>`, and the GitHub
+release that holds them is named `runtime-<channel>-<revision>`. Reusing a
+publication identity for different bytes is refused.
 
 ```json
 {
-  "images": {
-    "arm64": {
-      "artifacts": [
+  "architectures": [
+    {
+      "architecture": "arm64",
+      "images": [
         {
           "kind": "kernel",
           "name": "vmlinuz",
-          "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/vmlinuz",
+          "url": "/runtime/releases/stable/1.4.0-0123456789ab/arm64/vmlinuz",
           "bytes": 123,
           "digest": {
             "sha256": "...",
@@ -296,7 +298,7 @@ image set it describes:
         {
           "kind": "initrd",
           "name": "initrd.img",
-          "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/initrd.img",
+          "url": "/runtime/releases/stable/1.4.0-0123456789ab/arm64/initrd.img",
           "bytes": 123,
           "digest": {
             "sha256": "...",
@@ -307,7 +309,7 @@ image set it describes:
         {
           "kind": "rootfs",
           "name": "rootfs.erofs",
-          "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/rootfs.erofs",
+          "url": "/runtime/releases/stable/1.4.0-0123456789ab/arm64/rootfs.erofs",
           "bytes": 123,
           "digest": {
             "sha256": "...",
@@ -318,8 +320,8 @@ image set it describes:
       ],
       "evidence": [
         {
-          "kind": "abom",
-          "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/abom.cdx.json",
+          "kind": "obom",
+          "url": "/runtime/releases/stable/1.4.0-0123456789ab/arm64/obom.cdx.json",
           "bytes": 123,
           "digest": {
             "sha256": "...",
@@ -329,14 +331,15 @@ image set it describes:
         }
       ]
     }
-  }
+  ]
 }
 ```
 
 Every architecture image set must include kernel, initrd, and rootfs artifacts
-unless the profile schema grows an explicit enum for a different boot mode. A
-rootfs-only image set is incomplete and must fail the release gate. ABOM and
-OBOM entries are not global evidence. They are profile image evidence.
+unless the runtime schema grows an explicit enum for a different boot mode. A
+rootfs-only image set is incomplete and must fail the release gate. OBOM and
+software inventory entries are not global evidence. They are runtime image
+evidence.
 
 ## Page Contract
 
@@ -346,7 +349,7 @@ Pages render only their owning JSON:
 | --- | --- |
 | `/` | `channels.json` plus selected manifest links |
 | `/channels/<channel>/` | `channels.<channel>` plus selected manifest |
-| `/channels/<channel>/profiles/<profile>/` | selected manifest profile entry |
+| Runtime view of a channel | selected manifest `runtime` document |
 
 If a string is not present in the owning JSON, the page must not display it as
 a release fact. Labels such as table headers are allowed only for fields that
@@ -354,11 +357,11 @@ exist in the owning JSON shape.
 
 Examples:
 
-- A profile page may show `min_capsem_version`; it must not show current
+- A runtime view may show `min_capsem_version`; it must not show current
   binary state.
 - A channel page may show manifest records, package rows, package-owned
-  binaries, and profile references. It must not show `Evidence`, `Host SBOM`,
-  `VM OBOM`, profile image artifacts, software inventory, or asset release
+  binaries, and the runtime revision. It must not show `Evidence`, `Host SBOM`,
+  `VM OBOM`, runtime image artifacts, software inventory, or asset release
   history sections.
 - No page should show HMAC columns because the graph does not publish HMAC.
 
@@ -370,19 +373,19 @@ Release output tests must verify:
    `channels.json`.
 2. `channels.json` exposes exactly one public manifest URL per channel:
    `/assets/<channel>/manifest.json`.
-3. No public graph or page exposes a profile catalog release primitive.
+3. No public graph or page exposes a profile catalog or a `profiles` key.
 4. Every package has bytes, SHA-256, BLAKE3, and package-owned binaries.
 5. Every binary has installed path, version, bytes, SHA-256, BLAKE3, and SBOM
    component.
 6. No digest object contains HMAC.
 7. No digest is a repeated-character placeholder.
-8. Every profile config file required by the profile source is published.
-9. Every profile image architecture includes kernel, initrd, and rootfs.
-10. Every profile config/image/evidence URL resolves and its bytes, SHA-256,
-   and BLAKE3 match.
-11. Every profile software inventory entry is complete, hashed, and points at
+8. The runtime publishes no config files.
+9. Every runtime architecture includes kernel, initrd, and rootfs.
+10. Every runtime image/evidence URL resolves and its bytes, SHA-256, and
+   BLAKE3 match.
+11. Every runtime software inventory entry is complete, hashed, and points at
    the generated `software-inventory.json` evidence artifact.
-12. Profile pages contain only profile-owned facts.
+12. Runtime views contain only runtime-owned facts.
 13. Channel pages contain only channel and manifest facts.
-14. Stable and nightly may select different manifests and profile revisions
+14. Stable and nightly may select different manifests and runtime revisions
     without mutating each other.

@@ -13,7 +13,7 @@ How VM assets (kernel, initrd, rootfs) are built, checksummed, resolved, and ver
   schema, digest generation or enrichment, corporate/local manifest inputs,
   installed asset layout, package manifest metadata, or cache naming.
 - Read `references/release-channel-publication.md` before changing channel
-  graph generation, binary/profile publication, channel switching, deployment,
+  graph generation, binary/runtime publication, channel switching, deployment,
   Cloudflare readiness, evidence or attestation checks, or cache headers.
 
 ## Manifest Authority
@@ -25,7 +25,7 @@ or prior run. Fetch mutable manifests fresh. Cache only immutable artifact
 bytes, address each cache entry directly by the digest recorded in the
 manifest, and re-verify that digest before every use. Artifact cache identity
 is channel-independent; the manifest decides which digest set belongs to a
-channel/profile at that moment.
+channel at that moment.
 
 ## Versioning
 
@@ -57,7 +57,7 @@ rerun the failing recipe.
 
 | What | Where |
 |------|-------|
-| Profile source config | `config/profiles/<id>/` |
+| Runtime source config | `config/docker/image/` |
 | Guest artifacts | `guest/artifacts/` |
 | Built assets (dev) | `cache/target/assets/{arch}/vmlinuz, initrd.img, rootfs.erofs` |
 | Installed assets | `~/.capsem/assets/{name}-{hash16}.{ext}` (flat, hash-based) |
@@ -97,7 +97,7 @@ pinned asset metadata so a revocation or repair is visible immediately.
 
 **Hash mismatch where expected and actual look identical**: the two values differ
 only by an algorithm tag. Digests reach boot in two spellings — asset manifests
-carry bare hex, release-graph digests and the profile pins derived from them
+carry bare hex, release-graph digests and the runtime pins derived from them
 carry `blake3:<hex>`.
 
 `VmConfigBuilder::verify_hash` resolves both, in the one place that decides what
@@ -109,9 +109,9 @@ a second reconciliation at a call site.
 spellings as plausible prefixes (`blake3:de1d58193` looks like a hash), so a
 truncated audit line hides exactly the mismatch it exists to catch.
 
-**Boot verifies the *booting profile's* pins.** A channel carries one image set
-per profile, so no channel-wide pointer can answer which hashes apply — the
-caller passes `expected_asset_hashes` for the profile it is starting. Absent is
-a hard error, not permission to boot unverified.
+**Boot verifies the *booting runtime's* pins.** The caller passes
+`expected_asset_hashes` for the runtime image set it is starting; nothing
+infers them from a cache directory or channel name. Absent is a hard error,
+not permission to boot unverified.
 
 **Hashes silently skipped**: If `build.rs` can't extract hashes (manifest missing, wrong format), `option_env!()` returns `None` and verification is skipped.

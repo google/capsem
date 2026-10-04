@@ -40,7 +40,7 @@ then lead with a recommendation. The full contract is
 | `capsem-process` | Per-VM process. Boots VM, bridges vsock, job store. | `main.rs` (vsock setup, IPC handler) |
 | `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
 | `capsem-tui` | Terminal control UI over the gateway API. | `main.rs`, view/state modules |
-| `capsem-admin` | Profile, asset, and release validation/materialization administration. | `main.rs` |
+| `capsem-admin` | Runtime image build, asset, release, and profile-catalog validation/materialization administration. | `main.rs` |
 | `@capsem/mcp` (`mcp/typescript`) | Separately installed host MCP server for AI agents. Stdio, typed SDK, authenticated gateway HTTP. | `cli.ts`, `server.ts`, tool modules |
 | `capsem-router` | Confined TCP publication companion. Relays declared listeners to granted VSOCK data descriptors; no VM control authority. | `lib.rs`, `main.rs` |
 | `capsem-network` | Private networks between VMs: the u16-framed ethernet frame codec for a cable and the switch's MAC forwarding table. Pure code; the I/O lives in `capsem-router --network`, one L2 switch per network that VMs `plug()` into. | `frames.rs`, `switch.rs` |
@@ -75,7 +75,7 @@ hypervisor, security-engine, and host network runtime in `capsem-core`.
 | `cache/target/assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `web/graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
-| `config/` | Profile, corp, settings source config and profile payloads | `/site-architecture`, `/build-images` |
+| `config/` | Runtime image source (`docker/image`), corp, settings, and profile policy config | `/site-architecture`, `/build-images` |
 
 ## Skill map
 
@@ -105,7 +105,7 @@ When working on a specific area, consult the relevant skill:
 ### Build & release
 | Skill | When |
 |-------|------|
-| `/build-images` | profile-derived image builds, rootfs, OBOM |
+| `/build-images` | VM runtime builds: kernel, rootfs, OBOM |
 | `/build-initrd` | Guest binary repack, fast iteration |
 | `/release-process` | Release, CI, signing, docs, changelog |
 
@@ -132,7 +132,7 @@ Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM + framed guest MCP), 50
 ## Config hierarchy
 
 1. Corp config -- enterprise constraints, reporting endpoints, and locked rule/plugin policy
-2. Profile config -- VM assets, rules, detections, MCP, plugins, packaged root, and profile defaults
+2. Profile config -- rules, detections, MCP, plugins, and profile defaults
 3. Settings config -- UI/app preferences only
 
 There is no `user.toml` policy rail. A VM boots a profile; profile/corp own
@@ -156,8 +156,9 @@ Config naming is strict:
 - Guest VM is air-gapped. No real NIC, no real DNS, no direct internet.
 - Guest binaries are read-only (chmod 555). Rootfs mounted read-only.
 - **Sessions run profiles.** A session is created from a profile. The profile
-  selects assets, packaged root files, MCP config, plugins, rules, detections,
-  and UI-facing name/description/icon. Session status must reflect profile
+  selects MCP config, plugins, rules, detections, and UI-facing
+  name/description/icon. Every session boots the one VM runtime; applications
+  come from OCI images. Session status must reflect profile
   readiness and compatibility.
 - The binary must be codesigned with `com.apple.security.virtualization`.
 - Domain libraries own reusable logic; binary crates keep entrypoints focused
@@ -165,7 +166,7 @@ Config naming is strict:
   into `capsem-core` merely because more than one caller needs it.
 - **Fork images are first-class objects.** `capsem fork <session> <image-name>`
   clones a session into a reusable template. Forked images depend on the
-  base profile asset set and must remain compatible with the profile contract.
+  runtime asset set and must remain compatible with it.
 - **Public surfaces are approval-gated.** `config/public-surface.toml` is the
   exact allowlist for public Just recipes, Capsem CLI command paths, and
   service HTTP method/path pairs. `tests/test_public_surface_contract.py`
@@ -183,7 +184,7 @@ native-install or release-command fork.
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
 - `@capsem/mcp` -- separately installed npm package; native installation does not install Node.js or download it
-- `assets/` -- manifest.json and profile-selected VM assets such as `vmlinuz`,
+- `assets/` -- manifest.json and the runtime VM assets such as `vmlinuz`,
   `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/
 

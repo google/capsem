@@ -993,6 +993,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- VM profiles are no longer a build or release unit
+  ([#289](https://github.com/google/capsem/issues/289)). The VM runtime is
+  one minimal rootfs per architecture, built from `config/docker/image` and
+  the guest artifacts with no profile input: no profile apt, Python or npm
+  package lists, no profile `build.sh`, and no seeded `/root` files. Agent
+  CLIs, language runtimes and developer tools come from OCI images
+  (`images/`), not from the runtime. The release unit for VM assets is now
+  the runtime: `just release-assets <channel> <commit>` replaces
+  `just release-profile <channel> <profile> <commit>`, `just build-assets`
+  and `qualify-assets` take no profile, and a channel manifest carries one
+  `runtime` document (identity `runtime-<channel>-<version>-<commit>`)
+  instead of a map of profile ledgers. This is a clean break: 0.7 publishes
+  no profile ledgers, and a 0.6 updater cannot install a 0.7 release in
+  place. Packages no longer ship a profile catalog, and the updater no
+  longer stages one. `capsem-doctor` drops the checks for tools the runtime
+  no longer carries (AI CLIs, Node, npm, uv, git, the utility list, the
+  agent MCP config files); `tests/images` proves those in the images that
+  own them.
+
 - The files API no longer runs the Magika model to type workspace files.
   A file's type now comes from its extension, and a file with an unknown
   extension is text when its head is UTF-8 with no NUL byte. Typing is

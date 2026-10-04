@@ -46,7 +46,7 @@ Binary GitHub releases publish host packages and the canonical host SBOM
 artifact, `capsem-sbom.spdx.json`; the SBOM attestation subject list must cover
 both `.pkg` and `.deb` package artifacts, and the release summary must say
 `SBOM attested (SPDX 2.3, pkg + deb)`. VM asset manifests, blobs, OBOM evidence,
-profile-owned records, channel manifests, and the root channel list live on
+runtime records, channel manifests, and the root channel list live on
 `release.capsem.org`; do not verify or publish VM `manifest.json` through the
 tag release. Before recording binary metadata in the release channel, the tag
 workflow preflights that the downloaded release artifacts contain

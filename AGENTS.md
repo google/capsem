@@ -26,7 +26,7 @@ just install
 
 # Release only the exact commit whose `just test` passed (see Releases below)
 just release-binaries nightly "$source_commit"
-just release-profile nightly code "$source_commit"
+just release-assets nightly "$source_commit"
 ```
 
 See `/dev-just` for the full recipe reference and dependency chains.
@@ -47,7 +47,7 @@ crates/capsem-service/         Daemon service (axum HTTP over UDS, VM lifecycle)
 crates/capsem-process/         Per-VM process (boots VM, bridges vsock, job store)
 crates/capsem/                 CLI client (create, shell, exec, list, install, assets, update)
 crates/capsem-tui/             Terminal control UI (reads and drives state via the gateway)
-crates/capsem-admin/           Profile/asset/release administration (validate, materialize, publish)
+crates/capsem-admin/           Runtime image/asset/release administration (validate, materialize, publish)
 crates/capsem-gateway/         TCP-to-UDS HTTP gateway (frontend + tray + remote auth)
 mcp/typescript/                SDK-backed npm host MCP server for AI agents (stdio, authenticated gateway HTTP)
 crates/capsem-router/     Confined TCP publication companion (data descriptors only)
@@ -69,7 +69,9 @@ build_system/builder/      capsem-builder backend and gate implementation
 build_system/release_site/ Release channel site generator (Astro, writes cache/target/release/distribution/)
 build_system/scripts/      Thin functional command boundaries for build and release tooling
 config/                   Runtime product config source -- never developer skills (see Skills)
-config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packages, MCP, rules, root seed
+config/docker/image/      VM runtime build inputs (runtime_apt_packages, kernel and rootfs config)
+config/profiles/<id>/     Service policy catalog (code, co-work), materialized for the dev service; not a build, release, or package input
+images/                   Application OCI images and their catalog (catalog.toml); applications are not part of the VM runtime
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
 cache/target/assets/            Built VM assets (gitignored, per-arch: cache/target/assets/{arch}/)
 web/graphics/             Brand icons and Tauri app icons (source of truth)
@@ -269,7 +271,7 @@ The public entrypoints are:
 
 ```text
 just release-binaries <channel> <source-commit>
-just release-profile <channel> <profile> <source-commit>
+just release-assets <channel> <source-commit>
 ```
 
 Agents use these entrypoints rather than dispatching release workflows or

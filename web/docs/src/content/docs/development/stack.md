@@ -39,11 +39,11 @@ flowchart TD
     end
 
     subgraph stage0["0. VM images (first-time only)"]
-        PROFILE["config/profiles/<id>/profile.toml\n+ referenced sibling files"]
+        IMAGE["config/docker/image/\n+ guest/artifacts/"]
         ADMIN["capsem-admin image build"]
         BUILDER["capsem-builder\nbackend"]
         DOCKER["Docker (via Colima)"]
-        PROFILE --> ADMIN --> BUILDER --> DOCKER
+        IMAGE --> ADMIN --> BUILDER --> DOCKER
         DOCKER --> VMLINUZ["vmlinuz"]
         DOCKER --> ROOTFS["rootfs.erofs"]
         DOCKER --> INITRD_BASE["initrd.img (base)"]
@@ -98,13 +98,13 @@ just cross-compile x86_64    # Build x86_64 deb
 
 The initrd is a gzipped cpio archive that the kernel unpacks into RAM at boot. The `_pack-initrd` recipe:
 
-1. Extracts the base initrd (produced by `just build-assets code`)
+1. Extracts the base initrd (produced by `just build-assets`)
 2. Copies in the freshly cross-compiled guest binaries (chmod 555, read-only)
 3. Copies in shell scripts: `capsem-init` (PID 1), `capsem-doctor`, `capsem-bench`
 4. Repacks with `cpio + gzip`
 5. Regenerates BLAKE3 checksums (`B3SUMS` + `manifest.json`)
-6. `_materialize-config` uses the updated manifest to generate
-   `cache/target/config/profiles/code/profile.toml`
+6. `_materialize-config` uses the updated manifest to regenerate the catalog
+   the development service reads under `cache/target/config/`
 
 This is why `just run` is fast (~10s) -- it only rebuilds what changed, not the full rootfs.
 
@@ -156,29 +156,33 @@ On macOS, all binaries must be codesigned with the `com.apple.security.virtualiz
 
 ## Stage 4: Boot
 
-The service loads the selected profile from `cache/target/config/profiles` in
-development and the installed profile directory in packaged builds. That
-profile selects three assets from `~/.capsem/assets/` (installed) or
-`cache/target/assets/{arch}/` (development):
+The service boots the VM runtime: three assets from `~/.capsem/assets/`
+(installed, selected by the channel manifest's `runtime` document) or
+`cache/target/assets/{arch}/` (development, through the materialized catalog
+under `cache/target/config/`):
 
 | Asset | Produced by | What it is |
 |-------|-------------|------------|
-| `vmlinuz` | `just build-assets code [arch]` | Custom Linux kernel |
+| `vmlinuz` | `just build-assets [arch]` | Custom Linux kernel |
 | `initrd.img` | `just run` (repacked each time) | Guest binaries + init scripts |
-| `rootfs.erofs` | `just build-assets code [arch]` | Debian bookworm base + AI CLIs + tools, EROFS/LZ4HC |
+| `rootfs.erofs` | `just build-assets [arch]` | Debian bookworm base + `runtime_apt_packages` + guest tooling, EROFS/LZ4HC |
+
+Agents and developer tools are not in the rootfs: a session created with
+`--image` runs an OCI image as its workload on top of this runtime.
 
 Boot sequence: capsem-service spawns capsem-process, which loads the kernel + initrd into a VM. `capsem-init` (PID 1) sets up overlayfs, air-gapped networking, and launches the PTY agent + net proxy + MCP server + sysutil. The host connects over vsock.
 
-## VM image builds (`just build-assets code`)
+## VM image builds (`just build-assets`)
 
 The slow path (~10 min, first-time only). The
-[capsem-admin image rail](/architecture/build-system/) validates the selected
-profile, materializes a backend image workspace, and then uses the Python
-builder to produce kernel + rootfs via Docker.
+[capsem-admin image rail](/architecture/build-system/) materializes a backend
+image workspace from `config/docker/image/` and `guest/artifacts/`, and then
+uses the Python builder to produce kernel + rootfs via Docker.
 
 ```bash
-cargo run -p capsem-admin -- image build --profile config/profiles/code/profile.toml --config-root config --arch arm64
-uv run --project build_system --frozen capsem-builder doctor --profile code --config-root config # check prerequisites and profile
+just build-assets arm64
+cargo run -p capsem-admin -- image build --config-root config --arch arm64   # the same build, directly
+uv run --project build_system --frozen capsem-builder doctor                  # check prerequisites
 ```
 
 ### Container runtime
@@ -205,21 +209,24 @@ sudo apt install docker.io
 
 ## CI release pipeline
 
-When a `vX.Y.Z` tag is pushed, the release workflow runs. Jobs are parallelized to minimize wall-clock time (~18 min vs ~45 min sequential).
+Binaries and the VM runtime release on separate rails. `just release-binaries
+<channel> <source-commit>` dispatches `release.yaml`, which builds, signs, and
+install-tests the packages. `just release-assets <channel> <source-commit>`
+dispatches `release-assets.yaml`, which builds the runtime's kernel, initrd,
+and rootfs for both architectures and publishes them as arch-prefixed assets of
+the GitHub release `runtime-<channel>-<revision>`. Each lane updates only its own part of the
+channel manifest. See [CI/CD](/development/ci/) for both.
 
 ```mermaid
 flowchart LR
-    PF["preflight\n(macos-14, 30s)"]
-    BA["build-assets\n(arm64 + x86_64\nubuntu, 10 min)"]
-    T["test\n(macos-14, 8 min)"]
-    BM["build-app-macos\n(macos-14, 15 min)"]
-    BL["build-app-linux\n(arm64 + x86_64\nubuntu, 10 min)"]
-    CR["create-release\n(ubuntu, 2 min)"]
+    PF["preflight\n(macos-14)"]
+    T["test\n(macos-14)"]
+    BM["build-app-macos\n(macos-14)"]
+    BL["build-app-linux\n(arm64 + x86_64\nubuntu)"]
+    CR["create-release\n(ubuntu)"]
 
-    PF --> BA & T
-    PF --> BM & BL
-    BA --> BM & BL
-    T --> CR
+    PF --> T
+    T --> BM & BL
     BM --> CR
     BL --> CR
 ```
@@ -227,14 +234,13 @@ flowchart LR
 | Job | Runner | Produces |
 |-----|--------|----------|
 | `preflight` | macos-14 | Validates Apple cert, Tauri key, notarization creds |
-| `build-assets` | ubuntu arm64 + x86_64 | vmlinuz, initrd.img, rootfs.erofs per arch |
 | `test` | macos-14 | Unit tests + coverage, frontend check, audit |
 | `build-app-macos` | macos-14 | `.pkg` installer, notarized + stapled |
 | `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages for both arches |
-| `create-release` | ubuntu | Publishes packages, `manifest.json`, and arch-prefixed VM assets |
+| `create-release` | ubuntu | Publishes packages and host SBOM |
 
 **Key design decisions:**
-- `test` runs in parallel with `build-assets` and app builds -- it gates `create-release` but doesn't block compilation
+- The binary rail never rebuilds or uploads runtime images; the runtime rail never rebuilds packages
 - Linux produces `.deb` only on both arm64 and x86_64. AppImage is intentionally disabled.
 - VM assets are not bundled into the installers. They are uploaded as GitHub
   release assets named `<arch>-vmlinuz`, `<arch>-initrd.img`,

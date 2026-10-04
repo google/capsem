@@ -52,23 +52,15 @@ protocol rows, structured logs, counters, and route/UI JSON when those surfaces
 exist. No feature is done with a single-entry proof. What goes in must come out
 exactly, and every transformation must be accounted for.
 
-### Profile Build Hook Memory
+### Runtime Image Memory
 
-When image-build work touches `config/profiles/<profile_id>/build.sh`, load the
-`build-images` skill. `build.sh` is not an installer, setup step, boot hook, or
-runtime customization rail. It is the profile-owned rootfs build hook executed
-by the admin/just image pipeline before EROFS assets are produced. The profile
-ledger owns the file descriptor, and the change is only real in a VM after the
-profile assets are rebuilt through that same pipeline.
-
-Use `build.sh` only for rootfs construction work that cannot live in the boring
-profile package files: vendor shell installers, binary tarball installs,
-system-path wrappers, and build-time cleanup. Do not put credentials, corp
-policy, provider state, MCP decisions, runtime settings, or user repair logic
-there. After changing it, run `capsem-admin profile check`, rebuild assets,
-boot a fresh VM, and pay the Ironbank proof for the user-visible behavior.
-Never hand-edit profile payload hashes or sizes; if validation fails, fix the
-source contract or the materialization rail with tests.
+When image-build work touches `config/docker/image/` or `guest/artifacts/`,
+load the `build-images` skill. The VM runtime has no profile input and no
+build hook: its package set is `runtime_apt_packages` in
+`config/docker/image/build.toml`, reserved for Capsem's own guest machinery.
+Tools a user or agent works with belong in an OCI image under `images/`. A
+runtime change is only real in a VM after `just build-assets` rebuilds it; boot
+a fresh VM and pay the Ironbank proof for the user-visible behavior.
 
 `config/skills` is not a development skill location. Read `config/README.md`
 before adding any profile-owned skill payload, and keep repository development

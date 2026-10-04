@@ -66,16 +66,17 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
   Plugged VMs talk over any protocol. The switch forwards on MAC only and is a
   network, not a security boundary: never add per-flow relays, admission,
   or IP/TCP parsing to it. See `references/storage-network-and-lifecycle.md`.
-- Corp config owns enterprise constraints; profiles own VM assets and runtime
-  policy; settings own UI preferences. All enforcement and detection compiles
+- Corp config owns enterprise constraints; profiles own runtime policy; the
+  one VM runtime and OCI images own what a guest runs; settings own UI
+  preferences. All enforcement and detection compiles
   into one `SecurityRuleSet` over `SecurityEvent`.
 - Credential capture/injection belongs to the credential broker. Durable
   ledger storage belongs to `capsem-logger`; routes, MCP helpers, UI handlers,
   benchmarks, and network formatters must not open SQLite or own projection
   caches. Missing tables or columns are schema failures, never empty data.
 - Sessions run profiles. Workspace and overlay bytes are session state, never
-  a hidden image-authoring rail; package changes go through profile-owned
-  inputs and the profile-derived asset build.
+  a hidden image-authoring rail; package changes go through the runtime
+  package set (`/build-images`) or an OCI image under `images/`.
 - `capsem-process` stays low privilege: a cleared allowlisted environment,
   0600 sockets, a 0700 session directory, read-only assets and guest binaries,
   and only `session_dir/guest/` shared with the VM.
