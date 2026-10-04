@@ -112,6 +112,30 @@ pub const LAUNCH_COMMAND: &str = concat!(
     launcher_in_moved_root!("/root/.capsem-image")
 );
 
+/// The session terminal's command in an image session: the launcher enters the
+/// workload with a login shell, again whenever it ends, and never falls back to
+/// the VM. `/etc/capsem-bashrc` hands the PTY to it.
+pub const ATTACH_COMMAND: &str = launcher_in_moved_root!("--attach");
+
+/// Set in an image session's boot environment, so its terminal waits for the
+/// image it is created with instead of opening a VM shell first. A restarted
+/// or forked session finds its staged image (`STAGE/ready`) instead.
+pub const WORKLOAD_ENV: &str = "CAPSEM_WORKLOAD";
+
+/// The boot environment of a session, marked as an image session when it has
+/// a workload.
+pub fn session_env(
+    env: Option<std::collections::HashMap<String, String>>,
+    workload: bool,
+) -> Option<std::collections::HashMap<String, String>> {
+    if !workload {
+        return env;
+    }
+    let mut env = env.unwrap_or_default();
+    env.insert(WORKLOAD_ENV.to_string(), "1".to_string());
+    Some(env)
+}
+
 /// `command` run by `/bin/sh -c` inside the running workload, through
 /// `runc exec` as the image's own process (user, cwd, env, capabilities,
 /// seccomp, cgroup and namespaces). The JSON request travels hex-encoded, so

@@ -109,3 +109,33 @@ fn a_workload_exec_carries_any_command_exactly_to_the_launcher() {
         serde_json::json!({ "command": hostile, "tty": false })
     );
 }
+
+/// The terminal shell of an image session hands its PTY to the launcher's
+/// attach loop, in the same moved-root context as exec, before any VM shell
+/// prompt: for a session created with an image and for one restarted with it.
+#[test]
+fn the_vm_bashrc_hands_an_image_session_terminal_to_the_workload() {
+    let bashrc = include_str!("../../../../guest/artifacts/capsem-bashrc");
+    let handoff = bashrc
+        .find(&format!("exec {ATTACH_COMMAND}\n"))
+        .expect("bashrc execs ATTACH_COMMAND");
+    let guard = &bashrc[..handoff];
+    assert!(guard.contains(&format!("\"${WORKLOAD_ENV}\"")), "{guard}");
+    assert!(guard.contains(&format!("/root/{STAGE}/ready")), "{guard}");
+    assert!(
+        bashrc.find("capsem-banner").unwrap() > handoff,
+        "no VM banner before the hand-off"
+    );
+    assert!(ATTACH_COMMAND.ends_with("/root/.capsem-image/launch.py --attach'"));
+}
+
+#[test]
+fn only_an_image_session_is_marked_in_its_boot_environment() {
+    let user = std::collections::HashMap::from([("A".to_string(), "1".to_string())]);
+    assert_eq!(session_env(Some(user.clone()), false), Some(user.clone()));
+    assert_eq!(session_env(None, false), None);
+    let marked = session_env(Some(user), true).unwrap();
+    assert_eq!(marked.get(WORKLOAD_ENV).map(String::as_str), Some("1"));
+    assert_eq!(marked.get("A").map(String::as_str), Some("1"));
+    assert_eq!(session_env(None, true).unwrap().len(), 1);
+}

@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostics run; asking a session without a workload for `workload` is a
   400 rather than a silent VM exec. The session ledger records each exec's
   target (`exec_events.target`) beside the command as the caller wrote it.
+- An image session's terminal is now a login shell in its workload (the
+  image's bash, or `sh`), as the image's own user under the workload's
+  namespaces and filter. It waits for the image while the session is being
+  created and enters the workload again whenever that shell exits; it no
+  longer opens a VM root shell beside the workload.
 - OCI workloads now run under a deny-by-default syscall filter: the
   allowlist Docker, containerd and Podman ship (moby's `default.json`,
   vendored and pinned), resolved for the guest's architecture and the

@@ -10,6 +10,19 @@ export HISTFILE=/root/.bash_history
 export HOME=/root
 cd /root
 
+# An image session's terminal is its workload's (capsem-core ATTACH_COMMAND):
+# wait for the image it was created with, then hand this PTY to the launcher,
+# which enters the workload as the image's user and never comes back here.
+if [ -n "$CAPSEM_WORKLOAD" ] || [ -f /root/.capsem-image/ready ]; then
+    trap '' INT QUIT TSTP
+    until [ -f /root/.capsem-image/ready ]; do
+        [ -n "$_capsem_waiting" ] || echo "capsem: waiting for the image"
+        _capsem_waiting=1
+        sleep 1
+    done
+    exec chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py --attach'
+fi
+
 # Python venv is activated by capsem-pty-agent at boot (VIRTUAL_ENV + PATH).
 # Both the PTY shell and exec commands see the venv without sourcing here.
 

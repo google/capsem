@@ -6,8 +6,10 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path, PurePosixPath
 
 RUNTIME = Path("/var/tmp/capsem-container")
@@ -35,6 +37,10 @@ STAGE = ".capsem-image"
 CONTAINER = "workload"
 # The one runtime state root: the launch and every later exec name it.
 RUNC = ("runc", "--rootless=true", "--root", str(RUNTIME / "state"))
+# The terminal's shell in the workload: the image's bash when it has one.
+TERMINAL_SHELL = ["/bin/sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l; exec sh -l"]
+TERMINAL_TYPE = "TERM=xterm-256color"
+ATTACH_INTERVAL = 1.0
 
 # The VM trusts the Capsem CA through this bundle; the container gets the same
 # file read-only, so TLS it opens terminates at the host MITM like VM traffic.
@@ -700,6 +706,8 @@ def exec_process(config, argv, tty):
     gave it. runc exec joins its namespaces, cgroup and seccomp filter."""
     process = json.loads(json.dumps(config["process"]))
     process.update(args=argv, terminal=tty)
+    if tty and not any(entry.startswith("TERM=") for entry in process["env"]):
+        process["env"].append(TERMINAL_TYPE)
     return process
 
 
@@ -731,12 +739,49 @@ def exec_workload(encoded):
     bundle = workload_bundle()
     if bundle is None:
         raise SystemExit("capsem: no container workload is running in this session")
+    spec = process_spec(bundle, argv, tty)
+    runc = exec_argv(f"/proc/self/fd/{spec}")
+    os.execvp(runc[0], runc)
+
+
+def process_spec(bundle, argv, tty):
+    """A descriptor runc inherits holding the exec's process spec, from the
+    running workload's `bundle`: a memfd, so nothing is written to disk and
+    nothing is left to clean up."""
     config = json.loads((bundle / "config.json").read_text())
     spec = os.memfd_create("capsem-exec", 0)
     os.write(spec, json.dumps(exec_process(config, argv, tty)).encode())
     os.set_inheritable(spec, True)
-    runc = exec_argv(f"/proc/self/fd/{spec}")
-    os.execvp(runc[0], runc)
+    return spec
+
+
+def attach(bundle_of=workload_bundle, run=subprocess.run, sleep=time.sleep):
+    """The session terminal, inside the workload: wait for it to run, enter it
+    with a login shell, and enter it again whenever that shell ends.
+
+    An image session's terminal belongs to its workload, as exec does; it never
+    falls back to a VM shell. Keyboard signals reach the workload through runc's
+    raw terminal, so between shells they must not end this loop instead.
+    """
+    for number in (signal.SIGINT, signal.SIGQUIT, signal.SIGTSTP):
+        signal.signal(number, signal.SIG_IGN)
+    waiting = False
+    while True:
+        bundle = bundle_of()
+        if bundle is None:
+            if not waiting:
+                print("capsem: waiting for the workload to start", flush=True)
+                waiting = True
+            sleep(ATTACH_INTERVAL)
+            continue
+        waiting = False
+        spec = process_spec(bundle, TERMINAL_SHELL, True)
+        try:
+            run(exec_argv(f"/proc/self/fd/{spec}"), pass_fds=(spec,), check=False)
+        finally:
+            os.close(spec)
+        print("capsem: the workload shell ended; entering it again", flush=True)
+        sleep(ATTACH_INTERVAL)
 
 
 if __name__ == "__main__":
@@ -747,5 +792,7 @@ if __name__ == "__main__":
         network_ready(pid)
     elif len(sys.argv) == 3 and sys.argv[1] == "--exec":
         exec_workload(sys.argv[2])
+    elif sys.argv[1:] == ["--attach"]:
+        attach()
     else:
         sys.exit(run(Path(sys.argv[1])))

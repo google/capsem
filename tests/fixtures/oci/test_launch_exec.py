@@ -70,7 +70,9 @@ def test_the_exec_is_the_workload_process_with_another_command(launcher):
     # The image's user (with its groups), working directory and environment.
     assert process["user"] == {"uid": 999, "gid": 999, "additionalGids": [999, 1000]}
     assert process["cwd"] == "/data"
-    assert process["env"] == workload["env"]
+    # A terminal gets a terminal type when the image names none.
+    assert process["env"] == [*workload["env"], "TERM=xterm-256color"]
+    assert launcher.exec_process(config, ["id"], False)["env"] == workload["env"]
     assert "APP=1" in process["env"]
     assert any(entry.startswith("SSL_CERT_FILE=") for entry in process["env"])
     # The hardening the workload runs under, not runc's exec defaults.
@@ -160,3 +162,67 @@ def test_exec_hands_runc_the_workload_process_and_nothing_else(launcher, tmp_pat
     assert seen["program"] == "runc"
     assert seen["argv"][-1] == launcher.CONTAINER
     assert seen["process"] == launcher.exec_process(config, ["/bin/sh", "-c", "id -u"], False)
+
+
+def test_an_image_terminal_type_is_kept(launcher):
+    config = workload_config(launcher)
+    config["process"]["env"].append("TERM=dumb")
+    env = launcher.exec_process(config, ["sh"], True)["env"]
+    assert [entry for entry in env if entry.startswith("TERM=")] == ["TERM=dumb"]
+
+
+class Stop(Exception):
+    pass
+
+
+def attach_trace(launcher, tmp_path, monkeypatch, states, sleeps):
+    """Run `attach` over a scripted workload state until it has slept `sleeps`
+    times; return what it ran and printed."""
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "config.json").write_text(json.dumps(workload_config(launcher)))
+    monkeypatch.setattr(
+        launcher.os,
+        "memfd_create",
+        lambda name, flags: os.open(tmp_path / f"{name}-{len(ran)}", os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600),
+        raising=False,
+    )
+    monkeypatch.setattr(launcher.signal, "signal", lambda number, handler: ignored.append((number, handler)))
+    states, ran, ignored, slept = iter(states), [], [], []
+
+    def run(argv, pass_fds, check):
+        descriptor = int(argv[argv.index("--process") + 1].rsplit("/", 1)[1])
+        assert pass_fds == (descriptor,) and check is False
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        ran.append(json.loads(os.read(descriptor, 1 << 20)))
+
+    def sleep(seconds):
+        slept.append(seconds)
+        if len(slept) == sleeps:
+            raise Stop
+
+    with pytest.raises(Stop):
+        launcher.attach(bundle_of=lambda: bundle if next(states) else None, run=run, sleep=sleep)
+    return ran, ignored
+
+
+def test_the_terminal_waits_for_the_workload_then_enters_it_with_a_login_shell(
+    launcher, tmp_path, monkeypatch, capsys
+):
+    ran, ignored = attach_trace(launcher, tmp_path, monkeypatch, [False, False, True], 3)
+    assert len(ran) == 1
+    assert ran[0]["args"] == launcher.TERMINAL_SHELL
+    assert ran[0]["terminal"] is True
+    assert ran[0]["user"]["uid"] == 999, "the terminal is the image's user, not the VM's root"
+    assert "TERM=xterm-256color" in ran[0]["env"]
+    assert capsys.readouterr().out.count("waiting for the workload") == 1
+    signals = {number for number, handler in ignored if handler == launcher.signal.SIG_IGN}
+    assert {launcher.signal.SIGINT, launcher.signal.SIGQUIT, launcher.signal.SIGTSTP} <= signals
+
+
+def test_the_terminal_enters_the_workload_again_when_its_shell_ends(launcher, tmp_path, monkeypatch, capsys):
+    ran, _ = attach_trace(launcher, tmp_path, monkeypatch, [True, True, False, True], 4)
+    assert len(ran) == 3, "each ended shell is followed by a new one, never by a VM shell"
+    assert all(process["args"] == launcher.TERMINAL_SHELL for process in ran)
+    assert capsys.readouterr().out.count("entering it again") == 3
+
