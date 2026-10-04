@@ -52,8 +52,6 @@ pub(crate) struct ReportArgs {
     /// The benchmark store to read.
     #[arg(long, default_value = "cache/target/tests/benchmarks/benchmarks.db")]
     pub(crate) store: PathBuf,
-    #[arg(long, default_value = "code")]
-    pub(crate) profile: String,
 }
 
 #[cfg(feature = "host")]
@@ -80,8 +78,6 @@ pub(crate) struct RunArgs {
     pub(crate) channel: String,
     #[arg(long, default_value = "unknown")]
     pub(crate) commit: String,
-    #[arg(long, default_value = "code")]
-    pub(crate) profile: String,
 }
 
 /// How much growth is allowed, and how much of a move is just the machine.
@@ -102,8 +98,6 @@ pub(crate) struct CompareArgs {
     pub(crate) baseline: PathBuf,
     pub(crate) current: PathBuf,
     pub(crate) dimension: String,
-    #[arg(long, default_value = "code")]
-    pub(crate) profile: String,
     #[command(flatten)]
     pub(crate) thresholds: Thresholds,
 }
@@ -158,9 +152,6 @@ pub(crate) struct ProtocolArgs {
     #[cfg(feature = "host")]
     #[arg(long, default_value = "unknown")]
     pub(crate) commit: String,
-    #[cfg(feature = "host")]
-    #[arg(long, default_value = "code")]
-    pub(crate) profile: String,
 }
 
 #[derive(Parser, Debug)]

@@ -159,8 +159,6 @@ pub(crate) async fn run_protocol_delta(args: ProtocolDeltaArgs) -> Result<Protoc
         channel: "unknown".to_string(),
         #[cfg(feature = "host")]
         commit: "unknown".to_string(),
-        #[cfg(feature = "host")]
-        profile: "code".to_string(),
     })
     .await?;
 

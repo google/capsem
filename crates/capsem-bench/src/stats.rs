@@ -17,7 +17,7 @@ use crate::{schema::Unit, Thresholds};
 
 /// The distribution of one metric, as recorded.
 ///
-/// Serialized into `capsem.bench.v1`, so field names are the wire format.
+/// Serialized into `capsem.bench.v2`, so field names are the wire format.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Summary {
     pub n: usize,

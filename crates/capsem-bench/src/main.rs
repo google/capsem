@@ -57,8 +57,6 @@ async fn main() -> Result<()> {
         channel: "unknown".to_string(),
         #[cfg(feature = "host")]
         commit: "unknown".to_string(),
-        #[cfg(feature = "host")]
-        profile: "code".to_string(),
     })) {
         Command::Redis(args) => println!("{}", serde_json::to_string(&redis::run(args).await?)?),
         Command::Throughput(args) => println!("{}", serde_json::to_string(&throughput::run(args).await?)?),
@@ -68,17 +66,11 @@ async fn main() -> Result<()> {
             #[cfg(feature = "host")]
             let destination = args.record.clone();
             #[cfg(feature = "host")]
-            let (channel, commit, profile) = (args.channel.clone(), args.commit.clone(), args.profile.clone());
+            let (channel, commit) = (args.channel.clone(), args.commit.clone());
             let artifact = run_protocol(args).await?;
             #[cfg(feature = "host")]
             if let Some(root) = destination {
-                let record = protocol_record::build(
-                    &artifact,
-                    &channel,
-                    &commit,
-                    &profile,
-                    machine::running_capsem_processes()?,
-                );
+                let record = protocol_record::build(&artifact, &channel, &commit, machine::running_capsem_processes()?);
                 let mut connection = store::open(&root)?;
                 let run_id = store::insert(&mut connection, &record)?;
                 eprintln!(
@@ -98,7 +90,7 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&artifact)?);
         }
         #[cfg(feature = "host")]
-        Command::Report(args) => return commands::report(&args.store, std::env::consts::ARCH, &args.profile),
+        Command::Report(args) => return commands::report(&args.store, std::env::consts::ARCH),
         #[cfg(feature = "host")]
         Command::List => commands::list_dimensions(),
         #[cfg(feature = "host")]
@@ -113,7 +105,6 @@ async fn main() -> Result<()> {
                 &args.current,
                 dimension,
                 std::env::consts::ARCH,
-                &args.profile,
                 args.thresholds,
             );
         }
@@ -131,7 +122,6 @@ async fn main() -> Result<()> {
                 args.quick,
                 &args.channel,
                 &args.commit,
-                &args.profile,
                 machine::running_capsem_processes()?,
             );
         }
