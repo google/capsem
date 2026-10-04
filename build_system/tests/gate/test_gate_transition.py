@@ -28,7 +28,7 @@ def test_just_test_replays_the_installed_transition_after_the_rehearsal() -> Non
     order = [
         "rehearsal.package",
         "transition.before-packages",
-        "transition.before-profiles",
+        "transition.before-runtime",
         "transition.before-verify",
         "transition.installed",
         "recipes",
@@ -71,12 +71,15 @@ def test_the_glowup_gets_the_release_lanes_pairing(monkeypatch) -> None:
     assert env[pairing.channel] == env[pairing.baseline_channel] == channel
     assert env[pairing.transition] == "auto"
     assert env[pairing.before_manifest].endswith(
-        f"{transition.PROFILES}/{CONFIG.install.manifest_name}"
+        f"{transition.RUNTIME}/{CONFIG.install.manifest_name}"
     )
     assert env[pairing.after_manifest].endswith(
         CONFIG.modules.rehearsal_after_manifest.format(channel=channel)
     )
-    assert env[pairing.after_profile_inputs].endswith(CONFIG.modules.rehearsal_inputs_dir)
+    assert env[pairing.before_release_inputs].endswith(transition.RUNTIME)
+    assert env[pairing.after_release_inputs].endswith(CONFIG.modules.rehearsal_inputs_dir)
+    # 0.7 has no profiles: the glow-up takes neither a config root nor a profile policy.
+    assert "--config-root" not in command and "--profile" not in command
     assert f'--before-package "{before}"' in command
     assert f"--source-commit {COMMIT}" in command
     assert '--evidence-dir "/src/evidence"' in command

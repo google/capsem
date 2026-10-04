@@ -11,7 +11,7 @@ rule 0.6.3 cannot reload, and a ledger 0.6.4 would not open (#280).
 This fetches the deployed before-state over the release egress and replays the
 transition with the release lane's own glow-up script, inside the same
 disposable systemd container the install proof uses. The candidate side is the
-rehearsal's cohort: the package, manifest and verified profile inputs it built
+rehearsal's cohort: the package, manifest and verified release inputs it built
 and checked. No new transition logic lives here; `local_release_glowup` owns
 it, as it does in the release lane.
 """
@@ -23,7 +23,7 @@ from pathlib import Path
 from . import config as gate_config
 from .actions import Call, Script
 from .config import GateConfig
-from .content import ProfileContent, SelectedInstallContent
+from .content import RuntimeContent, SelectedInstallContent
 from .docker import Docker
 from .execution import Kind, Needs, Speed, Step, step
 from .fileactions import make_dir, remove
@@ -37,11 +37,11 @@ from .versions import workspace_version
 PHASE = "transition"
 PACKAGES = "packages"
 TRANSITION_EVIDENCE = "transition"
-PROFILES = "profiles"
+RUNTIME = "runtime"
 
 
 def fetch_before(config: GateConfig) -> list[Step]:
-    """The deployed public packages and profiles, digest-verified.
+    """The deployed public packages and runtime, digest-verified.
 
     Outside the sandbox, which forbids a mid-run fetch: this is a fetch, and
     the release egress is the one sanctioned route for it. The cache keys by
@@ -76,13 +76,13 @@ def fetch_before(config: GateConfig) -> list[Step]:
         )
         for kind, action in (
             (PACKAGES, fetch(PACKAGES)),
-            (PROFILES, fetch(PROFILES, "--architecture", config.host_arch().name)),
+            (RUNTIME, fetch(RUNTIME, "--architecture", config.host_arch().name)),
         )
     ]
     fetched.append(
         step(
             "before-verify",
-            Script(config, settings.verify_inputs_script, "--input-dir", before / PROFILES),
+            Script(config, settings.verify_inputs_script, "--input-dir", before / RUNTIME),
             kind=Kind.STATIC_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,
@@ -109,7 +109,7 @@ class TransitionGate:
         self._after = self._config.path(
             modules.rehearsal_after_manifest.format(channel=modules.rehearsal_channel)
         )
-        self._content = ProfileContent.staged(
+        self._content = RuntimeContent.staged(
             self._config, self._config.path(modules.rehearsal_content_root)
         )
         # The candidate's own tools, as the rehearsal and the release lane use
@@ -173,21 +173,20 @@ class TransitionGate:
             pairing.baseline_channel: channel,
             pairing.transition: "auto",
             pairing.before_manifest: str(
-                self._before / PROFILES / self._config.install.manifest_name
+                self._before / RUNTIME / self._config.install.manifest_name
             ),
             pairing.after_manifest: str(self._after),
-            pairing.before_profile_inputs: str(self._before / PROFILES),
-            pairing.after_profile_inputs: str(self._inputs),
+            pairing.before_release_inputs: str(self._before / RUNTIME),
+            pairing.after_release_inputs: str(self._inputs),
         }
         command = (
             f"{settings.venv_python} {settings.suite.glowup_script} "
             f'--input-deb "{self._package}" --before-package "{before_package}" '
             f'--bin-dir "{self._bin_dir}" '
-            f'--assets-dir "{self._content.assets}" --config-root "{self._content.config}" '
+            f'--assets-dir "{self._content.assets}" '
             f"--work-dir {settings.layout.glowup} --package-ready "
             f'--evidence-dir "{evidence}" '
-            f"--source-commit {self._source_commit} "
-            f"--profile-revision-policy {settings.profile_revision_policy.value}"
+            f"--source-commit {self._source_commit}"
         )
         Docker(self._runner).shell(
             self._container.name,
