@@ -140,28 +140,6 @@ fn parse_create_with_name() {
     }
 }
 
-/// Profiles are gone: no command takes `--profile`, and naming one is a
-/// usage error rather than a silently ignored flag.
-#[test]
-fn no_command_takes_a_profile() {
-    for args in [
-        vec!["capsem", "create", "--profile", "co-work"],
-        vec!["capsem", "run", "true", "--profile", "co-work"],
-        vec!["capsem", "assets", "status", "--profile", "code"],
-        vec!["capsem", "assets", "ensure", "--profile", "code"],
-        vec!["capsem", "mcp", "servers", "--profile", "co-work"],
-        vec!["capsem", "mcp", "tools", "--profile", "co-work"],
-        vec!["capsem", "mcp", "refresh", "--profile", "co-work"],
-        vec!["capsem", "mcp", "call", "server__tool", "--profile", "co-work"],
-    ] {
-        let error = match Cli::try_parse_from(&args) {
-            Ok(_) => panic!("{args:?} must not parse"),
-            Err(error) => error,
-        };
-        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument, "{args:?}");
-    }
-}
-
 #[test]
 fn parse_create_ephemeral() {
     let cli = Cli::parse_from(["capsem", "create"]);

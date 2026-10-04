@@ -340,6 +340,41 @@ pub(super) fn activate_staged_update_at(
     Ok(())
 }
 
+/// Remove `profiles/` below the Capsem home: the VM profile catalog earlier
+/// releases installed, which nothing reads any more. Removal never follows a
+/// link, so a symlinked catalog, or a link inside it, loses only the link.
+/// Returns whether there was a catalog to remove.
+pub(super) fn remove_retired_profile_catalog(capsem_home: &Path) -> std::io::Result<bool> {
+    let not_found = |error: &std::io::Error| error.kind() == std::io::ErrorKind::NotFound;
+    let home = match capsem_foundation::unix::contained::ContainedDir::open_root(capsem_home) {
+        Err(error) if not_found(&error) => return Ok(false),
+        home => home?,
+    };
+    match home.remove_tree(std::ffi::OsStr::new("profiles")) {
+        Err(error) if not_found(&error) => Ok(false),
+        removed => removed.map(|()| true),
+    }
+}
+
+/// Run on every applied update; a failure to tidy the retired catalog is
+/// reported and never fails the update itself.
+pub(super) fn retire_profile_catalog() {
+    let Ok(capsem_home) = crate::paths::capsem_home() else {
+        return;
+    };
+    match remove_retired_profile_catalog(&capsem_home) {
+        Ok(true) => println!(
+            "Removed the retired VM profile catalog {}.",
+            capsem_home.join("profiles").display()
+        ),
+        Ok(false) => {}
+        Err(error) => eprintln!(
+            "warning: could not remove {}: {error}",
+            capsem_home.join("profiles").display()
+        ),
+    }
+}
+
 pub(super) fn activate_staged_update_with_asset_audit(
     installed_assets: &Path,
     staged: &StagedUpdate,

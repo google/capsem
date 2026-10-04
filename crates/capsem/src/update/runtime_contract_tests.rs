@@ -423,11 +423,8 @@ async fn stage_verified_update_downloads_every_runtime_image_without_mutating_in
     let release_dir = temp.path().join("release");
     let (body, source, kernel) = staged_runtime_fixture(&release_dir, false);
     let installed_manifest = capsem_home.join("assets/manifest.json");
-    let installed_profile = capsem_home.join("profiles/code/profile.toml");
     std::fs::create_dir_all(installed_manifest.parent().unwrap()).unwrap();
-    std::fs::create_dir_all(installed_profile.parent().unwrap()).unwrap();
     std::fs::write(&installed_manifest, b"installed-manifest").unwrap();
-    std::fs::write(&installed_profile, b"installed-profile").unwrap();
 
     let check = staged_runtime_check(source, &body);
     let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(), &check, &body)
@@ -435,7 +432,6 @@ async fn stage_verified_update_downloads_every_runtime_image_without_mutating_in
         .unwrap();
 
     assert_eq!(std::fs::read(&installed_manifest).unwrap(), b"installed-manifest");
-    assert_eq!(std::fs::read(&installed_profile).unwrap(), b"installed-profile");
     assert_eq!(std::fs::read(&staged.manifest_path).unwrap(), body);
     assert_eq!(
         std::fs::read(
@@ -451,10 +447,6 @@ async fn stage_verified_update_downloads_every_runtime_image_without_mutating_in
         )
         .unwrap(),
         kernel
-    );
-    assert!(
-        !staged.manifest_path.with_file_name("profiles").exists(),
-        "a runtime update stages no profile catalog"
     );
     assert!(staged.installer_path.is_none());
 }
@@ -493,9 +485,7 @@ async fn activate_staged_update_switches_runtime_assets_and_manifest_together() 
     let (body, source, kernel) = staged_runtime_fixture(&release_dir, false);
     let installed_assets = capsem_home.join("assets");
     let installed_manifest = installed_assets.join("manifest.json");
-    let installed_profile = capsem_home.join("profiles/code/profile.toml");
     std::fs::create_dir_all(&installed_assets).unwrap();
-    std::fs::create_dir_all(installed_profile.parent().unwrap()).unwrap();
     std::fs::write(&installed_manifest, b"installed-manifest").unwrap();
     std::fs::write(
         installed_assets.join("manifest-metadata.json"),
@@ -506,7 +496,6 @@ async fn activate_staged_update_switches_runtime_assets_and_manifest_together() 
         .unwrap(),
     )
     .unwrap();
-    std::fs::write(&installed_profile, b"installed-profile").unwrap();
 
     let check = staged_runtime_check(source.clone(), &body);
     let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(), &check, &body)
@@ -516,11 +505,6 @@ async fn activate_staged_update_switches_runtime_assets_and_manifest_together() 
     activate_staged_update_at(&installed_assets, &staged, &check, &ChannelTransition::Preserve).unwrap();
 
     assert_eq!(std::fs::read(&installed_manifest).unwrap(), body);
-    assert_eq!(
-        std::fs::read(&installed_profile).unwrap(),
-        b"installed-profile",
-        "a runtime update leaves the profile catalog alone"
-    );
     assert_eq!(
         std::fs::read(
             installed_assets
@@ -609,4 +593,50 @@ async fn a_binary_only_graph_installs_its_manifest_and_no_assets() {
     hydrate_assets_for_binary(&assets_dir, env!("CARGO_PKG_VERSION"))
         .await
         .expect("a channel without a runtime has nothing to hydrate");
+}
+
+#[test]
+fn update_removes_the_retired_profile_catalog_without_following_links() {
+    let temp = tempfile::tempdir().unwrap();
+    let capsem_home = temp.path().join("home");
+    let outside = temp.path().join("outside");
+    std::fs::create_dir_all(capsem_home.join("profiles/code/root/root")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("keep"), b"keep").unwrap();
+    std::fs::write(capsem_home.join("profiles/code/profile.toml"), b"id = \"code\"").unwrap();
+    std::os::unix::fs::symlink(&outside, capsem_home.join("profiles/code/root/root/escape")).unwrap();
+    std::fs::create_dir_all(capsem_home.join("assets")).unwrap();
+
+    assert!(remove_retired_profile_catalog(&capsem_home).unwrap());
+
+    assert!(std::fs::symlink_metadata(capsem_home.join("profiles")).is_err());
+    assert!(
+        capsem_home.join("assets").is_dir(),
+        "only the retired catalog is removed"
+    );
+    assert_eq!(std::fs::read(outside.join("keep")).unwrap(), b"keep");
+    assert!(
+        !remove_retired_profile_catalog(&capsem_home).unwrap(),
+        "an absent catalog is not an error"
+    );
+}
+
+#[test]
+fn a_retired_profile_catalog_symlink_is_removed_as_the_link() {
+    let temp = tempfile::tempdir().unwrap();
+    let capsem_home = temp.path().join("home");
+    let outside = temp.path().join("outside");
+    std::fs::create_dir_all(&capsem_home).unwrap();
+    std::fs::create_dir_all(outside.join("code")).unwrap();
+    std::fs::write(outside.join("code/profile.toml"), b"keep").unwrap();
+    std::os::unix::fs::symlink(&outside, capsem_home.join("profiles")).unwrap();
+
+    assert!(remove_retired_profile_catalog(&capsem_home).unwrap());
+
+    assert!(std::fs::symlink_metadata(capsem_home.join("profiles")).is_err());
+    assert_eq!(std::fs::read(outside.join("code/profile.toml")).unwrap(), b"keep");
+    assert!(
+        !remove_retired_profile_catalog(&temp.path().join("never-installed")).unwrap(),
+        "a missing Capsem home has no catalog to remove"
+    );
 }

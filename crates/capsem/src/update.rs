@@ -292,9 +292,8 @@ struct ReleaseGraphManifest {
 
 /// The release graph in `body`, or `None` for a format-2 asset manifest.
 ///
-/// A graph is recognized by its package cohort or runtime. One that still
-/// publishes `profiles` is refused rather than read as a binary-only graph:
-/// it is a pre-runtime channel this Capsem cannot install VM assets from.
+/// A graph is recognized by its package cohort or runtime. One publishing
+/// `profiles` is a pre-runtime channel and is refused, not read as binary-only.
 fn release_graph_from_payload(body: &[u8]) -> Result<Option<ReleaseGraphManifest>> {
     let value: serde_json::Value = serde_json::from_slice(body).context("parse release manifest JSON")?;
     if value.get("format").is_some() {
@@ -2008,6 +2007,7 @@ pub async fn run_update(
     }
 
     if yes {
+        retire_profile_catalog();
         if let Some(staged) = staged_update.as_ref() {
             let installed_assets = capsem_assets::asset_manager::default_assets_dir()
                 .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
