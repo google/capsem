@@ -29,6 +29,7 @@ export { ExecOutputEncoding } from "./ExecOutputEncoding.js";
 export type { ExecRequest } from "./ExecRequest.js";
 export type { ExecResponse } from "./ExecResponse.js";
 export { ExecSource } from "./ExecSource.js";
+export { ExecTarget } from "./ExecTarget.js";
 export { ExposureAccess } from "./ExposureAccess.js";
 export type { ExposureInfo } from "./ExposureInfo.js";
 export type { ExposureListResponse } from "./ExposureListResponse.js";

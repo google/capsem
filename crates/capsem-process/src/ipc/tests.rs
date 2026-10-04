@@ -269,6 +269,7 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::Exec {
             id: 10,
             command: "printf ok".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
         })
         .await
         .unwrap();
@@ -298,12 +299,17 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::ExecStream {
             id: 19,
             command: "printf live".into(),
+            target: capsem_proto::ipc::ExecTarget::Workload,
         })
         .await
         .unwrap();
     assert!(matches!(
         ctrl_rx.recv().await.unwrap(),
-        ServiceToProcess::Exec { id: 19, .. }
+        ServiceToProcess::Exec {
+            id: 19,
+            target: capsem_proto::ipc::ExecTarget::Workload,
+            ..
+        }
     ));
     let sender = job_store
         .active_execs
@@ -346,6 +352,7 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::Exec {
             id: 17,
             command: "false".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
         })
         .await
         .unwrap();
@@ -377,6 +384,7 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::Exec {
             id: 18,
             command: "closed".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
         })
         .await
         .unwrap();
@@ -822,7 +830,8 @@ fn classify_exec() {
     assert_eq!(
         classify_ipc_message(&ServiceToProcess::Exec {
             id: 1,
-            command: "ls".into()
+            command: "ls".into(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
         }),
         IpcAction::Job
     );

@@ -155,6 +155,7 @@ impl VM {
             body: models::ExecRequest {
                 command: command.into(),
                 timeout_secs,
+                target: None,
             },
         };
         api::exec_vm(

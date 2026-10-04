@@ -415,3 +415,25 @@ fn exec_timeout_is_bounded_and_validated() {
     assert!(exec_timeout_secs(Some(0)).is_err());
     assert!(exec_timeout_secs(Some(MAX_EXEC_TIMEOUT_SECS + 1)).is_err());
 }
+
+/// An image session's exec enters its workload unless the caller names the
+/// VM; a session without one runs in the VM, and asking it for a workload is
+/// refused rather than silently answered by the VM.
+#[test]
+fn exec_target_defaults_to_the_workload_only_where_there_is_one() {
+    let absent: ExecRequest = serde_json::from_value(json!({"command": "id -u"})).unwrap();
+    assert_eq!(absent.target, None);
+    assert_eq!(exec_target(absent.target, true), Ok(ExecTarget::Workload));
+    assert_eq!(exec_target(absent.target, false), Ok(ExecTarget::Vm));
+    assert_eq!(exec_target(Some(ExecTarget::Vm), true), Ok(ExecTarget::Vm));
+    assert_eq!(exec_target(Some(ExecTarget::Vm), false), Ok(ExecTarget::Vm));
+    assert_eq!(exec_target(Some(ExecTarget::Workload), true), Ok(ExecTarget::Workload));
+    let refused = exec_target(Some(ExecTarget::Workload), false).unwrap_err();
+    assert!(refused.contains("no container workload"), "{refused}");
+
+    let named: ExecRequest = serde_json::from_value(json!({"command": "true", "target": "vm"})).unwrap();
+    assert_eq!(named.target, Some(ExecTarget::Vm));
+    assert!(serde_json::from_value::<ExecRequest>(json!({"command": "true", "target": "container"})).is_err());
+    // An absent target stays absent on the wire, so older services decode it.
+    assert_eq!(serde_json::to_value(&absent).unwrap(), json!({"command": "id -u"}));
+}

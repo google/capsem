@@ -132,6 +132,7 @@ async fn exec_response_preserves_non_utf8_output() {
         Json(ExecRequest {
             command: "binary-output".to_string(),
             timeout_secs: Some(5),
+            target: None,
         }),
     )
     .await

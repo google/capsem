@@ -31,6 +31,7 @@ from .exec_output_encoding import ExecOutputEncoding as ExecOutputEncoding
 from .exec_request import ExecRequest as ExecRequest
 from .exec_response import ExecResponse as ExecResponse
 from .exec_source import ExecSource as ExecSource
+from .exec_target import ExecTarget as ExecTarget
 from .exposure_access import ExposureAccess as ExposureAccess
 from .exposure_info import ExposureInfo as ExposureInfo
 from .exposure_list_response import ExposureListResponse as ExposureListResponse

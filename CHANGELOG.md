@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for a different host no longer reuses the connection opened for the
   previous one, which delivered a request judged for one host to another.
   Administrator `upstream_overrides` keep dialing their configured target.
+- `capsem exec` and `POST /vms/{id}/exec` on an image session now run in its
+  workload, through `runc exec` as the image's own user and cwd with its
+  environment, under the workload's user namespace, syscall filter,
+  capabilities and cgroup. They used to run as VM root beside the workload.
+  `--target vm` (`"target": "vm"`) still reaches the VM, where Capsem's
+  diagnostics run; asking a session without a workload for `workload` is a
+  400 rather than a silent VM exec. The session ledger records each exec's
+  target (`exec_events.target`) beside the command as the caller wrote it.
 - OCI workloads now run under a deny-by-default syscall filter: the
   allowlist Docker, containerd and Podman ship (moby's `default.json`,
   vendored and pinned), resolved for the guest's architecture and the

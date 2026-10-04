@@ -63,6 +63,7 @@ async fn send_ipc_command_ignores_lifecycle_broadcasts() {
         ServiceToProcess::Exec {
             id: 41,
             command: "true".into(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
         },
         Some(5),
     )

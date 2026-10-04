@@ -46,6 +46,35 @@ pub struct ExecRequest {
     pub command: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    /// Where the command runs. Absent means the session's workload when it
+    /// runs an image, otherwise the VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<ExecTarget>,
+}
+
+/// Where an exec runs.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecTarget {
+    /// The session's OCI workload, as the image's own user, under the
+    /// workload's namespaces, seccomp filter, capabilities and cgroup.
+    Workload,
+    /// The VM, as VM root: Capsem's diagnostics and the image runtime.
+    Vm,
+}
+
+/// Resolve a request's exec target for a session that does or does not run
+/// a container workload. A workload is refused where there is none, never
+/// quietly replaced by the VM.
+pub fn exec_target(requested: Option<ExecTarget>, runs_workload: bool) -> Result<ExecTarget, String> {
+    match (requested, runs_workload) {
+        (None, true) => Ok(ExecTarget::Workload),
+        (None, false) => Ok(ExecTarget::Vm),
+        (Some(ExecTarget::Workload), false) => {
+            Err("target workload: this session runs no container workload; use target vm".to_string())
+        }
+        (Some(target), _) => Ok(target),
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]

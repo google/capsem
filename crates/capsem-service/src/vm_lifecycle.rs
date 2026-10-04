@@ -882,6 +882,8 @@ pub(super) async fn handle_run(
         ServiceToProcess::Exec {
             id: job_id,
             command: payload.command,
+            // A one-shot run boots a VM with no workload.
+            target: capsem_proto::ipc::ExecTarget::Vm,
         },
         Some(timeout_secs),
     )

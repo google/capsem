@@ -7,11 +7,13 @@ mod diagnostics;
 mod launch;
 mod storage;
 pub(crate) use storage::storage_diagnostics;
+mod exec;
 mod fork;
 mod ipc_command;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
 #[cfg(test)]
 pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
+pub(super) use exec::{handle_exec, proto_exec_target};
 pub(crate) use fork::{clone_session_state, handle_fork};
 pub(super) use ipc_command::send_ipc_command;
 
@@ -1281,50 +1283,4 @@ pub(super) fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::pa
         .clone();
     drop(instances);
     Ok(path)
-}
-
-pub(super) async fn handle_exec(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(payload): Json<ExecRequest>,
-) -> Result<Json<ExecResponse>, AppError> {
-    let timeout_secs =
-        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let uds_path = running_uds_path(&state, &id)?;
-
-    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let id_val = state.next_job_id();
-    let command = payload.command;
-    let res = send_ipc_command(
-        &uds_path,
-        ServiceToProcess::Exec {
-            id: id_val,
-            command: command.clone(),
-        },
-        Some(timeout_secs),
-    )
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    match res {
-        ProcessToService::ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            truncated,
-            ..
-        } => Ok(Json(ExecResponse {
-            stdout: ExecOutput::from_bytes(stdout),
-            stderr: ExecOutput::from_bytes(stderr),
-            exit_code,
-            truncated,
-        })),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response for exec".to_string(),
-        )),
-    }
 }

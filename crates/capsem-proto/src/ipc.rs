@@ -8,7 +8,10 @@ pub enum FileBoundaryAction {
     Export,
 }
 
-/// Where a guest exec runs; the session ledger records which one ran.
+/// Where a guest exec runs. Chosen by the service and never defaulted on the
+/// wire: an image session's API exec enters its workload, Capsem's own
+/// launcher and diagnostics name the VM, and the session ledger records which
+/// one ran.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecTarget {
@@ -56,10 +59,13 @@ pub enum ServiceToProcess {
     },
     /// Request the process to gracefully shut down the VM.
     Shutdown,
-    /// Execute a command and wait for completion (structured).
+    /// Execute a command and wait for completion (structured). `command` is
+    /// the caller's own: the VM owner records it and applies policy to it,
+    /// then wraps it for `target`.
     Exec {
         id: u64,
         command: String,
+        target: ExecTarget,
     },
     /// Write a file to the guest.
     WriteFile {
@@ -136,6 +142,7 @@ pub enum ServiceToProcess {
     ExecStream {
         id: u64,
         command: String,
+        target: ExecTarget,
     },
     /// Send bytes to one running exec's stdin.
     ExecStreamInput {

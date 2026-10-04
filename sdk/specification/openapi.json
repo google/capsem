@@ -3560,6 +3560,17 @@
           "command": {
             "type": "string"
           },
+          "target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExecTarget",
+                "description": "Where the command runs. Absent means the session's workload when it\nruns an image, otherwise the VM."
+              }
+            ]
+          },
           "timeout_secs": {
             "type": [
               "integer",
@@ -3601,6 +3612,14 @@
           "cli",
           "mcp",
           "frontend"
+        ]
+      },
+      "ExecTarget": {
+        "type": "string",
+        "description": "Where an exec runs.",
+        "enum": [
+          "workload",
+          "vm"
         ]
       },
       "ExposureAccess": {

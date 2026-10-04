@@ -29,6 +29,7 @@ export {ExecOutputEncodingSchema} from "./ExecOutputEncoding.js";
 export {ExecRequestSchema} from "./ExecRequest.js";
 export {ExecResponseSchema} from "./ExecResponse.js";
 export {ExecSourceSchema} from "./ExecSource.js";
+export {ExecTargetSchema} from "./ExecTarget.js";
 export {ExposureAccessSchema} from "./ExposureAccess.js";
 export {ExposureInfoSchema} from "./ExposureInfo.js";
 export {ExposureListResponseSchema} from "./ExposureListResponse.js";

@@ -145,18 +145,23 @@ capsem restart mybox
 
 ### exec
 
-Execute a command in a running session.
+Execute a command in a running session. In a session created with
+`--image`, the command runs in the workload as the image's user, with its
+working directory, environment and confinement; `--target vm` runs it in the
+VM instead.
 
 ```sh
 capsem exec mybox "ls -la /root"
 capsem exec mybox "pip install numpy" --timeout 120
+capsem exec redis1 "test -f /var/tmp/capsem-container/workload.pid" --target vm
 ```
 
 | Arg/Flag | Default | Description |
 |----------|---------|-------------|
 | `<SESSION>` | -- | Name or ID of the session |
 | `<command>` | -- | Command to execute |
-| `--timeout <SECS>` | 30 | Timeout in seconds |
+| `--timeout <SECS>` | 3600 | Timeout in seconds |
+| `--target <workload\|vm>` | `workload` for an image session, else `vm` | Where the command runs |
 
 ### run
 

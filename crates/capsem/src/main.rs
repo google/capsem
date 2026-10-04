@@ -45,9 +45,9 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 use client::UpdateTrackState;
 use client::{
-    ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse,
-    ListResponse, LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse,
-    SessionInfo, UdsClient, UpdateStatusResponse, VmLifecycleState,
+    ApiResponse, AssetStatusResponse, ForkRequest, ForkResponse, HistoryResponse, ListResponse, LogsResponse,
+    PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse, SessionInfo, UdsClient,
+    UpdateStatusResponse, VmLifecycleState,
 };
 
 const DEFAULT_PROFILE_ID: &str = "code";
@@ -361,17 +361,8 @@ enum SessionCommands {
         /// Name of the persistent session
         name: String,
     },
-    /// Execute a command in a running session
-    Exec {
-        /// Name or ID of the session
-        #[arg(value_name = "SESSION")]
-        session: String,
-        /// Command to execute
-        command: String,
-        /// Timeout in seconds
-        #[arg(long)]
-        timeout: Option<u64>,
-    },
+    /// Execute a command in a running session (an image session's workload by default)
+    Exec(container_run::ExecArgs),
     /// Run a shell command or OCI image in a fresh session, then destroy it
     Run(container_run::RunArgs),
     /// Copy a file in or out of a session's workspace.
@@ -1584,21 +1575,8 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Session(SessionCommands::Exec {
-            session,
-            command,
-            timeout,
-        }) => {
-            client::validate_id(session)?;
-            let session_id = resolve_session_route_id(&client, session).await?;
-            let req = ExecRequest {
-                command: command.clone(),
-                timeout_secs: *timeout,
-            };
-            let resp: ApiResponse<ExecResponse> = client.post(&format!("/vms/{}/exec", session_id), req).await?;
-            let resp = resp.into_result()?;
-            container_run::write_exec_output(&mut tokio::io::stdout(), &mut tokio::io::stderr(), &resp).await?;
-            std::process::exit(resp.exit_code);
+        Commands::Session(SessionCommands::Exec(args)) => {
+            std::process::exit(container_run::exec(&client, args).await?);
         }
         Commands::Session(SessionCommands::Run(args)) => {
             let result = container_run::run(&client, args).await;

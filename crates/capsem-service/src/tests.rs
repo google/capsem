@@ -769,6 +769,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
 mod assets_registry;
 mod async_io_contract;
 mod db_handle_ownership;
+mod exec_target;
 mod files_api;
 mod files_paths;
 mod fork;

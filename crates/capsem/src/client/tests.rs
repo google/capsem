@@ -550,11 +550,13 @@ fn exec_request_serde() {
     let req = ExecRequest {
         command: "ls -la".into(),
         timeout_secs: Some(30),
+        target: Some(capsem_api::ExecTarget::Vm),
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: ExecRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.command, "ls -la");
     assert_eq!(req2.timeout_secs, Some(30));
+    assert_eq!(req2.target, Some(capsem_api::ExecTarget::Vm));
 }
 
 #[test]

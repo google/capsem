@@ -10,6 +10,7 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             ServiceToProcess::Exec {
                 id: 7,
                 command: "true".into(),
+                target: ExecTarget::Vm,
             },
             Some(7),
         ),

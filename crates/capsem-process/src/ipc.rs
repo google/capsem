@@ -280,9 +280,9 @@ pub(crate) async fn handle_ipc_connection(
                 );
             }
             ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => {
-                let (id, command, streaming) = match msg {
-                    ServiceToProcess::Exec { id, command } => (id, command, false),
-                    ServiceToProcess::ExecStream { id, command } => (id, command, true),
+                let (id, job, streaming) = match msg {
+                    ServiceToProcess::Exec { id, command, target } => (id, (command, target), false),
+                    ServiceToProcess::ExecStream { id, command, target } => (id, (command, target), true),
                     _ => unreachable!(),
                 };
                 connection_execs.insert(id);
@@ -291,7 +291,7 @@ pub(crate) async fn handle_ipc_connection(
                 let registration = exec::install(id, streaming, &job_store, &ipc_tx_out);
                 tokio::spawn(exec::run(
                     id,
-                    command,
+                    job,
                     Arc::clone(&job_store),
                     ctrl_tx.clone(),
                     ipc_tx_out.clone(),

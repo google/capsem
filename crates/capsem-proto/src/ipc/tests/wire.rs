@@ -35,6 +35,7 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
         ServiceToProcess::Exec {
             id: 1,
             command: "true".into(),
+            target: ExecTarget::Vm,
         },
         ServiceToProcess::WriteFile {
             id: 2,
@@ -74,6 +75,7 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
         ServiceToProcess::ExecStream {
             id: 10,
             command: "printf live".into(),
+            target: ExecTarget::Workload,
         },
         ServiceToProcess::ExecStreamInput { id: 10, data: vec![4] },
         ServiceToProcess::ExecStreamCloseStdin { id: 10 },

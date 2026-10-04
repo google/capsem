@@ -535,35 +535,26 @@ fn ram_gb_to_mb_conversion() {
 #[test]
 fn parse_exec() {
     let cli = Cli::parse_from(["capsem", "exec", "my-vm", "echo hello"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Exec {
-            session,
-            command,
-            timeout,
-        }) => {
-            assert_eq!(session, "my-vm");
-            assert_eq!(command, "echo hello");
-            assert_eq!(timeout, None);
-        }
-        _ => panic!("expected Exec"),
-    }
+    let Some(Commands::Session(SessionCommands::Exec(args))) = cli.command else {
+        panic!("expected Exec");
+    };
+    assert_eq!((args.session.as_str(), args.command.as_str()), ("my-vm", "echo hello"));
+    // No target: the service picks the workload for an image session.
+    assert_eq!((args.timeout, args.target), (None, None));
 }
 
 #[test]
 fn parse_exec_with_timeout() {
-    let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "my-vm", "make build"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Exec {
-            session,
-            command,
-            timeout,
-        }) => {
-            assert_eq!(session, "my-vm");
-            assert_eq!(command, "make build");
-            assert_eq!(timeout, Some(120));
-        }
-        _ => panic!("expected Exec"),
-    }
+    let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "--target", "vm", "my-vm", "make"]);
+    let Some(Commands::Session(SessionCommands::Exec(args))) = cli.command else {
+        panic!("expected Exec");
+    };
+    assert_eq!((args.session.as_str(), args.command.as_str()), ("my-vm", "make"));
+    assert_eq!(
+        (args.timeout, args.target),
+        (Some(120), Some(container_run::ExecTarget::Vm))
+    );
+    assert!(Cli::try_parse_from(["capsem", "exec", "--target", "container", "my-vm", "true"]).is_err());
 }
 
 #[test]

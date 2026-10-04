@@ -1,8 +1,14 @@
-//! One structured exec from the service to the guest agent: its ledger row
-//! and security decision first, and only a command that may run reaches the
-//! guest.
+//! One structured exec from the service to the guest agent.
+//!
+//! The ledger row and the security decision are made on the caller's own
+//! command and its target. Only a command that may run is then wrapped for
+//! its target: a workload exec becomes the container launcher's `--exec`
+//! (`capsem_core::container::workload_exec_command`), which `runc exec`s it
+//! into the running workload as the image's user. Wrapping any earlier would
+//! record, and judge, the launcher instead of what was asked for.
 
 use super::{exec_boundary_refusal, JobResult, JobStore, PluginPolicyHandle, SecurityRulesHandle};
+use capsem_proto::ipc::ExecTarget;
 use capsem_proto::HostToGuest;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -17,8 +23,16 @@ pub(super) struct ExecDispatch {
     pub(super) hub: mpsc::Sender<HostToGuest>,
 }
 
+/// The command the guest agent runs for `command` in `target`.
+pub(super) fn guest_command(command: String, target: ExecTarget) -> String {
+    match target {
+        ExecTarget::Vm => command,
+        ExecTarget::Workload => capsem_core::container::workload_exec_command(&command),
+    }
+}
+
 impl ExecDispatch {
-    pub(super) async fn dispatch(&self, id: u64, command: String) {
+    pub(super) async fn dispatch(&self, id: u64, command: String, target: ExecTarget) {
         // active_execs is owned by ipc.rs's Exec handler -- it creates the
         // capture slot *before* sending here. The control bridge owns
         // delivery/replay, so this layer just forwards without replacing the
@@ -40,7 +54,7 @@ impl ExecDispatch {
                 exec_id: id,
                 command: command.clone(),
                 source: "api".into(),
-                target: capsem_proto::ipc::ExecTarget::Vm,
+                target,
                 trace_id,
                 process_name: None,
                 credential_ref: None,
@@ -65,6 +79,7 @@ impl ExecDispatch {
                 active.event_id = Some(emission.event_id.clone());
             }
         }
+        let command = guest_command(command, target);
         capsem_core::try_send!("hub_exec", self.hub.send(HostToGuest::Exec { id, command }).await);
     }
 }

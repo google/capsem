@@ -58,26 +58,29 @@ fn exec_roundtrip() {
     let msg = ServiceToProcess::Exec {
         id: 42,
         command: "echo hi".into(),
+        target: ExecTarget::Workload,
     };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
-        ServiceToProcess::Exec { id, command } => {
+        ServiceToProcess::Exec { id, command, target } => {
             assert_eq!(id, 42);
             assert_eq!(command, "echo hi");
+            assert_eq!(target, ExecTarget::Workload);
         }
         _ => panic!("wrong variant"),
     }
 }
 
-/// The ledger's spelling is the wire's, and reads back as the same target.
+/// The target is never implied: a frame without one is refused rather than
+/// run somewhere its sender did not choose.
 #[test]
-fn exec_target_is_spelled_like_the_ledger() {
+fn exec_target_is_required_and_spelled_like_the_ledger() {
+    let missing = serde_json::json!({"Exec": {"id": 1, "command": "true"}});
+    assert!(serde_json::from_value::<ServiceToProcess>(missing).is_err());
     for target in [ExecTarget::Vm, ExecTarget::Workload] {
         assert_eq!(serde_json::to_value(target).unwrap(), target.as_str());
-        assert_eq!(target.as_str().parse::<ExecTarget>(), Ok(target));
     }
-    assert!("container".parse::<ExecTarget>().is_err());
 }
 
 #[test]
@@ -365,6 +368,7 @@ fn job_ids_are_distinct() {
     let exec = ServiceToProcess::Exec {
         id: 1,
         command: "a".into(),
+        target: ExecTarget::Vm,
     };
     let write = ServiceToProcess::WriteFile {
         id: 2,

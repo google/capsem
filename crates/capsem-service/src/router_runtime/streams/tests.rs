@@ -107,10 +107,11 @@ fn status(frame: &[u8]) -> StreamStatus {
 async fn exec_stream_relays_output_and_ends_with_the_exit_status() {
     let fx = fixture().await;
     let owner = owner(&fx.uds_path, |tx, rx| async move {
-        let ServiceToProcess::ExecStream { id, command } = rx.recv().await.unwrap() else {
+        let ServiceToProcess::ExecStream { id, command, target } = rx.recv().await.unwrap() else {
             panic!("expected ExecStream")
         };
         assert_eq!(command, "echo hi");
+        assert_eq!(target, capsem_proto::ipc::ExecTarget::Vm);
         tx.send(ProcessToService::StateChanged {
             id: "noise".into(),
             state: "x".into(),
@@ -243,10 +244,11 @@ async fn terminal_stream_relays_output_input_and_resize() {
 async fn exec_stream_relays_stdin_eof_separate_stderr_and_disconnect_cancellation() {
     let fx = fixture().await;
     let owner = owner(&fx.uds_path, |tx, rx| async move {
-        let ServiceToProcess::ExecStream { id, command } = rx.recv().await.unwrap() else {
+        let ServiceToProcess::ExecStream { id, command, target } = rx.recv().await.unwrap() else {
             panic!("expected ExecStream")
         };
         assert_eq!(command, "cat; echo problem >&2");
+        assert_eq!(target, capsem_proto::ipc::ExecTarget::Vm);
         assert!(matches!(
             rx.recv().await.unwrap(),
             ServiceToProcess::ExecStreamInput { id: input_id, data }
@@ -338,10 +340,11 @@ async fn container_stream_starts_a_staged_workload_once_and_records_its_exit() {
     let fx = fixture().await;
     let generation = fx.state.containers.stage_for_tests("box", "registry.example/app:1");
     let owner = owner(&fx.uds_path, |tx, rx| async move {
-        let ServiceToProcess::ExecStream { id, command } = rx.recv().await.unwrap() else {
+        let ServiceToProcess::ExecStream { id, command, target } = rx.recv().await.unwrap() else {
             panic!("expected ExecStream")
         };
         assert_eq!(command, capsem_core::container::LAUNCH_COMMAND);
+        assert_eq!(target, capsem_proto::ipc::ExecTarget::Vm);
         tx.send(ProcessToService::ExecResult {
             id,
             stdout: vec![],

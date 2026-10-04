@@ -68,9 +68,18 @@ async fn session(state: Arc<ServiceState>, id: String, uds_path: PathBuf, socket
             (StreamKind::Terminal, _) => terminal(owner?, &mut client_tx, &mut client_rx).await,
             (StreamKind::Exec, _) => {
                 let command = command.expect("decoder requires an exec command");
-                exec(&state, owner?, command, &mut client_tx, &mut client_rx)
-                    .await
-                    .map(drop)
+                // The stream protocol names no target yet, so a streamed exec
+                // goes where an untargeted POST exec goes.
+                let target = capsem_api::exec_target(None, container_setup::runs_container(&state, &id).await)?;
+                exec(
+                    &state,
+                    owner?,
+                    (command, proto_exec_target(target)),
+                    &mut client_tx,
+                    &mut client_rx,
+                )
+                .await
+                .map(drop)
             }
             (StreamKind::Container, claim) => {
                 let Some(generation) = claim else {
@@ -82,8 +91,10 @@ async fn session(state: Arc<ServiceState>, id: String, uds_path: PathBuf, socket
                             warn!(vm_id = id.as_str(), %error, "attached container launch record not written");
                         }
                         container_setup::grant_surface_in_background(&state, &id, generation);
+                        // The launcher is the VM's: it is what starts the workload.
                         let command = capsem_core::container::LAUNCH_COMMAND.to_string();
-                        exec(&state, owner, command, &mut client_tx, &mut client_rx).await
+                        let job = (command, capsem_proto::ipc::ExecTarget::Vm);
+                        exec(&state, owner, job, &mut client_tx, &mut client_rx).await
                     }
                     Err(error) => Err(error),
                 };
@@ -226,14 +237,18 @@ async fn terminal(
 async fn exec(
     state: &ServiceState,
     (owner_tx, owner_rx): OwnerChannel,
-    command: String,
+    (command, target): (String, capsem_proto::ipc::ExecTarget),
     client_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     client_rx: &mut futures::stream::SplitStream<WebSocket>,
 ) -> Result<Option<i32>, String> {
     let owner_closed = |e: std::io::Error| format!("VM owner closed: {e}");
     let job = state.next_job_id();
     owner_tx
-        .send(ServiceToProcess::ExecStream { id: job, command })
+        .send(ServiceToProcess::ExecStream {
+            id: job,
+            command,
+            target,
+        })
         .await
         .map_err(owner_closed)?;
     send_status(client_tx, &StreamStatus::Started).await?;

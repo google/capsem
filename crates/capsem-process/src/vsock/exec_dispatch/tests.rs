@@ -58,14 +58,35 @@ fn dispatched(guest: &mut mpsc::Receiver<HostToGuest>) -> (u64, String) {
     }
 }
 
-/// An allowed exec is recorded, then reaches the guest as it was asked.
+/// The ledger and the policy see the caller's command; only the guest sees the
+/// launcher that carries it into the workload.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_allowed_exec_is_recorded_then_dispatched() {
+async fn a_workload_exec_is_recorded_as_asked_and_dispatched_through_the_launcher() {
     let mut bridge = bridge();
-    bridge.dispatch.dispatch(8, "test -f /var/tmp/x".into()).await;
+    let asked = "id -u; printf '%s' \"$HOME\"";
+    bridge.dispatch.dispatch(7, asked.into(), ExecTarget::Workload).await;
+    bridge
+        .dispatch
+        .dispatch(8, "test -f /var/tmp/x".into(), ExecTarget::Vm)
+        .await;
+
+    let (id, wrapped) = dispatched(&mut bridge.guest);
+    assert_eq!(id, 7);
+    assert_eq!(wrapped, capsem_core::container::workload_exec_command(asked));
+    assert!(!wrapped.contains(asked), "the command travels encoded: {wrapped}");
     assert_eq!(dispatched(&mut bridge.guest), (8, "test -f /var/tmp/x".to_string()));
+
     assert_eq!(
         ledger_rows(&bridge).await,
-        vec![("test -f /var/tmp/x".to_string(), "vm".to_string())]
+        vec![
+            (asked.to_string(), "workload".to_string()),
+            ("test -f /var/tmp/x".to_string(), "vm".to_string()),
+        ]
     );
+}
+
+#[test]
+fn a_vm_exec_reaches_the_guest_unchanged() {
+    assert_eq!(guest_command("echo hi".into(), ExecTarget::Vm), "echo hi");
+    assert_ne!(guest_command("echo hi".into(), ExecTarget::Workload), "echo hi");
 }
