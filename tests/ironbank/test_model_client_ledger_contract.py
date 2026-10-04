@@ -24,6 +24,7 @@ from helpers.constants import (
     ASSETS_DIR,
 )
 from helpers.debug_session import WORKSPACE, debug_session
+from helpers.hermetic_models import model_corp_config
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
@@ -36,8 +37,6 @@ from helpers.session_ledger import open_session_ledger
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import (
     HERMETIC_OPENAI_PRICED_MODEL,
-    WORKLOAD_OLLAMA_HOST,
-    WORKLOAD_OLLAMA_PORT,
     WORKLOAD_OLLAMA_URL,
 )
 from ironbank.model_client_scripts import (
@@ -201,109 +200,7 @@ def model_client_env():
             dns_answers="routable",
         )
         corp_path = service.tmp_dir / "corp.toml"
-        corp_path.write_text(
-            textwrap.dedent(
-                f"""
-                refresh_policy = "24h"
-
-                [network.dns]
-                upstreams = [{json.dumps(ready["dns_udp_addr"])}]
-
-                [network.upstream_overrides."daily-cloudcode-pa.googleapis.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."generativelanguage.googleapis.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."www.googleapis.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."play.googleapis.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."antigravity-unleash.goog:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."api.openai.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."api.anthropic.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."{WORKLOAD_OLLAMA_HOST}:{WORKLOAD_OLLAMA_PORT}"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [settings."security.web.http_upstream_ports"]
-                value = [80, 3713, 8080, 11434]
-                modified = "2026-06-14T00:00:00Z"
-
-                [ai.ollama]
-                name = "Ollama"
-                protocol = "ollama"
-                url = "{WORKLOAD_OLLAMA_URL}"
-                listen_ports = [3713]
-                allowed_remote_targets = ["{WORKLOAD_OLLAMA_HOST}:{WORKLOAD_OLLAMA_PORT}"]
-
-                [ai.ollama.rules.local_fixture_endpoint]
-                name = "ollama_local_fixture_endpoint"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Declare the hermetic Ollama-compatible endpoint for Ironbank launcher tests."
-                match = 'http.host == "{WORKLOAD_OLLAMA_HOST}" && tcp.port == "{WORKLOAD_OLLAMA_PORT}" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
-
-                [corp.rules.allow_ironbank_mock_model_server]
-                name = "allow_ironbank_mock_model_server"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
-                match = 'http.host == "{WORKLOAD_OLLAMA_HOST}" && tcp.port == "{WORKLOAD_OLLAMA_PORT}" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
-
-                [corp.rules.allow_ironbank_google_code_assist]
-                name = "allow_ironbank_google_code_assist"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow hermetic AGY Google Code Assist replay through the declared upstream override."
-                match = 'tcp.port == "443" && ((http.host == "daily-cloudcode-pa.googleapis.com" && http.path.matches("^/v1internal:")) || (http.host == "www.googleapis.com" && http.path == "/oauth2/v2/userinfo") || (http.host == "play.googleapis.com" && http.path == "/log") || (http.host == "antigravity-unleash.goog" && http.path.matches("^/api/client/")))'
-
-                [corp.rules.allow_ironbank_gemini_api]
-                name = "allow_ironbank_gemini_api"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow hermetic Gemini API replay through the declared upstream override."
-                match = 'tcp.port == "443" && http.host == "generativelanguage.googleapis.com" && http.path.matches("^/v1beta/models/")'
-
-                [corp.rules.allow_ironbank_openai_api]
-                name = "allow_ironbank_openai_api"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow hermetic OpenAI API replay through the declared upstream override."
-                match = 'tcp.port == "443" && http.host == "api.openai.com" && http.path.matches("^/v1/")'
-
-                [corp.rules.allow_ironbank_anthropic_api]
-                name = "allow_ironbank_anthropic_api"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow hermetic Anthropic API replay through the declared upstream override."
-                match = 'tcp.port == "443" && http.host == "api.anthropic.com" && http.path.matches("^/v1/")'
-                """
-            ).strip()
-            + "\n",
-            encoding="utf-8",
-        )
+        corp_path.write_text(model_corp_config(ready), encoding="utf-8")
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
