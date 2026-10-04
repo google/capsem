@@ -104,10 +104,15 @@ def console(service, vm_id):
     return logs.get("serial_logs") or ""
 
 
+#: What the Redis fixture prints once it accepts connections.
+REDIS_READY = "Ready to accept connections tcp"
+
+
 @contextlib.contextmanager
-def created(service, tmp_path, reference, certificate, name, *options):
-    """A named container VM from `create --image`, up once its Redis is
-    ready; its create stderr (the published ports) is kept at `stderr`."""
+def created(service, tmp_path, reference, certificate, name, *options, ready=REDIS_READY):
+    """A named container VM from `create --image`, up once its console shows
+    `ready` (Redis's own readiness line by default); its create stderr (the
+    published ports) is kept at `stderr`."""
     result = subprocess.run(
         create_command(service, reference, certificate, "-n", name, *options),
         env=environment(service),
@@ -127,9 +132,7 @@ def created(service, tmp_path, reference, certificate, name, *options):
     assert rows[0]["id"] in result.stdout.decode(), result.stdout
     try:
         wait_for(
-            lambda: (
-                "Ready to accept connections tcp" in console(service, rows[0]["id"])
-            ),
+            lambda: ready in console(service, rows[0]["id"]),
             f"{name} container startup",
             timeout=180,
         )
