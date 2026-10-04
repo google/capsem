@@ -6,9 +6,9 @@ fn overview(service: &str, lifecycle: &str) -> String {
         "service": service, "gateway_version": "test", "vm_count": 1,
         "resource_summary": null,
         "vms": [{
-            "id": "vm", "name": null, "profile_id": "code", "persistent": true,
+            "id": "vm", "name": null, "persistent": true,
             "status": lifecycle, "available_actions": [], "can_resume": false,
-            "resume_blocked_reason": "profile payload hash drift",
+            "resume_blocked_reason": "session overlay is missing",
             "total_input_tokens": u64::MAX, "total_output_tokens": 1,
             "total_tool_calls": u64::MAX, "total_requests": u64::MAX,
             "total_file_events": 1, "total_estimated_cost": -1.0
@@ -36,11 +36,9 @@ fn typed_overview_preserves_vm_health_and_saturates_counters() {
             vm.attention.contains(&Attention::StaleData),
             lifecycle == SessionLifecycle::Failed
         );
-        assert_eq!(vm.profile, "code");
-        assert_eq!(vm.profile_status, None);
         assert_eq!(vm.branch, None);
         assert!(!vm.can_resume);
-        assert_eq!(vm.resume_blocked_reason.as_deref(), Some("profile payload hash drift"));
+        assert_eq!(vm.resume_blocked_reason.as_deref(), Some("session overlay is missing"));
         assert_eq!(vm.stats.tokens, u64::MAX);
         assert_eq!(vm.stats.jobs, u16::MAX);
         assert_eq!(vm.stats.events, u32::MAX);
@@ -73,11 +71,9 @@ async fn rotated_token_is_refetched_before_sdk_overview_retry() {
         for (step, (path, expected_token)) in [
             ("/token", None),
             ("/status", Some("old")),
-            ("/profiles/list", Some("old")),
             ("/status", Some("old")),
             ("/token", None),
             ("/status", Some("new")),
-            ("/profiles/list", Some("new")),
         ]
         .into_iter()
         .enumerate()
@@ -95,10 +91,7 @@ async fn rotated_token_is_refetched_before_sdk_overview_retry() {
                     let token = if step == 0 { "old" } else { "new" };
                     write_json_response(&mut stream, &format!(r#"{{"token":"{token}"}}"#)).await;
                 }
-                "/profiles/list" => {
-                    write_json_response(&mut stream, r#"{"profiles":[]}"#).await;
-                }
-                _ if step == 3 => write_response(&mut stream, "401 Unauthorized", "expired").await,
+                _ if step == 2 => write_response(&mut stream, "401 Unauthorized", "expired").await,
                 _ => write_json_response(&mut stream, &overview("running", "Running")).await,
             }
         }

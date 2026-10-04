@@ -454,7 +454,7 @@ fn render_overlay(
         AppOverlay::Help => help_lines(),
         AppOverlay::Stats => stats_lines(state),
         AppOverlay::Home => home_lines(state),
-        AppOverlay::Create => create_lines(state, create_draft),
+        AppOverlay::Create => create_lines(create_draft),
         AppOverlay::Fork => fork_lines(state, fork_draft),
         AppOverlay::Confirm => confirm_lines(pending_action),
         AppOverlay::None => Vec::new(),
@@ -484,7 +484,7 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
         AppOverlay::Help => 21,
         AppOverlay::Stats => 12,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
-        AppOverlay::Create => (state.profiles.len() as u16).saturating_add(10).clamp(12, 18),
+        AppOverlay::Create => 7,
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
@@ -501,7 +501,7 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+1..9", "jump", "global", "select by tab number"),
         help_row("Alt+l", "sessions", "global", "list sessions and status"),
         help_row("Alt+i", "session info", "session", "active session details"),
-        help_row("Alt+n", "new", "global", "create from profile"),
+        help_row("Alt+n", "new", "global", "create a session"),
         help_row("Alt+f", "fork", "session", "fork active session"),
         help_row("Alt+s", "suspend", "session", "warm stop active session"),
         help_row("Alt+c", "checkpoint", "session", "save/checkpoint session"),
@@ -526,7 +526,7 @@ fn confirm_lines(action: Option<&ControlAction>) -> Vec<Line<'static>> {
     ]
 }
 
-fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
+fn create_lines(draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
     let mut lines = vec![logo_line(), overlay_title("new session")];
     let name = draft
         .map(|draft| draft.name.as_str())
@@ -534,38 +534,7 @@ fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'stat
         .unwrap_or(" ");
     lines.push(focus_pair("name", name));
     lines.push(overlay_line("active input: name; type to edit; Backspace deletes"));
-    let create_hint = if state.profiles.is_empty() {
-        "profile list unavailable; Enter disabled; Esc cancels"
-    } else {
-        "Up/Down selects profile; Enter creates; Esc cancels"
-    };
-    lines.push(overlay_line(create_hint));
-    lines.push(overlay_line(""));
-    lines.push(overlay_title("profiles"));
-    lines.push(table_header(&["Pick", "Profile", "Name"]));
-
-    if state.profiles.is_empty() {
-        lines.push(focus_line("profiles unavailable"));
-        return lines;
-    }
-
-    let selected = draft
-        .map(|draft| draft.selected_profile)
-        .unwrap_or_default()
-        .min(state.profiles.len().saturating_sub(1));
-    for (index, profile) in state.profiles.iter().take(8).enumerate() {
-        let marker = if index == selected { "▶" } else { " " };
-        let row = format!(
-            "{marker:<4} {:<20} {:<22}",
-            truncate(&profile.id, 20),
-            truncate(&profile.name, 22),
-        );
-        if index == selected {
-            lines.push(focus_line(&row));
-        } else {
-            lines.push(overlay_line(&row));
-        }
-    }
+    lines.push(overlay_line("Enter creates; Esc cancels"));
     lines
 }
 
@@ -594,7 +563,6 @@ fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
         overlay_title("session info"),
         table_header(&["Field", "Value", "Note", ""]),
         info_row("session", &session.title, &session.id),
-        info_row("profile", &session.profile, session.branch.as_deref().unwrap_or("")),
         info_row("state", session.lifecycle.label(), attention_summary(session)),
         info_row("duration", &format_duration(session.stats.duration), ""),
         info_row("tokens", &format_tokens(session.stats.tokens), ""),
@@ -614,9 +582,7 @@ fn home_lines(state: &AppState) -> Vec<Line<'static>> {
         lines.push(overlay_line("no sessions"));
         return lines;
     }
-    lines.push(table_header(&[
-        "#", "Name", "Profile", "State", "Time", "Tokens", "Cost",
-    ]));
+    lines.push(table_header(&["#", "Name", "State", "Time", "Tokens", "Cost"]));
     for (index, session) in state.sessions.iter().take(10).enumerate() {
         let active = if session.id == state.active_session_id {
             "▶"
@@ -624,10 +590,9 @@ fn home_lines(state: &AppState) -> Vec<Line<'static>> {
             " "
         };
         let row = format!(
-            "{active} {:<2} {:<18} {:<14} {:<10} {:>6} {:>7} ${:<5}",
+            "{active} {:<2} {:<18} {:<10} {:>6} {:>7} ${:<5}",
             index + 1,
             truncate(&session.title, 18),
-            truncate(&profile_inventory_label(session), 14),
             session.lifecycle.label(),
             format_duration(session.stats.duration),
             format_tokens(session.stats.tokens),
@@ -640,16 +605,6 @@ fn home_lines(state: &AppState) -> Vec<Line<'static>> {
         }
     }
     lines
-}
-
-fn profile_inventory_label(session: &SessionSummary) -> String {
-    if resume_blocked_reason(session).is_some() {
-        return session
-            .profile_status
-            .clone()
-            .unwrap_or_else(|| "profile-error".to_string());
-    }
-    session.profile.clone()
 }
 
 fn overlay_title(title: &'static str) -> Line<'static> {

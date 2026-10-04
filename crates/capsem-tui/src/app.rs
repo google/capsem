@@ -26,7 +26,7 @@ pub enum AppOverlay {
 pub enum ControlAction {
     StartService,
     Update,
-    CreateSession { name: Option<String>, profile_id: String },
+    CreateSession { name: Option<String> },
     Fork { id: String, name: String },
     Resume { id: String, label: String },
     Checkpoint { id: String, label: String },
@@ -72,7 +72,7 @@ impl ControlAction {
             Self::StartService => "Capsem service",
             Self::Update => "complete verified release",
             Self::CreateSession { name: Some(name), .. } => name,
-            Self::CreateSession { profile_id, .. } => profile_id,
+            Self::CreateSession { name: None } => "new session",
             Self::Fork { name, .. } => name,
             Self::Resume { label, .. }
             | Self::Checkpoint { label, .. }
@@ -100,7 +100,6 @@ pub struct App {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateDraft {
     pub name: String,
-    pub selected_profile: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -476,10 +475,8 @@ impl App {
     fn open_create(&mut self) {
         self.pending_action = None;
         self.fork_draft = None;
-        let selected_profile = default_profile_index(&self.state);
         self.create_draft = Some(CreateDraft {
-            name: next_profile_session_name(&self.state, selected_profile),
-            selected_profile,
+            name: next_session_name(&self.state),
         });
         self.overlay = AppOverlay::Create;
     }
@@ -514,37 +511,10 @@ impl App {
                 if name.is_empty() {
                     return AppAction::Consumed;
                 }
-                let Some(profile_id) = selected_profile_id(&self.state, draft.selected_profile) else {
-                    return AppAction::Consumed;
-                };
-                let generated = next_profile_session_name(&self.state, draft.selected_profile);
-                let name = (name != generated).then_some(name);
+                let name = (name != next_session_name(&self.state)).then_some(name);
                 self.create_draft = None;
                 self.overlay = AppOverlay::None;
-                AppAction::Invoke(ControlAction::CreateSession { name, profile_id })
-            }
-            KeyCode::Up => {
-                let mut selected_profile = None;
-                if let Some(draft) = &mut self.create_draft {
-                    draft.selected_profile = draft.selected_profile.saturating_sub(1);
-                    selected_profile = Some(draft.selected_profile);
-                }
-                if let (Some(draft), Some(index)) = (&mut self.create_draft, selected_profile) {
-                    draft.name = next_profile_session_name(&self.state, index);
-                }
-                AppAction::Consumed
-            }
-            KeyCode::Down => {
-                let max_index = self.state.profiles.len().saturating_sub(1);
-                let mut selected_profile = None;
-                if let Some(draft) = &mut self.create_draft {
-                    draft.selected_profile = draft.selected_profile.saturating_add(1).min(max_index);
-                    selected_profile = Some(draft.selected_profile);
-                }
-                if let (Some(draft), Some(index)) = (&mut self.create_draft, selected_profile) {
-                    draft.name = next_profile_session_name(&self.state, index);
-                }
-                AppAction::Consumed
+                AppAction::Invoke(ControlAction::CreateSession { name })
             }
             KeyCode::Backspace => {
                 if let Some(draft) = &mut self.create_draft {
@@ -644,18 +614,6 @@ fn service_needs_start(status: ServiceStatus) -> bool {
     )
 }
 
-fn default_profile_index(state: &AppState) -> usize {
-    state.profiles.first().map(|_| 0).unwrap_or_default()
-}
-
-fn selected_profile_id(state: &AppState, index: usize) -> Option<String> {
-    state
-        .profiles
-        .get(index)
-        .or_else(|| state.profiles.first())
-        .map(|profile| profile.id.clone())
-}
-
 pub fn resume_blocked_reason(session: &crate::model::SessionSummary) -> Option<&str> {
     if !matches!(
         session.lifecycle,
@@ -665,19 +623,15 @@ pub fn resume_blocked_reason(session: &crate::model::SessionSummary) -> Option<&
     ) {
         return None;
     }
-    if !session.can_resume {
-        return Some(
-            session
-                .resume_blocked_reason
-                .as_deref()
-                .unwrap_or("cannot resume: session state is not resumable"),
-        );
-    }
-    let status = session.profile_status.as_deref()?.to_ascii_lowercase();
-    if matches!(status.as_str(), "ready" | "ok" | "installed" | "active" | "current") {
+    if session.can_resume {
         return None;
     }
-    Some("cannot resume: profile pin is corrupted; recreate from a signed profile")
+    Some(
+        session
+            .resume_blocked_reason
+            .as_deref()
+            .unwrap_or("cannot resume: session state is not resumable"),
+    )
 }
 
 pub fn session_visible_in_tabs(session: &crate::model::SessionSummary) -> bool {
@@ -693,39 +647,15 @@ fn visible_session_indices(state: &AppState) -> Vec<usize> {
         .collect()
 }
 
-fn next_profile_session_name(state: &AppState, profile_index: usize) -> String {
-    let base = selected_profile_id(state, profile_index)
-        .map(|profile_id| sanitize_session_prefix(&profile_id))
-        .unwrap_or_else(|| "session".to_string());
+/// The first free `vm-N` session name, the service's own spelling.
+fn next_session_name(state: &AppState) -> String {
     for index in 1..1000 {
-        let candidate = format!("{base}-{index}");
+        let candidate = format!("vm-{index}");
         if state.sessions.iter().all(|session| session.id != candidate) {
             return candidate;
         }
     }
-    format!("{base}-1000")
-}
-
-fn sanitize_session_prefix(value: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in value.trim().to_ascii_lowercase().chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-            last_dash = false;
-        } else if !last_dash && !out.is_empty() {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    if out.is_empty() {
-        "session".to_string()
-    } else {
-        out
-    }
+    "vm-1000".to_string()
 }
 
 fn next_fork_name(state: &AppState, source_id: &str) -> String {

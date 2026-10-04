@@ -330,14 +330,7 @@ async fn status_attaches_update_status_when_available() {
             },
             "assets": {
                 "current": "assets-1",
-                "latest": "assets-1",
-                "update_available": false,
-                "state": "current",
-                "compatibility": "compatible"
-            },
-            "profiles": {
-                "current": "profiles-2030.0101.0",
-                "latest": "profiles-2030.0101.1",
+                "latest": "assets-2",
                 "update_available": false,
                 "state": "current",
                 "blocked_reason": "requires binary 1.4.1 or newer",
@@ -363,7 +356,7 @@ async fn status_attaches_update_status_when_available() {
     assert!(updates.binary.update_available);
     assert_eq!(updates.binary.latest.as_deref(), Some("1.4.1"));
     assert_eq!(
-        updates.profiles.blocked_reason.as_deref(),
+        updates.assets.blocked_reason.as_deref(),
         Some("requires binary 1.4.1 or newer")
     );
     assert_eq!(status.update_error, None);
