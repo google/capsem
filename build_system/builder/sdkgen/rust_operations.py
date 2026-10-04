@@ -9,6 +9,9 @@ from .python import module_name
 from .schema import Schema
 
 HEADER = "// Generated from sdk/specification/openapi.json. Do not edit.\n"
+# rustfmt puts an array's items or a call's arguments one per line once they
+# span more than array_width/fn_call_width: 72 columns at max_width 120.
+RUSTFMT_LIST_WIDTH = 72
 RESERVED = frozenset(["as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", "abstract", "become", "box", "do", "final", "macro", "override", "priv", "typeof", "unsized", "virtual", "yield", "try", "gen"])
 UNESCAPABLE = frozenset(["crate", "self", "Self", "super"])
 
@@ -96,9 +99,8 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         lines += ["    let request = Request {"]
         if path:
             pairs = ", ".join(f'({json.dumps(p.name)}, path_{p.name}.as_str())' for p in path)
-            parameter_line = f"        parameters: &[{pairs}],"
-            if len(parameter_line) <= 100:
-                lines.append(parameter_line)
+            if len(pairs) <= RUSTFMT_LIST_WIDTH:
+                lines.append(f"        parameters: &[{pairs}],")
             else:
                 lines += ["        parameters: &[",
                           *(f"            ({json.dumps(p.name)}, path_{p.name}.as_str())," for p in path),
@@ -116,13 +118,14 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             member = "Gzip" if op.success.media_type == "application/gzip" else "Binary"
             lines.append(f"        accept: crate::transport::MediaType::{member},")
         lines += ["        options,", "        ..Default::default()", "    };"]
-        method = f".request(reqwest::Method::{route.method.name}, {json.dumps(route.path)}, request)"
+        arguments = f"reqwest::Method::{route.method.name}, {json.dumps(route.path)}, request"
+        method = f".request({arguments})"
         suffix = ".await" if binary else ".await?"
         call = "transport" + method + suffix
         # rustfmt keeps a chain on one line only while it is shorter than
         # chain_width (72 at max_width 120): a 72-character call is split.
         if len(call) >= 72:
-            if len("        " + method) <= 100:
+            if len(arguments) <= RUSTFMT_LIST_WIDTH:
                 call = f"transport\n        {method}\n        {suffix}"
             else:
                 call = ("transport\n        .request(\n"

@@ -21,9 +21,6 @@ def test_all_routes_are_generated_in_small_modules() -> None:
     assert len(sources) == len(routes) + 1
     assert max(len(source.splitlines()) for source in sources.values()) < 150
     assert sources == render_operations(list(reversed(routes)))
-    call = sources["call_mcp_tool.rs"]
-    assert 'parameters: &[("server_id", path_server_id.as_str()), ("tool_id", path_tool_id.as_str())]' in call
-    assert '.request(reqwest::Method::POST, "/mcp/servers/{server_id}/tools/{tool_id}/call", request)' in call
 
 
 def test_a_call_is_split_where_rustfmt_splits_it() -> None:
@@ -41,6 +38,30 @@ def test_a_call_is_split_where_rustfmt_splits_it() -> None:
     assert (
         '    let bytes = transport.request(reqwest::Method::POST, "/vms/create", request).await?;'
         in sources["create_vm.rs"]
+    )
+
+
+def test_a_list_wider_than_rustfmt_allows_is_one_item_per_line() -> None:
+    """rustfmt lays an array or a call's arguments out one per line once its
+    contents pass 72 columns (60% of max_width 120). call_mcp_tool is the first
+    route past it on both counts, with two path parameters (73 columns) and a
+    long path (79); generated on one line, `cargo fmt` rewrote it and the
+    drift check refused what it wrote."""
+    call = render_operations(read_operations(SPEC))["call_mcp_tool.rs"]
+    assert (
+        "        parameters: &[\n"
+        '            ("server_id", path_server_id.as_str()),\n'
+        '            ("tool_id", path_tool_id.as_str()),\n'
+        "        ],\n" in call
+    )
+    assert (
+        "    let bytes = transport\n"
+        "        .request(\n"
+        "            reqwest::Method::POST,\n"
+        '            "/mcp/servers/{server_id}/tools/{tool_id}/call",\n'
+        "            request,\n"
+        "        )\n"
+        "        .await?;" in call
     )
 
 
