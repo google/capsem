@@ -38,7 +38,6 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
         "cache/target/cargo/debug/capsem",
         "assets",
         str(profiles_dir),
-        "co-work",
         {
             "name": "proof",
             "description": "proof",
@@ -59,8 +58,6 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
     assert captured["args"] == [
         "cache/target/cargo/debug/capsem",
         "run",
-        "--profile",
-        "co-work",
         "capsem-doctor -k injection",
     ]
 

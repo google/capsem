@@ -33,13 +33,13 @@ SETTINGS = CONFIG.modules
 
 INPUT_DIR = SETTINGS.release_input_dir
 PACKAGE = SETTINGS.release_package
-PROFILE = SETTINGS.release_profile
+RUNTIME = SETTINGS.release_runtime
 
 #: A value for each variable, so a case is written as the set of names present.
 VALUES = {
-    INPUT_DIR: "cache/target/candidate-profile-inputs",
+    INPUT_DIR: "cache/target/candidate-runtime-inputs",
     PACKAGE: "dist/capsem_0.6.0_arm64.deb",
-    PROFILE: "code",
+    RUNTIME: "1",
 }
 
 
@@ -54,15 +54,15 @@ def environment(*present: str) -> dict[str, str]:
 VALID = {
     (): Mode.LOCAL,
     (INPUT_DIR, PACKAGE): Mode.BINARY_RELEASE,
-    (INPUT_DIR, PACKAGE, PROFILE): Mode.PROFILE_RELEASE,
+    (INPUT_DIR, PACKAGE, RUNTIME): Mode.RUNTIME_RELEASE,
 }
 
 PARTIAL = (
     (INPUT_DIR,),
     (PACKAGE,),
-    (PROFILE,),
-    (INPUT_DIR, PROFILE),
-    (PACKAGE, PROFILE),
+    (RUNTIME,),
+    (INPUT_DIR, RUNTIME),
+    (PACKAGE, RUNTIME),
 )
 
 
@@ -84,7 +84,7 @@ def test_every_partial_release_environment_is_refused(present: tuple[str, ...]) 
     for name in present:
         assert name in message, f"{name} is set and the refusal never mentions it"
     for name in set(VALUES) - set(present):
-        if name is PROFILE and INPUT_DIR in present and PACKAGE in present:
+        if name is RUNTIME and INPUT_DIR in present and PACKAGE in present:
             continue
         assert name in message, f"{name} is missing and the refusal never mentions it"
 
@@ -101,14 +101,21 @@ def test_an_empty_variable_counts_as_absent() -> None:
         qualification_for(CONFIG, {INPUT_DIR: VALUES[INPUT_DIR], PACKAGE: "   "})
 
 
-def test_the_profile_release_carries_its_profile_and_the_binary_release_does_not() -> None:
+def test_only_the_runtime_release_marks_the_runtime_as_the_candidate() -> None:
     binary = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE))
-    profile = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE, PROFILE))
+    runtime = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE, RUNTIME))
 
-    assert binary.profile is None
-    assert profile.profile == VALUES[PROFILE]
-    assert binary.input_dir == profile.input_dir == VALUES[INPUT_DIR]
-    assert binary.package == profile.package == VALUES[PACKAGE]
+    assert binary.runtime is False
+    assert runtime.runtime is True
+    assert binary.input_dir == runtime.input_dir == VALUES[INPUT_DIR]
+    assert binary.package == runtime.package == VALUES[PACKAGE]
+
+
+def test_the_runtime_flag_is_a_switch_not_a_name() -> None:
+    """There is one runtime; a value naming one (a retired profile id) is a
+    workflow still speaking the old contract, and refusing it says so."""
+    with pytest.raises(GateError, match=RUNTIME):
+        qualification_for(CONFIG, {**environment(INPUT_DIR, PACKAGE), RUNTIME: "code"})
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +140,7 @@ def planned(module: str, qualification: Qualification) -> str:
 
 LOCAL = qualification_for(CONFIG, {})
 BINARY = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE))
-PROFILE_LANE = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE, PROFILE))
+RUNTIME_LANE = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE, RUNTIME))
 
 
 def test_a_local_run_builds_both_families() -> None:
@@ -151,28 +158,30 @@ def test_a_binary_release_verifies_pulled_assets_and_proves_the_pulled_package()
     glowup = planned("test-glowup", BINARY)
 
     assert SETTINGS.verify_inputs_script in artifacts
-    # No profile: the binary lane resolves every profile the manifest names,
-    # so there is no single one to boot here.
-    assert SETTINGS.prove_profile_assets_script not in artifacts
+    # The binary lane boots the pulled runtime through its functional phase;
+    # only a runtime release boots it alone, here, before any pairing.
+    assert SETTINGS.prove_runtime_assets_script not in artifacts
     assert SETTINGS.glowup_script in glowup
     assert "package." not in glowup, "a release lane must not rebuild the package it was handed"
 
 
-def test_a_profile_release_boots_the_one_profile_it_is_publishing() -> None:
-    artifacts = planned("test-artifacts", PROFILE_LANE)
+def test_a_runtime_release_boots_the_runtime_it_is_publishing() -> None:
+    artifacts = planned("test-artifacts", RUNTIME_LANE)
 
     assert SETTINGS.verify_inputs_script in artifacts
-    assert SETTINGS.prove_profile_assets_script in artifacts
-    assert VALUES[PROFILE] in artifacts
+    assert SETTINGS.prove_runtime_assets_script in artifacts
+    assert artifacts.index(SETTINGS.verify_inputs_script) < artifacts.index(
+        SETTINGS.prove_runtime_assets_script
+    )
+    assert "--profile" not in artifacts
 
 
-def test_a_deferred_profile_proves_assets_without_inventing_a_package() -> None:
-    """A cold channel has no package, but its immutable profile still boots.
+def test_a_deferred_runtime_proves_assets_without_inventing_a_package() -> None:
+    """A cold channel has no package, but its immutable runtime still boots.
 
-    This is deliberately a separate private command rather than a fourth
-    release qualification shape: no functional or glow-up module may consume
-    a package-less pairing, and the complete three-state release union stays
-    fail-closed.
+    `qualify-assets` decides that from the flag the authoring job computed:
+    with no compatible package cohort the artifact proof stands alone, and no
+    functional or glow-up module may consume a package-less pairing.
     """
     from capsem_builder.gate import cli
     from capsem_builder.gate.command import GateCommand
@@ -180,32 +189,32 @@ def test_a_deferred_profile_proves_assets_without_inventing_a_package() -> None:
 
     assert cli.COMMAND_MODULES  # importing the CLI registers every command
 
-    command = GateCommand.registry["test-profile-artifacts"](
+    command = GateCommand.registry["qualify-assets"](
         RecordingRunner(PROJECT_ROOT),
         argparse.Namespace(
             dry_run=False,
             graph=False,
             timing=False,
-            input_dir=VALUES[INPUT_DIR],
-            profile=VALUES[PROFILE],
+            input_dir=Path(VALUES[INPUT_DIR]),
+            workspace_root=PROJECT_ROOT,
+            activation_ready="false",
         ),
     )
     rendered = command._describe().describe()
 
-    assert command.uses_qualification is False
     assert SETTINGS.verify_inputs_script in rendered
-    assert SETTINGS.prove_profile_assets_script in rendered
+    assert SETTINGS.prove_runtime_assets_script in rendered
     assert VALUES[INPUT_DIR] in rendered
-    assert VALUES[PROFILE] in rendered
     assert VALUES[PACKAGE] not in rendered
-    for forbidden in ("build-assets", "_build-kernel", "_build-rootfs", "test-functional"):
+    assert "--profile" not in rendered
+    for forbidden in ("build-assets", "_build-kernel", "_build-rootfs", "functional.", "glowup."):
         assert forbidden not in rendered
 
 
 def test_the_functional_module_signs_locally_and_never_in_a_release_lane() -> None:
     assert "sign" in planned("test-functional", LOCAL)
     assert "sign" not in planned("test-functional", BINARY)
-    assert "sign" not in planned("test-functional", PROFILE_LANE)
+    assert "sign" not in planned("test-functional", RUNTIME_LANE)
 
 
 # ---------------------------------------------------------------------------
@@ -261,8 +270,8 @@ def test_the_binary_lane_exports_a_complete_binary_release_state() -> None:
     assert exported("release.yaml") == {INPUT_DIR, PACKAGE}
 
 
-def test_the_profile_lane_exports_a_complete_profile_release_state() -> None:
-    assert exported("release-assets.yaml") == {INPUT_DIR, PACKAGE, PROFILE}
+def test_the_runtime_lane_exports_a_complete_runtime_release_state() -> None:
+    assert exported("release-assets.yaml") == {INPUT_DIR, PACKAGE, RUNTIME}
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +327,7 @@ def test_an_inspection_command_survives_a_partial_release_environment(
         ("test-functional", {}),
         ("test-glowup", {}),
         ("release-binaries", {"channel": "stable"}),
-        ("release-profile", {"channel": "stable", "profile": "code"}),
+        ("release-assets", {"channel": "stable"}),
     ),
 )
 def test_a_qualifying_command_still_refuses_a_partial_environment(
@@ -365,7 +374,7 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
         "qualify-assets",
         "qualify-binaries",
         "release-binaries",
-        "release-profile",
+        "release-assets",
     }
 
 
@@ -418,17 +427,4 @@ def test_a_release_path_may_not_be_empty_or_whitespace() -> None:
     with pytest.raises(pydantic.ValidationError):
         BinaryQualification(
             input_dir="   ", package=VALUES[PACKAGE], bin_dir="cache/target/cargo/debug"
-        )
-
-
-def test_a_profile_name_follows_the_configured_grammar() -> None:
-    import pydantic
-    from capsem_builder.gate.qualification import ProfileQualification
-
-    with pytest.raises(pydantic.ValidationError):
-        ProfileQualification(
-            input_dir=VALUES[INPUT_DIR],
-            package=VALUES[PACKAGE],
-            bin_dir="cache/target/cargo/debug",
-            profile="not a profile name",
         )

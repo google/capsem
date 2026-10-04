@@ -6,7 +6,6 @@ plan line and no edge changes, which is what its guard asserts.
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 from . import (
@@ -21,7 +20,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
-from .qualification import BinaryQualification, ProfileQualification, Qualification
+from .qualification import Qualification
 from .testmodules import InWorkspace
 
 
@@ -29,12 +28,12 @@ class ArtifactsModule(
     InWorkspace,
     GateCommand,
     name="test-artifacts",
-    help="build every profile's VM assets, or verify the pulled ones",
+    help="build the VM runtime assets, or verify the pulled ones",
 ):
     """Two shapes, one module.
 
-    A local run builds every profile for both architectures and boots each
-    one. A release lane arrives with immutable artifacts already resolved from
+    A local run builds the runtime for both architectures and boots it. A
+    release lane arrives with immutable artifacts already resolved from
     a manifest and verifies exactly those instead -- rebuilding them would
     prove something about the source rather than about what ships.
     """
@@ -48,37 +47,6 @@ class ArtifactsModule(
         return plan
 
 
-class ProfileArtifactsModule(
-    InWorkspace,
-    GateCommand,
-    name="test-profile-artifacts",
-    help="verify and boot one staged profile without claiming a binary pairing",
-):
-    """The non-activation half of a cold-channel profile release.
-
-    A first profile can be published immutably before the channel has a package
-    cohort.  That is not a fourth release qualification: it cannot run the
-    functional or glow-up modules.  It is exactly the profile-owned artifact
-    proof, exposed as its own private command so the workflow never invents a
-    package merely to satisfy the complete pairing type.
-    """
-
-    @classmethod
-    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("input_dir", type=Path)
-        parser.add_argument("profile")
-
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
-        pulled_artifacts(
-            plan,
-            self._config,
-            input_dir=self._args.input_dir,
-            profile=self._args.profile,
-        )
-        return plan
-
-
 def artifacts(
     plan: Plan,
     config: GateConfig,
@@ -88,16 +56,16 @@ def artifacts(
     node: Step | None = None,
     bundled: Step | None = None,
 ) -> Step:
-    """Build every profile's VM assets, or verify the pulled ones."""
+    """Build the VM runtime assets, or verify the pulled ones."""
     phase = plan.phase("artifacts")
     settings = config.modules
 
-    if isinstance(qualification, (BinaryQualification, ProfileQualification)):
+    if qualification.input_dir is not None:
         return pulled_artifacts(
             plan,
             config,
             input_dir=qualification.input_dir,
-            profile=qualification.profile,
+            boot=qualification.runtime,
             after=after,
         )
 
@@ -129,11 +97,11 @@ def pulled_artifacts(
     config: GateConfig,
     *,
     input_dir: str | Path,
-    profile: str | None,
+    boot: bool,
     after: tuple[Step, ...] = (),
     phase_name: str = "artifacts",
 ) -> Step:
-    """Verify pulled inputs, and boot the one profile when one is selected.
+    """Verify pulled inputs, and boot the runtime when it is the candidate.
 
     `phase_name` is how the local rehearsal keeps its copy of this step apart
     from the candidate's own `artifacts` phase, which in that plan is the
@@ -152,20 +120,18 @@ def pulled_artifacts(
         ),
         after=after,
     )
-    # A binary lane resolves every profile the manifest names, so there is no
-    # single one to boot; profile releases and deferred staging select one.
-    if profile is None:
+    # A binary lane boots the pulled runtime through its functional phase; a
+    # runtime release boots it here first, alone, before any pairing.
+    if not boot:
         return verify
     return phase.add(
         step(
             "release-inputs.boot",
             Script(
                 config,
-                settings.prove_profile_assets_script,
+                settings.prove_runtime_assets_script,
                 "--input-dir",
                 input_dir,
-                "--profile",
-                profile,
             ),
             contends=(config.exclusive("apple_vz"),),
             kind=Kind.CAPSEM,

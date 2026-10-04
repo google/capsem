@@ -285,10 +285,6 @@ class PytestConfig(Strict):
     managed_restart: str
     run_id_variable: str
     require_artifacts: str
-    profile_variable: str
-    base_profile: str
-    materialized_profiles: str
-    test_manifest: str
 
 
 class SuitesConfig(Strict):

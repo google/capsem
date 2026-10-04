@@ -100,7 +100,7 @@ def test_the_ownership_check_is_no_longer_running_over_nothing() -> None:
     )
 
 
-@pytest.mark.parametrize("command", ["release-binaries", "release-profile"])
+@pytest.mark.parametrize("command", ["release-binaries", "release-assets"])
 def test_release_lanes_consume_evidence_without_rebuilding_producers(command: str) -> None:
     """Publication accepts the complete run instead of rerunning its graph."""
     from capsem_builder.gate.sourcecommit import SourceCommit
@@ -108,11 +108,7 @@ def test_release_lanes_consume_evidence_without_rebuilding_producers(command: st
     source_commit = SourceCommit("0" * 40)
     args = {
         "release-binaries": {"channel": "stable", "source_commit": source_commit},
-        "release-profile": {
-            "channel": "stable",
-            "profile": "code",
-            "source_commit": source_commit,
-        },
+        "release-assets": {"channel": "stable", "source_commit": source_commit},
     }.get(command, {})
     import argparse
     import sys as _sys

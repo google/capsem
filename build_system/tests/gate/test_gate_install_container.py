@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.content import ProfileContent, SelectedInstallContent
+from capsem_builder.gate.content import RuntimeContent, SelectedInstallContent
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.installcontainer import InstallContainer
 from helpers.gate import RecordingRunner
@@ -217,7 +217,7 @@ def test_selected_release_transport_is_mounted_read_only_at_its_absolute_address
     """Rewritten file URLs stay resolvable without mounting the checkout."""
     _on(monkeypatch, "Darwin")
     root = tmp_path / "selected"
-    content = SelectedInstallContent(ProfileContent.isolated(CONFIG, root))
+    content = SelectedInstallContent(RuntimeContent.isolated(CONFIG, root))
     runner = RecordingRunner(PROJECT_ROOT, replies={"systemctl is-system-running": "running"})
     container = InstallContainer(runner, content=content, sleep=lambda _seconds: None)
 
@@ -238,7 +238,7 @@ def test_selected_release_transport_is_mounted_read_only_at_its_absolute_address
 
 def _complete_selected_content(tmp_path: Path) -> SelectedInstallContent:
     root = tmp_path / "selected"
-    selected = SelectedInstallContent(ProfileContent.isolated(CONFIG, root))
+    selected = SelectedInstallContent(RuntimeContent.isolated(CONFIG, root))
     inputs = selected.inputs(CONFIG)
     inputs.mkdir(parents=True)
     selected_manifest = {

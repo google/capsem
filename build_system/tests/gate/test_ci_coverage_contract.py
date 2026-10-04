@@ -94,7 +94,7 @@ def test_complete_gate_broad_suite_inherits_the_authoritative_coverage_floor() -
     from capsem_builder.gate import pytestsuite
 
     config = gate_config.load(PROJECT_ROOT)
-    argv = pytestsuite.broad(config, profile="code").argv(config)
+    argv = pytestsuite.broad(config).argv(config)
 
     assert "--cov=build_system/builder" in argv
     assert "--cov-report=xml:cache/target/coverage/python/codecov.xml" in argv

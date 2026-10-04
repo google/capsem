@@ -29,7 +29,7 @@ from . import cachetooling, debproof, host, packagebuilder
 from . import config as gate_config
 from .cachecontrol import CacheControl
 from .config import Arch
-from .content import ProfileContent
+from .content import RuntimeContent
 from .docker import Docker
 from .dockermount import Mount
 from .errors import GateError
@@ -49,7 +49,7 @@ class PackageRail:
         runner: Runner,
         target: Arch,
         *,
-        content: ProfileContent,
+        content: RuntimeContent,
         manifest_url: str | None = None,
         channel: str | None = None,
         require_proof: bool = False,
@@ -129,19 +129,18 @@ class PackageRail:
             ),
         )
         mount = self._config.install.mount
-        assets_destination, config_destination = self._package.generated_inputs
+        (assets_destination,) = self._package.generated_inputs
         mounts = (
             # No source mount. The checkout is copied into the lane image
             # below, so the container holds its own bytes and a host step
             # cannot race these inodes -- and the bundler's atomic
             # temporaries, which made a read-only mount impossible, land in an
             # image layer instead of the developer's `web/app/`.
-            # The two generated trees the build reads. Mounted, not copied:
+            # The generated tree the build reads. Mounted, not copied:
             # see `Mount.generated` -- `assets/` alone is 3.0 GB and changes
             # every run, so copying it would put a multi-gigabyte layer in
             # Docker storage per gate to avoid a mount that was never the race.
             Mount.generated(str(self.content.assets), f"{mount}/{assets_destination}"),
-            Mount.generated(str(self.content.config), f"{mount}/{config_destination}"),
             Mount(
                 self._package.cargo_target_volume.format(arch=self.target.name),
                 self._package.cargo_target_mount,

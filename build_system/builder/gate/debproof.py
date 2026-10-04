@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import re
 import time
 from pathlib import Path
 
 from . import config as gate_config
 from . import installimage
-from .content import ProfileContent
+from .content import RuntimeContent
 from .docker import Docker, Mount
 from .errors import GateError
 from .installcontainer import (
@@ -23,8 +22,6 @@ from .proc import Runner
 from .releasegraph import ReleaseGraph
 from .sourcecommit import SourceCommit
 
-PROFILE_READY = re.compile(r"^Profiles:\s+(\d+)/(\d+) ready", re.M)
-
 
 class DebProof:
     """One clean-container installation of one exact Debian package."""
@@ -34,7 +31,7 @@ class DebProof:
         runner: Runner,
         *,
         package: Path,
-        content: ProfileContent,
+        content: RuntimeContent,
         manifest_url: str,
         channel: str,
         source_commit: SourceCommit,
@@ -109,7 +106,7 @@ class DebProof:
             self._install_package(container_deb, expected)
             verify_vm_device_access(self._docker, self._proof.container, self._install)
             self._require_binaries(expected)
-            ready, total = self._require_status()
+            self._require_status()
             self._verify_release(expected)
             self._prove_shell()
         finally:
@@ -117,7 +114,7 @@ class DebProof:
             self._docker.remove(self._proof.container)
 
         self._runner.note(
-            f"Exact Debian package proof passed: version={expected} profiles={ready}/{total}"
+            f"Exact Debian package proof passed: version={expected}"
         )
 
     def _start(self, runtime: VmDeviceRuntime) -> None:
@@ -173,9 +170,7 @@ class DebProof:
             assets_manifest=f"{layout.assets}/{self._install.manifest_name}",
             candidate_base=f"{self._install.mount}/{layout.packages}",
             assets_dir=layout.assets,
-            profiles_dir=f"{layout.config}/{self._config.functional.profiles_subdir}",
             channel=self.channel,
-            profile_revision_policy=self._install.profile_revision_policy,
             manifest_version=self._install.manifest_version,
             out_dir=layout.channel,
         )
@@ -223,7 +218,7 @@ class DebProof:
         guest = self._install.guest_user
         return {"HOME": guest.home, "XDG_RUNTIME_DIR": guest.runtime_dir}
 
-    def _require_status(self) -> tuple[int, int]:
+    def _require_status(self) -> None:
         """`capsem status` from the installed package, as the user would run it."""
         guest = self._install.guest_user
         output = self._docker.capture(
@@ -237,14 +232,6 @@ class DebProof:
         missing = [line for line in self._proof.status_requires if line not in output]
         if missing:
             raise GateError("the installed package's status is missing: " + ", ".join(missing))
-
-        counts = PROFILE_READY.search(output)
-        if counts is None:
-            raise GateError("exact package status has no Profiles: ready count")
-        ready, total = int(counts.group(1)), int(counts.group(2))
-        if total <= 0 or ready != total:
-            raise GateError(f"exact package profiles are not all ready: {ready}/{total}")
-        return ready, total
 
     def _verify_release(self, expected: str) -> None:
         manifest = self._graph.handed_off

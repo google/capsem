@@ -1,4 +1,4 @@
-"""The local candidate packages the real profile bundle IronBank proved."""
+"""The local candidate packages the real runtime bundle IronBank proved."""
 
 from __future__ import annotations
 
@@ -8,16 +8,16 @@ from pathlib import Path
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import vmmodules
 from capsem_builder.gate.candidate import CandidateCommand
-from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.content import RuntimeContent
 from helpers.gate import RecordingRunner
 
 ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(ROOT)
 
 
-def test_candidate_glowup_consumes_the_real_base_profile(monkeypatch) -> None:
+def test_candidate_glowup_consumes_the_real_runtime_bundle(monkeypatch) -> None:
     """The mutable convenience selector is a symlink and not release input."""
-    selected: list[ProfileContent] = []
+    selected: list[RuntimeContent] = []
     original = vmmodules.glowup
 
     def observed(*args, **kwargs):
@@ -31,6 +31,6 @@ def test_candidate_glowup_consumes_the_real_base_profile(monkeypatch) -> None:
     )
     command._describe()
 
-    expected = ProfileContent.built_profile(CONFIG, CONFIG.suites.pytest.base_profile)
+    expected = RuntimeContent.built(CONFIG)
     assert selected == [expected]
     assert selected[0].assets != CONFIG.path(CONFIG.functional.assets_dir)

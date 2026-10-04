@@ -47,11 +47,6 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 #: that depends on the machine it is only describing.
 GatePath = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
 
-#: A profile directory name. The grammar only; whether this checkout *has* one
-#: is a catalog question that `profiles.selected` already owns.
-ProfileName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")]
-
-
 class Mode(StrEnum):
     """The three states a gate run can legally be in."""
 
@@ -59,10 +54,10 @@ class Mode(StrEnum):
     """Nothing was handed over; both families are built from this checkout."""
 
     BINARY_RELEASE = "binary-release"
-    """The packages are the candidate; every profile arrives by digest."""
+    """The packages are the candidate; the runtime arrives by digest."""
 
-    PROFILE_RELEASE = "profile-release"
-    """One profile is the candidate; the package arrives by digest."""
+    RUNTIME_RELEASE = "runtime-release"
+    """The runtime is the candidate; the package arrives by digest."""
 
 
 class LocalQualification(Strict):
@@ -77,7 +72,7 @@ class LocalQualification(Strict):
     # than an ordinary object the parser happens never to build.
     input_dir: None = None
     package: None = None
-    profile: None = None
+    runtime: Literal[False] = False
 
     @property
     def pulled(self) -> bool:
@@ -85,31 +80,31 @@ class LocalQualification(Strict):
 
 
 class BinaryQualification(Strict):
-    """The packages are the candidate; every profile arrives by digest."""
+    """The packages are the candidate; the runtime arrives by digest."""
 
     mode: Literal[Mode.BINARY_RELEASE] = Mode.BINARY_RELEASE
     input_dir: GatePath
     package: GatePath
     bin_dir: GatePath
 
-    profile: None = None
-    """A binary lane resolves every profile the manifest names, so there is no
-    single one to boot. A field rather than a property, so the subclass below
-    can narrow it -- Pydantic refuses to shadow a parent's property."""
+    runtime: Literal[False] = False
+    """Whether the runtime is the candidate, so its pulled assets are booted on
+    their own before any pairing. A field rather than a property, so each
+    shape narrows it -- Pydantic refuses to shadow a parent's property."""
 
     @property
     def pulled(self) -> bool:
         return True
 
 
-class ProfileQualification(Strict):
-    """One profile is the candidate; the package arrives by digest."""
+class RuntimeQualification(Strict):
+    """The runtime is the candidate; the package arrives by digest."""
 
-    mode: Literal[Mode.PROFILE_RELEASE] = Mode.PROFILE_RELEASE
+    mode: Literal[Mode.RUNTIME_RELEASE] = Mode.RUNTIME_RELEASE
     input_dir: GatePath
     package: GatePath
     bin_dir: GatePath
-    profile: ProfileName
+    runtime: Literal[True] = True
 
     @property
     def pulled(self) -> bool:
@@ -117,7 +112,7 @@ class ProfileQualification(Strict):
 
 
 Qualification = Annotated[
-    LocalQualification | BinaryQualification | ProfileQualification,
+    LocalQualification | BinaryQualification | RuntimeQualification,
     Field(discriminator="mode"),
 ]
 
@@ -151,7 +146,7 @@ def rehearsal(config: GateConfig, *, input_dir: str, package: str) -> BinaryQual
 
 
 def is_release(
-    state: LocalQualification | BinaryQualification | ProfileQualification | None,
+    state: LocalQualification | BinaryQualification | RuntimeQualification | None,
 ) -> bool:
     """Whether this run is proving a release rather than a checkout.
 
@@ -166,7 +161,7 @@ def is_release(
 
 def from_environment(
     config: GateConfig, environ: Mapping[str, str] | None = None
-) -> LocalQualification | BinaryQualification | ProfileQualification:
+) -> LocalQualification | BinaryQualification | RuntimeQualification:
     """Read the state once, and refuse anything that is not one of three.
 
     `environ` defaults to the process environment; tests pass their own rather
@@ -185,23 +180,23 @@ def from_environment(
         value = (source.get(name) or "").strip()
         return value or None
 
-    names = (settings.release_input_dir, settings.release_package, settings.release_profile)
-    input_dir, package, profile = (present(name) for name in names)
+    names = (settings.release_input_dir, settings.release_package, settings.release_runtime)
+    input_dir, package, runtime = (present(name) for name in names)
+    if runtime not in (None, "1"):
+        raise GateError(f"{settings.release_runtime} must be 1 or unset, not {runtime!r}")
     bin_dir = present(settings.release_bin_dir) or settings.default_bin_dir
 
     if input_dir and package:
         shape: dict[str, object] = {
-            "mode": Mode.PROFILE_RELEASE if profile else Mode.BINARY_RELEASE,
+            "mode": Mode.RUNTIME_RELEASE if runtime else Mode.BINARY_RELEASE,
             "input_dir": input_dir,
             "package": package,
             "bin_dir": bin_dir,
         }
-        if profile:
-            shape["profile"] = profile
-    elif not any((input_dir, package, profile)):
+    elif not any((input_dir, package, runtime)):
         shape = {"mode": Mode.LOCAL, "bin_dir": bin_dir}
     else:
-        raise _refusal(names, (input_dir, package, profile))
+        raise _refusal(names, (input_dir, package, runtime))
 
     return _QUALIFICATION.validate_python(shape)
 
@@ -222,7 +217,7 @@ def _refusal(names: tuple[str, ...], values: tuple[str | None, ...]) -> GateErro
         f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not. "
         "A run either builds both artifact families locally (none of these "
         f"set), proves a binary candidate ({names[0]} and {names[1]}), or "
-        f"proves one profile ({names[0]}, {names[1]} and {names[2]}). "
+        f"proves the runtime ({names[0]}, {names[1]} and {names[2]}). "
         "Anything else verifies manifest-selected bytes in one family and "
         "source-built bytes in the other, which is not the release that ships."
     )

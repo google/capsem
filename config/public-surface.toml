@@ -25,8 +25,8 @@ approved = [
   "logs",
   "qualify-assets",
   "qualify-binaries",
+  "release-assets",
   "release-binaries",
-  "release-profile",
   # Replays a release qualification lane against a cohort built here, so the
   # layout a release runs under is reachable without dispatching one.
   "replay-release-lane",

@@ -8,7 +8,7 @@ from pathlib import Path
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import module_qualify, qualification, toolchain
 from capsem_builder.gate.candidate import CandidateCommand
-from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.execution import Needs
 from capsem_builder.gate.plan import Plan
 from capsem_builder.gate.resume import ancestors
@@ -37,7 +37,7 @@ def _release_pairing() -> Plan:
         plan,
         CONFIG,
         state,
-        staged=ProfileContent.staged(CONFIG, ROOT),
+        staged=RuntimeContent.staged(CONFIG, ROOT),
     )
 
 
@@ -70,7 +70,7 @@ def test_source_contract_coverage_is_handed_to_the_fresh_vm_cohort() -> None:
     plan = _candidate()
     seeded = " ".join(plan.step_named("contracts.release").render())
     appended = " ".join(plan.step_named("contracts.build-system").render())
-    finished = " ".join(plan.step_named("functional.pytest.broad.code").render())
+    finished = " ".join(plan.step_named("functional.pytest.broad").render())
 
     assert "--cov-report=" in seeded and "--cov-append" not in seeded
     assert "--cov-append" in appended and "--cov-fail-under=0" in appended
@@ -85,36 +85,36 @@ def test_source_contract_coverage_is_handed_to_the_fresh_vm_cohort() -> None:
 def test_restaged_release_path_reuses_behavior_only_after_digest_verification() -> None:
     plan = _candidate()
     labels = set(plan.labels)
-    repeated = (
-        "rehearsal.pytest.",
-        "rehearsal.injection.",
-        "rehearsal.integration.",
-    )
+    repeated = {
+        label
+        for label in labels
+        if label.startswith("rehearsal.pytest.")
+        or label.split(".")[:2] in (["rehearsal", "injection"], ["rehearsal", "integration"])
+    }
 
     assert "rehearsal.release-inputs.verify" in labels
-    assert "rehearsal.axis" in labels
-    assert not any(label.startswith(repeated) for label in labels)
-    assert "functional.pytest.broad.code" in labels
-    assert "functional.pytest.compatibility.co-work" in labels
-    assert "functional.pytest.benchmark.code" in labels
+    assert "rehearsal.content-staged" in labels
+    assert not repeated
+    assert "functional.pytest.broad" in labels
+    assert "functional.pytest.benchmark" in labels
     prerequisites = ancestors(plan, "rehearsal.release-inputs.verify")
-    assert "functional.pytest.broad.code" in prerequisites
-    assert "functional.integration.co-work" in prerequisites
+    assert "functional.pytest.broad" in prerequisites
+    assert "functional.integration" in prerequisites
 
 
 def test_release_pairing_remains_independently_full_and_fresh() -> None:
     plan = _release_pairing()
     labels = set(plan.labels)
-    broad = " ".join(plan.step_named("functional.pytest.broad.code").render())
+    broad = " ".join(plan.step_named("functional.pytest.broad").render())
 
     assert {
         "artifacts.release-inputs.verify",
-        "functional.pytest.broad.code",
-        "functional.pytest.host-snapshot.code",
-        "functional.pytest.timing.code",
-        "functional.injection.code",
-        "functional.integration.code",
-        "functional.pytest.benchmark.code",
+        "functional.pytest.broad",
+        "functional.pytest.host-snapshot",
+        "functional.pytest.timing",
+        "functional.injection",
+        "functional.integration",
+        "functional.pytest.benchmark",
         "glowup.package",
     } <= labels
     assert "--cov-append" not in broad

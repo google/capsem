@@ -24,7 +24,7 @@ from . import config as gate_config
 from .actions import Call
 from .cachecontrol import CacheControl
 from .command import GateCommand
-from .content import InstallContent, LocalInstallContent, ProfileContent, SelectedInstallContent
+from .content import InstallContent, LocalInstallContent, RuntimeContent, SelectedInstallContent
 from .docker import Docker
 from .dockermount import container_path
 from .errors import GateError
@@ -97,7 +97,7 @@ class InstallGate:
         # edges, so nothing could order them against another lane's work.
         # A failed site overlay can leave write-only partial HTML on a macOS
         # bind mount. The host owns this generated tree, so clear it before the
-        # container exists; profile artifacts are regenerated from the manifest.
+        # container exists; runtime artifacts are regenerated from the manifest.
         remove(self._config.path(self._layout.channel))
         evidence = self._config.path(self._layout.glowup_evidence)
         remove(evidence)
@@ -125,7 +125,7 @@ class InstallGate:
     def _require_content(self) -> None:
         if self._content is None:
             raise GateError(
-                "install proof requires one selected profile content bundle; "
+                "install proof requires one selected runtime content bundle; "
                 "pass --selected-content-root for manifest-selected content"
             )
         arches = None
@@ -148,12 +148,12 @@ class InstallGate:
                 f"checkout is {self.version}"
             )
 
-        self._runner.note("Staging real profile assets for installed VM proofs...")
+        self._runner.note("Staging real runtime assets for installed VM proofs...")
         self._stage()
 
         # Before dpkg, and from the package under test: this breaks the circle
-        # between the selected profile graph and the exact binary being
-        # qualified. Even release-selected profile content needs this graph;
+        # between the selected runtime graph and the exact binary being
+        # qualified. Even release-selected runtime content needs this graph;
         # handing its raw projection to postinst would leave the package URL
         # public and make network-none fail for the wrong reason.
         self._runner.note("Authoring exact candidate manifest for the installed package...")
@@ -163,9 +163,7 @@ class InstallGate:
             assets_manifest=f"{self._layout.assets}/{self._settings.manifest_name}",
             candidate_base=f"{self._settings.mount}/{self._layout.packages}",
             assets_dir=self._layout.assets,
-            profiles_dir=f"{self._layout.config}/{self._config.assets.materialized_profiles_dir}",
             channel=self._settings.channel,
-            profile_revision_policy=self._settings.profile_revision_policy,
             manifest_version=self._settings.manifest_version,
             out_dir=self._layout.channel,
         )
@@ -257,10 +255,10 @@ class InstallCommand(
             root = Path(selected)
             root = root if root.is_absolute() else self._config.path(str(root))
             content: InstallContent = SelectedInstallContent(
-                ProfileContent.isolated(self._config, root)
+                RuntimeContent.isolated(self._config, root)
             )
         else:
-            content = LocalInstallContent(ProfileContent.standalone(self._config))
+            content = LocalInstallContent(RuntimeContent.standalone(self._config))
             prepared = plan.add(runtimeprepare.materialize_config_step(self._config))
             prerequisites += (prepared,)
         plan.add(install_step(self._config, content=content), after=prerequisites)

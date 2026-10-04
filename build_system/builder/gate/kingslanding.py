@@ -29,34 +29,31 @@ def prefetch(config: GateConfig) -> Step:
     )
 
 
-def greyjoy_suite(config: GateConfig, *, profile: str) -> pytestsuite.Suite:
+def greyjoy_suite(config: GateConfig) -> pytestsuite.Suite:
     """The chaos suite: the same fixture, its own owner, adversaries only."""
     return pytestsuite.Suite(
-        label=f"pytest.greyjoy.{profile}",
+        label="pytest.greyjoy",
         paths=(config.functional.greyjoy.suite_path,),
-        profile=profile,
         contends=pytestsuite.sharing(config),
     )
 
 
-def suite(config: GateConfig, *, profile: str, benchmark: bool = True) -> pytestsuite.Suite:
+def suite(config: GateConfig, *, benchmark: bool = True) -> pytestsuite.Suite:
     """The acceptance suite; with its measurement files it needs the machine alone."""
     settings = config.functional.kingslanding
     return pytestsuite.Suite(
-        label=f"pytest.kingslanding.{profile}",
+        label="pytest.kingslanding",
         paths=(settings.suite_path,),
         ignores=() if benchmark else settings.benchmark_paths,
-        profile=profile,
         contends=pytestsuite.measuring(config) if benchmark else pytestsuite.sharing(config),
     )
 
 
-def benchmark_suite(config: GateConfig, *, profile: str) -> pytestsuite.Suite:
+def benchmark_suite(config: GateConfig) -> pytestsuite.Suite:
     """Kingslanding's measurement files, split out so the rest can share the machine."""
     return pytestsuite.Suite(
-        label=f"pytest.kingslanding-benchmark.{profile}",
+        label="pytest.kingslanding-benchmark",
         paths=config.functional.kingslanding.benchmark_paths,
-        profile=profile,
         contends=pytestsuite.measuring(config),
     )
 
@@ -84,9 +81,7 @@ class KingslandingModule(
         phase = plan.phase("kingslanding")
         fixture = phase.add(prefetch(self._config), after=ready)
         phase.add(
-            suite(self._config, profile=self._config.suites.pytest.base_profile).as_step(
-                self._config
-            ),
+            suite(self._config).as_step(self._config),
             after=(fixture,),
         )
         return plan
@@ -115,9 +110,7 @@ class GreyjoyModule(
         phase = plan.phase("greyjoy")
         fixture = phase.add(prefetch(self._config), after=ready)
         phase.add(
-            greyjoy_suite(self._config, profile=self._config.suites.pytest.base_profile).as_step(
-                self._config
-            ),
+            greyjoy_suite(self._config).as_step(self._config),
             after=(fixture,),
         )
         return plan

@@ -217,39 +217,36 @@ def test_the_phases_run_in_the_order_the_gate_depends_on() -> None:
     assert _at(labels, "functional.") < _at(labels, "glowup.")
 
 
-def test_every_local_functional_vm_step_selects_its_exact_ironbank_profile() -> None:
+def test_every_local_functional_vm_step_selects_the_exact_ironbank_runtime() -> None:
     """Diagnostic continuation may start at any VM step, so selection travels
     with every step rather than relying on one earlier mutable selector."""
-    from capsem_builder.gate import profiles as gate_profiles
-
     plan = _plan()
     names = CONFIG.environment
+    root = CONFIG.path(CONFIG.assets.test_root)
+    assets = root / CONFIG.assets.merged_assets_dir
+    catalog = root / CONFIG.assets.merged_config_dir / CONFIG.assets.materialized_profiles_dir
 
-    for profile in gate_profiles.selected(CONFIG):
-        assets = CONFIG.path(CONFIG.assets.test_root) / profile / CONFIG.assets.merged_assets_dir
-        profiles = (
-            CONFIG.path(CONFIG.assets.test_root)
-            / profile
-            / CONFIG.assets.merged_config_dir
-            / CONFIG.assets.materialized_profiles_dir
-        )
-        labels = [
-            label
-            for label in plan.labels
-            if label.startswith("functional.") and label.endswith(f".{profile}")
-        ]
-        assert labels
-        for label in labels:
-            rendered = "\n".join(plan.step_named(label).render())
-            if ".pytest." in label:
-                assert f"{names.assets_dir}={assets}" in rendered, label
-                assert f"{names.profiles_dir}={profiles}" in rendered, label
+    labels = [
+        label
+        for label in plan.labels
+        if label.startswith("functional.pytest.")
+        or label in {"functional.injection", "functional.integration"}
+    ]
+    assert {"functional.pytest.broad", "functional.injection", "functional.integration"} <= set(
+        labels
+    )
+    for label in labels:
+        rendered = "\n".join(plan.step_named(label).render())
+        if ".pytest." in label:
+            assert f"{names.assets_dir}={assets}" in rendered, label
+            assert f"{names.profiles_dir}={catalog}" in rendered, label
+        else:
+            assert f"--assets {assets}" in rendered, label
+            if label == "functional.injection":
+                assert f"--profiles-dir {catalog}" in rendered, label
             else:
-                assert f"--assets {assets}" in rendered, label
-                if ".injection." in label:
-                    assert f"--profiles-dir {profiles}" in rendered, label
-                else:
-                    assert f"{names.profiles_dir}={profiles}" in rendered, label
+                assert f"{names.profiles_dir}={catalog}" in rendered, label
+        assert "--profile " not in rendered, f"{label} selects a profile the runtime lacks"
 
 
 def test_the_source_state_is_recorded_first_and_re_asserted_last() -> None:
@@ -276,7 +273,7 @@ def test_benchmark_fitness_precedes_expensive_assets_and_timing() -> None:
 
     assert harness < fitness
     assert fitness < labels.index("assets.build.arm64")
-    assert fitness < labels.index("functional.pytest.timing.code")
+    assert fitness < labels.index("functional.pytest.timing")
 
 
 def test_package_network_is_qualified_before_expensive_candidate_work() -> None:
@@ -288,11 +285,11 @@ def test_package_network_is_qualified_before_expensive_candidate_work() -> None:
     assert all(label in labels for label in dependencies)
     assert labels.index("prepare.benchmark-fitness") < labels.index(dependencies[0])
     assert labels.index(dependencies[-1]) < labels.index("assets.build.arm64")
-    assert labels.index(dependencies[-1]) < labels.index("functional.pytest.broad.code")
+    assert labels.index(dependencies[-1]) < labels.index("functional.pytest.broad")
     assert all(("host-image", label) in plan.edges for label in dependencies)
 
 
-def test_glowup_reuses_the_profile_content_materialized_by_preparation() -> None:
+def test_glowup_reuses_the_content_materialized_by_preparation() -> None:
     """Standalone ownership must not become duplicate work in composition."""
     plan = _plan()
     materializers = [

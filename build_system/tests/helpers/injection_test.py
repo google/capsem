@@ -137,7 +137,6 @@ def run_scenario(
     binary: str,
     assets_dir: str,
     profiles_dir: str,
-    profile: str,
     scenario: Scenario,
     results: Results,
 ) -> None:
@@ -183,7 +182,7 @@ def run_scenario(
     vm_command = "capsem-doctor -k injection"
     try:
         proc = subprocess.run(
-            [binary, "run", "--profile", profile, vm_command],
+            [binary, "run", vm_command],
             env=env,
             capture_output=True,
             text=True,
@@ -237,11 +236,6 @@ def main():
         help="Path to materialized profile catalog (default: cache/target/config/profiles)",
     )
     parser.add_argument(
-        "--profile",
-        default=os.environ.get("CAPSEM_TEST_PROFILE", "code"),
-        help="Manifest profile to exercise (default: CAPSEM_TEST_PROFILE or code)",
-    )
-    parser.add_argument(
         "--scenario",
         default=None,
         help="Run only this scenario (by name). Default: run all.",
@@ -252,7 +246,6 @@ def main():
     print(f"  binary: {args.binary}")
     print(f"  assets: {args.assets}")
     print(f"  profiles: {args.profiles_dir}")
-    print(f"  selected profile: {args.profile}")
 
     results = Results()
 
@@ -269,7 +262,6 @@ def main():
             args.binary,
             args.assets,
             args.profiles_dir,
-            args.profile,
             scenario,
             results,
         )

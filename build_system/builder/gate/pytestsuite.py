@@ -60,7 +60,6 @@ class Suite:
     parallel: bool = False
     coverage: CoverageMode = CoverageMode.NONE
     stop_at_first_failure: bool = True
-    profile: str = ""
     assets_dir: str = ""
     profiles_dir: str = ""
     project: str = ""
@@ -107,8 +106,6 @@ class Suite:
             # against a tree whose assets were never built.
             env[settings.require_artifacts] = "1"
         env[settings.run_id_variable] = self.label
-        if self.profile:
-            env[settings.profile_variable] = self.profile
         if self.assets_dir or self.profiles_dir:
             if not self.assets_dir or not self.profiles_dir:
                 raise ValueError("a pytest content selection requires both assets and profiles")
@@ -181,12 +178,7 @@ def collection(config: GateConfig) -> Step:
 # ---------------------------------------------------------------------------
 
 
-def broad(
-    config: GateConfig,
-    *,
-    profile: str,
-    source_contracts_proved: bool = False,
-) -> Suite:
+def broad(config: GateConfig, *, source_contracts_proved: bool = False) -> Suite:
     """Everything that can share a machine, four VMs at a time.
 
     The dogfooding canary. `--dist=loadfile` keeps per-file fixtures on one
@@ -196,77 +188,49 @@ def broad(
     proven_paths = config.suites.source_contract if source_contracts_proved else ()
     proven_globs = config.modules.contract_globs if source_contracts_proved else ()
     return Suite(
-        label=f"pytest.broad.{profile}",
+        label="pytest.broad",
         paths=(settings.root,),
         markers="not serial",
         ignores=(*settings.host_snapshot_serial, *settings.broad_ignores, *proven_paths),
         ignore_globs=proven_globs,
         parallel=True,
         coverage=(CoverageMode.FINISH if source_contracts_proved else CoverageMode.SINGLE),
-        profile=profile,
         contends=_fleet(config),
     )
 
 
-def host_snapshot(config: GateConfig, *, profile: str) -> Suite:
+def host_snapshot(config: GateConfig) -> Suite:
     """The suites that need to be the only service on the machine."""
     settings = config.suites.pytest
     return Suite(
-        label=f"pytest.host-snapshot.{profile}",
+        label="pytest.host-snapshot",
         paths=settings.host_snapshot_serial,
         markers="not serial",
-        profile=profile,
         contends=(config.exclusive("host_service"), *measuring(config)),
     )
 
 
-def timing(config: GateConfig, *, profile: str) -> Suite:
+def timing(config: GateConfig) -> Suite:
     """Timing probes, alone, so their numbers mean something."""
     settings = config.suites.pytest
     return Suite(
-        label=f"pytest.timing.{profile}",
+        label="pytest.timing",
         paths=settings.serial_paths,
         markers="serial",
         deselect=settings.benchmark_deselect,
         stop_at_first_failure=False,
-        profile=profile,
         contends=measuring(config),
     )
 
 
-def benchmark(config: GateConfig, *, profile: str) -> Suite:
+def benchmark(config: GateConfig) -> Suite:
     """The recorded baseline, which is the whole point of running alone."""
     settings = config.suites.pytest
     return Suite(
-        label=f"pytest.benchmark.{profile}",
+        label="pytest.benchmark",
         paths=(settings.benchmark_baseline,),
         stop_at_first_failure=False,
-        profile=profile,
         contends=measuring(config),
-    )
-
-
-def compatibility(config: GateConfig, *, profile: str) -> Suite:
-    """Every VM-owned suite again, for a second selected profile.
-
-    The compatibility axis, not a reduced substitute: the broad suite proves
-    the source and runtime contracts once, and this proves the VM behaviour
-    holds for each remaining profile the channel selects.
-    """
-    settings = config.suites.pytest
-    return Suite(
-        label=f"pytest.compatibility.{profile}",
-        paths=(settings.root,),
-        markers="(integration or mcp or e2e) and not serial",
-        ignores=(
-            *settings.host_snapshot_serial,
-            *config.suites.source_contract,
-            *settings.broad_ignores,
-        ),
-        ignore_globs=config.modules.contract_globs,
-        parallel=True,
-        profile=profile,
-        contends=_fleet(config),
     )
 
 

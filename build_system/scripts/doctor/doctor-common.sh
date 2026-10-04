@@ -44,7 +44,7 @@ FIX_NEEDED=()
 
 _reg() { FIX_IDS+=("$1"); FIX_CMDS+=("$2"); FIX_DESCS+=("$3"); FIX_NEEDED+=(0); }
 
-_doctor_build_assets_all_profiles() {
+_doctor_build_assets() {
     # Never from inside a gate. `just _build-assets` is `capsem-gate
     # build-assets`, which takes the machine lock -- and a gate run is already
     # holding it, so the child waits out its full timeout for a lock that
@@ -65,10 +65,7 @@ _doctor_build_assets_all_profiles() {
     fi
     local arch
     arch="$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/;s/x86_64/x86_64/')"
-    local profile
-    for profile in config/profiles/*/profile.toml; do
-        just _build-assets "$(basename "$(dirname "$profile")")" "$arch"
-    done
+    just _build-assets "$arch"
 }
 
 _doctor_pack_initrd() {
@@ -142,7 +139,7 @@ _reg run-signed-chmod "chmod +x build_system/packaging/macos/run_signed.sh" \
                       "Make build_system/packaging/macos/run_signed.sh executable"
 _reg pnpm-install     "_doctor_install_node_workspaces" \
                       "Install every locked Node workspace"
-_reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_build_assets_all_profiles" \
+_reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_build_assets" \
                       "Build VM assets (kernel + rootfs)"
 _reg pack-initrd      "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_pack_initrd" \
                       "Cross-compile guest binaries + repack initrd"

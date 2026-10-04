@@ -160,7 +160,7 @@ def test_release_prefix_name_is_the_complete_commit_not_a_truncation() -> None:
     ("argv", "slot"),
     [
         (["release-binaries", "nightly"], 2),
-        (["release-profile", "nightly", "code"], 3),
+        (["release-assets", "nightly"], 2),
     ],
 )
 def test_release_cli_requires_the_explicit_source_commit(argv: list[str], slot: int) -> None:
@@ -372,8 +372,8 @@ def test_release_workflow_evidence_pins_every_checkout_to_required_source_commit
 
 def test_reusable_release_workflows_receive_the_same_source_commit() -> None:
     binary = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
-    profile = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
-    for workflow in (binary, profile):
+    assets = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
+    for workflow in (binary, assets):
         assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in workflow
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         assert workflow.count("source_commit: ${{ inputs.source_commit }}") >= 3

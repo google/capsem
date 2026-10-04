@@ -17,7 +17,7 @@
 #   install                build and install the complete local macOS product
 #   test                   complete local proof; required before a release
 #   release-binaries       publish packages for one channel
-#   release-profile        publish one channel/profile, or `all` of them
+#   release-assets         publish the VM runtime assets for one channel
 #
 # Underscore recipes are implementation detail. No workflow may call one:
 # `tests/citadel/test_ci_calls_only_public_recipes.py` refuses it.
@@ -32,9 +32,9 @@ cache *command:
 _stamp-version:
     @uv run --project build_system --frozen capsem-gate stamp-version
 
-# Build one profile's VM assets for one architecture.
-build-assets arch profile="":
-    uv run --project build_system --frozen capsem-gate build-assets {{quote(profile)}} {{quote(arch)}}
+# Build the VM runtime assets for one architecture, or every one.
+build-assets arch="":
+    uv run --project build_system --frozen capsem-gate build-assets {{quote(arch)}}
 
 
 # Host-crate unit tests against the Linux KVM backend, with coverage.
@@ -42,14 +42,14 @@ test-linux-rust:
     uv run --project build_system --frozen capsem-gate linux-rust
 
 
-# Qualify the candidate packages against the manifest-selected profiles.
+# Qualify the candidate packages against the manifest-selected runtime.
 qualify-binaries workspace_root:
     uv run --project build_system --frozen capsem-gate qualify-binaries {{quote(workspace_root)}}
 
 
-# Qualify one profile's built assets against the selected binary.
-qualify-assets input_dir profile workspace_root activation_ready:
-    uv run --project build_system --frozen capsem-gate qualify-assets {{quote(input_dir)}} {{quote(profile)}} {{quote(workspace_root)}} --activation-ready {{quote(activation_ready)}}
+# Qualify the built runtime assets against the selected binary.
+qualify-assets input_dir workspace_root activation_ready:
+    uv run --project build_system --frozen capsem-gate qualify-assets {{quote(input_dir)}} {{quote(workspace_root)}} --activation-ready {{quote(activation_ready)}}
 
 
 # Replay a release qualification lane locally, against a cohort built here.
@@ -62,9 +62,9 @@ release-binaries channel source_commit force="false":
     uv run --project build_system --frozen capsem-gate release-binaries {{quote(channel)}} {{quote(source_commit)}} --force {{quote(force)}}
 
 
-# Build, test, and publish exactly one channel/profile through capsem-admin.
-release-profile channel profile source_commit force="false":
-    uv run --project build_system --frozen capsem-gate release-profile {{quote(channel)}} {{quote(profile)}} {{quote(source_commit)}} --force {{quote(force)}}
+# Build, test, and publish the VM runtime assets for one channel through capsem-admin.
+release-assets channel source_commit force="false":
+    uv run --project build_system --frozen capsem-gate release-assets {{quote(channel)}} {{quote(source_commit)}} --force {{quote(force)}}
 
 
 # Start service daemon + Tauri GUI with hot-reloading
@@ -102,8 +102,8 @@ build profile="debug":
     uv run --project build_system --frozen capsem-gate build-ui {{quote(profile)}}
 
 # Build every host binary plus the desktop and documentation surfaces.
-# VM/release assets remain profile-owned and are built by the canonical test
-# and release workflows, not hidden inside a routine source build.
+# VM runtime assets are built by the canonical test and release workflows,
+# not hidden inside a routine source build.
 build-all profile="debug":
     uv run --project build_system --frozen capsem-gate build-ui {{quote(profile)}}
     uv run --project build_system --frozen capsem-gate build-host
@@ -126,26 +126,25 @@ exec +CMD:
 
 
 
-# Build kernel only for one profile/arch (CI-facing primitive).
-_build-kernel arch profile="":
-    uv run --project build_system --frozen capsem-gate build-assets {{quote(profile)}} {{quote(arch)}} --template kernel
+# Build the kernel only for one arch (CI-facing primitive).
+_build-kernel arch:
+    uv run --project build_system --frozen capsem-gate build-assets {{quote(arch)}} --template kernel
 
 
-# Build rootfs only for one profile/arch (CI-facing primitive).
-_build-rootfs arch profile="":
-    uv run --project build_system --frozen capsem-gate build-assets {{quote(profile)}} {{quote(arch)}} --template rootfs
+# Build the rootfs only for one arch (CI-facing primitive).
+_build-rootfs arch:
+    uv run --project build_system --frozen capsem-gate build-assets {{quote(arch)}} --template rootfs
 
 
-# VM asset rebuild (kernel + rootfs). Profile is mandatory. Optional second arg
-# restricts to one arch.
-_build-assets profile="" arch="":
-    uv run --project build_system --frozen capsem-gate build-assets {{quote(profile)}} {{quote(arch)}}
+# VM runtime asset rebuild (kernel + rootfs). Optional arg restricts to one arch.
+_build-assets arch="":
+    uv run --project build_system --frozen capsem-gate build-assets {{quote(arch)}}
 
 
 # Ironbank VM asset gate. This is the superset owner for the image-build work
-# performed by release-assets.yaml: every checked-in profile, both published
+# performed by release-assets.yaml: the one runtime, both published
 # architectures, the exact CI-facing build primitives, generated-manifest
-# validation, and a real shell marker from each profile-owned host-arch image.
+# validation, and a real shell marker from the host-arch image.
 # Outputs stay under cache/target/ so the gate never mutates a source-owned directory.
 _gate-assets: _bootstrap _install-tools _generate-settings
     @uv run --project build_system --frozen capsem-gate assets
@@ -190,9 +189,6 @@ _test-compiled-checks: _clean-stale _check-generated-settings
 _test-artifacts:
     uv run --project build_system --frozen capsem-gate test-artifacts
 
-_test-profile-artifacts input_dir profile:
-    uv run --project build_system --frozen capsem-gate test-profile-artifacts {{quote(input_dir)}} {{quote(profile)}}
-
 _test-functional: _generate-settings
     uv run --project build_system --frozen capsem-gate test-functional
 
@@ -231,10 +227,6 @@ _gate-host-package-sbom:
     uv run --project build_system --frozen capsem-gate host-sbom
 
 
-# repack-deb.sh below reads the materialized profile catalog from cache/target/config,
-# so this recipe owns filling it rather than leaving each call site to remember.
-# Release CI never enters here: it consumes an already-built package with its
-# staged profile cohort, so nothing it pulled can be clobbered.
 # Build the full Linux release in a container (agent + deb).
 # Uses the private cached capsem-host-builder image.
 # Supports arm64 and x86_64 via native cross-compilation (no QEMU).
@@ -271,7 +263,7 @@ _check-generated-settings:
 # runtime proof now belongs to `focus-test functional`; there is no second
 # public VM-smoke spelling for agents to stack beside it.
 fast-test:
-    @echo "Agent: incomplete feedback only; use 'just focus-test <group>' for targeted proof, or 'just test <commit>', whose pass 'just release-profile ...' / 'just release-binaries ...' require."
+    @echo "Agent: incomplete feedback only; use 'just focus-test <group>' for targeted proof, or 'just test <commit>', whose pass 'just release-assets ...' / 'just release-binaries ...' require."
     uv run --project build_system --frozen capsem-gate test-fast
 
 
@@ -283,7 +275,7 @@ focus-test group mode="reuse" slow="":
 # Optional hands-on testing: build the complete installable product and install
 # that exact local package on this Mac. Never a release prerequisite.
 install:
-    @echo "Agent: optional hands-on local testing only; 'just install' does not qualify or unblock a release. Releases need 'just test <commit>' to pass first, then 'just release-binaries ...' or 'just release-profile ...'."
+    @echo "Agent: optional hands-on local testing only; 'just install' does not qualify or unblock a release. Releases need 'just test <commit>' to pass first, then 'just release-binaries ...' or 'just release-assets ...'."
     uv run --project build_system --frozen capsem-gate local-install
 
 

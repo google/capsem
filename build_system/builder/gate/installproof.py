@@ -1,7 +1,7 @@
 """What the install gate actually proves, once the container is up.
 
 Staging comes in two shapes, and they are not interchangeable. A release lane
-supplies profile inputs its manifest already resolved and verified; a local
+supplies runtime inputs its manifest already resolved and verified; a local
 gate has only this checkout's freshly built assets and must publish a channel
 from them before anything can install against it. Only the second produces an
 authoritative release graph, which is why only the second hands one over --
@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from . import config as gate_config
-from .content import ProfileContent
+from .content import RuntimeContent
 from .docker import Docker
 from .errors import GateError
 from .proc import Runner
@@ -59,7 +59,7 @@ class InstallProof:
             cwd=self._mount,
         )
 
-    def stage_content(self, content: ProfileContent) -> None:
+    def stage_content(self, content: RuntimeContent) -> None:
         """Copy the one mounted, prevalidated content pair into writable staging."""
         self.stage_content_from(
             assets=self._config.functional.assets_dir,
@@ -95,7 +95,7 @@ class InstallProof:
     def start_local_server(self) -> None:
         """Serve the exact local graph over container loopback.
 
-        Selected profile bytes still need this server: the package under test
+        Selected runtime bytes still need this server: the package under test
         is recorded into a fresh checked graph before installation, so its
         postinst never falls back to the packaged public URL while networking
         is denied.
@@ -227,8 +227,7 @@ class InstallProof:
             f'--config-root "{self._layout.config}" '
             f"--work-dir {self._layout.glowup} --package-ready "
             f"--evidence-dir {self._layout.glowup_evidence} "
-            f"--source-commit {self._source_commit} "
-            f"--profile-revision-policy {self._settings.profile_revision_policy.value}"
+            f"--source-commit {self._source_commit}"
         )
         self._docker.shell(
             self._container,

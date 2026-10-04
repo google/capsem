@@ -444,7 +444,7 @@ def _built(root: Path, name: str, args: tuple[tuple[str, object], ...], qualific
     from capsem_builder.gate.command import GateCommand
 
     values = dict(args)
-    if name in {"release-binaries", "release-profile"}:
+    if name in {"release-binaries", "release-assets"}:
         from capsem_builder.gate.sourcecommit import SourceCommit
 
         values.setdefault("source_commit", SourceCommit("0" * 40))

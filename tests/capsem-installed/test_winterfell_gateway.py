@@ -35,7 +35,7 @@ def test_installed_gateway_persists_exec_state() -> None:
     roots = resolve_winterfell_artifact_roots()
     assert roots.installed
     service = ServiceInstance(assets_dir=roots.assets_dir, sign_binaries=False)
-    service.profiles_dir = roots.profiles_dir
+    service.uses_profile_catalog = False
     vm_id: str | None = None
     try:
         service.start()

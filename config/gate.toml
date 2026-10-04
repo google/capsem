@@ -206,10 +206,6 @@ venv = "/home/capsem/.venv-install-test"
 source_cli = "/opt/capsem/install-test/bin/capsem-current"
 mount = "/src"
 channel = "local"
-# The install proof re-publishes immutable, already-selected public inputs into
-# a loopback-only graph. Current public profiles predate the strict SemVer
-# authoring rule; release authoring never selects this policy and remains strict.
-profile_revision_policy = "selected-input"
 manifest_version = "1.0.0"
 # The hands-on developer-machine path. It builds the same complete unsigned
 # candidate package the macOS qualification adapter consumes, then installs it
@@ -565,10 +561,10 @@ lane_container = "capsem-package-{arch}"
 # One tag for every architecture -- the source is the same, and `COPY`
 # invalidates the layer on any source change, which is the correct cache key.
 # Build output the lane consumes and the image deliberately does not carry.
-# `cache/target/assets/` is 3.0 GB and changes every run; `cache/target/config` is the
-# materialized profile catalog `repack-deb.sh` reads. Both are produced by
-# earlier steps, so they are mounted read-only rather than copied.
-generated_inputs = ["cache/target/assets", "cache/target/config"]
+# `cache/target/assets/` is 3.0 GB and changes every run. It is produced by an
+# earlier step, so it is mounted read-only rather than copied. The package ships
+# no configuration catalog, so nothing from `cache/target/config` is mounted.
+generated_inputs = ["cache/target/assets"]
 lane_dockerfile = "build_system/docker/Dockerfile.package"
 lane_image = "capsem-package-lane:latest"
 # The checkout is copied into the source image; these three paths get
@@ -890,13 +886,13 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 64
-invalid-assignment = 6
-invalid-return-type = 4
-no-matching-overload = 6
-not-subscriptable = 122
+invalid-argument-type = 55
+invalid-assignment = 5
+invalid-return-type = 3
+no-matching-overload = 5
+not-subscriptable = 110
 unresolved-attribute = 71
-unresolved-import = 3
+unresolved-import = 1
 unsupported-operator = 2
 unused-ignore-comment = 3
 unused-type-ignore-comment = 3
@@ -905,7 +901,7 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 225
+noqa = 214
 type_ignore = 22
 ty_ignore = 5
 ruff_global_ignore = 1
@@ -1099,14 +1095,12 @@ max_lines = 1000
 must_stay_below_lines = 3000
 
 [boundary.rust.oversized_line_counts]
-"crates/capsem-admin/src/assets_channel_render.rs" = 1719
-"crates/capsem-admin/src/assets_channel_validation.rs" = 1412
-"crates/capsem-admin/src/main.rs" = 2144
-"crates/capsem-admin/src/profile_images.rs" = 2188
-"crates/capsem-admin/src/release_graph.rs" = 1089
-"crates/capsem-admin/src/release_graph/tests.rs" = 1323
+"crates/capsem-admin/src/assets_channel_render.rs" = 1308
+"crates/capsem-admin/src/main.rs" = 1987
+"crates/capsem-admin/src/profile_images.rs" = 1476
+"crates/capsem-admin/src/release_graph/tests.rs" = 1078
 "crates/capsem-agent/src/tests.rs" = 1115
-"crates/capsem-assets/src/asset_manager.rs" = 1355
+"crates/capsem-assets/src/asset_manager.rs" = 1212
 "crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1029
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
@@ -1134,9 +1128,9 @@ must_stay_below_lines = 3000
 "crates/capsem/src/main.rs" = 2161
 "crates/capsem/src/support_bundle.rs" = 1034
 "crates/capsem/src/tests.rs" = 1314
-"crates/capsem/src/update.rs" = 2488
-"crates/capsem/src/update/asset_install.rs" = 1400
-"crates/capsem/src/update/tests.rs" = 2776
+"crates/capsem/src/update.rs" = 2187
+"crates/capsem/src/update/asset_install.rs" = 1125
+"crates/capsem/src/update/tests.rs" = 2306
 
 # The benchmark collectors. Their whole contract is that they print raw
 # samples and compute nothing, so one growing past this ceiling means
@@ -1153,10 +1147,10 @@ max_lines = 300
 [boundary.bench.oversized_line_counts]
 
 [boundary.scripts.oversized_line_counts]
-"build_system/packaging/macos/build-pkg.sh" = 349
-"build_system/packaging/macos/macos_release_glowup.py" = 367
-"build_system/packaging/macos/macos_tart_glowup.py" = 526
-"build_system/packaging/macos/macos_tart_guest.sh" = 316
+"build_system/packaging/macos/build-pkg.sh" = 317
+"build_system/packaging/macos/macos_release_glowup.py" = 360
+"build_system/packaging/macos/macos_tart_glowup.py" = 519
+"build_system/packaging/macos/macos_tart_guest.sh" = 310
 
 # ---------------------------------------------------------------------------
 # What may not run beside what
@@ -1456,10 +1450,9 @@ tagger_email = "release@capsem.org"
 notes = ["build_system/scripts/release/release-binaries.py", "--precheck"]
 fetch_manifest = "build_system/scripts/release/fetch-channel-source-manifest.py"
 binaries = "build_system/scripts/release/release-binaries.py"
-profile = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
-# `release-profile <channel> all` dispatches every profile behind one shared
-# source proof instead of repeating it once per profile. No profile may use it.
-all_profiles = "all"
+# `release-assets` dispatches the runtime asset lane through capsem-admin, which
+# owns the publication identity and the workflow correlation.
+assets = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
 preflight_dir = "cache/target/release/staging/preflight"
 channel_source = "cache/target/release/staging/preflight/channel-source.json"
 default_repository = "google/capsem"
@@ -1734,19 +1727,19 @@ cli = "cache/target/cargo/debug/capsem"
 admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "build"]
 workspace_admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "workspace"]
 dependency_backend = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "capsem_builder.image.image_build_backend"]
-# The profile materializer copies this directory byte-for-byte. It is also the
+# The image workspace copies this directory byte-for-byte. It is also the
 # one authority the gate uses to prefetch exact per-platform base manifests.
 source_config = "config/docker/image"
 guest_dir = "guest"
-workspace_root = "cache/target/build/image-workspace/{profile}/{arch}"
+# Must agree with `image_build_workspace_path` in capsem-admin, which the
+# single-shot build writes: the dependency step prepares that same tree.
+workspace_root = "cache/target/build/image-workspace/{arch}"
 workspace_guest_dir = "guest"
 # The stages a concurrent asset lane builds, in order. Named here because the
 # lanes build kernel and rootfs separately while a single-shot build uses
 # "all", and a second copy of that list in code is a second opinion.
 lane_templates = ["kernel", "rootfs"]
 templates = ["kernel", "rootfs", "all"]
-profiles_glob = "config/profiles/*/profile.toml"
-profile_manifest = "config/profiles/{profile}/profile.toml"
 config_root = "config"
 output = "cache/target/assets"
 # Doctor is run first, with the checks that would fail on the very thing this
@@ -1878,8 +1871,7 @@ max_lines = 20
 # Exact ratchets, as everywhere else: an entry may not grow, and a body that
 # shrinks updates or removes its entry in the same change.
 [boundary.shell_bodies.oversized_line_counts]
-"release-assets.yaml:author-profile-release:17:Author selected channel profile in the source manifest" = 32
-"release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
+"release-assets.yaml:publish-runtime-release:14:Publish immutable GitHub runtime release" = 27
 "release.yaml:build-app-macos:23:Verify macOS package installation path policy" = 31
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
 "release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 25
@@ -2049,7 +2041,6 @@ source_contract = [
     "build_system/tests/gate/test_gate_prefix.py",
     "build_system/tests/gate/test_gate_resume.py",
     "build_system/tests/gate/test_gate_release_isolation.py",
-    "build_system/tests/gate/test_gate_release_profile_all.py",
     "build_system/tests/gate/test_gate_release_source_commit.py",
     "build_system/tests/gate/test_gate_release_requires_local_proof.py",
     "build_system/tests/gate/test_gate_run_transfer.py",
@@ -2065,7 +2056,7 @@ source_contract = [
     "tests/test_surface_names_are_not_hardcoded.py",
     "build_system/tests/gate/test_python_filesystem_chokepoint.py",
     "tests/test_authoritative_values_are_not_restated.py",
-    "build_system/tests/gate/test_build_assets_profile.py",
+    "build_system/tests/gate/test_build_assets.py",
     "build_system/tests/image/test_asset_network_guardrail.py",
     "tests/test_build_provenance.py",
     "build_system/tests/image/test_builder_probe_timeouts.py",
@@ -2154,14 +2145,13 @@ source_contract = [
     "build_system/tests/gate/test_gate_versions.py",
     "build_system/tests/gate/test_gate_vm_cache.py",
     "build_system/tests/gate/test_gate_workspace.py",
-    "build_system/tests/scripts/test_integration_script_profiles.py",
+    "build_system/tests/scripts/test_integration_script.py",
     "build_system/tests/release/test_live_channel_watch.py",
     "build_system/tests/packaging/test_macos_tart_glowup.py",
     "build_system/tests/gate/test_orphan_process_gate.py",
     "build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py",
     "build_system/tests/scripts/test_pidfile_cleanup_is_wired.py",
     "build_system/tests/scripts/test_dependency_audit.py",
-    "build_system/tests/release/test_profile_revision_semver.py",
     "build_system/tests/packaging/test_prove_installed_shell.py",
     "build_system/tests/release/test_release_gate_integrity.py",
     "build_system/tests/release/test_release_graph_variable_split.py",
@@ -2283,12 +2273,6 @@ run_id_variable = "CAPSEM_TEST_RUN_ID"
 # Fails closed before collection rather than passing vacuously against a tree
 # whose assets were never built.
 require_artifacts = "CAPSEM_REQUIRE_ARTIFACTS"
-profile_variable = "CAPSEM_TEST_PROFILE"
-# The profile every broad proof runs against first. The rest are the
-# compatibility axis, and run the VM-owned suites again behind it.
-base_profile = "code"
-materialized_profiles = "cache/target/config/profiles"
-test_manifest = "cache/target/assets/manifest.json"
 
 [functional]
 # The two legacy VM drivers. Neither is pytest, both need a real VM, and both
@@ -2410,10 +2394,10 @@ guest_binary_tests = [
 # Release-lane inputs. When these are set the module verifies pulled immutable
 # artifacts instead of building source ones.
 release_input_dir = "CAPSEM_RELEASE_INPUT_DIR"
-release_profile = "CAPSEM_RELEASE_PROFILE"
+release_runtime = "CAPSEM_RELEASE_RUNTIME"
 release_package = "CAPSEM_RELEASE_PACKAGE"
 verify_inputs_script = "build_system/scripts/release/verify-release-inputs.py"
-prove_profile_assets_script = "build_system/scripts/release/prove-release-profile-assets.py"
+prove_runtime_assets_script = "build_system/scripts/release/prove-release-runtime-assets.py"
 glowup_script = "build_system/scripts/release/local-release-glowup.py"
 macos_glowup_script = "build_system/packaging/macos/macos_release_glowup.py"
 # Proves the published package runs on every release [platforms.linux]
@@ -2472,8 +2456,8 @@ baseline_channel = "CAPSEM_RELEASE_BASELINE_CHANNEL"
 transition = "CAPSEM_RELEASE_TRANSITION"
 before_manifest = "CAPSEM_RELEASE_BEFORE_MANIFEST"
 after_manifest = "CAPSEM_RELEASE_AFTER_MANIFEST"
-before_profile_inputs = "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS"
-after_profile_inputs = "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS"
+before_release_inputs = "CAPSEM_RELEASE_BEFORE_INPUTS"
+after_release_inputs = "CAPSEM_RELEASE_AFTER_INPUTS"
 
 # ---------------------------------------------------------------------------
 # The isolated home a gate run works in
@@ -3515,12 +3499,6 @@ digest = "3ebd958506da"
 where = "build_system/scripts/build/cleanup-docker-containers-by-mount.sh"
 subject = "docker inspect --format {{range .Mounts}}{{println .Source}}{{end}} $container_id"
 reason = "the container can exit between being listed and being inspected"
-
-[[boundary.discarded_verdicts]]
-digest = "218517a41536"
-where = "build_system/packaging/linux/deb-postinst.sh"
-subject = "cp -R /usr/share/capsem/profiles/. $CAPSEM_DIR/profiles/"
-reason = "the packaged profile tree is optional; its absence must not fail the install"
 
 [[boundary.discarded_verdicts]]
 digest = "b61604839e7c"

@@ -237,7 +237,7 @@ def test_the_docker_argv_names_the_variable_and_carries_the_value_in_the_child_e
     reaches argv -- and therefore never reaches `ps`, which is readable by
     every user on the machine and which no amount of log redaction covers.
     """
-    from capsem_builder.gate.content import ProfileContent
+    from capsem_builder.gate.content import RuntimeContent
     from capsem_builder.gate.packagerail import PackageRail
 
     _rail_with_keys(tmp_path, monkeypatch)
@@ -246,7 +246,7 @@ def test_the_docker_argv_names_the_variable_and_carries_the_value_in_the_child_e
     rail = PackageRail(
         runner,
         config.arch(next(iter(config.architectures))),
-        content=ProfileContent.standalone(config),
+        content=RuntimeContent.standalone(config),
     )
 
     rail.build()
@@ -279,7 +279,7 @@ def test_no_byte_of_a_recorded_run_holds_the_signing_material(
     Asserted over every file the run wrote, because the leak reached four
     different ones and a check per file is a check that misses the fifth.
     """
-    from capsem_builder.gate.content import ProfileContent
+    from capsem_builder.gate.content import RuntimeContent
     from capsem_builder.gate.packagerail import PackageRail
     from capsem_builder.gate.runlog import RunLog
 
@@ -292,7 +292,7 @@ def test_no_byte_of_a_recorded_run_holds_the_signing_material(
         rail = PackageRail(
             runner,
             config.arch(next(iter(config.architectures))),
-            content=ProfileContent.standalone(config),
+            content=RuntimeContent.standalone(config),
         )
         with pytest.raises(GateError):
             rail.build()

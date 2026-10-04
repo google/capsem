@@ -24,7 +24,7 @@ from capsem_builder.gate.execution import ResumePolicy, step
 from capsem_builder.gate.plan import Plan
 from capsem_builder.gate.qualification import LocalQualification
 from capsem_builder.gate.qualificationevidence import QualificationPolicy
-from capsem_builder.gate.release import ReleaseBinariesCommand, ReleaseProfileCommand
+from capsem_builder.gate.release import ReleaseAssetsCommand, ReleaseBinariesCommand
 from capsem_builder.gate.runlog import RunLog
 from capsem_builder.gate.runlogschema import (
     FAILED,
@@ -42,7 +42,7 @@ COMMIT = SourceCommit("5" * 40)
 #: (command class, positional arguments before the commit).
 RELEASES = {
     "release-binaries": (ReleaseBinariesCommand, {"channel": "stable"}),
-    "release-profile": (ReleaseProfileCommand, {"channel": "stable", "profile": "code"}),
+    "release-assets": (ReleaseAssetsCommand, {"channel": "stable"}),
 }
 
 

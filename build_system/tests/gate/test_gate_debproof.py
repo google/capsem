@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.debproof import DebProof
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.sourcecommit import SourceCommit
@@ -48,9 +48,9 @@ def _checkout(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _content(root: Path) -> ProfileContent:
+def _content(root: Path) -> RuntimeContent:
     config = gate_config.load(root)
-    content = ProfileContent.standalone(config)
+    content = RuntimeContent.standalone(config)
     payload = json.dumps(
         {
             "assets": {
@@ -200,7 +200,7 @@ def test_exact_package_graph_is_checked_and_handed_off_before_dpkg(
     record_command = runner.matching(r"assets channel record-binary")[0]
     assert f"--manifest-path {authoritative}" in record_command
     assert f"--source-commit {SOURCE_COMMIT}" in transcript
-    assert "--profile-revision-policy selected-input" in transcript
+    assert "--profile-revision-policy" not in transcript
     assert "--network none" in runner.matching(r"docker run -d")[0]
 
 
@@ -319,33 +319,6 @@ def test_a_status_line_that_is_missing_fails_the_proof(
     runner = RecordingRunner(root, replies=replies)
 
     with pytest.raises(GateError, match="status is missing"):
-        DebProof(
-            runner,
-            package=root / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb",
-            content=_content(root),
-            manifest_url="file:///src/m.json",
-            channel="nightly",
-            source_commit=SOURCE_COMMIT,
-            sleep=lambda _seconds: None,
-        ).run()
-
-
-@pytest.mark.parametrize("counts", ["0/0", "1/3"])
-def test_profiles_must_all_be_ready(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, counts: str
-) -> None:
-    """Zero of zero is the interesting one: it reads as success to anything
-    that only compares the two numbers."""
-    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
-    root = _checkout(tmp_path)
-    replies = _replies()
-    replies["capsem status"] = (
-        "Installed: true\nRunning:   true\nService:   ok\nGateway:   ok\n"
-        f"Profiles:  {counts} ready\n"
-    )
-    runner = RecordingRunner(root, replies=replies)
-
-    with pytest.raises(GateError, match="profiles are not all ready"):
         DebProof(
             runner,
             package=root / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb",

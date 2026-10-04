@@ -41,12 +41,12 @@ from . import qualification as qualification_state
 from .actions import Script
 from .command import GateCommand
 from .config import GateConfig
-from .content import ProfileContent
+from .content import RuntimeContent
 from .execution import Kind, Needs, Speed, Step, step
 from .module_artifacts import pulled_artifacts
 from .module_glowup import pulled_package
 from .plan import Plan
-from .profileaxis import AxisAgrees
+from .contentcheck import ContentComplete
 from .qualification import Qualification
 from .testmodules import InWorkspace
 from .versions import workspace_version
@@ -112,9 +112,7 @@ def rehearsal(
                 config,
                 settings.rehearsal_script,
                 "--assets-dir",
-                config.path(config.assets.test_root)
-                / config.suites.pytest.base_profile
-                / config.assets.merged_assets_dir,
+                RuntimeContent.built(config).assets,
                 "--bin-dir",
                 settings.default_bin_dir,
                 "--packages-dir",
@@ -148,7 +146,7 @@ def rehearsal(
         plan,
         config,
         input_dir=settings.rehearsal_inputs_dir,
-        profile=None,
+        boot=False,
         after=(built,),
         phase_name=PHASE,
     )
@@ -157,7 +155,7 @@ def rehearsal(
         input_dir=settings.rehearsal_inputs_dir,
         package=package,
     )
-    staged = ProfileContent.staged(config, config.path(settings.rehearsal_content_root))
+    staged = RuntimeContent.staged(config, config.path(settings.rehearsal_content_root))
 
     # Path selection is still proved after staging: this is the cheap boundary
     # that caught checkout-relative release defects, without rebooting bytes
@@ -165,8 +163,8 @@ def rehearsal(
     # plan's dependency chain.
     proved = phase.add(
         step(
-            "axis",
-            AxisAgrees(assets=staged.assets, profiles_dir=staged.profiles(config)),
+            "content-staged",
+            ContentComplete(staged),
             kind=Kind.UNIT_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,
@@ -202,7 +200,7 @@ def rehearsal(
             after_manifest=settings.rehearsal_after_manifest.format(
                 channel=settings.rehearsal_channel
             ),
-            before_profile_inputs=settings.rehearsal_before_inputs,
-            after_profile_inputs=settings.rehearsal_inputs_dir,
+            before_release_inputs=settings.rehearsal_before_inputs,
+            after_release_inputs=settings.rehearsal_inputs_dir,
         ),
     )

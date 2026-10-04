@@ -25,8 +25,8 @@ class ReleasePairingEnvironment(Strict):
     transition: str
     before_manifest: str
     after_manifest: str
-    before_profile_inputs: str
-    after_profile_inputs: str
+    before_release_inputs: str
+    after_release_inputs: str
 
     def runtime(
         self,
@@ -36,8 +36,8 @@ class ReleasePairingEnvironment(Strict):
         transition: object,
         before_manifest: object,
         after_manifest: object,
-        before_profile_inputs: object,
-        after_profile_inputs: object,
+        before_release_inputs: object,
+        after_release_inputs: object,
     ) -> dict[str, str]:
         """The exact transition one glow-up run is proving."""
         return {
@@ -46,8 +46,8 @@ class ReleasePairingEnvironment(Strict):
             self.transition: str(transition),
             self.before_manifest: str(before_manifest),
             self.after_manifest: str(after_manifest),
-            self.before_profile_inputs: str(before_profile_inputs),
-            self.after_profile_inputs: str(after_profile_inputs),
+            self.before_release_inputs: str(before_release_inputs),
+            self.after_release_inputs: str(after_release_inputs),
         }
 
     @property
@@ -59,8 +59,8 @@ class ReleasePairingEnvironment(Strict):
             self.transition,
             self.before_manifest,
             self.after_manifest,
-            self.before_profile_inputs,
-            self.after_profile_inputs,
+            self.before_release_inputs,
+            self.after_release_inputs,
         )
 
 
@@ -86,8 +86,7 @@ class ReleaseConfig(Strict):
     notes: tuple[str, ...]
     fetch_manifest: str
     binaries: str
-    profile: tuple[str, ...]
-    all_profiles: Annotated[str, StringConstraints(min_length=1)]
+    assets: tuple[str, ...]
     preflight_dir: str
     channel_source: str
     default_repository: str
