@@ -11,12 +11,25 @@ Selected by kernel cmdline `capsem.storage=virtiofs` (default) or absence (block
 **VirtioFS mode** (default):
 ```
 ~/.capsem/sessions/{id}/
-  guest/                     # the only VirtioFS share (guest can rewrite anything here)
+  guest/                     # the read-write VirtioFS share, tag `capsem` (guest can rewrite anything here)
     workspace/               # VirtioFS files for /root (host-visible)
   workspace -> guest/workspace   # compat symlink
+  image/                     # the read-only VirtioFS share, tag `capsem-image`: one image's blobs
   system/rootfs.img          # host-only: ext4 (2GB sparse) attached as /dev/vdb, overlayfs upper
   session.db                 # host-only, outside the share
 ```
+
+`image/` is attached to every VM, read-only at the device (Apple VZ
+`VZSharedDirectory` `readOnly`, the KVM FUSE server's `read_only`), because a
+device cannot be added after boot and an image is pulled only once the VM's
+owner admits it. It holds nothing but the image's blobs, each a 0444 file named
+by its SHA-256 and hard-linked from the service's private pull
+(`capsem_core::session::publish_image_share`). The container launcher mounts it
+read-only in its own mount namespace while it unpacks, and verifies every blob
+against the manifest digest the host pinned in `options.json`; the workspace
+stage (`/root/.capsem-image`) holds only that file, `launch.py` and the
+launcher's markers. Forks link the source's `image/`; a restart reuses it, and
+never needs it at all once the unpacked root is on the overlay.
 
 Boot sequence: read-only runtime rootfs asset -> VirtioFS mount -> ext4 on /dev/vdb -> overlayfs -> bind-mount workspace.
 
@@ -39,6 +52,7 @@ Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creatio
   persistent/{vm_id}/
     system/                  # CoW clone of source VM's rootfs overlay (host-only)
     guest/workspace/         # CoW clone of workspace files
+    image/                   # hard links to the source's image blobs (host-only)
     session.db               # SQLite-consistent copy of the source ledger
 ```
 
