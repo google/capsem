@@ -18,6 +18,10 @@ pub(crate) const GROUPED_HELP: &str = "\
   \x1b[32;1mpersist\x1b[0m      Promote an ephemeral session to persistent
   \x1b[32;1mpurge\x1b[0m        Destroy all temporary sessions
 
+\x1b[36;1;4mImages:\x1b[0m
+  \x1b[32;1mimages\x1b[0m       List the image catalog (`create --image NAME` runs one)
+  \x1b[32;1mimages pull\x1b[0m  Pull an image ahead of a create
+
 \x1b[36;1;4mService:\x1b[0m
   \x1b[32;1minstall\x1b[0m      Install as a system service (LaunchAgent / systemd)
   \x1b[32;1mstatus\x1b[0m       Show service status

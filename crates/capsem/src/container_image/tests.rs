@@ -84,7 +84,25 @@ async fn the_spec_refuses_what_it_cannot_name_before_any_vm_exists() {
     };
     let workload = Workload::of(&args, &[]).unwrap().unwrap();
     let error = workload.spec(false).await.err().unwrap();
-    assert!(format!("{error:#}").contains("--image expects"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("--image: expects a catalog name"),
+        "{error:#}"
+    );
+}
+
+/// `capsem create --image codex-cli` sends the name; the service resolves
+/// it, so the CLI never decides what a name means.
+#[tokio::test]
+async fn a_catalog_name_reaches_the_service_as_given() {
+    for name in ["codex-cli", "redis"] {
+        let args = ImageArgs {
+            image: vec![name.into()],
+            ..ImageArgs::default()
+        };
+        let spec = Workload::of(&args, &[]).unwrap().unwrap().spec(false).await.unwrap();
+        assert_eq!(spec.image, name);
+        assert!(spec.args.is_empty());
+    }
 }
 
 #[test]

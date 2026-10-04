@@ -722,6 +722,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   admits ahead of a create, answering 403 without contacting a refused
   registry. A workload's status and launch record now carry the
   `repository@digest` it resolved to.
+- `capsem images` lists the catalog the policy permits (`--refresh` rereads
+  it, `--json` prints full digests), `capsem images pull NAME` fetches an
+  image ahead of a create, and `--image` on `create` and `run` takes a
+  catalog name: `capsem create -n work --image codex-cli`.
 - The official images (`dev`, `codex-cli`, `claude-code`, `agy`) are
   published to `ghcr.io/google/capsem` for arm64 and amd64 by a dedicated
   workflow, each with a CycloneDX OBOM, an EROFS rootfs whose owners sit in

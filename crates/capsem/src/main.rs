@@ -7,6 +7,7 @@ mod doctor_bundle;
 mod doctor_output;
 use doctor_output::push_doctor_output_tail;
 mod grouped_help;
+mod image_commands;
 use grouped_help::GROUPED_HELP;
 mod network_commands;
 mod paths;
@@ -255,6 +256,9 @@ enum Commands {
     /// Manage named networks: groups of sessions that can reach each other
     #[command(subcommand)]
     Network(NetworkCommands),
+
+    /// List the image catalog, or pull an image ahead of a create
+    Images(image_commands::ImagesArgs),
 
     #[command(flatten)]
     Misc(MiscCommands),
@@ -1472,28 +1476,16 @@ async fn main() -> Result<()> {
     let client = UdsClient::with_direct_service_lifetime(uds_path, auto_launch, direct_service_lifetime(command));
 
     match command {
-        Commands::Assets(AssetsCommands::Status { profile, json }) => {
+        Commands::Assets(command) => {
+            let (AssetsCommands::Status { profile, json } | AssetsCommands::Ensure { profile, json }) = command;
             client::validate_id(profile)?;
-            let encoded_profile = urlencoding::encode(profile);
-            let resp: ApiResponse<AssetStatusResponse> = client
-                .get(&format!("/profiles/{encoded_profile}/assets/status"))
-                .await?;
-            let status = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&status)?);
-            } else {
-                print_asset_status(&status);
-            }
-        }
-        Commands::Assets(AssetsCommands::Ensure { profile, json }) => {
-            client::validate_id(profile)?;
-            let encoded_profile = urlencoding::encode(profile);
-            let resp: ApiResponse<AssetStatusResponse> = client
-                .post(
-                    &format!("/profiles/{encoded_profile}/assets/ensure"),
-                    serde_json::json!({}),
-                )
-                .await?;
+            let assets = format!("/profiles/{}/assets", urlencoding::encode(profile));
+            let resp: ApiResponse<AssetStatusResponse> = match command {
+                AssetsCommands::Status { .. } => client.get(&format!("{assets}/status")).await?,
+                AssetsCommands::Ensure { .. } => {
+                    client.post(&format!("{assets}/ensure"), serde_json::json!({})).await?
+                }
+            };
             let status = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
@@ -1813,6 +1805,7 @@ async fn main() -> Result<()> {
             println!("{}", resumed.id);
         }
         Commands::Network(command) => network_commands::run(&client, command).await?,
+        Commands::Images(args) => image_commands::run(&client, args).await?,
         Commands::Mcp(McpCommands::Servers { profile }) => {
             client::validate_id(profile)?;
             let resp: ApiResponse<Vec<serde_json::Value>> =

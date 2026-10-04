@@ -37,7 +37,7 @@ approved = [
 ]
 
 [capsem_cli]
-count = 39
+count = 41
 approved = [
   "assets ensure",
   "assets status",
@@ -49,6 +49,8 @@ approved = [
   "exec",
   "fork",
   "history",
+  "images",
+  "images pull",
   "info",
   "install",
   "list",

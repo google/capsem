@@ -58,6 +58,7 @@ capsem create --from template          # clone from existing session
 capsem create -e API_KEY=sk-...        # with environment variables
 capsem create -n cache -p 0:6379 --image docker://redis:7-alpine
                                        # an OCI image's workload, detached
+capsem create -n work --image codex-cli # a catalog image, by name
 ```
 
 With `--image`, the VM's workload is the image's command, or everything given
@@ -75,10 +76,17 @@ setup deletes the VM.
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
 | `--from <NAME>` | -- | Clone state from an existing retained session/template |
 | `--network <NAME>` | -- | Join a named network (repeatable) |
-| `--image <IMAGE>` | -- | OCI image to run: `docker://IMAGE` or `registry/repository:tag` |
+| `--image <IMAGE>` | -- | OCI image to run: a catalog name (see `images`), `docker://IMAGE` or `registry/repository:tag` |
 | `-p, --publish <HOST:GUEST>` | -- | With `--image`: publish a loopback TCP port (host `0` picks one) |
 | `--registry-ca <PEM>` | -- | With `--image`: extra CA trusted for this pull |
 | `--registry-user <USER>` | -- | With `--image`: registry user; token from `CAPSEM_REGISTRY_PASSWORD` |
+
+A catalog name such as `codex-cli` resolves, in the service, to the newest
+version of that image this host can run, pinned by digest; the session
+records the `repository@digest` and never follows a moved tag. A catalog name
+is looked up before anything is parsed as a reference, so `--image redis` is
+the catalog's `redis` or an error, never Docker Hub's: Docker Hub is always
+`docker://IMAGE`, and the default image policy refuses it.
 
 ### shell
 
@@ -263,6 +271,44 @@ capsem purge --all        # everything (requires confirmation)
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--all` | false | Also destroy retained sessions |
+
+## Image commands
+
+### images
+
+List the image catalog entries the image policy permits: each name, the
+architectures it is built for, the digest of the newest version this host can
+run (`-` when none is), and its description. The service reads the catalog at
+most every 30 minutes; `--refresh` asks it to read it now, and `--json` prints
+everything, full digests included.
+
+```sh
+capsem images
+capsem images --refresh --json
+```
+
+The catalog is `ghcr.io/google/capsem/catalog:stable` unless `[images]` in
+`settings.toml` or `corp.toml` (corp's wins) says otherwise:
+
+```toml
+[images]
+catalog = "mirror.company.com/capsem/catalog:stable"  # or false for none
+catalog_ca = "/etc/capsem/mirror-ca.pem"              # trusted for the catalog only
+```
+
+With the catalog off or unreadable, no name resolves and only the explicit
+`sources` and `admit` grants admit anything.
+
+### images pull
+
+Pull an image into the host's image cache ahead of a create, so the create
+need not wait on the network. It resolves, checks and admits exactly as
+`create --image` does, and prints the `repository@digest` it resolved to.
+
+```sh
+capsem images pull codex-cli
+capsem images pull --registry-ca ca.pem registry.company.com/team/dev:latest
+```
 
 ## Network commands
 

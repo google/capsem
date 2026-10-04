@@ -23,9 +23,11 @@ const STATUS_POLL: Duration = Duration::from_millis(250);
 /// The flags that make a VM an image's: shared by `create` and `run`.
 #[derive(clap::Args, Debug, Default)]
 pub(super) struct ImageArgs {
-    /// OCI image (docker://IMAGE or registry/repository:tag) and the command
-    /// replacing its Cmd. Everything after the image is that command, as with
-    /// `docker run`, so options go before --image.
+    /// OCI image -- a catalog name from `capsem images` (codex-cli),
+    /// docker://IMAGE, or registry/repository:tag -- and the command replacing
+    /// its Cmd. Everything after the image is that command, as with `docker
+    /// run`, so options go before --image. A catalog name wins over the Docker
+    /// Hub image it may look like; Docker Hub is always docker://IMAGE.
     #[arg(long, num_args = 1.., allow_hyphen_values = true, value_names = ["IMAGE", "CMD"])]
     pub image: Vec<String>,
     /// Publish loopback HOST_PORT:GUEST_PORT over VSOCK (host 0 picks a port)
@@ -70,25 +72,7 @@ impl<'a> Workload<'a> {
     /// The service's container spec. A reference that cannot name an image,
     /// or a registry user without a password, is refused before any VM exists.
     pub(super) async fn spec(&self, attach: bool) -> Result<ContainerSpec> {
-        capsem_assets::oci::image_reference(self.reference)
-            .context("--image expects docker://IMAGE or registry/repository:tag")?;
-        let username = self.image.registry_user.clone();
-        let password = match &username {
-            Some(_) => Some(
-                std::env::var("CAPSEM_REGISTRY_PASSWORD")
-                    .context("--registry-user requires CAPSEM_REGISTRY_PASSWORD")?,
-            ),
-            None => None,
-        };
-        let ca_pem = match &self.image.registry_ca {
-            Some(path) => Some(tokio::fs::read_to_string(path).await.context("read registry CA")?),
-            None => None,
-        };
-        let registry = (username.is_some() || ca_pem.is_some()).then_some(RegistryAccess {
-            username,
-            password,
-            ca_pem,
-        });
+        check_image(self.reference).context("--image")?;
         Ok(ContainerSpec {
             image: self.reference.to_string(),
             args: self.args.to_vec(),
@@ -96,10 +80,44 @@ impl<'a> Workload<'a> {
                 .unwrap_or_default()
                 .into_iter()
                 .collect(),
-            registry,
+            registry: registry_access(self.image.registry_user.as_deref(), self.image.registry_ca.as_deref()).await?,
             attach,
         })
     }
+}
+
+/// Refuse what can name no image before the service is asked. A catalog
+/// name is the service's to resolve; anything else must be a reference.
+pub(super) fn check_image(image: &str) -> Result<()> {
+    if capsem_assets::oci::is_catalog_name(image) {
+        return Ok(());
+    }
+    capsem_assets::oci::image_reference(image)
+        .map(drop)
+        .context("expects a catalog name (see `capsem images`), docker://IMAGE or registry/repository:tag")
+}
+
+/// Access to a private registry for one pull. The password comes from
+/// CAPSEM_REGISTRY_PASSWORD, never the command line; anonymous sends none.
+pub(super) async fn registry_access(
+    username: Option<&str>,
+    ca: Option<&std::path::Path>,
+) -> Result<Option<RegistryAccess>> {
+    let password = match username {
+        Some(_) => Some(
+            std::env::var("CAPSEM_REGISTRY_PASSWORD").context("--registry-user requires CAPSEM_REGISTRY_PASSWORD")?,
+        ),
+        None => None,
+    };
+    let ca_pem = match ca {
+        Some(path) => Some(tokio::fs::read_to_string(path).await.context("read registry CA")?),
+        None => None,
+    };
+    Ok((username.is_some() || ca_pem.is_some()).then(|| RegistryAccess {
+        username: username.map(str::to_owned),
+        password,
+        ca_pem,
+    }))
 }
 
 /// Create the VM. With a container workload the service pulls the image and
