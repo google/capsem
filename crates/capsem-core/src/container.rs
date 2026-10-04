@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 
+pub mod admission;
 pub mod publish;
 pub mod seccomp;
 pub mod stage;
