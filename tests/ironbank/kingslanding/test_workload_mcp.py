@@ -15,9 +15,9 @@ import shlex
 import sqlite3
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID
 from helpers.service import exec_output_text, vm_session_db_path
 from helpers.session_ledger import open_session_ledger
+from helpers.settings_policy import apply_settings_rule
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_run import created, service
@@ -106,17 +106,14 @@ def test_a_workload_calls_capsem_mcp_over_http_and_policy_refuses_it(service, tm
         }, allowed
 
         # A live rule refuses one call; the workload gets the refusal, not the tool.
-        rule = client.put(
-            f"/profiles/{CODE_PROFILE_ID}/enforcement/rules/{RULE}/edit",
-            {
-                "name": RULE,
-                "action": "block",
-                "match": f'mcp.tool_call.name.contains("echo") && mcp.request.arguments.contains("{FORBIDDEN}")',
-                "reason": "Kingslanding workload MCP refusal proof.",
-            },
+        reload = apply_settings_rule(
+            service,
+            RULE,
+            action="block",
+            match=f'mcp.tool_call.name.contains("echo") && mcp.request.arguments.contains("{FORBIDDEN}")',
+            reason="Kingslanding workload MCP refusal proof.",
         )
-        (tmp_path / "rule.json").write_text(json.dumps(rule, indent=2))
-        assert rule["rule"]["action"] == "block", rule
+        (tmp_path / "rule.json").write_text(json.dumps(reload, indent=2))
         refused = mcp(client, vm_id, echo(4, FORBIDDEN))
         (tmp_path / "refused.json").write_text(json.dumps(refused, indent=2))
         assert refused == {
