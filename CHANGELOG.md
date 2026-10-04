@@ -345,6 +345,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   official `dev`, `claude-code`, `codex-cli` and `agy` images -- read
   end-of-file and exited at once, leaving a session with no workload. The
   command now runs on a terminal Capsem holds, as `docker run -dit` does.
+- `GET /vms/{id}/container` and `capsem` report a workload that ran and
+  ended as `exited`, with its exit code. It stayed `running` forever.
 - `localhost` resolves inside the VM again. The runtime image booted with an
   empty `/etc/hosts` and the guest DNS never answers `localhost`, so tools
   that connect to `localhost` failed; capsem-init now provides

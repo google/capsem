@@ -658,15 +658,45 @@ fn observe(
     let Some(mut status) = live.or_else(|| read_launch_record(&session_dir).map(LaunchRecord::starting)) else {
         return Ok(None);
     };
-    if status.state == ContainerState::Starting {
-        if staged_marker(state, id, capsem_core::container::STAGE_RUNNING) {
-            status.state = ContainerState::Running;
-        } else if staged_marker(state, id, capsem_core::container::STAGE_FAILED) {
-            status.state = ContainerState::Failed;
-            status.error = Some("the workload did not start; `capsem logs` shows why".into());
+    if matches!(status.state, ContainerState::Starting | ContainerState::Running) {
+        if let Some(exited) = exited_marker(state, id) {
+            status.state = ContainerState::Exited;
+            status.exit_code = exited.code;
+        } else if status.state == ContainerState::Starting {
+            if staged_marker(state, id, capsem_core::container::STAGE_RUNNING) {
+                status.state = ContainerState::Running;
+            } else if staged_marker(state, id, capsem_core::container::STAGE_FAILED) {
+                status.state = ContainerState::Failed;
+                status.error = Some("the workload did not start; `capsem logs` shows why".into());
+            }
         }
     }
     Ok(Some(status))
+}
+
+/// A workload that ran and ended, as its stage records it.
+struct Exited {
+    /// `None` when the marker's code does not parse.
+    code: Option<i32>,
+}
+
+/// Whether the workload of VM `id` ran and ended, and how. The guest writes
+/// the marker, so it is opened without following links and read only a few
+/// bytes deep.
+fn exited_marker(state: &ServiceState, id: &str) -> Option<Exited> {
+    use std::io::Read as _;
+    let path = format!(
+        "{}/{}",
+        capsem_core::container::STAGE,
+        capsem_core::container::STAGE_EXITED
+    );
+    let (parent, name) = resolve_workspace_target(state, id, &path, false).ok()?;
+    let file = parent.open_file(&name, ContainedOpenOptions::read_only()).ok()?;
+    let mut text = String::new();
+    file.take(32).read_to_string(&mut text).ok()?;
+    Some(Exited {
+        code: text.trim().parse().ok(),
+    })
 }
 
 /// Whether the launcher left `marker` in VM `id`'s stage.

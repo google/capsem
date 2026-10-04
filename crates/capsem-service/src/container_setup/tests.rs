@@ -675,6 +675,27 @@ async fn container_status_route_reports_running_only_once_the_guest_marks_it_run
     );
 }
 
+/// A workload that ran and ended is `exited`, with its code -- not `running`
+/// forever. The launcher writes the code into the stage when runc returns.
+#[tokio::test]
+async fn container_status_reports_a_workload_that_ran_and_ended_as_exited_with_its_code() {
+    let fx = fixture(images());
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    start(&fx.state, "box".into(), spec(None));
+    owner.await.unwrap();
+    wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
+    mark(&fx, "ready");
+    mark(&fx, "running");
+    let (_, body) = get_status(&fx.state, "box").await;
+    assert_eq!(body["state"], "running");
+
+    std::fs::write(fx.workspace.join(".capsem-image").join("exited"), b"3\n").unwrap();
+    let (status, body) = get_status(&fx.state, "box").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], "exited", "{body}");
+    assert_eq!(body["exit_code"], 3, "{body}");
+}
+
 #[tokio::test]
 async fn container_status_survives_a_service_restart_through_the_launch_record() {
     let fx = fixture(images());
