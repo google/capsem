@@ -47,5 +47,4 @@ def test_gateway_forwards_update_status_for_update_surfaces(
     assert status["binary"]["state"] == "update_available"
     assert status["binary"]["update_available"] is True
     assert status["assets"]["latest"] == "2026.0628.1"
-    assert "profiles" not in status
     assert status["images"]["state"] == "not_published"

@@ -231,7 +231,7 @@ def test_a_name_used_elsewhere_in_the_test_file_does_not_register_it() -> None:
 
 
 def test_prose_is_not_mistaken_for_sql() -> None:
-    sources = {"x.rs": 'fn msg() { error!("pick a profile"); bail!("no rows selected"); }\n'}
+    sources = {"x.rs": 'fn msg() { error!("pick a session"); bail!("no rows selected"); }\n'}
     assert unregistered(sources, REGISTRY_SNIPPET) == {}
 
 

@@ -1,7 +1,7 @@
 """Citadel guard: policy files are published atomically.
 
-Policy sources (settings.toml, corp config, and the profile files before
-them) and each session's active policy were written with `fs::write`, which
+Policy sources (settings.toml and corp config) and each session's active
+policy were written with `fs::write`, which
 truncates the destination and then fills it. A reader between the two -- a
 reload in capsem-process, a concurrent load in the service -- saw an empty or
 half-written policy, and a crash in between left it that way

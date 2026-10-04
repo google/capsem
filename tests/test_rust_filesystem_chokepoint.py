@@ -15,7 +15,7 @@ would have been worse: a guard shaped around its own result.
 
 So the invariant is the one that actually failed. A hardlink is the only
 operation that makes two paths *the same file*, and there are exactly two in
-the workspace. `capsem-admin` used one to stage profile payloads and put 48
+the workspace. `capsem-admin` used one to stage config payloads and put 48
 checked-in `config/` files inside published release output -- one inode, so a
 chmod on the artifact rewrites tracked source and no content digest notices.
 Auditing every hardlink is cheap precisely because hardlinks are rare, and it

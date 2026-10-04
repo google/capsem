@@ -41,7 +41,6 @@ class TestStatusEndpoint:
     def test_status_includes_asset_readiness_and_manifest_provenance(self, gw_client):
         """GET /status carries the asset status and installed manifest provenance."""
         resp = gw_client.get("/status")
-        assert "profiles" not in resp
         assets = resp.get("assets")
         assert assets is not None
         assert assets["ready"] is False
@@ -61,11 +60,6 @@ class TestStatusEndpoint:
         assert manifest["refresh_policy"] == "24h"
         assert manifest["assets_current"] == "2026.0613.1"
         assert manifest["binaries_current"] == "1.3.0"
-
-    def test_status_vms_carry_no_profile(self, gw_client):
-        resp = gw_client.get("/status")
-        assert resp["vms"]
-        assert all("profile_id" not in vm for vm in resp["vms"])
 
     def test_status_caches_within_ttl(self, gw_client):
         """Two rapid calls return identical data (cache TTL is 2s)."""

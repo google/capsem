@@ -2,7 +2,7 @@
 
 Locked output of `capsem-bench dns-load` captured during T3
 closure (mitm-redesign sprint, T3.4). This historical baseline used
-`api.openai.com` with active profile rules allowing it, so the first
+`api.openai.com` with active policy rules allowing it, so the first
 query went through upstream forwarding and subsequent queries hit the
 answer cache.
 
@@ -55,6 +55,6 @@ The decision distribution must match what the target says. For the
 default `load-test.capsem-bogus` fixture, expect
 `decision_distribution = {"denied": N}` and `errors = 0`. For an
 allowed upstream/cache target such as `api.openai.com`, expect
-`{"allowed": N}` once the active profile allows it. Any
+`{"allowed": N}` once the active policy allows it. Any
 `transport_error` > 0 outside that shape is a real proxy bug, not bench
 noise.

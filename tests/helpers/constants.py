@@ -10,7 +10,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_VARIABLE = "CAPSEM_ASSETS_DIR"
-PROFILES_VARIABLE = "CAPSEM_PROFILES_DIR"
 BIN_VARIABLE = "CAPSEM_RELEASE_BIN_DIR"
 
 
@@ -20,16 +19,10 @@ def content_assets_root(environment: Mapping[str, str] | None = None) -> Path:
     return Path(source.get(ASSETS_VARIABLE) or PROJECT_ROOT / "cache" / "target" / "assets")
 
 
-def content_profiles_root(environment: Mapping[str, str] | None = None) -> Path:
-    """The profile catalog paired with the selected asset manifest."""
-    source = os.environ if environment is None else environment
-    return Path(source.get(PROFILES_VARIABLE) or PROJECT_ROOT / "cache" / "target" / "config" / "profiles")
-
-
 def host_bin_root(environment: Mapping[str, str] | None = None) -> Path:
     """Where this test process's host binaries are, built or pulled.
 
-    The third of these, and for the same reason as the first two: a release
+    The second of these, and for the same reason as the first: a release
     lane qualifies from a private prefix carrying only tracked files, so
     `cache/target/cargo/debug` is a directory nothing ever wrote. The gate already answers
     this question -- `qualification.py` resolves `CAPSEM_RELEASE_BIN_DIR` or

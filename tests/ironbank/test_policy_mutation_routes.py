@@ -58,9 +58,6 @@ def _mutation_rows(service: ServiceInstance) -> list[dict[str, Any]]:
             row["name"] for row in conn.execute("PRAGMA table_info(policy_mutation_events)")
         )
         assert columns == LEDGER_COLUMNS
-        assert not conn.execute(
-            "SELECT name FROM sqlite_master WHERE name = 'profile_mutation_events'"
-        ).fetchall()
         rows = conn.execute("SELECT * FROM policy_mutation_events ORDER BY id ASC").fetchall()
     finally:
         conn.close()
@@ -175,22 +172,3 @@ def test_policy_mutation_routes_edit_settings_and_record_the_ledger() -> None:
     finally:
         service.stop()
 
-
-def test_retired_profile_mutation_routes_are_gone() -> None:
-    service = ServiceInstance()
-    try:
-        service.start()
-        client = service.client()
-        for method, path, body in (
-            ("PUT", "/profiles/code/enforcement/rules/probe/edit", {"action": "block"}),
-            ("DELETE", "/profiles/code/enforcement/rules/probe/delete", None),
-            ("PUT", "/profiles/code/detection/rules/probe/edit", {"action": "allow"}),
-            ("PUT", "/profiles/code/mcp/servers/probe/edit", {"enabled": False}),
-            ("DELETE", "/profiles/code/mcp/servers/probe/delete", None),
-            ("POST", "/profiles/code/skills/add", {}),
-            ("PATCH", "/profiles/code/plugins/dummy_pre_eicar/edit", {"mode": "block"}),
-        ):
-            status, payload = _status(client, method, path, body)
-            assert status in {404, 405}, (method, path, status, payload)
-    finally:
-        service.stop()

@@ -326,8 +326,8 @@ def _hydrate_asset_sha256_in_manifest(manifest_path: Path) -> None:
 
 
 # The runtime revision is the asset release the manifest names current
-# (`assets.current`): one kernel/initrd/rootfs set per architecture, with no
-# profile input. Deliberately not the workspace version: a fixture equal to the
+# (`assets.current`): one kernel/initrd/rootfs set per architecture.
+# Deliberately not the workspace version: a fixture equal to the
 # real one hides whether the code under test depends on it.
 RUNTIME_REVISION = "2030.0101.1"
 
@@ -361,7 +361,6 @@ def test_release_index_generator_writes_split_cache_headers(tmp_path: Path) -> N
     assert "/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/runtime/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/assets/*\n  Cache-Control: no-cache" not in headers
-    assert "/profiles/" not in headers
 
 
 def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path) -> None:
@@ -410,13 +409,10 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Capsem-1.4.1.pkg" in channel_html
     assert "capsem-1-4-1-pkg-sbom.spdx.json" in channel_html
     assert "The fastest way to ship with AI securely." not in index_html
-    assert not (dist / "channels" / "stable" / "profiles").exists()
-    assert not (dist / "profiles").exists()
 
     channel_manifest = json.loads(
         (dist / "assets" / "stable" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert "profiles" not in channel_manifest
     runtime = channel_manifest["runtime"]
     assert runtime["revision"] == RUNTIME_REVISION
     assert runtime["status"] == "current"
@@ -445,7 +441,6 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/runtime/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/assets/*\n  Cache-Control: no-cache" not in headers
-    assert "/profiles/" not in headers
 
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["schema"] == "capsem.assets_channel.health.v1"
@@ -460,9 +455,6 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     }
     assert health["updates"]["binary"]["latest"] == "1.4.1"
     assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
-    assert "profiles" not in health
-    assert "profiles" not in health["updates"]
-    assert "profile_catalog" not in health["urls"]
     assert health["runtime"]["revision"] == RUNTIME_REVISION
     assert health["runtime"]["state"] == "current"
     assert health["runtime"]["source"] == "manifest.runtime"
@@ -681,7 +673,6 @@ def test_runtime_release_deploys_generated_preview_only_when_activation_ready() 
     assert '--version "$RUNTIME_REVISION"' in author
     assert "cargo run -p capsem-admin -- release" in author
     assert '--runtime-revision "$RUNTIME_REVISION"' in author
-    assert "--profile" not in author
     assert "build_system/scripts/release/build-complete-release-channel.py" in author
     assert '--channel-source "$CHANNEL=file://$PWD/cache/target/assets/manifest.json"' in author
     assert '--primary-channel "$CHANNEL"' in author
@@ -1330,7 +1321,6 @@ def test_binary_release_index_records_source_on_packages_without_changing_runtim
     assert report["schema"] == "capsem.admin.assets_channel_record_binary.v1"
     assert report["version"] == "1.4.2"
     assert after["runtime"] == before["runtime"]
-    assert "profiles" not in after
     packages = {entry["name"]: entry for entry in after["packages"]}
     assert packages[pkg.name]["source_commit"] == SOURCE_COMMIT
     assert packages[deb.name]["source_commit"] == SOURCE_COMMIT
@@ -1584,7 +1574,6 @@ def test_binary_release_index_builds_release_site_without_rebuilding_vm_assets(
     assert health["runtime"]["source"] == "manifest.runtime"
     assert health["updates"]["runtime"]["source"] == "manifest.runtime"
     assert '"runtime"' in channel_manifest_text
-    assert '"profiles"' not in channel_manifest_text
     assert '"min_capsem_version": "1.4.0"' in channel_manifest_text
     assert "file://" not in channel_manifest_text
     assert str(tmp_path) not in channel_manifest_text

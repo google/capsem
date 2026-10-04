@@ -92,7 +92,7 @@ def _resolvable_package():
     On a developer's machine an earlier `just _cross-compile` had left one, so
     this passed for reasons unrelated to what it tests. It failed the moment a
     run got a checkout of its own, which is the same leftover-dependency class
-    as the CI run where 94 tests reported no materialized profiles.
+    as any test that reads a build output it never asked for.
 
     Created only when genuinely absent, and removed again, so a real package is
     never touched and an empty placeholder never outlives the test that needed
@@ -157,12 +157,6 @@ def _selected_content(tmp_path: Path) -> str:
     (content.assets / config.install.manifest_name).write_bytes(payload)
     for arch in config.architectures:
         (content.assets / arch).mkdir()
-    config_manifest = content.config_manifest(config)
-    config_manifest.parent.mkdir(parents=True)
-    config_manifest.write_bytes(payload)
-    profile = content.profiles(config) / "code/profile.toml"
-    profile.parent.mkdir(parents=True)
-    profile.write_text("name = 'code'\n")
     return str(content.root)
 
 
@@ -718,7 +712,6 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
         "--bin-dir",
         "--package-ready",
         "--assets-dir",
-        "--config-root",
     ):
         assert flag in proof, f"the glow-up is invoked without {flag}"
 
@@ -745,14 +738,12 @@ def test_install_test_stages_real_runtime_assets_for_mandatory_vm_proofs() -> No
     )
 
     assert layout.assets == "cache/target/tests/install/assets"
-    assert layout.config == "cache/target/tests/install/config"
     assert config.install.generated_inputs == (config.outputs.packages,)
     assert (
         config.install.suite.serve_script
         == "build_system/release_site/scripts/serve-release-test-root.py"
     )
     assert "stage_content" in proof
-    assert "cmp -s" in proof
     assert "stage-release-test-inputs" not in proof
 
     # Build the graph, render the site over it, then check it.
@@ -1054,9 +1045,7 @@ def test_binary_packages_embed_public_url_but_install_against_serialized_source(
         assert "needs: [preflight, resolve-channel-source]" in job
         assert "name: binary-channel-source" in job
 
-    assert "PREACTIVATION_MANIFEST=file://" in macos
-    assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in macos
-    assert "cache/target/package-content/assets/manifest.json" in linux
+    assert "--assets-dir cache/target/package-content/assets" in linux
     assert "--content-root cache/target/package-content" in linux
     assert "CAPSEM_INSTALL_MANIFEST_URL:" in linux
 
@@ -2759,8 +2748,6 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "obom-" not in build_pkg
     assert "sync-dev-assets.sh" not in build_pkg
     assert "CONFIG_ROOT" not in build_pkg
-    assert '"$SHARE_DIR/profiles"' not in build_pkg
-    assert "profile validate" not in build_pkg
     assert "for package_script in preinstall postinstall install-user" in build_pkg
     assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script"' in build_pkg
     assert (
@@ -2831,14 +2818,10 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "initrd-" not in repack_deb
     assert "vmlinuz-" not in repack_deb
     assert "obom-" not in repack_deb
-    assert "usr/share/capsem/profiles" not in repack_deb
-    assert "profile validate" not in repack_deb
     assert "sync-dev-assets.sh" not in repack_deb
     assert "capsem-admin" in repack_deb
     assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst
-    assert "/usr/share/capsem/profiles" not in deb_postinst
-    assert '"$CAPSEM_DIR/profiles"' not in deb_postinst
     assert (
         'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"'
         not in deb_postinst
@@ -2877,10 +2860,6 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "install-current-run" in deb_postinst
     assert "install-latest.log" in deb_postinst
     assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in deb_postinst
-    assert 'PROFILE_COUNTS=$(echo "$STATUS_OUTPUT" | sed -n' not in deb_postinst
-    assert '[ "$READY_PROFILES" = "$TOTAL_PROFILES" ]' not in deb_postinst
-    assert '[ "$TOTAL_PROFILES" -gt 0 ]' not in deb_postinst
-    assert "event=profiles_not_ready" not in deb_postinst
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
@@ -2914,8 +2893,6 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=asset_hydration_failed" not in pkg_postinstall
     assert "event=assets_copied" not in pkg_postinstall
     assert 'echo "capsem: packaged binary missing: $src" >&2' in pkg_postinstall
-    assert '"$PKG_SHARE/profiles"' not in pkg_postinstall
-    assert '"$CAPSEM_DIR/profiles"' not in pkg_postinstall
     assert "event=binary_missing bin=$bin" in pkg_postinstall
     assert 'source "$(dirname "$0")/install-user"' in pkg_postinstall
     assert "capsem_resolve_install_user" in pkg_postinstall
@@ -2950,10 +2927,6 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in postinstall
     assert "event=readiness_poll" in postinstall
     assert "attempt=$attempt" in postinstall
-    assert 'PROFILE_COUNTS=$(echo "$STATUS_OUTPUT" | sed -n' not in postinstall
-    assert '[ "$READY_PROFILES" = "$TOTAL_PROFILES" ]' not in postinstall
-    assert '[ "$TOTAL_PROFILES" -gt 0 ]' not in postinstall
-    assert "event=profiles_not_ready" not in postinstall
 
 
 def test_linux_postinstall_prints_service_journal_on_readiness_failure() -> None:
@@ -2976,7 +2949,6 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "kind: runtime" in workflow
-    assert "kind: profiles" not in workflow
     assert "output: cache/target/binary-public-before/runtime" in workflow
     assert "output: cache/target/candidate-runtime-inputs" in workflow
     assert "--input-dir cache/target/candidate-runtime-inputs" in workflow
@@ -3094,9 +3066,6 @@ def test_ci_install_job_selects_exact_runtime_before_building_packages() -> None
     stage_pos = install_job.index(
         "build_system/scripts/release/stage-release-test-inputs.py"
     )
-    materialize_pos = install_job.index(
-        "bash build_system/scripts/build/materialize-config.sh"
-    )
     package_pos = install_job.index(
         "uv run --project build_system --frozen capsem-gate cross-compile x86_64"
     )
@@ -3108,13 +3077,8 @@ def test_ci_install_job_selects_exact_runtime_before_building_packages() -> None
         < source_pos
         < fetch_pos
         < stage_pos
-        < materialize_pos
         < package_pos
         < gate_pos
-    )
-    assert (
-        "bash build_system/scripts/build/materialize-config.sh --pair-content"
-        in install_job
     )
     assert "kind: runtime" in install_job
     assert "architecture: x86_64" in install_job

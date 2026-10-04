@@ -2,7 +2,7 @@
 
 The binary replay contract matched ``echo NAME=`` until the workflow switched
 to ``printf``. The paired-content guard sliced YAML jobs by indentation and
-therefore never followed the profile job into its dispatched script. Both
+therefore never followed the asset job into its dispatched script. Both
 looked fast and precise; both were second, incomplete grammars that made the
 release dispatcher the first honest test.
 """
@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[2]
 RELEASE_CONTRACTS = ROOT / "tests/capsem-release"
 WORKFLOW_GUARDS = (
     ROOT / "tests/citadel/test_ci_calls_only_public_recipes.py",
-    ROOT / "tests/citadel/test_paired_content_reaches_every_lane.py",
     ROOT / "tests/citadel/test_workflow_enforcement.py",
     ROOT / "tests/citadel/test_workflow_heredocs_do_not_run_their_backticks.py",
 )

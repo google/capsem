@@ -219,14 +219,6 @@ _REQUIRED_ARTIFACTS = {
     / "build"
     / "linux-agent"
     / _ARCH,
-    # Seven checked-in tests read this directly rather than through
-    # `CAPSEM_PROFILES_DIR`, and they are not wrong to: a test should not have
-    # to know whether this run materialized its profiles or was handed them.
-    # Unregistered, a lane that did not provide them failed fifteen minutes in
-    # on `assert {'co-work', 'code'} <= set()`, which names neither the missing
-    # directory nor the lane that owed it. Declared here it is a collection
-    # error naming the path, before anything boots.
-    "cache/target/config/profiles": _PROJECT_ROOT / "cache" / "target" / "config" / "profiles",
 }
 
 _DEFAULT_TEST_NOFILE_LIMIT = 8192
@@ -261,7 +253,7 @@ def _required_artifacts_for_run(
 
     Local ``just test`` owns source-build intermediates such as
     ``cache/target/build/linux-agent``. A release functional lane instead consumes an
-    already-verified package and profile input cohort. Requiring the source
+    already-verified package and runtime input cohort. Requiring the source
     intermediate there would force an unrelated rebuild and would not prove
     the pulled package. Keep the manifest-derived release inputs and exact
     staged binary mandatory in that mode.
@@ -360,11 +352,11 @@ def pytest_sessionstart(session):
         if os.environ.get("CAPSEM_RELEASE_INPUT_DIR", "").strip():
             guidance = (
                 "The release lane must stage the manifest-selected package, "
-                "binary inventory, and verified profile inputs before invoking pytest."
+                "binary inventory, and verified runtime inputs before invoking pytest."
             )
         else:
             guidance = (
-                "Run `just build-assets code` (for assets/) and "
+                "Run `just build-assets` (for assets/) and "
                 "`uv run --project build_system --frozen capsem-builder agent` "
                 "(for cache/target/build/linux-agent/) "
                 "before invoking pytest. Locally, unset the env var to let "

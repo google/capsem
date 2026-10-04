@@ -2,7 +2,7 @@
 
 These routes are the UI/TUI contract for plugins and MCP configuration,
 answered from the built-in defaults, settings.toml and the corp config. Retired
-profile, policy, approval, and plugin-man surfaces must stay burned.
+policy, approval, and plugin-man surfaces must stay burned.
 """
 
 from __future__ import annotations
@@ -75,7 +75,6 @@ def test_settings_security_routes_expose_single_contract(client: Any, service_en
 
     assert mcp_info["builtin_local_enabled"] is True
     assert mcp_info["server_count"] == mcp_info["manual_server_count"] + 1
-    assert "profile_id" not in mcp_info
 
     assert mcp_default["action"] in {"allow", "ask", "block"}
     assert mcp_default["rule_id"] == "default.mcp"
@@ -91,21 +90,8 @@ def test_settings_security_routes_expose_single_contract(client: Any, service_en
         assert "policy" not in tool
 
 
-def test_retired_profile_and_security_routes_stay_burned(client: Any) -> None:
+def test_retired_security_routes_stay_burned(client: Any) -> None:
     for method, path in (
-        ("GET", "/profiles/list"),
-        ("GET", "/profiles/status"),
-        ("POST", "/profiles/reload"),
-        ("GET", "/profiles/code/info"),
-        ("GET", "/profiles/code/obom"),
-        ("POST", "/profiles/code/validate"),
-        ("GET", "/profiles/code/assets/status"),
-        ("GET", "/profiles/code/enforcement/rules/list"),
-        ("POST", "/profiles/code/enforcement/evaluate"),
-        ("GET", "/profiles/code/detection/rules/list"),
-        ("GET", "/profiles/code/skills/list"),
-        ("GET", "/profiles/code/plugins/list"),
-        ("GET", "/profiles/code/mcp/info"),
         ("GET", "/plugins/info"),
         ("GET", "/plugins/credential_broker/info"),
         ("GET", "/plugins/credential_broker/man"),

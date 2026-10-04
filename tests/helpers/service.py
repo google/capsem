@@ -21,7 +21,6 @@ from .constants import (
     BIN_DIR,
     EXEC_READY_TIMEOUT,
     content_assets_root,
-    content_profiles_root,
     host_bin_root,
 )
 from .http_transport import Transport
@@ -85,15 +84,10 @@ def test_rust_log_filter(environ: Mapping[str, str] = os.environ) -> str:
 
 @dataclass(frozen=True)
 class WinterfellArtifactRoots:
-    """One coherent binary/asset cohort for Winterfell.
-
-    An installed cohort has no profile catalog: packages ship none, so the
-    installed service runs on what it carries itself.
-    """
+    """One coherent binary/asset cohort for Winterfell."""
 
     binary_dir: Path
     assets_dir: Path
-    profiles_dir: Path | None
     installed: bool
 
     def binary(self, name: str) -> Path:
@@ -130,7 +124,6 @@ def resolve_winterfell_artifact_roots(
         return WinterfellArtifactRoots(
             binary_dir=host_bin_root(environment),
             assets_dir=content_assets_root(environment) / architecture,
-            profiles_dir=content_profiles_root(environment),
             installed=False,
         )
     if len(present) != len(WINTERFELL_ROOT_ENV) or any(
@@ -188,7 +181,6 @@ def resolve_winterfell_artifact_roots(
     return WinterfellArtifactRoots(
         binary_dir=binary_dir,
         assets_dir=assets_dir,
-        profiles_dir=None,
         installed=True,
     )
 
@@ -242,12 +234,6 @@ def wait_assets_settled(client: StatusReader, *, timeout: float = 5) -> dict:
             return last
         time.sleep(0.01)
     raise AssertionError(f"VM assets did not settle: {last}")
-
-
-def _contains_profile_toml(profiles_dir: Path) -> bool:
-    return any(
-        path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml")
-    )
 
 
 def record_failure(nodeid: str) -> None:

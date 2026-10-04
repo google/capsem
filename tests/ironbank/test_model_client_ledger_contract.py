@@ -1018,7 +1018,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
                 "db_boundary_contract": (
                     "security/latest must preserve every rule match row; "
                     "event_id alone is not unique because one event can match "
-                    "corp, profile, and default rules"
+                    "corp, settings, and default rules"
                 ),
             }
             route_row = route_security_by_event_rule[route_key]

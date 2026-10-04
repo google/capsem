@@ -81,7 +81,6 @@ def test_default_winterfell_roots_preserve_the_development_suite() -> None:
 
     assert roots.installed is False
     assert roots.binary_dir == PROJECT_ROOT / "cache" / "target" / "cargo" / "debug"
-    assert roots.profiles_dir == PROJECT_ROOT / "cache" / "target" / "config" / "profiles"
     assert roots.assets_dir.parent == PROJECT_ROOT / "cache" / "target" / "assets"
 
 
@@ -89,18 +88,15 @@ def test_development_winterfell_honours_the_functional_content_selector(
     tmp_path: Path,
 ) -> None:
     assets = tmp_path / "verified-assets"
-    profiles = tmp_path / "verified-profiles"
     roots = service.resolve_winterfell_artifact_roots(
         {
             "CAPSEM_ASSETS_DIR": str(assets),
-            "CAPSEM_PROFILES_DIR": str(profiles),
         }
     )
 
     architecture = "arm64" if os.uname().machine == "arm64" else "x86_64"
     assert roots.installed is False
     assert roots.assets_dir == assets / architecture
-    assert roots.profiles_dir == profiles
 
 
 @pytest.mark.parametrize(
@@ -130,8 +126,6 @@ def test_installed_winterfell_roots_accept_one_complete_installed_cohort(
     assert roots.installed is True
     assert roots.binary("capsem-service") == bin_dir / "capsem-service"
     assert roots.assets_dir == assets_dir
-    # Packages ship no profile catalog, so an installed cohort has none.
-    assert roots.profiles_dir is None
 
 
 @pytest.mark.parametrize(
@@ -231,7 +225,6 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
     assert child_environment["CAPSEM_WINTERFELL_ASSETS_DIR"] == str(assets_dir)
     assert child_environment["CAPSEM_RELEASE_BIN_DIR"] == str(bin_dir)
     assert child_environment["CAPSEM_ASSETS_DIR"] == str(assets_dir)
-    assert "CAPSEM_WINTERFELL_PROFILES_DIR" not in child_environment
     assert child_environment["CAPSEM_TEST_ARTIFACTS_ROOT"] == str(
         tmp_path / "failure-artifacts"
     )

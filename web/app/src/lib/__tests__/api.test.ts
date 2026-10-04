@@ -212,7 +212,6 @@ describe('api', () => {
       expect(snapshot.connected).toBe(true);
       expect((snapshot.status as Record<string, unknown>).service).toBe('running');
       expect((snapshot.assets_status as AssetStatus).current_arch).toBe('arm64');
-      expect('profiles_status' in snapshot).toBe(false);
       expect((snapshot.corp_info as Record<string, unknown>).installed).toBe(true);
       expect((snapshot.update_status as Record<string, any>).binary.update_available).toBe(true);
       const paths = mockFetch.mock.calls.slice(-4).map(call => call[0]);

@@ -93,10 +93,10 @@ def test_release_spine_keeps_paired_runtime_content_boundary() -> None:
     normalized = " ".join(text.split())
 
     for required in (
-        "Assets and materialized configuration travel as one `RuntimeContent` root.",
-        "must derive both paths from that one value and validate it before Docker or Colima",
-        "stages raw manifest inputs into the paired root on the host",
-        "the sealed proof never rematerializes them or falls back to checkout `assets`/`cache/target/config` selectors",
+        "Runtime assets travel as one `RuntimeContent` root.",
+        "must derive the assets path from that one value and validate it before Docker or Colima",
+        "stages raw manifest inputs into that root on the host",
+        "the sealed proof never rematerializes them or falls back to the checkout's `assets` selector",
     ):
         assert required in normalized
 

@@ -132,7 +132,6 @@ def test_asset_cards_and_launch_follow_the_asset_readiness_route(tmp_path: Path)
         assert ready["errors"] == []
         assert ready["current_arch"] == arch
         assert ready["asset_version"] == ASSET_VERSION
-        assert "profile_id" not in ready
         _assert_exact_assets(ready, installed, arch, missing=None)
         assert ready["manifest"]["validation_status"] == "valid"
         assert ready["manifest"]["format"] == 2

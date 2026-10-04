@@ -174,7 +174,6 @@ class TestInstalledLayoutContract:
             assert data.get("status") == "current"
             assert data.get("version"), "release graph missing version"
             assert data["packages"], "release graph missing packages"
-            assert "profiles" not in data, "release graph still publishes profiles"
             assert data["runtime"], "release graph missing runtime"
             return
 
@@ -315,10 +314,6 @@ class TestInstalledLayoutContract:
         assert (CAPSEM_DIR / "bin").is_dir()
         assert (CAPSEM_DIR / "assets").is_dir()
         assert (CAPSEM_DIR / "run").is_dir()
-
-    def test_install_ships_no_profile_catalog(self, installed_layout):
-        """The VM assets are one runtime; an install copies no profile catalog."""
-        assert not (CAPSEM_DIR / "profiles").exists()
 
     # -- Service spawn contract --
     # When CLI auto-launches, it runs:

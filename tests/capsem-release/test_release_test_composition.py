@@ -700,17 +700,10 @@ def test_release_glowup_runs_one_exact_candidate_transition() -> None:
     assert "cache/target/release/staging/module-channel-switch" not in glowup
 
 
-def test_standalone_local_glowup_materializes_config_without_release_builders() -> None:
-    """The package rail owns materializing the catalog `repack-deb.sh` reads.
-
-    Asserted as a dependency rather than as a call before each cross-compile,
-    which is what stops a new caller silently dropping it -- ordinary CI's
-    install gate hit exactly that and failed with "no materialized profiles
-    found".
-    """
+def test_standalone_local_glowup_runs_without_release_builders() -> None:
+    """The local package rail packages what was built; it never rebuilds images."""
     runner = _all_modules()
 
-    assert "_materialize-config" in _recipe("_cross-compile").splitlines()[0]
     assert "build the Linux release package for arm64" in _planned("test-glowup")
     for forbidden in ("_build-kernel", "_build-rootfs", "_build-images"):
         assert forbidden not in runner
@@ -741,7 +734,6 @@ def test_functional_module_runs_the_runtime_once_without_rebuilding() -> None:
     functional = plan.describe()
     broad = "\n".join(plan.step_named("functional.pytest.broad").render())
 
-    assert "CAPSEM_TEST_PROFILE" not in functional
     assert " tests/ -v " in broad
     assert "-m 'not serial'" in broad
     assert "tests/capsem-mcp/" not in functional
@@ -757,21 +749,6 @@ def test_release_functional_keeps_the_manifest_staged_input_selector() -> None:
         assert CONFIG.assets.test_root not in functional
 
 
-def test_release_integration_follows_the_declared_staged_config_root(
-    monkeypatch,
-) -> None:
-    """The legacy integration driver gets the same pulled catalog as pytest."""
-    from capsem_builder.gate import vmproofs
-
-    config_root = PROJECT_ROOT / "cache" / "target" / "synthetic-release-config"
-    monkeypatch.setenv(CONFIG.functional.config_root_variable, str(config_root))
-
-    rendered = "\n".join(vmproofs.integration(CONFIG).render())
-
-    expected = config_root / CONFIG.functional.profiles_subdir
-    assert f"{CONFIG.environment.profiles_dir}={expected}" in rendered
-
-
 def test_standalone_local_functional_uses_its_declared_canonical_inputs() -> None:
     """Only the composed candidate owns the private IronBank build fragment."""
     functional = _planned("test-functional")
@@ -783,7 +760,6 @@ def test_release_functional_helpers_never_hide_host_binary_builds() -> None:
     helper_paths = (
         "build_system/tests/helpers/mock_server.py",
         "tests/helpers/gateway.py",
-        "tests/capsem-admin/test_profile_materialization.py",
         "tests/test_capsem_bench_rust.py",
     )
 

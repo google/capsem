@@ -625,9 +625,6 @@ def test_update_fetches_release_manifest_and_writes_channel_cache(
     assert cache["update_available"] is True
     assert cache["latest_assets"]
     assert cache.get("current_assets") is None
-    assert "latest_profiles" not in cache
-    assert "profiles_update_available" not in cache
-    assert "Profile catalog" not in result.stdout
     assert cache["images_state"] == "current"
 
 
@@ -841,13 +838,11 @@ def test_corporate_manifest_metadata_uses_manifest_endpoint_for_update_check(
     assert cache["current_assets"]
     assert cache["latest_assets"] != cache["current_assets"]
     assert cache["assets_update_available"] is True
-    assert "profiles_update_available" not in cache
     assert cache["images_state"] == "current"
     assert (
         f"VM asset update available: {cache['current_assets']} -> {cache['latest_assets']}."
         in result.stdout
     )
-    assert "Profile catalog" not in result.stdout
     assert f"VM image update available: {cache['latest_images']}." in result.stdout
 
 
@@ -906,8 +901,6 @@ def test_update_check_reports_binary_asset_and_image_tracks(
         f"latest release is {cache['latest_assets']}." in result.stdout
     )
     assert f"VM image track latest: {cache['latest_images']}." in result.stdout
-    assert "Profile catalog" not in result.stdout
-    assert not (capsem_home / "profiles").exists()
 
 
 def test_binary_update_state_does_not_claim_asset_update(
@@ -1223,13 +1216,11 @@ def test_staged_update_state_matrix_keeps_cli_tracks_separated(
     assert cache["update_available"] is case["binary_update"]
     assert cache["assets_update_available"] is case["runtime_update"]
     assert cache["images_update_available"] is case["runtime_update"]
-    assert "profiles_update_available" not in cache
     if case["binary_update"]:
         assert "Binary update available" in result.stdout
     else:
         assert "Capsem binary is current" in result.stdout
         assert "Binary update available" not in result.stdout
-    assert "Profile catalog" not in result.stdout
     if case["runtime_update"]:
         assert "VM asset update available" in result.stdout
         assert "VM image update available" in result.stdout

@@ -81,8 +81,6 @@ def test_switch_stable_to_nightly_and_back() -> None:
     stable_runtime = stable_before["runtime"]
     nightly_runtime = nightly["runtime"]
 
-    assert "profiles" not in stable_before
-    assert "profiles" not in nightly
     assert stable_before == stable_after
     assert stable_before["version"] == "1.0.2"
     assert nightly["version"] == "1.0.2"

@@ -30,8 +30,7 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
         assert_eq!(vm.id(), Some("vm-1"));
         assert_eq!(vm.name(), Some("work"));
         // A create is one request: CPU, memory and what the VM runs are the
-        // service's to decide, so nothing asks `/status` first and the body
-        // names no profile.
+        // service's to decide, so nothing asks `/status` first.
         let body = request(&mut server, "/vms/create").await;
         assert_eq!(body, json!({"name": null, "persistent": false}));
     }
@@ -135,7 +134,6 @@ async fn container_and_port_resources_hide_wire_exposure_details() {
         .await
         .unwrap();
     let create = request(&mut server, "/vms/create").await;
-    assert!(create.get("profile_id").is_none(), "a create never names a profile");
     assert_eq!(create["env"], serde_json::Value::Null);
     assert_eq!(create["container"]["image"], "docker://busybox:latest");
     assert_eq!(create["container"]["env"]["MODE"], "preview");

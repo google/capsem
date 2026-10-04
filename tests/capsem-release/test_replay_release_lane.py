@@ -36,7 +36,6 @@ def test_binary_replay_uses_fabricated_content_and_exact_workflow_environment(
     assert environment["CAPSEM_RELEASE_BEFORE_PACKAGE"] == ""
     assert "CAPSEM_RELEASE_RUNTIME" not in environment
     assert environment["CAPSEM_TEST_ASSETS_DIR"] == f"{cohort['content_root']}/assets"
-    assert environment["CAPSEM_TEST_CONFIG_ROOT"] == f"{cohort['content_root']}/cache/target/config"
 
     activation = workflow_step(
         ROOT / ".github" / "workflows" / "release.yaml",

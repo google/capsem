@@ -8,9 +8,9 @@ from helpers.persistent_registry import registry_entry, write_registry
 from helpers.service import ServiceInstance
 
 DEFUNCT_ID = "33333333-3333-4333-8333-333333333333"
-LEGACY_ID = "44444444-4444-4444-8444-444444444444"
+INCOMPATIBLE_ID = "44444444-4444-4444-8444-444444444444"
 DEFUNCT_NAME = "stale-overlay"
-LEGACY_NAME = "legacy-profile"
+INCOMPATIBLE_NAME = "missing-overlay"
 
 
 def _curl_json_with_status(service: ServiceInstance, method: str, path: str, body=None):
@@ -48,8 +48,8 @@ def test_defunct_overlayfs_session_is_non_resumable_and_purgeable():
         )
         Path(defunct["session_dir"], "process.log").write_text("boot died before ready\n")
         Path(defunct["session_dir"], "serial.log").write_text(last_error)
-        # An entry written before profiles were removed is incompatible.
-        incompatible = registry_entry(svc.tmp_dir, LEGACY_ID, LEGACY_NAME, profile_id="code")
+        # A persistent VM whose system overlay is gone cannot boot as recorded.
+        incompatible = registry_entry(svc.tmp_dir, INCOMPATIBLE_ID, INCOMPATIBLE_NAME, overlay=False)
         write_registry(svc.tmp_dir, [defunct, incompatible])
 
         svc.start()
@@ -80,16 +80,16 @@ def test_defunct_overlayfs_session_is_non_resumable_and_purgeable():
         assert "resume failed" in error["error"]
         assert "Stale file handle" in error["error"]
 
-        legacy_row = _row(client.get("/vms/list"), LEGACY_ID)
-        assert legacy_row["name"] == LEGACY_NAME
-        _assert_not_resumable(legacy_row, "Incompatible")
-        assert "'code' profile" in legacy_row["resume_blocked_reason"]
-        assert "last_error" not in legacy_row
+        incompatible_row = _row(client.get("/vms/list"), INCOMPATIBLE_ID)
+        assert incompatible_row["name"] == INCOMPATIBLE_NAME
+        _assert_not_resumable(incompatible_row, "Incompatible")
+        assert "system overlay rootfs.img unavailable" in incompatible_row["resume_blocked_reason"]
+        assert "last_error" not in incompatible_row
 
-        legacy_status = client.get(f"/vms/{LEGACY_ID}/status")
-        _assert_not_resumable(legacy_status, "Incompatible")
-        assert "'code' profile" in legacy_status["resume_blocked_reason"]
-        assert legacy_status.get("last_error") is None
+        incompatible_status = client.get(f"/vms/{INCOMPATIBLE_ID}/status")
+        _assert_not_resumable(incompatible_status, "Incompatible")
+        assert "system overlay rootfs.img unavailable" in incompatible_status["resume_blocked_reason"]
+        assert incompatible_status.get("last_error") is None
 
         purge = client.post("/purge", {})
         assert purge["persistent_purged"] == 1
@@ -97,6 +97,6 @@ def test_defunct_overlayfs_session_is_non_resumable_and_purgeable():
 
         listing_after_purge = client.get("/vms/list")
         assert not [row for row in listing_after_purge["sandboxes"] if row["id"] == DEFUNCT_ID]
-        assert _row(listing_after_purge, LEGACY_ID)["status"] == "Incompatible"
+        assert _row(listing_after_purge, INCOMPATIBLE_ID)["status"] == "Incompatible"
     finally:
         svc.stop()

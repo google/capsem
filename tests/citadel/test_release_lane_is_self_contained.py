@@ -11,8 +11,8 @@ A local `just test` cannot tell the two apart, because there the checkout *is*
 the workspace: every path resolves, so a lane that silently read the wrong root
 passed here and failed there.
 
-Four separate consumers had it. The since-removed profile axis resolved the
-catalog against the checkout. The glow-up built `--assets-dir` and `--config-root` from the
+Four separate consumers had it. One resolved the config catalog against the
+checkout. The glow-up built `--assets-dir` and `--config-root` from the
 checkout layout. The suites were handed no content selection at all and fell
 back to the checkout. Each was found by dispatching a release and waiting.
 
@@ -117,7 +117,6 @@ def test_no_step_reads_a_staged_input_from_the_checkout() -> None:
     functional = config.functional
     staged_inputs = {
         "assets": ROOT / functional.assets_dir,
-        "materialized config": ROOT / functional.config_root,
         "host binary": ROOT / functional.binary,
     }
 
@@ -144,7 +143,7 @@ def test_every_suite_is_told_which_content_to_prove() -> None:
     on a developer machine it is the last local build, which is worse.
     """
     config, plan = _release_plan()
-    content = config.environment.content(assets="A", profiles="P")
+    content = config.environment.content(assets="A")
     variables = tuple(content)
 
     unselected = [
@@ -155,7 +154,7 @@ def test_every_suite_is_told_which_content_to_prove() -> None:
     ]
 
     assert not unselected, (
-        "these suites run without being told which assets and profiles to "
+        "these suites run without being told which assets to "
         f"prove, so they fall back to the checkout: {sorted(set(unselected))}"
     )
 

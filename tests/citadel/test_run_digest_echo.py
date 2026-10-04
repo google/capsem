@@ -268,7 +268,7 @@ CI_BLINDNESS_RATIONALE = """\
 The digest described local gate runs and nothing else, and that gap had a cost.
 
 Trunk sat red for fourteen consecutive CI runs on a single root cause -- a
-published profile that no longer satisfied a rule the source had grown -- while
+published release that no longer satisfied a rule the source had grown -- while
 this hook printed a healthy-looking local picture. Every instrument was
 correct. None of them was looking at the thing that was broken.
 

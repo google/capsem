@@ -53,7 +53,7 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
         "Running:   true\n"
         "Service:   ok (v1.5.9)\n"
         "Gateway:   ok (port 19222, v1.5.9)\n"
-        "Profiles:  2/2 ready (profile)\n"
+        "Assets: ready\n"
         f"  source:  {manifest.resolve().as_uri()}\n"
         "  status:  valid\n"
         "EOF\n",

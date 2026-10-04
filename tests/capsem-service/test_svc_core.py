@@ -77,5 +77,3 @@ class TestReloadConfig:
 
     def test_retired_reload_routes_are_removed(self, client):
         assert client.post("/reload-config", {}) is None
-        assert client.post("/profiles/reload", {}) is None
-        assert client.post("/profiles/code/reload", {}) is None

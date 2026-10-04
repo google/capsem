@@ -1,4 +1,4 @@
-"""Active docs and skills must teach the profile-derived build contract."""
+"""Active docs and skills must teach the current build contract."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ ALLOWED_CONFIG_DIRS = {
     "corp",
     "data",
     "docker",
-    "profiles",
     "settings",
 }
 
@@ -30,11 +29,6 @@ ALLOWED_CONFIG_FILES = {
     # file for the same reason as the others -- the drift report is only
     # meaningful against a baseline somebody agreed to.
     "dependency-inventory.json",
-    # Which profile each runtime gets by default, compiled into the binary.
-    # Catalog-level, so not a profile field: a published profile.toml is
-    # parsed strictly by the binary already installed, and a new field there
-    # fails every automatic update from it.
-    "profile-catalog.toml",
 }
 
 FORBIDDEN_CONFIG_DIRS = {
@@ -93,7 +87,6 @@ STALE_GUIDANCE = [
     "settings-registry",
     "settings-schema.generated",
     "mcp-tools.generated",
-    "capsem-admin profile init",
     "capsem-admin settings init",
     "capsem-admin manifest verify",
     "capsem-admin image plan",
@@ -118,7 +111,6 @@ STALE_GUIDANCE = [
     "file pins",
     "payload pins",
     "admin pin",
-    "profile payload pins",
     "Refresh payload pins",
     "resolved pins",
     "source pins",
@@ -156,9 +148,9 @@ def test_active_docs_do_not_teach_retired_guest_config_authority() -> None:
         text = _active_text(path)
         for needle in STALE_GUIDANCE:
             # Word-bounded so a retired term cannot be matched inside a current
-            # one. Substring matching flagged the correct term "profile pins"
-            # for containing the retired "file pins", which would have pushed
-            # docs away from the right vocabulary to satisfy the check.
+            # one: substring matching once flagged a correct term for containing
+            # the retired "file pins", which would have pushed docs away from
+            # the right vocabulary to satisfy the check.
             pattern = rf"(?<!\w){re.escape(needle)}(?!\w)"
             if re.search(pattern, text):
                 failures.append(f"{path.relative_to(PROJECT_ROOT)} contains {needle!r}")
@@ -263,14 +255,14 @@ def test_config_root_has_only_declared_authority_directories() -> None:
 
 
 def test_config_readme_declares_authority_and_public_admin_surface() -> None:
-    text = (CONFIG_ROOT / "README.md").read_text()
+    # Compared with line wrapping collapsed: a reflowed paragraph is the same
+    # contract, and a check that fails on it teaches nothing.
+    text = " ".join((CONFIG_ROOT / "README.md").read_text().split())
     for directory in sorted(ALLOWED_CONFIG_DIRS):
         assert f"`{directory}/`" in text
     for directory in sorted(FORBIDDEN_CONFIG_DIRS):
         assert f"`{directory}/`" in text
 
-    assert "Settings have a schema; profiles may\nhave a catalog" in text
     assert "Settings do not have a registry" in text
-    assert "`profile validate|check|materialize`" in text
     assert "`image build`" in text
-    assert "Do not add\n`init`, `new`, `add`" in text
+    assert "Do not add `init`, `new`, `add`" in text

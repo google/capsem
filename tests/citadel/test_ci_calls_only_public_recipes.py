@@ -7,9 +7,9 @@ is part of the canonical `test` graph". Every release workflow then took it.
 The cost was not the broken convention, it was where the integration ended up.
 With no public verb meaning "qualify this lane", each workflow assembled the
 lane itself: three or four private steps, in an order restated in YAML, with
-the deferred-profile branch written as a step-level `if:`. The module bodies
+the deferred-asset branch written as a step-level `if:`. The module bodies
 were shared; the sequence around them was not. That is how the asset lane grew
-a `_test-profile-artifacts` branch the binary lane never got -- a divergence no
+a private artifact-test branch the binary lane never got -- a divergence no
 test could see, because each half was individually correct.
 
 So the exception is gone. A workflow calls a public recipe or it calls none.

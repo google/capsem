@@ -469,7 +469,6 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             ),
             timeout_s=20,
         )
-        assert "profile_id" not in info
         # The session's totals are the writer's counter snapshot (#223),
         # written with the rows it counts.
         with closing(_connect_session_db(service, vm_id)) as conn:

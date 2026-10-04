@@ -41,10 +41,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import psutil
+from helpers.constants import ASSETS_DIR
 from helpers.gateway import GatewayInstance
 from helpers.http_transport import Transport
 from helpers.process_cpu import process_cpu_seconds
-from helpers.service import ServiceInstance, materialize_test_profiles
+from helpers.service import ServiceInstance
 from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, assert_event_bodies, seed_stopped_workspace
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -133,8 +134,7 @@ def main() -> int:
 
     metrics: dict[str, dict] = {}
     try:
-        service.profiles_dir = materialize_test_profiles(service.tmp_dir)
-        seed_stopped_workspace(service.tmp_dir, service.profiles_dir)
+        seed_stopped_workspace(service.tmp_dir, ASSETS_DIR)
         service.start()
         gateway.start()
         service_proc = psutil.Process(service.proc.pid)

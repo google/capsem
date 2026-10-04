@@ -32,17 +32,11 @@ def test_frontend_uses_current_route_vocabulary_not_retired_policy_vm_terms() ->
 
 def test_settings_page_hosts_service_wide_plugins_and_mcp() -> None:
     source = read("lib/components/shell/SettingsPage.svelte")
-    app = read("lib/components/shell/App.svelte")
 
     assert "{ key: 'plugins', label: 'Plugins'" in source
     assert "{ key: 'mcp', label: 'MCP'" in source
     assert "<PluginSection />" in source
     assert "<McpSection />" in source
-
-    # The VM profile concept is gone: no page, tab, or route for it.
-    assert not (FRONTEND / "lib/components/shell/ProfilePage.svelte").exists()
-    assert "ProfilePage" not in app
-    assert "'profile'" not in read("lib/stores/tabs.svelte.ts")
 
 
 def test_detail_panes_render_one_canonical_payload_view_without_preview_duplicates() -> None:

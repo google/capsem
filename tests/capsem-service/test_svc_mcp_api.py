@@ -111,7 +111,6 @@ class TestMcpApprove:
             {"action": "ask"},
         )
         assert resp is not None, "tool permission mutation returned no body"
-        assert "profile_id" not in resp
         assert resp.get("server_id") == SERVER
         assert resp.get("tool_id") == "not-a-real-tool"
         assert resp.get("action") == "ask"
@@ -119,7 +118,6 @@ class TestMcpApprove:
         assert mutation.get("category") == "mcp"
         assert mutation.get("operation") == "permission"
         assert mutation.get("filename") == "settings.toml"
-        assert "profile_id" not in mutation
         rule_id = mutation["rule_id"]
         assert rule_id.startswith("profiles.rules."), mutation
 

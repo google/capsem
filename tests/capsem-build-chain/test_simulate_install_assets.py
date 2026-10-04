@@ -41,14 +41,6 @@ def _write_fake_bins(root: Path) -> None:
         path.chmod(0o755)
 
 
-def _write_config(root: Path) -> Path:
-    profiles = root / "profiles"
-    (profiles / "code").mkdir(parents=True)
-    (profiles / "code" / "profile.toml").write_text("id = \"code\"\n")
-    (profiles / "code" / "enforcement.toml").write_text("# enforcement\n")
-    return root
-
-
 def _write_assets(root: Path, initrd_prefix: str, arch: str | None = None) -> tuple[str, str]:
     arch = arch or _host_arch()
     arch_dir = root / arch
@@ -89,7 +81,6 @@ def test_reinstall_updates_initrd_when_only_initrd_hash_changes(tmp_path: Path) 
     capsem_home = tmp_path / "home"
     assets_v1 = tmp_path / "assets-v1"
     assets_v2 = tmp_path / "assets-v2"
-    config = _write_config(tmp_path / "target-config")
     _write_fake_bins(bin_src)
     arch, initrd_v1 = _write_assets(assets_v1, "1111111111111111")
     _, initrd_v2 = _write_assets(assets_v2, "2222222222222222")
@@ -100,14 +91,12 @@ def test_reinstall_updates_initrd_when_only_initrd_hash_changes(tmp_path: Path) 
     }
 
     subprocess.run(
-        ["bash", str(SCRIPT), str(bin_src), str(assets_v1), str(config)], env=env, check=True
+        ["bash", str(SCRIPT), str(bin_src), str(assets_v1)], env=env, check=True
     )
     assert (capsem_home / "assets" / arch / initrd_v1).exists()
-    # Installs carry no profile catalog: the VM assets are one runtime.
-    assert not (capsem_home / "profiles").exists()
 
     subprocess.run(
-        ["bash", str(SCRIPT), str(bin_src), str(assets_v2), str(config)], env=env, check=True
+        ["bash", str(SCRIPT), str(bin_src), str(assets_v2)], env=env, check=True
     )
 
     assert (capsem_home / "assets" / "manifest.json").exists()
@@ -119,7 +108,6 @@ def test_simulate_install_removes_retired_binary_backups(tmp_path: Path) -> None
     bin_src = tmp_path / "bin"
     capsem_home = tmp_path / "home"
     assets = tmp_path / "assets"
-    config = _write_config(tmp_path / "target-config")
     _write_fake_bins(bin_src)
     _write_assets(assets, "1111111111111111")
     backup = capsem_home / "bin.backup.20260618T145156Z.mcp-keychain"
@@ -132,7 +120,7 @@ def test_simulate_install_removes_retired_binary_backups(tmp_path: Path) -> None
     }
 
     subprocess.run(
-        ["bash", str(SCRIPT), str(bin_src), str(assets), str(config)], env=env, check=True
+        ["bash", str(SCRIPT), str(bin_src), str(assets)], env=env, check=True
     )
 
     assert not backup.exists()
@@ -142,7 +130,6 @@ def test_simulate_install_removes_retired_python_admin_bundle(tmp_path: Path) ->
     bin_src = tmp_path / "bin"
     capsem_home = tmp_path / "home"
     assets = tmp_path / "assets"
-    config = _write_config(tmp_path / "target-config")
     _write_fake_bins(bin_src)
     _write_assets(assets, "1111111111111111")
     retired_bundle = capsem_home / "bin" / "capsem-admin-python"
@@ -155,7 +142,7 @@ def test_simulate_install_removes_retired_python_admin_bundle(tmp_path: Path) ->
     }
 
     subprocess.run(
-        ["bash", str(SCRIPT), str(bin_src), str(assets), str(config)], env=env, check=True
+        ["bash", str(SCRIPT), str(bin_src), str(assets)], env=env, check=True
     )
 
     assert not retired_bundle.exists()
@@ -165,7 +152,6 @@ def test_simulate_install_codesigns_macho_binaries_on_macos(tmp_path: Path) -> N
     bin_src = tmp_path / "bin"
     capsem_home = tmp_path / "home"
     assets = tmp_path / "assets"
-    config = _write_config(tmp_path / "target-config")
     fake_tools = tmp_path / "tools"
     log_path = tmp_path / "codesign.log"
     _write_fake_bins(bin_src)
@@ -195,7 +181,7 @@ def test_simulate_install_codesigns_macho_binaries_on_macos(tmp_path: Path) -> N
     }
 
     subprocess.run(
-        ["bash", str(SCRIPT), str(bin_src), str(assets), str(config)], env=env, check=True
+        ["bash", str(SCRIPT), str(bin_src), str(assets)], env=env, check=True
     )
 
     log = log_path.read_text()

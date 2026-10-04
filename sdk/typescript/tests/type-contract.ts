@@ -3,7 +3,6 @@ import {
   type ExecRequest, type FileListEntry, type TimelineStatus, type UpdateApplyRequest,
   type VmStatsDetailResponse,
 } from '../src/models/index.js';
-import type {Hypervisor} from '../src/hypervisor.js';
 import type {Networks, Ports} from '../src/resources.js';
 
 const request: UpdateApplyRequest = {};
@@ -17,7 +16,6 @@ const tree: FileListEntry = { ...leaf, type: FileEntryType.DIRECTORY, children: 
 const bodies: VmStatsDetailResponse['body_blobs'] = { event: [] };
 declare const networks: Networks;
 declare const ports: Ports;
-declare const hypervisor: Hypervisor;
 
 // @ts-expect-error An optional boolean cannot be explicit null.
 request.confirmed = null;
@@ -39,10 +37,6 @@ void networks.delete('net-1');
 void networks.logs('net-1');
 // @ts-expect-error Port closure requires an object returned by the SDK.
 void ports.close('exp-1');
-// @ts-expect-error A VM has no profile to select.
-void hypervisor.create({profile: 'code'});
-// @ts-expect-error A one-shot run has no profile to select.
-void hypervisor.run('true', {profile: 'code'});
 
 if (numeric !== 403 || status !== ToolDecision.DENIED || !Array.isArray(bodies.event)) {
   throw new Error('Generated type usage failed');

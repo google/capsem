@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_HASH_RATIONALE = """
 The exec stream changed from raw bytes to typed frames while its declarations
-were absent from capsem-proto's schema hash. Immutable profile assets then
+were absent from capsem-proto's schema hash. Immutable runtime assets then
 booted with a new host but failed every exec. Every separately framed
 host/guest protocol must be an explicit hash input so compatibility changes
 cannot keep the old digest.

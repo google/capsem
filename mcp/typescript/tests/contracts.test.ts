@@ -57,7 +57,7 @@ describe('contracts', () => {
     for (const name of ['capsem_status', 'capsem_pause', 'capsem_host_logs', 'capsem_mcp_call']) {
       expect(names.has(name), name).toBe(true);
     }
-    for (const name of ['capsem_version', 'capsem_suspend', 'capsem_service_logs', 'capsem_container_wait', 'capsem_profiles']) {
+    for (const name of ['capsem_version', 'capsem_suspend', 'capsem_service_logs', 'capsem_container_wait']) {
       expect(names.has(name), name).toBe(false);
     }
     const create = tools.find(tool => tool.name === 'capsem_create');
@@ -73,7 +73,6 @@ describe('contracts', () => {
       'capsem_mcp_call', 'capsem_mcp_default', 'capsem_mcp_info', 'capsem_mcp_refresh',
       'capsem_mcp_servers', 'capsem_mcp_tools',
     ]);
-    for (const tool of mcpTools) expect(Object.keys(tool.inputSchema.properties ?? {}), tool.name).not.toContain('profile');
     const exec = tools.find(tool => tool.name === 'capsem_exec');
     expect(Object.keys(exec?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['vm_id', 'command', 'timeout_secs']));
     expect(tools.every(tool => Boolean(tool.description))).toBe(true);

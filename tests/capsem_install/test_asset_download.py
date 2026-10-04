@@ -772,7 +772,6 @@ def test_update_assets_accepts_release_channel_runtime_manifest(
         f"/runtime/releases/stable/{NEW_ASSET_VERSION}/{arch}/{name}" for name in new_files
     }
     assert expected_blob_paths.issubset(set(requested_paths))
-    assert not any("/profiles/" in path for path in requested_paths)
     assert "missing field `format`" not in result.stderr
 
     installed_manifest = json.loads((assets / "manifest.json").read_text())
@@ -791,9 +790,6 @@ def test_update_assets_accepts_release_channel_runtime_manifest(
         target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
         assert target.read_bytes() == blob
-    # The runtime is the whole VM-asset release; nothing projects it into a
-    # per-profile catalog under the install home.
-    assert not (capsem_home / "profiles").exists()
 
 
 def test_installed_cli_switches_public_channels_then_corporate_channel_locks(

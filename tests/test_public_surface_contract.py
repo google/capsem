@@ -48,7 +48,7 @@ def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification()
 
     for name, extra in (
         ("release-binaries", {"channel": "stable"}),
-        ("release-profile", {"channel": "stable", "profile": "code"}),
+        ("release-assets", {"channel": "stable"}),
     ):
         plan = GateCommand.registry[name](
             RecordingRunner(ROOT),
