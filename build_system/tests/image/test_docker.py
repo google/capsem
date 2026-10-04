@@ -144,7 +144,7 @@ def test_software_inventory_records_the_runtime_debian_packages(tmp_path):
     assert container_output.call_count == 1
     assert container_output.call_args.args[3].startswith("dpkg-query -W")
     inventory = json.loads((tmp_path / "software-inventory.json").read_text())
-    assert inventory["schema"] == "capsem.profile_software_inventory.v1"
+    assert inventory["schema"] == "capsem.runtime_software_inventory.v1"
     assert inventory["packages"] == [
         {"architecture": "arm64", "name": "python3", "source": "dpkg", "version": "3.11.2"},
         {"architecture": "arm64", "name": "runc", "source": "dpkg", "version": "1.1.5"},
@@ -1584,7 +1584,7 @@ class TestBuildLedger:
             path.write_text(
                 json.dumps(
                     {
-                        "schema": "capsem.profile_software_inventory.v1",
+                        "schema": "capsem.runtime_software_inventory.v1",
                         "architecture": "arm64",
                         "packages": [],
                     }
@@ -2226,7 +2226,7 @@ class TestGenerateChecksums:
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
         (arm64 / "software-inventory.json").write_text(
-            json.dumps({"schema": "capsem.profile_software_inventory.v1", "packages": []})
+            json.dumps({"schema": "capsem.runtime_software_inventory.v1", "packages": []})
         )
         generate_checksums(tmp_path, "0.13.0")
         manifest = json.loads((tmp_path / "manifest.json").read_text())

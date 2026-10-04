@@ -1508,7 +1508,7 @@ def validate_evidence_document(
                 return f"{label} {url} contains live-host inventory"
         return None
     if expected_document == "software_inventory":
-        if document.get("schema") != "capsem.profile_software_inventory.v1":
+        if document.get("schema") != "capsem.runtime_software_inventory.v1":
             return f"{label} {url} software inventory schema mismatch"
         if not isinstance(document.get("packages"), list):
             return f"{label} {url} software inventory packages missing"

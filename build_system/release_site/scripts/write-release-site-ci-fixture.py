@@ -21,7 +21,7 @@ SBOM_FIXTURE_BLAKE3 = "df2133a32b67cf97c9046915933d1449d886c245fedc97a6bf45078c2
 
 SOFTWARE_INVENTORY = json.dumps(
     {
-        "schema": "capsem.profile_software_inventory.v1",
+        "schema": "capsem.runtime_software_inventory.v1",
         "architecture": "{arch}",
         "packages": [
             {

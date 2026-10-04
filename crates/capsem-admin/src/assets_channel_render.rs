@@ -643,9 +643,9 @@ pub(super) fn runtime_architecture_software(
     let inventory_bytes = fs::read(&inventory_path).with_context(|| format!("read {}", inventory_path.display()))?;
     let inventory: serde_json::Value =
         serde_json::from_slice(&inventory_bytes).with_context(|| format!("parse {}", inventory_path.display()))?;
-    if inventory.get("schema").and_then(|value| value.as_str()) != Some("capsem.profile_software_inventory.v1") {
+    if inventory.get("schema").and_then(|value| value.as_str()) != Some("capsem.runtime_software_inventory.v1") {
         return Err(anyhow!(
-            "{} schema must be capsem.profile_software_inventory.v1",
+            "{} schema must be capsem.runtime_software_inventory.v1",
             inventory_path.display()
         ));
     }

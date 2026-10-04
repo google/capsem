@@ -278,7 +278,7 @@ fn test_software_inventory_json(arch: &str) -> String {
     format!(
         "{}\n",
         serde_json::json!({
-            "schema": "capsem.profile_software_inventory.v1",
+            "schema": "capsem.runtime_software_inventory.v1",
             "architecture": arch,
             "packages": [
                 {

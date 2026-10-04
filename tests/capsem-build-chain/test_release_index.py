@@ -190,7 +190,7 @@ def _write_release_manifest(
             arm64 / "software-inventory.json",
             json.dumps(
                 {
-                    "schema": "capsem.profile_software_inventory.v1",
+                    "schema": "capsem.runtime_software_inventory.v1",
                     "architecture": "arm64",
                     "packages": [
                         {
@@ -223,7 +223,7 @@ def _write_release_manifest(
                 x86_64 / "software-inventory.json",
                 json.dumps(
                     {
-                        "schema": "capsem.profile_software_inventory.v1",
+                        "schema": "capsem.runtime_software_inventory.v1",
                         "architecture": "x86_64",
                         "packages": [
                             {

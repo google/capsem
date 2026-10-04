@@ -185,7 +185,7 @@ from pathlib import Path
 out = Path(sys.argv[1])
 arch = sys.argv[2]
 document = {
-    "schema": "capsem.profile_software_inventory.v1",
+    "schema": "capsem.runtime_software_inventory.v1",
     "architecture": arch,
     "packages": [
         {

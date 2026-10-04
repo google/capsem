@@ -2249,7 +2249,7 @@ def _install_release_graph_contract_fixture(
         "/packages/Capsem-1.4.0.pkg": b"package bytes\n",
         "/packages/Capsem-1.4.0.spdx.json": b'{"spdxVersion":"SPDX-2.3","files":[]}\n',
         f"/runtime/releases/stable/{runtime_revision}/arm64/software-inventory.json": (
-            b'{"schema":"capsem.profile_software_inventory.v1","packages":[]}\n'
+            b'{"schema":"capsem.runtime_software_inventory.v1","packages":[]}\n'
         ),
         f"{asset_base}/{current_assets}/arm64-vmlinuz": b"kernel bytes\n",
         f"{asset_base}/{current_assets}/arm64-initrd.img": b"initrd bytes\n",
@@ -2604,7 +2604,7 @@ def test_remote_readiness_rejects_runtime_evidence_content_drift() -> None:
 
     def stale_inventory(payloads: dict[str, bytes], _checker) -> None:
         payloads[f"https://release.capsem.org{source}"] = (
-            b'{"schema":"capsem.profile_software_inventory.v0","packages":[]}\n'
+            b'{"schema":"capsem.runtime_software_inventory.v0","packages":[]}\n'
         )
 
     fixture = _install_release_graph_contract_fixture(checker, payload_mutator=stale_inventory)
