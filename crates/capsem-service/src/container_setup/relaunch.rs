@@ -1,8 +1,9 @@
 //! A recorded workload under a new owner: a fork, a `--from` clone, a resume.
 //!
-//! The guest relaunches a staged image on every boot (capsem-init), so only
+//! The guest relaunches a `ready` stage on every boot (capsem-init), so mostly
 //! the host side needs restoring: the live status that routes exec into the
-//! workload, and the surface grant. An exposure lives in the VM owner process
+//! workload, and the surface grant. A stage whose first launch died before
+//! `ready` is the one case the owner starts itself (`needs_relaunch`). An exposure lives in the VM owner process
 //! that made it, so a new owner never inherits one; it is granted again once
 //! the workload runs.
 //!
@@ -49,7 +50,48 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
     let generation = state.containers.begin(id, &status.image);
     state.containers.advance(id, generation, |live| *live = status);
     state.containers.pin_manifest(id, generation, manifest);
+    if needs_relaunch(state, id) {
+        relaunch_in_background(state, id);
+    }
     grant_surface_in_background(state, id, generation);
+}
+
+/// Whether VM `id` holds a staged workload its boot did not start: capsem-init
+/// relaunches only a stage the launcher marked `ready`, which it does once the
+/// image is unpacked. A first launch that died before then left a stage with
+/// its options and no marker, which nothing else would ever start. A boot that
+/// found `ready` launched it already, so this never starts a second workload.
+pub(crate) fn needs_relaunch(state: &ServiceState, id: &str) -> bool {
+    staged_marker(state, id, "options.json") && !staged_marker(state, id, capsem_core::container::STAGE_READY)
+}
+
+/// Start VM `id`'s staged workload the way a create does, detached.
+fn relaunch_in_background(state: &Arc<ServiceState>, id: &str) {
+    let Ok(uds_path) = running_uds_path(state, id) else {
+        return;
+    };
+    let (state, id) = (Arc::clone(state), id.to_owned());
+    tokio::spawn(async move {
+        let reply = send_ipc_command(
+            &uds_path,
+            ServiceToProcess::Exec {
+                id: state.next_job_id(),
+                command: capsem_core::container::detached_launch_command(),
+                target: capsem_proto::ipc::ExecTarget::Vm,
+            },
+            Some(30),
+        )
+        .await;
+        match reply {
+            Ok(ProcessToService::ExecResult { exit_code: 0, .. }) => {
+                info!(
+                    vm_id = id.as_str(),
+                    "relaunched a staged workload its boot never started"
+                );
+            }
+            other => warn!(vm_id = id.as_str(), reply = ?other, "relaunch of a staged workload failed"),
+        }
+    });
 }
 
 /// Forget the staged image a clone carried, so its first boot launches

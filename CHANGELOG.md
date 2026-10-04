@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostics run; asking a session without a workload for `workload` is a
   400 rather than a silent VM exec. The session ledger records each exec's
   target (`exec_events.target`) beside the command as the caller wrote it.
+- A resumed or cloned image session whose first launch died before the image
+  was unpacked is launched again by the service. The VM's boot only relaunches
+  a fully staged image, so such a session used to stay `starting` forever.
 - A fork of an image session, and `capsem create --from`, stay image
   sessions: the clone keeps the pinned image and its volumes, `capsem exec`
   still enters the workload, and a GUI surface is granted afresh (an

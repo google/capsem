@@ -145,3 +145,25 @@ async fn a_vm_without_a_record_is_not_given_a_workload() {
     restore(&state, "box");
     assert!(state.containers.status("box").is_none());
 }
+
+/// capsem-init relaunches only a stage it finds `ready`; a first launch that
+/// died before writing it leaves a stage nothing would start again. The new
+/// owner relaunches exactly that case, and never one the boot already took.
+#[tokio::test]
+async fn only_a_staged_workload_that_never_got_ready_is_relaunched_by_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(make_test_state_owned());
+    let session = dir.path().join("session");
+    let stage = session.join("guest/workspace").join(capsem_core::container::STAGE);
+    std::fs::create_dir_all(&stage).unwrap();
+    insert_fake_instance_with_session_dir(&state, "box", 1, session);
+
+    assert!(!needs_relaunch(&state, "box"), "nothing staged, nothing to launch");
+    std::fs::write(stage.join("options.json"), b"{}").unwrap();
+    assert!(needs_relaunch(&state, "box"), "staged but never ready");
+    std::fs::write(stage.join(capsem_core::container::STAGE_READY), b"1\n").unwrap();
+    assert!(
+        !needs_relaunch(&state, "box"),
+        "the boot relaunches a ready stage itself"
+    );
+}
