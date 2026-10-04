@@ -17,8 +17,8 @@ fn args_parses_all_required() {
         "/tmp/rootfs.img",
         "--session-dir",
         "/tmp/session",
-        "--active-profile",
-        "/tmp/config/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -33,13 +33,13 @@ fn args_parses_all_required() {
     assert_eq!(args.assets_dir, PathBuf::from("/tmp/assets"));
     assert_eq!(args.rootfs, PathBuf::from("/tmp/rootfs.img"));
     assert_eq!(args.session_dir, PathBuf::from("/tmp/session"));
-    assert_eq!(args.active_profile, PathBuf::from("/tmp/config/profiles/code"));
+    assert_eq!(args.active_policy, PathBuf::from("/tmp/session/vm/active_policy.toml"));
     assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
 }
 
 /// The metric endpoint is granted by the service at launch; without the flag
 /// export is off. The process has no other way to learn it: it may not read
-/// settings or corp files (`test_process_profile_runtime_contract.py`).
+/// settings or corp files (`test_process_policy_runtime_contract.py`).
 #[test]
 fn args_metric_endpoint_is_granted_at_launch_and_off_without_it() {
     let required = [
@@ -52,8 +52,8 @@ fn args_metric_endpoint_is_granted_at_launch_and_off_without_it() {
         "/tmp/rootfs.img",
         "--session-dir",
         "/tmp/session",
-        "--active-profile",
-        "/tmp/config/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -88,8 +88,8 @@ fn args_default_cpus() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -115,8 +115,8 @@ fn args_default_ram_mb() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -142,8 +142,8 @@ fn args_default_scratch_disk_size_gb() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -169,8 +169,8 @@ fn args_custom_cpus_ram_and_scratch_disk_size() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -215,8 +215,8 @@ fn args_missing_required_id_fails() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -239,8 +239,8 @@ fn args_missing_required_assets_dir_fails() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -254,7 +254,7 @@ fn args_missing_required_assets_dir_fails() {
 }
 
 #[test]
-fn args_missing_required_active_profile_fails() {
+fn args_missing_required_active_policy_fails() {
     let result = Args::try_parse_from([
         "capsem-process",
         "--id",
@@ -289,8 +289,8 @@ fn args_invalid_cpus_type_fails() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -317,8 +317,8 @@ fn args_checkpoint_path_optional() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -344,8 +344,8 @@ fn args_checkpoint_path_set() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",
@@ -373,8 +373,8 @@ fn args_env_vars_parsed() {
         "/r",
         "--session-dir",
         "/s",
-        "--active-profile",
-        "/profiles/code",
+        "--active-policy",
+        "/tmp/session/vm/active_policy.toml",
         "--expected-kernel-hash",
         "aa",
         "--expected-initrd-hash",

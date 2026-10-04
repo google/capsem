@@ -91,7 +91,7 @@ pub enum ServiceToProcess {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
-    /// Request the process to reload its active profile from disk. Answered by
+    /// Request the process to reload its active policy from disk. Answered by
     /// `ConfigReloadResult` naming the digest of the bytes it applied.
     ReloadConfig {
         id: u64,
@@ -215,7 +215,7 @@ pub enum ServiceToProcess {
     },
     /// The service is plugging this VM into a network's switch and wants the
     /// guest's stream for that network's cable. The owner evaluates its
-    /// profile once, has the guest bring the cable up with `address`/`prefix`,
+    /// policy once, has the guest bring the cable up with `address`/`prefix`,
     /// then answers with the handoff socket the service should ask on, keyed
     /// by `token`; the stream comes back on that connection. `generation` is
     /// the attachment's, which only grows: the cable remembers the newest.
@@ -429,13 +429,13 @@ pub enum ProcessToService {
     /// The terminal stream on this connection stopped; no more TerminalOutput
     /// follows. Sent instead of going silent when the client fell behind.
     TerminalStreamEnded { reason: String },
-    /// Result of `ReloadConfig`. On success `active_profile_digest` is the
-    /// digest of the exact active-profile bytes now enforced; on failure the
+    /// Result of `ReloadConfig`. On success `active_policy_digest` is the
+    /// digest of the exact active-policy bytes now enforced; on failure the
     /// previous policy stays in force and `error` says why.
     ConfigReloadResult {
         id: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        active_profile_digest: Option<String>,
+        active_policy_digest: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },

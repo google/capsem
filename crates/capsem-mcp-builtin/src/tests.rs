@@ -420,16 +420,16 @@ fn pooled_peers_each_get_their_own_singleton_lock() {
 }
 
 #[test]
-fn a_missing_or_malformed_active_profile_names_the_file() {
+fn a_missing_or_malformed_active_policy_names_the_file() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("absent.toml");
     let missing = missing.to_str().unwrap();
-    let error = format!("{:#}", load_active_profile(missing).unwrap_err());
-    assert!(error.contains(&format!("read active profile {missing}")), "{error}");
+    let error = format!("{:#}", load_active_policy(missing).unwrap_err());
+    assert!(error.contains(&format!("read active policy {missing}")), "{error}");
 
     let malformed = dir.path().join("malformed.toml");
     std::fs::write(&malformed, "this is = = not toml").unwrap();
     let malformed = malformed.to_str().unwrap();
-    let error = format!("{:#}", load_active_profile(malformed).unwrap_err());
-    assert!(error.contains(&format!("parse active profile {malformed}")), "{error}");
+    let error = format!("{:#}", load_active_policy(malformed).unwrap_err());
+    assert!(error.contains(&format!("parse active policy {malformed}")), "{error}");
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-/// A reload that cannot load its active profile keeps the previous policy in
+/// A reload that cannot load its active policy keeps the previous policy in
 /// force and says so. It used to drop the connection without a reply, which the
 /// service could only report as "IPC connection closed".
 #[tokio::test]
@@ -20,14 +20,14 @@ async fn failed_reload_answers_with_its_error_and_keeps_the_previous_policy() {
         .await
         .unwrap();
 
-    std::fs::write(temp.path().join("active_profile.toml"), "id = [not toml").unwrap();
+    std::fs::write(temp.path().join("active_policy.toml"), "id = [not toml").unwrap();
     service_tx.send(ServiceToProcess::ReloadConfig { id: 7 }).await.unwrap();
     match service_rx.recv().await.unwrap() {
         ProcessToService::ConfigReloadResult {
             id: 7,
-            active_profile_digest: None,
+            active_policy_digest: None,
             error: Some(error),
-        } => assert!(error.contains("active_profile.toml"), "{error}"),
+        } => assert!(error.contains("active_policy.toml"), "{error}"),
         other => panic!("unexpected reload reply: {other:?}"),
     }
     assert!(

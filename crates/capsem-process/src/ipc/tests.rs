@@ -81,7 +81,7 @@ async fn malformed_handshake_is_refused_before_typed_ipc_starts() {
     assert!(open_ipc_channel(process_stream).await.unwrap().is_none());
 }
 
-/// The owner's IPC dispatcher as `main.rs` wires it, on a fixture profile
+/// The owner's IPC dispatcher as `main.rs` wires it, on a fixture policy
 /// with an in-memory ledger and a canned MCP aggregator.
 struct Dispatcher {
     job_store: Arc<JobStore>,
@@ -90,23 +90,14 @@ struct Dispatcher {
     events_tx: broadcast::Sender<ProcessToService>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
-    runtime_source: RuntimeProfileSource,
+    runtime_source: RuntimePolicySource,
     ready: Arc<AtomicBool>,
 }
 
 impl Dispatcher {
     fn new(temp: &std::path::Path) -> (Self, mpsc::Receiver<ServiceToProcess>) {
-        let active_profile = temp.join("active_profile.toml");
-        std::fs::write(
-            &active_profile,
-            r#"
-id = "code"
-name = "Code"
-description = "IPC dispatcher fixture."
-revision = "test.1"
-"#,
-        )
-        .unwrap();
+        let active_policy = temp.join("active_policy.toml");
+        std::fs::write(&active_policy, "[user_rules]\n[corp_rules]\n[network]\n").unwrap();
         let db = Arc::new(capsem_logger::DbWriter::open_in_memory(64).unwrap());
         let net_state = Arc::new(
             capsem_core::create_net_state_with_policy(
@@ -132,7 +123,7 @@ revision = "test.1"
                             name: "fixture".to_string(),
                             url: "stdio://fixture".to_string(),
                             enabled: true,
-                            source: "profile".to_string(),
+                            source: "config".to_string(),
                             is_stdio: true,
                             connected: true,
                             tool_count: 1,
@@ -194,7 +185,7 @@ revision = "test.1"
                 events_tx,
                 net_state,
                 mcp_runtime,
-                runtime_source: RuntimeProfileSource::new(active_profile),
+                runtime_source: RuntimePolicySource::new(active_policy),
                 ready: Arc::new(AtomicBool::new(true)),
             },
             ctrl_rx,
@@ -670,12 +661,12 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::ReloadConfig { id: 30 })
         .await
         .unwrap();
-    let applied = capsem_core::net::policy_config::active_profile_digest(
-        &std::fs::read(temp.path().join("active_profile.toml")).unwrap(),
+    let applied = capsem_core::net::policy_config::active_policy_digest(
+        &std::fs::read(temp.path().join("active_policy.toml")).unwrap(),
     );
     assert!(matches!(
         service_rx.recv().await.unwrap(),
-        ProcessToService::ConfigReloadResult { id: 30, active_profile_digest: Some(digest), error: None }
+        ProcessToService::ConfigReloadResult { id: 30, active_policy_digest: Some(digest), error: None }
             if digest == applied
     ));
 

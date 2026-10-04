@@ -1,7 +1,7 @@
 //! This VM's network cables: one per network it is plugged into.
 //!
 //! When the service plugs the VM into a network it says so over IPC
-//! (`LinkAttach`): this VM's profile decides once, the owner gives the
+//! (`LinkAttach`): this VM's policy decides once, the owner gives the
 //! network a cable id and tells the guest to bring that cable up with the
 //! network's address (`PlugCable`), and the token it answers with is
 //! presented on the handoff socket, where the reply is a duplicate of that
@@ -148,7 +148,7 @@ impl Cables {
     }
 
     /// The service is plugging this VM into `network` with `address`: the
-    /// profile decides once, the network's cable is brought up in the guest,
+    /// policy decides once, the network's cable is brought up in the guest,
     /// and an allowed plug waits under `token` for the service to present it.
     pub(crate) async fn expect(
         &self,
@@ -171,7 +171,7 @@ impl Cables {
                 .record(RuntimeSecurityEventType::NetworkConnectResult, reason, 0, 0)
                 .await?;
             anyhow::bail!(
-                "this VM's profile {} the link",
+                "this VM's policy {} the link",
                 if action == SecurityEnforcementAction::Ask {
                     "holds for approval"
                 } else {

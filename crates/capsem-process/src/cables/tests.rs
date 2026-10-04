@@ -151,7 +151,7 @@ async fn plugging_a_network_brings_its_cable_up_in_the_guest_once() {
 }
 
 #[tokio::test]
-async fn a_blocked_profile_refuses_the_plug_and_a_token_is_expected_once() {
+async fn a_blocked_policy_refuses_the_plug_and_a_token_is_expected_once() {
     let (blocked, mut told) = cables("block");
     let refused = blocked
         .expect("00000000000000aa", network(TEAM), IN_TEAM, 24, 1)
