@@ -1796,6 +1796,10 @@ lockfiles = [
     "web/docs/pnpm-lock.yaml",
     "web/marketing/pnpm-lock.yaml",
     "build_system/release_site/pnpm-lock.yaml",
+    # capsem-debug, the test-tooling image: what its sessions run is shipped
+    # into every VM the functional suites boot.
+    "images/capsem-debug/package-lock.json",
+    "images/capsem-debug/requirements.txt",
 ]
 # Reviewed exceptions; the Rust ones mirror .cargo/audit.toml exactly.
 config = ".config/osv-scanner.toml"
@@ -2291,6 +2295,27 @@ benchmark_paths = [
     "tests/ironbank/kingslanding/test_redis_benchmark.py",
     "tests/ironbank/kingslanding/test_publish_benchmark.py",
 ]
+
+# capsem-debug: the test-tooling image (images/capsem-debug). Sessions that
+# need test runners, network tools, package managers, agent CLIs or benchmark
+# peers run them inside a session of this image, so the VM runtime rootfs
+# carries none of it. It is a fixture, not an official image: the catalog
+# does not list it and no default admission policy admits it.
+#
+# `digests` pins each platform's OCI image manifest. The kingslanding prefetch
+# verifies the pinned layout in the shared `cache_stage`, pulling it from
+# `repository` by digest only when absent; `capsem-gate debug-image` builds it
+# locally into the same place and prints the digest to pin here. x86_64 is
+# built on a Linux x86_64 host (Colima here emulates no amd64), so only arm64
+# is pinned until that lane publishes one. tests/fixtures/oci/README.md has
+# the maintainer's publish steps.
+[functional.debug_image]
+name = "capsem-debug"
+context = "images/capsem-debug"
+script = "tests/fixtures/oci/debug_image.py"
+repository = "ghcr.io/google/capsem/capsem-debug"
+cache_stage = "test-images"
+digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6" }
 
 [modules]
 # The build-chain suites that need built artifacts. The release-contracts

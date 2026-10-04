@@ -209,11 +209,26 @@ maximum_age_hours = 168
 description = "Bounded diagnostics preserved from failed expensive tests."
 scope = "disk"
 path = "target/tests/evidence"
-warm_size_bytes = 4294967296 # 4 GiB
-max_size_bytes = 8589934592 # 8 GiB
+# Lowered from 4/8 GiB to fund `test-images` inside [budget]: the stage held
+# 53 MB when measured on 2026-10-04, so 6 GiB still bounds a run of failures.
+warm_size_bytes = 3221225472 # 3 GiB
+max_size_bytes = 6442450944 # 6 GiB
 prune_strategy = "lru"
 maximum_age_hours = 720
 maximum_count = 20
+
+[stages.test-images]
+description = "Digest-pinned OCI layouts of test-fixture images (capsem-debug), shared by every checkout and gate prefix."
+scope = "disk"
+# One directory per image digest: a local build and a registry pull of the same
+# digest land in the same entry, so the harness pulls a pinned image once per
+# machine rather than once per private checkout. An arm64 layout is ~430 MB.
+path = "target/tests/images"
+warm_size_bytes = 1073741824 # 1 GiB
+max_size_bytes = 2147483648 # 2 GiB
+prune_strategy = "lru"
+maximum_age_hours = 720
+maximum_count = 4
 
 [stages.test-benchmarks]
 description = "Local benchmark recordings used for performance regression checks."
