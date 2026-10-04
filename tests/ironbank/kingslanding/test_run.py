@@ -6,7 +6,6 @@ Kingslanding uses a pinned native image prepared before hermetic execution.
 import contextlib
 import json
 import os
-import re
 import signal
 import subprocess
 import time
@@ -15,7 +14,7 @@ import pytest
 from helpers.constants import BIN_DIR
 from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
 
-from tests.fixtures.oci.registry import registry
+from tests.fixtures.oci.registry import grant_image, registry
 
 pytestmark = pytest.mark.integration
 
@@ -59,29 +58,8 @@ def cli(service, *args):
     return [str(BIN_DIR / "capsem"), "--uds-path", str(service.uds_path), *args]
 
 
-def grant_image(service, reference):
-    """Allow the test registry as an image source and admit what it serves.
-
-    The service refuses any image its `[images]` policy does not name (the
-    catalog aside); a test's registry is a fresh localhost port, so each one
-    is granted, in the service's own settings.toml, before it is used.
-    """
-    authority = reference.split("/", 1)[0]
-    path = service.home_dir / "settings.toml"
-    text = path.read_text() if path.exists() else ""
-    # Only what an earlier grant listed: `catalog` and `catalog_ca` are
-    # quoted too, and are not selectors.
-    sources = re.search(r"^sources = \[(.*)\]$", text.split("[images]", 1)[-1], re.M)
-    granted = set(re.findall(r'"([^"]+)"', sources.group(1))) if "[images]" in text and sources else set()
-    granted.add(authority)
-    listed = ", ".join(f'"{name}"' for name in sorted(granted))
-    block = f"[images]\nsources = [{listed}]\nadmit = [{listed}]\n"
-    text = re.sub(r"\[images\]\n(?:[^\[\n][^\n]*\n)*", "", text)
-    path.write_text(text + ("\n" if text and not text.endswith("\n") else "") + block)
-
-
 def image_command(verb, service, reference, certificate=None, *args):
-    grant_image(service, reference)
+    grant_image(service.home_dir, reference)
     result = cli(service, verb)
     if certificate is not None:
         result += ["--registry-ca", str(certificate)]

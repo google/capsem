@@ -10,7 +10,11 @@ from .testmodules import InWorkspace
 
 
 def prefetch(config: GateConfig) -> Step:
+    """Every pinned image the suites serve: Redis and iperf3, and capsem-debug,
+    whose layout is verified in the shared cache and pulled by digest only
+    when absent."""
     settings = config.functional.kingslanding
+    platform = config.host_arch().docker_platform
     return step(
         "prefetch",
         Script(
@@ -19,7 +23,15 @@ def prefetch(config: GateConfig) -> Step:
             "--output",
             settings.fixture_dir,
             "--platform",
-            config.host_arch().docker_platform,
+            platform,
+            outside_sandbox=True,
+        ),
+        Script(
+            config,
+            config.functional.debug_image.script,
+            "prepare",
+            "--platform",
+            platform,
             outside_sandbox=True,
         ),
         contends=(config.exclusive("docker_daemon"),),

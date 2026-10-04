@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import http.server
 import json
+import re
 import ssl
 import subprocess
 import threading
@@ -14,6 +15,27 @@ from tests.fixtures.oci.prepare_redis import native_pin
 
 FIXTURES = Path(__file__).parent
 IMAGE = FIXTURES.parents[2] / "cache/target/tests/redis-image"
+
+
+def grant_image(home: Path, reference: str) -> None:
+    """Allow the test registry as an image source and admit what it serves.
+
+    The service refuses any image its `[images]` policy does not name (the
+    catalog aside); a test's registry is a fresh localhost port, so each one
+    is granted, in the service's own settings.toml, before it is used.
+    """
+    authority = reference.split("/", 1)[0]
+    path = home / "settings.toml"
+    text = path.read_text() if path.exists() else ""
+    # Only what an earlier grant listed: `catalog` and `catalog_ca` are
+    # quoted too, and are not selectors.
+    sources = re.search(r"^sources = \[(.*)\]$", text.split("[images]", 1)[-1], re.M)
+    granted = set(re.findall(r'"([^"]+)"', sources.group(1))) if "[images]" in text and sources else set()
+    granted.add(authority)
+    listed = ", ".join(f'"{name}"' for name in sorted(granted))
+    block = f"[images]\nsources = [{listed}]\nadmit = [{listed}]\n"
+    text = re.sub(r"\[images\]\n(?:[^\[\n][^\n]*\n)*", "", text)
+    path.write_text(text + ("\n" if text and not text.endswith("\n") else "") + block)
 
 
 @contextlib.contextmanager

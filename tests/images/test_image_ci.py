@@ -214,11 +214,43 @@ def test_an_image_without_a_description_is_refused() -> None:
 def test_descriptions_directories_and_workflow_name_the_same_images() -> None:
     """A new image directory that the workflow never builds, or a catalog entry
     with no image behind it, is a publication that silently does not happen."""
-    directories = {path.parent.name for path in (ROOT / "images").glob("*/Dockerfile")} - {"base"}
+    directories = {path.parent.name for path in (ROOT / "images").glob("*/Dockerfile")} - {
+        "base",
+        _debug_image_directory(),
+    }
     workflow = yaml.safe_load((ROOT / ".github/workflows/images.yaml").read_text())
     for job in ("image-arch", "image"):
         assert set(workflow["jobs"][job]["strategy"]["matrix"]["image"]) == directories, job
     assert set(catalog.descriptions()) == directories
+
+
+def _debug_image_directory() -> str:
+    from capsem_builder.gate import config as gate_config
+
+    return Path(gate_config.load(ROOT).functional.debug_image.context).name
+
+
+DEBUG_IMAGE_RATIONALE = """\
+capsem-debug is a test fixture, not an official image.
+
+It carries test runners, network tools, package managers and agent CLIs so the
+VM runtime does not. Sessions admit it only because a test grants its local
+registry; listed in images/catalog.toml it would be admitted by every default
+policy, since admission is the catalog's digests (crates/capsem-core
+container::admission), and built by images.yaml it would be published beside
+the official images under an input key no test pinned. Its one pin is
+config/gate.toml [functional.debug_image].
+"""
+
+
+def test_the_debug_image_is_neither_catalogued_nor_published_by_the_image_workflow() -> None:
+    name = _debug_image_directory()
+    assert (ROOT / "images" / name / "Dockerfile").is_file()
+    assert name not in catalog.descriptions(), DEBUG_IMAGE_RATIONALE
+    workflow = yaml.safe_load((ROOT / ".github/workflows/images.yaml").read_text())
+    for job in ("image-arch", "image"):
+        assert name not in workflow["jobs"][job]["strategy"]["matrix"]["image"], DEBUG_IMAGE_RATIONALE
+    assert name not in (ROOT / ".github/workflows/images.yaml").read_text(), DEBUG_IMAGE_RATIONALE
 
 
 def test_oci_architectures_resolve_to_the_guest_config() -> None:

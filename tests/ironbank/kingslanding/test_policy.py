@@ -11,9 +11,9 @@ from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.session_ledger import open_session_ledger
 from helpers.settings_policy import apply_settings_rule, write_settings_rule
 
-from tests.fixtures.oci.registry import registry
+from tests.fixtures.oci.registry import grant_image, registry
 from tests.ironbank.kingslanding.test_publish import redis
-from tests.ironbank.kingslanding.test_run import grant_image, service, wait_for
+from tests.ironbank.kingslanding.test_run import service, wait_for
 
 __all__ = ["redis", "service"]
 pytestmark = pytest.mark.integration
@@ -39,7 +39,7 @@ def test_container_pull_policy_stops_before_registry_egress_and_redacts_credenti
             reason="Kingslanding container pull boundary proof.",
         )
 
-        grant_image(service, reference)
+        grant_image(service.home_dir, reference)
         created = client.post(
             "/vms/create",
             {

@@ -32,6 +32,13 @@ just exec "capsem-doctor -x"           # Stop on first failure
 The runtime rootfs is minimal: no node, uv, git or AI CLIs. Those live in the OCI
 images under `images/`, and `tests/images/` proves each one boots and runs its agent.
 
+A host-side test that needs a tool the runtime lacks -- a test runner, network
+tool, package manager, model SDK, agent CLI or benchmark peer -- opens a
+`capsem-debug` session (`tests/helpers/debug_session.py`) and execs into its
+workload; `"target": "vm"` still reaches the VM. Never add test tooling to
+`runtime_apt_packages`. The image, its digest pin and how to rebuild it are in
+`tests/fixtures/oci/README.md`.
+
 ### Adding new in-VM tests
 
 1. Add test functions to the appropriate `guest/artifacts/diagnostics/test_*.py` or create `test_<category>.py`

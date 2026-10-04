@@ -16,6 +16,7 @@ from pydantic import PositiveFloat, PositiveInt, StringConstraints, model_valida
 from ..cache.tools import CachedToolPolicy
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import SafeToken, Strict
+from .functionalschema import DebugImageConfig, GreyjoyConfig, KingslandingConfig
 from .releaseschema import ReleasePairingEnvironment
 
 
@@ -79,20 +80,10 @@ class ModulesConfig(Strict):
     release_pairing: ReleasePairingEnvironment
 
 
-class KingslandingConfig(Strict):
-    fixture_script: str
-    fixture_dir: str
-    suite_path: str
-    benchmark_paths: tuple[str, ...]
-
-
-class GreyjoyConfig(Strict):
-    suite_path: str
-
-
 class FunctionalConfig(Strict):
     kingslanding: KingslandingConfig
     greyjoy: GreyjoyConfig
+    debug_image: DebugImageConfig
     injection_script: str
     integration_script: str
     binary: str

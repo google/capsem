@@ -93,6 +93,60 @@ restores the command and host bindings; fork copies the workload and workspace
 without copying host ports. Redis memory and image-declared tmpfs volumes are
 fresh on cold boot, so this does not promise database persistence across restart.
 
+## capsem-debug, the test-tooling image
+
+The VM runtime rootfs is minimal. Tests that need test runners, network
+tools, package managers, model SDKs, agent CLIs or benchmark peers run them in
+a session of `images/capsem-debug` instead: an exec without a target enters
+that workload, and `"target": "vm"` still reaches the VM. The image is all
+third-party content, every source pinned (see its Dockerfile). It is a test
+fixture, not an official image: `images/catalog.toml` does not list it, so no
+default admission policy admits it, and `.github/workflows/images.yaml` does
+not build it (`tests/images/test_image_ci.py` holds both).
+
+`config/gate.toml [functional.debug_image]` pins one image manifest digest
+per platform. `debug_image.py` keeps each pinned image as an OCI layout in the
+shared `test-images` cache stage (`config/cache.toml`), one directory per
+digest, so every checkout and gate prefix uses one copy:
+
+- the Kingslanding prefetch (`debug_image.py prepare`) verifies the pinned
+  layout, and only when it is absent pulls it from `repository` by digest,
+  verbatim, before the suites run with no network;
+- the suites call `debug_image.ready()`, which verifies and never fetches,
+  and serve the layout through `registry.layout_registry`.
+
+### Building, pinning and publishing it (maintainers)
+
+1. Change `images/capsem-debug/` (bump a pin, add a tool). Regenerate the
+   Python lock when `requirements.in` changes:
+   `uv pip compile images/capsem-debug/requirements.in --generate-hashes --python-version 3.11 --universal --exclude-newer <date> --no-header -o images/capsem-debug/requirements.txt`.
+2. `uv run --project build_system --frozen capsem-gate debug-image` builds it
+   for this host's platform into the cache stage and loads it into Docker as
+   `capsem-debug:<arch>`. It prints the line to pin.
+3. Put that digest in `[functional.debug_image] digests` and run the suites
+   against it: `uv run --project build_system --frozen capsem-gate focus-test kingslanding --slow`.
+   The prefetch finds the local layout, so nothing is pulled.
+4. Publish exactly those bytes, so the registry serves the pinned digest. With
+   push access to `ghcr.io/google/capsem` (a maintainer's token, never a trunk
+   workflow):
+
+   ```sh
+   layout=cache/target/tests/images/capsem-debug-<hex digest>
+   oras cp --from-oci-layout "$layout@sha256:<hex digest>" \
+     ghcr.io/google/capsem/capsem-debug:<arch>-<first 12 hex of the digest>
+   oras manifest fetch --descriptor ghcr.io/google/capsem/capsem-debug@sha256:<hex digest>
+   ```
+
+   `oras cp` copies the manifest and blobs verbatim; `docker push` would
+   recompress the layers and publish a different digest. Then attach its
+   OBOM the way the official images do:
+   `uv run --project build_system --frozen python images/ci/rootfs.py --image capsem-debug:<arch> --arch <arch> --repository ghcr.io/google/capsem/capsem-debug --digest sha256:<hex digest> --out <dir>`
+   and `oras attach --artifact-type application/vnd.cyclonedx+json ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/obom.cdx.json:application/vnd.cyclonedx+json`.
+   The package must be public, or CI's anonymous pull by digest fails.
+5. x86_64: repeat 2-4 on a Linux x86_64 host (Colima on Apple Silicon has no
+   amd64 emulator here) and add its `linux/amd64` digest beside the arm64 one.
+   Until then the x86_64 lanes fail at the prefetch, naming the missing pin.
+
 ## Artifact identities and evidence
 
 Supported ARM64 proof: **23 passed in 123.47s** at

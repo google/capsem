@@ -5,6 +5,39 @@ from helpers.service import exec_output_text
 
 pytestmark = pytest.mark.guest
 
+#: One ICMP echo to 8.8.8.8 from a raw socket, waiting two seconds for an
+#: echo reply from that address. A send the stack refuses (no route) is as
+#: good as no reply: either way nothing left the VM and came back.
+ICMP_ECHO_PROBE = r"""python3 - <<'PY'
+import socket, struct, time
+
+def checksum(data):
+    total = sum(struct.unpack(f"!{len(data) // 2}H", data))
+    total = (total >> 16) + (total & 0xFFFF)
+    return ~(total + (total >> 16)) & 0xFFFF
+
+header = struct.pack("!BBHHH", 8, 0, 0, 0x4341, 1)
+packet = header + b"capsem!!"
+packet = packet[:2] + struct.pack("!H", checksum(packet)) + packet[4:]
+sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+try:
+    sock.sendto(packet, ("8.8.8.8", 0))
+except OSError as error:
+    print("ICMP no-reply send", error.errno)
+    raise SystemExit(0)
+deadline = time.monotonic() + 2
+while (left := deadline - time.monotonic()) > 0:
+    sock.settimeout(left)
+    try:
+        data, (source, _) = sock.recvfrom(1024)
+    except TimeoutError:
+        break
+    if source == "8.8.8.8" and data[(data[0] & 0x0F) * 4] == 0:
+        print("ICMP reply", source)
+        raise SystemExit(0)
+print("ICMP no-reply timeout")
+PY"""
+
 
 class TestGuestNetwork:
 
@@ -66,10 +99,15 @@ class TestGuestNetwork:
         )
 
     def test_external_ping_fails(self, guest_env):
-        """Direct ping to external IP should fail (air-gapped)."""
+        """An ICMP echo to an external address gets no reply (air-gapped).
+
+        Sent from a raw socket as VM root rather than with `ping`: the runtime
+        carries no network tools (they are in capsem-debug), and `ping`
+        missing used to read as `exit=127`, which this test never accepted.
+        """
         client, name = guest_env
-        resp = client.post(f"/vms/{name}/exec", {"command": "ping -c 1 -W 2 8.8.8.8 2>&1; echo exit=$?"})
-        print(f"DEBUG: {resp}")
-        stdout = exec_output_text(resp) if resp else ""
-        # Ping should fail in an air-gapped VM
-        assert "exit=1" in stdout or "exit=2" in stdout or "unreachable" in stdout.lower() or "100% packet loss" in stdout
+        resp = client.post(f"/vms/{name}/exec", {"command": ICMP_ECHO_PROBE, "timeout_secs": 30})
+        assert resp is not None and resp.get("exit_code") == 0, resp
+        stdout = exec_output_text(resp)
+        assert "ICMP no-reply" in stdout, stdout
+        assert "ICMP reply" not in stdout.replace("ICMP no-reply", ""), stdout

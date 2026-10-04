@@ -1,0 +1,10 @@
+# The model SDKs capsem-debug's client scripts import. Locked with hashes in
+# requirements.txt; tests/fixtures/oci/README.md has the compile command.
+openai==2.54.0
+anthropic==0.121.0
+litellm==1.96.2
+ollama==0.6.2
+requests==2.34.2
+httpx==0.28.1
+# requests alone resolves urllib3 2.7.0 (PYSEC-2026-4175/4176/4177).
+urllib3>=2.8.0
