@@ -6175,7 +6175,7 @@ def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
     for fragment in forbidden_fragments:
         assert fragment not in source
 
-    assert "--no-index" in source
+    # The runtime's only package manager is apt, proven from a local .deb.
     assert "dpkg-deb --build" in source
 
 
@@ -6461,13 +6461,12 @@ def test_capsem_init_keeps_etc_traversable_for_apt_sandbox() -> None:
     assert "TLS trust lives under `/etc/ssl/certs`" in init
 
 
-def test_guest_virtiofs_pip_probe_is_hermetic() -> None:
+def test_guest_virtiofs_probes_never_install_from_the_network() -> None:
+    """The runtime ships no pip; pip is proven in a capsem-debug workload."""
     source = (PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_virtiofs.py").read_text()
 
-    assert "pip install --quiet cowsay" not in source
+    assert "pip install" not in source
     assert "import cowsay" not in source
-    assert "pip install --no-index" in source
-    assert "ZipFile" in source
 
 
 def test_automatic_docker_gc_never_prunes_tagged_images() -> None:
