@@ -230,10 +230,16 @@ fn the_built_in_policy_lets_the_doctor_reach_its_mock_server() {
 
     let rules = active.compile_security_rule_set().expect("active policy compiles");
     let evaluation = rules.evaluate(&event).expect("mock server request evaluates");
-    let first = evaluation.enforcement_rules().first().map(|rule| (rule.rule_id.as_str(), rule.action));
+    let first = evaluation
+        .enforcement_rules()
+        .first()
+        .map(|rule| (rule.rule_id.as_str(), rule.action));
 
     assert_eq!(
         first,
-        Some(("profiles.rules.default_000_capsem_mock_server", SecurityRuleAction::Allow))
+        Some((
+            "profiles.rules.default_000_capsem_mock_server",
+            SecurityRuleAction::Allow
+        ))
     );
 }
