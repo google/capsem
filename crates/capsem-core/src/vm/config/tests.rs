@@ -499,7 +499,7 @@ fn hash_verification_succeeds_with_correct_blake3() {
 
 #[test]
 fn algorithm_tagged_pins_verify_against_the_same_digest_as_bare_hex() {
-    // Profile pins derived from the release graph spell the digest
+    // Asset pins derived from the release graph spell the digest
     // `blake3:<hex>`; asset manifests spell the same digest as bare hex. Boot
     // receives whichever the caller holds, so both must verify the same bytes
     // rather than one of them failing as a mismatch against itself.

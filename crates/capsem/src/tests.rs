@@ -440,7 +440,7 @@ fn service_control_commands_do_not_cross_service_api_boundary() {
         let command = cli.command.as_ref().expect("parsed command");
         assert!(
             command_is_handled_before_service_api(command),
-            "{args:?} must be handled before UDS/service API construction so service control cannot depend on profile, status, or credential-store readiness"
+            "{args:?} must be handled before UDS/service API construction so service control cannot depend on asset, status, or credential-store readiness"
         );
     }
 }

@@ -696,8 +696,8 @@ fn cleanup_preserves_explicit_retention_filenames() {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path();
 
-    std::fs::write(base.join("vmlinuz-deadbeef12345678"), b"profile kernel").unwrap();
-    std::fs::write(base.join("rootfs-feedface87654321.erofs"), b"profile rootfs").unwrap();
+    std::fs::write(base.join("vmlinuz-deadbeef12345678"), b"pinned kernel").unwrap();
+    std::fs::write(base.join("rootfs-feedface87654321.erofs"), b"pinned rootfs").unwrap();
     std::fs::write(base.join("rootfs-1111111111111111.erofs"), b"old rootfs").unwrap();
 
     let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
@@ -727,8 +727,8 @@ fn channel_cache_isolation() {
     let nightly_rootfs_hash = "2222222222222222222222222222222222222222222222222222222222222222";
     let stable_rootfs = asset_dir.join(hash_filename("rootfs.erofs", stable_rootfs_hash));
     let nightly_rootfs = asset_dir.join(hash_filename("rootfs.erofs", nightly_rootfs_hash));
-    std::fs::write(&stable_rootfs, b"stable profile rootfs").unwrap();
-    std::fs::write(&nightly_rootfs, b"nightly profile rootfs").unwrap();
+    std::fs::write(&stable_rootfs, b"stable rootfs").unwrap();
+    std::fs::write(&nightly_rootfs, b"nightly rootfs").unwrap();
 
     assert_ne!(stable_manifest, nightly_manifest);
     assert_ne!(stable_rootfs, nightly_rootfs);

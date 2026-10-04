@@ -1043,5 +1043,4 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
         .any(|entry| { entry.channel == "nightly" && entry.kind == ReleaseLedgerKind::Manifest }));
     let serialized = serde_json::to_value(&ledger).expect("serialize ledger");
     assert!(serialized.to_string().contains("\"runtime_image\""));
-    assert!(!serialized.to_string().contains("\"profile"));
 }

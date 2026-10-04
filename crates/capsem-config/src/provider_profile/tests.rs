@@ -288,10 +288,10 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
     assert!(includes_openai_rule);
 }
 
-/// Without a profile, publication, preview and named-network allows and the
-/// skill detection must still be in force: they ship built in.
+/// Publication, preview and named-network allows and the skill detection
+/// ship built in.
 #[test]
-fn built_in_defaults_cover_what_profiles_supplied() {
+fn built_in_defaults_cover_publication_preview_networks_and_skills() {
     let built_in = ProviderRuleProfile::builtin_security_defaults()
         .compile(SecurityRuleSource::BuiltinDefault)
         .expect("built-in defaults compile");
