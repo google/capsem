@@ -105,7 +105,7 @@ pub(crate) async fn handle_provision(
                     "capsem-process exited before reaching ready"
                 );
             } else if let ProvisionAttemptOutcome::ProvisionError(ref e) = outcome {
-                error!(id, error = %format_args!("{e:#}"), "provision failed");
+                error!(id, error = format!("{e:#}"), "provision failed");
             }
             match classify_attempt_decision(outcome, &id) {
                 AttemptDecision::Succeed(uds_path) => Some(Ok(uds_path)),
