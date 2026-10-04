@@ -29,7 +29,7 @@ from capsem_builder.release.tools.release_glowup import (
 from capsem_builder.release.tools.release_transition_candidates import (
     validate_macos_guest_report,
 )
-from macos_candidate_content import stage_file, stage_guest_scripts
+from macos_candidate_content import stage_file, stage_guest_scripts, stage_release_site
 from macos_tart_transition_support import local_tart_capabilities
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -411,7 +411,7 @@ def main() -> int:
     guest_package = release_dir / package.name
     stage_file(package, guest_package)
     stage_file(args.sbom.resolve(), release_dir / "capsem-sbom.spdx.json")
-    stage_file(manifest_file, candidate_dir / "assets" / args.channel / "manifest.json")
+    stage_release_site(manifest_file, asset_share, candidate_dir, args.channel)
     stage_file(manifest_file, share / "original-manifest.json")
     for source, name in zip(
         candidate_files,

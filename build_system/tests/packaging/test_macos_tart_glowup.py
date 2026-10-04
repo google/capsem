@@ -918,3 +918,31 @@ def test_public_release_dispatch_recipe_is_gone() -> None:
     assert "    release " not in listed
     assert "release-binaries" in listed
     assert "release-assets" in listed
+
+
+def test_the_local_release_site_serves_the_runtime_blobs_where_the_service_fetches_them(
+    tmp_path: Path,
+) -> None:
+    """An installed service repairs a missing asset from `<site>/assets/releases/
+    <asset_version>/<arch>-<name>`, derived from its manifest URL: the 0.7 runtime
+    document names no other asset base. The Tart guest's local site must serve the
+    candidate's blobs there, or the asset-repair proof finds a 404."""
+    spec = importlib.util.spec_from_file_location(
+        "macos_candidate_content", MACOS_PACKAGING / "macos_candidate_content.py"
+    )
+    assert spec is not None and spec.loader is not None
+    content = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(content)
+    asset_share = tmp_path / "asset-share"
+    (asset_share / "0.7.0-abc").mkdir(parents=True)
+    (asset_share / "0.7.0-abc" / "arm64-vmlinuz").write_bytes(b"kernel")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}")
+    candidate = tmp_path / "share" / "candidate"
+
+    content.stage_release_site(manifest, asset_share, candidate, "stable")
+
+    assert (candidate / "assets" / "stable" / "manifest.json").read_text() == "{}"
+    blob = candidate / "assets" / "releases" / "0.7.0-abc" / "arm64-vmlinuz"
+    assert blob.read_bytes() == b"kernel"
+    assert not blob.is_symlink()
