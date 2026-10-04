@@ -40,12 +40,13 @@ impl ImageSource for FixtureImages {
             images: Some(capsem_core::net::policy_config::ImagePolicyConfig {
                 sources: vec!["registry.example".into()],
                 admit: vec!["registry.example".into()],
+                ..Default::default()
             }),
             ..Default::default()
         };
-        Box::pin(async move {
-            capsem_core::container::admission::ImagePolicy::from_files(&granted, &Default::default(), Vec::new())
-        })
+        Box::pin(
+            async move { capsem_core::container::admission::ImagePolicy::from_files(&granted, &Default::default()) },
+        )
     }
 
     fn pull(&self, _image: String, access: RegistryAccess, _parent: PathBuf) -> PullFuture {
@@ -639,11 +640,11 @@ fn admission_takes_either_content_address_and_nothing_else() {
         images: Some(capsem_core::net::policy_config::ImagePolicyConfig {
             sources: vec!["registry.example".into()],
             admit: vec![format!("registry.example/app@{a}")],
+            ..Default::default()
         }),
         ..Default::default()
     };
-    let policy =
-        capsem_core::container::admission::ImagePolicy::from_files(&granted, &Default::default(), Vec::new()).unwrap();
+    let policy = capsem_core::container::admission::ImagePolicy::from_files(&granted, &Default::default()).unwrap();
     let requested: capsem_assets::oci::ImageReference = "registry.example/app:1".parse().unwrap();
     let pulled = |image_digest: &str, digest: &str| PulledImage {
         root: PathBuf::new(),

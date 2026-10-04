@@ -172,5 +172,16 @@ pub fn oci_architecture() -> Result<&'static str> {
     }
 }
 
+/// This host's architecture as the image catalog names it, which picks the
+/// catalog version a name resolves to.
+pub fn catalog_architecture() -> Result<capsem_assets::asset_manager::PackageArchitecture> {
+    use capsem_assets::asset_manager::PackageArchitecture;
+    match oci_architecture()? {
+        "arm64" => Ok(PackageArchitecture::Arm64),
+        "amd64" => Ok(PackageArchitecture::Amd64),
+        other => bail!("unsupported container architecture: {other}"),
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -55,6 +55,8 @@ fn oci_architecture_names_the_host_the_way_registries_do() {
         _ => return assert!(oci_architecture().is_err()),
     };
     assert_eq!(oci_architecture().unwrap(), expected);
+    // The catalog names the same architecture the registry does.
+    assert_eq!(catalog_architecture().unwrap().as_str(), expected);
 }
 
 fn labels(pairs: &[(&str, serde_json::Value)]) -> serde_json::Map<String, serde_json::Value> {

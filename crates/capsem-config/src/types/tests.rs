@@ -190,3 +190,28 @@ fn enum_variants_serialize_with_snake_case() {
     assert_eq!(serde_json::to_string(&McpToolOrigin::InVm).unwrap(), "\"in_vm\"");
     assert_eq!(serde_json::to_string(&PolicySource::Corp).unwrap(), "\"corp\"");
 }
+
+#[test]
+fn images_catalog_is_on_off_or_a_reference() {
+    let parse = |text: &str| toml::from_str::<ImagePolicyConfig>(text);
+    assert_eq!(parse("").unwrap().catalog, None);
+    assert_eq!(
+        parse("catalog = false").unwrap().catalog,
+        Some(CatalogSetting::Enabled(false))
+    );
+    assert_eq!(
+        parse("catalog = true").unwrap().catalog,
+        Some(CatalogSetting::Enabled(true))
+    );
+    let mirror = parse("catalog = \"mirror.example/capsem/catalog:stable\"\ncatalog_ca = \"/etc/mirror.pem\"").unwrap();
+    assert_eq!(
+        mirror.catalog,
+        Some(CatalogSetting::Reference("mirror.example/capsem/catalog:stable".into()))
+    );
+    assert_eq!(mirror.catalog_ca.as_deref(), Some("/etc/mirror.pem"));
+    assert!(parse("catalog = 1").is_err(), "a number names no catalog");
+    assert!(
+        parse("catalogue = false").is_err(),
+        "a misspelled key must not be ignored"
+    );
+}

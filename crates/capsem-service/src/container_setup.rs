@@ -38,7 +38,7 @@ pub(crate) trait ImageSource: Send + Sync {
         Box::pin(async {
             tokio::task::spawn_blocking(|| {
                 let (settings, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
-                capsem_core::container::admission::ImagePolicy::from_files(&settings, &corp, Vec::new())
+                capsem_core::container::admission::ImagePolicy::from_files(&settings, &corp)
             })
             .await?
         })

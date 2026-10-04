@@ -444,7 +444,9 @@ pub struct SettingsFile {
 /// any registry access; `admit` says which images may execute and is checked
 /// on the resolved digest. The catalog's supported images are admitted, and
 /// their repositories are sources, without being listed here. A corp
-/// `[images]` replaces the user's.
+/// `[images]` replaces the user's, `catalog` included, so an enterprise that
+/// points the catalog at its mirror or turns it off cannot be overridden by a
+/// user setting.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ImagePolicyConfig {
@@ -452,6 +454,24 @@ pub struct ImagePolicyConfig {
     pub sources: Vec<String>,
     #[serde(default)]
     pub admit: Vec<String>,
+    /// Where the image catalog is read from: an OCI reference (a mirror of
+    /// the official catalog, say), `true` for the official catalog, or
+    /// `false` for none, which leaves exactly `sources` and `admit`. Absent
+    /// means the official catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<CatalogSetting>,
+    /// An absolute path to a PEM file trusted, beside the public roots, for
+    /// the catalog's registry only (a mirror on a private CA).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_ca: Option<String>,
+}
+
+/// `[images] catalog`: on, off, or read from a named reference.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum CatalogSetting {
+    Enabled(bool),
+    Reference(String),
 }
 
 impl SettingsFile {
