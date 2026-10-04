@@ -37,12 +37,16 @@ def load_readiness_checker() -> Any:
     return check_remote_release_readiness
 
 
-def retain_successful_external_fetches(checker: Any, release_site: str) -> None:
-    """Refetch mutable site bytes without redownloading immutable graph bytes."""
+def retain_successful_external_fetches(checker: Any, release_site: str) -> set[str]:
+    """Refetch mutable site bytes without redownloading immutable graph bytes.
+
+    Returns the retained URLs. Kept to save a download, not as evidence: see
+    `release_fetch_snapshot`'s `carried`.
+    """
 
     cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
     if not isinstance(cache, dict):
-        return
+        return set()
     site = urlparse(normalize_release_site(release_site))
     retained: dict[str, Any] = {}
     for url, fetched in cache.items():
@@ -56,6 +60,7 @@ def retain_successful_external_fetches(checker: Any, release_site: str) -> None:
             retained[url] = fetched
     cache.clear()
     cache.update(retained)
+    return set(retained)
 
 
 def _fetch_complete_distribution(checker: Any, release_site: str, dist: Path) -> None:
@@ -84,8 +89,16 @@ def release_fetch_snapshot(
     dist: Path | None = None,
     include_dist_in_snapshot: bool = True,
     same_origin_only: bool = False,
+    carried: set[str] | None = None,
 ) -> dict[str, object]:
-    """Bind every body consumed by the validator to a location-independent path."""
+    """Bind every body consumed by the validator to a location-independent path.
+
+    `carried` are external bodies an earlier attempt fetched and this one kept.
+    One counts only when a site body fetched now still names its URL. The
+    stable 0.6.4 activation failed all 30 attempts because its first attempts
+    ran against the previous distribution, and every 0.6.1 asset they fetched
+    was carried into each later snapshot as served.
+    """
 
     cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
     contract_urls = (
@@ -99,11 +112,20 @@ def release_fetch_snapshot(
     if not isinstance(cache, dict) or not cache:
         raise RuntimeError("release validator produced no fetched-byte evidence")
     site = urlparse(normalize_release_site(release_site))
+    site_text = b"\n".join(
+        body
+        for url, fetched in cache.items()
+        if isinstance(url, str)
+        and (urlparse(url).scheme, urlparse(url).netloc) == (site.scheme, site.netloc)
+        and isinstance(body := getattr(fetched, "data", None), bytes)
+    )
     entries: dict[str, dict[str, int | str]] = {}
     for url, fetched in sorted(cache.items()):
         if not isinstance(url, str):
             continue
         if contract_urls is not None and url not in contract_urls:
+            continue
+        if carried and url in carried and url.encode() not in site_text:
             continue
         parsed = urlparse(url)
         if same_origin_only and (parsed.scheme, parsed.netloc) != (site.scheme, site.netloc):
@@ -186,7 +208,7 @@ def snapshot_distribution_bytes(
     last_error: OSError | RuntimeError | ValueError | None = None
     rounds = max(attempts, 1)
     for attempt in range(1, rounds + 1):
-        retain_successful_external_fetches(checker, release_site)
+        carried = retain_successful_external_fetches(checker, release_site)
         try:
             result = populate()
             if require_valid and result != 0:
@@ -197,6 +219,7 @@ def snapshot_distribution_bytes(
                 dist=dist,
                 include_dist_in_snapshot=include_dist_in_snapshot,
                 same_origin_only=same_origin_only,
+                carried=carried,
             )
             if snapshot_out is not None:
                 write_snapshot(snapshot_out, snapshot)
