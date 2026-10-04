@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -8,10 +8,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use capsem_assets::asset_manager::{BinaryExecutable, BinaryFile, ManifestV2};
-use capsem_core::net::policy_config::{
-    validate_corp_toml_contract, CompiledSecurityRule, ProfileCatalog, ProfileConfigFile, ProfileObomConfig,
-    ProfileObomDescriptor, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource, SettingsFile,
-};
+use capsem_core::net::policy_config::{CompiledSecurityRule, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,10 +18,10 @@ mod assets_channel_build;
 mod assets_channel_render;
 mod assets_channel_validation;
 mod channel_bootstrap;
+mod config_checks;
 mod image_build;
 mod manifest_generation;
 mod package_inspection;
-mod profile_images;
 mod release_github;
 #[allow(dead_code)]
 mod release_graph;
@@ -33,9 +30,9 @@ mod source_commit;
 use assets_channel_build::*;
 use assets_channel_render::*;
 use assets_channel_validation::*;
+use config_checks::*;
 use image_build::*;
 use manifest_generation::*;
-use profile_images::*;
 
 use package_inspection::binary_files_from_artifacts;
 use release_github::{ensure_publication_identity_is_free, GhReleaseWorkflowRunner, ReleaseWorkflowRunner};
@@ -44,7 +41,7 @@ use source_commit::SourceCommit;
 #[derive(Debug, Parser)]
 #[command(name = "capsem-admin")]
 #[command(version)]
-#[command(about = "Capsem runtime, asset, and profile administration")]
+#[command(about = "Capsem runtime and asset administration")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -56,26 +53,12 @@ enum Commands {
     Validate(ReleaseValidateArgs),
     /// Publish one channel's runtime through the serialized release workflow.
     Release(ReleaseArgs),
-    Profile(ProfileCommand),
     Settings(SettingsCommand),
     Enforcement(RuleFileCommand),
     Detection(RuleFileCommand),
     Manifest(ManifestCommand),
     Assets(AssetsCommand),
     Image(ImageCommand),
-}
-
-#[derive(Debug, Parser)]
-struct ProfileCommand {
-    #[command(subcommand)]
-    command: ProfileSubcommand,
-}
-
-#[derive(Debug, Subcommand)]
-enum ProfileSubcommand {
-    Validate(ProfileValidateArgs),
-    Check(ProfileCheckArgs),
-    Materialize(ProfileMaterializeArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -148,64 +131,6 @@ struct ImageCommand {
 enum ImageSubcommand {
     Build(ImageBuildArgs),
     Workspace(ImageWorkspaceArgs),
-}
-
-#[derive(Debug, Parser)]
-struct ProfileValidateArgs {
-    /// Profile TOML to validate.
-    path: PathBuf,
-    /// Config root used to resolve profile rule files.
-    #[arg(long)]
-    config_root: Option<PathBuf>,
-    /// Require signed runtime pins instead of source-profile placeholders.
-    #[arg(long)]
-    materialized: bool,
-    /// Emit a machine-readable validation report.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Parser)]
-struct ProfileCheckArgs {
-    /// Profile TOML to check.
-    path: PathBuf,
-    /// Config root used to resolve profile rule files.
-    #[arg(long)]
-    config_root: Option<PathBuf>,
-    /// Restrict file:// asset verification to one profile arch.
-    #[arg(long)]
-    arch: Option<String>,
-    /// Emit a machine-readable check report.
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Parser)]
-struct ProfileMaterializeArgs {
-    /// Source profile TOML to materialize.
-    #[arg(long)]
-    profile: PathBuf,
-    /// Source config root containing settings, corp, profiles, and rule files.
-    #[arg(long, default_value = "config")]
-    config_root: PathBuf,
-    /// Generated asset manifest URL to use for current build hashes.
-    #[arg(long)]
-    manifest: String,
-    /// Built asset root containing per-arch logical asset files.
-    #[arg(long, default_value = "assets")]
-    assets_dir: PathBuf,
-    /// Generated runtime config output root.
-    #[arg(long, default_value = "cache/target/config")]
-    output_root: PathBuf,
-    /// Restrict materialization to one architecture.
-    #[arg(long)]
-    arch: Option<String>,
-    /// Remove output root before materializing.
-    #[arg(long)]
-    clean: bool,
-    /// Emit a machine-readable materialization report.
-    #[arg(long)]
-    json: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -495,50 +420,6 @@ impl RuleFileSourceArg {
 }
 
 #[derive(Debug, Serialize)]
-struct ProfileValidationReport {
-    schema: &'static str,
-    ok: bool,
-    profile_id: String,
-    path: String,
-    config_root: String,
-    compiled_rules: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct ProfileCheckReport {
-    schema: &'static str,
-    ok: bool,
-    validation: ProfileValidationReport,
-    assets: Vec<LocalAssetCheckReport>,
-    profile_files: Vec<LocalAssetCheckReport>,
-}
-
-#[derive(Debug, Serialize)]
-struct ConfigRootCheckReport {
-    schema: &'static str,
-    ok: bool,
-    config_root: String,
-    settings: SettingsValidationReport,
-    corp_rules: usize,
-    profiles: Vec<ProfileCheckReport>,
-}
-
-#[derive(Debug, Serialize)]
-struct ProfileMaterializeReport {
-    schema: &'static str,
-    ok: bool,
-    profile_id: String,
-    profile_revision: String,
-    source_config_root: String,
-    output_config_root: String,
-    profile_path: String,
-    manifest: String,
-    asset_version: String,
-    materialized_assets: Vec<ProfileMaterializedAssetReport>,
-    materialized_obom: Vec<ProfileMaterializedObomReport>,
-}
-
-#[derive(Debug, Serialize)]
 struct RuntimeReleaseReport {
     schema: &'static str,
     ok: bool,
@@ -715,27 +596,6 @@ struct CorporateManifestReport {
 }
 
 #[derive(Debug, Serialize)]
-struct ProfileMaterializedAssetReport {
-    arch: String,
-    logical_name: String,
-    url: String,
-    hash: String,
-    size: u64,
-}
-
-#[derive(Debug, Serialize)]
-struct ProfileMaterializedObomReport {
-    arch: String,
-    url: String,
-    hash: String,
-    size: u64,
-    generator: String,
-    generator_version: String,
-    rootfs_hash: String,
-    scope: &'static str,
-}
-
-#[derive(Debug, Serialize)]
 struct SettingsValidationReport {
     schema: &'static str,
     ok: bool,
@@ -857,18 +717,6 @@ struct ImageWorkspaceReport {
     workspace: String,
     build_plan_path: String,
     arches: Vec<ImageBuildArchPlan>,
-}
-
-#[derive(Debug, Serialize)]
-struct LocalAssetCheckReport {
-    arch: String,
-    logical_name: String,
-    expected_hash: String,
-    expected_size: u64,
-    path: Option<String>,
-    present: bool,
-    size_ok: Option<bool>,
-    blake3_ok: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1039,11 +887,6 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Validate(args) => release_validate_command(args),
         Commands::Release(args) => release_command(args),
-        Commands::Profile(command) => match command.command {
-            ProfileSubcommand::Validate(args) => validate_profile_command(args),
-            ProfileSubcommand::Check(args) => profile_check_command(args),
-            ProfileSubcommand::Materialize(args) => profile_materialize_command(args),
-        },
         Commands::Settings(command) => match command.command {
             SettingsSubcommand::Validate(args) => validate_settings_command(args),
         },
@@ -1070,52 +913,6 @@ fn main() -> Result<()> {
             ImageSubcommand::Workspace(args) => image_workspace_command(args),
         },
     }
-}
-
-fn validate_profile_command(args: ProfileValidateArgs) -> Result<()> {
-    let report = if args.materialized {
-        validate_materialized_profile(&args.path, args.config_root.as_deref())?
-    } else {
-        validate_profile(&args.path, args.config_root.as_deref())?
-    };
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        println!(
-            "valid: profile {} ({} compiled rules)",
-            report.profile_id, report.compiled_rules
-        );
-    }
-    Ok(())
-}
-
-fn profile_check_command(args: ProfileCheckArgs) -> Result<()> {
-    let report = check_profile(&args)?;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        println!(
-            "valid: profile {} ({} compiled rules)",
-            report.validation.profile_id, report.validation.compiled_rules
-        );
-        if !report.assets.is_empty() {
-            println!("valid: profile file assets ({} assets)", report.assets.len());
-        }
-    }
-    Ok(())
-}
-
-fn profile_materialize_command(args: ProfileMaterializeArgs) -> Result<()> {
-    let report = materialize_profile_config(&args)?;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        println!(
-            "materialized: profile {} at {}",
-            report.profile_id, report.output_config_root
-        );
-    }
-    Ok(())
 }
 
 fn validate_release_selection(channel: &str, source_commit: &SourceCommit) -> Result<ReleaseSelectionReport> {
@@ -1627,63 +1424,6 @@ fn rewrite_runtime_publication_urls(runtime: &mut serde_json::Value, publication
         }
     }
     Ok(())
-}
-
-fn check_config_root(config_root: &Path, arch: Option<&str>) -> Result<ConfigRootCheckReport> {
-    let settings = validate_settings(&config_root.join("settings/settings.toml"))?;
-    let corp_rules = validate_corp_config(&config_root.join("corp/corp.toml"), config_root)?;
-    let catalog = ProfileCatalog::load_from_dir(&config_root.join("profiles")).map_err(|error| {
-        anyhow!(
-            "load profile directory {}: {error}",
-            config_root.join("profiles").display()
-        )
-    })?;
-    let mut profiles = Vec::new();
-    for profile in catalog.profiles() {
-        profiles.push(check_profile(&ProfileCheckArgs {
-            path: config_root.join("profiles").join(&profile.id).join("profile.toml"),
-            config_root: Some(config_root.to_path_buf()),
-            arch: arch.map(ToOwned::to_owned),
-            json: true,
-        })?);
-    }
-    Ok(ConfigRootCheckReport {
-        schema: "capsem.admin.config_root_check.v1",
-        ok: true,
-        config_root: config_root.display().to_string(),
-        settings,
-        corp_rules,
-        profiles,
-    })
-}
-
-fn validate_corp_config(path: &Path, config_root: &Path) -> Result<usize> {
-    let content = fs::read_to_string(path).with_context(|| format!("read corp {}", path.display()))?;
-    let file: SettingsFile = toml::from_str(&content).with_context(|| format!("parse corp {}", path.display()))?;
-    file.validate_metadata_contract()
-        .map_err(|error| anyhow!("validate corp {}: {error}", path.display()))?;
-    validate_corp_toml_contract(&file)
-        .map_err(|error| anyhow!("validate corp ownership {}: {error}", path.display()))?;
-
-    let inline_profile = SecurityRuleProfile {
-        default: file.default.clone(),
-        corp: file.corp.clone(),
-        profiles: file.profiles.clone(),
-        ai: file.ai.clone(),
-        plugins: file.plugins.clone(),
-    };
-    let mut compiled = inline_profile
-        .compile(SecurityRuleSource::Corp)
-        .map_err(|error| anyhow!("compile corp inline rules {}: {error}", path.display()))?
-        .len();
-    if let Some(enforcement) = file.corp_rule_files.enforcement.as_deref() {
-        compiled +=
-            compile_rule_file("enforcement", &config_root.join(enforcement), RuleFileSourceArg::Corp)?.compiled_rules;
-    }
-    if let Some(sigma) = file.corp_rule_files.sigma.as_deref() {
-        compiled += compile_rule_file("detection", &config_root.join(sigma), RuleFileSourceArg::Corp)?.compiled_rules;
-    }
-    Ok(compiled)
 }
 
 fn validate_settings_command(args: SettingsValidateArgs) -> Result<()> {

@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 /// Every published asset path is `release_dir/<arch>-<name>` and every source
 /// path is `assets_dir/<arch>/<name>`. Both are built from manifest keys, and

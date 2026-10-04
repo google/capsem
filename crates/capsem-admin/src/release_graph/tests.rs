@@ -797,37 +797,6 @@ fn runtime_source_commit_is_optional_but_strict_when_present() {
 }
 
 #[test]
-fn runtime_document_has_no_profile_identity_or_config_refs() {
-    let runtime = serde_json::to_value(runtime_document("1.0.0")).expect("serialize runtime");
-    for (field, value) in [
-        ("id", serde_json::json!("co-work")),
-        ("name", serde_json::json!("Co-work")),
-        ("description", serde_json::json!("A profile")),
-        ("version", serde_json::json!("1.0.0")),
-        ("current_binary", serde_json::json!("1.4.0")),
-    ] {
-        let mut value_with_field = runtime.clone();
-        value_with_field[field] = value;
-        let error = serde_json::from_value::<RuntimeDocument>(value_with_field)
-            .expect_err("a runtime carries no profile identity");
-        assert!(error.to_string().contains(field), "{error}");
-    }
-
-    let mut with_config = runtime;
-    with_config["architectures"][0]["config"] = serde_json::json!([{
-        "kind": "profile",
-        "path": "profiles/co-work/profile.toml",
-        "url": "/runtime/releases/stable/1.0.0/arm64/profile.toml",
-        "bytes": 12,
-        "digest": digest_json(),
-        "status": "current"
-    }]);
-    let error =
-        serde_json::from_value::<RuntimeDocument>(with_config).expect_err("a runtime publishes no profile config refs");
-    assert!(error.to_string().contains("config"), "{error}");
-}
-
-#[test]
 fn release_graph_refuses_a_profiles_map() {
     let graph = serde_json::json!({
         "version": "1.0.0",
