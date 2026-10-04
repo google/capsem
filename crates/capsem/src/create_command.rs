@@ -22,8 +22,9 @@ pub(super) struct CreateArgs {
     /// Set environment variables (repeatable: -e KEY=VALUE; the container's, with --image)
     #[arg(short = 'e', long = "env")]
     pub env: Vec<String>,
-    /// Clone state from an existing persistent session
-    #[arg(long, conflicts_with = "image")]
+    /// Clone state from an existing persistent session: its workspace and,
+    /// with --image, its image volumes under the new image; without, its image
+    #[arg(long)]
     pub from: Option<String>,
     /// Named networks to join (repeatable: --network NAME)
     #[arg(long = "network")]

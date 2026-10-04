@@ -34,9 +34,8 @@ fn create_image_takes_everything_after_the_image_as_its_command() {
 }
 
 #[test]
-fn image_only_flags_and_clone_sources_do_not_mix_with_plain_create() {
+fn image_only_flags_do_not_mix_with_plain_create() {
     for argv in [
-        vec!["capsem", "create", "--from", "base", "--image", "docker://redis"],
         vec!["capsem", "create", "redis-server"],
         vec!["capsem", "create", "--image"],
     ] {
@@ -187,4 +186,14 @@ mod against_the_service {
         );
         assert!(service.find("DELETE", "/vms/vm-3/delete").is_empty());
     }
+}
+
+#[test]
+fn a_clone_source_takes_a_new_image() {
+    let cli = Cli::parse_from(["capsem", "create", "--from", "base", "--image", "docker://redis"]);
+    let Commands::Session(SessionCommands::Create(args)) = cli.command.unwrap() else {
+        panic!("expected Create")
+    };
+    assert_eq!(args.from.as_deref(), Some("base"));
+    assert_eq!(args.image.image, ["docker://redis"]);
 }
