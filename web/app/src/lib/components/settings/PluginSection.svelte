@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { getCredentialBrokerInfo, listPlugins, reloadCredentialBrokerStore, updatePlugin } from '../../api';
   import type {
     CredentialBrokerInfo,
@@ -67,8 +68,6 @@
     return MODE_META[mode];
   }
 
-  let { profileId } = $props<{ profileId: string }>();
-
   function runtimeSummary(plugin: PluginInfo): string {
     const { runtime } = plugin;
     return `${runtime.event_count} events, ${runtime.detection_count} detections`;
@@ -87,13 +86,8 @@
   let error = $state<string | null>(null);
   let brokerError = $state<string | null>(null);
 
-  let loadedProfileId = $state<string | null>(null);
-
-  $effect(() => {
-    if (profileId && profileId !== loadedProfileId) {
-      loadedProfileId = profileId;
-      void load();
-    }
+  onMount(() => {
+    void load();
   });
 
   async function load() {
@@ -101,10 +95,10 @@
     error = null;
     brokerError = null;
     try {
-      response = await listPlugins(profileId);
+      response = await listPlugins();
       const broker = response.plugins.find((plugin) => plugin.id === 'credential_broker');
       if (broker?.detail_routes.some((route) => route.kind === 'credential_broker')) {
-        await loadCredentialBrokerInfo(response.scope.profile_id);
+        await loadCredentialBrokerInfo();
       }
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
@@ -113,11 +107,11 @@
     }
   }
 
-  async function loadCredentialBrokerInfo(activeProfileId = response?.scope.profile_id ?? profileId) {
+  async function loadCredentialBrokerInfo() {
     brokerLoading = true;
     brokerError = null;
     try {
-      credentialBrokerInfo = await getCredentialBrokerInfo(activeProfileId);
+      credentialBrokerInfo = await getCredentialBrokerInfo();
     } catch (err) {
       credentialBrokerInfo = null;
       brokerError = String(err instanceof Error ? err.message : err);
@@ -126,11 +120,11 @@
     }
   }
 
-  async function retryCredentialBrokerStore(activeProfileId = response?.scope.profile_id ?? profileId) {
+  async function retryCredentialBrokerStore() {
     brokerLoading = true;
     brokerError = null;
     try {
-      credentialBrokerInfo = await reloadCredentialBrokerStore(activeProfileId);
+      credentialBrokerInfo = await reloadCredentialBrokerStore();
     } catch (err) {
       brokerError = String(err instanceof Error ? err.message : err);
     } finally {
@@ -150,10 +144,9 @@
     saving = { ...saving, [plugin.id]: true };
     error = null;
     try {
-      const activeProfileId = response?.scope.profile_id ?? profileId;
-      replacePlugin(await updatePlugin(activeProfileId, plugin.id, { mode }));
+      replacePlugin(await updatePlugin(plugin.id, { mode }));
       if (plugin.id === 'credential_broker') {
-        await loadCredentialBrokerInfo(activeProfileId);
+        await loadCredentialBrokerInfo();
       }
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
@@ -166,7 +159,7 @@
     saving = { ...saving, [plugin.id]: true };
     error = null;
     try {
-      replacePlugin(await updatePlugin(response?.scope.profile_id ?? profileId, plugin.id, { detection_level }));
+      replacePlugin(await updatePlugin(plugin.id, { detection_level }));
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
     } finally {
@@ -268,14 +261,14 @@
               <div>
                 <p class="text-sm font-medium text-foreground">{plugin.name}</p>
                 <p class="text-xs text-muted-foreground-1 mt-0.5">
-                  {credentialBrokerInfo?.inventory.length ?? 0} credentials · profile {credentialBrokerInfo?.grants.profile_enabled ? 'enabled' : 'disabled'}
+                  {credentialBrokerInfo?.inventory.length ?? 0} credentials · {credentialBrokerInfo?.grants.enabled ? 'enabled' : 'disabled'}
                 </p>
               </div>
               <button
                 type="button"
                 class="py-1.5 px-3 text-xs font-medium rounded-md bg-muted text-foreground hover:bg-muted-hover disabled:opacity-60"
                 disabled={brokerLoading}
-                onclick={() => loadCredentialBrokerInfo(response?.scope.profile_id ?? profileId)}
+                onclick={loadCredentialBrokerInfo}
               >
                 Refresh
               </button>
@@ -283,7 +276,7 @@
                 type="button"
                 class="py-1.5 px-3 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-60"
                 disabled={brokerLoading}
-                onclick={() => retryCredentialBrokerStore(response?.scope.profile_id ?? profileId)}
+                onclick={retryCredentialBrokerStore}
               >
                 Retry store
               </button>
@@ -350,7 +343,7 @@
                   {/each}
                 </ul>
               {:else}
-                <p class="mt-4 text-xs text-muted-foreground-1">No brokered credentials recorded for this profile.</p>
+                <p class="mt-4 text-xs text-muted-foreground-1">No brokered credentials recorded.</p>
               {/if}
 
               {#if credentialBrokerInfo.corp_constraints.length > 0}

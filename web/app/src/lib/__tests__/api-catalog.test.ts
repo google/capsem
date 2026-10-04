@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { UpdateActionStatus } from '@capsem/sdk';
-import { profile, updateStatusFixture } from './sdk-catalog-fixtures';
+import { updateStatusFixture } from './sdk-catalog-fixtures';
 
 const mockFetch = vi.fn<typeof fetch>();
 vi.stubGlobal('fetch', mockFetch);
@@ -19,7 +19,6 @@ beforeEach(async () => {
 });
 
 const reads = [
-  { name: 'profiles', read: () => api.listProfiles(), path: '/profiles/list', value: { profiles: [profile] } },
   { name: 'update status', read: () => api.getUpdateStatus(), path: '/update/status', value: updateStatusFixture() },
 ];
 it.each(reads)('reads typed $name through the SDK', async ({ read, path, value }) => {
@@ -42,11 +41,7 @@ it.each(reads)('refreshes a rotated token for $name once', async ({ read, value 
   expect(mockFetch).toHaveBeenCalledTimes(3);
   expect(new Headers(mockFetch.mock.calls[2]?.[1]?.headers).get('Authorization')).toBe('Bearer rotated');
 });
-it('rejects unknown nested profile and update enums', async () => {
-  mockFetch.mockResolvedValueOnce(json({ profiles: [{ ...profile, update_semantics: {
-    ...profile.update_semantics, upgrade_action: 'unknown',
-  } }] }));
-  await expect(api.listProfiles()).rejects.toThrow();
+it('rejects unknown nested update enums', async () => {
   const updates = updateStatusFixture();
   mockFetch.mockResolvedValueOnce(json({ ...updates, binary: { ...updates.binary, state: 'unknown-state' } }));
   await expect(api.getUpdateStatus()).rejects.toThrow();

@@ -5,8 +5,23 @@ const source = readFileSync(
   new URL('../components/settings/PluginSection.svelte', import.meta.url),
   'utf8',
 );
+const settingsPage = readFileSync(
+  new URL('../components/shell/SettingsPage.svelte', import.meta.url),
+  'utf8',
+);
 
 describe('PluginSection route contract', () => {
+  it('lives in Settings and loads service-wide plugins without a scope argument', () => {
+    expect(settingsPage).toContain('<PluginSection />');
+    expect(source).toContain('await listPlugins()');
+    expect(source).toContain('await updatePlugin(plugin.id, { mode })');
+    expect(source).toContain('await getCredentialBrokerInfo()');
+    expect(source).toContain('await reloadCredentialBrokerStore()');
+    expect(source).toContain('credentialBrokerInfo?.grants.enabled');
+    expect(source).not.toContain('$props');
+    expect(source).not.toContain('scope');
+  });
+
   it('renders plugin modes from the typed enum with recognizable icons', () => {
     expect(source).toContain('const MODE_META: Record<PluginMode');
     expect(source).toContain('allow:');

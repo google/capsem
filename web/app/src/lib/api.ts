@@ -5,8 +5,7 @@ import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse } from '@capsem/sdk';
 import { surfaceLauncherUrl } from './models/surface';
-import type { ProfileSummary, ProfilesListResponse, UpdateApplyRequest } from '@capsem/sdk';
-export type { ProfileSummary, ProfilesListResponse } from '@capsem/sdk';
+import type { AssetStatus, UpdateApplyRequest } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
 import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
 import type {
@@ -92,11 +91,6 @@ export interface PluginConfig {
   detection_level: PluginDetectionLevel;
 }
 
-export interface PluginScope {
-  kind: 'profile';
-  profile_id: string;
-}
-
 export interface BrokeredCredentialStatus {
   provider: string | null;
   credential_ref: string;
@@ -140,7 +134,6 @@ export interface PluginInfo {
   config: PluginConfig;
   default_config: PluginConfig;
   overridden: boolean;
-  scope: PluginScope;
   description: string;
   stage: PluginStage;
   version: string;
@@ -150,11 +143,10 @@ export interface PluginInfo {
 }
 
 export interface PluginListResponse {
-  scope: PluginScope;
   plugins: PluginInfo[];
 }
 
-export type CredentialBrokerForkGrantDefault = 'inherit_profile';
+export type CredentialBrokerForkGrantDefault = 'inherit';
 
 export interface CredentialBrokerVmGrant {
   vm_id: string;
@@ -162,7 +154,7 @@ export interface CredentialBrokerVmGrant {
 }
 
 export interface CredentialBrokerGrantStatus {
-  profile_enabled: boolean;
+  enabled: boolean;
   vm_grants: CredentialBrokerVmGrant[];
   fork_default: CredentialBrokerForkGrantDefault;
 }
@@ -183,7 +175,6 @@ export interface CredentialStoreStatus {
 }
 
 export interface CredentialBrokerInfo {
-  scope: PluginScope;
   plugin_id: 'credential_broker';
   store: CredentialStoreStatus;
   inventory: BrokeredCredentialStatus[];
@@ -191,83 +182,9 @@ export interface CredentialBrokerInfo {
   corp_constraints: CredentialBrokerCorpConstraint[];
 }
 
-export interface ProfileObomInfo {
-  profile_id: string;
-  current_arch: string;
-  scope: 'base_image';
-  format: string;
-  name: string;
-  url: string;
-  hash: string;
-  size: number;
-  generator: string;
-  generator_version: string;
-  rootfs_hash: string;
-  route: string;
-}
-
-export interface ProfileInfoResponse {
-  profile: ProfileSummary;
-  obom?: ProfileObomInfo | null;
-}
-
-export interface ProfileObomResponse {
-  profile_id: string;
-  current_arch: string;
-  obom: ProfileObomInfo;
-  document?: unknown;
-}
-
-export interface ProfileValidateRequest {
-  toml?: string;
-  profile?: Record<string, unknown>;
-}
-
-export interface ProfileValidateResponse {
-  valid: boolean;
-  profile_id: string;
-}
-
 export type SecurityRuleAction = 'allow' | 'ask' | 'block' | 'preprocess' | 'rewrite' | 'postprocess';
 export type SecurityRuleDetectionLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
 export type RuntimeSecurityRuleDetectionLevel = SecurityRuleDetectionLevel | 'none';
-
-export interface EnforcementRuleInfo {
-  rule_id: string;
-  source: string;
-  provider: string;
-  namespace: string;
-  rule_key: string;
-  default_rule: boolean;
-  enabled: boolean;
-  name: string;
-  action: SecurityRuleAction;
-  match: string;
-  detection_level?: SecurityRuleDetectionLevel;
-  priority: number;
-  corp_locked: boolean;
-  reason?: string;
-}
-
-export interface EnforcementRuleListResponse {
-  profile_id: string;
-  rules: EnforcementRuleInfo[];
-}
-
-export interface EnforcementInfoResponse {
-  profile_id: string;
-  rule_count: number;
-  default_rule_count: number;
-  custom_rule_count: number;
-  detection_rule_count: number;
-  corp_locked_rule_count: number;
-  source_counts: Record<string, number>;
-  action_counts: Record<string, number>;
-}
-
-export type DetectionRuleInfo = EnforcementRuleInfo;
-export type DetectionRuleListResponse = EnforcementRuleListResponse;
-export type DetectionInfoResponse = EnforcementInfoResponse;
 
 export interface SecurityRuleActionCount {
   rule_action: SecurityRuleAction;
@@ -451,10 +368,6 @@ async function _patch(path: string, body?: unknown): Promise<Response> {
   return _request('PATCH', path, body);
 }
 
-async function _delete(path: string): Promise<Response> {
-  return _request('DELETE', path);
-}
-
 // Helper: returns true if error is a network failure (gateway unreachable)
 function isNetworkError(err: unknown): boolean {
   return !(err instanceof ApiError);
@@ -494,9 +407,9 @@ function settledValue(result: PromiseSettledResult<unknown>): unknown {
 }
 
 export async function debugSnapshot(): Promise<unknown> {
-  const [status, profilesStatus, corpInfo, updateStatus] = await Promise.allSettled([
+  const [status, assetsStatus, corpInfo, updateStatus] = await Promise.allSettled([
     getStatus(),
-    routeJson('/profiles/status'),
+    getAssetsStatus(),
     routeJson('/corp/info'),
     getUpdateStatus(),
   ]);
@@ -505,7 +418,7 @@ export async function debugSnapshot(): Promise<unknown> {
     connected: _connected,
     base_url: _baseUrl,
     status: settledValue(status),
-    profiles_status: settledValue(profilesStatus),
+    assets_status: settledValue(assetsStatus),
     corp_info: settledValue(corpInfo),
     update_status: settledValue(updateStatus),
   };
@@ -519,7 +432,7 @@ export interface CapsemStatus {
   service: string;
   manifest: Record<string, unknown>;
   manifest_metadata: Record<string, unknown>;
-  profiles: Record<string, unknown>;
+  assets: AssetStatus;
   corp: Record<string, unknown>;
   updates: UpdateStatusResponse;
 }
@@ -696,12 +609,6 @@ export async function getImages(): Promise<{ images: { name: string }[] }> {
   return await resp.json();
 }
 
-// -- Config --
-
-export async function reloadProfile(profileId: string): Promise<void> {
-  await _post(`/profiles/${encodeURIComponent(profileId)}/reload`);
-}
-
 // -- Stats --
 
 /** Fetch cross-session stats folded from the host ledger and live sessions. */
@@ -812,103 +719,6 @@ export async function saveSettings(changes: Record<string, unknown>): Promise<Se
   return await resp.json();
 }
 
-// -- Profiles --
-
-export async function listProfiles(): Promise<ProfilesListResponse> {
-  return _sdk.call(gateway.listProfiles);
-}
-
-export async function getProfileInfo(profileId: string): Promise<ProfileInfoResponse> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/info`);
-  return await resp.json();
-}
-
-export async function getProfileObom(profileId: string): Promise<ProfileObomResponse> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/obom`);
-  return await resp.json();
-}
-
-export async function validateProfile(
-  profileId: string,
-  request: ProfileValidateRequest = {},
-): Promise<ProfileValidateResponse> {
-  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/validate`, request);
-  return await resp.json();
-}
-
-export async function getProfileSkillsInfo(profileId: string): Promise<unknown> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/skills/info`);
-  return await resp.json();
-}
-
-export async function listProfileSkills(profileId: string): Promise<unknown> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/skills/list`);
-  return await resp.json();
-}
-
-export async function addProfileSkill(profileId: string, request: Record<string, unknown>): Promise<unknown> {
-  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/skills/add`, request);
-  return await resp.json();
-}
-
-export async function editProfileSkill(
-  profileId: string,
-  skillId: string,
-  request: Record<string, unknown>,
-): Promise<unknown> {
-  const resp = await _patch(
-    `/profiles/${encodeURIComponent(profileId)}/skills/${encodeURIComponent(skillId)}/edit`,
-    request,
-  );
-  return await resp.json();
-}
-
-export async function deleteProfileSkill(profileId: string, skillId: string): Promise<unknown> {
-  const resp = await _delete(
-    `/profiles/${encodeURIComponent(profileId)}/skills/${encodeURIComponent(skillId)}/delete`,
-  );
-  return await resp.json();
-}
-
-export async function getProfileAssetsInfo(profileId: string): Promise<unknown> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/assets/info`);
-  return await resp.json();
-}
-
-export async function getProfilePluginsInfo(profileId: string): Promise<unknown> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/plugins/info`);
-  return await resp.json();
-}
-
-export async function getProfileMcpInfo(profileId: string): Promise<unknown> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/mcp/info`);
-  return await resp.json();
-}
-
-// -- Enforcement rules --
-
-export async function listEnforcementRules(profileId: string): Promise<EnforcementRuleListResponse> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/enforcement/rules/list`);
-  return await resp.json();
-}
-
-export async function getEnforcementInfo(profileId: string): Promise<EnforcementInfoResponse> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/enforcement/info`);
-  return await resp.json();
-}
-
-// -- Detection rules --
-
-export async function listDetectionRules(profileId: string): Promise<DetectionRuleListResponse> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/detection/rules/list`);
-  return await resp.json();
-}
-
-export async function getDetectionInfo(profileId: string): Promise<DetectionInfoResponse> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/detection/info`);
-  return await resp.json();
-}
-
 // -- Runtime ledger --
 
 export async function getSecurityLatest(): Promise<unknown> {
@@ -973,47 +783,34 @@ export async function getVmDetectionStatus(id: string): Promise<SecurityRuleStat
 
 // -- Plugins --
 
-export async function listPlugins(profileId: string): Promise<PluginListResponse> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/plugins/list`);
+export async function listPlugins(): Promise<PluginListResponse> {
+  const resp = await _get('/plugins/list');
   return await resp.json();
 }
 
-export async function updatePlugin(
-  profileId: string,
-  pluginId: string,
-  update: Partial<PluginConfig>,
-): Promise<PluginInfo> {
-  const resp = await _patch(
-    `/profiles/${encodeURIComponent(profileId)}/plugins/${encodeURIComponent(pluginId)}/edit`,
-    update,
-  );
+/** Edit a plugin's mode or detection level in the user's settings.toml. */
+export async function updatePlugin(pluginId: string, update: Partial<PluginConfig>): Promise<PluginInfo> {
+  const resp = await _patch(`/plugins/${encodeURIComponent(pluginId)}/edit`, update);
   return await resp.json();
 }
 
-export async function getCredentialBrokerInfo(profileId: string): Promise<CredentialBrokerInfo> {
-  const resp = await _get(
-    `/profiles/${encodeURIComponent(profileId)}/plugins/credential_broker/credentials/info`,
-  );
+export async function getCredentialBrokerInfo(): Promise<CredentialBrokerInfo> {
+  const resp = await _get('/plugins/credential_broker/credentials/info');
   return await resp.json();
 }
 
-export async function reloadCredentialBrokerStore(profileId: string): Promise<CredentialBrokerInfo> {
-  const resp = await _post(
-    `/profiles/${encodeURIComponent(profileId)}/plugins/credential_broker/credentials/reload`,
-    {},
-  );
+export async function reloadCredentialBrokerStore(): Promise<CredentialBrokerInfo> {
+  const resp = await _post('/plugins/credential_broker/credentials/reload', {});
   return await resp.json();
 }
 
-// -- MCP config --
-
-// -- MCP runtime --
+// -- MCP --
 
 /** List configured MCP servers with tool counts (runtime). */
-export async function getMcpServers(profileId: string): Promise<McpServerInfo[]> {
+export async function getMcpServers(): Promise<McpServerInfo[]> {
   if (!_connected) return [];
   try {
-    const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/mcp/servers/list`);
+    const resp = await _get('/mcp/servers/list');
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) return [];
@@ -1021,19 +818,17 @@ export async function getMcpServers(profileId: string): Promise<McpServerInfo[]>
   }
 }
 
-/** Read the profile default MCP permission rule. */
-export async function getMcpDefaultPermission(profileId: string): Promise<McpDefaultPermission> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/mcp/default/info`);
+/** Read the default MCP tool permission and where it comes from. */
+export async function getMcpDefaultPermission(): Promise<McpDefaultPermission> {
+  const resp = await _get('/mcp/default/info');
   return await resp.json();
 }
 
-/** List discovered MCP tools with cache/approval status (runtime). */
-export async function getMcpTools(profileId: string, serverId: string): Promise<McpToolInfo[]> {
+/** List discovered MCP tools with their effective permission. */
+export async function getMcpTools(serverId: string): Promise<McpToolInfo[]> {
   if (!_connected) return [];
   try {
-    const resp = await _get(
-      `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/list`,
-    );
+    const resp = await _get(`/mcp/servers/${encodeURIComponent(serverId)}/tools/list`);
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) return [];
@@ -1041,46 +836,36 @@ export async function getMcpTools(profileId: string, serverId: string): Promise<
   }
 }
 
-/** Re-discover tools from MCP servers. */
-export async function refreshMcpTools(profileId: string, serverId: string): Promise<void> {
-  await _post(
-    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/refresh`,
-  );
+/** Re-discover tools from an MCP server. */
+export async function refreshMcpTools(serverId: string): Promise<void> {
+  await _post(`/mcp/servers/${encodeURIComponent(serverId)}/refresh`);
 }
 
-/** Edit the profile default MCP permission through the enforcement rule ledger. */
-export async function updateMcpDefaultPermission(
-  profileId: string,
-  action: ToolPermission,
-): Promise<void> {
-  await _patch(
-    `/profiles/${encodeURIComponent(profileId)}/mcp/default/edit`,
-    { action },
-  );
+/** Edit the default MCP tool permission in the user's settings.toml. */
+export async function updateMcpDefaultPermission(action: ToolPermission): Promise<void> {
+  await _patch('/mcp/default/edit', { action });
 }
 
-/** Edit MCP tool permission through the profile enforcement rule ledger. */
+/** Edit one MCP tool's permission in the user's settings.toml. */
 export async function updateMcpToolPermission(
-  profileId: string,
   serverId: string,
   toolId: string,
   action: ToolPermission,
 ): Promise<void> {
   await _patch(
-    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/edit`,
+    `/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/edit`,
     { action },
   );
 }
 
 /** Call a built-in MCP file tool. */
 export async function callMcpTool(
-  profileId: string,
   serverId: string,
   toolId: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
   const resp = await _post(
-    `/profiles/${encodeURIComponent(profileId)}/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/call`,
+    `/mcp/servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/call`,
     args,
   );
   return await resp.json();
@@ -1088,17 +873,14 @@ export async function callMcpTool(
 
 // -- Assets --
 
-import type { AssetStatusResponse } from './types/assets';
-
-/** Get first-class VM asset status. */
-export async function getAssetsStatus(profileId: string): Promise<AssetStatusResponse> {
-  const resp = await _get(`/profiles/${encodeURIComponent(profileId)}/assets/status`);
-  return await resp.json();
+/** Get VM asset status for this host's architecture. */
+export async function getAssetsStatus(): Promise<AssetStatus> {
+  return _sdk.call(gateway.getAssetStatus);
 }
 
-/** Ensure missing/corrupt VM assets, then return refreshed status. */
-export async function ensureAssets(profileId: string): Promise<AssetStatusResponse> {
-  const resp = await _post(`/profiles/${encodeURIComponent(profileId)}/assets/ensure`, {});
+/** Start downloading missing or invalid VM assets; returns the refreshed status. */
+export async function ensureAssets(): Promise<AssetStatus> {
+  const resp = await _post('/assets/ensure', {});
   return await resp.json();
 }
 
