@@ -23,6 +23,7 @@ pub fn openapi() -> OpenApi {
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
     doc.get::<ContainerStatusResponse>("/vms/{id}/container", "getVmContainer");
+    doc.images();
     doc.exposures();
     doc.post::<ExecRequest, ExecResponse>("/vms/{id}/exec", "execVm");
     doc.post::<ForkRequest, ForkResponse>("/vms/{id}/fork", "forkVm");
@@ -178,6 +179,14 @@ impl Document {
         let sessions = "/vms/{id}/exposures/{exposure_id}/preview-session";
         let revoke_sessions = self.operation::<PreviewSessionsRevokedResponse>(sessions, "revokeVmPreviewSessions");
         self.add(sessions, HttpMethod::Delete, revoke_sessions);
+    }
+
+    fn images(&mut self) {
+        let list = self
+            .operation::<ImageListResponse>("/images", "listImages")
+            .parameters(Some(ImageListQuery::into_params(|| Some(ParameterIn::Query))));
+        self.add("/images", HttpMethod::Get, list);
+        self.post::<ImagePullRequest, ImagePullResponse>("/images/pull", "pullImage");
     }
 
     fn networks(&mut self) {

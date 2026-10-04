@@ -14,5 +14,6 @@ class ContainerStatusResponse(Model):
     error: StrictStr | None = None
     exit_code: StrictInt | None = None
     image: StrictStr
+    resolved: StrictStr | None = None
     state: ContainerState
     surface: ContainerSurface | None = None

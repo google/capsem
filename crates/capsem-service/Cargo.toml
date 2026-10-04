@@ -49,3 +49,6 @@ tempfile = "3"
 filetime = "0.2"
 tower = { version = "0.5", features = ["util"] }
 rusqlite = { workspace = true }
+# test-util enables tokio's paused clock, so the image catalog's refresh and
+# retry intervals are tested at their real lengths. Dev-only; no prod impact.
+tokio = { workspace = true, features = ["test-util"] }

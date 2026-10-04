@@ -11,7 +11,9 @@ use utoipa::ToSchema;
 /// environment values can carry secrets, and registry access always does.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, ToSchema)]
 pub struct ContainerSpec {
-    /// `docker://IMAGE` or a registry-qualified `registry/repository:tag`.
+    /// A catalog name (`codex-cli`), `docker://IMAGE`, or a registry-qualified
+    /// `registry/repository:tag`. A catalog name is looked up first, so a
+    /// name that is also a Docker Hub short name never reaches Docker Hub.
     pub image: String,
     /// Command replacing the image's default command, as `docker run IMAGE CMD...`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -93,6 +95,11 @@ pub struct ContainerStatusResponse {
     /// Content digest of the verified image, once pulled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+    /// What the request resolved to, as `repository@digest`, once admitted:
+    /// a catalog name or tag pinned, so the session never follows a moved
+    /// tag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<String>,
     /// Workload exit status reported by the guest, when `state` is `exited`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,

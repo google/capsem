@@ -83,6 +83,91 @@
         }
       }
     },
+    "/images": {
+      "get": {
+        "operationId": "listImages",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "description": "Read the catalog from its registry now instead of from the copy the\nservice keeps for up to 30 minutes.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/images/pull": {
+      "post": {
+        "operationId": "pullImage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImagePullRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImagePullResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/networks": {
       "get": {
         "operationId": "listNetworks",
@@ -2938,6 +3023,36 @@
           }
         }
       },
+      "CatalogInfo": {
+        "type": "object",
+        "description": "One catalog version, identified by its manifest digest.",
+        "required": [
+          "reference",
+          "digest",
+          "channel"
+        ],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "`stable` or `nightly`."
+          },
+          "digest": {
+            "type": "string",
+            "description": "The catalog version's manifest digest."
+          },
+          "generated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the publishing workflow wrote this version, as it recorded it."
+          },
+          "reference": {
+            "type": "string",
+            "description": "The reference the catalog was read from, usually a moving channel tag."
+          }
+        }
+      },
       "ContainerSpec": {
         "type": "object",
         "description": "An OCI image run as a VM's workload.\n\n`Debug` shows the image and environment names only: arguments and\nenvironment values can carry secrets, and registry access always does.",
@@ -2968,7 +3083,7 @@
           },
           "image": {
             "type": "string",
-            "description": "`docker://IMAGE` or a registry-qualified `registry/repository:tag`."
+            "description": "A catalog name (`codex-cli`), `docker://IMAGE`, or a registry-qualified\n`registry/repository:tag`. A catalog name is looked up first, so a\nname that is also a Docker Hub short name never reaches Docker Hub."
           },
           "registry": {
             "oneOf": [
@@ -3029,6 +3144,13 @@
           "image": {
             "type": "string",
             "description": "The image reference as requested."
+          },
+          "resolved": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the request resolved to, as `repository@digest`, once admitted:\na catalog name or tag pinned, so the session never follows a moved\ntag."
           },
           "state": {
             "$ref": "#/components/schemas/ContainerState"
@@ -4094,6 +4216,123 @@
             "items": {
               "$ref": "#/components/schemas/VmSummary"
             }
+          }
+        }
+      },
+      "ImageCacheState": {
+        "type": "string",
+        "description": "Whether the host's image cache already holds an image.",
+        "enum": [
+          "unknown"
+        ]
+      },
+      "ImageInfo": {
+        "type": "object",
+        "description": "One catalog entry.",
+        "required": [
+          "name",
+          "description",
+          "architectures",
+          "cached"
+        ],
+        "properties": {
+          "architectures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every architecture some version is built for (`arm64`, `amd64`)."
+          },
+          "cached": {
+            "$ref": "#/components/schemas/ImageCacheState"
+          },
+          "description": {
+            "type": "string"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The newest version this host can run, as `repository@digest`; absent\nwhen no version is built for this host's architecture and runtime."
+          },
+          "name": {
+            "type": "string",
+            "description": "The catalog name, as `capsem create --image` and `POST /images/pull` take it."
+          }
+        }
+      },
+      "ImageListResponse": {
+        "type": "object",
+        "description": "`GET /images`: the catalog entries the current image policy permits.",
+        "required": [
+          "images"
+        ],
+        "properties": {
+          "catalog": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CatalogInfo",
+                "description": "The catalog version listed; absent when the policy turns the catalog\noff or no catalog could ever be read, and then `images` is empty."
+              }
+            ]
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImageInfo"
+            },
+            "description": "Entries in name order."
+          }
+        }
+      },
+      "ImagePullRequest": {
+        "type": "object",
+        "description": "`POST /images/pull`: fetch an image into the host cache ahead of a create.\n`Debug` redacts registry access the way [`RegistryAccess`] does.",
+        "required": [
+          "image"
+        ],
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "A catalog name, `docker://IMAGE`, or a registry-qualified\n`registry/repository:tag` or `@sha256:` reference."
+          },
+          "registry": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RegistryAccess",
+                "description": "Access to a private registry, used for this pull only and never stored."
+              }
+            ]
+          }
+        }
+      },
+      "ImagePullResponse": {
+        "type": "object",
+        "description": "A pulled and admitted image.",
+        "required": [
+          "image",
+          "resolved",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "The platform manifest pulled for this host."
+          },
+          "image": {
+            "type": "string",
+            "description": "The image as requested."
+          },
+          "resolved": {
+            "type": "string",
+            "description": "What the request resolved to, as `repository@digest`: the pin a\nsession records, never a tag."
           }
         }
       },

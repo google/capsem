@@ -8,11 +8,14 @@ use super::*;
 use capsem_api::{
     ContainerSpec, ContainerState, ContainerStatusResponse, ContainerSurface, ContainerSurfaceKind, RegistryAccess,
 };
+use capsem_core::container::admission::CatalogSource;
 use capsem_core::container::stage::{self, StagedContent};
 use capsem_foundation::unix::contained::{ContainedOpenOptions, EntryKind};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
+
+pub(crate) mod images;
 
 const CREATE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(110);
 
@@ -32,6 +35,9 @@ pub(crate) type PullFuture = Pin<Box<dyn Future<Output = anyhow::Result<PulledIm
 /// pulls from registries under the installation's policy; tests substitute.
 pub(crate) trait ImageSource: Send + Sync {
     fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf) -> PullFuture;
+
+    /// Read the catalog `source` names, anonymously: catalogs are public.
+    fn fetch_catalog(&self, source: CatalogSource, parent: PathBuf) -> images::CatalogFuture;
 
     /// The image policy for one decision, read fresh each time.
     fn policy(&self) -> PolicyFuture {
@@ -75,6 +81,25 @@ impl ImageSource for RegistryImages {
             })
         })
     }
+
+    fn fetch_catalog(&self, source: CatalogSource, parent: PathBuf) -> images::CatalogFuture {
+        Box::pin(async move {
+            let ca = match &source.ca {
+                Some(path) => Some(
+                    tokio::fs::read(path)
+                        .await
+                        .with_context(|| format!("read [images] catalog_ca {}", path.display()))?,
+                ),
+                None => None,
+            };
+            let puller = capsem_assets::oci::Puller::new_with_root_certificate(
+                stage::oci_architecture()?,
+                capsem_assets::oci::RegistryAuth::Anonymous,
+                ca.as_deref(),
+            )?;
+            puller.fetch_catalog(&source.reference, &parent).await
+        })
+    }
 }
 
 struct ContainerRecord {
@@ -88,6 +113,8 @@ pub(crate) struct ContainerSetups {
     records: Mutex<HashMap<String, ContainerRecord>>,
     generation: AtomicU64,
     source: Box<dyn ImageSource>,
+    /// The last good image catalog, shared by every image request.
+    catalog: images::CatalogCache,
 }
 
 impl Default for ContainerSetups {
@@ -102,6 +129,7 @@ impl ContainerSetups {
             records: Mutex::new(HashMap::new()),
             generation: AtomicU64::new(0),
             source,
+            catalog: Default::default(),
         }
     }
 
@@ -127,6 +155,7 @@ impl ContainerSetups {
                     state: ContainerState::Pulling,
                     image: image.to_owned(),
                     digest: None,
+                    resolved: None,
                     exit_code: None,
                     error: None,
                     surface: None,
@@ -205,20 +234,25 @@ impl ContainerSetups {
 }
 
 /// Admit a pulled image by either of its content addresses: what the
-/// reference resolved to, or the platform manifest it selected.
+/// reference resolved to, or the platform manifest it selected. Answers with
+/// what the reference resolved to, which is what a session records.
 fn admit(
     policy: &capsem_core::container::admission::ImagePolicy,
     requested: &capsem_assets::oci::ImageReference,
     image: &PulledImage,
-) -> Result<(), String> {
+) -> Result<capsem_assets::oci::ResolvedImage, String> {
+    let bind =
+        |digest: &str| capsem_assets::oci::Digest::parse(digest).and_then(|digest| requested.clone().resolve(digest));
+    // The refusal reported is the one for what the reference resolved to: a
+    // pinned reference cannot bind its platform manifest at all, and that
+    // mismatch used to replace the policy's reason.
     let mut refusal = None;
     for digest in [&image.image_digest, &image.digest] {
-        let resolved = capsem_assets::oci::Digest::parse(digest)
-            .and_then(|digest| requested.clone().resolve(digest))
-            .and_then(|resolved| policy.admit(&resolved));
-        match resolved {
-            Ok(()) => return Ok(()),
-            Err(error) => refusal = Some(format!("container image refused: {error:#}")),
+        match bind(digest).and_then(|resolved| policy.admit(&resolved)) {
+            Ok(()) => return bind(&image.image_digest).map_err(|e| format!("container image refused: {e:#}")),
+            Err(error) => {
+                refusal.get_or_insert_with(|| format!("container image refused: {error:#}"));
+            }
         }
     }
     Err(refusal.unwrap_or_else(|| "container image refused".into()))
@@ -244,23 +278,18 @@ pub(crate) fn start(state: &Arc<ServiceState>, id: String, spec: ContainerSpec) 
 }
 
 async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: ContainerSpec) -> Result<(), String> {
-    let reference = capsem_assets::oci::image_reference(&spec.image)
-        .map_err(|error| format!("container image expects docker://IMAGE or registry/repository:tag: {error:#}"))?;
+    // One resolver for every entrypoint: a catalog name becomes the pinned
+    // digest it names here, and is an explicit reference from then on.
+    let mut decision = images::Decision::new(state).await?;
+    let requested = decision.resolve(&spec.image).await?;
     // Sources are checked before any registry access: a refused registry is
     // never contacted.
-    let requested = capsem_assets::oci::ImageReference::try_from(&reference).map_err(|e| format!("{e:#}"))?;
-    let policy = state
-        .containers
-        .source
-        .policy()
-        .await
-        .map_err(|e| format!("image policy: {e:#}"))?;
-    policy.check_source(&requested).map_err(|e| format!("{e:#}"))?;
+    decision.check_source(&requested).await?;
     let admission = ServiceToProcess::AdmitContainerPull {
         id: state.next_job_id(),
-        image: spec.image.clone(),
-        registry: reference.resolve_registry().to_owned(),
-        digest: reference.digest().map(str::to_owned),
+        image: requested.pull.clone(),
+        registry: requested.registry.clone(),
+        digest: requested.identity.digest().map(ToString::to_string),
     };
     let uds_path = running_uds_path(state, id).map_err(|error| error.1)?;
     wait_for_vm_ready(&uds_path, 30, Some(state), Some(id))
@@ -282,22 +311,18 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         }
         other => return Err(format!("unexpected container pull admission reply: {other:?}")),
     }
-    let parent = state.run_dir.join("container-pulls");
-    tokio::task::spawn_blocking({
-        let parent = parent.clone();
-        move || capsem_foundation::unix::fs::ensure_private_dir(&parent)
-    })
-    .await
-    .map_err(|e| format!("prepare pull directory: {e}"))?
-    .map_err(|e| format!("prepare pull directory: {e}"))?;
     let image = state
         .containers
         .source
-        .pull(spec.image.clone(), spec.registry.unwrap_or_default(), parent)
+        .pull(
+            requested.pull.clone(),
+            spec.registry.unwrap_or_default(),
+            decision.parent.clone(),
+        )
         .await
-        .map_err(|e| format!("pull {}: {e:#}", spec.image))?;
+        .map_err(|e| format!("pull {}: {e:#}", requested.pull))?;
     // Admission is on the resolved digest, before anything is staged.
-    admit(&policy, &requested, &image)?;
+    let resolved = decision.admit(&requested, &image).await?;
     // An image whose surface labels are not exactly one valid declaration is
     // refused here, before staging: nothing of it runs and nothing is exposed.
     let declared = tokio::task::spawn_blocking({
@@ -311,6 +336,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         status.state = ContainerState::Staging;
         status.digest = Some(image.digest.clone());
         status.surface = api_surface(declared);
+        status.resolved = Some(resolved.to_string());
     }) {
         return Ok(());
     }
@@ -472,6 +498,10 @@ struct LaunchRecord {
     /// lives in the VM owner, which outlives a service restart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     surface: Option<ContainerSurface>,
+    /// The pinned `repository@digest`; absent in records written before
+    /// sessions recorded it.
+    #[serde(default)]
+    resolved: Option<String>,
 }
 
 /// Wait for the workload `POST /vms/create` started to settle. A detached
@@ -522,6 +552,7 @@ pub(crate) fn record_launched(state: &ServiceState, id: &str) -> Result<(), Stri
         image: status.image,
         digest: status.digest.unwrap_or_default(),
         surface: status.surface,
+        resolved: status.resolved,
     })
     .map_err(|e| format!("encode launch record: {e}"))?;
     capsem_foundation::unix::fs::atomic_write_private(&session_dir.join(LAUNCH_RECORD), &record)
@@ -577,6 +608,7 @@ fn observe(
             state: ContainerState::Starting,
             image: record.image,
             digest: Some(record.digest),
+            resolved: record.resolved,
             exit_code: None,
             error: None,
             surface: record.surface,

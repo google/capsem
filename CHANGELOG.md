@@ -707,6 +707,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Images can be named from the catalog. The service reads
+  `ghcr.io/google/capsem/catalog:stable` (or the mirror `[images] catalog`
+  names, trusting `[images] catalog_ca` for it; `catalog = false` turns it
+  off) at most every 30 minutes and keeps the last good copy when a read
+  fails, and a container workload's `image` may be a catalog name such as
+  `codex-cli`, which resolves to the newest version this host's architecture
+  and runtime can run, pinned by digest. A catalog name is looked up before
+  anything is parsed as a reference, so `redis` is the catalog's `redis` or
+  nothing, never Docker Hub's. A request the explicit `[images]` grants
+  decide never reads the catalog. `GET /images` lists the entries the policy
+  permits with their architectures and the pin this host runs, and
+  `POST /images/pull` resolves, checks, pulls into the host image cache and
+  admits ahead of a create, answering 403 without contacting a refused
+  registry. A workload's status and launch record now carry the
+  `repository@digest` it resolved to.
 - The official images (`dev`, `codex-cli`, `claude-code`, `agy`) are
   published to `ghcr.io/google/capsem` for arm64 and amd64 by a dedicated
   workflow, each with a CycloneDX OBOM, an EROFS rootfs whose owners sit in

@@ -34,6 +34,7 @@ from .get_vm_stats_detail import get_vm_stats_detail as get_vm_stats_detail
 from .get_vm_stats_summary import get_vm_stats_summary as get_vm_stats_summary
 from .get_vm_status import get_vm_status as get_vm_status
 from .get_vm_timeline import get_vm_timeline as get_vm_timeline
+from .list_images import list_images as list_images
 from .list_networks import list_networks as list_networks
 from .list_profile_mcp_servers import (
     list_profile_mcp_servers as list_profile_mcp_servers,
@@ -45,6 +46,7 @@ from .list_vm_files import list_vm_files as list_vm_files
 from .list_vms import list_vms as list_vms
 from .pause_vm import pause_vm as pause_vm
 from .persist_vm import persist_vm as persist_vm
+from .pull_image import pull_image as pull_image
 from .purge_vms import purge_vms as purge_vms
 from .refresh_profile_mcp_server import (
     refresh_profile_mcp_server as refresh_profile_mcp_server,

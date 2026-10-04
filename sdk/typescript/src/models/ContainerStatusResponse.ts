@@ -8,6 +8,7 @@ export interface ContainerStatusResponse {
   "error"?: string | null;
   "exit_code"?: number | null;
   "image": string;
+  "resolved"?: string | null;
   "state": ContainerState;
   "surface"?: null | ContainerSurface;
 }

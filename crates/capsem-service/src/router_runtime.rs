@@ -33,6 +33,8 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/networks/{id}/members/{vm_id}",
             put(network_routes::handle_network_attach).delete(network_routes::handle_network_detach),
         )
+        .route("/images", get(container_setup::images::handle_list_images))
+        .route("/images/pull", post(container_setup::images::handle_pull_image))
         .route("/vms/create", post(handle_provision))
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))

@@ -10,6 +10,7 @@ export const ContainerStatusResponseSchema: z.ZodType<ContainerStatusResponse> =
   "error": z.string().nullable().exactOptional(),
   "exit_code": z.int().nullable().exactOptional(),
   "image": z.string(),
+  "resolved": z.string().nullable().exactOptional(),
   "state": z.lazy(() => ContainerStateSchema),
   "surface": z.union([z.null(), z.lazy(() => ContainerSurfaceSchema)]).exactOptional(),
 });

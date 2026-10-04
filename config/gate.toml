@@ -2984,6 +2984,7 @@ measured = [
     "/vms/list",
     "/networks",
     "/detection/latest",
+    "/enforcement/latest",
     "/detection/status",
     "/enforcement/status",
     "/profiles/list",
@@ -3003,7 +3004,11 @@ unmeasured = [
     "/networks/{id}",
     "/networks/{id}/logs",
     "/networks/{id}/members/{vm_id}",
-    "/enforcement/latest",
+    # The image catalog is read from a registry, at most every 30 minutes;
+    # timing it would time the network. Pulls are network-bound mutations.
+    # /enforcement/latest moved to measured so the debt does not grow.
+    "/images",
+    "/images/pull",
     "/host-logs/{name}",
     "/panics",
     "/profiles/reload",

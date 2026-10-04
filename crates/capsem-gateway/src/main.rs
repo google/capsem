@@ -230,6 +230,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/networks/{id}/members/{vm_id}",
             put(proxy::handle_proxy).delete(proxy::handle_proxy),
         )
+        .route("/images", get(proxy::handle_proxy))
+        .route("/images/pull", post(proxy::handle_proxy))
         .route("/vms/create", post(proxy::handle_proxy))
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))

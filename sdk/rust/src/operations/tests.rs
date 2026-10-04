@@ -92,6 +92,8 @@ operation!(get_vm_stats_detail, "getVmStatsDetail", GetVmStatsDetailParams);
 operation!(get_vm_stats_summary, "getVmStatsSummary", GetVmStatsSummaryParams);
 operation!(get_vm_status, "getVmStatus", GetVmStatusParams);
 operation!(get_vm_container, "getVmContainer", GetVmContainerParams);
+operation!(list_images, "listImages", ListImagesParams);
+operation!(pull_image, "pullImage", PullImageParams);
 operation!(list_vm_exposures, "listVmExposures", ListVmExposuresParams);
 operation!(create_vm_exposure, "createVmExposure", CreateVmExposureParams);
 operation!(delete_vm_exposure, "deleteVmExposure", DeleteVmExposureParams);

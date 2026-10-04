@@ -8,6 +8,7 @@ from .body_encoding import BodyEncoding as BodyEncoding
 from .capture_status import CaptureStatus as CaptureStatus
 from .captured_content import CapturedContent as CapturedContent
 from .captured_payload import CapturedPayload as CapturedPayload
+from .catalog_info import CatalogInfo as CatalogInfo
 from .container_spec import ContainerSpec as ContainerSpec
 from .container_state import ContainerState as ContainerState
 from .container_status_response import (
@@ -53,6 +54,11 @@ from .host_logs_response import HostLogsResponse as HostLogsResponse
 from .host_triage_response import HostTriageResponse as HostTriageResponse
 from .http_event import HttpEvent as HttpEvent
 from .hypervisor_info import HypervisorInfo as HypervisorInfo
+from .image_cache_state import ImageCacheState as ImageCacheState
+from .image_info import ImageInfo as ImageInfo
+from .image_list_response import ImageListResponse as ImageListResponse
+from .image_pull_request import ImagePullRequest as ImagePullRequest
+from .image_pull_response import ImagePullResponse as ImagePullResponse
 from .interaction import Interaction as Interaction
 from .interaction_block import InteractionBlock as InteractionBlock
 from .interaction_block_kind import InteractionBlockKind as InteractionBlockKind

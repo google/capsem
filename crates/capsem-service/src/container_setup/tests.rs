@@ -13,6 +13,7 @@ struct FixtureImages {
     access: Arc<Mutex<Option<RegistryAccess>>>,
     /// Image config labels; `None` serves a layout naming no manifest.
     labels: Option<serde_json::Value>,
+    catalog_reads: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 const MANIFEST_BLOB: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -47,6 +48,12 @@ impl ImageSource for FixtureImages {
         Box::pin(
             async move { capsem_core::container::admission::ImagePolicy::from_files(&granted, &Default::default()) },
         )
+    }
+
+    /// No catalog can be read here: only the fixture grants admit anything.
+    fn fetch_catalog(&self, _source: CatalogSource, _parent: PathBuf) -> images::CatalogFuture {
+        self.catalog_reads.fetch_add(1, Ordering::Relaxed);
+        Box::pin(async { anyhow::bail!("no catalog in this fixture") })
     }
 
     fn pull(&self, _image: String, access: RegistryAccess, _parent: PathBuf) -> PullFuture {
@@ -148,6 +155,7 @@ fn images() -> FixtureImages {
         gate: None,
         access: Arc::new(Mutex::new(None)),
         labels: None,
+        catalog_reads: Default::default(),
     }
 }
 
@@ -336,7 +344,9 @@ fn spec(registry: Option<RegistryAccess>) -> ContainerSpec {
 
 #[tokio::test]
 async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached() {
-    let fx = fixture(images());
+    let images = images();
+    let catalog_reads = Arc::clone(&images.catalog_reads);
+    let fx = fixture(images);
     // Pull admission, index.json part, transfer.json, options.json, launch.py,
     // then the launch exec.
     let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
@@ -347,6 +357,11 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
     assert_eq!(
         status.digest.as_deref(),
         Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    );
+    // The tag is gone from what the session records: the pin is.
+    assert_eq!(
+        status.resolved.as_deref(),
+        Some("registry.example/app@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
     );
     assert!(status.error.is_none());
     let staged: Vec<&str> = messages
@@ -397,6 +412,11 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
         })
     );
     assert!(!stage.join("1-0").exists(), "an empty layout file has no part");
+    assert_eq!(
+        catalog_reads.load(Ordering::Relaxed),
+        0,
+        "the explicit grants decided source and admission; the catalog is never read"
+    );
 }
 
 #[tokio::test]
@@ -607,6 +627,11 @@ async fn container_status_survives_a_service_restart_through_the_launch_record()
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "running");
     assert_eq!(body["image"], "registry.example/app:1");
+    // A restarted service still knows the pin, never only the moving tag.
+    assert_eq!(
+        body["resolved"],
+        "registry.example/app@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    );
 }
 
 /// A registry outside the policy's sources is refused before anything else:
@@ -615,6 +640,7 @@ async fn container_status_survives_a_service_restart_through_the_launch_record()
 async fn an_ungranted_source_is_refused_before_any_registry_access() {
     let images = images();
     let access = Arc::clone(&images.access);
+    let catalog_reads = Arc::clone(&images.catalog_reads);
     let fx = fixture(images);
     start(
         &fx.state,
@@ -627,6 +653,9 @@ async fn an_ungranted_source_is_refused_before_any_registry_access() {
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Failed).await;
     assert!(status.error.as_deref().unwrap().contains("not allowed"), "{status:?}");
     assert!(access.lock().unwrap().is_none(), "the registry was contacted");
+    // The grants did not decide, so the catalog was asked -- and, unreadable,
+    // widened nothing.
+    assert_eq!(catalog_reads.load(Ordering::Relaxed), 1);
 }
 
 /// Admission is on the resolved digest: an image granted by digest runs only

@@ -173,7 +173,9 @@ connection.
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/vms/create` | Create a VM from a profile, optionally with a name, resource overrides, and a `container` workload |
-| GET | `/vms/{id}/container` | Container workload setup and runtime state (pulling, staging, staged, starting, running, failed) |
+| GET | `/vms/{id}/container` | Container workload setup and runtime state (pulling, staging, staged, starting, running, failed), and the `repository@digest` it resolved to |
+| GET | `/images` | Image catalog entries the policy permits: name, description, architectures, the pin this host runs (`?refresh=true` rereads the catalog) |
+| POST | `/images/pull` | Resolve a catalog name or reference, check its source, pull it into the host image cache, admit it; 403 when the policy refuses |
 | GET/POST | `/vms/{id}/exposures` | List or open loopback port exposures held by the VM owner |
 | DELETE | `/vms/{id}/exposures/{exposure_id}` | Close an exposure for good |
 | GET | `/vms/{id}/stream` | `capsem.stream.v1` WebSocket: terminal, streaming exec, or attached container |
