@@ -102,6 +102,9 @@ pub const STAGE_RUNNING: &str = "running";
 /// The launcher's marker in [`STAGE`] that a launch ended without starting
 /// the workload.
 pub const STAGE_FAILED: &str = "failed";
+/// The launcher's marker in [`STAGE`] that a workload which started has
+/// ended. It holds the exit code.
+pub const STAGE_EXITED: &str = "exited";
 /// Where a container sees the VM workspace (the VM's /root share). The
 /// launcher mounts it there with the stage hidden, and the files API maps
 /// absolute container paths under it back to the workspace.
@@ -121,9 +124,20 @@ macro_rules! launcher_in_moved_root {
     };
 }
 
+/// The launcher with the client attached: `capsem run --image` streams its
+/// stdio, so the workload's command reads and writes the client's.
 pub const LAUNCH_COMMAND: &str = concat!(
     "chmod 555 /root/.capsem-image/launch.py && ",
     launcher_in_moved_root!("/root/.capsem-image")
+);
+
+/// The launcher with nothing attached: a detached create, a relaunch. The
+/// workload's command runs on a terminal the launcher holds, so an
+/// interactive one (a shell, an agent's TUI) waits for its user instead of
+/// reading end-of-file, and the session terminal attaches to it.
+pub const DETACHED_LAUNCH_COMMAND: &str = concat!(
+    "chmod 555 /root/.capsem-image/launch.py && ",
+    launcher_in_moved_root!("--detached /root/.capsem-image")
 );
 
 /// The session terminal's command in an image session: the launcher enters the
@@ -171,7 +185,7 @@ pub fn workload_exec_command(command: &str) -> String {
 pub fn detached_launch_command() -> String {
     format!(
         "setsid /bin/sh -c '{}' </dev/null >/dev/console 2>&1 &",
-        LAUNCH_COMMAND.replace('\'', r"'\''")
+        DETACHED_LAUNCH_COMMAND.replace('\'', r"'\''")
     )
 }
 

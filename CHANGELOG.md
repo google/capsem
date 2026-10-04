@@ -339,6 +339,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A session of an interactive image keeps its workload. A detached session
+  (`capsem create --image`, or any session the app creates) ran the image's
+  command with nothing attached, so a shell or an agent's interface -- the
+  official `dev`, `claude-code`, `codex-cli` and `agy` images -- read
+  end-of-file and exited at once, leaving a session with no workload. The
+  command now runs on a terminal Capsem holds, as `docker run -dit` does.
 - `localhost` resolves inside the VM again. The runtime image booted with an
   empty `/etc/hosts` and the guest DNS never answers `localhost`, so tools
   that connect to `localhost` failed; capsem-init now provides
@@ -1171,6 +1177,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An image session's terminal is its workload's own command: opening a
+  `claude-code` session shows Claude Code, and a `dev` session its shell.
+  Leaving the terminal leaves the workload running, and attaching again
+  shows where it was; when the command exits, the workload has exited. It
+  used to open a separate login shell beside the command.
 - An image now reaches its VM through a second VirtioFS share, read-only at
   the device and holding only that image's verified blobs, linked from the
   host's pull, instead of being copied layer by layer into the workspace.

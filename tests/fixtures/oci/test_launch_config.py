@@ -117,14 +117,15 @@ def test_a_launch_starts_from_no_markers_and_reports_a_workload_that_never_start
     assert not (stage / "running").exists() and not (stage / "failed").exists()
 
     # runc gave up before the workload ran: say so, instead of starting forever.
-    launcher.launch_ended(stage)
+    launcher.launch_ended(stage, 1)
     assert (stage / "failed").read_text() == "1\n"
 
-    # A workload that ran and then ended is not a failed start.
+    # A workload that ran and then ended is not a failed start: it exited.
     launcher.clear_launch_markers(stage)
     launcher.workload_started(stage)
-    launcher.launch_ended(stage)
+    launcher.launch_ended(stage, 0)
     assert not (stage / "failed").exists()
+    assert (stage / "exited").read_text() == "0\n"
 
 
 def test_container_trusts_capsem_ca_and_resolves_through_the_gateway(launcher):

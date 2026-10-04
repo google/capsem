@@ -4,17 +4,25 @@ The image's blobs come from the host's read-only image share, never from the
 workspace: the guest can write the workspace, and cannot write the share.
 """
 
+import collections
 import contextlib
 import ctypes
+import fcntl
 import hashlib
 import json
 import os
 import re
+import selectors
 import shutil
 import signal
+import socket
+import struct
 import subprocess
 import sys
+import termios
+import threading
 import time
+import tty
 from pathlib import Path, PurePosixPath
 
 RUNTIME = Path("/var/tmp/capsem-container")
@@ -52,9 +60,11 @@ VM_WORKSPACE = "/root"
 STAGE = ".capsem-image"
 # Markers in the stage the service reads (capsem-core `container`): `ready`,
 # the image is staged and unpacked, and a boot relaunches it; `running`, runc
-# started the workload; `failed`, a launch ended without starting it.
+# started the workload; `failed`, a launch ended without starting it;
+# `exited`, a workload that started has ended, holding its exit code.
 RUNNING = "running"
 FAILED = "failed"
+EXITED = "exited"
 CONTAINER = "workload"
 # The one runtime state root: the launch and every later exec name it.
 RUNC = ("runc", "--rootless=true", "--root", str(RUNTIME / "state"))
@@ -62,6 +72,22 @@ RUNC = ("runc", "--rootless=true", "--root", str(RUNTIME / "state"))
 TERMINAL_SHELL = ["/bin/sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l; exec sh -l"]
 TERMINAL_TYPE = "TERM=xterm-256color"
 ATTACH_INTERVAL = 1.0
+# A detached workload's terminal: runc runs in the foreground on a PTY this
+# launcher holds (runc gives the container its own and relays the two; it
+# allows a console socket only when it detaches, which would lose the exit
+# code), and the launcher serves that PTY to the session terminal on CONSOLE,
+# in RUNTIME, which only root can enter.
+CONSOLE = RUNTIME / "console.sock"
+# What a terminal that attaches late is shown first: the newest output, enough
+# for a TUI's last screen.
+REPLAY_LIMIT = 256 * 1024
+# Terminal-to-console frames: a kind byte and a big-endian length, then the
+# payload. Input carries keystrokes; resize carries rows and columns.
+FRAME_HEADER = struct.Struct(">cI")
+INPUT_FRAME = b"d"
+RESIZE_FRAME = b"w"
+RESIZE = struct.Struct(">HH")
+FRAME_LIMIT = 1024 * 1024
 
 # The VM trusts the Capsem CA through this bundle; the container gets the same
 # file read-only, so TLS it opens terminates at the host MITM like VM traffic.
@@ -113,7 +139,7 @@ def _safe_mount_point(value):
     )
 
 
-def configure(unpacked, image, options):
+def configure(unpacked, image, options, detached=False):
     for key in ("capabilities", "seccomp", "id_map", "resources"):
         if key not in options:
             raise ValueError(f"stage options carry no {key}; refusing to run the workload without it")
@@ -137,8 +163,13 @@ def configure(unpacked, image, options):
         dict.fromkeys(("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"), CA_BUNDLE)
     )
     environment.update(options["env"])
+    # Detached, nothing is attached when the command starts: an interactive
+    # one (a shell, an agent's TUI) would read end-of-file and exit at once.
+    # It runs on a terminal the launcher holds, as `docker run -dit` does.
+    if detached:
+        environment.setdefault("TERM", TERMINAL_TYPE.split("=", 1)[1])
     process.update(
-        terminal=False,
+        terminal=detached,
         env=[f"{key}={value}" for key, value in environment.items()],
         noNewPrivileges=True,
         # The host decides what the workload holds and which syscalls it may
@@ -300,14 +331,18 @@ def workload_started(stage):
 
 def clear_launch_markers(stage):
     """A launch starts from nothing the last one of a named session left."""
-    for marker in (RUNNING, FAILED):
+    for marker in (RUNNING, FAILED, EXITED):
         (stage / marker).unlink(missing_ok=True)
 
 
-def launch_ended(stage):
+def launch_ended(stage, code):
     """runc returned. A workload that never started is a failed launch, which
-    the service reports instead of waiting for it to start."""
-    if not (stage / RUNNING).exists():
+    the service reports instead of waiting for it to start; one that started
+    has exited, and the service reports that, with its code, instead of
+    calling it running."""
+    if (stage / RUNNING).exists():
+        (stage / EXITED).write_text(f"{code}\n")
+    else:
         (stage / FAILED).write_text("1\n")
 
 
@@ -727,7 +762,7 @@ def unpacked_root(digest, id_map, share=image_share):
     )
 
 
-def run(stage):
+def run(stage, detached=False):
     # A second workload cannot overwrite live state. Traversable, not listable:
     # runc sets the container up as the mapped root, which must reach the
     # bundle and the resolver file through here.
@@ -735,6 +770,7 @@ def run(stage):
     RUNTIME.chmod(0o711)
     state = RUNTIME / "state"
     process = None
+    code = None
     clear_launch_markers(stage)
     try:
         options = json.loads((stage / "options.json").read_text())
@@ -744,7 +780,7 @@ def run(stage):
             WORKSPACE_VIEW.mkdir(mode=0o700, exist_ok=True)
             idmap_workspace(id_map, WORKSPACE_VIEW)
         config_path = bundle / "config.json"
-        config = configure(unpacked, image, options)
+        config = configure(unpacked, image, options, detached=detached)
         # configure() has refused any unsafe volume path by now.
         prepare_volumes(
             (image.get("config") or {}).get("Volumes") or {},
@@ -756,21 +792,32 @@ def run(stage):
         (RUNTIME / "hosts").write_text(hosts_file())
         (stage / "ready").write_text("1\n")
         pid_file = RUNTIME / "workload.pid"
-        process = subprocess.Popen(
-            [
-                *RUNC,
-                "run",
-                "--no-new-keyring",
-                "--pid-file",
-                str(pid_file),
-                "--bundle",
-                str(bundle),
-                CONTAINER,
-            ]
-        )
-        return process.wait()
+        argv = [*RUNC, "run", "--no-new-keyring", "--pid-file", str(pid_file), "--bundle", str(bundle)]
+        if not detached:
+            process = subprocess.Popen([*argv, CONTAINER])
+            code = process.wait()
+            return code
+        # Detached: nothing is attached, so the workload runs on a terminal
+        # this launcher holds for as long as it runs.
+        # The console listens before runc starts, so a terminal never finds
+        # the workload running without it and enters a separate shell.
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(CONSOLE))
+            CONSOLE.chmod(0o600)
+            listener.listen()
+            master, terminal = os.openpty()
+            try:
+                process = subprocess.Popen([*argv, CONTAINER], stdin=terminal, stdout=terminal)
+            finally:
+                os.close(terminal)
+            try:
+                Console(master, listener, resized=lambda: process.send_signal(signal.SIGWINCH)).serve()
+            finally:
+                os.close(master)
+        code = process.wait()
+        return code
     finally:
-        launch_ended(stage)
+        launch_ended(stage, code)
         if (state / CONTAINER).exists():
             command(*RUNC, "delete", "--force", CONTAINER)
         if process is not None and process.poll() is None:
@@ -855,13 +902,206 @@ def process_spec(bundle, argv, tty):
     return spec
 
 
-def attach(bundle_of=workload_bundle, run=subprocess.run, sleep=time.sleep):
-    """The session terminal, inside the workload: wait for it to run, enter it
-    with a login shell, and enter it again whenever that shell ends.
+def encode_input(data):
+    return FRAME_HEADER.pack(INPUT_FRAME, len(data)) + data
 
-    An image session's terminal belongs to its workload, as exec does; it never
-    falls back to a VM shell. Keyboard signals reach the workload through runc's
-    raw terminal, so between shells they must not end this loop instead.
+
+def encode_resize(rows, cols):
+    return FRAME_HEADER.pack(RESIZE_FRAME, RESIZE.size) + RESIZE.pack(rows, cols)
+
+
+class FrameReader:
+    """Terminal-to-console frames, from a byte stream cut anywhere."""
+
+    def __init__(self):
+        self._buffer = b""
+
+    def feed(self, data):
+        self._buffer += data
+        events = []
+        while len(self._buffer) >= FRAME_HEADER.size:
+            kind, length = FRAME_HEADER.unpack_from(self._buffer)
+            if kind not in (INPUT_FRAME, RESIZE_FRAME) or length > FRAME_LIMIT:
+                raise ValueError(f"not a console frame: {kind!r} of {length} bytes")
+            if kind == RESIZE_FRAME and length != RESIZE.size:
+                raise ValueError(f"a resize frame carries {RESIZE.size} bytes, not {length}")
+            end = FRAME_HEADER.size + length
+            if len(self._buffer) < end:
+                break
+            payload, self._buffer = self._buffer[FRAME_HEADER.size : end], self._buffer[end:]
+            events.append(("input", payload) if kind == INPUT_FRAME else ("resize", RESIZE.unpack(payload)))
+        return events
+
+
+class Console:
+    """A detached workload's terminal: the PTY master runc handed over.
+
+    Its output is always drained -- into a bounded replay of the newest bytes,
+    and to every attached terminal -- so the workload never blocks on a full
+    terminal. A terminal that attaches is shown the replay, then the live
+    output; its keystrokes and window size reach the workload. A terminal that
+    leaves leaves the workload running. When the workload exits (the master
+    reads end-of-file) every terminal is closed and `serve` returns.
+    """
+
+    def __init__(self, master, listener, replay_limit=REPLAY_LIMIT, resized=None):
+        self._master = master
+        # Called after a resize: runc copies its terminal's size to the
+        # workload's when signalled, not by itself.
+        self._resized = resized
+        self._listener = listener
+        self._replay = collections.deque()
+        self._replay_size = 0
+        self._limit = replay_limit
+        self._clients = {}
+        self._lock = threading.Lock()
+
+    def replayed(self):
+        with self._lock:
+            return b"".join(self._replay)
+
+    def _remember(self, data):
+        with self._lock:
+            self._replay.append(data)
+            self._replay_size += len(data)
+            while self._replay_size > self._limit:
+                excess = self._replay_size - self._limit
+                head = self._replay[0]
+                if len(head) <= excess:
+                    self._replay.popleft()
+                    self._replay_size -= len(head)
+                else:
+                    self._replay[0] = head[excess:]
+                    self._replay_size -= excess
+
+    def _drop(self, selector, client):
+        selector.unregister(client)
+        self._clients.pop(client, None)
+        client.close()
+
+    def serve(self):
+        selector = selectors.DefaultSelector()
+        selector.register(self._master, selectors.EVENT_READ, "master")
+        selector.register(self._listener, selectors.EVENT_READ, "listener")
+        try:
+            while True:
+                for key, _ in selector.select():
+                    if key.data == "master":
+                        try:
+                            data = os.read(self._master, 65536)
+                        except OSError:
+                            data = b""
+                        if not data:
+                            return
+                        self._remember(data)
+                        for client in list(self._clients):
+                            try:
+                                client.sendall(data)
+                            except OSError:
+                                self._drop(selector, client)
+                    elif key.data == "listener":
+                        client, _ = self._listener.accept()
+                        try:
+                            client.sendall(self.replayed())
+                        except OSError:
+                            client.close()
+                            continue
+                        self._clients[client] = FrameReader()
+                        selector.register(client, selectors.EVENT_READ, client)
+                    else:
+                        client = key.data
+                        try:
+                            data = client.recv(65536)
+                            events = self._clients[client].feed(data) if data else None
+                        except (OSError, ValueError):
+                            events = None
+                        if events is None:
+                            self._drop(selector, client)
+                            continue
+                        for kind, value in events:
+                            if kind == "input":
+                                os.write(self._master, value)
+                            else:
+                                rows, cols = value
+                                fcntl.ioctl(self._master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                                if self._resized is not None:
+                                    self._resized()
+        finally:
+            for client in list(self._clients):
+                with contextlib.suppress(OSError, KeyError):
+                    self._drop(selector, client)
+            selector.close()
+
+
+def window_size(fd):
+    """(rows, cols) of the terminal on `fd`, or None when it is not one."""
+    try:
+        rows, cols, _, _ = struct.unpack("HHHH", fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\0" * 8))
+    except OSError:
+        return None
+    return rows, cols
+
+
+def relay(console, keys, screen):
+    """Copy a terminal to a held console until the console closes: keystrokes
+    on `keys` go out as input frames, output comes back to `screen` verbatim."""
+    selector = selectors.DefaultSelector()
+    selector.register(console, selectors.EVENT_READ, "console")
+    selector.register(keys, selectors.EVENT_READ, "keys")
+    try:
+        while True:
+            for key, _ in selector.select():
+                if key.data == "console":
+                    data = console.recv(65536)
+                    if not data:
+                        return
+                    os.write(screen, data)
+                else:
+                    data = os.read(keys, 65536)
+                    if not data:
+                        selector.unregister(keys)
+                        continue
+                    console.sendall(encode_input(data))
+    finally:
+        selector.close()
+
+
+def attach_console():
+    """The session terminal on the held console, in raw mode, its window size
+    following the terminal's. Returns when the workload exits."""
+    keys, screen = sys.stdin.fileno(), sys.stdout.fileno()
+    saved = termios.tcgetattr(keys) if os.isatty(keys) else None
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as console:
+        console.connect(str(CONSOLE))
+
+        def resized(*_):
+            size = window_size(keys)
+            if size is not None:
+                with contextlib.suppress(OSError):
+                    console.sendall(encode_resize(*size))
+
+        previous = signal.signal(signal.SIGWINCH, resized)
+        try:
+            if saved is not None:
+                tty.setraw(keys)
+            resized()
+            relay(console, keys, screen)
+        finally:
+            signal.signal(signal.SIGWINCH, previous)
+            if saved is not None:
+                termios.tcsetattr(keys, termios.TCSADRAIN, saved)
+
+
+def attach(bundle_of=workload_bundle, run=subprocess.run, sleep=time.sleep, console=CONSOLE):
+    """The session terminal, inside the workload, and never a VM shell.
+
+    A detached workload runs on a terminal this launcher holds: the session
+    terminal attaches to it, so opening the session shows the image's own
+    command (an agent's TUI, a shell). An attached run has no held terminal,
+    so the terminal enters the workload with a login shell instead. Either
+    way it waits for the workload to run, and attaches again after it ends.
+    Keyboard signals reach the workload through the raw terminal, so between
+    attaches they must not end this loop instead.
     """
     for number in (signal.SIGINT, signal.SIGQUIT, signal.SIGTSTP):
         signal.signal(number, signal.SIG_IGN)
@@ -875,6 +1115,16 @@ def attach(bundle_of=workload_bundle, run=subprocess.run, sleep=time.sleep):
             sleep(ATTACH_INTERVAL)
             continue
         waiting = False
+        if console.exists():
+            try:
+                attach_console()
+            except OSError:
+                # It exited between the check and the connect.
+                pass
+            print("\r\ncapsem: the workload exited; waiting for it to start again", flush=True)
+            waiting = True
+            sleep(ATTACH_INTERVAL)
+            continue
         spec = process_spec(bundle, TERMINAL_SHELL, True)
         try:
             run(exec_argv(f"/proc/self/fd/{spec}"), pass_fds=(spec,), check=False)
@@ -897,5 +1147,8 @@ if __name__ == "__main__":
         exec_workload(sys.argv[2])
     elif sys.argv[1:] == ["--attach"]:
         attach()
+    elif len(sys.argv) == 3 and sys.argv[1] == "--detached":
+        # Nothing is attached: the workload runs on a terminal held here.
+        sys.exit(run(Path(sys.argv[2]), detached=True))
     else:
         sys.exit(run(Path(sys.argv[1])))

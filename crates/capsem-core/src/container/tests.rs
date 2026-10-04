@@ -30,7 +30,28 @@ fn the_detached_launch_is_the_launch_command_backgrounded_to_the_console() {
         )
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8(echoed.stdout).unwrap(), LAUNCH_COMMAND);
+    assert_eq!(String::from_utf8(echoed.stdout).unwrap(), DETACHED_LAUNCH_COMMAND);
+}
+
+/// Nothing is attached to a detached launch, so its workload runs on a
+/// terminal the launcher holds; an attached `capsem run` streams the
+/// launcher's own stdio instead. A boot's relaunch is detached too.
+#[test]
+fn a_detached_launch_holds_a_terminal_and_an_attached_one_does_not() {
+    assert!(
+        DETACHED_LAUNCH_COMMAND.ends_with("/root/.capsem-image/launch.py --detached /root/.capsem-image'"),
+        "{DETACHED_LAUNCH_COMMAND}"
+    );
+    assert!(!LAUNCH_COMMAND.contains("--detached"), "{LAUNCH_COMMAND}");
+    let init = include_str!("../../../../guest/artifacts/capsem-init");
+    let relaunch = init
+        .lines()
+        .find(|line| line.contains("/root/.capsem-image/launch.py"))
+        .expect("capsem-init relaunches a staged image");
+    assert!(
+        relaunch.contains("launch.py --detached /root/.capsem-image'"),
+        "{relaunch}"
+    );
 }
 
 #[test]

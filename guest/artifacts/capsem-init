@@ -736,7 +736,7 @@ fi
 # over what looks like a live workload.
 rm -rf /newroot/var/tmp/capsem-container
 if [ -f /newroot/root/.capsem-image/ready ]; then
-    /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py /root/.capsem-image' &
+    /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py --detached /root/.capsem-image' &
 fi
 
 AGENT_STDIO_LOG=/tmp/capsem-agent-stdio.log
