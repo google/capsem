@@ -13,46 +13,26 @@ fn parse(input: &str) -> SettingsFile {
 }
 
 #[test]
-fn setting_id_ownership_matches_current_registry_contract() {
-    for definition in setting_definitions() {
-        let owner = setting_id_owner(&definition.id);
-        if definition.id.starts_with("app.") || definition.id.starts_with("appearance.") {
-            assert_eq!(owner, ConfigOwner::Settings, "{}", definition.id);
-        } else {
-            assert_eq!(owner, ConfigOwner::Corp, "{}", definition.id);
-        }
-    }
-}
-
-#[test]
-fn settings_toml_accepts_only_ui_application_preferences() {
+fn settings_toml_accepts_every_registry_setting() {
+    // Every registry id is the user's (#289). With VM profiles gone, an id
+    // settings.toml refused could be set by corp alone: the user's git
+    // identity and service toggles among them.
     let mut file = SettingsFile::default();
-    file.settings
-        .insert("appearance.dark_mode".to_string(), entry(SettingValue::Bool(true)));
-    file.settings
-        .insert("app.auto_update".to_string(), entry(SettingValue::Bool(false)));
-
-    validate_settings_toml_contract(&file).expect("ui settings are valid settings.toml");
-}
-
-#[test]
-fn settings_toml_rejects_corp_owned_behavior_settings() {
-    for id in [
-        "vm.resources.cpu_count",
-        "security.web.http_upstream_ports",
-        "ai.openai.api_key",
-        "repository.providers.github.token",
-    ] {
-        let mut file = SettingsFile::default();
+    for definition in setting_definitions() {
         file.settings
-            .insert(id.to_string(), entry(SettingValue::Text("x".to_string())));
-
-        let error = match validate_settings_toml_contract(&file) {
-            Ok(()) => panic!("{id} must not belong to settings.toml"),
-            Err(error) => error,
-        };
-        assert!(error.contains("owned by corp"), "{id} produced wrong error: {error}");
+            .insert(definition.id.clone(), entry(definition.default_value.clone()));
     }
+    for id in [
+        "appearance.dark_mode",
+        "repository.git.identity.author_name",
+        "repository.providers.github.allow",
+        "security.services.registry.npm.allow",
+        "vm.resources.cpu_count",
+    ] {
+        assert!(file.settings.contains_key(id), "{id} left the registry");
+    }
+
+    validate_settings_toml_contract(&file).expect("every registry setting belongs to settings.toml");
 }
 
 #[test]
@@ -128,38 +108,4 @@ upstreams = ["127.0.0.1:5353"]
             "{label} must not belong to settings.toml"
         );
     }
-}
-
-#[test]
-fn corp_toml_accepts_constraints_and_rejects_ui_preferences() {
-    let valid = parse(
-        r#"
-refresh_policy = "24h"
-
-[settings."vm.resources.cpu_count"]
-value = 8
-modified = "2026-06-07T00:00:00Z"
-
-[corp.rules.block_external_http]
-name = "block_external_http"
-action = "block"
-corp_locked = true
-priority = -10
-match = 'http.host == "external.example"'
-
-[corp_rule_files]
-sigma_output_endpoint = "https://security.example.invalid/sigma"
-
-[network.dns]
-upstreams = ["127.0.0.1:5353"]
-"#,
-    );
-    validate_corp_toml_contract(&valid).expect("corp constraints are corp-owned");
-
-    let mut ui = SettingsFile::default();
-    ui.settings
-        .insert("app.auto_update".to_string(), entry(SettingValue::Bool(true)));
-    assert!(validate_corp_toml_contract(&ui)
-        .unwrap_err()
-        .contains("owned by settings"));
 }

@@ -1,10 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::{
-    setting_id_owner, validate_corp_toml_contract, validate_settings_toml_contract, validate_stored_setting_contract,
-    ConfigOwner, SettingValue, SettingsFile,
-};
+use super::{validate_settings_toml_contract, validate_stored_setting_contract, SettingValue, SettingsFile};
 
 // ---------------------------------------------------------------------------
 // File I/O
@@ -91,7 +88,8 @@ fn resolve_settings_document(path: &Path, mut file: SettingsFile) -> Result<Sett
     Ok(file)
 }
 
-/// Load the user's settings.toml and reject what only corp.toml may define.
+/// Load the user's settings.toml and reject the sections only corp.toml may
+/// define. Every registry setting id is the user's; see `ownership`.
 pub fn load_local_settings_file(path: &Path) -> Result<SettingsFile, String> {
     let file = load_settings_file(path)?;
     validate_settings_toml_contract(&file).map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
@@ -106,13 +104,6 @@ pub fn write_local_settings_document(path: &Path, document: &SettingsFile) -> Re
     validate_settings_toml_contract(&resolved).map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
     write_settings_file(path, document)?;
     Ok(resolved)
-}
-
-/// Load a corporate constraint file and reject UI preferences.
-pub fn load_corp_settings_file(path: &Path) -> Result<SettingsFile, String> {
-    let file = load_settings_file(path)?;
-    validate_corp_toml_contract(&file).map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
-    Ok(file)
 }
 
 fn reject_retired_mcp_policy_keys(path: &Path, content: &str) -> Result<(), String> {
@@ -294,7 +285,7 @@ pub fn load_policy_files() -> Result<(SettingsFile, SettingsFile), String> {
 pub fn load_corp_files() -> SettingsFile {
     let mut corp = SettingsFile::default();
     for path in corp_config_paths() {
-        match load_corp_settings_file(&path) {
+        match load_settings_file(&path) {
             Ok(file) => {
                 // First path wins per-key: only insert if not already present
                 for (id, entry) in file.settings {
@@ -370,9 +361,10 @@ pub fn load_settings_response() -> super::types::SettingsResponse {
 
 /// Batch-update multiple settings atomically.
 ///
-/// Validates ALL changes upfront. If any change is invalid (corp-locked,
-/// type mismatch, unknown ID, disabled), the entire batch is rejected and
-/// nothing is written. Returns the list of applied setting IDs on success.
+/// Any registry setting id may be written: every one is the user's, unless
+/// corp sets it, which locks it. Validates ALL changes upfront. If any change
+/// is invalid (unknown id, corp-locked, invalid value), the entire batch is
+/// rejected and nothing is written. Returns the applied setting ids.
 pub fn batch_update_settings(changes: &HashMap<String, SettingValue>) -> Result<Vec<String>, String> {
     let mut raw = HashMap::new();
     for (id, value) in changes {
@@ -396,7 +388,7 @@ fn batch_update_settings_json_inner(changes: &HashMap<String, serde_json::Value>
     let settings_path = settings_config_path().ok_or("HOME not set")?;
     let corp_path = corp_config_path();
     let mut settings_file = load_settings_document(&settings_path)?.unwrap_or_default();
-    let corp_file = load_corp_settings_file(&corp_path)?;
+    let corp_file = load_settings_file(&corp_path)?;
     let defs = setting_definitions();
     let mut setting_changes = HashMap::new();
 
@@ -418,25 +410,13 @@ fn batch_update_settings_json_inner(changes: &HashMap<String, serde_json::Value>
             }
         };
 
-        // Check known setting ID (allow dynamic guest.env.*)
-        let is_dynamic = id.starts_with("guest.env.");
-        let def = defs.iter().find(|d| d.id == *id);
-        if def.is_none() && !is_dynamic {
+        // Every registry id is the user's to write; nothing else is.
+        if !defs.iter().any(|d| d.id == *id) {
             errors.push(format!("unknown setting: {id}"));
             continue;
         }
 
-        let actual_owner = setting_id_owner(id);
-        if actual_owner != ConfigOwner::Settings {
-            errors.push(format!(
-                "{} update cannot write {}-owned setting: {id}",
-                ConfigOwner::Settings.as_str(),
-                actual_owner.as_str()
-            ));
-            continue;
-        }
-
-        // Corp-locked check
+        // An id corp sets is corp's, whatever its namespace.
         if corp_file.settings.contains_key(id) {
             errors.push(format!("corp-locked: {id}"));
             continue;

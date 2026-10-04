@@ -58,7 +58,7 @@ These routes describe the daemon and service-wide runtime summaries.
 | `GET` | `/detection/latest` | Service-wide recent detection ledger rows. |
 | `GET` | `/detection/status` | Service-wide detection counters. |
 | `GET` | `/settings/info` | The unified `settings.toml` tree with corp locks and validation issues. |
-| `PATCH` | `/settings/edit` | Batch-edit `app.*`/`appearance.*` preferences in `settings.toml` and return the refreshed tree; corp-owned ids are refused. |
+| `PATCH` | `/settings/edit` | Batch-edit any registry setting in `settings.toml` and return the refreshed tree; an id the corp config sets is refused as corp-locked. |
 | `GET` | `/corp/info` | Corporate constraints and reporting config. |
 | `PUT` | `/corp/edit` | Replace corporate constraints where local policy permits. |
 | `POST` | `/corp/validate` | Validate corporate config without applying it. |

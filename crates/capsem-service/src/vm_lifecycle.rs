@@ -809,7 +809,7 @@ pub(super) async fn handle_run(
         })
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
-        provision_result.map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision failed: {e}")))?;
+        provision_result.map_err(|e| provision_failure(&e))?;
 
         // 3. Wait for VM socket to appear while still holding the VZ
         // lifecycle rail. The child does its Apple VZ start/restore before it

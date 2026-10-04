@@ -324,6 +324,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Users can again set their git identity, repository providers and the
+  search-engine and package-registry toggles in `settings.toml`, and through
+  `/settings/edit` (#289). When VM profiles went away those settings became
+  corp-only, so a `settings.toml` that set one failed every `capsem run` and
+  the settings page offered edits it then refused. Every registry setting is
+  now the user's; an id the corp config sets still wins and stays locked
+  against edits, and `settings.toml` still cannot carry corp rules, corp
+  rule-file endpoints, refresh metadata or network mechanics.
+- A failed provision now reports its whole cause. `capsem run` used to stop
+  at `provision failed: load the policy inputs` and leave the reason in
+  `service.log`; it now names it, for example `settings.toml cannot define
+  corp.rules`.
 - An image session's workload now resolves `localhost` (and its hostname,
   `container`) to its own loopback. The launcher supplies `/etc/hosts`
   read-only beside `/etc/resolv.conf`, as any container runtime does; an

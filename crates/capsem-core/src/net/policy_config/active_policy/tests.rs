@@ -243,3 +243,44 @@ fn the_built_in_policy_lets_the_doctor_reach_its_mock_server() {
         ))
     );
 }
+
+#[test]
+fn settings_toml_behavior_settings_reach_the_active_policy() {
+    // #289: a non-app setting in settings.toml is the user's. It loads, it
+    // shapes the session, and a corp value for the same id still wins.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::write(
+        &path,
+        r#"
+[settings]
+"repository.git.identity.author_name" = { value = "Test User", modified = "2026-01-01T00:00:00Z" }
+"vm.resources.max_body_capture" = { value = 1024, modified = "2026-01-01T00:00:00Z" }
+"vm.resources.log_bodies" = { value = true, modified = "2026-01-01T00:00:00Z" }
+"#,
+    )
+    .unwrap();
+    let settings = crate::net::policy_config::load_local_settings_file(&path).expect("settings.toml loads");
+
+    let active =
+        ActivePolicyFile::from_settings_and_corp(&settings, &SettingsFile::default()).expect("policy materializes");
+    assert_eq!(active.network.max_body_capture, Some(1024));
+    assert_eq!(active.network.log_bodies, Some(true));
+    let guest = MergedPolicies::from_files(&settings, &SettingsFile::default())
+        .expect("policy compiles")
+        .guest;
+    assert_eq!(
+        guest.env.unwrap_or_default().get("GIT_AUTHOR_NAME").map(String::as_str),
+        Some("Test User")
+    );
+
+    let corp = parse(
+        r#"
+[settings]
+"vm.resources.max_body_capture" = { value = 0, modified = "2026-01-01T00:00:00Z" }
+"#,
+    );
+    let locked = ActivePolicyFile::from_settings_and_corp(&settings, &corp).expect("policy materializes");
+    assert_eq!(locked.network.max_body_capture, Some(0), "corp wins");
+    assert_eq!(locked.network.log_bodies, Some(true));
+}
