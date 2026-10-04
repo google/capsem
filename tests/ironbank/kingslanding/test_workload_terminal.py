@@ -1,10 +1,13 @@
-"""An image session's terminal is a shell in its workload, never in the VM.
+"""An image session's terminal is its workload's own command, never the VM.
 
 `capsem create --image` marks the session (capsem-core `WORKLOAD_ENV`), so the
 VM's terminal shell hands its PTY to the launcher's attach loop before any VM
-prompt. What the user types then runs through `runc exec` as the image's own
-user, inside the workload's user namespace; ending that shell enters the
-workload again instead of exposing the VM shell underneath.
+prompt. A detached workload runs on a terminal the launcher holds
+(`docker run -dit`), and the session terminal attaches to it: opening a
+session of the reference image (the official `dev`, whose command is bash)
+shows that bash, as the image's own user inside the workload's user
+namespace. Leaving the terminal leaves the workload running, and attaching
+again shows where it was. When the command exits, the workload has exited.
 """
 
 import contextlib
@@ -13,12 +16,11 @@ import re
 import time
 
 import pytest
+from helpers.image_session import image_session
 from websockets.sync.client import connect
 from websockets.typing import Subprotocol
 
-from tests.fixtures.oci.registry import registry
-from tests.ironbank.kingslanding.test_run import created, service
-from tests.ironbank.kingslanding.test_workload_exec import BUNDLE_USER, run
+from tests.ironbank.kingslanding.test_run import service
 
 __all__ = ["service"]
 
@@ -41,7 +43,10 @@ def terminal(service, vm_id):
         additional_headers={"Authorization": f"Bearer {token}"},
         open_timeout=10,
     ) as socket:
-        socket.send(bytes([CONTROL]) + json.dumps({"type": "start", "kind": "terminal"}).encode())
+        socket.send(
+            bytes([CONTROL])
+            + json.dumps({"type": "start", "kind": "terminal"}).encode()
+        )
         yield socket
 
 
@@ -62,22 +67,35 @@ def probe(socket, after=b"", deadline=90):
         if isinstance(frame, bytes) and frame[:1] in (bytes([STDOUT]), bytes([STDERR])):
             seen += frame[1:]
             start = seen.find(after)
-            found = start >= 0 and PROBE.search(seen[start + len(after) :].decode(errors="replace"))
+            found = start >= 0 and PROBE.search(
+                seen[start + len(after) :].decode(errors="replace")
+            )
             if found:
                 return found.groups()
     raise AssertionError(f"the terminal never answered the probe: {seen[-2000:]!r}")
 
 
-def test_an_image_session_terminal_is_a_workload_shell_and_stays_one(service, tmp_path):
+def test_an_image_session_terminal_is_its_workloads_command(service, tmp_path):
     client = service.client()
-    with (
-        registry(tmp_path) as (reference, certificate, _),
-        created(service, tmp_path, reference, certificate, "workload-terminal") as vm,
-    ):
-        uid, _ = run(client, vm["id"], BUNDLE_USER, target="vm").split()
-        with terminal(service, vm["id"]) as socket:
-            assert probe(socket) == (uid, "100000", "workload")
-            # Ending the workload shell enters the workload again: the VM shell
-            # under the attach loop is never handed to the terminal.
+    with image_session(service, tmp_path, "workload-terminal") as vm_id:
+        with terminal(service, vm_id) as socket:
+            assert probe(socket) == ("1000", "100000", "workload")
+            socket.send(bytes([STDIN]) + b"echo MARK-BEFORE-DETACH\n")
+        # Leaving the terminal leaves the workload running; attaching again
+        # replays its screen and types into the same shell.
+        assert client.get(f"/vms/{vm_id}/container")["state"] == "running"
+        with terminal(service, vm_id) as socket:
+            assert probe(socket, after=b"MARK-BEFORE-DETACH") == (
+                "1000",
+                "100000",
+                "workload",
+            )
+            # The command is the workload: when it exits, the workload has.
             socket.send(bytes([STDIN]) + b"exit\n")
-            assert probe(socket, after=b"entering it again") == (uid, "100000", "workload")
+            deadline = time.monotonic() + 60
+            status = client.get(f"/vms/{vm_id}/container")
+            while status["state"] != "exited" and time.monotonic() < deadline:
+                time.sleep(0.5)
+                status = client.get(f"/vms/{vm_id}/container")
+            assert status["state"] == "exited", status
+            assert status["exit_code"] == 0, status
