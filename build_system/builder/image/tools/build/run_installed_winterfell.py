@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Winterfell against one exact installed binary/profile/asset cohort."""
+"""Run Winterfell against one exact installed binary/asset cohort."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ REPORT_SCHEMA = "capsem.installed_winterfell.v1"
 WINTERFELL_ROOT_ENV = {
     "binary_dir": "CAPSEM_WINTERFELL_BIN_DIR",
     "assets_dir": "CAPSEM_WINTERFELL_ASSETS_DIR",
-    "profiles_dir": "CAPSEM_WINTERFELL_PROFILES_DIR",
 }
 WINTERFELL_TESTS = (
     "tests/capsem-installed/test_winterfell_gateway.py",
@@ -35,7 +34,6 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", required=True, type=Path)
     parser.add_argument("--assets-dir", required=True, type=Path)
-    parser.add_argument("--profiles-dir", required=True, type=Path)
     parser.add_argument("--evidence-out", required=True, type=Path)
     return parser.parse_args(arguments)
 
@@ -47,7 +45,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
     overrides = {
         WINTERFELL_ROOT_ENV["binary_dir"]: str(args.bin_dir),
         WINTERFELL_ROOT_ENV["assets_dir"]: str(args.assets_dir),
-        WINTERFELL_ROOT_ENV["profiles_dir"]: str(args.profiles_dir),
     }
     roots = _resolve_winterfell_artifact_roots(overrides)
     environment = os.environ.copy()
@@ -56,7 +53,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
         {
             "CAPSEM_RELEASE_BIN_DIR": str(args.bin_dir),
             "CAPSEM_ASSETS_DIR": str(args.assets_dir),
-            "CAPSEM_PROFILES_DIR": str(args.profiles_dir),
             "CAPSEM_TEST_ARTIFACTS_ROOT": str(args.evidence_out.parent / "failure-artifacts"),
         }
     )
@@ -80,7 +76,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "roots": {
             "assets": str(roots.assets_dir),
             "binaries": str(roots.binary_dir),
-            "profiles": str(roots.profiles_dir),
         },
     }
     args.evidence_out.write_text(

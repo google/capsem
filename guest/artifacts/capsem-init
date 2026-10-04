@@ -389,42 +389,6 @@ rm -rf /newroot/run/capsem-venv /newroot/run/capsem-venv-ready
 rm -rf /newroot/root/.venv
 ln -sfn /run/capsem-venv /newroot/root/.venv
 
-# Project profile-owned seed files into the writable runtime root.
-# The image stores them under /usr/local/share/capsem/profile-root because
-# rootfs /root is hidden by the runtime workspace mount above.
-if [ -d /newroot/usr/local/share/capsem/profile-root ]; then
-    echo "[capsem-init] projecting profile root seed..."
-    # Seeded files are root's already, and the VirtioFS workspace refuses
-    # the chown `cp -a` repeats for each of them: its "can't preserve
-    # ownership" lines are expected noise, not console errors.
-    cp -a /newroot/usr/local/share/capsem/profile-root/. /newroot/ 2>&1 || {
-        echo "[capsem-init] FATAL: cannot project profile root seed" >&2
-        exit 1
-    }
-    boot_mark "profile_root_seed"
-fi
-
-# The profile root seed may carry `/etc` metadata. Re-assert traversal after
-# projection so apt's `_apt` sandbox can always read the TLS trust bundle.
-chmod 755 /newroot/etc
-
-# Curl-installed AI CLIs are promoted to /usr/local/bin at image build time
-# because /root is mounted fresh at runtime. Recreate the user-local shims that
-# their own doctor/config checks expect after the runtime /root mount exists.
-for cli in claude agy; do
-    mkdir -p /newroot/usr/local/bin /newroot/root/.local/bin
-    if [ ! -e "/newroot/usr/local/bin/$cli" ] && [ -x "/newroot/opt/ai-clis/bin/$cli" ]; then
-        ln -sf "/opt/ai-clis/bin/$cli" "/newroot/usr/local/bin/$cli"
-    fi
-    rm -f "/newroot/root/.local/bin/$cli"
-    ln -sf "/usr/local/bin/$cli" "/newroot/root/.local/bin/$cli"
-    if [ -x "/newroot/usr/local/bin/$cli" ]; then
-        chroot /newroot /bin/chmod 555 "/root/.local/bin/$cli" 2>/dev/null || true
-    else
-        init_log "WARNING: /usr/local/bin/$cli missing; created expected user-local shim"
-    fi
-done
-
 chroot /newroot /bin/chmod 755 /
 
 # Remove legacy HTTP sources.list if present (belt-and-suspenders).
@@ -677,9 +641,9 @@ boot_mark "audit"
 # Increase open file descriptor limit to prevent EMFILE/Errno 24 crashes
 ulimit -n 65536
 
-# Minimal PATH for chroot commands below (uv, npm, python3 are in /usr/local/bin).
+# Minimal PATH for chroot commands below (python3 for the venv).
 # The interactive shell PATH is set by the host via BootConfig SetEnv later.
-export PATH=/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
 export TERM=xterm-256color
 export COLORTERM=truecolor

@@ -19,29 +19,27 @@ cluster_size = 65536
 # regression it exists for by a wide margin -- that one reached nearly 3 GB.
 max_uncompressed_bytes = 2500000000
 max_erofs_bytes = 950000000
-# The guest has no GPU device. Ollama has moved its accelerator bundle between
-# /usr and /usr/local more than once, so the exported tree is checked at both.
-forbidden_path_prefixes = [
-    "usr/lib/ollama/cuda",
-    "usr/lib/ollama/hip",
-    "usr/lib/ollama/jetpack",
-    "usr/lib/ollama/oneapi",
-    "usr/lib/ollama/opencl",
-    "usr/lib/ollama/rocm",
-    "usr/lib/ollama/vulkan",
-    "usr/local/lib/ollama/cuda",
-    "usr/local/lib/ollama/hip",
-    "usr/local/lib/ollama/jetpack",
-    "usr/local/lib/ollama/oneapi",
-    "usr/local/lib/ollama/opencl",
-    "usr/local/lib/ollama/rocm",
-    "usr/local/lib/ollama/vulkan",
+# The whole package set of the VM runtime: the container launcher's tools
+# (runc, umoci, python3, iptables, iproute2), what capsem-init needs (auditd
+# for the execve ledger, e2fsprogs to format the system overlay), the system
+# trust store the Capsem CA is installed into (ca-certificates), and what
+# capsem-doctor, capsem-bench and the network diagnostics run with.
+# Applications are not installed here; they come from OCI images.
+runtime_apt_packages = [
+    "runc",
+    "umoci",
+    "python3",
+    "iptables",
+    "iproute2",
+    "ca-certificates",
+    "curl",
+    "procps",
+    "python3-pytest",
+    "python3-rich",
+    "python3-venv",
+    "auditd",
+    "e2fsprogs",
 ]
-
-# The container launcher's own tools. Profiles used to supply them, so
-# deleting a profile would have removed the runtime's ability to run any
-# image; the builder refuses a profile that lists one.
-runtime_apt_packages = ["runc", "umoci", "python3", "iptables", "iproute2"]
 
 [build.kernel]
 version = "6.18.44"
@@ -59,48 +57,6 @@ tag_template = "capsem-{template}-dependencies-{arch}:{digest}"
 rootfs_template = "Dockerfile.rootfs-dependencies.j2"
 kernel_template = "Dockerfile.kernel-dependencies.j2"
 source_build_network = "none"
-
-[build.asset_dependencies.architectures.arm64.node]
-version = "24.19.0"
-url = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-arm64.tar.xz"
-sha256 = "01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc"
-npm_version = "11.17.0"
-
-[build.asset_dependencies.architectures.arm64.uv]
-version = "0.12.3"
-url = "https://github.com/astral-sh/uv/releases/download/0.12.3/uv-aarch64-unknown-linux-gnu.tar.gz"
-sha256 = "bb66cb52e7b1823aed1183630d8d8e5c958840d584a4c55ec10a4cfc168dcca2"
-
-[build.asset_dependencies.architectures.arm64.claude]
-version = "2.1.229"
-url = "https://downloads.claude.ai/claude-code-releases/2.1.229/linux-arm64/claude"
-sha256 = "ba53130acbda3ddb00b3dd5641f11733867f5d837a258b7e6ccef4927cc1a509"
-
-[build.asset_dependencies.architectures.arm64.ollama]
-version = "0.32.9"
-url = "https://github.com/ollama/ollama/releases/download/v0.32.9/ollama-linux-arm64.tar.zst"
-sha256 = "79617139521db251c716d6229505d7530171ff4d68e476d0c22dabc15726a237"
-
-[build.asset_dependencies.architectures.x86_64.node]
-version = "24.19.0"
-url = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz"
-sha256 = "14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647"
-npm_version = "11.17.0"
-
-[build.asset_dependencies.architectures.x86_64.uv]
-version = "0.12.3"
-url = "https://github.com/astral-sh/uv/releases/download/0.12.3/uv-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "600cf9a742aca00d292673b16b5acffaa7b8c269a364ad0c2e79498dcb1fe101"
-
-[build.asset_dependencies.architectures.x86_64.claude]
-version = "2.1.229"
-url = "https://downloads.claude.ai/claude-code-releases/2.1.229/linux-x64/claude"
-sha256 = "200338139a3df04a9ad22233837d1fb53fb6dffa21cd82e47559bfaa115acc1b"
-
-[build.asset_dependencies.architectures.x86_64.ollama]
-version = "0.32.9"
-url = "https://github.com/ollama/ollama/releases/download/v0.32.9/ollama-linux-amd64.tar.zst"
-sha256 = "5d747a43369f61e38f20b5a39fcc5c90647e562cdc61e2e56034f1c5b113d540"
 
 [build.guest_rust_builder]
 dockerfile = "build_system/docker/Dockerfile.guest-rust-builder"
@@ -147,12 +103,6 @@ sha256 = "e202de54d1a99e388eddf9b21bf11b3301f8495a77e84a5d323f9b867160d731"
 [build.asset_tools.architectures.x86_64.cdx_validate]
 url = "https://github.com/CycloneDX/cdxgen/releases/download/v12.7.0/cdx-validate-linux-amd64"
 sha256 = "865c98417126eaac34b33de49ec21a60339553ce3bcf034bdc70948c003ad942"
-
-[build.version_commands]
-node = "node --version 2>&1 | tr -d v"
-npm = "npm --version 2>&1"
-uv = "uv --version 2>&1 | awk '{print $2}'"
-pip = "pip3 --version 2>&1 | awk '{print $2}'"
 
 [build.architectures.arm64]
 base_image = "docker.io/library/debian@sha256:817e6cf99d6fc127ff4ffe8580049b60deba0adfbbb2bd65ddc3ef8fbb7aade0"

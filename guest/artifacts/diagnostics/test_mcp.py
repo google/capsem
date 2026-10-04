@@ -6,7 +6,6 @@ MITM MCP endpoint responds to JSON-RPC messages over framed vsock:5002.
 
 import json
 import os
-import re
 import subprocess
 
 import pytest
@@ -14,9 +13,6 @@ import pytest
 from .diagnostic_support import run
 
 LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
-SECRET_PATTERN = re.compile(
-    r"(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,})"
-)
 
 
 def _local_mock_url(path):
@@ -450,56 +446,6 @@ def test_mcp_http_headers_allowed_domain():
     assert "content-type" in text.lower(), f"missing content-type header: {text[:500]}"
 
 
-def test_claude_mcp_list_shows_capsem():
-    """Claude sees the profile-owned Capsem MCP bridge."""
-    r = run("claude mcp list 2>&1", timeout=15)
-    assert r.returncode == 0, f"claude mcp list failed: {r.stderr}"
-    assert "capsem:" in r.stdout, f"Claude MCP config missing capsem: {r.stdout}"
-    assert "/run/capsem-mcp-server" in r.stdout, (
-        f"Claude MCP bridge points at the wrong command: {r.stdout}"
-    )
-    assert "No MCP servers configured" not in r.stdout, (
-        f"Claude ignored profile-owned MCP config: {r.stdout}"
-    )
-
-
-def test_claude_state_json_has_capsem_mcp():
-    """Claude state is profile-owned trust state and must not embed MCP or secrets."""
-    r = run("cat /root/.claude.json")
-    assert r.returncode == 0, f"missing Claude profile state: {r.stderr}"
-    assert not SECRET_PATTERN.search(r.stdout), "secret-like value found in Claude state"
-    settings = json.loads(r.stdout)
-    assert "mcpServers" not in settings or not settings["mcpServers"], (
-        f"Claude state must not create a second MCP authority: {settings.get('mcpServers')}"
-    )
-    assert settings["hasTrustDialogAccepted"] is True
-    assert settings["projects"]["/root"]["hasTrustDialogAccepted"] is True
-
-
-def test_profile_mcp_registry_has_capsem_bridge_only():
-    """The profile-owned MCP registry is the canonical MCP authority."""
-    r = run("cat /root/.mcp.json")
-    assert r.returncode == 0, f"missing canonical MCP registry: {r.stderr}"
-    assert not SECRET_PATTERN.search(r.stdout), "secret-like value found in MCP registry"
-    registry = json.loads(r.stdout)
-    assert registry == {
-        "mcpServers": {
-            "capsem": {
-                "command": "/run/capsem-mcp-server",
-            },
-        },
-    }
-
-
-def test_codex_config_has_capsem_mcp():
-    """Codex config must consume the same profile-owned Capsem MCP bridge."""
-    r = run("cat /root/.codex/config.toml")
-    assert r.returncode == 0, f"missing Codex profile config: {r.stderr}"
-    assert not SECRET_PATTERN.search(r.stdout), "secret-like value found in Codex config"
-    assert '[mcp_servers.capsem]' in r.stdout
-    assert 'command = "/run/capsem-mcp-server"' in r.stdout
-
-
 def test_mcp_tools_list_has_descriptions():
     """Every tool in tools/list must have a non-empty description."""
     responses = _mcp_call([
@@ -685,12 +631,6 @@ def test_mcp_fetch_http_pagination():
     assert "start_index" in text, (
         f"pagination hint must be present for large page with small max_length: {text[:500]}"
     )
-
-
-def test_fastmcp_available():
-    """fastmcp Python package is importable."""
-    r = run("python3 -c 'import fastmcp; print(fastmcp.__version__)'")
-    assert r.returncode == 0, f"fastmcp import failed: {r.stderr}"
 
 
 def test_retired_snapshot_surfaces_are_absent():

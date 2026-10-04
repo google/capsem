@@ -1,13 +1,11 @@
 """BOM manifest models, parsers, and renderer.
 
 Pydantic models for the bill-of-materials manifest. Parsers accept
-pre-captured command output strings (dpkg-query, pip list, npm ls, b3sum).
+pre-captured command output strings (dpkg-query, b3sum).
 render() produces a plain-text table -- the single human-readable output path.
 """
 
 from __future__ import annotations
-
-import json
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -17,13 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PackageEntry(BaseModel):
-    """A single installed package from dpkg, pip, or npm."""
+    """A single installed Debian package."""
 
     model_config = ConfigDict(frozen=True)
 
     name: str
     version: str
-    source: str  # "dpkg", "pip", "npm"
+    source: str  # "dpkg"
     arch: str = ""
 
 
@@ -102,36 +100,6 @@ def parse_dpkg_query(output: str) -> list[PackageEntry]:
     return sorted(entries, key=lambda p: p.name)
 
 
-def parse_pip_list(output: str) -> list[PackageEntry]:
-    """Parse pip list --format json output."""
-    try:
-        data = json.loads(output)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid pip list JSON: {e}") from e
-    entries: list[PackageEntry] = []
-    for item in data:
-        name = item.get("name", "")
-        version = item.get("version", "")
-        if name and version:
-            entries.append(PackageEntry(name=name, version=version, source="pip"))
-    return sorted(entries, key=lambda p: p.name)
-
-
-def parse_npm_ls(output: str) -> list[PackageEntry]:
-    """Parse npm ls --json --global output."""
-    try:
-        data = json.loads(output)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid npm ls JSON: {e}") from e
-    deps = data.get("dependencies", {})
-    entries: list[PackageEntry] = []
-    for name, info in deps.items():
-        version = info.get("version", "") if isinstance(info, dict) else ""
-        if name and version:
-            entries.append(PackageEntry(name=name, version=version, source="npm"))
-    return sorted(entries, key=lambda p: p.name)
-
-
 def parse_b3sums(
     output: str,
     *,
@@ -153,16 +121,11 @@ def collect_bom(
     *,
     arch: str,
     dpkg_output: str = "",
-    pip_output: str = "[]",
-    npm_output: str = "{}",
     b3sum_output: str = "",
     sizes: dict[str, int] | None = None,
 ) -> ArchManifest:
     """Collect BOM from all parser outputs into an ArchManifest."""
-    packages: list[PackageEntry] = []
-    packages.extend(parse_dpkg_query(dpkg_output))
-    packages.extend(parse_pip_list(pip_output))
-    packages.extend(parse_npm_ls(npm_output))
+    packages = parse_dpkg_query(dpkg_output)
     assets = parse_b3sums(b3sum_output, sizes=sizes)
     return ArchManifest(arch=arch, packages=packages, assets=assets)
 
@@ -216,22 +179,10 @@ def render(manifest: ImageManifest) -> str:
     for arch_name, arch in manifest.architectures.items():
         parts.append(f"\n=== {arch_name} ===")
 
-        # Group packages by source
-        by_source: dict[str, list[PackageEntry]] = {}
-        for pkg in arch.packages:
-            by_source.setdefault(pkg.source, []).append(pkg)
-
-        for source in ("dpkg", "pip", "npm"):
-            pkgs = by_source.get(source, [])
-            if not pkgs:
-                continue
-            parts.append(f"\nPackages ({source}): {len(pkgs)}")
-            if source == "dpkg":
-                rows = [[p.name, p.version, p.arch] for p in pkgs]
-                parts.append(_table(["PACKAGE", "VERSION", "ARCH"], rows))
-            else:
-                rows = [[p.name, p.version] for p in pkgs]
-                parts.append(_table(["PACKAGE", "VERSION"], rows))
+        if arch.packages:
+            parts.append(f"\nPackages (dpkg): {len(arch.packages)}")
+            rows = [[p.name, p.version, p.arch] for p in arch.packages]
+            parts.append(_table(["PACKAGE", "VERSION", "ARCH"], rows))
 
         if arch.assets:
             parts.append(f"\nAssets: {len(arch.assets)}")

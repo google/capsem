@@ -5,6 +5,7 @@ the exact layer that broke.
 """
 
 import os
+import shlex
 from urllib.parse import urlsplit
 
 import pytest
@@ -365,20 +366,6 @@ def test_mitm_ca_in_system_bundle():
         "Capsem CA not found in system CA bundle"
 
 
-def test_certifi_includes_capsem_ca():
-    """Python certifi bundle must include the Capsem CA."""
-    result = run(
-        'python3 -c "'
-        "import certifi; "
-        "bundle = open(certifi.where()).read(); "
-        "print('found' if 'OMYp0kksjRwy' in bundle else 'missing')"
-        '"'
-    )
-    assert result.returncode == 0
-    assert "found" in result.stdout, \
-        "Capsem CA not found in certifi bundle"
-
-
 def test_curl_allowed_domain_ca_trusted():
     """curl without public access must still prove the local rail works."""
     local_url = _require_local_mock_url("/tiny", "local curl trust smoke")
@@ -592,19 +579,79 @@ def test_local_oauth_token_fixture_is_broker_stimulus_only():
     assert "capsem_test_" not in result.stdout
 
 
+# A stdlib RFC 6455 client: the runtime ships no websocket library, and the
+# probe must exercise the proxy's upgrade path, not a library's.
+WEBSOCKET_ECHO_PROBE = r"""
+import base64, hashlib, os, socket, ssl, struct, sys
+from urllib.parse import urlsplit
+
+url = urlsplit(sys.argv[1])
+port = url.port or (443 if url.scheme == "wss" else 80)
+sock = socket.create_connection((url.hostname, port), timeout=5)
+if url.scheme == "wss":
+    sock = ssl.create_default_context().wrap_socket(sock, server_hostname=url.hostname)
+key = base64.b64encode(os.urandom(16)).decode()
+target = (url.path or "/") + ("?" + url.query if url.query else "")
+sock.sendall((
+    f"GET {target} HTTP/1.1\r\nHost: {url.netloc}\r\n"
+    "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+    f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+).encode())
+pending = bytearray()
+while b"\r\n\r\n" not in pending:
+    chunk = sock.recv(4096)
+    if not chunk:
+        sys.exit(f"closed during handshake: {bytes(pending)!r}")
+    pending.extend(chunk)
+head, _, rest = bytes(pending).partition(b"\r\n\r\n")
+pending = bytearray(rest)
+lines = head.decode("latin-1").split("\r\n")
+if lines[0].split()[1:2] != ["101"]:
+    sys.exit(f"upgrade refused: {lines[0]}")
+accept = base64.b64encode(hashlib.sha1(
+    (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+headers = {k.strip().lower(): v.strip() for k, _, v in (h.partition(":") for h in lines[1:])}
+if headers.get("sec-websocket-accept") != accept:
+    sys.exit(f"bad Sec-WebSocket-Accept: {headers}")
+
+payload = b"doctor-websocket"
+mask = os.urandom(4)
+sock.sendall(bytes([0x81, 0x80 | len(payload)]) + mask
+             + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+def take(n):
+    while len(pending) < n:
+        chunk = sock.recv(4096)
+        if not chunk:
+            sys.exit("closed mid-frame")
+        pending.extend(chunk)
+    out = bytes(pending[:n])
+    del pending[:n]
+    return out
+
+first, second = take(2)
+length = second & 0x7F
+if length == 126:
+    length = struct.unpack("!H", take(2))[0]
+elif length == 127:
+    length = struct.unpack("!Q", take(8))[0]
+frame_mask = take(4) if second & 0x80 else b""
+data = take(length)
+if frame_mask:
+    data = bytes(b ^ frame_mask[i % 4] for i, b in enumerate(data))
+if first & 0x0F != 0x1:
+    sys.exit(f"expected a text frame, got opcode {first & 0x0F}")
+print(data.decode())
+sock.sendall(bytes([0x88, 0x80]) + os.urandom(4))  # masked, empty close frame
+"""
+
+
 def test_local_websocket_echo_fixture():
     """WebSocket upgrade and frame echo must work against the local lab."""
     local_url = _require_local_mock_url("/ws/echo", "local WebSocket smoke")
     ws_url = local_url.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
     result = run(
-        "python3 - <<'PY'\n"
-        "import sys\n"
-        "from websockets.sync.client import connect\n"
-        f"with connect({ws_url!r}, proxy=None, open_timeout=5, close_timeout=5) as ws:\n"
-        "    ws.send('doctor-websocket')\n"
-        "    reply = ws.recv(timeout=5)\n"
-        "    print(reply)\n"
-        "PY",
+        f"python3 - {shlex.quote(ws_url)} <<'PY' 2>&1\n{WEBSOCKET_ECHO_PROBE}\nPY",
         timeout=15,
     )
     assert result.returncode == 0, f"websocket fixture failed: {result.stdout}"

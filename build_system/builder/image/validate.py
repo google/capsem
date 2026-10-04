@@ -155,7 +155,7 @@ def _validate_pydantic(
     guest_dir: Path,
     diags: list[Diagnostic],
 ) -> GuestImageConfig | None:
-    """Load and validate config through Pydantic, emit E003-E005."""
+    """Load and validate config through Pydantic, emit E003."""
     try:
         return load_guest_config(guest_dir)
     except FileNotFoundError:
@@ -170,18 +170,10 @@ def _validate_pydantic(
             loc = ".".join(str(p) for p in err["loc"])
             msg = err["msg"]
 
-            # Determine specific error code
-            code = "E003"
-            if "packages" in msg.lower() and ("empty" in msg.lower() or "at least one" in msg.lower()):
-                code = "E004"
-            elif "input should be" in msg.lower() and ("manager" in loc.lower() or "manager" in msg.lower()):
-                code = "E005"
-
-            # Try to find the file and line
             file_str = _guess_file_for_error(config_dir, loc)
 
             diags.append(Diagnostic(
-                code=code,
+                code="E003",
                 severity=Severity.ERROR,
                 message=f"{loc}: {msg}",
                 file=file_str,
@@ -192,8 +184,6 @@ def _validate_pydantic(
 def _guess_file_for_error(config_dir: Path, loc: str) -> str:
     """Best-effort file path for a Pydantic validation error location."""
     loc_lower = loc.lower()
-    if "package_set" in loc_lower:
-        return "config/packages/*.toml"
     if "mcp_server" in loc_lower:
         return "config/mcp/*.toml"
     if "web_security" in loc_lower:
@@ -237,11 +227,6 @@ def _validate_duplicates(
     mcp_dir = config_dir / "mcp"
     if mcp_dir.is_dir():
         _check_dir_key_collisions(mcp_dir, parsed, diags, "MCP server")
-
-    # Check package sets
-    pkg_dir = config_dir / "packages"
-    if pkg_dir.is_dir():
-        _check_dir_key_collisions(pkg_dir, parsed, diags, "package set")
 
 
 def _check_dir_key_collisions(
@@ -347,29 +332,7 @@ def _validate_warnings(
     config: GuestImageConfig,
     diags: list[Diagnostic],
 ) -> None:
-    """Emit W001-W012 warnings."""
-    ws = config.web_security
-
-    # W001: Package set uses a registry but no registry configured in web security
-    if config.package_sets and not ws.registry:
-        diags.append(Diagnostic(
-            code="W001",
-            severity=Severity.WARNING,
-            message="Package sets configured but no package registry in web security",
-            file="config/security/web.toml",
-        ))
-
-    # W002: -dev packages in package lists
-    for key, ps in config.package_sets.items():
-        for pkg in ps.packages:
-            if pkg.endswith(("-dev", "-devel")):
-                diags.append(Diagnostic(
-                    code="W002",
-                    severity=Severity.WARNING,
-                    message=f"Package '{pkg}' looks like a development package in {key}",
-                    file=f"config/packages/{key}.toml",
-                ))
-
+    """Emit W003, W007, W010 and W012 warnings."""
     # W003: Potential secrets in MCP headers/env and shell configs
     for key, mcp in config.mcp_servers.items():
         for hdr_key, hdr_val in mcp.headers.items():
@@ -405,28 +368,8 @@ def _validate_warnings(
             file="config/vm/environment.toml",
         ))
 
-    # W004: Package set with no network config
-    for key, ps in config.package_sets.items():
-        if ps.network is None:
-            diags.append(Diagnostic(
-                code="W004",
-                severity=Severity.WARNING,
-                message=f"Package set '{key}' has no network config (can't download at build time)",
-                file=f"config/packages/{key}.toml",
-            ))
-
     # W007: Overly broad wildcard domains
     _check_broad_wildcards(config, diags)
-
-    # W009: Shell metacharacters in install_cmd
-    for key, ps in config.package_sets.items():
-        if _has_shell_metachar(ps.install_cmd):
-            diags.append(Diagnostic(
-                code="W009",
-                severity=Severity.WARNING,
-                message=f"Shell metacharacters in install_cmd for {key}",
-                file=f"config/packages/{key}.toml",
-            ))
 
     # W010: PATH missing essential directories
     path_dirs = set(env.shell.path.split(":"))
@@ -449,8 +392,6 @@ _KNOWN_MUSL_TARGETS = {
     "aarch64-unknown-linux-musl",
     "x86_64-unknown-linux-musl",
 }
-
-_SHELL_METACHAR_PAT = re.compile(r"[;|&`$()]")
 
 
 def _is_broad_wildcard(domain: str) -> bool:
@@ -482,11 +423,6 @@ def _check_broad_wildcards(config: GuestImageConfig, diags: list[Diagnostic]) ->
                         message=f"Overly broad wildcard domain '{domain}' in web.{section_name}.{key}",
                         file="config/security/web.toml",
                     ))
-
-
-def _has_shell_metachar(cmd: str) -> bool:
-    """Check if a command string contains shell metacharacters."""
-    return bool(_SHELL_METACHAR_PAT.search(cmd))
 
 
 def _check_rust_targets(config: GuestImageConfig, diags: list[Diagnostic]) -> None:
@@ -575,7 +511,7 @@ def validate_guest(
     if artifacts_dir is not None:
         _validate_artifacts(artifacts_dir, diags)
 
-    # W001-W006: Warnings
+    # Warnings
     _validate_warnings(config, diags)
 
     return sorted(diags, key=lambda d: (d.severity.value, d.code))

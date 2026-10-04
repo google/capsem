@@ -9,7 +9,6 @@ run_all_checks() for the doctor CLI command.
 from __future__ import annotations
 
 import datetime
-import json
 import shutil
 import subprocess
 import sys
@@ -74,8 +73,8 @@ def check_container_runtime() -> CheckResult:
 
 
 # Minimum memory (MB) for the container VM to build images reliably.
-# The rootfs build runs apt, npm, and curl installers concurrently inside the
-# container -- 2 GB is not enough (OOM-killed exit 137 on Claude installer).
+# The image builds run inside the container VM; 2 GB was not enough for the
+# rootfs build (OOM-killed exit 137).
 CONTAINER_MIN_MEMORY_MB = 4096
 CONTAINER_RECOMMENDED_MEMORY_MB = 8192
 
@@ -251,63 +250,6 @@ def check_b3sum() -> CheckResult:
     return CheckResult(name="b3sum", passed=True, detail=version)
 
 
-def check_profile_contract(profile_path: Path, config_root: Path) -> CheckResult:
-    """Validate the profile ledger through capsem-admin.
-
-    The Python builder doctor is a prerequisite checker, not a second profile
-    parser. `capsem-admin profile check` owns profile files, hash pins, rule
-    compilation, and asset pin validation; doctor only reports its result.
-    """
-    if not profile_path.is_file():
-        return CheckResult(
-            name="profile-contract",
-            passed=False,
-            detail=f"profile not found: {profile_path}",
-            fix="check the profile id and ensure config/profiles/<id>/profile.toml exists",
-        )
-    try:
-        result = subprocess.run(
-            [
-                "cargo",
-                "run",
-                "-p",
-                "capsem-admin",
-                "--",
-                "profile",
-                "check",
-                str(profile_path),
-                "--config-root",
-                str(config_root),
-                "--json",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-    except Exception as e:
-        return CheckResult(
-            name="profile-contract",
-            passed=False,
-            detail=f"failed to run capsem-admin profile check: {e}",
-        )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "capsem-admin profile check failed").strip()
-        return CheckResult(name="profile-contract", passed=False, detail=detail)
-    try:
-        payload = json.loads(result.stdout)
-        profile_id = payload.get("profile_id") or payload.get("validation", {}).get("profile_id")
-        compiled = payload.get("validation", {}).get("compiled_rules")
-        if profile_id and compiled is not None:
-            detail = f"profile {profile_id} ({compiled} compiled rules)"
-        elif profile_id:
-            detail = f"profile {profile_id}"
-        else:
-            detail = "profile check passed"
-    except Exception:
-        detail = "profile check passed"
-    return CheckResult(name="profile-contract", passed=True, detail=detail)
-
-
 def check_source_files(repo_root: Path) -> CheckResult:
     """Check that required source files exist for build context assembly."""
     required = {
@@ -357,7 +299,7 @@ def check_source_files(repo_root: Path) -> CheckResult:
 # ---------------------------------------------------------------------------
 
 
-def run_all_checks(repo_root: Path, *, profile_id: str = "code", config_root: Path | None = None) -> list[CheckResult]:
+def run_all_checks(repo_root: Path) -> list[CheckResult]:
     """Run all prerequisite checks and return results."""
     results: list[CheckResult] = []
     results.append(check_container_runtime())
@@ -371,9 +313,6 @@ def run_all_checks(repo_root: Path, *, profile_id: str = "code", config_root: Pa
     results.append(check_cross_target("aarch64-unknown-linux-musl"))
     results.append(check_cross_target("x86_64-unknown-linux-musl"))
     results.append(check_b3sum())
-    config_root = config_root or (repo_root / "config")
-    profile_path = config_root / "profiles" / profile_id / "profile.toml"
-    results.append(check_profile_contract(profile_path, config_root))
     results.append(check_source_files(repo_root))
     return results
 
@@ -398,8 +337,6 @@ def format_results(results: list[CheckResult]) -> str:
             cat = "Rust Toolchain"
         elif r.name == "b3sum":
             cat = "Build Tools"
-        elif r.name == "profile-contract":
-            cat = "Profile Contract"
         elif r.name == "source-files":
             cat = "Source Files"
         else:

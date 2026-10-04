@@ -142,30 +142,11 @@ class TestGitCredentials:
         content = open("/root/.gitconfig").read()  # noqa: SIM115 -- handed to Popen; must outlive this statement
         assert "helper = store" in content, ".gitconfig must set credential.helper = store"
 
-    def test_git_credential_fill(self):
-        """git credential fill must return the token for each configured host."""
-        m = _load_manifest()
-        cred_files = [f for f in m["files"] if f["path"] == "/root/.git-credentials"]
-        if not cred_files:
-            return
-        content = open("/root/.git-credentials").read()  # noqa: SIM115 -- handed to Popen; must outlive this statement
-        for line in content.strip().splitlines():
-            # Parse https://oauth2:TOKEN@HOST
-            parts = line.split("@", 1)
-            host = parts[1]
-            result = run(
-                f'echo "protocol=https\nhost={host}\n" | git credential fill',
-                timeout=5,
-            )
-            assert "password=" in result.stdout, (
-                f"git credential fill failed for {host}: {result.stdout}"
-            )
+
+# -- GitHub token --
 
 
-# -- GitHub CLI --
-
-
-class TestGitHubCli:
+class TestGitHubToken:
     def test_gh_token_set(self):
         """GH_TOKEN env var must be set when GitHub is enabled with a token."""
         m = _load_manifest()
@@ -174,22 +155,3 @@ class TestGitHubCli:
             return
         actual = os.environ.get("GH_TOKEN")
         assert actual, "GH_TOKEN env var is not set in the guest"
-
-    def test_gh_auth_status(self):
-        """gh auth status must detect the GH_TOKEN env var.
-
-        Injection tests use fake tokens, so authentication failure is expected.
-        We only verify that gh detected GH_TOKEN and attempted to use it.
-        """
-        if not os.environ.get("GH_TOKEN"):
-            return
-        result = run("gh auth status", timeout=10)
-        output = result.stdout + result.stderr
-        # gh auth status should mention github.com and GH_TOKEN regardless of
-        # whether the token is valid (injection tests use fake tokens).
-        assert "github.com" in output, (
-            f"gh did not detect github.com: {output}"
-        )
-        assert "GH_TOKEN" in output, (
-            f"gh did not detect GH_TOKEN env var: {output}"
-        )

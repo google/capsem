@@ -10,7 +10,6 @@ from typing import cast
 import pytest
 from capsem_builder.image.models import (
     ArchConfig,
-    AssetDependencyArchitectureConfig,
     AssetDependencyConfig,
     AssetToolBinaryConfig,
     AssetToolsArchitectureConfig,
@@ -22,15 +21,10 @@ from capsem_builder.image.models import (
     GuestRustBuilderConfig,
     KernelConfig,
     McpServerConfig,
-    NodeDownloadConfig,
-    PackageManager,
-    PackageNetworkConfig,
-    PackageSetConfig,
     RootfsConfig,
     ShellConfig,
     ShellFileConfig,
     TlsConfig,
-    VersionedDownloadConfig,
     VmEnvironmentConfig,
     VmResourcesConfig,
     WebSecurityConfig,
@@ -95,13 +89,11 @@ def _build(**kw):
             rootfs_template="Dockerfile.rootfs-dependencies.j2",
             kernel_template="Dockerfile.kernel-dependencies.j2",
             source_build_network=BuildNetwork.NONE,
-            architectures={name: _dependency_arch(name) for name in architectures},
         ),
         "kernel": KernelConfig(version="9.9.9", sha256="a" * 64),
         "rootfs": RootfsConfig(
             max_uncompressed_bytes=2_500_000_000,
             max_erofs_bytes=900_000_000,
-            forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
             runtime_apt_packages=("runc",),
         ),
         "guest_rust_builder": GuestRustBuilderConfig(
@@ -119,45 +111,10 @@ def _build(**kw):
     return BuildConfig.model_validate(defaults)
 
 
-def _dependency_arch(name: str) -> AssetDependencyArchitectureConfig:
-    suffix = "arm64" if name == "arm64" else "x64"
-    download = VersionedDownloadConfig(
-        version="1.2.3",
-        url=f"https://example.test/tool-1.2.3-linux-{suffix}",
-        sha256="f" * 64,
-    )
-    return AssetDependencyArchitectureConfig(
-        node=NodeDownloadConfig(
-            version="24.19.0",
-            url=f"https://example.test/node-v24.19.0-linux-{suffix}.tar.xz",
-            sha256="e" * 64,
-            npm_version="11.17.0",
-        ),
-        uv=download,
-        claude=download,
-        ollama=download,
-    )
-
-
 def _mcp_stdio(**kw):
     defaults = {"name": "Test", "transport": McpTransport.STDIO, "command": "/bin/test"}
     defaults.update(kw)
     return McpServerConfig(**defaults)
-
-
-def test_asset_dependency_node_major_must_match_architecture() -> None:
-    dependency = _dependency_arch("arm64")
-    bad_node = dependency.node.model_copy(update={"version": "23.11.0"})
-    with pytest.raises(ValidationError, match="Node major"):
-        _build(
-            asset_dependencies=AssetDependencyConfig(
-                tag_template="capsem-{template}-dependencies-{arch}:{digest}",
-                rootfs_template="Dockerfile.rootfs-dependencies.j2",
-                kernel_template="Dockerfile.kernel-dependencies.j2",
-                source_build_network=BuildNetwork.NONE,
-                architectures={"arm64": dependency.model_copy(update={"node": bad_node})},
-            )
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -198,11 +155,10 @@ class TestErofsCompression:
 
 
 class TestRootfsConfig:
-    def test_release_limits_and_forbidden_payloads_are_typed(self):
+    def test_release_limits_are_typed(self):
         config = RootfsConfig(
             max_uncompressed_bytes=2_500_000_000,
             max_erofs_bytes=900_000_000,
-            forbidden_path_prefixes=("usr/lib/ollama/cuda_",),
             runtime_apt_packages=("runc",),
         )
 
@@ -210,65 +166,23 @@ class TestRootfsConfig:
         assert config.max_erofs_bytes == 900_000_000
 
     @pytest.mark.parametrize(
-        "prefix",
-        (
-            "/usr/lib/ollama",
-            "../usr/lib/ollama",
-            "usr/lib/../ollama",
-            " usr/lib/ollama",
-            "",
-        ),
-    )
-    def test_forbidden_prefixes_must_be_safe_relative_paths(self, prefix: str):
-        with pytest.raises(ValidationError):
-            RootfsConfig(
-                max_uncompressed_bytes=2_500_000_000,
-                max_erofs_bytes=900_000_000,
-                forbidden_path_prefixes=(prefix,),
-                runtime_apt_packages=("runc",),
-            )
-
-    @pytest.mark.parametrize(
         "overrides",
         (
             {"max_uncompressed_bytes": 900_000_000},
             {"max_erofs_bytes": 2_500_000_000},
-            {"forbidden_path_prefixes": ()},
-            {
-                "forbidden_path_prefixes": (
-                    "usr/lib/ollama/cuda",
-                    "usr/lib/ollama/cuda",
-                )
-            },
+            {"runtime_apt_packages": ()},
+            {"runtime_apt_packages": ("runc", "runc")},
         ),
     )
     def test_release_limits_cannot_be_ambiguous_or_inverted(self, overrides: dict):
         values = {
             "max_uncompressed_bytes": 2_500_000_000,
             "max_erofs_bytes": 900_000_000,
-            "forbidden_path_prefixes": ("usr/lib/ollama/cuda",),
             "runtime_apt_packages": ("runc",),
             **overrides,
         }
         with pytest.raises(ValidationError):
             RootfsConfig.model_validate(values)
-
-
-class TestPackageManager:
-    def test_values(self):
-        assert set(PackageManager) == {
-            PackageManager.APT,
-            PackageManager.UV,
-            PackageManager.PIP,
-            PackageManager.NPM,
-            PackageManager.CURL,
-        }
-
-    def test_string_values(self):
-        assert PackageManager.APT.value == "apt"
-        assert PackageManager.UV.value == "uv"
-        assert PackageManager.PIP.value == "pip"
-        assert PackageManager.NPM.value == "npm"
 
 
 # ---------------------------------------------------------------------------
@@ -414,110 +328,6 @@ class TestBuildConfig:
         data = b.model_dump()
         c = BuildConfig.model_validate(data)
         assert b == c
-
-    def test_version_commands_default(self):
-        b = _build()
-        assert b.version_commands == {}
-
-    def test_version_commands(self):
-        b = _build(version_commands={"node": "node --version", "npm": "npm --version"})
-        assert b.version_commands["node"] == "node --version"
-        assert len(b.version_commands) == 2
-
-    def test_version_commands_roundtrip(self):
-        b = _build(version_commands={"uv": "uv --version"})
-        data = b.model_dump()
-        c = BuildConfig.model_validate(data)
-        assert b == c
-
-
-# ---------------------------------------------------------------------------
-# PackageSetConfig
-# ---------------------------------------------------------------------------
-
-
-class TestPackageSetConfig:
-    def test_minimal(self):
-        ps = PackageSetConfig(
-            name="Python",
-            manager=PackageManager.UV,
-            install_cmd="uv pip install --system",
-            packages=["pytest"],
-        )
-        assert ps.name == "Python"
-        assert ps.manager is PackageManager.UV
-        assert ps.network is None
-
-    def test_with_network(self):
-        net = PackageNetworkConfig(name="PyPI", domains=["pypi.org"])
-        ps = PackageSetConfig(
-            name="Python",
-            manager=PackageManager.UV,
-            install_cmd="uv pip install",
-            packages=["pytest"],
-            network=net,
-        )
-        assert ps.network is not None
-        assert ps.network.name == "PyPI"
-
-    def test_empty_packages_rejected(self):
-        with pytest.raises(ValidationError):
-            PackageSetConfig(
-                name="Empty",
-                manager=PackageManager.APT,
-                install_cmd="apt install",
-                packages=[],
-            )
-
-    def test_empty_install_cmd_rejected(self):
-        with pytest.raises(ValidationError):
-            PackageSetConfig(
-                name="Bad",
-                manager=PackageManager.APT,
-                install_cmd="",
-                packages=["pkg"],
-            )
-
-    def test_version_commands_default(self):
-        ps = PackageSetConfig(
-            name="Test",
-            manager=PackageManager.APT,
-            install_cmd="apt install",
-            packages=["git"],
-        )
-        assert ps.version_commands == {}
-
-    def test_version_commands_valid(self):
-        ps = PackageSetConfig(
-            name="Test",
-            manager=PackageManager.APT,
-            install_cmd="apt install",
-            packages=["git", "curl"],
-            version_commands={"git": "git --version"},
-        )
-        assert ps.version_commands["git"] == "git --version"
-
-    def test_version_commands_unknown_key_rejected(self):
-        with pytest.raises(ValidationError, match="version_commands keys not in packages"):
-            PackageSetConfig(
-                name="Bad",
-                manager=PackageManager.APT,
-                install_cmd="apt install",
-                packages=["git"],
-                version_commands={"nonexistent": "echo 1"},
-            )
-
-    def test_roundtrip(self):
-        ps = PackageSetConfig(
-            name="Node",
-            manager=PackageManager.NPM,
-            install_cmd="npm install -g",
-            packages=["typescript"],
-        )
-        data = ps.model_dump()
-        q = PackageSetConfig.model_validate(data)
-        assert ps == q
-
 
 # ---------------------------------------------------------------------------
 # McpServerConfig
@@ -739,7 +549,7 @@ class TestVmEnvironmentConfig:
     def test_shell_path_default(self):
         e = VmEnvironmentConfig()
         assert "/usr/bin" in e.shell.path
-        assert "/opt/ai-clis/bin" in e.shell.path
+        assert "/opt/ai-clis/bin" not in e.shell.path
 
     def test_with_shell_files(self):
         bashrc = ShellFileConfig(path="/root/.bashrc", content="PS1='$ '")
@@ -781,7 +591,6 @@ class TestGuestImageConfig:
     def test_minimal(self):
         g = GuestImageConfig(build=_build())
         assert g.build.erofs.compression is ErofsCompression.LZ4HC
-        assert g.package_sets == {}
         assert g.mcp_servers == {}
         assert g.web_security.http_upstream_ports == [80, 3128, 3713, 8080, 11434]
         assert g.vm_resources.cpu_count == 4
@@ -790,14 +599,6 @@ class TestGuestImageConfig:
     def test_full(self):
         g = GuestImageConfig(
             build=_build(),
-            package_sets={
-                "python": PackageSetConfig(
-                    name="Python",
-                    manager=PackageManager.UV,
-                    install_cmd="uv pip install",
-                    packages=["pytest"],
-                )
-            },
             mcp_servers={"capsem": _mcp_stdio(name="Capsem")},
             web_security=WebSecurityConfig(http_upstream_ports=[80]),
             vm_resources=VmResourcesConfig(cpu_count=8),
@@ -805,7 +606,6 @@ class TestGuestImageConfig:
                 shell=ShellConfig(term="screen"),
             ),
         )
-        assert "python" in g.package_sets
         assert "capsem" in g.mcp_servers
         assert g.web_security.http_upstream_ports == [80]
         assert g.vm_resources.cpu_count == 8
@@ -824,20 +624,3 @@ class TestGuestImageConfig:
         json_str = g.model_dump_json()
         h = GuestImageConfig.model_validate_json(json_str)
         assert g == h
-
-
-# ---------------------------------------------------------------------------
-# Adversarial tests
-# ---------------------------------------------------------------------------
-
-
-class TestAdversarial:
-    def test_huge_package_list(self):
-        packages = [f"pkg-{i}" for i in range(1000)]
-        ps = PackageSetConfig(
-            name="Huge",
-            manager=PackageManager.APT,
-            install_cmd="apt install",
-            packages=packages,
-        )
-        assert len(ps.packages) == 1000

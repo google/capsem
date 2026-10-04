@@ -34,7 +34,7 @@ if [ -f /etc/capsem-banner.txt ]; then
         while IFS= read -r line; do echo -e "$line"; done
 fi
 
-# Show AI tool status based on policy (CAPSEM_*_ALLOWED) and API key env vars.
+# Show AI provider status based on policy (CAPSEM_*_ALLOWED) and API key env vars.
 # Host injects CAPSEM_ANTHROPIC_ALLOWED, CAPSEM_OPENAI_ALLOWED, CAPSEM_GOOGLE_ALLOWED
 # as "1" or "0" at boot based on the provider allow toggles in settings.
 _ai_status() {
@@ -50,10 +50,10 @@ _ai_status() {
     fi
 }
 echo ""
-echo -e "  ${_DIM}AI:${_RST}"
-_ai_status "claude" "CAPSEM_ANTHROPIC_ALLOWED" "ANTHROPIC_API_KEY"
-_ai_status "gemini" "CAPSEM_GOOGLE_ALLOWED"    "GEMINI_API_KEY"
-_ai_status "codex"  "CAPSEM_OPENAI_ALLOWED"    "OPENAI_API_KEY"
+echo -e "  ${_DIM}AI providers:${_RST}"
+_ai_status "anthropic" "CAPSEM_ANTHROPIC_ALLOWED" "ANTHROPIC_API_KEY"
+_ai_status "google"    "CAPSEM_GOOGLE_ALLOWED"    "GEMINI_API_KEY"
+_ai_status "openai"    "CAPSEM_OPENAI_ALLOWED"    "OPENAI_API_KEY"
 unset -f _ai_status
 
 # Random tip from /etc/capsem-tips.txt

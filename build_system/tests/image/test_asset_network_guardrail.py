@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import json
 import os
 import re
 import shlex
@@ -262,111 +261,30 @@ def test_mutable_tool_vocabulary_covers_every_supported_ecosystem() -> None:
     }
 
 
-@pytest.mark.parametrize("profile", ("code", "co-work"))
-def test_profile_language_dependencies_are_exact_and_lock_derived(profile: str) -> None:
-    profile_root = PROJECT_ROOT / "config/profiles" / profile
-    python_packages = _source_package_lines(profile_root / "python-requirements.txt")
-    npm_packages = _source_package_lines(profile_root / "npm-packages.txt")
-
-    assert all(
-        re.fullmatch(r"[A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_.-]+\])?==[^=\s]+", package)
-        for package in python_packages
-    ), "every direct Python requirement must select one exact version"
-    assert all(re.fullmatch(r"@[^/@\s]+/[^@\s]+@[^@\s]+", package) for package in npm_packages), (
-        "every direct npm requirement must select one exact version"
-    )
-
-    python_lock = profile_root / "python-requirements.lock"
-    npm_lock = profile_root / "npm-package-lock.json"
-    assert python_lock.is_file(), "the profile must own its hashed Python resolution"
-    assert npm_lock.is_file(), "the profile must own its integrity-bound npm resolution"
-
-    locked_python = {
-        match.group("name").lower().replace("_", "-")
-        for line in python_lock.read_text(encoding="utf-8").splitlines()
-        if (match := re.match(r"^(?P<name>[A-Za-z0-9_.-]+)==[^\s\\]+", line))
-    }
-    direct_python = {
-        package.partition("==")[0].lower().replace("_", "-") for package in python_packages
-    }
-    assert direct_python <= locked_python
-    assert "--hash=sha256:" in python_lock.read_text(encoding="utf-8")
-
-    npm_payload = json.loads(npm_lock.read_text(encoding="utf-8"))
-    assert npm_payload["lockfileVersion"] == 3
-    assert npm_payload["packages"][""]["dependencies"] == {
-        package.rsplit("@", 1)[0]: package.rsplit("@", 1)[1] for package in npm_packages
-    }
-    assert all(
-        isinstance(entry.get("integrity"), str) and entry["integrity"].startswith("sha512-")
-        for key, entry in npm_payload["packages"].items()
-        if key
-    )
-
-
-def _source_package_lines(path: Path) -> tuple[str, ...]:
-    return tuple(
-        line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    )
-
-
-def test_rootfs_materializer_has_no_floating_bootstrap_or_installer() -> None:
+def test_rootfs_materializer_installs_only_debian_packages() -> None:
     source = (PROJECT_ROOT / "config/docker/Dockerfile.rootfs-dependencies.j2").read_text(
         encoding="utf-8"
     )
-    profile_builds = "\n".join(
-        (PROJECT_ROOT / "config/profiles" / profile / "build.sh").read_text(encoding="utf-8")
-        for profile in ("code", "co-work")
-    )
-    combined = source + "\n" + profile_builds
 
-    for forbidden in (
-        "nvm-sh/nvm/master",
-        "npm@latest",
-        "astral.sh/uv/install.sh",
-        "--upgrade pip",
-        "claude.ai/install.sh",
-        "ollama.com/install.sh",
-    ):
-        assert forbidden not in combined
-    assert "uv pip install --system --break-system-packages --require-hashes" in source
-    assert "npm ci" in source
-
-
-def test_rootfs_binary_inputs_are_versioned_and_digest_bound_per_architecture() -> None:
-    settings = BUILD.asset_dependencies
-
-    assert set(settings.architectures) == set(BUILD.architectures)
-    for arch_name, artifacts in settings.architectures.items():
-        assert arch_name in {"arm64", "x86_64"}
-        for name in ("node", "uv", "claude", "ollama"):
-            artifact = getattr(artifacts, name)
-            assert artifact.version in artifact.url
-            assert re.fullmatch(r"[0-9a-f]{64}", artifact.sha256)
+    # Applications come from OCI images; the runtime rootfs has no language
+    # package manager and downloads nothing outside the Debian snapshot.
+    assert _source_line_inventory(
+        PROJECT_ROOT / "config/docker/Dockerfile.rootfs-dependencies.j2"
+    ) == Counter({"apt": 10, "apt-get": 3})
+    assert "curl" not in source
+    assert "{{ apt_packages" in source
 
 
 def test_asset_python_has_no_unclassified_mutable_tool_commands() -> None:
     inventory = _function_string_inventory(PROJECT_ROOT / "build_system/builder/image/docker.py")
 
-    # `_rootfs_context` declares commands inserted into the network-open rootfs
-    # Dockerfile. `container_compile_agent` is the one sealed compiler client.
+    # `container_compile_agent` is the one sealed compiler client.
     # No post-build packer, probe, inventory, or OBOM helper may grow its own
     # package-manager/fetch path.
     assert set(inventory) == {
-        "_rootfs_context",  # declarations rendered into the materializer
-        "build_version_script",  # read-only version commands
         "container_compile_agent",  # separately proved locked/offline below
-        "extract_software_inventory",  # dpkg-query, pip list, npm ls
-        "prepare_build_context",  # copies the npm lock; never invokes npm
         "sync_container_clock",  # pre-materialization Colima clock repair
     }
-    # These are read-only inventory commands. Ratchet their executable tool
-    # vocabulary directly instead of scanning prose: a docstring such as
-    # "installed packages" must not look like an install command.
-    assert inventory["extract_software_inventory"] == Counter({"npm": 2, "pip": 1})
-    assert inventory["prepare_build_context"] == Counter({"npm": 1})
 
 
 def test_container_guest_compile_is_locked_offline_and_network_denied() -> None:
@@ -433,19 +351,7 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
         "config/docker/Dockerfile.kernel-dependencies.j2": Counter(
             {"apt": 5, "apt-get": 2, "wget": 2}
         ),
-        "config/docker/Dockerfile.rootfs-dependencies.j2": Counter(
-            {
-                "npm": 10,
-                "uv": 8,
-                "apt": 10,
-                "apt-get": 3,
-                "curl": 2,
-                "pip": 1,
-                "npx": 1,
-            }
-        ),
-        "config/profiles/co-work/build.sh": Counter({"curl": 3}),
-        "config/profiles/code/build.sh": Counter({"curl": 3}),
+        "config/docker/Dockerfile.rootfs-dependencies.j2": Counter({"apt": 10, "apt-get": 3}),
         "build_system/docker/Dockerfile.asset-tools": Counter({"apt": 5, "curl": 3, "apt-get": 2}),
         "build_system/docker/Dockerfile.guest-rust-builder": Counter(
             {"rustup": 3, "cargo": 2, "apk": 1}
@@ -453,7 +359,6 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
     }
     candidates = {
         *PROJECT_ROOT.glob("config/docker/**/*.j2"),
-        *PROJECT_ROOT.glob("config/profiles/*/build.sh"),
         PROJECT_ROOT / "build_system/docker/Dockerfile.asset-tools",
         PROJECT_ROOT / "build_system/docker/Dockerfile.guest-rust-builder",
     }

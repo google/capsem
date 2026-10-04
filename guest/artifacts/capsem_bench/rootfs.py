@@ -16,7 +16,7 @@ from .helpers import (
     throughput_mbps,
 )
 
-ROOTFS_SCAN_DIRS = ["/usr/bin", "/usr/lib", "/opt/ai-clis"]
+ROOTFS_SCAN_DIRS = ["/usr/bin", "/usr/lib"]
 ROOTFS_RAND_READ_COUNT = 5000
 ROOTFS_SMALL_READ_COUNT = 5000
 ROOTFS_METADATA_STAT_COUNT = 10000
@@ -24,7 +24,7 @@ ROOTFS_LARGE_FILE_MIN_SIZE = 16 * 1024 * 1024
 ROOTFS_SMALL_JS_MAX_SIZE = 64 * 1024
 SMALL_FILE_SUFFIXES = (
     ".js", ".mjs", ".cjs", ".json", ".map", ".node", ".wasm",
-    ".ts", ".tsx", ".jsx",
+    ".ts", ".tsx", ".jsx", ".py",
 )
 
 
