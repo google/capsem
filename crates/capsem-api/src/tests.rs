@@ -110,7 +110,7 @@ fn management_categories_are_closed_enums() {
     assert!(serde_json::from_value::<ServiceAvailability>(json!("maybe")).is_err());
     assert!(serde_json::from_value::<UpdateActionStatus>(json!("maybe")).is_err());
     assert!(serde_json::from_value::<ValidationStatus>(json!("maybe")).is_err());
-    assert!(serde_json::from_value::<ProfileCatalogSource>(json!("directory")).is_err());
+    assert!(serde_json::from_value::<AssetFileState>(json!("maybe")).is_err());
     assert_eq!(
         serde_json::to_value(UpdateActionStatus::Succeeded).unwrap(),
         "succeeded"
@@ -306,7 +306,7 @@ fn openapi_describes_network_mutations_and_both_member_path_parameters() {
 }
 
 #[test]
-fn openapi_exposes_existing_diagnostics_persistence_and_profile_mcp_routes() {
+fn openapi_exposes_existing_diagnostics_persistence_and_mcp_routes() {
     let document = serde_json::to_value(crate::openapi()).unwrap();
     let paths = &document["paths"];
     for (path, method, operation_id) in [
@@ -315,39 +315,24 @@ fn openapi_exposes_existing_diagnostics_persistence_and_profile_mcp_routes() {
         ("/panics", "get", "getPanics"),
         ("/triage", "get", "getTriage"),
         ("/vms/{id}/save", "post", "persistVm"),
-        ("/profiles/{profile_id}/mcp/info", "get", "getProfileMcpInfo"),
-        (
-            "/profiles/{profile_id}/mcp/servers/list",
-            "get",
-            "listProfileMcpServers",
-        ),
-        ("/profiles/{profile_id}/mcp/default/info", "get", "getProfileMcpDefault"),
-        (
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
-            "get",
-            "listProfileMcpTools",
-        ),
-        (
-            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
-            "post",
-            "refreshProfileMcpServer",
-        ),
-        (
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
-            "post",
-            "callProfileMcpTool",
-        ),
+        ("/assets/status", "get", "getAssetStatus"),
+        ("/mcp/info", "get", "getMcpInfo"),
+        ("/mcp/servers/list", "get", "listMcpServers"),
+        ("/mcp/default/info", "get", "getMcpDefault"),
+        ("/mcp/servers/{server_id}/tools/list", "get", "listMcpTools"),
+        ("/mcp/servers/{server_id}/refresh", "post", "refreshMcpServer"),
+        ("/mcp/servers/{server_id}/tools/{tool_id}/call", "post", "callMcpTool"),
     ] {
         assert_eq!(paths[path][method]["operationId"], operation_id, "{method} {path}");
     }
-    let call = &paths["/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call"]["post"];
+    let call = &paths["/mcp/servers/{server_id}/tools/{tool_id}/call"]["post"];
     let parameters = call["parameters"].as_array().unwrap();
     assert_eq!(
         parameters
             .iter()
             .map(|parameter| parameter["name"].as_str().unwrap())
             .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from(["profile_id", "server_id", "tool_id"])
+        std::collections::BTreeSet::from(["server_id", "tool_id"])
     );
 }
 
@@ -373,8 +358,8 @@ fn action_availability_distinguishes_resume_from_start() {
 }
 
 #[test]
-fn omitted_resources_remain_profile_owned() {
-    let request: ProvisionRequest = serde_json::from_value(json!({"profile_id": "code"})).unwrap();
+fn omitted_resources_stay_off_the_wire() {
+    let request: ProvisionRequest = serde_json::from_value(json!({})).unwrap();
     let wire = serde_json::to_value(request).unwrap();
     assert!(wire.get("ram_mb").is_none());
     assert!(wire.get("cpus").is_none());
@@ -383,8 +368,16 @@ fn omitted_resources_remain_profile_owned() {
 
 #[test]
 fn image_is_not_a_clone_source_alias() {
-    let request: ProvisionRequest = serde_json::from_value(json!({"profile_id": "code", "image": "old-img"})).unwrap();
-    assert_eq!(request.from, None);
+    let error = serde_json::from_value::<ProvisionRequest>(json!({"image": "old-img"})).unwrap_err();
+    assert!(error.to_string().contains("unknown field `image`"), "{error}");
+}
+
+#[test]
+fn a_profile_id_is_refused_not_ignored() {
+    let error = serde_json::from_value::<ProvisionRequest>(json!({"profile_id": "code"})).unwrap_err();
+    assert!(error.to_string().contains("unknown field `profile_id`"), "{error}");
+    let error = serde_json::from_value::<RunRequest>(json!({"command": "true", "profile_id": "code"})).unwrap_err();
+    assert!(error.to_string().contains("unknown field `profile_id`"), "{error}");
 }
 
 #[test]

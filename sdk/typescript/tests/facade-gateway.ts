@@ -6,8 +6,6 @@ export class FacadeGateway {
   names = ['chosen'];
   containerStates = ['running'];
   previewSessionStatus: number | undefined;
-  defaultVmProfileId: string | undefined = 'code';
-  defaultContainerProfileId: string | undefined = 'code';
   exposureDeleteStatus: number | undefined;
   readonly files = new Map<string, Buffer>();
 
@@ -32,20 +30,7 @@ export class FacadeGateway {
     if (operation.operationId === 'listVms') value = {
       sandboxes: this.names.map(name => ({...sample(schemas.SandboxInfo ?? {}) as object, id: 'vm-0', name})),
     };
-    if (operation.operationId === 'getHypervisorInfo') {
-      const catalog: Record<string, unknown> = {
-        ...sample(schemas.ProfileCatalogStatus ?? {}) as Record<string, unknown>, profiles: [],
-      };
-      catalog.defaults = {
-        ...(this.defaultVmProfileId === undefined ? {} : {vm: this.defaultVmProfileId}),
-        ...(this.defaultContainerProfileId === undefined ? {} : {container: this.defaultContainerProfileId}),
-      };
-      value = {...value as object, profiles: catalog, vms: [], vm_count: 0};
-    }
-    if (operation.operationId === 'listProfiles') value = {
-      profiles: [{...sample(schemas.ProfileSummary ?? {}) as object, id: 'code', name: 'Code'}],
-    };
-    if (operation.operationId === 'listProfileMcpServers') value = [
+    if (operation.operationId === 'listMcpServers') value = [
       {...sample(schemas.McpServerInfoResponse ?? {}) as object, name: 'local'},
     ];
     if (operation.operationId === 'createVm' || operation.operationId === 'forkVm') {

@@ -26,8 +26,6 @@ class GatewayState:
     container_states: list[str] = field(default_factory=lambda: ["running"])
     preview_session_status: int | None = None
     delays: dict[str, float] = field(default_factory=dict)
-    default_vm_profile_id: str | None = "code"
-    default_container_profile_id: str | None = "code"
 
 
 def response_model(schema_name: str, **fields: Any) -> dict[str, Any]:
@@ -49,14 +47,6 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         if request.path == "/vms/list":
             return web.json_response({"sandboxes": [response_model("SandboxInfo", id=f"vm-{index}", name=name)
                                                     for index, name in enumerate(state.names)]})
-        if request.path == "/status":
-            catalog = response_model("ProfileCatalogStatus", profiles=[])
-            catalog["defaults"] = {runtime: profile_id for runtime, profile_id in
-                                   (("vm", state.default_vm_profile_id),
-                                    ("container", state.default_container_profile_id)) if profile_id is not None}
-            return web.json_response(response_model("HypervisorInfo", profiles=catalog, vms=[], vm_count=0))
-        if request.path == "/profiles/list":
-            return web.json_response({"profiles": [response_model("ProfileSummary", id="code", name="Code")]})
         if request.path == "/vms/create":
             payload = json.loads(body)
             return web.json_response(response_model("ProvisionResponse", id="created-id", name=payload["name"] or "temporary"))
@@ -68,7 +58,7 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
                     "vm_id": "vm-0", "address": "10.0.0.2", "state": "ready", "updated_unix_ms": 1,
                 }],
             )]})
-        if request.path.endswith("/mcp/servers/list"):
+        if request.path == "/mcp/servers/list":
             return web.json_response([response_model("McpServerInfoResponse", name="filesystem")])
         if request.path.endswith("/fork"):
             return web.json_response(response_model("ForkResponse", id="forked-id", name=json.loads(body)["name"]))

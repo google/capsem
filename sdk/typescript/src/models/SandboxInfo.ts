@@ -26,7 +26,6 @@ export interface SandboxInfo {
   "network"?: null | VmNetworkInfo;
   "persistent"?: boolean;
   "pid": number;
-  "profile_id": string;
   "ram_mb"?: number | null;
   "resume_blocked_reason"?: string | null;
   "session_db"?: null | SessionDbStatus;

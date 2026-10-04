@@ -1,7 +1,10 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
 from .archived_event_body import ArchivedEventBody as ArchivedEventBody
+from .asset_file_state import AssetFileState as AssetFileState
+from .asset_file_status import AssetFileStatus as AssetFileStatus
 from .asset_manifest_status import AssetManifestStatus as AssetManifestStatus
+from .asset_status import AssetStatus as AssetStatus
 from .audit_event import AuditEvent as AuditEvent
 from .audit_history_details import AuditHistoryDetails as AuditHistoryDetails
 from .body_encoding import BodyEncoding as BodyEncoding
@@ -87,6 +90,7 @@ from .material_class import MaterialClass as MaterialClass
 from .mcp_default_permission_response import (
     McpDefaultPermissionResponse as McpDefaultPermissionResponse,
 )
+from .mcp_info_response import McpInfoResponse as McpInfoResponse
 from .mcp_permission_action import McpPermissionAction as McpPermissionAction
 from .mcp_refresh_response import McpRefreshResponse as McpRefreshResponse
 from .mcp_server_info_response import McpServerInfoResponse as McpServerInfoResponse
@@ -113,25 +117,6 @@ from .preview_sessions_revoked_response import (
     PreviewSessionsRevokedResponse as PreviewSessionsRevokedResponse,
 )
 from .process_event import ProcessEvent as ProcessEvent
-from .profile_artifact_issue import ProfileArtifactIssue as ProfileArtifactIssue
-from .profile_availability_summary import (
-    ProfileAvailabilitySummary as ProfileAvailabilitySummary,
-)
-from .profile_catalog_source import ProfileCatalogSource as ProfileCatalogSource
-from .profile_catalog_status import ProfileCatalogStatus as ProfileCatalogStatus
-from .profile_defaults import ProfileDefaults as ProfileDefaults
-from .profile_existing_vm_update_semantics import (
-    ProfileExistingVmUpdateSemantics as ProfileExistingVmUpdateSemantics,
-)
-from .profile_mcp_info_response import ProfileMcpInfoResponse as ProfileMcpInfoResponse
-from .profile_new_session_update_semantics import (
-    ProfileNewSessionUpdateSemantics as ProfileNewSessionUpdateSemantics,
-)
-from .profile_readiness import ProfileReadiness as ProfileReadiness
-from .profile_summary import ProfileSummary as ProfileSummary
-from .profile_update_semantics import ProfileUpdateSemantics as ProfileUpdateSemantics
-from .profile_upgrade_action import ProfileUpgradeAction as ProfileUpgradeAction
-from .profiles_list_response import ProfilesListResponse as ProfilesListResponse
 from .provision_request import ProvisionRequest as ProvisionRequest
 from .provision_response import ProvisionResponse as ProvisionResponse
 from .purge_request import PurgeRequest as PurgeRequest

@@ -1,16 +1,8 @@
-//! Typed profile readiness and provenance included in the hypervisor overview.
+//! Readiness and provenance of the VM boot assets, included in the hypervisor
+//! overview and answered by `/assets/status`.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-
-use crate::ProfileUpdateSemantics;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ProfileCatalogSource {
-    BuiltIn,
-    Profile,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -21,74 +13,60 @@ pub enum ValidationStatus {
     FetchError,
 }
 
-/// The catalog's default profile for each runtime. They are answered
-/// separately because they diverge: a container image carries its own
-/// userland, so the profile that boots a VM workstation is not what a
-/// container should get by default.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct ProfileDefaults {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vm: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub container: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ProfileCatalogStatus {
-    pub source: ProfileCatalogSource,
-    /// The profile a client gets when it names none. Clients read it here
-    /// instead of compiling a profile name in.
-    #[serde(default)]
-    pub defaults: ProfileDefaults,
-    pub profile_count: usize,
-    pub ready_count: usize,
-    pub profiles: Vec<ProfileReadiness>,
+/// Whether the one runtime asset set every new VM boots -- kernel, initrd and
+/// rootfs of the installed manifest's current release -- is on disk.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AssetStatus {
+    pub ready: bool,
+    /// An asset reconciliation (startup or `/assets/ensure`) is running.
+    pub downloading: bool,
+    pub current_arch: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub asset_manifest: Option<AssetManifestStatus>,
+    pub asset_version: Option<String>,
+    pub assets: Vec<AssetFileStatus>,
+    pub errors: Vec<String>,
+    pub manifest: AssetManifestStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_asset: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes_done: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes_total: Option<u64>,
+    /// Assets the last finished reconciliation downloaded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub downloaded: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reconcile_error: Option<String>,
+    /// Set by `/assets/ensure`: whether this call started a reconciliation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ProfileReadiness {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub ready: bool,
-    pub current_arch: String,
-    pub missing_assets: Vec<ProfileArtifactIssue>,
-    pub invalid_assets: Vec<ProfileArtifactIssue>,
-    pub invalid_files: Vec<ProfileArtifactIssue>,
-    pub errors: Vec<String>,
-    pub asset_count: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub revision: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_payload_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_semantics: Option<ProfileUpdateSemantics>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ProfileArtifactIssue {
-    /// Profile-owned artifact label, not a lifecycle or permission state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AssetFileStatus {
+    /// `kernel`, `initrd` or `rootfs`.
     pub kind: String,
+    /// Logical asset name in the manifest, e.g. `vmlinuz`.
+    pub name: String,
     pub path: String,
+    pub status: AssetFileState,
+    pub expected_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub valid: Option<bool>,
+    pub expected_size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub present: Option<bool>,
+    pub actual_size: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetFileState {
+    Present,
+    Missing,
+    /// On disk with a size the manifest does not record for it.
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AssetManifestStatus {
     /// Provenance label recorded by the installer or channel metadata.
     pub origin: String,

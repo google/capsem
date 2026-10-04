@@ -10,12 +10,12 @@ pub mod resources;
 pub mod transport;
 mod vm;
 pub use error::{Error, Result};
-pub use hypervisor::{Hypervisor, Runtime};
+pub use hypervisor::Hypervisor;
 pub use options::{
     CreateOptions, DiagnosticOptions, HistoryOptions, LogOptions, NetworkLogOptions, Registry, RunOptions,
     TimelineOptions, TriageOptions, VmSelector,
 };
-pub use resources::{Debug, Files, McpTools, Port, PortOptions, ProfileMcpServer, VmNetworks};
+pub use resources::{Debug, Files, Mcp, McpServer, McpTools, Port, PortOptions, VmNetworks};
 pub use vm::VM;
 
 #[cfg(test)]

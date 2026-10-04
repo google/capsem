@@ -4,7 +4,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {createServer} from '../src/server.js';
-import {codeProfile, customProfile, hypervisorInfo, provision, routeFixtures, sandbox} from './host-fixtures.js';
+import {hypervisorInfo, provision, routeFixtures, sandbox} from './host-fixtures.js';
 
 interface RequestRecord {method: string; url: string; authorization?: string; body: Buffer}
 
@@ -44,7 +44,6 @@ describe('host-tools', () => {
       const path = new URL(record.url, 'http://gateway.test').pathname;
       if (path === '/status') return json(response, hypervisorInfo);
       if (path === '/vms/list') return json(response, {sandboxes: [sandbox]});
-      if (path === '/profiles/list') return json(response, {profiles: [customProfile, codeProfile]});
       if (path === '/vms/create') return json(response, provision);
       if (path === '/networks/net-1') return json(response, {
         id: 'net-1', name: 'private', subnet: '10.0.0.0/24', created_unix_ms: 1, members: [],
@@ -106,6 +105,7 @@ describe('host-tools', () => {
   });
 
   it('uses typed SDK lifecycle calls with the supplied bearer credential', async () => {
+    expect(structured(await client.callTool({name: 'capsem_status', arguments: {}}))).toEqual(hypervisorInfo);
     expect(structured(await client.callTool({name: 'capsem_list', arguments: {}}))).toEqual({sandboxes: [sandbox]});
     expect(structured(await client.callTool({name: 'capsem_info', arguments: {vm_id: 'vm-1'}}))).toEqual(sandbox);
     expect(structured(await client.callTool({
@@ -123,22 +123,21 @@ describe('host-tools', () => {
   it('passes typed create resources and environment through the SDK without echoing secrets', async () => {
     const result = await client.callTool({
       name: 'capsem_create',
-      arguments: {profile: 'co-work', name: 'demo', cpus: 2, memory: 2, env: {API_KEY: 'guest-secret'}, network_ids: ['net-1']},
+      arguments: {name: 'demo', cpus: 2, memory: 2, env: {API_KEY: 'guest-secret'}, network_ids: ['net-1']},
     });
     expect(structured(result)).toEqual({id: 'vm-1', name: 'demo'});
     expect(JSON.stringify(result)).not.toContain('guest-secret');
     expect(JSON.parse(requests.at(-1)?.body.toString() ?? '')).toEqual({
-      profile_id: 'co-work', name: 'demo', persistent: true, cpus: 2, ram_mb: 2048,
+      name: 'demo', persistent: true, cpus: 2, ram_mb: 2048,
       env: {API_KEY: 'guest-secret'}, networks: ['private'],
     });
-    expect(requests.some(request => request.url === '/profiles/list')).toBe(true);
+    expect(requests.map(request => request.url)).toEqual(['/networks/net-1', '/vms/create']);
   });
 
   it('creates and inspects containers and manages ports through SDK resources', async () => {
     const created = await client.callTool({
       name: 'capsem_create',
       arguments: {
-        profile: 'code',
         env: {APP_SECRET: 'container-secret'},
         image: 'registry.example/app:latest', command: ['serve'],
         registry: {username: 'robot', password: 'registry-secret'},
@@ -201,23 +200,13 @@ describe('host-tools', () => {
     });
   });
 
-  // A name the catalog does not have is the caller's mistake, not ours.
-  // No profile means the catalog default the gateway names, not a literal.
-  it('creates with the catalog default when no profile is named', async () => {
+  it('creates with the service defaults when no resources are named', async () => {
     const created = await client.callTool({name: 'capsem_create', arguments: {}});
     expect(created.isError).not.toBe(true);
-    const body = requests.find(request => request.url === '/vms/create')?.body.toString() ?? '';
-    expect(JSON.parse(body)).toMatchObject({profile_id: 'code'});
-    expect(requests.some(request => request.url === '/status')).toBe(true);
-  });
-
-  it('reports an unknown profile as invalid input', async () => {
-    const result = await client.callTool({
-      name: 'capsem_create', arguments: {profile: 'ghost'},
+    expect(requests.map(request => request.url)).toEqual(['/vms/create']);
+    expect(JSON.parse(requests[0]?.body.toString() ?? '')).toEqual({
+      name: null, persistent: false, cpus: null, ram_mb: null, env: null, networks: [],
     });
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toEqual({error: {kind: 'invalid_input'}});
-    expect(JSON.stringify(result)).toContain('ghost');
   });
 
   it('bounds a file read and reports what it returned', async () => {
@@ -260,7 +249,7 @@ describe('host-tools', () => {
 
   it('routes the remaining lifecycle and diagnostic tools through typed SDK resources', async () => {
     const calls: {name: string; arguments: Record<string, unknown>}[] = [
-      {name: 'capsem_run', arguments: {command: 'true', profile: 'code', timeout_secs: 3}},
+      {name: 'capsem_run', arguments: {command: 'true', timeout_secs: 3}},
       {name: 'capsem_start', arguments: {vm_id: 'vm-1'}},
       {name: 'capsem_stop', arguments: {vm_id: 'vm-1'}},
       {name: 'capsem_pause', arguments: {vm_id: 'vm-1'}},

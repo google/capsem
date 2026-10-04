@@ -65,9 +65,9 @@ pub fn openapi() -> OpenApi {
         .operation::<HistoryResponse>("/vms/{id}/history", "getVmHistory")
         .parameters(Some(HistoryQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/vms/{id}/history", HttpMethod::Get, history);
-    doc.get::<ProfilesListResponse>("/profiles/list", "listProfiles");
     doc.diagnostics();
-    doc.profile_mcp();
+    doc.get::<AssetStatus>("/assets/status", "getAssetStatus");
+    doc.mcp();
     doc.get::<UpdateStatusResponse>("/update/status", "getUpdateStatus");
     doc.post::<UpdateApplyRequest, UpdateActionResponse>("/update/apply", "updateHypervisor");
     doc.networks();
@@ -86,7 +86,7 @@ struct Document {
 /// force every generated SDK to be regenerated, and an SDK built against the
 /// contract keeps working across binary releases. Raise it when the contract
 /// changes in a way clients must notice.
-pub const CONTRACT_VERSION: &str = "2.1.0";
+pub const CONTRACT_VERSION: &str = "3.0.0";
 
 impl Document {
     fn schema<T: ToSchema>(&mut self) -> Ref {
@@ -221,21 +221,15 @@ impl Document {
         self.add("/triage", HttpMethod::Get, triage);
     }
 
-    fn profile_mcp(&mut self) {
-        self.get::<ProfileMcpInfoResponse>("/profiles/{profile_id}/mcp/info", "getProfileMcpInfo");
-        self.get::<McpServersListResponse>("/profiles/{profile_id}/mcp/servers/list", "listProfileMcpServers");
-        self.get::<McpDefaultPermissionResponse>("/profiles/{profile_id}/mcp/default/info", "getProfileMcpDefault");
-        self.get::<McpToolsListResponse>(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
-            "listProfileMcpTools",
-        );
-        self.empty_post::<McpRefreshResponse>(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
-            "refreshProfileMcpServer",
-        );
+    fn mcp(&mut self) {
+        self.get::<McpInfoResponse>("/mcp/info", "getMcpInfo");
+        self.get::<McpServersListResponse>("/mcp/servers/list", "listMcpServers");
+        self.get::<McpDefaultPermissionResponse>("/mcp/default/info", "getMcpDefault");
+        self.get::<McpToolsListResponse>("/mcp/servers/{server_id}/tools/list", "listMcpTools");
+        self.empty_post::<McpRefreshResponse>("/mcp/servers/{server_id}/refresh", "refreshMcpServer");
         self.post::<serde_json::Value, serde_json::Value>(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
-            "callProfileMcpTool",
+            "/mcp/servers/{server_id}/tools/{tool_id}/call",
+            "callMcpTool",
         );
     }
 

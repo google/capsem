@@ -15,7 +15,6 @@ export const VmSummarySchema: z.ZodType<VmSummary> = z.object({
   "model_call_count": z.int().min(0).nullable().exactOptional(),
   "name": z.string().nullable().exactOptional(),
   "persistent": z.boolean(),
-  "profile_id": z.string(),
   "resume_blocked_reason": z.string().nullable().exactOptional(),
   "status": z.lazy(() => VmLifecycleStateSchema),
   "total_estimated_cost": z.number().nullable().exactOptional(),

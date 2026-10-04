@@ -16,5 +16,4 @@ class ProvisionResponse(Model):
     id: StrictStr
     name: StrictStr
     persistent: StrictBool | None = None
-    profile_id: StrictStr
     status: VmLifecycleState

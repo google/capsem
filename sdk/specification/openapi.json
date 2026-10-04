@@ -2,9 +2,41 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "2.1.0"
+    "version": "3.0.0"
   },
   "paths": {
+    "/assets/status": {
+      "get": {
+        "operationId": "getAssetStatus",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/host-logs/{name}": {
       "get": {
         "description": "Send Accept: application/json for the typed response. Without it the route returns plain text.",
@@ -146,6 +178,246 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ImagePullResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/default/info": {
+      "get": {
+        "operationId": "getMcpDefault",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpDefaultPermissionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/info": {
+      "get": {
+        "operationId": "getMcpInfo",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpInfoResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/servers/list": {
+      "get": {
+        "operationId": "listMcpServers",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServersListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/servers/{server_id}/refresh": {
+      "post": {
+        "operationId": "refreshMcpServer",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpRefreshResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/servers/{server_id}/tools/list": {
+      "get": {
+        "operationId": "listMcpTools",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpToolsListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/servers/{server_id}/tools/{tool_id}/call": {
+      "post": {
+        "operationId": "callMcpTool",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Value"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Value"
                 }
               }
             }
@@ -602,332 +874,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PanicsResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/list": {
-      "get": {
-        "operationId": "listProfiles",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfilesListResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/default/info": {
-      "get": {
-        "operationId": "getProfileMcpDefault",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpDefaultPermissionResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/info": {
-      "get": {
-        "operationId": "getProfileMcpInfo",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileMcpInfoResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/servers/list": {
-      "get": {
-        "operationId": "listProfileMcpServers",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpServersListResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/servers/{server_id}/refresh": {
-      "post": {
-        "operationId": "refreshProfileMcpServer",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "server_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpRefreshResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list": {
-      "get": {
-        "operationId": "listProfileMcpTools",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "server_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpToolsListResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call": {
-      "post": {
-        "operationId": "callProfileMcpTool",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "server_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "tool_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Value"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Value"
                 }
               }
             }
@@ -2726,6 +2672,59 @@
           }
         }
       },
+      "AssetFileState": {
+        "type": "string",
+        "enum": [
+          "present",
+          "missing",
+          "invalid"
+        ]
+      },
+      "AssetFileStatus": {
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "path",
+          "status",
+          "expected_hash"
+        ],
+        "properties": {
+          "actual_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "expected_hash": {
+            "type": "string"
+          },
+          "expected_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "`kernel`, `initrd` or `rootfs`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Logical asset name in the manifest, e.g. `vmlinuz`."
+          },
+          "path": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AssetFileState"
+          }
+        }
+      },
       "AssetManifestStatus": {
         "type": "object",
         "required": [
@@ -2805,6 +2804,94 @@
           },
           "validation_status": {
             "$ref": "#/components/schemas/ValidationStatus"
+          }
+        }
+      },
+      "AssetStatus": {
+        "type": "object",
+        "description": "Whether the one runtime asset set every new VM boots -- kernel, initrd and\nrootfs of the installed manifest's current release -- is on disk.",
+        "required": [
+          "ready",
+          "downloading",
+          "current_arch",
+          "assets",
+          "errors",
+          "manifest"
+        ],
+        "properties": {
+          "asset_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AssetFileStatus"
+            }
+          },
+          "bytes_done": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "current_arch": {
+            "type": "string"
+          },
+          "current_asset": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "downloaded": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Assets the last finished reconciliation downloaded.",
+            "minimum": 0
+          },
+          "downloading": {
+            "type": "boolean",
+            "description": "An asset reconciliation (startup or `/assets/ensure`) is running."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/AssetManifestStatus"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "reconcile_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Set by `/assets/ensure`: whether this call started a reconciliation."
           }
         }
       },
@@ -4190,18 +4277,18 @@
           "vms"
         ],
         "properties": {
-          "gateway_version": {
-            "type": "string"
-          },
-          "profiles": {
+          "assets": {
             "oneOf": [
               {
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ProfileCatalogStatus"
+                "$ref": "#/components/schemas/AssetStatus"
               }
             ]
+          },
+          "gateway_version": {
+            "type": "string"
           },
           "resource_summary": {
             "oneOf": [
@@ -4796,6 +4883,27 @@
           },
           "source": {
             "type": "string"
+          }
+        }
+      },
+      "McpInfoResponse": {
+        "type": "object",
+        "required": [
+          "server_count",
+          "manual_server_count",
+          "builtin_local_enabled"
+        ],
+        "properties": {
+          "builtin_local_enabled": {
+            "type": "boolean"
+          },
+          "manual_server_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "server_count": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -5463,375 +5571,9 @@
           }
         }
       },
-      "ProfileArtifactIssue": {
-        "type": "object",
-        "required": [
-          "kind",
-          "path"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "description": "Profile-owned artifact label, not a lifecycle or permission state."
-          },
-          "path": {
-            "type": "string"
-          },
-          "present": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "valid": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          }
-        }
-      },
-      "ProfileAvailabilitySummary": {
-        "type": "object",
-        "required": [
-          "web",
-          "shell",
-          "mobile"
-        ],
-        "properties": {
-          "mobile": {
-            "type": "boolean"
-          },
-          "shell": {
-            "type": "boolean"
-          },
-          "web": {
-            "type": "boolean"
-          }
-        }
-      },
-      "ProfileCatalogSource": {
-        "type": "string",
-        "enum": [
-          "built_in",
-          "profile"
-        ]
-      },
-      "ProfileCatalogStatus": {
-        "type": "object",
-        "required": [
-          "source",
-          "profile_count",
-          "ready_count",
-          "profiles"
-        ],
-        "properties": {
-          "asset_manifest": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AssetManifestStatus"
-              }
-            ]
-          },
-          "bytes_done": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "minimum": 0
-          },
-          "bytes_total": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "minimum": 0
-          },
-          "current_asset": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "defaults": {
-            "$ref": "#/components/schemas/ProfileDefaults",
-            "description": "The profile a client gets when it names none. Clients read it here\ninstead of compiling a profile name in."
-          },
-          "downloaded": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 0
-          },
-          "profile_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "profiles": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileReadiness"
-            }
-          },
-          "ready_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "reconcile_error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "source": {
-            "$ref": "#/components/schemas/ProfileCatalogSource"
-          }
-        }
-      },
-      "ProfileDefaults": {
-        "type": "object",
-        "description": "The catalog's default profile for each runtime. They are answered\nseparately because they diverge: a container image carries its own\nuserland, so the profile that boots a VM workstation is not what a\ncontainer should get by default.",
-        "properties": {
-          "container": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "vm": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "ProfileExistingVmUpdateSemantics": {
-        "type": "string",
-        "enum": [
-          "pinned_until_recreate"
-        ]
-      },
-      "ProfileMcpInfoResponse": {
-        "type": "object",
-        "required": [
-          "profile_id",
-          "server_count",
-          "manual_server_count",
-          "builtin_local_enabled"
-        ],
-        "properties": {
-          "builtin_local_enabled": {
-            "type": "boolean"
-          },
-          "manual_server_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "profile_id": {
-            "type": "string"
-          },
-          "server_count": {
-            "type": "integer",
-            "minimum": 0
-          }
-        }
-      },
-      "ProfileNewSessionUpdateSemantics": {
-        "type": "string",
-        "enum": [
-          "use_current_profile_catalog"
-        ]
-      },
-      "ProfileReadiness": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "description",
-          "ready",
-          "current_arch",
-          "missing_assets",
-          "invalid_assets",
-          "invalid_files",
-          "errors",
-          "asset_count"
-        ],
-        "properties": {
-          "asset_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "current_arch": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "errors": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "id": {
-            "type": "string"
-          },
-          "invalid_assets": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileArtifactIssue"
-            }
-          },
-          "invalid_files": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileArtifactIssue"
-            }
-          },
-          "missing_assets": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileArtifactIssue"
-            }
-          },
-          "name": {
-            "type": "string"
-          },
-          "profile_payload_hash": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "ready": {
-            "type": "boolean"
-          },
-          "revision": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "update_semantics": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ProfileUpdateSemantics"
-              }
-            ]
-          }
-        }
-      },
-      "ProfileSummary": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "description",
-          "availability",
-          "source",
-          "rule_count",
-          "default_rule_count",
-          "plugin_count",
-          "mcp_server_count",
-          "update_semantics"
-        ],
-        "properties": {
-          "availability": {
-            "$ref": "#/components/schemas/ProfileAvailabilitySummary"
-          },
-          "default_rule_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "description": {
-            "type": "string"
-          },
-          "icon_svg": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "mcp_server_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "name": {
-            "type": "string"
-          },
-          "plugin_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "rule_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "source": {
-            "type": "string"
-          },
-          "update_semantics": {
-            "$ref": "#/components/schemas/ProfileUpdateSemantics"
-          }
-        }
-      },
-      "ProfileUpdateSemantics": {
-        "type": "object",
-        "required": [
-          "new_sessions",
-          "existing_vms",
-          "upgrade_action"
-        ],
-        "properties": {
-          "existing_vms": {
-            "$ref": "#/components/schemas/ProfileExistingVmUpdateSemantics"
-          },
-          "new_sessions": {
-            "$ref": "#/components/schemas/ProfileNewSessionUpdateSemantics"
-          },
-          "upgrade_action": {
-            "$ref": "#/components/schemas/ProfileUpgradeAction"
-          }
-        }
-      },
-      "ProfileUpgradeAction": {
-        "type": "string",
-        "enum": [
-          "recreate_vm"
-        ]
-      },
-      "ProfilesListResponse": {
-        "type": "object",
-        "required": [
-          "profiles"
-        ],
-        "properties": {
-          "profiles": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileSummary"
-            }
-          }
-        }
-      },
       "ProvisionRequest": {
         "type": "object",
-        "required": [
-          "profile_id"
-        ],
+        "description": "Unknown fields are refused rather than ignored.",
         "properties": {
           "container": {
             "oneOf": [
@@ -5850,7 +5592,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "CPU count. If absent, service resolves from the selected profile's VM\nresources.",
+            "description": "CPU count. If absent, the service's default (4).",
             "minimum": 0
           },
           "env": {
@@ -5890,26 +5632,23 @@
             "type": "boolean",
             "description": "When true, the VM is persistent (named VMs). Ephemeral VMs are destroyed on stop."
           },
-          "profile_id": {
-            "type": "string"
-          },
           "ram_mb": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int64",
-            "description": "RAM in megabytes. If absent, service resolves from the selected\nprofile's VM resources.",
+            "description": "RAM in megabytes. If absent, the service's default (12 GiB).",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
       },
       "ProvisionResponse": {
         "type": "object",
         "required": [
           "id",
           "name",
-          "profile_id",
           "status",
           "available_actions"
         ],
@@ -5931,9 +5670,6 @@
           },
           "persistent": {
             "type": "boolean"
-          },
-          "profile_id": {
-            "type": "string"
           },
           "status": {
             "$ref": "#/components/schemas/VmLifecycleState"
@@ -6102,8 +5838,7 @@
       "RunRequest": {
         "type": "object",
         "required": [
-          "command",
-          "profile_id"
+          "command"
         ],
         "properties": {
           "command": {
@@ -6115,7 +5850,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "Guest CPU count. Falls back to the selected profile's VM resources.",
+            "description": "Guest CPU count. If absent, the service's default (4).",
             "minimum": 0
           },
           "env": {
@@ -6131,16 +5866,13 @@
               "type": "string"
             }
           },
-          "profile_id": {
-            "type": "string"
-          },
           "ram_mb": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int64",
-            "description": "Guest RAM in MiB. Falls back to the selected profile's VM resources.",
+            "description": "Guest RAM in MiB. If absent, the service's default (12 GiB).",
             "minimum": 0
           },
           "timeout_secs": {
@@ -6151,13 +5883,13 @@
             "format": "int64",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
       },
       "SandboxInfo": {
         "type": "object",
         "required": [
           "id",
-          "profile_id",
           "pid",
           "status",
           "available_actions"
@@ -6190,7 +5922,7 @@
           },
           "can_resume": {
             "type": "boolean",
-            "description": "True only when an inactive persistent VM can be started/resumed with\nthe currently installed profile and pinned assets."
+            "description": "True only when an inactive persistent VM can be started/resumed: its\npinned boot assets are installed and its shape is current."
           },
           "cpus": {
             "type": [
@@ -6278,9 +6010,6 @@
             "format": "int32",
             "minimum": 0
           },
-          "profile_id": {
-            "type": "string"
-          },
           "ram_mb": {
             "type": [
               "integer",
@@ -6294,7 +6023,7 @@
               "string",
               "null"
             ],
-            "description": "Human-readable reason `can_resume` is false for an inactive persistent\nVM, e.g. profile payload hash drift after an upgrade."
+            "description": "Human-readable reason `can_resume` is false for an inactive persistent\nVM, e.g. a pinned boot asset that is no longer installed."
           },
           "session_db": {
             "oneOf": [
@@ -7000,7 +6729,6 @@
           "stale",
           "binary",
           "assets",
-          "profiles",
           "images",
           "supply_chain"
         ],
@@ -7039,9 +6767,6 @@
               "string",
               "null"
             ]
-          },
-          "profiles": {
-            "$ref": "#/components/schemas/UpdateTrackStatus"
           },
           "stale": {
             "type": "boolean"
@@ -7534,7 +7259,6 @@
           "id",
           "status",
           "persistent",
-          "profile_id",
           "available_actions"
         ],
         "properties": {
@@ -7589,9 +7313,6 @@
           },
           "persistent": {
             "type": "boolean"
-          },
-          "profile_id": {
-            "type": "string"
           },
           "resume_blocked_reason": {
             "type": [

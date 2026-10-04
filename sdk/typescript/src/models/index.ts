@@ -1,7 +1,10 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
 export type { ArchivedEventBody } from "./ArchivedEventBody.js";
+export { AssetFileState } from "./AssetFileState.js";
+export type { AssetFileStatus } from "./AssetFileStatus.js";
 export type { AssetManifestStatus } from "./AssetManifestStatus.js";
+export type { AssetStatus } from "./AssetStatus.js";
 export type { AuditEvent } from "./AuditEvent.js";
 export type { AuditHistoryDetails } from "./AuditHistoryDetails.js";
 export { BodyEncoding } from "./BodyEncoding.js";
@@ -79,6 +82,7 @@ export type { ListResponse } from "./ListResponse.js";
 export type { LogsResponse } from "./LogsResponse.js";
 export { MaterialClass } from "./MaterialClass.js";
 export type { McpDefaultPermissionResponse } from "./McpDefaultPermissionResponse.js";
+export type { McpInfoResponse } from "./McpInfoResponse.js";
 export { McpPermissionAction } from "./McpPermissionAction.js";
 export type { McpRefreshResponse } from "./McpRefreshResponse.js";
 export type { McpServerInfoResponse } from "./McpServerInfoResponse.js";
@@ -103,19 +107,6 @@ export type { PersistResponse } from "./PersistResponse.js";
 export type { PreviewSessionResponse } from "./PreviewSessionResponse.js";
 export type { PreviewSessionsRevokedResponse } from "./PreviewSessionsRevokedResponse.js";
 export type { ProcessEvent } from "./ProcessEvent.js";
-export type { ProfileArtifactIssue } from "./ProfileArtifactIssue.js";
-export type { ProfileAvailabilitySummary } from "./ProfileAvailabilitySummary.js";
-export { ProfileCatalogSource } from "./ProfileCatalogSource.js";
-export type { ProfileCatalogStatus } from "./ProfileCatalogStatus.js";
-export type { ProfileDefaults } from "./ProfileDefaults.js";
-export { ProfileExistingVmUpdateSemantics } from "./ProfileExistingVmUpdateSemantics.js";
-export type { ProfileMcpInfoResponse } from "./ProfileMcpInfoResponse.js";
-export { ProfileNewSessionUpdateSemantics } from "./ProfileNewSessionUpdateSemantics.js";
-export type { ProfileReadiness } from "./ProfileReadiness.js";
-export type { ProfileSummary } from "./ProfileSummary.js";
-export type { ProfileUpdateSemantics } from "./ProfileUpdateSemantics.js";
-export { ProfileUpgradeAction } from "./ProfileUpgradeAction.js";
-export type { ProfilesListResponse } from "./ProfilesListResponse.js";
 export type { ProvisionRequest } from "./ProvisionRequest.js";
 export type { ProvisionResponse } from "./ProvisionResponse.js";
 export type { PurgeRequest } from "./PurgeRequest.js";

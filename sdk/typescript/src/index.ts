@@ -4,7 +4,7 @@ export {decodeExecOutput} from './execution.js';
 export {Hypervisor} from './hypervisor.js';
 export {VM} from './vm.js';
 export {
-  Files, McpTools, Networks, Ports, Profiles, ProfileMcp, ProfileMcpServer, VmNetworks, type Port,
+  Files, Mcp, McpServer, McpTools, Networks, Ports, VmNetworks, type Port,
 } from './resources.js';
 export {HttpError, NetworkError, type CallOptions, type TransportOptions} from './transport.js';
 export type * from './options.js';

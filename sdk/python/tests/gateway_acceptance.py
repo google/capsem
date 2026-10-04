@@ -20,10 +20,10 @@ async def main() -> None:
             raise AssertionError("gateway accepted incorrect SDK credentials")
     async with Hypervisor(url, token) as hv, VM(url, token, name="route-workspace") as vm:
         assert isinstance(await hv.info(), models.HypervisorInfo)
-        profiles = await hv.profiles.list()
-        assert profiles
-        mcp = hv.profiles.mcp(profiles[0])
-        assert (await mcp.info()).profile_id == profiles[0].id
+        mcp = await hv.mcp.info()
+        assert mcp.manual_server_count <= mcp.server_count
+        assert isinstance(await hv.mcp.servers(), list)
+        assert isinstance(await hv.mcp.default_permission(), models.McpDefaultPermissionResponse)
         assert isinstance(await hv.debug.panics(limit=2), models.PanicsResponse)
         assert isinstance(await hv.debug.triage(since="1h", limit=2), models.TriageResponse)
         inventory = await hv.list()

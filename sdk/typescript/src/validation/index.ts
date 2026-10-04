@@ -1,7 +1,10 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
 export {ArchivedEventBodySchema} from "./ArchivedEventBody.js";
+export {AssetFileStateSchema} from "./AssetFileState.js";
+export {AssetFileStatusSchema} from "./AssetFileStatus.js";
 export {AssetManifestStatusSchema} from "./AssetManifestStatus.js";
+export {AssetStatusSchema} from "./AssetStatus.js";
 export {AuditEventSchema} from "./AuditEvent.js";
 export {AuditHistoryDetailsSchema} from "./AuditHistoryDetails.js";
 export {BodyEncodingSchema} from "./BodyEncoding.js";
@@ -79,6 +82,7 @@ export {ListResponseSchema} from "./ListResponse.js";
 export {LogsResponseSchema} from "./LogsResponse.js";
 export {MaterialClassSchema} from "./MaterialClass.js";
 export {McpDefaultPermissionResponseSchema} from "./McpDefaultPermissionResponse.js";
+export {McpInfoResponseSchema} from "./McpInfoResponse.js";
 export {McpPermissionActionSchema} from "./McpPermissionAction.js";
 export {McpRefreshResponseSchema} from "./McpRefreshResponse.js";
 export {McpServerInfoResponseSchema} from "./McpServerInfoResponse.js";
@@ -103,19 +107,6 @@ export {PersistResponseSchema} from "./PersistResponse.js";
 export {PreviewSessionResponseSchema} from "./PreviewSessionResponse.js";
 export {PreviewSessionsRevokedResponseSchema} from "./PreviewSessionsRevokedResponse.js";
 export {ProcessEventSchema} from "./ProcessEvent.js";
-export {ProfileArtifactIssueSchema} from "./ProfileArtifactIssue.js";
-export {ProfileAvailabilitySummarySchema} from "./ProfileAvailabilitySummary.js";
-export {ProfileCatalogSourceSchema} from "./ProfileCatalogSource.js";
-export {ProfileCatalogStatusSchema} from "./ProfileCatalogStatus.js";
-export {ProfileDefaultsSchema} from "./ProfileDefaults.js";
-export {ProfileExistingVmUpdateSemanticsSchema} from "./ProfileExistingVmUpdateSemantics.js";
-export {ProfileMcpInfoResponseSchema} from "./ProfileMcpInfoResponse.js";
-export {ProfileNewSessionUpdateSemanticsSchema} from "./ProfileNewSessionUpdateSemantics.js";
-export {ProfileReadinessSchema} from "./ProfileReadiness.js";
-export {ProfileSummarySchema} from "./ProfileSummary.js";
-export {ProfileUpdateSemanticsSchema} from "./ProfileUpdateSemantics.js";
-export {ProfileUpgradeActionSchema} from "./ProfileUpgradeAction.js";
-export {ProfilesListResponseSchema} from "./ProfilesListResponse.js";
 export {ProvisionRequestSchema} from "./ProvisionRequest.js";
 export {ProvisionResponseSchema} from "./ProvisionResponse.js";
 export {PurgeRequestSchema} from "./PurgeRequest.js";

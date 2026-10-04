@@ -11,9 +11,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(matches!(denied.list().await, Err(Error::Http { status: 401, .. })));
     let hv = Hypervisor::new(&url, &token)?;
     assert!(!hv.info().await?.gateway_version.is_empty());
-    let profiles = hv.profiles().list().await?;
-    let profile = profiles.first().expect("fixture profile");
-    assert_eq!(hv.profiles().mcp(profile).info().await?.profile_id, profile.id);
+    let mcp = hv.mcp().info().await?;
+    assert!(mcp.manual_server_count <= mcp.server_count);
+    hv.mcp().servers().await?;
     hv.debug()
         .panics(DiagnosticOptions {
             limit: Some(2),

@@ -9,8 +9,7 @@ from capsem import Hypervisor, VM
 from capsem.models import HostLogSource, TimelineLayer
 
 async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
-    overview = await hv.info()  # health, versions, profiles, updates
-    profile = (await hv.profiles.list())[0]
+    overview = await hv.info()  # health, versions, assets, updates
     network = await hv.networks.create("private")
     vm = await hv.create(
         name="workspace",
@@ -34,7 +33,7 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     timeline = await vm.timeline(layers=[TimelineLayer.EXEC, TimelineLayer.MODEL])
     await vm.persist("saved-workspace")
     triage = await hv.debug.triage(vm_id=vm.id, since="1h")
-    server = await hv.profiles.mcp(profile).get("filesystem")
+    server = await hv.mcp.get("filesystem")
     tools = await server.tools.list()
     logs = await hv.log(HostLogSource.SERVICE, tail=100)
     await vm.ports.close(port)
@@ -46,11 +45,8 @@ async with VM("http://127.0.0.1:19222", token, name="workspace") as vm:
 ```
 
 Named VMs are persistent; an omitted name creates an ephemeral VM. Omitting
-`profile` selects the profile the gateway's catalog names as its default, read
-once from `GET /status` and cached on the client. To select another profile,
-pass an object returned by `await hv.profiles.list()` to `create(profile=...)`
-or `run(profile=...)`. Omitting `cpus` or `memory` uses the selected profile's
-defaults. Memory is a positive integer in GiB.
+`cpus` or `memory` uses the service defaults (4 CPUs, 12 GiB). Memory is a
+positive integer in GiB.
 
 `hv.list()` returns a typed VM inventory. `hv.update()` applies the configured
 update. VM lifecycle methods are `start`, `stop`, `pause`, `resume`, `delete`
@@ -94,5 +90,8 @@ Mounts remain pending.
 
 `hv.run(command)` executes once in a temporary VM. `hv.debug.panics()` and
 `hv.debug.triage()` expose host and optional VM-ledger diagnostics, and `hv.purge()`
-cleans stopped VMs. `hv.profiles` lists profiles and provides typed MCP server,
-permission and tool discovery; MCP calls retain native JSON arguments/results.
+cleans stopped VMs. `hv.mcp` covers the MCP servers every VM runs
+(settings.toml `[mcp]` with corp's laid over it): `info()`, `servers()`,
+`default_permission()` and `get(name)`, whose server has `tools.list()`,
+`tools.call(name, arguments)` and `refresh()`. MCP calls retain native JSON
+arguments/results.

@@ -38,25 +38,13 @@ macro_rules! operation {
 
 operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
-operation!(list_profiles, "listProfiles");
-operation!(get_profile_mcp_info, "getProfileMcpInfo", GetProfileMcpInfoParams);
-operation!(
-    list_profile_mcp_servers,
-    "listProfileMcpServers",
-    ListProfileMcpServersParams
-);
-operation!(
-    get_profile_mcp_default,
-    "getProfileMcpDefault",
-    GetProfileMcpDefaultParams
-);
-operation!(list_profile_mcp_tools, "listProfileMcpTools", ListProfileMcpToolsParams);
-operation!(
-    refresh_profile_mcp_server,
-    "refreshProfileMcpServer",
-    RefreshProfileMcpServerParams
-);
-operation!(call_profile_mcp_tool, "callProfileMcpTool", CallProfileMcpToolParams);
+operation!(get_asset_status, "getAssetStatus");
+operation!(get_mcp_info, "getMcpInfo");
+operation!(list_mcp_servers, "listMcpServers");
+operation!(get_mcp_default, "getMcpDefault");
+operation!(list_mcp_tools, "listMcpTools", ListMcpToolsParams);
+operation!(refresh_mcp_server, "refreshMcpServer", RefreshMcpServerParams);
+operation!(call_mcp_tool, "callMcpTool", CallMcpToolParams);
 operation!(run_vm, "runVm", RunVmParams);
 operation!(purge_vms, "purgeVms", PurgeVmsParams);
 operation!(get_panics, "getPanics", GetPanicsParams);
