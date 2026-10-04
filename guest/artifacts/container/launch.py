@@ -33,6 +33,8 @@ CPU_PERIOD = 100000
 VM_WORKSPACE = "/root"
 STAGE = ".capsem-image"
 CONTAINER = "workload"
+# The one runtime state root: the launch and every later exec name it.
+RUNC = ("runc", "--rootless=true", "--root", str(RUNTIME / "state"))
 
 # The VM trusts the Capsem CA through this bundle; the container gets the same
 # file read-only, so TLS it opens terminates at the host MITM like VM traffic.
@@ -629,7 +631,6 @@ def run(stage):
     RUNTIME.mkdir(mode=0o711)
     RUNTIME.chmod(0o711)
     state = RUNTIME / "state"
-    runc = ["runc", "--rootless=true", "--root", str(state)]
     process = None
     try:
         options = json.loads((stage / "options.json").read_text())
@@ -652,7 +653,7 @@ def run(stage):
         pid_file = RUNTIME / "workload.pid"
         process = subprocess.Popen(
             [
-                *runc,
+                *RUNC,
                 "run",
                 "--no-new-keyring",
                 "--pid-file",
@@ -665,10 +666,71 @@ def run(stage):
         return process.wait()
     finally:
         if (state / CONTAINER).exists():
-            command(*runc, "delete", "--force", CONTAINER)
+            command(*RUNC, "delete", "--force", CONTAINER)
         if process is not None and process.poll() is None:
             process.wait(timeout=5)
         shutil.rmtree(RUNTIME)
+
+
+def exec_request(encoded):
+    """(argv, tty) from the host's hex-encoded JSON request (capsem-core
+    `workload_exec_command`): `command` runs under the image's /bin/sh, `argv`
+    runs as given."""
+    request = json.loads(bytes.fromhex(encoded))
+    if not isinstance(request, dict) or set(request) - {"argv", "command", "tty"}:
+        raise ValueError(f"refusing exec request {request!r}")
+    if ("argv" in request) == ("command" in request):
+        raise ValueError("an exec request names exactly one of argv and command")
+    argv = request["argv"] if "argv" in request else ["/bin/sh", "-c", request["command"]]
+    tty = request.get("tty", False)
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or not all(isinstance(arg, str) and "\0" not in arg for arg in argv)
+        or not argv[0]
+        or type(tty) is not bool
+    ):
+        raise ValueError(f"refusing exec request {request!r}")
+    return argv, tty
+
+
+def exec_process(config, argv, tty):
+    """The workload's own process with another command: the image's user, cwd
+    and env, and the capabilities, rlimits and no-new-privileges `configure`
+    gave it. runc exec joins its namespaces, cgroup and seccomp filter."""
+    process = json.loads(json.dumps(config["process"]))
+    process.update(args=argv, terminal=tty)
+    return process
+
+
+def exec_argv(process_path):
+    """runc exec of the process spec at `process_path` into the workload."""
+    return [*RUNC, "exec", "--process", process_path, CONTAINER]
+
+
+def workload_running(run=command):
+    """Whether the workload this VM launched is running now."""
+    if not (RUNTIME / "state" / CONTAINER).exists():
+        return False
+    state = run(*RUNC, "state", CONTAINER, check=False, capture_output=True, text=True)
+    return state.returncode == 0 and json.loads(state.stdout).get("status") == "running"
+
+
+def exec_workload(encoded):
+    """Replace this launcher with `runc exec` of the request in the workload.
+
+    The process spec travels in a memfd, so nothing is written to disk and
+    nothing is left to clean up; runc reads it through /proc/self/fd.
+    """
+    argv, tty = exec_request(encoded)
+    if not workload_running():
+        raise SystemExit("capsem: no container workload is running in this session")
+    config = json.loads((RUNTIME / "bundle" / "config.json").read_text())
+    spec = os.memfd_create("capsem-exec", 0)
+    os.write(spec, json.dumps(exec_process(config, argv, tty)).encode())
+    os.set_inheritable(spec, True)
+    runc = exec_argv(f"/proc/self/fd/{spec}")
+    os.execvp(runc[0], runc)
 
 
 if __name__ == "__main__":
@@ -677,5 +739,7 @@ if __name__ == "__main__":
         if pid <= 1:
             raise ValueError("invalid container network namespace pid")
         network_ready(pid)
+    elif len(sys.argv) == 3 and sys.argv[1] == "--exec":
+        exec_workload(sys.argv[2])
     else:
         sys.exit(run(Path(sys.argv[1])))

@@ -92,7 +92,40 @@ pub const STAGE: &str = ".capsem-image";
 /// launcher mounts it there with the stage hidden, and the files API maps
 /// absolute container paths under it back to the workspace.
 pub const CONTAINER_WORKSPACE: &str = "/workspace";
-pub const LAUNCH_COMMAND: &str = "chmod 555 /root/.capsem-image/launch.py && chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py /root/.capsem-image'";
+/// The launcher with `$args`, run where it can work: the agent's exec shell is
+/// chrooted, and the kernel refuses to create or join a user namespace from a
+/// chrooted task. Escaping to PID 1's root and moving the real root over `/`
+/// in a private mount namespace gives the same filesystem without the chroot.
+macro_rules! launcher_in_moved_root {
+    ($args:literal) => {
+        concat!(
+            "chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; ",
+            "mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py ",
+            $args,
+            "'"
+        )
+    };
+}
+
+pub const LAUNCH_COMMAND: &str = concat!(
+    "chmod 555 /root/.capsem-image/launch.py && ",
+    launcher_in_moved_root!("/root/.capsem-image")
+);
+
+/// `command` run by `/bin/sh -c` inside the running workload, through
+/// `runc exec` as the image's own process (user, cwd, env, capabilities,
+/// seccomp, cgroup and namespaces). The JSON request travels hex-encoded, so
+/// no byte of it is ever shell syntax at either quoting level; the launcher
+/// refuses when no workload runs.
+pub fn workload_exec_command(command: &str) -> String {
+    use std::fmt::Write as _;
+    let request = serde_json::json!({ "command": command, "tty": false }).to_string();
+    let mut payload = String::with_capacity(request.len() * 2);
+    for byte in request.bytes() {
+        write!(payload, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    format!(launcher_in_moved_root!("--exec {}"), payload)
+}
 
 /// The launcher in the background, the way a boot of a configured VM starts
 /// it: detached from the exec that asked, with its output on the console that
