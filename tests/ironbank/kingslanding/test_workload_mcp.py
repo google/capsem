@@ -153,11 +153,9 @@ def test_a_workload_calls_capsem_mcp_over_http_and_policy_refuses_it(service, tm
         ("tools/call", "http")
     ] * 2, calls
     common = {"method": "tools/call", "transport": "http", "origin": "mcp", "server_name": "local"}
-    # Who in the workload made the call is not asserted: the guest attributes
-    # a connection by its socket in the VM's own network namespace, and a
-    # workload's socket lives in the workload's.
-    for row in calls:
-        row.pop("process_name")
+    # The client is the image's busybox wget in the workload: the guest finds
+    # its socket in the workload's network namespace by its exact address.
+    assert [row.pop("process_name") for row in calls] == ["wget"] * 2, calls
     assert calls == [
         {
             **common,

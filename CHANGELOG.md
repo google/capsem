@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostics run; asking a session without a workload for `workload` is a
   400 rather than a silent VM exec. The session ledger records each exec's
   target (`exec_events.target`) beside the command as the caller wrote it.
+- Network and MCP events from a container workload now name the workload
+  process that made them instead of `unknown`, and a VM process is no longer
+  mistaken for the client because it holds the same port on another address:
+  the guest matches the client's exact address, in the workload's network
+  namespace when it is not the VM's.
 - Turning off a service toggle (a search engine, a package registry, GitHub or
   GitLab) now blocks its domains: those its domains setting lists, or the
   registry's own. A corp toggle is a corp rule the user cannot override.

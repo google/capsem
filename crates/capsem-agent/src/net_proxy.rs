@@ -27,6 +27,7 @@ mod process_attribution;
 
 use std::collections::VecDeque;
 use std::io;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::process;
 use std::sync::{Arc, Mutex};
@@ -57,11 +58,13 @@ struct ProcessAttributor {
 
 impl ProcessAttributor {
     /// Retrieve the process name that initiated the TCP connection.
-    async fn get_process_name(&self, client_port: u16) -> Option<String> {
+    async fn get_process_name(&self, client: SocketAddr) -> Option<String> {
         let recent_pids = self.recent_pids.lock().unwrap().iter().copied().collect::<Vec<_>>();
-        let pid = tokio::task::spawn_blocking(move || find_process_pid(Path::new("/proc"), client_port, &recent_pids))
-            .await
-            .unwrap_or(None)?;
+        let pid = tokio::task::spawn_blocking(move || {
+            find_process_pid(Path::new("/proc"), client, &recent_pids, workload_pid())
+        })
+        .await
+        .unwrap_or(None)?;
 
         self.remember(pid);
         Some(procfs::process_name_for_pid(pid))
@@ -75,8 +78,20 @@ impl ProcessAttributor {
     }
 }
 
-fn find_process_pid(proc_root: &Path, client_port: u16, recent_pids: &[u32]) -> Option<u32> {
-    let inode = find_socket_inode(proc_root, client_port)?;
+/// The container workload's init pid, when one runs: its sockets live in its
+/// own network namespace, which only `/proc/<pid>/net` lists.
+const WORKLOAD_PID_FILE: &str = "/var/tmp/capsem-container/workload.pid";
+
+fn workload_pid() -> Option<u32> {
+    std::fs::read_to_string(WORKLOAD_PID_FILE).ok()?.trim().parse().ok()
+}
+
+/// The process holding the client end of an intercepted connection. The
+/// socket is named by its exact local address and port -- the peer the proxy
+/// accepted -- in the VM's tables, then in the workload's network namespace.
+fn find_process_pid(proc_root: &Path, client: SocketAddr, recent_pids: &[u32], workload: Option<u32>) -> Option<u32> {
+    let inode = find_socket_inode(&proc_root.join("net"), client)
+        .or_else(|| find_socket_inode(&proc_root.join(workload?.to_string()).join("net"), client))?;
     let target = format!("socket:[{inode}]");
 
     for pid in pid_candidates(proc_root, recent_pids) {
@@ -94,37 +109,44 @@ fn find_process_pid(proc_root: &Path, client_port: u16, recent_pids: &[u32]) -> 
     None
 }
 
-fn find_socket_inode(proc_root: &Path, client_port: u16) -> Option<String> {
-    let port_hex = format!("{:04X}", client_port);
-
-    let mut inode = None;
-    // Search /proc/net/tcp and tcp6 for a socket matching our client port.
-    // Format: "local_address" is "IP:PORT" where PORT is uppercase hex.
-    // Use rsplit(':') for exact port match (ends_with could false-match
-    // if the hex port is a suffix of the IP hex).
-    for proc_path in &[proc_root.join("net/tcp"), proc_root.join("net/tcp6")] {
-        if inode.is_some() {
-            break;
-        }
-        if let Ok(content) = std::fs::read_to_string(proc_path) {
-            for line in content.lines().skip(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                // Index 1 is local_address (ip:port).
-                // Index 9 is inode.
-                if parts.len() >= 10 {
-                    let local_addr = parts[1];
-                    if let Some(port_part) = local_addr.rsplit(':').next() {
-                        if port_part == port_hex {
-                            inode = Some(parts[9].to_string());
-                            break;
-                        }
-                    }
-                }
+/// The inode of the socket whose local address is exactly `client`, from the
+/// `tcp` and `tcp6` tables under `net_dir`.
+fn find_socket_inode(net_dir: &Path, client: SocketAddr) -> Option<String> {
+    let wanted = proc_tcp_addresses(client);
+    for table in ["tcp", "tcp6"] {
+        let Ok(content) = std::fs::read_to_string(net_dir.join(table)) else {
+            continue;
+        };
+        for line in content.lines().skip(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            // Index 1 is local_address (ip:port), index 9 the inode.
+            if parts.len() >= 10 && wanted.iter().any(|address| address == parts[1]) {
+                return Some(parts[9].to_string());
             }
         }
     }
+    None
+}
 
-    inode
+/// How the kernel prints `address` as a local_address in /proc/net/tcp{,6}:
+/// each 32-bit word of the address in host byte order, then the port in hex.
+/// An IPv4 client may also sit on a dual-stack socket as ::ffff:a.b.c.d.
+fn proc_tcp_addresses(address: SocketAddr) -> Vec<String> {
+    let words = |bytes: &[u8]| -> String {
+        use std::fmt::Write;
+        bytes.chunks(4).fold(String::new(), |mut out, word| {
+            let _ = write!(out, "{:08X}", u32::from_ne_bytes([word[0], word[1], word[2], word[3]]));
+            out
+        })
+    };
+    let port = address.port();
+    match address.ip() {
+        std::net::IpAddr::V4(ip) => vec![
+            format!("{}:{port:04X}", words(&ip.octets())),
+            format!("{}:{port:04X}", words(&ip.to_ipv6_mapped().octets())),
+        ],
+        std::net::IpAddr::V6(ip) => vec![format!("{}:{port:04X}", words(&ip.octets()))],
+    }
 }
 
 fn pid_candidates(proc_root: &Path, recent_pids: &[u32]) -> Vec<u32> {
@@ -160,7 +182,7 @@ async fn handle_connection(mut tcp_stream: TcpStream, attributor: Arc<ProcessAtt
     // neither needs the other, and both sit in front of the first byte of
     // every outbound connection, so they run at the same time.
     let (process_name, vsock_raw) = tokio::join!(
-        attributor.get_process_name(peer_addr.port()),
+        attributor.get_process_name(peer_addr),
         tokio::task::spawn_blocking(|| vsock_connect(VSOCK_HOST_CID, VSOCK_PORT_SNI_PROXY)),
     );
     let process_name = process_name.unwrap_or_else(|| "unknown".to_string());
