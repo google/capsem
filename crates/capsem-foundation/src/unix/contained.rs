@@ -413,6 +413,24 @@ impl ContainedDir {
         unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into)
     }
 
+    /// Remove the child `name` and, when it is a directory, everything below
+    /// it, without following a link at any depth. A symlink is unlinked as
+    /// the link itself, so its target is never touched. Directories are
+    /// entered with `O_NOFOLLOW`: an entry swapped for a link between the
+    /// inspection and the descent is refused, not followed.
+    pub fn remove_tree(&self, name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        let stat = fstatat(Some(self.fd.as_raw_fd()), name, AtFlags::AT_SYMLINK_NOFOLLOW)?;
+        if kind_of(stat.st_mode) != EntryKind::Directory {
+            return unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into);
+        }
+        let child = self.descend(name)?;
+        for entry in child.entries()? {
+            child.remove_tree(&entry.name)?;
+        }
+        unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::RemoveDir).map_err(Into::into)
+    }
+
     /// Persist namespace changes made through this directory.
     pub fn sync(&self) -> io::Result<()> {
         File::from(self.fd.try_clone()?).sync_all()

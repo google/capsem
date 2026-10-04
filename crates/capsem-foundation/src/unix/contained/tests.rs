@@ -432,3 +432,41 @@ fn listings_tell_a_symlink_from_other_special_entries() {
     assert!(!find("fifo").is_symlink && find("fifo").kind == EntryKind::Other);
     assert!(!find("file").is_symlink);
 }
+
+#[test]
+fn tree_removal_deletes_links_as_links_and_never_their_targets() {
+    let tree = tree();
+    let doomed = tree.root_path.join("doomed");
+    std::fs::create_dir_all(doomed.join("nested/deeper")).unwrap();
+    std::fs::write(doomed.join("nested/deeper/file"), b"bytes").unwrap();
+    symlink(&tree.outside, doomed.join("dir-link")).unwrap();
+    symlink(tree.outside.join("secret"), doomed.join("nested/file-link")).unwrap();
+    symlink("missing", doomed.join("dangling")).unwrap();
+
+    tree.root.remove_tree(OsStr::new("doomed")).unwrap();
+
+    assert!(std::fs::symlink_metadata(&doomed).is_err());
+    assert_eq!(std::fs::read(tree.outside.join("secret")).unwrap(), b"secret");
+}
+
+#[test]
+fn tree_removal_of_a_top_level_link_removes_only_the_link() {
+    let tree = tree();
+    symlink(&tree.outside, tree.root_path.join("link")).unwrap();
+
+    tree.root.remove_tree(OsStr::new("link")).unwrap();
+
+    assert!(std::fs::symlink_metadata(tree.root_path.join("link")).is_err());
+    assert_eq!(std::fs::read(tree.outside.join("secret")).unwrap(), b"secret");
+}
+
+#[test]
+fn tree_removal_reports_a_missing_entry_and_refuses_traversal_names() {
+    let tree = tree();
+    let error = tree.root.remove_tree(OsStr::new("absent")).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    for name in ["..", ".", "a/b", ""] {
+        assert!(tree.root.remove_tree(OsStr::new(name)).is_err(), "{name:?}");
+    }
+    assert!(tree.outside.join("secret").exists());
+}
