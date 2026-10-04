@@ -19,8 +19,11 @@
   import FolderSimple from 'phosphor-svelte/lib/FolderSimple';
   import Scroll from 'phosphor-svelte/lib/Scroll';
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
+  import AppWindow from 'phosphor-svelte/lib/AppWindow';
   import { formatTokens, formatCost } from '../../format';
   import { hasVmAction, startAction, startLabel } from '../../vm-actions';
+  import { getContainerStatus, openSurface } from '../../api';
+  import { hasOpenableSurface, surfaceMayAppear } from '../../models/surface';
 
   let active = $derived(tabStore.active);
   let isVM = $derived(active?.vmId != null);
@@ -44,6 +47,36 @@
     return () => {
       clearInterval(interval);
       vmStore.clearActiveStats(id);
+    };
+  });
+
+  // The active session's app surface, once its workload runs and the service
+  // has exposed it. Asked again only while one may still appear, and again
+  // whenever the session's lifecycle changes.
+  const SURFACE_RECHECK_MS = 3000;
+  let surfaceVmId = $state<string | null>(null);
+  // A primitive, so the 2 s session poll re-runs the check only on a change.
+  let activeVmStatus = $derived(activeVm?.status);
+  $effect(() => {
+    const id = active?.vmId;
+    void activeVmStatus;
+    surfaceVmId = null;
+    if (!id) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      const status = await getContainerStatus(id).catch(() => null);
+      if (stopped) return;
+      if (hasOpenableSurface(status)) {
+        surfaceVmId = id;
+      } else if (surfaceMayAppear(status)) {
+        timer = setTimeout(check, SURFACE_RECHECK_MS);
+      }
+    };
+    void check();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
     };
   });
 
@@ -273,6 +306,17 @@
         </button>
       {/each}
     </div>
+    {#if surfaceVmId && surfaceVmId === active?.vmId}
+      <button
+        type="button"
+        class="inline-flex items-center gap-x-1 px-2 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary-hover"
+        onclick={() => { if (surfaceVmId) openSurface(surfaceVmId).catch(err => console.error('[toolbar] open app failed:', err)); }}
+        title="Open this session's app in your browser"
+      >
+        <AppWindow size={14} />
+        <span class="hidden sm:inline">Open app</span>
+      </button>
+    {/if}
   {/if}
 
   <!-- Center: window name / shell title -->

@@ -740,6 +740,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gateway issued there, shows one application with no tray, menu or
   on-screen keyboard, and sizes the application's window to the browser
   viewport. No token appears in a URL (google/capsem#289).
+- The Capsem UI shows an "Open app" action on a session whose image's app
+  surface is running and exposed; it opens the surface in the browser
+  through the gateway's launcher (google/capsem#289).
 - OCI workloads reach Capsem's MCP tools over streamable HTTP at
   `http://mcp.capsem.internal/mcp`. A container cannot open vsock, so the
   in-guest relay was out of its reach. The session's DNS answers the name

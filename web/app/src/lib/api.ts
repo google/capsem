@@ -3,6 +3,8 @@
 import * as gateway from '@capsem/sdk/operations';
 import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
+import type { ContainerStatusResponse } from '@capsem/sdk';
+import { surfaceLauncherUrl } from './models/surface';
 import type { ProfileSummary, ProfilesListResponse, UpdateApplyRequest } from '@capsem/sdk';
 export type { ProfileSummary, ProfilesListResponse } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
@@ -635,6 +637,26 @@ export async function getVmStatsSummary(id: string): Promise<VmStatsSummary> {
     }
     throw err;
   }
+}
+
+/** A session's container workload, or null when it runs none. */
+export async function getContainerStatus(id: string): Promise<ContainerStatusResponse | null> {
+  if (!_connected) return null;
+  try {
+    return await _sdk.call(transport => gateway.getVmContainer(transport, { id }));
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    if (err instanceof NetworkError) {
+      _connected = false;
+      return null;
+    }
+    throw err;
+  }
+}
+
+/** Open a session's app surface in the browser, through the gateway. */
+export async function openSurface(id: string): Promise<void> {
+  await openUrl(surfaceLauncherUrl(_baseUrl, id));
 }
 
 export async function getVmStatsDetail(id: string): Promise<VmStatsDetailResponse> {
