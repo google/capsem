@@ -26,6 +26,24 @@ def test_all_routes_are_generated_in_small_modules() -> None:
     assert ".request(\n            reqwest::Method::POST," in call
 
 
+def test_a_call_is_split_where_rustfmt_splits_it() -> None:
+    """`cargo fmt` and the drift check both run over the generated SDK, so a
+    call rustfmt would split must be generated split. POST /images/pull is
+    the first call exactly at rustfmt's 72-column chain width; the generator
+    kept it on one line, and each check then failed on what the other wrote."""
+    sources = render_operations(read_operations(SPEC))
+    assert (
+        "    let bytes = transport\n"
+        '        .request(reqwest::Method::POST, "/images/pull", request)\n'
+        "        .await?;" in sources["pull_image.rs"]
+    )
+    # One column shorter stays on one line, as rustfmt leaves it.
+    assert (
+        '    let bytes = transport.request(reqwest::Method::POST, "/vms/create", request).await?;'
+        in sources["create_vm.rs"]
+    )
+
+
 @pytest.mark.parametrize(("schema", "expected"), [
     ({"type": "integer", "format": "int32"}, "i32"),
     ({"type": "integer", "minimum": 0}, "u64"),

@@ -119,7 +119,9 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         method = f".request(reqwest::Method::{route.method.name}, {json.dumps(route.path)}, request)"
         suffix = ".await" if binary else ".await?"
         call = "transport" + method + suffix
-        if len(call) > 72:
+        # rustfmt keeps a chain on one line only while it is shorter than
+        # chain_width (72 at max_width 120): a 72-character call is split.
+        if len(call) >= 72:
             if len("        " + method) <= 100:
                 call = f"transport\n        {method}\n        {suffix}"
             else:
