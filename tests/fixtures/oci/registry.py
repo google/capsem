@@ -17,7 +17,7 @@ IMAGE = FIXTURES.parents[2] / "cache/target/tests/redis-image"
 
 
 @contextlib.contextmanager
-def registry(directory, *, image_config=None, image="redis"):
+def registry(directory, *, image_config=None, image="redis", artifacts=None):
     pin = native_pin(image=image)
     metadata = json.loads((IMAGE / f"{image}-image.json").read_text())
     assert all(metadata[key] == value for key, value in pin.items())
@@ -51,7 +51,7 @@ def registry(directory, *, image_config=None, image="redis"):
         },
         sort_keys=True,
     ).encode()
-    with serve(directory, image, manifest, media, blobs.get) as served:
+    with serve(directory, image, manifest, media, blobs.get, artifacts) as served:
         yield served
 
 
@@ -72,17 +72,63 @@ def layout_registry(directory, layout, image):
         yield served
 
 
+CATALOG_MEDIA = "application/vnd.capsem.catalog.v1+json"
+OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+OCI_EMPTY = "application/vnd.oci.empty.v1+json"
+
+
+def publish_catalog(artifacts, repository, tag, entries, channel="stable"):
+    """Publish an image catalog into a served registry's `artifacts` as
+    `repository:tag`, shaped as the image workflow pushes it: an OCI manifest
+    with an empty config and one layer of the catalog media type holding the
+    document. Returns the catalog version's manifest digest."""
+    document = json.dumps(
+        {"schema_version": 1, "channel": channel, "entries": entries}, sort_keys=True
+    ).encode()
+
+    def descriptor(data, kind):
+        return {
+            "mediaType": kind,
+            "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+            "size": len(data),
+        }
+
+    empty = b"{}"
+    manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": OCI_MANIFEST,
+            "artifactType": CATALOG_MEDIA,
+            "config": descriptor(empty, OCI_EMPTY),
+            "layers": [descriptor(document, CATALOG_MEDIA)],
+        },
+        sort_keys=True,
+    ).encode()
+    for data, kind in ((document, CATALOG_MEDIA), (empty, OCI_EMPTY)):
+        path = f"/v2/{repository}/blobs/{descriptor(data, kind)['digest']}"
+        artifacts[path] = (data, "application/octet-stream")
+    artifacts[f"/v2/{repository}/manifests/{tag}"] = (manifest, OCI_MANIFEST)
+    return "sha256:" + hashlib.sha256(manifest).hexdigest()
+
+
 @contextlib.contextmanager
-def serve(directory, image, manifest, media, fetch):
+def serve(directory, image, manifest, media, fetch, artifacts=None):
     """A TLS registry on localhost serving one manifest and the blobs `fetch`
-    finds; yields (pinned reference, CA certificate, requested paths)."""
+    finds; yields (pinned reference, CA certificate, requested paths).
+
+    `artifacts` maps further paths to (body, media type) and is read on every
+    request, so a test can publish into it once it knows the registry's
+    address (see `publish_catalog`)."""
+    artifacts = {} if artifacts is None else artifacts
     digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
     requests = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             requests.append(self.path)
-            if self.path == "/v2/":
+            if self.path in artifacts:
+                body, kind = artifacts[self.path]
+            elif self.path == "/v2/":
                 body, kind = b"{}", "application/json"
             elif self.path.startswith(f"/v2/library/{image}/manifests/"):
                 body, kind = manifest, media

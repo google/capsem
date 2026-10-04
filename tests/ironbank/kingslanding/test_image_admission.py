@@ -47,8 +47,10 @@ def test_an_ungranted_image_is_refused_before_its_registry_is_contacted(
     settings = service.home_dir / "settings.toml"
     before = settings.read_text() if settings.exists() else None
     try:
-        if settings.exists():
-            settings.write_text("")
+        # No grants, and no catalog: an ungranted source would otherwise send
+        # the service to ghcr.io for the official catalog, which this
+        # hermetic suite never contacts (test_image_catalog serves its own).
+        settings.write_text("[images]\ncatalog = false\n")
         with registry(tmp_path) as (reference, certificate, requests):
             result = run_image(service, reference, certificate)
             refused = result.stdout.decode(errors="replace") + result.stderr.decode(

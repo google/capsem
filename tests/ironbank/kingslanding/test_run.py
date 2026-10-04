@@ -69,7 +69,10 @@ def grant_image(service, reference):
     authority = reference.split("/", 1)[0]
     path = service.home_dir / "settings.toml"
     text = path.read_text() if path.exists() else ""
-    granted = set(re.findall(r'"([^"]+)"', text.split("[images]", 1)[1])) if "[images]" in text else set()
+    # Only what an earlier grant listed: `catalog` and `catalog_ca` are
+    # quoted too, and are not selectors.
+    sources = re.search(r"^sources = \[(.*)\]$", text.split("[images]", 1)[-1], re.M)
+    granted = set(re.findall(r'"([^"]+)"', sources.group(1))) if "[images]" in text and sources else set()
     granted.add(authority)
     listed = ", ".join(f'"{name}"' for name in sorted(granted))
     block = f"[images]\nsources = [{listed}]\nadmit = [{listed}]\n"
