@@ -188,9 +188,12 @@ pub(super) fn plugin_catalog() -> &'static BTreeMap<String, PluginCatalogEntry> 
     &PLUGIN_CATALOG
 }
 
-/// Each catalogued plugin's effective configuration, and whether settings or
-/// corp set it, from the current files.
-fn effective_plugin_policy() -> Result<(BTreeMap<String, SecurityPluginConfig>, BTreeSet<String>), AppError> {
+/// Each catalogued plugin's effective configuration, and the plugins settings
+/// or corp set.
+type EffectivePluginPolicy = (BTreeMap<String, SecurityPluginConfig>, BTreeSet<String>);
+
+/// The effective plugin policy from the current files.
+fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
     let (settings, corp) = capsem_core::net::policy_config::load_policy_files()
         .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
     let mut policy: BTreeMap<_, _> = plugin_catalog()
@@ -207,10 +210,21 @@ async fn plugin_info_for(
     plugin_id: &str,
     include_runtime: bool,
 ) -> Result<PluginInfo, AppError> {
+    let policy = state.off_worker(|_| effective_plugin_policy()).await??;
+    plugin_info_from(state, &policy, plugin_id, include_runtime).await
+}
+
+/// One plugin's info against a policy the caller already read, so a route
+/// answering for every plugin reads the policy files once.
+async fn plugin_info_from(
+    state: &Arc<ServiceState>,
+    (policy, overridden): &EffectivePluginPolicy,
+    plugin_id: &str,
+    include_runtime: bool,
+) -> Result<PluginInfo, AppError> {
     let Some(catalog_entry) = plugin_catalog().get(plugin_id).copied() else {
         return Err(AppError(StatusCode::NOT_FOUND, format!("unknown plugin: {plugin_id}")));
     };
-    let (policy, overridden) = state.off_worker(|_| effective_plugin_policy()).await??;
     let config = policy.get(plugin_id).copied().unwrap_or(catalog_entry.default_config);
     let runtime = if include_runtime {
         plugin_runtime_status(state, plugin_id, config).await
@@ -414,9 +428,10 @@ fn hydrate_credential_broker_runtime(
 pub(super) async fn handle_plugins(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<PluginListResponse>, AppError> {
+    let policy = state.off_worker(|_| effective_plugin_policy()).await??;
     let mut plugins = Vec::new();
     for plugin_id in plugin_catalog().keys() {
-        plugins.push(plugin_info_for(&state, plugin_id, false).await?);
+        plugins.push(plugin_info_from(&state, &policy, plugin_id, false).await?);
     }
     Ok(Json(PluginListResponse { plugins }))
 }

@@ -324,6 +324,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The plugin and MCP-permission routes the UI, TUI and tray poll answer in
+  well under a millisecond again (#289). `/plugins/list` took about 15 ms and
+  `/plugins/credential_broker/credentials/info` and `/mcp/default/info` about
+  4 ms each, because every read re-parsed and re-validated the built-in rule
+  defaults compiled into the binary -- once per plugin on the list. The
+  built-ins are now parsed once per process, and the plugin list reads the
+  settings and corp files once per request instead of once per plugin.
 - Users can again set their git identity, repository providers and the
   search-engine and package-registry toggles in `settings.toml`, and through
   `/settings/edit` (#289). When VM profiles went away those settings became

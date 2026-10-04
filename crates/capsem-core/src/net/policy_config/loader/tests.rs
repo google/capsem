@@ -408,6 +408,32 @@ local__echo = "block"
     }
 }
 
+/// The document is parsed once, so retired `ai.*` ids are found on the typed
+/// map: still refused, and always the first by name, whether or not the rest
+/// of the file parses.
+#[test]
+fn load_settings_file_rejects_retired_ai_setting_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    let retired = r#"
+[settings."ai.openai.allow"]
+value = true
+modified = "2026-01-01T00:00:00Z"
+
+[settings."ai.anthropic.allow"]
+value = true
+modified = "2026-01-01T00:00:00Z"
+"#;
+    for content in [retired.to_string(), format!("{retired}\nunknown_section = 1\n")] {
+        std::fs::write(&path, content).unwrap();
+        let error = load_settings_file(&path).unwrap_err();
+        assert!(
+            error.contains("retired AI setting id ai.anthropic.allow"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
 #[test]
 fn validate_setting_value_allows_non_file_values() {
     assert!(validate_setting_value("any.id", &SettingValue::Bool(true)).is_ok());
