@@ -128,7 +128,9 @@ pub(super) fn require_installed_runtime(installed_assets: &Path, manifest_bytes:
         .chain(have.keys())
         .find(|name| wanted.get(*name) != have.get(*name))
     {
-        anyhow::bail!("candidate changes the installed {name} image without a new runtime revision");
+        anyhow::bail!(
+            "{name} digest mismatch: the candidate changes the installed image without a new runtime revision"
+        );
     }
     Ok(())
 }

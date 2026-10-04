@@ -682,7 +682,11 @@ fn a_candidate_that_downloads_nothing_must_describe_the_installed_runtime() {
     tampered["runtime"]["architectures"][0]["images"][2]["digest"]["sha256"] = "5".repeat(64).into();
     let error = require_installed_runtime(installed.path(), &serde_json::to_vec(&tampered).unwrap())
         .expect_err("a rewritten digest is not metadata");
-    assert!(format!("{error:#}").contains("rootfs.erofs"), "{error:#}");
+    // The release proof reads the cause: a rewritten digest is a mismatch.
+    assert!(
+        format!("{error:#}").contains("rootfs.erofs digest mismatch"),
+        "{error:#}"
+    );
 
     let empty = tempfile::tempdir().unwrap();
     require_installed_runtime(empty.path(), &metadata_only).expect_err("nothing installed to vouch for it");
