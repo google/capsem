@@ -21,10 +21,8 @@ from helpers.body_archive import (
 )
 from helpers.constants import (
     ASSETS_DIR,
-    DEFAULT_CPUS,
-    DEFAULT_RAM_MB,
-    EXEC_READY_TIMEOUT,
 )
+from helpers.debug_session import debug_session
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
@@ -32,17 +30,77 @@ from helpers.service import (
     exec_output_text,
     vm_name,
     vm_session_db_path,
-    wait_exec_ready,
 )
 from helpers.session_ledger import ledger_totals, open_session_ledger
 from ironbank.model_client_config import (
     HERMETIC_ANTHROPIC_MODEL,
     HERMETIC_OPENAI_COMPAT_MODEL,
+    WORKLOAD_OLLAMA_HOST,
+    WORKLOAD_OLLAMA_PORT,
+    WORKLOAD_OLLAMA_URL,
 )
 
 pytestmark = pytest.mark.integration
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+#: The SDK clients run in a capsem-debug workload, which has its own loopback.
+#: The mock upstream is reached through two fixture names the mock DNS answers
+#: routably: the local model endpoint, and a second name the broker replay is
+#: bound to (it was `localhost`, beside the model's `127.0.0.1`).
+WORKLOAD_REPLAY_HOST = "model.capsem.test"
+#: The OAuth half of the broker replay runs as VM root (see
+#: `_broker_oauth_replay_script`), where the mock is the host loopback port.
+VM_LOOPBACK_MOCK_URL = "http://127.0.0.1:3713"
+#: The built-in rules that judge the mock on the VM's loopback: a workload's
+#: requests to fixture hosts must match neither.
+LOOPBACK_RULES = {
+    "profiles.rules.default_000_capsem_mock_server",
+    "profiles.rules.default_000_local_network",
+}
+#: The image's user (uid 1000) as the VM's audit ledger sees it.
+WORKLOAD_UID = 101000
+
+
+#: Every host the hermetic run may reach: the workload's fixture names, and
+#: the host-loopback mock the VM-root OAuth half dials.
+HERMETIC_HOSTS = (WORKLOAD_OLLAMA_HOST, WORKLOAD_REPLAY_HOST, "127.0.0.1")
+
+
+def _public_traffic(conn: sqlite3.Connection, session_id: str) -> tuple[list[dict], list[dict]]:
+    """Requests and lookups for anything but the hermetic hosts, Capsem's own
+    `.capsem.internal` names (the workload's MCP endpoint) and the session's
+    own name: none may leave a hermetic run."""
+    marks = ",".join("?" for _ in HERMETIC_HOSTS)
+    requests = conn.execute(
+        f"""
+        SELECT id, event_id, domain, port, method, path, status_code
+        FROM net_events
+        WHERE domain IS NOT NULL AND domain NOT IN ({marks})
+        ORDER BY id
+        """,
+        HERMETIC_HOSTS,
+    ).fetchall()
+    lookups = conn.execute(
+        f"""
+        SELECT id, event_id, qname, qtype, qclass, rcode, answer_ip, decision
+        FROM dns_events
+        WHERE qname NOT LIKE ? AND qname NOT LIKE '%.capsem.internal'
+          AND rtrim(qname, '.') NOT IN ({marks})
+        ORDER BY id
+        """,
+        (f"{session_id}%", *HERMETIC_HOSTS),
+    ).fetchall()
+    return [dict(row) for row in requests], [dict(row) for row in lookups]
+
+
+def _mock_routes(ready: dict) -> str:
+    """corp.toml routes from the workload's fixture names to the mock upstream."""
+    return "".join(
+        f'[network.upstream_overrides."{host}:{WORKLOAD_OLLAMA_PORT}"]\n'
+        f"dial = {json.dumps(ready['http_addr'])}\n"
+        'protocol = "http"\n\n'
+        for host in (WORKLOAD_OLLAMA_HOST, WORKLOAD_REPLAY_HOST)
+    )
 
 RAW_SDK_SECRET = "capsem_test_sdk_api_key_repeat_0123456789abcdef"
 RAW_CODEX_SECRET = "capsem_test_codex_cli_key_0123456789abcdef"
@@ -157,7 +215,7 @@ def _sdk_probe_script(base_url: str) -> str:
         "base_url": f"{base_url.rstrip('/')}/v1",
         "api_key_parts": ["capsem_test_sdk_api_key_", "repeat_0123456789abcdef"],
         "model": "gemma4:latest",
-        "poem_path": "/root/poem.md",
+        "poem_path": "/workspace/poem.md",
     }
     return textwrap.dedent(
         f"""
@@ -222,8 +280,6 @@ def _broker_replay_script(base_url: str, credential_ref: str) -> str:
     payload = {
         "base_url": f"{base_url.rstrip('/')}/v1",
         "echo_url": f"{base_url.rstrip('/')}/echo",
-        "token_url": f"{base_url.rstrip('/')}/oauth/token",
-        "credential_response_url": f"{base_url.rstrip('/')}/credential/response",
         "credential_ref": credential_ref,
         "model": "gemma4:latest",
     }
@@ -258,6 +314,48 @@ def _broker_replay_script(base_url: str, credential_ref: str) -> str:
         with urllib.request.urlopen(query_echo_req, timeout=30) as response:
             query_echo = json.loads(response.read().decode("utf-8"))
 
+        client = OpenAI(base_url=cfg["base_url"], api_key=cfg["credential_ref"])
+        completion = client.chat.completions.create(
+            model=cfg["model"],
+            messages=[{{"role": "user", "content": "Replay the Capsem ironbank poem."}}],
+        )
+        message = completion.choices[0].message
+        result = {{
+            "echo_has_authorization": echo["has_authorization"],
+            "echo_authorization_is_broker_ref": echo["authorization_is_broker_ref"],
+            "query_echo_has_access_token": query_echo["query_has_access_token"],
+            "query_echo_has_broker_ref": query_echo["query_has_broker_ref"],
+            "model": completion.model,
+            "content": message.content,
+            "usage_total": completion.usage.total_tokens if completion.usage else 0,
+        }}
+        print("IRONBANK_BROKER_REPLAY_RESULT=" + json.dumps(result, sort_keys=True))
+        """
+    ).strip()
+
+
+def _broker_oauth_replay_script(base_url: str) -> str:
+    """The OAuth token exchange and credential response, from VM root to the
+    host-loopback mock.
+
+    The broker treats a hermetic OAuth endpoint as one only on a loopback name
+    (127.0.0.1, localhost): it captures the token bodies and redacts the
+    response there. A container workload cannot reach that loopback, its own
+    is its own, so this half of the replay stays a VM-target exec; it needs
+    only the runtime's python3.
+    """
+    payload = {
+        "token_url": f"{base_url.rstrip('/')}/oauth/token",
+        "credential_response_url": f"{base_url.rstrip('/')}/credential/response",
+    }
+    return textwrap.dedent(
+        f"""
+        import json
+        import urllib.parse
+        import urllib.request
+
+        cfg = json.loads({json.dumps(json.dumps(payload))})
+
         json_token_req = urllib.request.Request(
             cfg["token_url"],
             data=json.dumps({{"access_token": "capsem_test_oauth_access_json_0123456789abcdef"}}).encode("utf-8"),
@@ -279,25 +377,12 @@ def _broker_replay_script(base_url: str, credential_ref: str) -> str:
         with urllib.request.urlopen(cfg["credential_response_url"], timeout=30) as response:
             credential_response = json.loads(response.read().decode("utf-8"))
 
-        client = OpenAI(base_url=cfg["base_url"], api_key=cfg["credential_ref"])
-        completion = client.chat.completions.create(
-            model=cfg["model"],
-            messages=[{{"role": "user", "content": "Replay the Capsem ironbank poem."}}],
-        )
-        message = completion.choices[0].message
         result = {{
-            "echo_has_authorization": echo["has_authorization"],
-            "echo_authorization_is_broker_ref": echo["authorization_is_broker_ref"],
-            "query_echo_has_access_token": query_echo["query_has_access_token"],
-            "query_echo_has_broker_ref": query_echo["query_has_broker_ref"],
             "json_token_kind": json_token["kind"],
             "form_token_kind": form_token["kind"],
             "credential_response_kind": credential_response["kind"],
-            "model": completion.model,
-            "content": message.content,
-            "usage_total": completion.usage.total_tokens if completion.usage else 0,
         }}
-        print("IRONBANK_BROKER_REPLAY_RESULT=" + json.dumps(result, sort_keys=True))
+        print("IRONBANK_BROKER_OAUTH_RESULT=" + json.dumps(result, sort_keys=True))
         """
     ).strip()
 
@@ -503,9 +588,9 @@ def _real_client_diversity_probe_script(base_url: str) -> str:
         "base_url": base_url.rstrip("/"),
         "openai_base_url": f"{base_url.rstrip('/')}/v1",
         "poem_paths": {
-            "anthropic": "/root/anthropic-sdk-poem.md",
-            "litellm": "/root/litellm-poem.md",
-            "ollama": "/root/ollama-sdk-poem.md",
+            "anthropic": "/workspace/anthropic-sdk-poem.md",
+            "litellm": "/workspace/litellm-poem.md",
+            "ollama": "/workspace/ollama-sdk-poem.md",
         },
         "secrets": {
             "anthropic": ["capsem_test_anthropic_sdk_", "key_0123456789abcdef"],
@@ -602,7 +687,7 @@ def _codex_cli_probe_script(base_url: str) -> str:
     payload = {
         "openai_base_url": f"{base_url.rstrip('/')}/v1",
         "echo_url": f"{base_url.rstrip('/')}/echo",
-        "codex_config": "/root/.codex/config.toml",
+        "codex_config": "/home/capsem/.codex/config.toml",
         "api_key_parts": ["capsem_test_codex_cli_", "key_0123456789abcdef"],
         "broker_key_parts": ["sk-capsem-test-codex-cli-", "key-0123456789abcdef"],
     }
@@ -636,7 +721,9 @@ def _codex_cli_probe_script(base_url: str) -> str:
                 'plugin_sharing = false',
                 '',
                 '[mcp_servers.capsem]',
-                'command = "/run/capsem-mcp-server"',
+                # The workload reaches Capsem's MCP over HTTP at the name the
+                # session proxy answers; the in-VM stdio relay is not in it.
+                'url = "http://mcp.capsem.internal/mcp"',
                 '',
                 '[model_providers.capsem-ironbank]',
                 'name = "Ironbank OpenAI-compatible fixture"',
@@ -650,7 +737,7 @@ def _codex_cli_probe_script(base_url: str) -> str:
         )
 
         env = os.environ.copy()
-        env["HOME"] = "/root"
+        env["HOME"] = "/home/capsem"
         env["NO_COLOR"] = "1"
         env["TERM"] = "xterm-256color"
         env["OPENAI_API_KEY"] = "".join(cfg["api_key_parts"])
@@ -670,7 +757,7 @@ def _codex_cli_probe_script(base_url: str) -> str:
 
         nonce = uuid.uuid4().hex
         filename = "codex-cli-" + uuid.uuid4().hex + ".txt"
-        target_path = "/root/" + filename
+        target_path = "/workspace/" + filename
         prompt = (
             "Write uuid4 hex value " + nonce + " to " + target_path + "."
         )
@@ -681,10 +768,10 @@ def _codex_cli_probe_script(base_url: str) -> str:
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--skip-git-repo-check",
                 "--cd",
-                "/root",
+                "/workspace",
                 prompt,
             ],
-            cwd="/root",
+            cwd="/workspace",
             env=env,
             text=True,
             capture_output=True,
@@ -722,12 +809,13 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     gateway: GatewayInstance | None = None
     gateway_client: TcpHttpClient | None = None
     session_id = vm_name("ironbank-sdk")
-    vm_id: str | None = None
+    sessions = contextlib.ExitStack()
     script_name = f"ironbank-model-sdk-{uuid.uuid4().hex[:8]}.py"
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
         mock_proc, ready = start_mock_server(
-            request_log=service.tmp_dir / "mock-server-requests.jsonl"
+            request_log=service.tmp_dir / "mock-server-requests.jsonl",
+            dns_answers="routable",
         )
         corp_path = service.tmp_dir / "corp.toml"
         corp_path.write_text(
@@ -738,18 +826,19 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 [network.dns]
                 upstreams = [{json.dumps(ready["dns_udp_addr"])}]
 
+{_mock_routes(ready)}
                 [settings."security.web.http_upstream_ports"]
                 value = [80, 3713, 8080, 11434]
                 modified = "2026-06-14T00:00:00Z"
 
                 [ai.openai]
-                allowed_remote_targets = ["api.openai.com:443", "localhost:3713"]
+                allowed_remote_targets = ["api.openai.com:443", "model.capsem.test:3713"]
 
                 [ai.openai.rules.ironbank_broker_replay_binding]
                 name = "ironbank_broker_replay_binding"
                 action = "allow"
                 detection_level = "informational"
-                match = 'http.host == "localhost" && tcp.port == "3713"'
+                match = 'http.host == "model.capsem.test" && tcp.port == "3713"'
 
                 [corp.rules.allow_ironbank_mock_model_server]
                 name = "allow_ironbank_mock_model_server"
@@ -757,7 +846,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 priority = -100
                 detection_level = "informational"
                 reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
-                match = '(http.host == "127.0.0.1" || http.host == "localhost") && tcp.port == "3713"'
+                match = '(http.host == "ollama.capsem.test" || http.host == "model.capsem.test") && tcp.port == "3713"'
 
                 [corp.rules.allow_ironbank_mock_mcp_server]
                 name = "allow_ironbank_mock_mcp_server"
@@ -765,7 +854,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 priority = -100
                 detection_level = "informational"
                 reason = "Allow the hermetic Ironbank observed MCP fixture while preserving local-network ask defaults."
-                match = 'mcp.server.name == "observed:127.0.0.1:3713/mcp" || (ip.value == "127.0.0.1" && tcp.port == "3713")'
+                match = 'mcp.server.name == "observed:ollama.capsem.test:3713/mcp" || (http.host == "ollama.capsem.test" && tcp.port == "3713")'
                 """
             ).strip()
             + "\n",
@@ -777,23 +866,17 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         gateway = GatewayInstance(uds_path=service.uds_path)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
-        mock_base_url = ready["base_url"]
+        mock_base_url = WORKLOAD_OLLAMA_URL
 
-        create = client.post(
-            "/vms/create",
-            {
-                "name": session_id,
-                "ram_mb": DEFAULT_RAM_MB,
-                "cpus": DEFAULT_CPUS,
-                "env": {"CAPSEM_MOCK_SERVER_BASE_URL": mock_base_url},
-            },
-            timeout=90,
+        # The SDKs are capsem-debug's: they run in its workload.
+        vm_id = sessions.enter_context(
+            debug_session(
+                service,
+                service.tmp_dir / "registry",
+                session_id,
+                env={"CAPSEM_MOCK_SERVER_BASE_URL": mock_base_url},
+            )
         )
-        assert create is not None, "session creation returned no body"
-        vm_id = create["id"]
-        assert isinstance(vm_id, str)
-        assert create.get("name") == session_id
-        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
         script = _sdk_probe_script(mock_base_url).encode()
         upload = client.post_bytes(
@@ -807,7 +890,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
 
         exec_resp = client.post(
             f"/vms/{vm_id}/exec",
-            {"command": f"python3 /root/{script_name}", "timeout_secs": 220},
+            {"command": f"python3 /workspace/{script_name}", "timeout_secs": 220},
             timeout=240,
         )
         assert exec_resp is not None, "SDK exec returned no body"
@@ -827,7 +910,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             "first_tool_arguments": '{"query":"Capsem ironbank poem"}',
             "first_tool_count": 1,
             "first_tool_name": "fixture_lookup",
-            "poem_path": "/root/poem.md",
+            "poem_path": "/workspace/poem.md",
             "second_content": EXPECTED_POEM,
             "second_model": "gemma4:latest",
             "usage_total": 534,
@@ -852,7 +935,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert shape_upload["size"] == len(shape_script)
         shape_exec = client.post(
             f"/vms/{vm_id}/exec",
-            {"command": f"python3 /root/{shape_script_name}", "timeout_secs": 120},
+            {"command": f"python3 /workspace/{shape_script_name}", "timeout_secs": 120},
             timeout=150,
         )
         assert shape_exec is not None, "unknown-shape exec returned no body"
@@ -888,7 +971,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert declared_tool_upload["size"] == len(declared_tool_script)
         declared_tool_exec = client.post(
             f"/vms/{vm_id}/exec",
-            {"command": f"python3 /root/{declared_tool_script_name}", "timeout_secs": 120},
+            {"command": f"python3 /workspace/{declared_tool_script_name}", "timeout_secs": 120},
             timeout=150,
         )
         assert declared_tool_exec is not None, "declared-tool exec returned no body"
@@ -927,7 +1010,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert mcp_upload["size"] == len(mcp_script)
         mcp_exec = client.post(
             f"/vms/{vm_id}/exec",
-            {"command": f"python3 /root/{mcp_script_name}", "timeout_secs": 120},
+            {"command": f"python3 /workspace/{mcp_script_name}", "timeout_secs": 120},
             timeout=150,
         )
         assert mcp_exec is not None, "unknown-MCP exec returned no body"
@@ -960,7 +1043,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         assert streaming_upload["size"] == len(streaming_script)
         streaming_exec = client.post(
             f"/vms/{vm_id}/exec",
-            {"command": f"python3 /root/{streaming_script_name}", "timeout_secs": 120},
+            {"command": f"python3 /workspace/{streaming_script_name}", "timeout_secs": 120},
             timeout=150,
         )
         assert streaming_exec is not None, "streaming provider exec returned no body"
@@ -1041,7 +1124,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             _assert_credential_ref(credential_ref)
 
             replay_script_name = f"ironbank-broker-replay-{uuid.uuid4().hex[:8]}.py"
-            replay_base_url = mock_base_url.replace("127.0.0.1", "localhost")
+            replay_base_url = mock_base_url.replace(WORKLOAD_OLLAMA_HOST, WORKLOAD_REPLAY_HOST)
             replay_script = _broker_replay_script(replay_base_url, credential_ref).encode()
             replay_upload = client.post_bytes(
                 f"/vms/{vm_id}/files/content?path={replay_script_name}",
@@ -1054,7 +1137,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
 
             replay_exec = client.post(
                 f"/vms/{vm_id}/exec",
-                {"command": f"python3 /root/{replay_script_name}", "timeout_secs": 220},
+                {"command": f"python3 /workspace/{replay_script_name}", "timeout_secs": 220},
                 timeout=240,
             )
             assert replay_exec is not None
@@ -1073,15 +1156,47 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             replay_result = json.loads(replay_line.split("=", 1)[1])
             assert replay_result == {
                 "content": EXPECTED_POEM,
-                "credential_response_kind": "synthetic_credential_fixture",
                 "echo_authorization_is_broker_ref": False,
                 "echo_has_authorization": True,
-                "form_token_kind": "synthetic_oauth_token_fixture",
-                "json_token_kind": "synthetic_oauth_token_fixture",
                 "model": "gemma4:latest",
                 "query_echo_has_access_token": True,
                 "query_echo_has_broker_ref": False,
                 "usage_total": 78,
+            }
+
+            oauth_script_name = f"ironbank-broker-oauth-{uuid.uuid4().hex[:8]}.py"
+            oauth_script = _broker_oauth_replay_script(VM_LOOPBACK_MOCK_URL).encode()
+            oauth_upload = client.post_bytes(
+                f"/vms/{vm_id}/files/content?path={oauth_script_name}",
+                oauth_script,
+                timeout=30,
+            )
+            assert oauth_upload is not None and oauth_upload["success"] is True, oauth_upload
+            oauth_exec = client.post(
+                f"/vms/{vm_id}/exec",
+                {
+                    "command": f"python3 /root/{oauth_script_name}",
+                    "timeout_secs": 120,
+                    "target": "vm",
+                },
+                timeout=150,
+            )
+            assert oauth_exec is not None
+            assert oauth_exec["exit_code"] == 0, oauth_exec
+            oauth_output = exec_output_text(oauth_exec) + exec_output_text(oauth_exec, "stderr")
+            oauth_line = next(
+                (
+                    line
+                    for line in oauth_output.splitlines()
+                    if line.startswith("IRONBANK_BROKER_OAUTH_RESULT=")
+                ),
+                None,
+            )
+            assert oauth_line is not None, oauth_output
+            assert json.loads(oauth_line.split("=", 1)[1]) == {
+                "credential_response_kind": "synthetic_credential_fixture",
+                "form_token_kind": "synthetic_oauth_token_fixture",
+                "json_token_kind": "synthetic_oauth_token_fixture",
             }
 
             net_rows = _eventually(
@@ -1096,9 +1211,9 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 lambda rows: len(rows) >= 3,
             )
             assert [row["domain"] for row in net_rows] == [
-                "127.0.0.1",
-                "127.0.0.1",
-                "localhost",
+                "ollama.capsem.test",
+                "ollama.capsem.test",
+                "model.capsem.test",
             ]
             for row in net_rows:
                 _assert_event_id(row["event_id"])
@@ -1398,7 +1513,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 _assert_credential_ref(row["credential_ref"])
                 assert row["credential_ref"] in valid_tool_credential_refs
 
-            observed_mcp_server = "observed:127.0.0.1:3713/mcp"
+            observed_mcp_server = "observed:ollama.capsem.test:3713/mcp"
             assert "mcp_calls" not in {
                 row["name"]
                 for row in conn.execute(
@@ -1522,7 +1637,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                     UNION
                     SELECT event_id FROM model_calls WHERE path = '/v1/messages'
                     UNION
-                    SELECT event_id FROM tool_calls WHERE origin = 'mcp' AND server_name = 'observed:127.0.0.1:3713/mcp'
+                    SELECT event_id FROM tool_calls WHERE origin = 'mcp' AND server_name = 'observed:ollama.capsem.test:3713/mcp'
                     UNION
                     SELECT event_id FROM net_events WHERE path = '/v1/chat/completions'
                     UNION
@@ -1549,12 +1664,10 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert "allow" in actions
                 assert "corp.rules.allow_ironbank_mock_model_server" in rule_ids
                 assert "profiles.rules.default_http" in rule_ids
-                assert "profiles.rules.default_000_local_network" in rule_ids
-                assert any(
-                    item["rule_id"] == "profiles.rules.default_000_local_network"
-                    and item["rule_action"] == "ask"
-                    for item in rows
-                )
+                # A workload names the mock by a fixture host an override
+                # routes, not a loopback address: the local-network ask and
+                # the loopback mock allow have nothing to match.
+                assert not rule_ids & LOOPBACK_RULES, rule_ids
             for row in model_rows:
                 rows = security_by_event[row["event_id"]]
                 assert {item["rule_action"] for item in rows} == {"allow"}
@@ -1743,7 +1856,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
 
             exec_row = conn.execute(
                 "SELECT * FROM exec_events WHERE command = ? ORDER BY id DESC LIMIT 1",
-                (f"python3 /root/{script_name}",),
+                (f"python3 /workspace/{script_name}",),
             ).fetchone()
             assert exec_row is not None
             _assert_event_id(exec_row["event_id"])
@@ -1774,7 +1887,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert real_client_upload["size"] == len(real_client_script)
             real_client_exec = client.post(
                 f"/vms/{vm_id}/exec",
-                {"command": f"python3 /root/{real_client_script_name}", "timeout_secs": 180},
+                {"command": f"python3 /workspace/{real_client_script_name}", "timeout_secs": 180},
                 timeout=210,
             )
             assert real_client_exec is not None, "real-client exec returned no body"
@@ -1807,9 +1920,9 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 "ollama_prompt_eval_count": 32,
                 "ollama_text": EXPECTED_POEM,
                 "poem_paths": {
-                    "anthropic": "/root/anthropic-sdk-poem.md",
-                    "litellm": "/root/litellm-poem.md",
-                    "ollama": "/root/ollama-sdk-poem.md",
+                    "anthropic": "/workspace/anthropic-sdk-poem.md",
+                    "litellm": "/workspace/litellm-poem.md",
+                    "ollama": "/workspace/ollama-sdk-poem.md",
                 },
             }
             for poem_path in real_client_result["poem_paths"].values():
@@ -1922,35 +2035,14 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 assert "allow" in {item["rule_action"] for item in rows}
                 assert "profiles.rules.default_model" in {item["rule_id"] for item in rows}
 
-            public_net_rows = conn.execute(
-                """
-                SELECT id, event_id, domain, port, method, path, status_code
-                FROM net_events
-                WHERE domain IS NOT NULL
-                  AND domain NOT IN ('127.0.0.1', 'localhost')
-                ORDER BY id
-                """
-            ).fetchall()
-            assert public_net_rows == []
-            public_dns_rows = conn.execute(
-                """
-                SELECT id, event_id, qname, qtype, qclass, rcode, decision
-                FROM dns_events
-                WHERE qname NOT LIKE ?
-                ORDER BY id
-                """,
-                (f"{session_id}%",),
-            ).fetchall()
-            assert public_dns_rows == []
+            assert _public_traffic(conn, session_id) == ([], [])
 
             _assert_raw_secret_not_in_db(conn)
         finally:
             conn.close()
     finally:
         stop_process(mock_proc)
-        if client is not None and vm_id is not None:
-            with contextlib.suppress(Exception):
-                client.delete(f"/vms/{vm_id}/delete", timeout=60)
+        sessions.close()
         if gateway is not None:
             gateway.stop()
         service.stop()
@@ -1968,31 +2060,34 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
     client = None
     mock_proc = None
     session_id = vm_name("ironbank-codex")
-    vm_id: str | None = None
+    sessions = contextlib.ExitStack()
     script_name = f"ironbank-codex-cli-{uuid.uuid4().hex[:8]}.py"
+    old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
+        mock_proc, ready = start_mock_server(
+            request_log=service.tmp_dir / "mock-server-requests.jsonl",
+            dns_answers="routable",
+        )
+        corp_path = service.tmp_dir / "corp.toml"
+        corp_path.write_text(
+            'refresh_policy = "24h"\n\n[network.dns]\n'
+            f'upstreams = [{json.dumps(ready["dns_udp_addr"])}]\n\n{_mock_routes(ready)}',
+            encoding="utf-8",
+        )
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        mock_proc, ready = start_mock_server(
-            request_log=service.tmp_dir / "mock-server-requests.jsonl"
-        )
-        mock_base_url = ready["base_url"]
+        mock_base_url = WORKLOAD_OLLAMA_URL
         mock_request_log = Path(ready["request_log"])
-        create = client.post(
-            "/vms/create",
-            {
-                "name": session_id,
-                "ram_mb": DEFAULT_RAM_MB,
-                "cpus": DEFAULT_CPUS,
-                "env": {"CAPSEM_MOCK_SERVER_BASE_URL": mock_base_url},
-            },
-            timeout=90,
+        # Codex is capsem-debug's: it runs in its workload.
+        vm_id = sessions.enter_context(
+            debug_session(
+                service,
+                service.tmp_dir / "registry",
+                session_id,
+                env={"CAPSEM_MOCK_SERVER_BASE_URL": mock_base_url},
+            )
         )
-        assert create is not None
-        vm_id = create["id"]
-        assert isinstance(vm_id, str)
-        assert create.get("name") == session_id
-        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
 
         script = _codex_cli_probe_script(mock_base_url).encode()
         upload = client.post_bytes(
@@ -2006,7 +2101,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
 
         exec_resp = client.post(
             f"/vms/{vm_id}/exec",
-            {"command": f"python3 /root/{script_name}", "timeout_secs": 240},
+            {"command": f"python3 /workspace/{script_name}", "timeout_secs": 240},
             timeout=270,
         )
         assert exec_resp is not None
@@ -2032,7 +2127,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert result["file_contains_nonce"] is True
         assert result["output_bytes"] > len(nonce)
         assert result["poem_bytes"] == len((nonce + "\n").encode())
-        assert result["poem_path"] == f"/root/{filename}"
+        assert result["poem_path"] == f"/workspace/{filename}"
         assert result["broker_echo"]["has_authorization"] is True
         assert result["broker_echo"]["authorization_is_broker_ref"] is False
 
@@ -2043,7 +2138,12 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert poem_status == 200
         assert poem_bytes.decode() == nonce + "\n"
 
-        mock_records = [json.loads(line) for line in mock_request_log.read_text().splitlines()]
+        # The HTTP exchanges; the workload's DNS queries reach the mock too now.
+        mock_records = [
+            row
+            for row in map(json.loads, mock_request_log.read_text().splitlines())
+            if "path" in row
+        ]
         echo_records = [row for row in mock_records if row["path"] == "/echo"]
         assert len(echo_records) >= 1
         broker_echo_record = echo_records[0]
@@ -2069,11 +2169,11 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert len(tool_http_request["tools"]) == 14
         assert any(tool["name"] == "exec_command" for tool in tool_http_request["tools"])
         assert nonce in tool_http_record["request_body"]
-        assert f"/root/{filename}" in tool_http_record["request_body"]
+        assert f"/workspace/{filename}" in tool_http_record["request_body"]
         assert expected_call_id in tool_http_record["response_body"]
         assert "response.function_call_arguments.delta" in tool_http_record["response_body"]
         assert nonce in tool_http_record["response_body"]
-        assert f"/root/{filename}" in tool_http_record["response_body"]
+        assert f"/workspace/{filename}" in tool_http_record["response_body"]
         assert "capsem_test_codex_cli_key" not in tool_http_record["request_body"]
         assert RAW_CODEX_BROKER_SECRET not in tool_http_record["request_body"]
 
@@ -2095,7 +2195,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert final_inputs[-2]["name"] == "exec_command"
         assert final_inputs[-2]["call_id"] == expected_call_id
         assert nonce in final_inputs[-2]["arguments"]
-        assert f"/root/{filename}" in final_inputs[-2]["arguments"]
+        assert f"/workspace/{filename}" in final_inputs[-2]["arguments"]
         assert final_inputs[-1]["type"] == "function_call_output"
         assert final_inputs[-1]["call_id"] == expected_call_id
         assert "Process exited with code 0" in final_inputs[-1]["output"]
@@ -2132,12 +2232,12 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             broker_echo_net = echo_rows[-1]
             _assert_event_id(broker_echo_net["event_id"])
             assert broker_echo_net["method"] == "POST"
-            assert broker_echo_net["domain"] == "127.0.0.1"
+            assert broker_echo_net["domain"] == "ollama.capsem.test"
             assert broker_echo_net["port"] == 3713
             assert broker_echo_net["status_code"] == 200
             assert broker_echo_net["decision"] == "allowed"
             _assert_credential_ref(broker_echo_net["credential_ref"])
-            assert "host: 127.0.0.1:3713" in (broker_echo_net["request_headers"] or "")
+            assert "host: ollama.capsem.test:3713" in (broker_echo_net["request_headers"] or "")
             assert "authorization: hash:" in (broker_echo_net["request_headers"] or "")
             assert "content-type: text/plain" in (broker_echo_net["request_headers"] or "")
             assert broker_echo_net["request_body_preview"] is None
@@ -2226,9 +2326,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_row["tool_name"] == "exec_command"
             tool_args = json.loads(tool_row["arguments"])
             assert tool_args["cmd"] == (
-                f"printf '%s\\n' {nonce} > /root/{filename}"
+                f"printf '%s\\n' {nonce} > /workspace/{filename}"
             )
-            assert f"/root/{filename}" in tool_args["cmd"]
+            assert f"/workspace/{filename}" in tool_args["cmd"]
             assert tool_args["yield_time_ms"] == 1000
             assert tool_args["max_output_tokens"] == 2000
             assert tool_row["origin"] == "native"
@@ -2273,12 +2373,12 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             codex_net = net_rows[-1]
             _assert_event_id(tool_net["event_id"])
             assert tool_net["method"] == "POST"
-            assert tool_net["domain"] == "127.0.0.1"
+            assert tool_net["domain"] == "ollama.capsem.test"
             assert tool_net["port"] == 3713
             assert tool_net["status_code"] == 200
             assert tool_net["decision"] == "allowed"
             assert tool_net["credential_ref"] == codex_credential_ref
-            assert "host: 127.0.0.1:3713" in (tool_net["request_headers"] or "")
+            assert "host: ollama.capsem.test:3713" in (tool_net["request_headers"] or "")
             assert "authorization: hash:" in (tool_net["request_headers"] or "").lower()
             assert "content-type: application/json" in (tool_net["request_headers"] or "")
             assert "user-agent:" in (tool_net["request_headers"] or "")
@@ -2293,14 +2393,14 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             )
             _assert_event_id(codex_net["event_id"])
             assert codex_net["method"] == "POST"
-            assert codex_net["domain"] == "127.0.0.1"
+            assert codex_net["domain"] == "ollama.capsem.test"
             assert codex_net["port"] == 3713
             assert codex_net["status_code"] == 200
             assert codex_net["decision"] == "allowed"
             assert codex_net["credential_ref"] == codex_credential_ref
             assert codex_net["bytes_sent"] > 0
             assert codex_net["bytes_received"] > 0
-            assert "host: 127.0.0.1:3713" in (codex_net["request_headers"] or "")
+            assert "host: ollama.capsem.test:3713" in (codex_net["request_headers"] or "")
             assert "authorization: hash:" in (codex_net["request_headers"] or "").lower()
             assert "content-type: application/json" in (codex_net["request_headers"] or "")
             assert "user-agent:" in (codex_net["request_headers"] or "")
@@ -2329,8 +2429,12 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                         codex_model["event_id"],
                     ),
                 ).fetchall(),
-                lambda rows: len(rows) >= 8,
+                # Each request matches only the default HTTP allow (see
+                # LOOPBACK_RULES); each model call at least default_model and
+                # the unknown-provider rule.
+                lambda rows: len(rows) >= 6,
             )
+            assert not {row["rule_id"] for row in security_rows} & LOOPBACK_RULES
             by_event: dict[str, list[sqlite3.Row]] = {}
             for row in security_rows:
                 by_event.setdefault(row["event_id"], []).append(row)
@@ -2372,25 +2476,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             }
             assert "allow" in {row["rule_action"] for row in echo_security_rows}
 
-            public_net_rows = conn.execute(
-                """
-                SELECT *
-                FROM net_events
-                WHERE domain IS NOT NULL AND domain != '127.0.0.1'
-                ORDER BY id
-                """
-            ).fetchall()
-            assert public_net_rows == []
-            public_dns_rows = conn.execute(
-                """
-                SELECT id, event_id, qname, qtype, qclass, rcode, answer_ip, decision
-                FROM dns_events
-                WHERE qname NOT LIKE ?
-                ORDER BY id
-                """,
-                (f"{session_id}%",),
-            ).fetchall()
-            assert public_dns_rows == []
+            assert _public_traffic(conn, session_id) == ([], [])
 
             substitutions = _eventually(
                 lambda: conn.execute(
@@ -2417,7 +2503,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                 assert row["confidence"] is None
                 assert row["trace_id"] == broker_echo_net["trace_id"]
                 context = json.loads(row["context_json"])
-                assert context["domain"] == "127.0.0.1"
+                assert context["domain"] == "ollama.capsem.test"
                 assert context["header"] == "authorization"
 
             substitution_security_rows = conn.execute(
@@ -2456,7 +2542,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
 
             exec_row = conn.execute(
                 "SELECT * FROM exec_events WHERE command = ? ORDER BY id DESC LIMIT 1",
-                (f"python3 /root/{script_name}",),
+                (f"python3 /workspace/{script_name}",),
             ).fetchone()
             assert exec_row is not None
             _assert_event_id(exec_row["event_id"])
@@ -2464,7 +2550,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert exec_row["exit_code"] == 0
             assert "IRONBANK_CODEX_CLI_RESULT" in (exec_row["stdout_preview"] or "")
             assert "capsem_test_codex_cli_key" not in (exec_row["stdout_preview"] or "")
-            assert exec_row["command"] == f"python3 /root/{script_name}"
+            assert exec_row["command"] == f"python3 /workspace/{script_name}"
             assert exec_row["credential_ref"] is None
 
             audit_rows = _eventually(
@@ -2480,7 +2566,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             )
             for row in audit_rows:
                 _assert_event_id(row["event_id"])
-                assert row["uid"] == 0
+                assert row["uid"] == WORKLOAD_UID
                 assert row["exe"] or row["comm"] or row["argv"]
                 assert row["credential_ref"] is None
             assert any("codex" in (row["argv"] or "") for row in audit_rows)
@@ -2517,18 +2603,12 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                     "postprocess",
                     "ask_resolution",
                 }
-                if row["event_type"] == "model.call" or row["rule_id"] == "profiles.rules.default_000_capsem_mock_server":
-                    assert row["previous_decision"] == "allow"
-                    assert row["requested_decision"] == "allow"
-                    assert row["effective_decision"] == "allow"
-                elif row["rule_id"] == "profiles.rules.default_000_local_network":
-                    assert row["previous_decision"] == "allow"
-                    assert row["requested_decision"] == "ask"
-                    assert row["effective_decision"] == "ask"
-                elif row["rule_id"] == "profiles.rules.default_http":
-                    assert row["previous_decision"] == "ask"
-                    assert row["requested_decision"] == "allow"
-                    assert row["effective_decision"] == "ask"
+                assert row["rule_id"] not in LOOPBACK_RULES, dict(row)
+                # Nothing asks on the way to a fixture host, so every decision
+                # stays the allow it starts as.
+                assert row["previous_decision"] == "allow", dict(row)
+                assert row["requested_decision"] == "allow", dict(row)
+                assert row["effective_decision"] == "allow", dict(row)
             # The decided-about event is archive-backed, like a rule match's.
             with session_archive(conn) as archive:
                 for row in security_decision_rows:
@@ -2538,7 +2618,9 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             conn.close()
     finally:
         stop_process(mock_proc)
-        if client is not None and vm_id is not None:
-            with contextlib.suppress(Exception):
-                client.delete(f"/vms/{vm_id}/delete", timeout=60)
+        sessions.close()
         service.stop()
+        if old_corp_config is None:
+            os.environ.pop("CAPSEM_CORP_CONFIG", None)
+        else:
+            os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
