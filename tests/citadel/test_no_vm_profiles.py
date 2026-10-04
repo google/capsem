@@ -63,8 +63,9 @@ VM_PROFILE_VOCABULARY: tuple[tuple[str, str], ...] = (
 )
 FORBIDDEN = re.compile("|".join(f"(?:{pattern})" for pattern, _ in VM_PROFILE_VOCABULARY))
 
-# History is not product: release notes and the changelog describe what was.
-HISTORY = re.compile(r"^(CHANGELOG\.md|LATEST_RELEASE\.md|web/docs/src/content/docs/releases/|benchmarks/baselines/)")
+# History is not product: release notes, the changelog and recorded benchmark
+# evidence (JSON under the benchmarks root) describe what was.
+HISTORY = re.compile(r"^(CHANGELOG\.md|LATEST_RELEASE\.md|bench[^/]*/.*\.json)$")
 
 # Files that must name the removed concept to refuse it or clean up after it.
 REMOVAL_SITES: dict[str, str] = {
