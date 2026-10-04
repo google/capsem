@@ -222,6 +222,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Updating from Capsem 0.6.3 no longer leaves a service that will not start.
+  0.6.4 refused the session ledger 0.6.3 wrote (`~/.capsem/sessions/main.db`,
+  and a persistent VM's own ledger) because it predates ledger format v4, so
+  the service crash-looped. Such a ledger is now kept beside the new one as
+  `main.db.pre-v4-<seconds>` and a fresh ledger starts; the old session
+  history is not shown in the new one.
+
 - On Linux hosts, `cp -a`, `tar -x` and `chown` work in the VM's `/root`
   workspace again. The VirtioFS server numbered FSYNCDIR 21, the opcode the
   kernel uses for SETXATTR, so every extended-attribute write failed with

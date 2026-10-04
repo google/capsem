@@ -105,6 +105,11 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/writer/model_rows.rs"),
     Path("crates/capsem-logger/src/writer/retention.rs"),
     Path("crates/capsem-logger/src/writer/tests.rs"),
+    # The writer's open path, under the writer lock it already holds: it reads
+    # whether a ledger predates format v4 and moves such a file aside before
+    # the writer opens a fresh one. It never reads or writes ledger rows.
+    Path("crates/capsem-logger/src/writer/legacy.rs"),
+    Path("crates/capsem-logger/src/writer/legacy/tests.rs"),
 }
 
 
