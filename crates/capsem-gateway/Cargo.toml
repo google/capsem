@@ -35,6 +35,9 @@ tower-http = { version = "0.6", features = ["trace", "cors"] }
 rand = "0.9"
 url = "2"
 
+[build-dependencies]
+sha2 = "0.10"
+
 [lints]
 workspace = true
 

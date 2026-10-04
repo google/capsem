@@ -1,0 +1,14 @@
+# The xpra-html5 client capsem-gateway serves for Xpra surfaces, vendored
+# unmodified from the pinned upstream package (MPL-2.0, see LICENSE).
+#
+# The pin is the one the v0.7 GUI spike proved against Xpra 6.5.1 servers: the
+# SHA-256 was read from xpra.org's signature-verified bookworm package index
+# (key B4993B57323148E37977E5D873254CAD17978FAF). Regenerate www/ and
+# SHA256SUMS from it with build_system/scripts/build/vendor_xpra_html5.py;
+# never edit them by hand. capsem-gateway's build verifies every file against
+# SHA256SUMS and fails on a mismatch.
+package = "xpra-html5"
+version = "21-r1-1"
+url = "https://xpra.org/dists/bookworm/main/binary-arm64/xpra-html5-21-r1-1.deb"
+sha256 = "232d498314d302983522fbb8c9b6f91bd4ce12a9de2f37970ae3a7f5ff0ce466"
+license = "MPL-2.0"
