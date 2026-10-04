@@ -114,7 +114,10 @@ def test_an_image_runs_by_catalog_name_and_only_listed_digests_run(service, tmp_
             assert "not admitted" in refusal, refusal
             assert service.client().get("/vms/list")["sandboxes"] == []
             status, body = service.client().call_json(
-                "POST", "/images/pull", {"image": reference}, timeout=180
+                "POST",
+                "/images/pull",
+                {"image": reference, "registry": {"ca_pem": certificate.read_text()}},
+                timeout=180,
             )
             assert status == 403, body
             assert "not admitted" in body["error"], body
