@@ -1,10 +1,12 @@
 //! Generic typed UI settings system with corp constraints.
 //!
 //! Each setting has an id, name, description, type, category, default value,
-//! and optional `enabled_by` pointer to a parent toggle. Local UI settings are
-//! stored in `settings.toml`. Corporate constraints live in `corp.toml`.
+//! and optional `enabled_by` pointer to a parent toggle. The user's settings
+//! live in `settings.toml`, which may set any registry id. Corporate
+//! constraints live in `corp.toml`, which may set any id too.
 //!
-//! Merge semantics: corp settings override local settings per-key.
+//! Merge semantics: corp settings override local settings per-key, and an id
+//! corp sets is locked against `/settings/edit`.
 
 mod active_policy;
 mod builder;

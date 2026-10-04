@@ -65,6 +65,21 @@ class TestSettingsTree:
         refetched = _find_setting_value(client.get("/settings/info")["tree"], "app.auto_update")
         assert refetched is False
 
+    def test_save_settings_writes_behavior_settings(self, isolated_client):
+        """Every registry setting is the user's, not only app.* (#289).
+
+        With VM profiles gone, the git identity and the service toggles were
+        refused as corp-owned, though the settings page offers them.
+        """
+        saved = isolated_client.patch("/settings/edit", {
+            "repository.git.identity.author_name": "Test User",
+            "security.services.registry.npm.allow": False,
+        })
+        assert saved is not None and "tree" in saved, f"edit refused: {saved}"
+        tree = isolated_client.get("/settings/info")["tree"]
+        assert _find_setting_value(tree, "repository.git.identity.author_name") == "Test User"
+        assert _find_setting_value(tree, "security.services.registry.npm.allow") is False
+
     def test_save_settings_rejects_unknown_key(self, client):
         """Batch update is atomic -- any unknown key fails the whole batch."""
         resp = client.patch("/settings/edit", {"totally.not.a.setting": True})

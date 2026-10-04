@@ -259,7 +259,7 @@ policy digest) before the route returns.
 | GET | `/panics` | Panic log summary |
 | GET | `/host-logs/{name}` | Named host log |
 | GET | `/settings/info` | The resolved `settings.toml` tree and validation issues |
-| PATCH | `/settings/edit` | Batch-edit `app.*`/`appearance.*` preferences in `settings.toml` |
+| PATCH | `/settings/edit` | Batch-edit registry settings in `settings.toml`; corp-set ids are locked |
 | GET | `/corp/info` | Corporate constraint/reporting config |
 | PUT | `/corp/edit` | Replace corporate config |
 | POST | `/corp/validate` | Validate corporate config |

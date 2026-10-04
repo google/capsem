@@ -43,7 +43,7 @@ fn retired_snapshot_settings_in_existing_files_are_ignored() {
         ("vm.snapshots.manual_max", SettingValue::Number(12)),
         ("vm.snapshots.auto_interval", SettingValue::Number(300)),
     ]);
-    super::super::ownership::validate_corp_toml_contract(&retired).unwrap();
+    retired.validate_metadata_contract().unwrap();
 
     let resolved = resolve_settings(&SettingsFile::default(), &retired);
 

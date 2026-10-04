@@ -47,20 +47,50 @@ fn write_then_load_roundtrip() {
 }
 
 #[test]
-fn load_local_settings_file_rejects_corp_owned_settings() {
+fn load_local_settings_file_accepts_behavior_settings() {
+    // The settings.toml of #289: a git identity refused as "owned by corp"
+    // failed every `capsem run` at "load the policy inputs".
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(
         tmp.path(),
         r#"
-[settings."vm.resources.cpu_count"]
-value = 8
-modified = "2026-06-11T00:00:00Z"
+[settings]
+"repository.git.identity.author_name" = { value = "Test User", modified = "2026-01-01T00:00:00Z" }
+"security.services.registry.npm.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
+"vm.resources.cpu_count" = { value = 8, modified = "2026-01-01T00:00:00Z" }
 "#,
     )
     .unwrap();
 
-    let error = load_local_settings_file(tmp.path()).expect_err("corp-owned setting rejected");
-    assert!(error.contains("owned by corp"), "{error}");
+    let file = load_local_settings_file(tmp.path()).expect("behavior settings load from settings.toml");
+    assert_eq!(
+        file.settings["repository.git.identity.author_name"].value.as_text(),
+        Some("Test User")
+    );
+    assert_eq!(
+        file.settings["security.services.registry.npm.allow"].value,
+        SettingValue::Bool(false)
+    );
+    assert_eq!(file.settings["vm.resources.cpu_count"].value, SettingValue::Number(8));
+}
+
+#[test]
+fn load_local_settings_file_still_refuses_corp_only_sections() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+[corp.rules.block_example]
+name = "block_example"
+action = "block"
+priority = -10
+match = 'http.host == "example.invalid"'
+"#,
+    )
+    .unwrap();
+
+    let error = load_local_settings_file(tmp.path()).expect_err("corp rules stay corp-only");
+    assert!(error.contains("settings.toml cannot define corp.rules"), "{error}");
 }
 
 #[test]
@@ -81,7 +111,8 @@ modified = "2026-06-11T00:00:00Z"
 }
 
 #[test]
-fn load_corp_settings_file_rejects_ui_preferences() {
+fn corp_file_loads_ui_preferences() {
+    // Corp may set any registry id, and a corp-set id is locked for the user.
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(
         tmp.path(),
@@ -93,12 +124,12 @@ modified = "2026-06-11T00:00:00Z"
     )
     .unwrap();
 
-    let error = load_corp_settings_file(tmp.path()).expect_err("ui setting rejected");
-    assert!(error.contains("owned by settings"), "{error}");
+    let file = load_settings_file(tmp.path()).expect("corp may set a ui preference");
+    assert_eq!(file.settings["app.auto_update"].value, SettingValue::Bool(true));
 }
 
 #[test]
-fn load_corp_settings_file_accepts_constraints() {
+fn corp_file_loads_constraints() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(
         tmp.path(),
@@ -118,7 +149,7 @@ match = 'http.host == "example.invalid"'
     )
     .unwrap();
 
-    let file = load_corp_settings_file(tmp.path()).expect("corp constraints load");
+    let file = load_settings_file(tmp.path()).expect("corp constraints load");
     assert!(file.settings.contains_key("vm.resources.cpu_count"));
     assert!(file.corp.rules.contains_key("block_example"));
 }
