@@ -2,10 +2,27 @@ use super::*;
 use crate::container_setup::{ContainerSetups, ImageSource, PullFuture};
 use crate::tests::{insert_fake_instance_with_session_dir, spawn_fake_process};
 
-/// An image source that always refuses, as a registry or policy would.
+/// An image source whose registry refuses every pull. Its policy grants that
+/// registry, so the refusal is the registry's: the default policy reads the
+/// developer's own settings.toml, and without one it refused the source
+/// first and the test never reached the pull it is about.
 struct RefusingImages;
 
 impl ImageSource for RefusingImages {
+    fn policy(&self) -> crate::container_setup::PolicyFuture {
+        let granted = capsem_core::net::policy_config::SettingsFile {
+            images: Some(capsem_core::net::policy_config::ImagePolicyConfig {
+                sources: vec!["registry.example".into()],
+                admit: vec!["registry.example".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        Box::pin(
+            async move { capsem_core::container::admission::ImagePolicy::from_files(&granted, &Default::default()) },
+        )
+    }
+
     fn pull(&self, _image: String, _access: api::RegistryAccess, _parent: PathBuf) -> PullFuture {
         Box::pin(async { anyhow::bail!("registry refused the image") })
     }
