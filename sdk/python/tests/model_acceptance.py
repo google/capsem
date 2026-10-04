@@ -15,7 +15,9 @@ async def main() -> None:
                   id=os.environ["SDK_VM_ID"], timeout=120) as vm:
         script = Path(os.environ["SDK_MODEL_SCRIPT"]).read_bytes()
         assert (await vm.files.write("sdk-model-proof.py", script)).success
-        execution = await vm.exec("python3 /root/sdk-model-proof.py", timeout_secs=90)
+        # Relative to where the exec starts: an image session runs it in its
+        # workload, whose working directory is not the VM's /root.
+        execution = await vm.exec("python3 sdk-model-proof.py", timeout_secs=90)
         assert execution.exit_code == 0, execution.stderr.data
         observation = json.loads(next(line.removeprefix("IRONBANK_CLIENT_RESULT=")
                                       for line in execution.stdout.data.splitlines()
