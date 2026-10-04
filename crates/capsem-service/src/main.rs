@@ -344,6 +344,16 @@ pub struct CloneFrom {
     pub replace_image: bool,
 }
 
+impl CloneFrom {
+    /// A clone that boots its source's own staged image.
+    pub fn keeping_image(source: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            replace_image: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ResolvedVmResources {
     ram_mb: u64,

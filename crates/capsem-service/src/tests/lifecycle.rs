@@ -181,10 +181,7 @@ fn provision_rejects_nonexistent_source_sandbox() {
         version_override: None,
         persistent: false,
         env: None,
-        from: Some(crate::CloneFrom {
-            source: "ghost-sandbox".into(),
-            replace_image: false,
-        }),
+        from: Some(crate::CloneFrom::keeping_image("ghost-sandbox")),
         description: None,
     });
     assert!(result.is_err());
@@ -206,10 +203,7 @@ fn provision_refuses_to_clone_a_profile_era_vm() {
         version_override: None,
         persistent: false,
         env: None,
-        from: Some(crate::CloneFrom {
-            source: "profile-era-source".into(),
-            replace_image: false,
-        }),
+        from: Some(crate::CloneFrom::keeping_image("profile-era-source")),
         description: None,
     });
     let err = result.unwrap_err().to_string();
