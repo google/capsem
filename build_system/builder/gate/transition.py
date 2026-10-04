@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import config as gate_config
+from . import referenceimage
 from .actions import Call, Script
 from .config import GateConfig
 from .content import RuntimeContent, SelectedInstallContent
@@ -126,6 +127,7 @@ class TransitionGate:
                 self._package.parent,
                 self._after.parent,
                 self._bin_dir,
+                *referenceimage.inputs(self._config),
             ),
         )
 
@@ -178,6 +180,7 @@ class TransitionGate:
             pairing.after_manifest: str(self._after),
             pairing.before_release_inputs: str(self._before / RUNTIME),
             pairing.after_release_inputs: str(self._inputs),
+            **referenceimage.environment(self._config),
         }
         command = (
             f"{settings.venv_python} {settings.suite.glowup_script} "

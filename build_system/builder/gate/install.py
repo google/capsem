@@ -19,7 +19,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from . import cachelayout, installplan, platformproof
+from . import cachelayout, installplan, platformproof, referenceimage
 from . import config as gate_config
 from .actions import Call
 from .cachecontrol import CacheControl
@@ -57,7 +57,11 @@ class InstallGate:
         self._layout = self._settings.layout
         self._cache = CacheControl(runner)
         self._content = content
-        self._container = InstallContainer(runner, content=content)
+        # The installed proof boots the reference image from its verified
+        # layout, mounted read-only at its own path.
+        self._container = InstallContainer(
+            runner, content=content, inputs=referenceimage.inputs(self._config)
+        )
         self._proof = InstallProof(
             runner,
             self._config,

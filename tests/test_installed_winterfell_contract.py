@@ -203,6 +203,8 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
             str(assets_dir),
             "--evidence-out",
             str(evidence),
+            "--image-layout",
+            str(tmp_path / "reference-layout"),
         ]
     )
 
@@ -228,6 +230,9 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
     assert child_environment["CAPSEM_TEST_ARTIFACTS_ROOT"] == str(
         tmp_path / "failure-artifacts"
     )
+    assert child_environment["CAPSEM_WINTERFELL_IMAGE_LAYOUT"] == str(
+        tmp_path / "reference-layout"
+    )
     assert captured["cwd"] == PROJECT_ROOT
     report = json.loads(evidence.read_text())
     assert report == {
@@ -236,6 +241,7 @@ def test_runner_executes_only_winterfell_against_exact_installed_roots(
         "roots": {
             "assets": str(assets_dir),
             "binaries": str(bin_dir),
+            "image_layout": str(tmp_path / "reference-layout"),
         },
     }
 
@@ -261,8 +267,39 @@ def test_runner_records_failure_and_returns_pytest_status(
             str(assets_dir),
             "--evidence-out",
             str(evidence),
+            "--image-layout",
+            str(tmp_path / "reference-layout"),
         ]
     )
 
     assert result == 7
     assert json.loads(evidence.read_text())["passed"] is False
+
+
+def test_the_installed_proof_cannot_run_without_the_reference_image() -> None:
+    """Winterfell boots the reference image as a user's session; a caller that
+    forgets its layout must fail, not run the bare-VM case and pass."""
+    runner = _load_runner()
+    with pytest.raises(SystemExit):
+        runner.parse_args(["--bin-dir", "b", "--assets-dir", "a", "--evidence-out", "e"])
+    parsed = runner.parse_args(
+        ["--bin-dir", "b", "--assets-dir", "a", "--evidence-out", "e", "--image-layout", "l"]
+    )
+    assert parsed.image_layout == Path("l")
+
+
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "build_system/builder/release/tools/release_installed_probe.py",
+        "build_system/packaging/macos/prove-macos-package-boot.sh",
+    ],
+)
+def test_every_installed_proof_hands_winterfell_the_reference_image(caller) -> None:
+    """Each place that runs the installed proof passes the layout the gate
+    mounts, and fails loudly when it was not given one."""
+    source = (PROJECT_ROOT / caller).read_text()
+    call = source[source.index("run-installed-winterfell.py") :]
+    call = call[: call.index("--evidence-out")]
+    assert "--image-layout" in call, call
+    assert "CAPSEM_REFERENCE_IMAGE_LAYOUT:?" in call, call

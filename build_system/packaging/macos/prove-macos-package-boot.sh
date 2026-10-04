@@ -202,6 +202,7 @@ CAPSEM_RUN_DIR="$RUN_DIR" \
     uv run --project build_system --frozen python "$ROOT/build_system/scripts/build/run-installed-winterfell.py" \
         --bin-dir "$CAPSEM_HOME_DIR/bin" \
         --assets-dir "$CAPSEM_HOME_DIR/assets" \
+        --image-layout "${CAPSEM_REFERENCE_IMAGE_LAYOUT:?the installed proof boots the reference image: set CAPSEM_REFERENCE_IMAGE_LAYOUT}" \
         --evidence-out "$WINTERFELL_EVIDENCE" \
         >"$WINTERFELL_LOG" 2>&1
 WINTERFELL_STATUS=$?

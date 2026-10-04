@@ -786,6 +786,8 @@ def test_installed_winterfell_does_not_write_pytest_state_to_source(
             str(roots.assets_dir),
             "--evidence-out",
             str(tmp_path / "evidence.json"),
+            "--image-layout",
+            str(tmp_path / "reference-layout"),
         ]
     ) == 0
     assert commands[0][3:5] == ["-o", f"cache_dir={tmp_path / '.pytest_cache'}"]

@@ -198,6 +198,7 @@ probe_installed_transition() {{
   {shlex.quote(sys.executable)} build_system/scripts/build/run-installed-winterfell.py \
     --bin-dir "$CAPSEM_HOME_DIR/bin" \
     --assets-dir "$CAPSEM_HOME_DIR/assets" \
+    --image-layout "${{CAPSEM_REFERENCE_IMAGE_LAYOUT:?the installed proof boots the reference image: set CAPSEM_REFERENCE_IMAGE_LAYOUT}}" \
     --evidence-out "$EVIDENCE_DIR/$label-winterfell.json"
 }}
 observe_update_transition() {{

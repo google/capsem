@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from . import config as gate_config
+from . import referenceimage
 from .content import RuntimeContent
 from .docker import Docker
 from .errors import GateError
@@ -218,6 +219,7 @@ class InstallProof:
             env={
                 "XDG_RUNTIME_DIR": self._guest.runtime_dir,
                 "UV_PROJECT_ENVIRONMENT": self._settings.venv,
+                **referenceimage.environment(self._config),
             },
         )
         self._runner.note(

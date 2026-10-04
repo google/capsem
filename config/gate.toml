@@ -2334,6 +2334,10 @@ base_context = "images/base"
 script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/dev"
 cache_stage = "test-images"
+# The installed proofs (winterfell, through the glow-up and the transition
+# replay) boot this image from the layout this variable names, mounted into
+# their container at its own path.
+layout_variable = "CAPSEM_REFERENCE_IMAGE_LAYOUT"
 digests = { "linux/arm64" = "sha256:64729596d6cdf9e5005c6d0d4745c842b1d159eea95b7e4025350d1d830b80b1" }
 
 [modules]

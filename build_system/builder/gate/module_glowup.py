@@ -15,6 +15,7 @@ from . import (
     managedrestart,
     module_artifacts,
     platformproof,
+    referenceimage,
     runtimeprepare,
 )
 from .actions import Call, Script
@@ -50,10 +51,12 @@ class GlowupModule(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
+        # The installed proof boots the reference image (`just test` stages it in prefetch).
+        ready = plan.phase("glowup").add(referenceimage.prepare(self._config))
         if self.qualification.pulled:
-            glowup(plan, self._config, qualification=self.qualification)
+            glowup(plan, self._config, qualification=self.qualification, after=(ready,))
         else:
-            built = module_artifacts.artifacts(plan, self._config, qualification=self.qualification)
+            built = module_artifacts.artifacts(plan, self._config, qualification=self.qualification, after=(ready,))
             runtime = None
             if host.on_macos():  # the managed-restart proof runs the signed host binaries
                 runtime = runtimeprepare.prepare(plan, self._config, guest=False, after=(built,)).ready
@@ -200,7 +203,7 @@ def _glowup_step(
             # put the two sides. `clear` wins on the channel-switch run, which
             # must rediscover the channel rather than inherit it -- and the two
             # never overlap, because that step is given no pairing at all.
-            env={**(pairing or {}), **dict.fromkeys(clear, "")},
+            env=referenceimage.environment(config) | (pairing or {}) | dict.fromkeys(clear, ""),
             # Installs a system package, so it needs privileges Bubblewrap
             # denies by construction: `PR_SET_NO_NEW_PRIVS` stops sudo dead on
             # a hosted runner. Not the boundary widened for convenience -- it
@@ -267,6 +270,7 @@ def _build_and_prove(
                         config.modules.macos_glowup_script,
                         "--content-root",
                         content.root,
+                        env=referenceimage.environment(config),
                         outside_sandbox=True,
                     ),
                     contends=(config.exclusive("apple_vz"),),

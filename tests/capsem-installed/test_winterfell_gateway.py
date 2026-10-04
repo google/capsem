@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from contextlib import suppress
+from pathlib import Path
 
 import pytest
 from helpers.constants import (
@@ -13,6 +14,7 @@ from helpers.constants import (
     EXEC_READY_TIMEOUT,
 )
 from helpers.gateway import TcpHttpClient
+from helpers.image_session import WORKSPACE, image_session, wait_running, workload_exec
 from helpers.service import (
     ServiceInstance,
     installed_exec_output_text,
@@ -87,4 +89,58 @@ def test_installed_gateway_persists_exec_state() -> None:
         if vm_id is not None:
             with suppress(Exception):
                 service.client().delete(f"/vms/{vm_id}/delete", timeout=60)
+        service.stop()
+
+
+#: The reference image's layout, staged into the installed proof's inputs by
+#: whoever runs it (run-installed-winterfell.py --image-layout). An installed
+#: run without it fails: the release proof must boot the product's own shape.
+IMAGE_LAYOUT_ENV = "CAPSEM_WINTERFELL_IMAGE_LAYOUT"
+
+
+def test_installed_image_session_lives_through_stop_resume_and_fork(tmp_path) -> None:
+    """The installed package runs a user's image session, through the gateway:
+    the reference image (the official `dev`) admitted as one exact image, its
+    workload writing the workspace as the image's user, relaunched by the
+    VM's boot after a stop, and carried into a fork."""
+    layout = os.environ.get(IMAGE_LAYOUT_ENV)
+    assert layout, f"installed Winterfell needs {IMAGE_LAYOUT_ENV}: the reference image's layout"
+    roots = resolve_winterfell_artifact_roots()
+    assert roots.installed
+    service = ServiceInstance(assets_dir=roots.assets_dir, sign_binaries=False)
+    try:
+        service.start()
+        port = (service.tmp_dir / "gateway.port").read_text().strip()
+        token = (service.tmp_dir / "gateway.token").read_text().strip()
+        gateway = TcpHttpClient(f"http://127.0.0.1:{port}", token)
+        name = f"winterfell-image-{uuid.uuid4().hex[:8]}"
+        with image_session(
+            service, tmp_path / "registry", name, layout=Path(layout), client=gateway
+        ) as vm_id:
+            wrote = workload_exec(
+                gateway, vm_id, f"id -u; pwd; echo 'the north remembers' > {WORKSPACE}/stark.txt"
+            )
+            assert wrote.get("exit_code") == 0, wrote
+            assert wrote["stdout_text"].splitlines() == ["1000", WORKSPACE], wrote
+
+            # A stop and a resume: the VM's boot relaunches the staged image.
+            assert gateway.call_json("POST", f"/vms/{vm_id}/stop")[0] == 200
+            assert gateway.call_json("POST", f"/vms/{vm_id}/resume", timeout=120)[0] == 200
+            wait_running(gateway, vm_id, timeout=300)
+            kept = workload_exec(gateway, vm_id, f"cat {WORKSPACE}/stark.txt")
+            assert kept["stdout_text"] == "the north remembers\n", kept
+
+            # A fork is an image session of the same digest, with the files.
+            digest = gateway.get(f"/vms/{vm_id}/container")["digest"]
+            fork_id = gateway.post(f"/vms/{vm_id}/fork", {"name": f"{name}-fork"})["id"]
+            try:
+                gateway.post(f"/vms/{fork_id}/resume", {}, timeout=120)
+                wait_running(gateway, fork_id, timeout=300)
+                assert gateway.get(f"/vms/{fork_id}/container")["digest"] == digest
+                forked = workload_exec(gateway, fork_id, f"cat {WORKSPACE}/stark.txt")
+                assert forked["stdout_text"] == "the north remembers\n", forked
+            finally:
+                with suppress(Exception):
+                    service.client().delete(f"/vms/{fork_id}/delete", timeout=60)
+    finally:
         service.stop()

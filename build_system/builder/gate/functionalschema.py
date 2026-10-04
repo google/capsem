@@ -47,6 +47,9 @@ class PinnedImageConfig(Strict):
     repository: str
     cache_stage: SafeToken
     digests: dict[Platform, ManifestDigest]
+    #: The variable an installed proof reads the image's layout path from,
+    #: for an image the release proofs boot (the reference image).
+    layout_variable: str | None = None
 
     @model_validator(mode="after")
     def pins_at_least_one_platform(self) -> PinnedImageConfig:

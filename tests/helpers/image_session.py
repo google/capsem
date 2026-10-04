@@ -21,7 +21,6 @@ from pathlib import Path
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import exec_output_text
-
 from tests.fixtures.oci.pinned_image import PinnedImage, reference_image
 from tests.fixtures.oci.registry import grant_exact, layout_registry
 
@@ -48,6 +47,8 @@ def image_session(
     name: str,
     *,
     image: PinnedImage = reference_image,
+    layout: Path | None = None,
+    client=None,
     env: Mapping[str, str] | None = None,
     ram_mb: int = DEFAULT_RAM_MB,
     cpus: int = DEFAULT_CPUS,
@@ -58,11 +59,18 @@ def image_session(
 
     The registry stays up for the session, so a restart or fork that pulls
     again finds the same digest. A missing layout fails here, never skips:
-    `image.ready()` raises when the prefetch did not stage it.
+    `image.ready()` raises when the prefetch did not stage it. `layout` names
+    one staged elsewhere (an installed proof's inputs), verified against the
+    same pin; `client` defaults to the service's own socket (the gateway's
+    TCP client drives it the same way).
     """
     workdir.mkdir(parents=True, exist_ok=True)
-    client = service.client()
-    with layout_registry(workdir, image.ready(), image.settings().name) as (
+    client = client or service.client()
+    if layout is None:
+        layout = image.ready()
+    else:
+        image.verify(layout, image.pinned(), image.platform_name())
+    with layout_registry(workdir, layout, image.settings().name) as (
         reference,
         certificate,
         _,
