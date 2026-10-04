@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostics run; asking a session without a workload for `workload` is a
   400 rather than a silent VM exec. The session ledger records each exec's
   target (`exec_events.target`) beside the command as the caller wrote it.
+- A fork of an image session, and `capsem create --from`, stay image
+  sessions: the clone keeps the pinned image and its volumes, `capsem exec`
+  still enters the workload, and a GUI surface is granted afresh (an
+  exposure never travels to the clone). Resuming an image session grants its
+  surface again too. `--from` now combines with `--image`: the new session
+  runs the image it names over the source's workspace and volume contents,
+  and the source's image is not launched. Application logins kept in a
+  volume travel with a fork.
 - An image session's terminal is now a login shell in its workload (the
   image's bash, or `sh`), as the image's own user under the workload's
   namespaces and filter. It waits for the image while the session is being

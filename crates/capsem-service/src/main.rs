@@ -332,8 +332,16 @@ pub struct ProvisionOptions<'a> {
     pub version_override: Option<String>,
     pub persistent: bool,
     pub env: Option<std::collections::HashMap<String, String>>,
-    pub from: Option<String>,
+    pub from: Option<CloneFrom>,
     pub description: Option<String>,
+}
+
+/// The persistent session a new one is cloned from (`--from`).
+pub struct CloneFrom {
+    pub source: String,
+    /// The new session names its own image: the source's staged image is
+    /// not launched, while its workspace and image volumes carry over.
+    pub replace_image: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

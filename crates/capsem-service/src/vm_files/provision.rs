@@ -54,7 +54,10 @@ pub(crate) async fn handle_provision(
         let id = id_for_loop.clone();
         let name = name.clone();
         let payload_env = capsem_core::container::session_env(payload.env.clone(), payload.container.is_some());
-        let payload_from = payload.from.clone();
+        let payload_from = payload.from.clone().map(|source| crate::CloneFrom {
+            source,
+            replace_image: payload.container.is_some(),
+        });
         let payload_persistent = persistent;
         let attempt = attempt_num.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         async move {
@@ -165,6 +168,10 @@ async fn complete_create(
 ) -> Result<ProvisionResponse, AppError> {
     let response = provision_response_for_running(state, id.to_owned())?;
     network_routes::attach_provisioned(state, id, networks).await?;
+    if container.is_none() {
+        // A `--from` clone boots its source's staged image, if it had one.
+        container_setup::restore(state, id);
+    }
     if let Some(spec) = container {
         container_setup::start(state, id.to_owned(), spec);
         let status = container_setup::wait_for_create(state, id).await.map_err(|timed_out| {

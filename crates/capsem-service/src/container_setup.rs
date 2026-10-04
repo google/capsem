@@ -16,6 +16,8 @@ use std::pin::Pin;
 use std::sync::atomic::Ordering;
 
 pub(crate) mod images;
+mod relaunch;
+pub(crate) use relaunch::{carry_launch_record, drop_carried_image, restore};
 
 const CREATE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(110);
 
@@ -505,6 +507,25 @@ struct LaunchRecord {
     resolved: Option<String>,
 }
 
+impl LaunchRecord {
+    /// The status a recorded workload has before its launcher reports.
+    fn starting(self) -> ContainerStatusResponse {
+        ContainerStatusResponse {
+            state: ContainerState::Starting,
+            image: self.image,
+            digest: Some(self.digest),
+            resolved: self.resolved,
+            exit_code: None,
+            error: None,
+            surface: self.surface,
+        }
+    }
+}
+
+fn read_launch_record(session_dir: &std::path::Path) -> Option<LaunchRecord> {
+    serde_json::from_slice(&std::fs::read(session_dir.join(LAUNCH_RECORD)).ok()?).ok()
+}
+
 /// Wait for the workload `POST /vms/create` started to settle. A detached
 /// launcher runs in the background, so readiness is read the way the status
 /// route reads it -- through the guest's ready marker -- not only from the
@@ -604,19 +625,7 @@ fn observe(
     live: Option<ContainerStatusResponse>,
 ) -> Result<Option<ContainerStatusResponse>, AppError> {
     let session_dir = resolve_session_dir(state, id)?;
-    let Some(mut status) = live.or_else(|| {
-        let record = std::fs::read(session_dir.join(LAUNCH_RECORD)).ok()?;
-        let record: LaunchRecord = serde_json::from_slice(&record).ok()?;
-        Some(ContainerStatusResponse {
-            state: ContainerState::Starting,
-            image: record.image,
-            digest: Some(record.digest),
-            resolved: record.resolved,
-            exit_code: None,
-            error: None,
-            surface: record.surface,
-        })
-    }) else {
+    let Some(mut status) = live.or_else(|| read_launch_record(&session_dir).map(LaunchRecord::starting)) else {
         return Ok(None);
     };
     if status.state == ContainerState::Starting {

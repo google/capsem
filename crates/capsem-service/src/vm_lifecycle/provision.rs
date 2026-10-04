@@ -66,11 +66,11 @@ impl ServiceState {
         }
 
         // Validate source sandbox if --from provided
-        let source_entry = if let Some(ref from_name) = from {
+        let source_entry = if let Some(ref clone) = from {
             let registry = self.persistent_registry.lock().unwrap();
             let entry = registry
-                .get(from_name)
-                .ok_or_else(|| anyhow!("source sandbox '{}' not found", from_name))?
+                .get(&clone.source)
+                .ok_or_else(|| anyhow!("source sandbox '{}' not found", clone.source))?
                 .clone();
             drop(registry);
             // A VM in the old shape is refused, never laundered into a clone.
@@ -87,7 +87,8 @@ impl ServiceState {
             version_override.unwrap_or_else(|| self.current_version.clone())
         };
 
-        info!(id, version, persistent, from, "provision_sandbox called");
+        let from_name = from.as_ref().map(|clone| clone.source.clone());
+        info!(id, version, persistent, from = from_name, "provision_sandbox called");
 
         // A clone boots its source's images; a new VM the runtime asset set.
         // Both are checked before any session state exists.
@@ -137,6 +138,11 @@ impl ServiceState {
                 ))
                 .map_err(anyhow::Error::msg)
                 .context("failed to clone sandbox state")?;
+            if from.as_ref().is_some_and(|clone| clone.replace_image) {
+                crate::container_setup::drop_carried_image(&session_dir)
+                    .map_err(anyhow::Error::msg)
+                    .context("failed to drop the source's staged image")?;
+            }
         }
 
         let active_policy_path = self.materialize_active_policy(&session_dir)?.path;
@@ -269,7 +275,7 @@ impl ServiceState {
             storage_mode: "virtiofs".to_string(),
             rootfs_hash: Some(asset_pins.rootfs.hash.clone()),
             rootfs_version: Some(version.clone()),
-            forked_from: from.clone(),
+            forked_from: from_name.clone(),
             ..Default::default()
         };
         if let Err(error) = tokio::runtime::Handle::current().block_on(self.record_host_session_created(id, created)) {
@@ -294,7 +300,7 @@ impl ServiceState {
                         .as_secs()
                 ),
                 session_dir: session_dir.clone(),
-                forked_from: from.clone(),
+                forked_from: from_name.clone(),
                 description,
                 suspended: false,
                 defunct: false,
@@ -324,7 +330,7 @@ impl ServiceState {
                 base_version: version,
                 persistent,
                 env,
-                forked_from: from,
+                forked_from: from_name,
                 owner_secret,
             },
         );

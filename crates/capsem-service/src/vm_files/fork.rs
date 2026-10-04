@@ -118,6 +118,22 @@ pub(crate) async fn clone_session_state(
     tokio::fs::create_dir_all(&destination)
         .await
         .map_err(|error| format!("create {}: {error}", destination.display()))?;
+    let size = clone_guest_state(state, running, source.clone(), destination.clone()).await?;
+    // The clone boots the source's staged image; the service must know it
+    // runs one, or exec and the files API would treat it as a bare VM.
+    if let Err(error) = crate::container_setup::carry_launch_record(&source, &destination) {
+        let _ = tokio::fs::remove_dir_all(&destination).await;
+        return Err(error);
+    }
+    Ok(size)
+}
+
+async fn clone_guest_state(
+    state: &ServiceState,
+    running: Option<&std::path::Path>,
+    source: PathBuf,
+    destination: PathBuf,
+) -> Result<u64, String> {
     let Some(uds_path) = running else {
         return tokio::task::spawn_blocking(move || {
             capsem_core::session::clone_sandbox_state(&source, &destination).map_err(|error| {

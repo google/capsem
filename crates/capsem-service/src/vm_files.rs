@@ -726,7 +726,7 @@ pub(super) async fn provision_attempt(
     scratch_disk_size_gb: u32,
     persistent: bool,
     env: Option<std::collections::HashMap<String, String>>,
-    from: Option<String>,
+    from: Option<crate::CloneFrom>,
 ) -> ProvisionAttemptOutcome {
     // Creating/starting a VM is an Apple VZ lifecycle operation too. Cold
     // starts take the shared rail so independent boots can overlap, but they
