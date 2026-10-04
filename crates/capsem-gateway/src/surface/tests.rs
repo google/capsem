@@ -23,6 +23,7 @@ fn status(surface: Option<ContainerSurface>) -> ContainerStatusResponse {
         exit_code: None,
         error: None,
         surface,
+        resolved: None,
     }
 }
 
