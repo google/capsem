@@ -43,6 +43,9 @@ pub fn validate_profile_toml_contract(file: &SettingsFile) -> Result<(), String>
     if !file.network.is_empty() {
         return Err("profile.toml cannot define network mechanics".to_string());
     }
+    if file.images.is_some() {
+        return Err("profile.toml cannot define image policy".to_string());
+    }
     reject_settings_keys_not_owned_by(file, ConfigOwner::Profile, "profile.toml")
 }
 

@@ -260,6 +260,10 @@ pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
                 if corp.mcp.is_none() && file.mcp.is_some() {
                     corp.mcp = file.mcp;
                 }
+                // Image policy: first non-None wins, and replaces the user's.
+                if corp.images.is_none() && file.images.is_some() {
+                    corp.images = file.images;
+                }
                 // External rule files: first corp path wins per reference.
                 corp.rule_files.merge_first_wins(file.rule_files);
                 corp.corp_rule_files.merge_first_wins(file.corp_rule_files);

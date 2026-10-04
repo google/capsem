@@ -431,6 +431,27 @@ pub struct SettingsFile {
     /// Corporate-owned network mechanics such as DNS upstreams.
     #[serde(default, skip_serializing_if = "NetworkConfig::is_empty")]
     pub network: NetworkConfig,
+    /// Which OCI images may be fetched and which may run (`[images]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<ImagePolicyConfig>,
+}
+
+/// Image policy as written: selectors are checked and normalized where the
+/// policy is built (capsem-core `container::admission`), which fails on any
+/// selector it cannot parse.
+///
+/// `sources` say where image bytes may be fetched from and are checked before
+/// any registry access; `admit` says which images may execute and is checked
+/// on the resolved digest. The catalog's supported images are admitted, and
+/// their repositories are sources, without being listed here. A corp
+/// `[images]` replaces the user's.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ImagePolicyConfig {
+    #[serde(default)]
+    pub sources: Vec<String>,
+    #[serde(default)]
+    pub admit: Vec<String>,
 }
 
 impl SettingsFile {
