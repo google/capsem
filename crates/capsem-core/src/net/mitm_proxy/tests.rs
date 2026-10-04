@@ -192,6 +192,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713" && ip.value == "127.0.0.
     let body = Bytes::from_static(br#"{"kind":"ironbank_http_plain_json"}"#);
     let event = http_request_security_event(HttpRequestSecurityEventInput {
         domain: "127.0.0.1",
+        upstream_ip: Some(IpAddr::from([127, 0, 0, 1])),
         upstream_port: 3713,
         method: "POST",
         path: "/echo",

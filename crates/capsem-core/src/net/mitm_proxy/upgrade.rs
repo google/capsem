@@ -1,7 +1,8 @@
 //! WebSocket upgrade handling for MITM-proxied connections.
 //!
 //! An upgrade is gated exactly like any other request -- port allowlist, then
-//! the security boundary -- before the upstream is dialed. Only then is the
+//! the security boundary, which judges the resolved address -- before the
+//! upstream is dialed, at exactly that address. Only then is the
 //! 101 relayed and the two upgraded streams spliced together.
 
 use super::*;
@@ -12,6 +13,7 @@ pub(super) struct UpgradeRequest<'a> {
     pub parts: &'a http::request::Parts,
     pub client_upgrade: hyper::upgrade::OnUpgrade,
     pub domain: &'a str,
+    pub target: &'a UpstreamTarget,
     pub protocol: Protocol,
     pub upstream_port: u16,
     pub upstream_tls: &'a Arc<rustls::ClientConfig>,
@@ -45,6 +47,7 @@ pub(super) async fn handle_upgrade(
         parts,
         client_upgrade,
         domain,
+        target,
         protocol,
         upstream_port,
         upstream_tls,
@@ -170,6 +173,7 @@ pub(super) async fn handle_upgrade(
     }
     let mut upgrade_event = http_request_security_event(HttpRequestSecurityEventInput {
         domain,
+        upstream_ip: target.judged_ip(domain),
         upstream_port,
         method: &method,
         path: &path,
@@ -207,12 +211,8 @@ pub(super) async fn handle_upgrade(
         .clone()
         .unwrap_or_else(|| matched_rule.clone());
 
-    let dial_target = format!("{domain}:{upstream_port}");
-    let upstream_tcp = match tokio::net::TcpStream::connect(&dial_target)
-        .instrument(ws_span.clone())
-        .await
-    {
-        Ok(stream) => stream,
+    let upstream_tcp = match target.connect().instrument(ws_span.clone()).await {
+        Ok((stream, _pinned)) => stream,
         Err(error) => {
             ws_span.record("decision", "error");
             ws_span.record("status", "error");
@@ -221,7 +221,7 @@ pub(super) async fn handle_upgrade(
         }
     };
 
-    let upstream_io: TokioIo<Box<dyn TokioReadWrite + Unpin + Send>> = match protocol {
+    let upstream_io: TokioIo<Box<dyn TokioReadWrite + Unpin + Send>> = match target.protocol(protocol) {
         Protocol::Tls => {
             let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
             let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string()) {

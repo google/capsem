@@ -5,7 +5,7 @@
 //! whose answer changed between check and dial reached anything.
 
 use super::*;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
 fn rules(toml: &str) -> SecurityRuleSet {
     crate::net::policy_config::SecurityRuleProfile::parse_toml(toml)
@@ -13,73 +13,6 @@ fn rules(toml: &str) -> SecurityRuleSet {
             SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User)
         })
         .expect("test security rules compile")
-}
-
-#[test]
-fn public_addresses_are_told_apart_from_everything_else() {
-    for public in [
-        "8.8.8.8",
-        "1.1.1.1",
-        "93.184.216.34",
-        "2606:4700::1111",
-        "2a00:1450:4001::1",
-        "64:ff9b::808:808",
-    ] {
-        assert!(is_public_address(public.parse().unwrap()), "{public} is public");
-    }
-    for private in [
-        "127.0.0.1",
-        "127.255.255.254",
-        "10.0.0.1",
-        "172.16.0.1",
-        "172.31.255.255",
-        "192.168.1.1",
-        "169.254.169.254",
-        "100.64.0.1",
-        "100.127.255.255",
-        "0.0.0.0",
-        "0.1.2.3",
-        "255.255.255.255",
-        "224.0.0.1",
-        "240.0.0.1",
-        "198.18.0.1",
-        "198.51.100.7",
-        "::1",
-        "::",
-        "fe80::1",
-        "fc00::1",
-        "fd12:3456::1",
-        "ff02::1",
-        "2001:db8::1",
-        "::ffff:127.0.0.1",
-        "::ffff:10.0.0.1",
-        "::ffff:169.254.169.254",
-        "2002:7f00:1::",
-        "2002:a9fe:a9fe::",
-        "64:ff9b::7f00:1",
-        "64:ff9b::a9fe:a9fe",
-    ] {
-        assert!(!is_public_address(private.parse().unwrap()), "{private} is not public");
-    }
-}
-
-#[tokio::test]
-async fn ip_literals_resolve_to_themselves_and_names_through_the_resolver() {
-    assert_eq!(
-        resolve_upstream("127.0.0.1", 80).await.unwrap(),
-        vec![SocketAddr::from(([127, 0, 0, 1], 80))]
-    );
-    assert_eq!(
-        resolve_upstream("::1", 8080).await.unwrap(),
-        vec![SocketAddr::new(IpAddr::V6("::1".parse().unwrap()), 8080)]
-    );
-    let localhost = resolve_upstream("localhost", 1).await.expect("localhost resolves");
-    assert!(!localhost.is_empty());
-    assert!(
-        localhost.iter().all(|address| address.ip().is_loopback()),
-        "{localhost:?}"
-    );
-    assert!(resolve_upstream("no-such-host.invalid", 80).await.is_err());
 }
 
 #[tokio::test]

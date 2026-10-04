@@ -171,8 +171,7 @@ fn make_proxy_config_with_mechanics(
     let policy = Arc::new(std::sync::RwLock::new(Arc::new(policy_inner)));
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
-    // Leak the tempdir so it lives for the test
-    std::mem::forget(dir);
+    std::mem::forget(dir); // the tempdir lives as long as the test
     let telemetry = Arc::new(mitm_proxy::telemetry_hook::TelemetryDeps {
         db: db.clone(),
         pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
@@ -195,6 +194,7 @@ fn make_proxy_config_with_mechanics(
         telemetry,
         pipeline,
         mcp_endpoint: None,
+        upstream_resolver: Default::default(),
     });
     (config, db)
 }

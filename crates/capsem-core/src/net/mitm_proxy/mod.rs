@@ -29,6 +29,7 @@ pub mod telemetry_hook;
 pub mod tls_server;
 pub use tls_server::make_server_tls_config;
 mod upgrade;
+mod upstream;
 mod util;
 
 use std::net::IpAddr;
@@ -61,6 +62,7 @@ use fd_stream::{AsyncFdStream, ReplayReader};
 use mcp_observe::{observed_mcp_http_request_for_body, should_sniff_mcp_http_body, ObservedMcpHttpRequest};
 use protocol::Protocol;
 use telemetry_hook::TelemetryRequestContext;
+use upstream::{CachedUpstream, UpstreamCache, UpstreamTarget};
 use util::{
     current_unix_ms, format_headers, format_headers_for_domain, http_upstream_port_allowed, is_anthropic_model_name,
     is_google_model_name, is_llm_api_path, is_openai_model_name, materialize_collected_response_headers,
@@ -118,6 +120,8 @@ pub struct MitmProxyConfig {
     /// here so the low-privilege aggregator remains DB-free while MITM
     /// owns policy, timeouts, protocol telemetry, and MCP-origin `tool_calls`.
     pub mcp_endpoint: Option<Arc<McpEndpointState>>,
+    /// Resolves guest-named upstreams before policy; the dial goes only to what it judged.
+    pub upstream_resolver: crate::net::upstream_address::UpstreamResolver,
 }
 
 /// Build the default (empty) hook pipeline. T1 slices 2 + 3 will
@@ -705,8 +709,7 @@ async fn serve_pipeline<IO>(
     // serves one upstream via keep-alive, so caching the sender
     // avoids re-establishing TCP[+TLS] for every request on the
     // same connection.
-    let cached_upstream: Arc<tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>> =
-        Arc::new(tokio::sync::Mutex::new(None));
+    let cached_upstream: Arc<UpstreamCache> = Arc::default();
 
     let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
         let upstream_tls = Arc::clone(&upstream_tls);
@@ -770,6 +773,7 @@ async fn serve_pipeline<IO>(
 
 struct HttpRequestSecurityEventInput<'a> {
     domain: &'a str,
+    upstream_ip: Option<IpAddr>,
     upstream_port: u16,
     method: &'a str,
     path: &'a str,
@@ -798,14 +802,16 @@ fn http_request_security_event(input: HttpRequestSecurityEventInput<'_>) -> Secu
             input.headers,
             input.query,
         ));
-    security_event_with_transport(event, input.domain, input.upstream_port)
+    security_event_with_transport(event, input.upstream_ip, input.upstream_port)
 }
 
-fn security_event_with_transport(mut event: SecurityEvent, domain: &str, upstream_port: u16) -> SecurityEvent {
+/// Transport facts for the rules: the upstream port, and the address the dial
+/// reaches (`UpstreamTarget::judged_ip`), never one read off the guest's name.
+fn security_event_with_transport(mut event: SecurityEvent, ip: Option<IpAddr>, upstream_port: u16) -> SecurityEvent {
     event = event.with_tcp(TcpSecurityEvent {
         port: Some(upstream_port.to_string()),
     });
-    if let Ok(ip) = domain.parse::<IpAddr>() {
+    if let Some(ip) = ip {
         event = event.with_ip(IpSecurityEvent {
             value: Some(ip.to_string()),
             version: Some(match ip {
@@ -847,7 +853,7 @@ async fn handle_request(
     process_name: &Option<String>,
     ai_provider: Option<ProviderKind>,
     ai_protocol: Option<ModelProtocol>,
-    cached_upstream: &tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>,
+    cached_upstream: &UpstreamCache,
 ) -> Result<hyper::Response<ProxyBoxBody>, anyhow::Error> {
     use http_body_util::BodyExt;
 
@@ -867,6 +873,10 @@ async fn handle_request(
     // hot-reloaded settings take effect for subsequent requests on the same
     // keep-alive connection.
     let policy: Arc<NetworkMechanics> = config.policy.read().unwrap().clone();
+    // Resolve before the rules run, so they judge the address the dial reaches.
+    let resolver = &config.upstream_resolver;
+    let target = UpstreamTarget::select(resolver, &policy, domain, upstream_port, cached_upstream).await;
+    let upstream_ip = target.judged_ip(domain);
     let log_bodies = policy.log_bodies;
     let max_body = policy.max_body_capture;
 
@@ -960,6 +970,7 @@ async fn handle_request(
                 parts: &parts,
                 client_upgrade: client_upgrade.expect("websocket upgrade captured before split"),
                 domain,
+                target: &target,
                 protocol,
                 upstream_port,
                 upstream_tls,
@@ -1148,6 +1159,7 @@ async fn handle_request(
 
     let mut http_security_event = http_request_security_event(HttpRequestSecurityEventInput {
         domain,
+        upstream_ip,
         upstream_port,
         method: &method,
         path: &path,
@@ -1339,7 +1351,7 @@ async fn handle_request(
                 status: None,
                 body: observed.request_preview.clone(),
             }),
-            domain,
+            upstream_ip,
             upstream_port,
         );
         let mcp_evaluation = match mcp_span.in_scope(|| {
@@ -1385,7 +1397,7 @@ async fn handle_request(
                         status: Some("403".to_string()),
                         body: observed.request_preview.clone(),
                     }),
-                domain,
+                upstream_ip,
                 upstream_port,
             );
             let denied_call = McpCall {
@@ -1560,7 +1572,7 @@ async fn handle_request(
                 status: None,
                 body: Some(String::from_utf8_lossy(&body_bytes).to_string()),
             });
-            let model_event = security_event_with_transport(model_event, domain, upstream_port);
+            let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
             let model_evaluation = match crate::security_engine::evaluate_security_boundary(
                 &rules,
                 config.telemetry.plugin_policy.read().unwrap().clone(),
@@ -1696,7 +1708,9 @@ async fn handle_request(
         .lock()
         .instrument(upstream_prepare_span.clone())
         .await
-        .take();
+        .take()
+        .filter(|cached| cached.serves(domain, upstream_port, &target))
+        .map(|cached| cached.sender);
     let upstream_lock_us = upstream_lock_start.elapsed().as_micros() as u64;
 
     // If we have a cached sender, check it's still alive.
@@ -1714,18 +1728,9 @@ async fn handle_request(
     let mut tcp_us = 0u64;
     let mut tls_us = 0u64;
     let mut handshake_us = 0u64;
-    let upstream_override = policy.find_upstream_override(domain, upstream_port).cloned();
-    let dial_target = upstream_override
-        .as_ref()
-        .map(|route| route.dial.clone())
-        .unwrap_or_else(|| format!("{domain}:{upstream_port}"));
-    let upstream_protocol = upstream_override
-        .as_ref()
-        .map(|route| match route.protocol {
-            crate::net::policy::UpstreamOverrideProtocol::Http => Protocol::Http,
-            crate::net::policy::UpstreamOverrideProtocol::Tls => Protocol::Tls,
-        })
-        .unwrap_or(protocol);
+    let upstream_protocol = target.protocol(protocol);
+    // What the sender reaches, pinned to the peer once connected: the cache key.
+    let mut connected = target.clone();
 
     // Create a fresh upstream connection if needed. TLS path goes
     // TCP -> TLS handshake -> HTTP/1.1 handshake; HTTP path skips
@@ -1735,12 +1740,9 @@ async fn handle_request(
     } else {
         let dial_start = Instant::now();
         let tcp_start = Instant::now();
-        let upstream_tcp = match tokio::net::TcpStream::connect(&dial_target)
-            .instrument(upstream_prepare_span.clone())
-            .await
-        {
-            Ok(tcp) => {
-                let _ = tcp.set_nodelay(true);
+        let upstream_tcp = match target.connect().instrument(upstream_prepare_span.clone()).await {
+            Ok((tcp, pinned)) => {
+                connected = pinned;
                 tcp
             }
             Err(e) => {
@@ -1751,8 +1753,7 @@ async fn handle_request(
                 tracing::debug!(
                     target: "mitm.transport.upstream",
                     domain, port = upstream_port, reused = false,
-                    dial_target = %dial_target,
-                    upstream_override = upstream_override.is_some(),
+                    dial_target = %target,
                     upstream_lock_us, ready_us, tcp_us,
                     error = %e, "upstream TCP connect failed"
                 );
@@ -1895,8 +1896,7 @@ async fn handle_request(
     tracing::debug!(
         target: "mitm.transport.upstream",
         domain, port = upstream_port, reused, upstream_lock_us, ready_us,
-        dial_target = %dial_target,
-        upstream_override = upstream_override.is_some(),
+        dial_target = %target,
         tcp_us, tls_us, handshake_us,
         "upstream sender prepared"
     );
@@ -1980,16 +1980,13 @@ async fn handle_request(
             };
             tracing::debug!(
                 target: "mitm.transport.upstream",
-                domain, port = upstream_port, dial_target = %dial_target,
+                domain, port = upstream_port, dial_target = %target,
                 error = %e,
                 "cached upstream sender failed on send; reconnecting replayable request"
             );
-            let upstream_tcp = match tokio::net::TcpStream::connect(&dial_target)
-                .instrument(upstream_send_span.clone())
-                .await
-            {
-                Ok(tcp) => {
-                    let _ = tcp.set_nodelay(true);
+            let upstream_tcp = match target.connect().instrument(upstream_send_span.clone()).await {
+                Ok((tcp, pinned)) => {
+                    connected = pinned;
                     tcp
                 }
                 Err(retry_error) => {
@@ -2099,7 +2096,8 @@ async fn handle_request(
     // Put the sender back in the cache for the next request on this connection.
     // The next request's ready().await will naturally wait until this response
     // body completes (hyper 1.x keep-alive semantics).
-    cached_upstream.lock().await.replace(sender);
+    let cached = CachedUpstream::new(domain, upstream_port, connected, sender);
+    cached_upstream.lock().await.replace(cached);
     let (mut resp_parts, resp_body) = resp.into_parts();
 
     let mut effective_security_decision = request_security_decision.clone();
@@ -2218,7 +2216,7 @@ async fn handle_request(
                 status: Some(resp_status.to_string()),
                 body: Some(String::from_utf8_lossy(&response_body).to_string()),
             });
-            let model_event = security_event_with_transport(model_event, domain, upstream_port);
+            let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
             let model_evaluation = match crate::security_engine::evaluate_security_boundary(
                 &rules,
                 config.telemetry.plugin_policy.read().unwrap().clone(),
@@ -2318,7 +2316,7 @@ async fn handle_request(
                         status: Some(resp_status.to_string()),
                         body: observed.request_preview.clone(),
                     }),
-                domain,
+                upstream_ip,
                 upstream_port,
             );
             let call = McpCall {

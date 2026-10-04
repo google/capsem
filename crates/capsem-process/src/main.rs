@@ -575,6 +575,7 @@ async fn run_async_main_loop(
         telemetry: telemetry_deps,
         pipeline: mitm_pipeline,
         mcp_endpoint: Some(mcp_endpoint),
+        upstream_resolver: capsem_core::net::upstream_address::UpstreamResolver::system(),
     });
 
     // DNS handler shares the same security rule/plugin handles as MITM

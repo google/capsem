@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The network proxy now judges a guest's HTTP and HTTPS requests by the
+  address it will actually connect to. It used to evaluate the rules on the
+  name alone and then dial the name, so the built-in "ask before local
+  network" guard only saw IP literals and a short list of names: any other
+  name that resolved to loopback, a private range or the cloud metadata
+  address (a public record pointing at 127.0.0.1, DNS rebinding,
+  `metadata.google.internal` on a cloud host) reached it unasked: the cloud
+  metadata server and its credentials, and host-loopback or LAN services on
+  any port in the plain-HTTP allowlist (by default 80, 3128, 3713, 8080 and
+  11434; HTTPS always dials 443 and still had to pass certificate checks for
+  the name). The host now resolves the name first, judges
+  the resolved address (any non-public answer counts), and connects only to
+  the addresses it judged, so a second DNS answer cannot swap the target.
+  WebSocket upgrades follow the same rule. A plain-HTTP keep-alive request
+  for a different host no longer reuses the connection opened for the
+  previous one, which delivered a request judged for one host to another.
+  Administrator `upstream_overrides` keep dialing their configured target.
 - OCI workloads now run under a deny-by-default syscall filter: the
   allowlist Docker, containerd and Podman ship (moby's `default.json`,
   vendored and pinned), resolved for the guest's architecture and the

@@ -21,12 +21,13 @@ use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 mod html_extract;
 mod upstream;
 
+pub use crate::net::upstream_address::{is_public_address, resolve_upstream};
 use crate::security_engine::{
     evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent, IpSecurityEvent, RuntimeSecurityEventType,
     SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent, TcpSecurityEvent,
 };
 pub use html_extract::{collapse_whitespace, extract_markdown_from_html, extract_text_from_html};
-pub use upstream::{is_public_address, non_public_refusal, resolve_upstream, BuiltinHttpClient};
+pub use upstream::{non_public_refusal, BuiltinHttpClient};
 
 /// The three built-in tool names (without any namespace prefix).
 const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"];

@@ -309,6 +309,17 @@ at all -- `has(http.valid)`, not `has(http)`.
 | `tcp` | `tcp.valid`, `tcp.port` |
 | `udp` | `udp.valid`, `udp.port` |
 
+For an HTTP request, `ip.value` is the address the proxy connects to, not one
+read off the name: the host resolves the requested name before the rules run
+and then dials only the addresses it resolved, so a second DNS answer cannot
+move the connection after the check. When a name resolves to several
+addresses and any of them is loopback, private, link-local or otherwise
+non-public, `ip.value` is that one, so a rule on the address cannot be
+sidestepped by choosing a name. An IPv4-mapped IPv6 answer is reported as its
+IPv4 address. Hosts routed by `network.upstream_overrides` are administrator
+routing: they are dialed as configured and carry `ip.value` only when the
+requested host is itself an IP literal.
+
 Credential broker state is plugin/runtime evidence, exposed through plugin
 status and BLAKE3 references on real events. It is not a CEL root. Neither is
 `security`: decision state is the engine's output, not an input a rule reads.

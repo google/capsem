@@ -98,6 +98,7 @@ fn proxy_config(upstream_port: u16) -> Arc<MitmProxyConfig> {
         telemetry,
         pipeline,
         mcp_endpoint: None,
+        upstream_resolver: Default::default(),
     })
 }
 
