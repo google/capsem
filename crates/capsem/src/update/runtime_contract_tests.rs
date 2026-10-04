@@ -428,7 +428,7 @@ async fn stage_verified_update_downloads_every_runtime_image_without_mutating_in
     std::fs::write(&installed_manifest, b"installed-manifest").unwrap();
 
     let check = staged_runtime_check(source, &body);
-    let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(&body), &check, &body)
+    let staged = stage_verified_update_at(&capsem_home, &capsem_home, &runtime_stage_plan(&body), &check, &body)
         .await
         .unwrap();
 
@@ -463,7 +463,7 @@ async fn stage_verified_update_rejects_corruption_before_candidate_or_install_mu
     std::fs::write(&installed_manifest, b"installed-manifest").unwrap();
 
     let check = staged_runtime_check(source, &body);
-    let error = stage_verified_update_at(&capsem_home, &runtime_stage_plan(&body), &check, &body)
+    let error = stage_verified_update_at(&capsem_home, &capsem_home, &runtime_stage_plan(&body), &check, &body)
         .await
         .expect_err("corrupt runtime bytes must fail before activation");
 
@@ -499,7 +499,7 @@ async fn activate_staged_update_switches_runtime_assets_and_manifest_together() 
     .unwrap();
 
     let check = staged_runtime_check(source.clone(), &body);
-    let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(&body), &check, &body)
+    let staged = stage_verified_update_at(&capsem_home, &capsem_home, &runtime_stage_plan(&body), &check, &body)
         .await
         .unwrap();
 
@@ -538,7 +538,7 @@ async fn activate_staged_update_rolls_back_every_selected_path_on_manifest_failu
     std::fs::write(&installed_metadata, b"installed-metadata").unwrap();
 
     let check = staged_runtime_check(source, &body);
-    let staged = stage_verified_update_at(&capsem_home, &runtime_stage_plan(&body), &check, &body)
+    let staged = stage_verified_update_at(&capsem_home, &capsem_home, &runtime_stage_plan(&body), &check, &body)
         .await
         .unwrap();
     let staged_kernel = staged
@@ -663,4 +663,27 @@ fn a_republished_manifest_with_unchanged_artifacts_is_still_installed() {
     std::fs::write(temp.path().join("manifest.json"), &body).unwrap();
     assert!(!plan.needs_staging(&None, temp.path()));
     assert!(plan.needs_staging(&Some(switched), temp.path()));
+}
+
+#[test]
+fn a_candidate_that_downloads_nothing_must_describe_the_installed_runtime() {
+    // Nothing is downloaded for a candidate whose runtime revision did not
+    // change, so nothing would check the digests it names. A candidate that
+    // rewrites them -- tampered -- must be refused, not installed as metadata.
+    let installed = tempfile::tempdir().unwrap();
+    let body = update_plan_graph("1.0.0", "1.0.0");
+    std::fs::write(installed.path().join("manifest.json"), &body).unwrap();
+    let mut metadata_only: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    metadata_only["runtime"]["max_capsem_version"] = "9999.0.0".into();
+    let metadata_only = serde_json::to_vec(&metadata_only).unwrap();
+    require_installed_runtime(installed.path(), &metadata_only).unwrap();
+
+    let mut tampered: serde_json::Value = serde_json::from_slice(&metadata_only).unwrap();
+    tampered["runtime"]["architectures"][0]["images"][2]["digest"]["sha256"] = "5".repeat(64).into();
+    let error = require_installed_runtime(installed.path(), &serde_json::to_vec(&tampered).unwrap())
+        .expect_err("a rewritten digest is not metadata");
+    assert!(format!("{error:#}").contains("rootfs.erofs"), "{error:#}");
+
+    let empty = tempfile::tempdir().unwrap();
+    require_installed_runtime(empty.path(), &metadata_only).expect_err("nothing installed to vouch for it");
 }

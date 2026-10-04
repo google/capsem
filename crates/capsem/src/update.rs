@@ -6,9 +6,11 @@
 //! from VM asset hydration.
 
 mod asset_install;
+mod candidate_audit;
 mod verified_update;
 
 use asset_install::*;
+use candidate_audit::*;
 use verified_update::*;
 
 #[cfg(test)]
@@ -1828,38 +1830,19 @@ pub async fn run_update(
         .source
         .as_deref()
         .context("verified update is missing its manifest source")?;
-    let candidate_manifest_sha256 = sha256_hex(&manifest_bytes);
     let candidate_assets_dir = capsem_assets::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-    let candidate_previous_state = installed_asset_audit_state(&candidate_assets_dir);
+    let audit = CandidateAudit::new(candidate_source, &manifest_bytes, candidate_assets_dir);
     let staged_update = if yes {
-        append_update_audit(serde_json::json!({
-            "event": "release_candidate_fetched",
-            "action": "release_candidate",
-            "outcome": "fetched",
-            "source": candidate_source,
-            "channel": channel_from_source(candidate_source),
-            "candidate_manifest_sha256": candidate_manifest_sha256,
-            "previous": candidate_previous_state
-        }));
+        audit.fetched();
         let plan = match plan_verified_update(&check, &manifest_bytes, &current) {
             Ok(plan) => plan,
             Err(error) => {
-                append_update_audit(serde_json::json!({
-                    "event": "release_candidate_rejected",
-                    "action": "release_candidate",
-                    "outcome": "failure",
-                    "source": candidate_source,
-                    "channel": channel_from_source(candidate_source),
-                    "candidate_manifest_sha256": candidate_manifest_sha256,
-                    "previous": candidate_previous_state,
-                    "current": installed_asset_audit_state(&candidate_assets_dir),
-                    "error": format!("{error:#}")
-                }));
+                audit.rejected(&error);
                 return Err(error).context("release manifest does not describe a complete compatible update");
             }
         };
-        if !plan.needs_staging(&selected_channel, &candidate_assets_dir) {
+        if !plan.needs_staging(&selected_channel, audit.installed_assets()) {
             None
         } else {
             let capsem_home = crate::paths::capsem_home()?;
@@ -1885,46 +1868,39 @@ pub async fn run_update(
                     }
                 }));
             }
-            let staged = match stage_verified_update_at(&capsem_home, &plan, &check, &manifest_bytes).await {
-                Ok(staged) => staged,
-                Err(error) => {
-                    if let Some(installer) = check
-                        .binary_installer
-                        .as_ref()
-                        .filter(|_| plan.steps.contains(&UpdatePlanStep::Binary))
-                    {
-                        append_update_audit(serde_json::json!({
-                            "event": "binary_update_failed",
-                            "action": "binary_update",
-                            "outcome": "failure",
-                            "source": check.source.as_deref(),
-                            "channel": check.source.as_deref().and_then(channel_from_source),
-                            "old_version": current.as_str(),
-                            "new_version": plan.selected_binary.as_str(),
-                            "package": {
-                                "name": &installer.name,
-                                "url": &installer.url,
-                                "sha256": &installer.sha256,
-                                "size": installer.size,
-                                "layout": &installer.install_layout
-                            },
-                            "error": format!("{error:#}")
-                        }));
+            let staged =
+                match stage_verified_update_at(&capsem_home, audit.installed_assets(), &plan, &check, &manifest_bytes)
+                    .await
+                {
+                    Ok(staged) => staged,
+                    Err(error) => {
+                        if let Some(installer) = check
+                            .binary_installer
+                            .as_ref()
+                            .filter(|_| plan.steps.contains(&UpdatePlanStep::Binary))
+                        {
+                            append_update_audit(serde_json::json!({
+                                "event": "binary_update_failed",
+                                "action": "binary_update",
+                                "outcome": "failure",
+                                "source": check.source.as_deref(),
+                                "channel": check.source.as_deref().and_then(channel_from_source),
+                                "old_version": current.as_str(),
+                                "new_version": plan.selected_binary.as_str(),
+                                "package": {
+                                    "name": &installer.name,
+                                    "url": &installer.url,
+                                    "sha256": &installer.sha256,
+                                    "size": installer.size,
+                                    "layout": &installer.install_layout
+                                },
+                                "error": format!("{error:#}")
+                            }));
+                        }
+                        audit.rejected(&error);
+                        return Err(error);
                     }
-                    append_update_audit(serde_json::json!({
-                        "event": "release_candidate_rejected",
-                        "action": "release_candidate",
-                        "outcome": "failure",
-                        "source": candidate_source,
-                        "channel": channel_from_source(candidate_source),
-                        "candidate_manifest_sha256": candidate_manifest_sha256,
-                        "previous": candidate_previous_state,
-                        "current": installed_asset_audit_state(&candidate_assets_dir),
-                        "error": format!("{error:#}")
-                    }));
-                    return Err(error);
-                }
-            };
+                };
             info!(
                 manifest = %staged.manifest_path.display(),
                 installer = ?staged.installer_path,
@@ -2009,10 +1985,9 @@ pub async fn run_update(
     if yes {
         retire_profile_catalog();
         if let Some(staged) = staged_update.as_ref() {
-            let installed_assets = capsem_assets::asset_manager::default_assets_dir()
-                .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
+            let installed_assets = audit.installed_assets();
             if let Err(error) =
-                activate_staged_update_with_asset_audit(&installed_assets, staged, &check, &requested_transition)
+                activate_staged_update_with_asset_audit(installed_assets, staged, &check, &requested_transition)
             {
                 if binary_applied {
                     if let Some(installer) = check.binary_installer.as_ref() {
@@ -2035,29 +2010,10 @@ pub async fn run_update(
                         }));
                     }
                 }
-                append_update_audit(serde_json::json!({
-                    "event": "release_candidate_rejected",
-                    "action": "release_candidate",
-                    "outcome": "failure",
-                    "source": candidate_source,
-                    "channel": channel_from_source(candidate_source),
-                    "candidate_manifest_sha256": candidate_manifest_sha256,
-                    "previous": candidate_previous_state,
-                    "current": installed_asset_audit_state(&installed_assets),
-                    "error": format!("{error:#}")
-                }));
+                audit.rejected(&error);
                 return Err(error);
             }
-            append_update_audit(serde_json::json!({
-                "event": "release_candidate_activated",
-                "action": "release_candidate",
-                "outcome": "success",
-                "source": candidate_source,
-                "channel": channel_from_source(candidate_source),
-                "candidate_manifest_sha256": candidate_manifest_sha256,
-                "previous": candidate_previous_state,
-                "current": installed_asset_audit_state(&installed_assets)
-            }));
+            audit.activated();
             did_update = true;
 
             if binary_applied {

@@ -97,6 +97,42 @@ pub(super) fn plan_verified_update(
     })
 }
 
+/// A candidate that stages no runtime is installed on the strength of the
+/// runtime already here, so it must name exactly this host's installed images.
+/// A digest it changes without a new runtime revision would otherwise be
+/// installed unverified.
+pub(super) fn require_installed_runtime(installed_assets: &Path, manifest_bytes: &[u8]) -> Result<()> {
+    let Some(candidate) = release_graph_from_payload(manifest_bytes)?.filter(|graph| graph.runtime.is_some()) else {
+        return Ok(());
+    };
+    let arch = capsem_assets::asset_manager::host_manifest_arch();
+    let installed_path = installed_assets.join("manifest.json");
+    let installed = std::fs::read(&installed_path)
+        .ok()
+        .and_then(|bytes| release_graph_from_payload(&bytes).ok().flatten())
+        .with_context(|| {
+            format!(
+                "no installed runtime manifest at {} to compare",
+                installed_path.display()
+            )
+        })?;
+    let images = |graph: &ReleaseGraphManifest| -> Result<BTreeMap<String, (String, String, u64)>> {
+        Ok(runtime_asset_downloads(graph, arch)?
+            .into_iter()
+            .map(|image| (image.logical_name, (image.sha256, image.blake3, image.size)))
+            .collect())
+    };
+    let (wanted, have) = (images(&candidate)?, images(&installed)?);
+    if let Some(name) = wanted
+        .keys()
+        .chain(have.keys())
+        .find(|name| wanted.get(*name) != have.get(*name))
+    {
+        anyhow::bail!("candidate changes the installed {name} image without a new runtime revision");
+    }
+    Ok(())
+}
+
 impl VerifiedUpdatePlan {
     /// Whether this candidate must be staged and activated. Artifacts are only
     /// part of it: the installed manifest is what the service reads
@@ -189,6 +225,7 @@ pub(super) fn validate_v2_update_pairing(
 
 pub(super) async fn stage_verified_update_at(
     capsem_home: &Path,
+    installed_assets: &Path,
     plan: &VerifiedUpdatePlan,
     check: &UpdateCheck,
     manifest_bytes: &[u8],
@@ -196,6 +233,9 @@ pub(super) async fn stage_verified_update_at(
     let derived = plan_verified_update(check, manifest_bytes, &plan.installed_binary)?;
     if &derived != plan {
         anyhow::bail!("verified update plan changed before artifact staging");
+    }
+    if !plan.steps.contains(&UpdatePlanStep::Runtime) {
+        require_installed_runtime(installed_assets, manifest_bytes)?;
     }
     let source = check
         .source

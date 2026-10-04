@@ -1110,7 +1110,7 @@ must_stay_below_lines = 3000
 "crates/capsem-tui/src/ui.rs" = 1036
 "crates/capsem/src/main.rs" = 2015
 "crates/capsem/src/tests.rs" = 1227
-"crates/capsem/src/update.rs" = 2187
+"crates/capsem/src/update.rs" = 2143
 "crates/capsem/src/update/asset_install.rs" = 1125
 "crates/capsem/src/update/tests.rs" = 2306
 
