@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from helpers.bounded import bounded
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ASSETS_DIR = PROJECT_ROOT / "cache" / "target" / "assets"
@@ -35,7 +36,7 @@ def host_arch():
 def built_binaries():
     """Build all daemon crates once for the session."""
     result = subprocess.run(
-        ["cargo", "build"] + [arg for c in DAEMON_CRATES for arg in ["-p", c]],
+        bounded(["cargo", "build"] + [arg for c in DAEMON_CRATES for arg in ["-p", c]], 300),
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

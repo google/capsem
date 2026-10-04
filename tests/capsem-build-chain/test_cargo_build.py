@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from helpers.bounded import bounded
 
 pytestmark = pytest.mark.build_chain
 
@@ -43,7 +44,7 @@ def test_workspace_has_no_warnings():
     while unit tests passed. Workspace lints deny warnings via Cargo.toml.
     """
     result = subprocess.run(
-        ["cargo", "check", "--workspace"],
+        bounded(["cargo", "check", "--workspace"], 300),
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

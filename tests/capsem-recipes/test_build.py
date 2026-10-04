@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from helpers.bounded import bounded
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -13,7 +14,7 @@ pytestmark = pytest.mark.recipe
 def test_cargo_build_workspace():
     """cargo build --workspace succeeds."""
     result = subprocess.run(
-        ["cargo", "build", "--workspace"],
+        bounded(["cargo", "build", "--workspace"], 300),
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

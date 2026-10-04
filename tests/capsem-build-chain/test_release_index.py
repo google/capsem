@@ -12,6 +12,7 @@ import tarfile
 from pathlib import Path
 
 from blake3 import blake3
+from helpers.bounded import bounded
 from helpers.release_site import build_release_channel_site
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -52,7 +53,7 @@ def _rootfs_obom_bytes(architecture: str) -> bytes:
 
 def _run_admin(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        ["cargo", "run", "-p", "capsem-admin", "--quiet", "--", *args],
+        bounded(["cargo", "run", "-p", "capsem-admin", "--quiet", "--", *args], 900),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
