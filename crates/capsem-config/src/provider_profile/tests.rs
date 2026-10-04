@@ -311,3 +311,21 @@ fn built_in_defaults_cover_publication_preview_networks_and_skills() {
         r#"file.read.name == "SKILL.md" && file.read.ext == "md""#
     );
 }
+
+/// The built-in profile is parsed once per process: every call hands out the
+/// same instance. Policy reads on polled routes used to re-parse it per call,
+/// about 4 ms each in a debug build and once per plugin on `/plugins/list`.
+#[test]
+fn built_in_defaults_are_parsed_once_and_shared() {
+    let first = ProviderRuleProfile::builtin_security_defaults();
+    let second = ProviderRuleProfile::builtin_security_defaults();
+    assert!(
+        std::ptr::eq(first, second),
+        "built-in defaults must be one shared instance"
+    );
+    assert_eq!(
+        first,
+        &SecurityRuleProfile::parse_toml(DRAFT).expect("built-in defaults parse"),
+        "the shared instance is the compiled-in TOML"
+    );
+}

@@ -217,7 +217,7 @@ impl MergedPolicies {
 
 /// Plugin modes as a session runs them: built in, then the user's, then corp's.
 pub fn merge_plugin_policy(user: &SettingsFile, corp: &SettingsFile) -> BTreeMap<String, SecurityPluginConfig> {
-    let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins;
+    let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins.clone();
     for (plugin_id, mode) in &user.plugins {
         plugins.insert(plugin_id.clone(), *mode);
     }

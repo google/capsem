@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +8,18 @@ use crate::model::{ModelProtocol, ProviderKind};
 use crate::{CompiledSecurityRule, SecurityRuleProfile, SecurityRuleProvider, SecurityRuleSet, SecurityRuleSource};
 
 const DEFAULT_PROVIDER_RULES_TOML: &str = include_str!("default_provider_rules.toml");
+
+/// The built-in profile, parsed and checked once. It is compiled into the
+/// binary, so it cannot change while the process runs; parsing it per call
+/// cost every policy read about 4 ms in a debug build, and `/plugins/list`
+/// paid it once per plugin.
+static BUILTIN_SECURITY_DEFAULTS: LazyLock<SecurityRuleProfile> = LazyLock::new(|| {
+    let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES_TOML)
+        .expect("built-in provider rule profile must parse");
+    validate_builtin_profile_contract(&profile)
+        .expect("built-in provider rule profile must include default rules and plugins");
+    profile
+});
 const REQUIRED_BUILTIN_PLUGINS: &[&str] = &["credential_broker", "log_sanitizer"];
 const REQUIRED_DEFAULT_RULE_KEYS: &[&str] = &[
     "http",
@@ -204,17 +217,16 @@ pub struct ProviderRuleProfile {
 }
 
 impl ProviderRuleProfile {
-    pub fn builtin_security_defaults() -> SecurityRuleProfile {
-        let profile = SecurityRuleProfile::parse_toml(DEFAULT_PROVIDER_RULES_TOML)
-            .expect("built-in provider rule profile must parse");
-        validate_builtin_profile_contract(&profile)
-            .expect("built-in provider rule profile must include default rules and plugins");
-        profile
+    /// The built-in rules, plugins and providers: one shared instance for
+    /// the life of the process. Callers clone only the part they keep.
+    pub fn builtin_security_defaults() -> &'static SecurityRuleProfile {
+        &BUILTIN_SECURITY_DEFAULTS
     }
 
     pub fn builtin_defaults() -> Self {
-        let profile = Self::builtin_security_defaults();
-        Self { ai: profile.ai }
+        Self {
+            ai: Self::builtin_security_defaults().ai.clone(),
+        }
     }
 
     pub fn parse_toml(input: &str) -> Result<Self, String> {
