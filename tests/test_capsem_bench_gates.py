@@ -27,10 +27,6 @@ def _valid_result():
         "startup": {
             "commands": {
                 "python3": {"mean_ms": 10},
-                "node": {"mean_ms": 150},
-                "claude": {"mean_ms": 400},
-                "gemini": {"mean_ms": 900},
-                "codex": {"mean_ms": 350},
             },
         },
         "http": {
@@ -198,7 +194,7 @@ def test_failed_capsem_bench_measurement_is_archived(monkeypatch):
     ("path", "value", "message"),
     [
         (("disk", "seq_write", "throughput_mbps"), 10, "disk seq_write"),
-        (("startup", "commands", "gemini", "mean_ms"), 10_000, "startup gemini"),
+        (("startup", "commands", "python3", "mean_ms"), 10_000, "startup python3"),
         (("http", "failed"), 1, "HTTP failed"),
         (("throughput", "http_code"), 500, "throughput HTTP"),
     ],
@@ -217,7 +213,7 @@ def test_validate_capsem_bench_result_rejects_bad_result(path, value, message):
 def test_no_gross_regression_threshold_is_authored_in_python() -> None:
     """The gate contract, applied to the one table that escaped it.
 
-    Eleven thresholds -- disk MB/s, IOPS, five per-runtime startup ceilings,
+    Eleven thresholds -- disk MB/s, IOPS, per-runtime startup ceilings,
     HTTP rps and p99, throughput bytes and MB/s, snapshot op latency -- lived
     as literals in a test helper. Every other number the gate judges by lives
     in `config/gate.toml`, and these were judged the same way while being
