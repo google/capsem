@@ -104,10 +104,15 @@ def console(service, vm_id):
     return logs.get("serial_logs") or ""
 
 
+#: What the Redis fixture prints once it accepts connections.
+REDIS_READY = "Ready to accept connections tcp"
+
+
 @contextlib.contextmanager
-def created(service, tmp_path, reference, certificate, name, *options):
-    """A named container VM from `create --image`, up once its Redis is
-    ready; its create stderr (the published ports) is kept at `stderr`."""
+def created(service, tmp_path, reference, certificate, name, *options, ready=REDIS_READY):
+    """A named container VM from `create --image`, up once its console shows
+    `ready` (Redis's own readiness line by default); its create stderr (the
+    published ports) is kept at `stderr`."""
     result = subprocess.run(
         create_command(service, reference, certificate, "-n", name, *options),
         env=environment(service),
@@ -127,9 +132,7 @@ def created(service, tmp_path, reference, certificate, name, *options):
     assert rows[0]["id"] in result.stdout.decode(), result.stdout
     try:
         wait_for(
-            lambda: (
-                "Ready to accept connections tcp" in console(service, rows[0]["id"])
-            ),
+            lambda: ready in console(service, rows[0]["id"]),
             f"{name} container startup",
             timeout=180,
         )
@@ -290,6 +293,27 @@ def test_cli_runtime_failure_destroys_the_vm(service, tmp_path):
         assert service.client().get("/vms/list")["sandboxes"] == []
 
 
+def test_cli_create_reports_a_workload_that_never_started(service, tmp_path):
+    """A detached workload runc cannot start fails the create, promptly,
+    instead of being reported running or waited on until the deadline."""
+    metadata = {"Entrypoint": ["/missing-entrypoint"], "Cmd": []}
+    with registry(tmp_path, image_config=metadata) as (reference, certificate, _):
+        started = time.monotonic()
+        result = subprocess.run(
+            create_command(service, reference, certificate, "-n", "never-started"),
+            env=environment(service),
+            capture_output=True,
+            timeout=240,
+            check=False,
+        )
+        elapsed = time.monotonic() - started
+    (tmp_path / "create.stderr").write_bytes(result.stderr)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert b"the workload did not start" in result.stderr, result.stderr
+    # Well inside the service's 110-second readiness deadline.
+    assert elapsed < 60, elapsed
+
+
 def test_cli_stream_exceeds_captured_exec_limit(service, tmp_path):
     with registry(tmp_path) as (reference, certificate, _):
         result = subprocess.run(
@@ -355,6 +379,12 @@ def test_cli_create_image_starts_detached_and_keeps_only_a_named_vm(service, tmp
         assert unnamed.returncode == 0, unnamed.stderr
         rows = client.get("/vms/list")["sandboxes"]
         assert len(rows) == 1 and not rows[0]["persistent"], rows
+        # A create returns once the workload runs, so the very next exec
+        # enters it: `running` used to be reported from the staged image,
+        # before runc had created anything to enter.
+        assert client.get(f"/vms/{rows[0]['id']}/container")["state"] == "running"
+        first = client.post(f"/vms/{rows[0]['id']}/exec", {"command": "echo entered", "timeout_secs": 10})
+        assert first["exit_code"] == 0 and exec_output_text(first) == "entered\n", first
         wait_for(
             lambda: (
                 "Ready to accept connections tcp" in console(service, rows[0]["id"])

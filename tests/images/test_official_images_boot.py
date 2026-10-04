@@ -7,14 +7,23 @@ version command in a `capsem run --image` session, as the image's
 unprivileged user.
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
 
 import pytest
+from helpers.service import exec_output_text
 
 from tests.fixtures.oci.registry import layout_registry
-from tests.ironbank.kingslanding.test_run import command, environment, service
+from tests.ironbank.kingslanding.test_run import (
+    command,
+    console,
+    create_command,
+    environment,
+    service,
+    wait_for,
+)
 
 __all__ = ["service"]
 
@@ -54,6 +63,73 @@ def test_the_image_boots_and_its_agent_runs(service, tmp_path, name):
 @pytest.mark.parametrize("name", sorted(MCP_CONFIGS))
 def test_the_images_agent_reaches_capsem_mcp_over_http(service, tmp_path, name):
     _run_in_image(service, tmp_path, name, ["cat", MCP_CONFIGS[name]], MCP_URL)
+
+
+CHROMIUM_PROCESSES = (
+    # Each Chromium process: its pid, its pid in every PID namespace it is in
+    # (NSpid, readable without ptrace access to a non-dumpable renderer), and
+    # its command line.
+    'for d in /proc/[0-9]*; do c=$(tr "\\0" " " <"$d/cmdline" 2>/dev/null) || continue; '
+    'case "$c" in /usr/lib/claude-desktop/claude-desktop\\ --type=*) printf "%s|%s|%s\\n" "${d#/proc/}" '
+    '"$(sed -n "s/^NSpid:[[:space:]]*//p" "$d/status" | tr "\\t" " ")" "$c";; esac; done'
+)
+
+
+def test_claude_desktop_runs_chromium_inside_its_namespace_sandbox(service, tmp_path):
+    """Claude Desktop starts under the Xpra surface's filter with Chromium's
+    sandbox on: no process runs with --no-sandbox, and its zygote and renderers
+    live in PID namespaces of their own, which the user-namespace sandbox
+    creates and the terminal filter refuses."""
+    layout = Path(LAYOUTS or "") / "claude-desktop"
+    client = service.client()
+    with layout_registry(tmp_path, layout, "claude-desktop") as (reference, certificate, _):
+        created = subprocess.run(
+            create_command(service, reference, certificate, "-n", "desktop", "--ram", "4"),
+            env=environment(service),
+            capture_output=True,
+            timeout=900,
+            check=False,
+        )
+        (tmp_path / "create.stderr").write_bytes(created.stderr)
+        assert created.returncode == 0, created.stderr.decode(errors="replace")
+        (vm,) = (
+            row for row in client.get("/vms/list")["sandboxes"] if row.get("name") == "desktop"
+        )
+        try:
+            processes = []
+
+            # A create returns once the workload runs, so every exec enters it.
+            def sandboxed():
+                result = client.post(
+                    f"/vms/{vm['id']}/exec",
+                    {"command": CHROMIUM_PROCESSES, "timeout_secs": 30},
+                    timeout=40,
+                )
+                assert result.get("exit_code") == 0, result
+                processes[:] = [
+                    line.split("|", 2) for line in exec_output_text(result).splitlines()
+                ]
+                return any("--type=renderer" in line for _, _, line in processes)
+
+            wait_for(sandboxed, "Claude Desktop renderer", timeout=600)
+            (tmp_path / "processes.txt").write_text("\n".join("|".join(row) for row in processes))
+            status = client.get(f"/vms/{vm['id']}/container")
+            (tmp_path / "container.json").write_text(json.dumps(status, indent=2))
+            assert status["state"] == "running", status
+            assert not any("--no-sandbox" in line for _, _, line in processes), processes
+            nested = {
+                kind: [
+                    len(nspid.split()) > 1
+                    for _, nspid, line in processes
+                    if f"--type={kind}" in line
+                ]
+                for kind in ("zygote", "renderer")
+            }
+            assert all(nested["renderer"]) and nested["renderer"], processes
+            assert any(nested["zygote"]), processes
+            assert "No usable sandbox" not in console(service, vm["id"])
+        finally:
+            client.delete(f"/vms/{vm['id']}/delete")
 
 
 def _run_in_image(service, tmp_path, name, argv, expected):

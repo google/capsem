@@ -316,6 +316,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem create --image` returns once the image's workload is running, and
+  `GET /vms/{id}/container` says `running` only then. Both used to report it
+  running as soon as the image was unpacked, before runc had created the
+  workload, so an exec sent right after the create failed with "no container
+  workload is running". A detached workload that never starts (a missing
+  entrypoint, say) now fails the create promptly with `failed`, instead of
+  being reported running.
 - A profile MCP tool the service invokes on the user's behalf is now
   recorded in `tool_calls` as `transport = 'direct'`. It was recorded as
   `vsock_frame`, the guest relay's transport, which it never used.

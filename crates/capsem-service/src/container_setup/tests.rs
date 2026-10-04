@@ -205,28 +205,68 @@ async fn create_wait_returns_terminal_failure_without_retrying_setup() {
     assert_eq!(status.error.as_deref(), Some("pull refused"));
 }
 
+/// The guest's stage markers (the launcher's `ready`, `running`, `failed`).
+fn mark(fx: &Fixture, marker: &str) {
+    std::fs::write(fx.workspace.join(".capsem-image").join(marker), b"1\n").unwrap();
+}
+
 /// `POST /vms/create` waits on this for a detached workload. The launcher runs
-/// in the background, so only the guest's ready marker says it is running; a
+/// in the background, so only the guest's running marker says it is running; a
 /// wait that ignores it spins until the HTTP deadline and returns 504.
 #[tokio::test]
-async fn create_wait_reports_a_detached_workload_running_once_the_guest_marks_ready() {
+async fn create_wait_reports_a_detached_workload_running_once_the_guest_marks_it_running() {
     let fx = fixture(images());
     let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
-    std::fs::write(fx.workspace.join(".capsem-image/ready"), b"1\n").unwrap();
+    // Staged and unpacked is not started: runc has not created the workload
+    // yet, and an exec the create's caller sends next would find nothing.
+    mark(&fx, "ready");
+    let staged = wait_observed(
+        &fx.state,
+        "box",
+        capsem_foundation::poll::PollOpts::new("container-create-test", std::time::Duration::from_millis(300)),
+    )
+    .await;
+    assert!(staged.is_err(), "a staged workload settled the create wait: {staged:?}");
+    mark(&fx, "running");
     let status = wait_observed(
         &fx.state,
         "box",
         capsem_foundation::poll::PollOpts::new("container-create-test", std::time::Duration::from_secs(2)),
     )
     .await
-    .expect("a guest-ready detached workload settles the create wait");
+    .expect("a running detached workload settles the create wait");
     assert_eq!(status.state, ContainerState::Running);
     assert_eq!(
         status.digest.as_deref(),
         Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    );
+}
+
+/// A launch whose workload never started ends the create wait as a failure,
+/// instead of leaving it to spin until the HTTP deadline.
+#[tokio::test]
+async fn create_wait_reports_a_detached_workload_that_never_started_as_failed() {
+    let fx = fixture(images());
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
+    start(&fx.state, "box".into(), spec(None));
+    owner.await.unwrap();
+    wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
+    mark(&fx, "ready");
+    mark(&fx, "failed");
+    let status = wait_observed(
+        &fx.state,
+        "box",
+        capsem_foundation::poll::PollOpts::new("container-create-test", std::time::Duration::from_secs(2)),
+    )
+    .await
+    .expect("a failed launch settles the create wait");
+    assert_eq!(status.state, ContainerState::Failed);
+    assert_eq!(
+        status.error.as_deref(),
+        Some("the workload did not start; `capsem logs` shows why")
     );
 }
 
@@ -586,7 +626,7 @@ async fn container_status_route_reports_no_workload_as_not_found() {
 }
 
 #[tokio::test]
-async fn container_status_route_reports_running_only_once_the_guest_marks_ready() {
+async fn container_status_route_reports_running_only_once_the_guest_marks_it_running() {
     let fx = fixture(images());
     let owner = owner_accepting_stage_and_launch(&fx.uds_path, 6);
     start(&fx.state, "box".into(), spec(None));
@@ -596,7 +636,11 @@ async fn container_status_route_reports_running_only_once_the_guest_marks_ready(
     assert_eq!(body["state"], "starting");
     assert_eq!(body["image"], "registry.example/app:1");
 
-    std::fs::write(fx.workspace.join(".capsem-image/ready"), b"1\n").unwrap();
+    mark(&fx, "ready");
+    let (_, body) = get_status(&fx.state, "box").await;
+    assert_eq!(body["state"], "starting", "staged is not running");
+
+    mark(&fx, "running");
     let (status, body) = get_status(&fx.state, "box").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["state"], "running");
@@ -622,7 +666,8 @@ async fn container_status_survives_a_service_restart_through_the_launch_record()
     }
     // A restarted service has no live record, only the session directory.
     fx.state.containers.cancel("box");
-    std::fs::write(fx.workspace.join(".capsem-image/ready"), b"1\n").unwrap();
+    mark(&fx, "ready");
+    mark(&fx, "running");
     let (status, body) = get_status(&fx.state, "box").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "running");

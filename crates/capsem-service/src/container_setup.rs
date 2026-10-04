@@ -582,8 +582,10 @@ pub(crate) async fn guest_file(
     capsem_service::fs_utils::resolve_file_path(&query.path, query.exact, runs_container(state, id).await)
 }
 
-/// `running` is guest-reported: the launcher writes its ready marker into the
-/// shared workspace once the image is unpacked and the workload started.
+/// `running` is guest-reported: runc's poststart hook writes the launcher's
+/// running marker into the shared workspace once the workload's process
+/// started, so an exec sent after `running` finds it. A launch that ended
+/// without starting it marks itself failed.
 pub(crate) async fn handle_container_status(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
@@ -618,15 +620,22 @@ fn observe(
         return Ok(None);
     };
     if status.state == ContainerState::Starting {
-        let ready = format!("{}/ready", capsem_core::container::STAGE);
-        let launched = resolve_workspace_target(state, id, &ready, false)
-            .and_then(|(parent, name)| parent.entry_kind(&name).map_err(workspace_io_error))
-            .is_ok_and(|kind| kind == Some(EntryKind::File));
-        if launched {
+        if staged_marker(state, id, capsem_core::container::STAGE_RUNNING) {
             status.state = ContainerState::Running;
+        } else if staged_marker(state, id, capsem_core::container::STAGE_FAILED) {
+            status.state = ContainerState::Failed;
+            status.error = Some("the workload did not start; `capsem logs` shows why".into());
         }
     }
     Ok(Some(status))
+}
+
+/// Whether the launcher left `marker` in VM `id`'s stage.
+fn staged_marker(state: &ServiceState, id: &str, marker: &str) -> bool {
+    let path = format!("{}/{marker}", capsem_core::container::STAGE);
+    resolve_workspace_target(state, id, &path, false)
+        .and_then(|(parent, name)| parent.entry_kind(&name).map_err(workspace_io_error))
+        .is_ok_and(|kind| kind == Some(EntryKind::File))
 }
 
 /// Write one staged file into the VM's workspace through the same contained,
