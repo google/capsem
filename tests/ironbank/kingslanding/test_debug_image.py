@@ -13,7 +13,7 @@ import pytest
 from helpers.debug_session import WORKSPACE, debug_session
 from helpers.service import exec_output_text
 
-from tests.fixtures.oci import debug_image
+from tests.fixtures.oci.pinned_image import debug_image
 from tests.ironbank.kingslanding.test_run import service
 
 __all__ = ["service"]

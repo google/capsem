@@ -2313,10 +2313,28 @@ benchmark_paths = [
 [functional.debug_image]
 name = "capsem-debug"
 context = "images/capsem-debug"
-script = "tests/fixtures/oci/debug_image.py"
+script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/capsem-debug"
 cache_stage = "test-images"
 digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6" }
+
+# The reference image: a pinned digest of the official `dev` image. Every
+# runtime test that boots a workload boots this one, so main development
+# qualifies the runtime against the product's own shape (a non-root image
+# user, /workspace, git, a toolchain) rather than a fixture -- without
+# depending on every application image. `dev` carries no agent; agent images
+# qualify on their own (`capsem-gate image-qualify`). Updating images/dev never
+# moves this pin: it changes only by a deliberate commit, after the new digest
+# qualified. `base_context` is built first and passed as BASE, as the image
+# workflow does.
+[functional.reference_image]
+name = "dev"
+context = "images/dev"
+base_context = "images/base"
+script = "tests/fixtures/oci/pinned_image.py"
+repository = "ghcr.io/google/capsem/dev"
+cache_stage = "test-images"
+digests = { "linux/arm64" = "sha256:64729596d6cdf9e5005c6d0d4745c842b1d159eea95b7e4025350d1d830b80b1" }
 
 [modules]
 # The build-chain suites that need built artifacts. The release-contracts

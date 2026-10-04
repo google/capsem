@@ -1,13 +1,18 @@
-"""capsem-debug, the test-tooling image: verified, pulled by digest, or built.
+"""Images the suites serve by pinned digest: verified, pulled, or built.
 
-`config/gate.toml [functional.debug_image]` pins one OCI image manifest per
-platform. Its layout lives in the shared cache stage that section names, one
-directory per digest, so a local build and a registry pull of the same digest
-are the same entry, and every checkout and gate prefix reuses it instead of
-pulling it again.
+`config/gate.toml [functional.<section>]` pins one OCI image manifest per
+platform for each image the harness serves:
 
-    debug_image.py prepare [--platform P]   verify the pinned layout; pull it by digest if absent
-    debug_image.py build [--platform P]     build images/capsem-debug into the stage; print its digest
+- `debug_image`: capsem-debug, the test-tooling image;
+- `reference_image`: the official `dev` image, the product stand-in every
+  runtime test boots.
+
+Each layout lives in the shared cache stage its section names, one directory
+per digest, so a local build and a registry pull of the same digest are the
+same entry, and every checkout and gate prefix reuses it.
+
+    pinned_image.py <section> prepare [--platform P]   verify the pin; pull it by digest if absent
+    pinned_image.py <section> build [--platform P]     build it into the stage; print its digest
 
 Both are host-only: `prepare` reaches the registry and `build` drives Docker,
 so the gate runs them outside its network sandbox, before any suite. The
@@ -42,38 +47,6 @@ MANIFEST_TYPES = (
 )
 CHUNK = 1 << 20
 TIMEOUT = 120
-
-
-@functools.cache
-def _config():
-    return gate_config.load(ROOT)
-
-
-def settings():
-    return _config().functional.debug_image
-
-
-def platform_name(selected: str | None = None) -> str:
-    return selected or _config().host_arch().docker_platform
-
-
-def pinned(selected: str | None = None) -> str:
-    """The manifest digest config/gate.toml pins for `selected` (default: this host)."""
-    platform = platform_name(selected)
-    digests = settings().digests
-    if platform not in digests:
-        raise ValueError(
-            f"capsem-debug pins no image for {platform}; pinned: {sorted(digests)}"
-        )
-    return digests[platform]
-
-
-def stage() -> Path:
-    return load_paths(ROOT).stage(settings().cache_stage)
-
-
-def layout_path(digest: str) -> Path:
-    return stage() / f"{settings().name}-{digest.removeprefix('sha256:')}"
 
 
 def _blob(layout: Path, digest: str) -> Path:
@@ -116,25 +89,6 @@ def verify(layout: Path, digest: str, platform: str) -> None:
         raise ValueError(
             f"{digest} is {image['os']}/{image['architecture']}, not {platform}"
         )
-
-
-@functools.cache
-def ready(selected: str | None = None) -> Path:
-    """The verified layout of the pinned image, for the harness to serve.
-
-    Never fetches: the suites run with no network, so a missing layout is the
-    prefetch step's failure, and reported as one.
-    """
-    platform = platform_name(selected)
-    digest = pinned(platform)
-    layout = layout_path(digest)
-    if not layout.is_dir():
-        raise FileNotFoundError(
-            f"{layout} is missing: run the kingslanding prefetch "
-            f"({settings().script} prepare) or `capsem-gate debug-image`"
-        )
-    verify(layout, digest, platform)
-    return layout
 
 
 def _publish(staged: Path, layout: Path) -> None:
@@ -212,11 +166,11 @@ def pull(
     platform: str,
     layout: Path,
     *,
-    repository: str | None = None,
+    repository: str,
     context: ssl.SSLContext | None = None,
 ) -> None:
     """Fetch the pinned manifest and its blobs verbatim, so the digest survives."""
-    registry, name = (repository or settings().repository).split("/", 1)
+    registry, name = repository.split("/", 1)
     client = _Registry(context)
     token = _token(client, registry, name)
     base = f"https://{registry}/v2/{name}"
@@ -253,68 +207,169 @@ def pull(
         _publish(staged, layout)
 
 
-def prepare(selected: str | None = None) -> Path:
-    platform = platform_name(selected)
-    digest = pinned(platform)
-    layout = layout_path(digest)
-    layout.parent.mkdir(parents=True, exist_ok=True)
-    if layout.is_dir():
-        verify(layout, digest, platform)
-        print(f"Verified cached capsem-debug {platform}: {digest}")
-    else:
-        pull(digest, platform, layout)
-        print(
-            f"Pulled capsem-debug {platform} by digest: {settings().repository}@{digest}"
+@functools.cache
+def _config():
+    return gate_config.load(ROOT)
+
+
+class PinnedImage:
+    """One `[functional.<section>]` pin and its layout in the cache stage."""
+
+    def __init__(self, section: str) -> None:
+        self.section = section
+
+    def settings(self):
+        return getattr(_config().functional, self.section)
+
+    @staticmethod
+    def platform_name(selected: str | None = None) -> str:
+        return selected or _config().host_arch().docker_platform
+
+    def pinned(self, selected: str | None = None) -> str:
+        """The manifest digest the config pins for `selected` (default: this host)."""
+        platform = self.platform_name(selected)
+        digests = self.settings().digests
+        if platform not in digests:
+            raise ValueError(
+                f"{self.settings().name} pins no image for {platform}; pinned: {sorted(digests)}"
+            )
+        return digests[platform]
+
+    def stage(self) -> Path:
+        return load_paths(ROOT).stage(self.settings().cache_stage)
+
+    def layout_path(self, digest: str) -> Path:
+        return self.stage() / f"{self.settings().name}-{digest.removeprefix('sha256:')}"
+
+    verify = staticmethod(verify)
+
+    def ready(self, selected: str | None = None) -> Path:
+        """The verified layout of the pinned image, for the harness to serve.
+
+        Never fetches: the suites run with no network, so a missing layout is
+        the prefetch step's failure, and reported as one.
+        """
+        return _ready(self.section, self.platform_name(selected))
+
+    def pull(
+        self,
+        digest: str,
+        platform: str,
+        layout: Path,
+        *,
+        repository: str | None = None,
+        context: ssl.SSLContext | None = None,
+    ) -> None:
+        """Fetch the pinned manifest and its blobs verbatim, so the digest survives."""
+        pull(
+            digest,
+            platform,
+            layout,
+            repository=repository or self.settings().repository,
+            context=context,
         )
-    # The stage is retained least-recently-used; using an entry is what keeps it.
-    os.utime(layout)
+
+    def prepare(self, selected: str | None = None) -> Path:
+        name = self.settings().name
+        platform = self.platform_name(selected)
+        digest = self.pinned(platform)
+        layout = self.layout_path(digest)
+        layout.parent.mkdir(parents=True, exist_ok=True)
+        if layout.is_dir():
+            verify(layout, digest, platform)
+            print(f"Verified cached {name} {platform}: {digest}")
+        else:
+            self.pull(digest, platform, layout)
+            print(
+                f"Pulled {name} {platform} by digest: {self.settings().repository}@{digest}"
+            )
+        # The stage is retained least-recently-used; using an entry is what keeps it.
+        os.utime(layout)
+        return layout
+
+    def build(self, selected: str | None = None) -> str:
+        """Build the image into the stage by digest and load it as `<name>:<arch>` too.
+
+        An image built FROM a base (`base_context`) gets that base built first
+        and passed as its BASE argument, as the image workflow does.
+        """
+        settings = self.settings()
+        platform = self.platform_name(selected)
+        arch = platform.split("/")[1]
+        common = [
+            "docker",
+            "buildx",
+            "build",
+            "--platform",
+            platform,
+            "--provenance=false",
+            "--sbom=false",
+        ]
+        if settings.base_context:
+            base = f"{settings.name}-base:{arch}"
+            subprocess.run(
+                [*common, "--load", "--tag", base, str(ROOT / settings.base_context)],
+                check=True,
+                timeout=3600,
+            )
+            common += ["--build-arg", f"BASE={base}"]
+        context = str(ROOT / settings.context)
+        self.stage().mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=self.stage(), prefix=".build-") as tmp:
+            staged = Path(tmp) / "layout"
+            output = f"type=oci,tar=false,dest={staged}"
+            subprocess.run(
+                [*common, "--output", output, context], check=True, timeout=3600
+            )
+            (entry,) = json.loads((staged / "index.json").read_text())["manifests"]
+            digest = entry["digest"]
+            verify(staged, digest, platform)
+            layout = self.layout_path(digest)
+            if layout.is_dir():
+                verify(layout, digest, platform)
+            else:
+                _publish(staged, layout)
+        # The same build again from BuildKit's cache, loaded into Docker under a
+        # local tag, for images/ci/rootfs.py (the OBOM) and hands-on use.
+        tag = f"{settings.name}:{arch}"
+        subprocess.run(
+            [*common, "--load", "--tag", tag, context], check=True, timeout=3600
+        )
+        print(f"Built {settings.name} {platform}: {digest}")
+        print(f"  layout: {layout}")
+        print(f"  docker: {tag}")
+        print(f"Pin it in config/gate.toml [functional.{self.section}] digests:")
+        print(f'  "{platform}" = "{digest}"')
+        return digest
+
+
+@functools.cache
+def _ready(section: str, platform: str) -> Path:
+    image = SECTIONS[section]
+    digest = image.pinned(platform)
+    layout = image.layout_path(digest)
+    if not layout.is_dir():
+        raise FileNotFoundError(
+            f"{layout} is missing: run the kingslanding prefetch "
+            f"({image.settings().script} {section} prepare)"
+        )
+    verify(layout, digest, platform)
     return layout
 
 
-def build(selected: str | None = None) -> str:
-    """Build the image into the stage by digest and load it as `<name>:<arch>` too."""
-    platform = platform_name(selected)
-    context = str(ROOT / settings().context)
-    common = [
-        "docker",
-        "buildx",
-        "build",
-        "--platform",
-        platform,
-        "--provenance=false",
-        "--sbom=false",
-    ]
-    stage().mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=stage(), prefix=".build-") as tmp:
-        staged = Path(tmp) / "layout"
-        output = f"type=oci,tar=false,dest={staged}"
-        subprocess.run([*common, "--output", output, context], check=True, timeout=3600)
-        (entry,) = json.loads((staged / "index.json").read_text())["manifests"]
-        digest = entry["digest"]
-        verify(staged, digest, platform)
-        layout = layout_path(digest)
-        if layout.is_dir():
-            verify(layout, digest, platform)
-        else:
-            _publish(staged, layout)
-    # The same build again from BuildKit's cache, loaded into Docker under a
-    # local tag, for images/ci/rootfs.py (the OBOM) and hands-on use.
-    tag = f"{settings().name}:{platform.split('/')[1]}"
-    subprocess.run([*common, "--load", "--tag", tag, context], check=True, timeout=3600)
-    print(f"Built {settings().name} {platform}: {digest}")
-    print(f"  layout: {layout}")
-    print(f"  docker: {tag}")
-    print("Pin it in config/gate.toml [functional.debug_image] digests:")
-    print(f'  "{platform}" = "{digest}"')
-    return digest
+debug_image = PinnedImage("debug_image")
+reference_image = PinnedImage("reference_image")
+SECTIONS = {image.section: image for image in (debug_image, reference_image)}
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("section", choices=sorted(SECTIONS))
     parser.add_argument("action", choices=("prepare", "build"))
     parser.add_argument("--platform", help="linux/<arch>; this host's by default")
     args = parser.parse_args(argv)
-    (prepare if args.action == "prepare" else build)(args.platform)
+    image = SECTIONS[args.section]
+    (image.prepare if args.action == "prepare" else image.build)(args.platform)
 
 
 if __name__ == "__main__":

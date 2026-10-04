@@ -17,25 +17,49 @@ FIXTURES = Path(__file__).parent
 IMAGE = FIXTURES.parents[2] / "cache/target/tests/redis-image"
 
 
-def grant_image(home: Path, reference: str) -> None:
-    """Allow the test registry as an image source and admit what it serves.
+def _listed(section: str, key: str) -> set[str]:
+    """The selectors an earlier grant wrote under `[images] <key>`. Only those:
+    `catalog` and `catalog_ca` are quoted too, and are not selectors."""
+    found = re.search(rf"^{key} = \[(.*)\]$", section, re.MULTILINE)
+    return set(re.findall(r'"([^"]+)"', found.group(1))) if found else set()
 
-    The service refuses any image its `[images]` policy does not name (the
-    catalog aside); a test's registry is a fresh localhost port, so each one
-    is granted, in the service's own settings.toml, before it is used.
-    """
-    authority = reference.split("/", 1)[0]
+
+def _grant(home: Path, sources: set[str], admit: set[str]) -> None:
+    """Add selectors to the service's own `[images]` policy in settings.toml,
+    keeping what earlier grants listed."""
     path = home / "settings.toml"
     text = path.read_text() if path.exists() else ""
-    # Only what an earlier grant listed: `catalog` and `catalog_ca` are
-    # quoted too, and are not selectors.
-    sources = re.search(r"^sources = \[(.*)\]$", text.split("[images]", 1)[-1], re.M)
-    granted = set(re.findall(r'"([^"]+)"', sources.group(1))) if "[images]" in text and sources else set()
-    granted.add(authority)
-    listed = ", ".join(f'"{name}"' for name in sorted(granted))
-    block = f"[images]\nsources = [{listed}]\nadmit = [{listed}]\n"
+    section = text.split("[images]", 1)[-1] if "[images]" in text else ""
+    sources |= _listed(section, "sources")
+    admit |= _listed(section, "admit")
+
+    def listed(names: set[str]) -> str:
+        return ", ".join(f'"{name}"' for name in sorted(names))
+
+    block = f"[images]\nsources = [{listed(sources)}]\nadmit = [{listed(admit)}]\n"
     text = re.sub(r"\[images\]\n(?:[^\[\n][^\n]*\n)*", "", text)
     path.write_text(text + ("\n" if text and not text.endswith("\n") else "") + block)
+
+
+def grant_image(home: Path, reference: str) -> None:
+    """Allow the test registry as an image source and admit everything it serves.
+
+    A whole-registry grant. The service refuses any image its `[images]` policy
+    does not name (the catalog aside); a test's registry is a fresh localhost
+    port. Product sessions use `grant_exact`; this broad form is for the
+    admission tests and the fixtures that predate them.
+    """
+    authority = reference.split("/", 1)[0]
+    _grant(home, {authority}, {authority})
+
+
+def grant_exact(home: Path, reference: str) -> None:
+    """Allow exactly one image: its repository as a source, that repository at
+    that digest as the one image admitted. `reference` must carry its digest."""
+    repository, separator, digest = reference.partition("@")
+    if not separator or not digest.startswith("sha256:"):
+        raise ValueError(f"an exact grant needs a digest reference, not {reference}")
+    _grant(home, {repository}, {reference})
 
 
 @contextlib.contextmanager
@@ -86,7 +110,11 @@ def layout_registry(directory, layout, image):
 
     def fetch(digest):
         path = layout / "blobs" / "sha256" / digest.removeprefix("sha256:")
-        return path.read_bytes() if digest.startswith("sha256:") and path.is_file() else None
+        return (
+            path.read_bytes()
+            if digest.startswith("sha256:") and path.is_file()
+            else None
+        )
 
     manifest = fetch(entry["digest"])
     assert manifest is not None, entry

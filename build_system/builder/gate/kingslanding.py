@@ -8,11 +8,14 @@ from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
 from .testmodules import InWorkspace
 
+#: The `[functional.<section>]` pins every kingslanding run verifies first.
+PINNED_IMAGES = ("debug_image", "reference_image")
+
 
 def prefetch(config: GateConfig) -> Step:
-    """Every pinned image the suites serve: Redis and iperf3, and capsem-debug,
-    whose layout is verified in the shared cache and pulled by digest only
-    when absent."""
+    """Every pinned image the suites serve: Redis and iperf3, capsem-debug and
+    the reference image, whose layouts are verified in the shared cache and
+    pulled by digest only when absent."""
     settings = config.functional.kingslanding
     platform = config.host_arch().docker_platform
     return step(
@@ -26,13 +29,17 @@ def prefetch(config: GateConfig) -> Step:
             platform,
             outside_sandbox=True,
         ),
-        Script(
-            config,
-            config.functional.debug_image.script,
-            "prepare",
-            "--platform",
-            platform,
-            outside_sandbox=True,
+        *(
+            Script(
+                config,
+                getattr(config.functional, section).script,
+                section,
+                "prepare",
+                "--platform",
+                platform,
+                outside_sandbox=True,
+            )
+            for section in PINNED_IMAGES
         ),
         contends=(config.exclusive("docker_daemon"),),
         kind=Kind.COMPILE,
