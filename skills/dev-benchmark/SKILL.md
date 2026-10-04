@@ -41,19 +41,19 @@ Modules: `schema.rs` (the record), `stats.rs` (**all** statistics),
 
 ## The record
 
-`capsem.bench.v1`: one envelope, one clock, explicit identity, a flat metric
+`capsem.bench.v2`: one envelope, one clock, explicit identity, a flat metric
 list with stable dotted keys (`gateway./vms/list.cpu_s`). Per metric: `n`,
 `min`, `max`, `mean`, `median`, `p90`, `p95`, `p99`, `p999`, `stddev`, `cv`,
 `mad`, rounded to two decimals.
 
-It lives in SQLite -- `cache/target/tests/benchmarks/benchmarks.db`, two tables. The
-scheme before it was a file per dimension per release per architecture per
-profile in ten incompatible shapes, one of them 80 KB of captured stdout;
+It lives in SQLite -- `cache/target/tests/benchmarks/benchmarks.db`, two tables,
+keyed by dimension and architecture. The scheme before it was a file per
+dimension per release per architecture in ten incompatible shapes, one of them 80 KB of captured stdout;
 asking "is `/vms/list` slower than three releases ago" meant globbing filenames
 and knowing which shape each match used. It is now a query.
 
 `quick` runs are recorded and never selected as evidence, so a dev-loop
-measurement is visible without becoming a baseline. Architecture and profile
+measurement is visible without becoming a baseline. Dimension and architecture
 must match before two numbers are compared -- otherwise you have measured the
 difference between two machines.
 

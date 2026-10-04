@@ -148,7 +148,7 @@ export const exampleStore = new ExampleStore();
 
 Chrome browser shell. Tabs = sessions, toolbar = controls. Views switched by `tabStore.active.view`:
 
-- `'new-tab'` -- session/profile dashboard (NewTabPage), sortable table of real sessions
+- `'new-tab'` -- session dashboard (NewTabPage), sortable table of real sessions
 - `'terminal'` -- sandboxed iframe with xterm.js (VMFrame), one iframe per VM
 - `'settings'` -- appearance, general, security, network, storage, advanced, about
 - Future: focused typed views for logs/debug surfaces as needed.
@@ -166,7 +166,7 @@ Key gateway endpoints:
 | `GET /` | Health check (no auth) |
 | `GET /status` | Aggregated VM status (1s cache TTL) |
 | `GET /vms/{id}/stream` | `capsem.stream.v1` WebSocket (terminal, streaming exec, container attach), tunneled to the service |
-| Explicit allowlist | Profile, session, stats, enforcement, detection, plugin, MCP, credential, and debug routes used by the UI/TUI |
+| Explicit allowlist | Settings, session, stats, enforcement, detection, plugin, MCP, credential, and debug routes used by the UI/TUI |
 
 The gateway forwards only routes that are deliberately registered in its route table.
 Unknown, retired, or misspelled routes must return 404 instead of falling through to
@@ -178,7 +178,7 @@ Typed data contract:
   `/vms/{id}/timeline`, `/vms/{id}/security/latest`,
   `/vms/{id}/detection/latest`, and protocol-specific routes.
 - **Cross-session state**: use dedicated service routes such as `/status`,
-  `/stats`, `/vms/list`, and profile/plugin/MCP routes.
+  `/stats`, `/vms/list`, and settings/plugin/MCP routes.
 - **Never add frontend raw SQL helpers**. The old Inspector and `/inspect`
   surfaces are burned; UI code reflects typed API contracts only.
 

@@ -190,13 +190,13 @@ environment you hand to a process. Standard conventions (`HOME`, `TMPDIR`,
 
 Reach for the builders rather than assembling dictionaries:
 `config.environment.capsem(home=…, run_dir=…)`,
-`config.environment.content(assets=…, profiles=…)`, and the typed families
+`config.environment.content(assets=…)`, and the typed families
 under `[environment.package]`, `[environment.release_site]`,
 `[environment.install_proof]`.
 
-Treat the runtime assets and materialized configuration as one typed
-`RuntimeContent` root. Pass that value through composed package/install/glow-up
-fragments; never rediscover its halves from ambient variables or mutable
+Treat the runtime assets as one typed `RuntimeContent` root. Pass that value
+through composed package/install/glow-up fragments; never rediscover it from
+ambient variables or mutable
 checkout selectors at a Docker/Colima boundary.
 
 Machine effects and stable lifecycle labels are closed `StrEnum` vocabularies.

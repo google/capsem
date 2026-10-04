@@ -105,16 +105,10 @@ need a runtime rebuild.
 Day-to-day, `just shell` and `just exec` repack the initrd without rebuilding
 rootfs images.
 
-Runtime recipes run the shared generated-config path:
-
-```text
-_check-assets -> _pack-initrd -> _materialize-config -> _ensure-service
-```
-
-`_materialize-config` invokes `capsem-admin profile materialize`, which writes
-the catalog the development service still reads under `cache/target/config/`
-from checked-in `config/` source files and `cache/target/assets/manifest.json`.
-It is a dev/test service input, not a build or release unit.
+Runtime recipes (`just shell`, `just exec`, `just run-service`) check the
+assets, repack the initrd, and start the development service, which resolves
+the runtime from `cache/target/assets/manifest.json`. Policy comes from the
+service home's `settings.toml` and corp config; nothing is materialized.
 
 ## Session inspection
 

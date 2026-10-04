@@ -4,12 +4,14 @@ description: How Capsem loads, merges, and applies UI/application preferences fr
 ---
 
 Capsem's settings system controls UI/application preferences: appearance,
-notifications, local app behavior, and other service-level preferences that are
-not profile runtime truth. VM resources, assets, MCP, provider access,
-enforcement, detections, and credential brokerage are owned by profile/corp
-contracts plus plugins, not by settings-owned AI provider toggles. Settings are
-declared in TOML, merged from defaults, user, and enterprise sources with
-enterprise override, and rendered in a dynamic UI.
+notifications, local app behavior, and other service-level preferences. The
+same `settings.toml` file also carries the user's security policy (rules,
+plugins, MCP servers), but that policy is not a settings tree node: it is
+merged with built-in defaults and `corp.toml` into each VM's
+`vm/active_policy.toml` and edited through the plugin and MCP pages. VM size
+comes from create flags, and the VM runtime from the installed assets.
+Settings are declared in TOML, merged from defaults, user, and enterprise
+sources with enterprise override, and rendered in a dynamic UI.
 
 ## File Sources
 
@@ -43,8 +45,8 @@ The settings TOML uses a formal grammar with four node types, distinguished by k
 | has `action` key | **Action** | UI button/widget, no stored value |
 | neither | **Group** | Container that organizes children |
 
-MCP server configuration is profile-owned and may be reflected in profile UI,
-but it is not a settings node type.
+MCP server configuration lives in the `[mcp]` table and is shown on the MCP
+settings page, but it is not a settings node type.
 
 ### Setting types
 
@@ -119,7 +121,7 @@ effective_enabled = explicit_enabled AND enabled_by_result
 Example: when `repository.providers.github.allow` is `false` (corp-locked off),
 child settings such as the repository token field are `enabled: false` and
 greyed out in the UI. Provider allow/block behavior is not represented this
-way; it is expressed as profile/corp security rules.
+way; it is expressed as security rules in `settings.toml` or `corp.toml`.
 
 ### Hidden resolution
 
@@ -178,7 +180,8 @@ Returns the full `SettingsResponse` in one call:
 
 `SettingsResponse` intentionally does not include behavior bundles, provider status, MCP
 policy, security rules, plugins, credentials, or VM behavior. Those belong to
-profile/corp contracts, runtime plugin status, or service/VM runtime endpoints.
+the `/plugins`, `/mcp`, and `/corp` routes, runtime plugin status, or
+service/VM runtime endpoints.
 
 ### save_settings
 
@@ -192,17 +195,21 @@ Accepts a batch of changes as `{ setting_id: value, ... }`. Behavior:
 Bool toggles use `save_settings` immediately. Text, number, file, and list
 changes accumulate locally and are sent as a batch when the user clicks Save.
 
-Security rules are stored under `profiles.rules`, `corp.rules`, or referenced
-rule files. A profile can point at shared rule packs:
+Security rules are stored under `profiles.rules` (the user rule table's name;
+it does not refer to a VM profile), `corp.rules`, or referenced rule files.
+`settings.toml` can point at shared rule packs (relative paths resolve next to
+`settings.toml`):
 
 ```toml
 [rule_files]
-enforcement = "profiles/base/enforcement.toml"
-sigma = "profiles/base/detection.yaml"
+enforcement = "rules/enforcement.toml"
+sigma = "rules/detection.yaml"
 ```
 
-Profile rule edits use the profile enforcement endpoints, not the settings save
-endpoint.
+Rule edits never go through the settings save endpoint. Plugin and MCP
+permissions are edited through `/plugins/{plugin_id}/edit` and
+`/mcp/...` routes, which validate the whole next `settings.toml` and refuse
+anything corp already decides.
 
 ## Frontend Architecture
 
@@ -264,7 +271,7 @@ Key behaviors:
 - **API keys and provider credentials are never settings materialized boot
   secrets.** They are detected, substituted, and audited by the credential
   broker plugin using opaque BLAKE3 references.
-- **Profile/corp rules control network access.** HTTP, DNS, MCP, model, file,
+- **Settings/corp rules control network access.** HTTP, DNS, MCP, model, file,
   and process events are blocked or allowed by `SecurityRuleSet` over canonical
   `SecurityEvent` fields.
 - **File permissions** default to `0o600` (owner-only) for sensitive explicit
@@ -275,21 +282,23 @@ Key behaviors:
 
 ## MCP Server Definitions
 
-MCP servers are profile configuration. The UI may display MCP profile config
-through profile routes, but settings do not own or merge MCP runtime truth and
+MCP servers are declared in the `[mcp]` table of `settings.toml` and
+`corp.toml`. The MCP settings page shows them through the `/mcp/...` routes;
 the settings tree never contains MCP server nodes:
 
 ```mermaid
 flowchart LR
-  P["profile.toml\n[mcp]"] --> MR[MCP Resolver]
-  C["corp.toml\nlocks/constraints"] --> MR
-  MR --> MS["Resolved profile MCP servers"]
+  B["Built-in defaults"] --> MR[MCP Resolver]
+  P["settings.toml\n[mcp]"] --> MR
+  C["corp.toml\n[mcp] + locks"] --> MR
+  MR --> MS["Resolved MCP servers"]
   MS --> ROUTE["MCP runtime routing"]
   MS --> TOOLS["Per-server tool inventory"]
-  MS --> TREE["Profile UI"]
+  MS --> TREE["MCP settings page"]
 ```
 
-Resolution is profile-first with corp constraints. Example profile entry:
+Corp entries win over user entries, which win over built-in defaults. Example
+entry:
 
 ```toml
 [mcp.capsem]
@@ -300,7 +309,7 @@ command = "/run/capsem-mcp-server"
 builtin = true
 ```
 
-Enterprises can add MCP servers via corp-owned profile configuration:
+Enterprises can add MCP servers in `corp.toml`:
 
 ```toml
 [mcp.internal_tools]
@@ -313,9 +322,9 @@ args = ["--config", "/etc/acme.json"]
 ## Security Rules
 
 Security rules live outside ordinary `settings` leaves. They are resolved from
-profile/corp enforcement TOML and Sigma detection YAML. Corp rules keep
-corporate priority and lock semantics; profile/user rules run after corp rules,
-and built-in default rules run last.
+settings and corp enforcement TOML and Sigma detection YAML. Corp rules keep
+corporate priority and lock semantics; user rules run after corp rules, and
+built-in default rules run last.
 
 See [Policy](/security/policy/) for rule syntax, first-party `SecurityEvent`
 fields, actions, priorities, Sigma import, examples, and telemetry.
@@ -327,7 +336,7 @@ Enterprise administrators distribute `corp.toml` via MDM. It controls:
 | Capability | How |
 |---|---|
 | **Force a value** | Set the key in corp.toml -- user cannot override |
-| **Disable provider traffic** | Add a corp/profile enforcement rule that matches the provider boundary and uses `action = "block"` |
+| **Disable provider traffic** | Add a corp enforcement rule that matches the provider boundary and uses `action = "block"` |
 | **Hide a setting** | Set `hidden = true` on the override entry |
 | **Add MCP servers** | Add entries to `[mcp]` section -- user cannot remove |
 | **Disable MCP servers** | Set `enabled = false` on a server definition |

@@ -37,7 +37,7 @@ The graph hierarchy is strict:
    rootfs per architecture), software inventory, OBOM evidence, and the
    optional `min_capsem_version`/`max_capsem_version`. It never advertises the
    selected Capsem binary. A channel that has published no runtime yet has no
-   `runtime` key; there is no `profiles` key and no published profile config.
+   `runtime` key.
 
 Immutable runtime image blobs are referenced by instantiated URLs in the
 selected channel manifest. Public releases may store large blobs in GitHub

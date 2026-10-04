@@ -18,11 +18,9 @@ specification governs. The release implementation, tests, `AGENTS.md`, checked-i
 skills, and developer documentation MUST be changed together so two release
 models are never simultaneously described as authoritative.
 
-Capsem 0.7 is a clean break from the 0.6 profile release model. No profile
-ledger, channel/profile pair, profile tag, or profile configuration is
-published, and no compatibility shim serves 0.6 field binaries. Applications
-are OCI images resolved through the image catalog; they are not part of the VM
-runtime and are not authored by the release lanes in this document.
+Capsem 0.7 is a clean break from the 0.6 release model; no compatibility
+shim serves 0.6 field binaries. Applications are OCI images resolved through
+the image catalog; they are not part of the VM runtime and are not authored by the release lanes in this document.
 
 ## 1. Purpose
 

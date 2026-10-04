@@ -55,15 +55,14 @@ exactly, and every transformation must be accounted for.
 ### Runtime Image Memory
 
 When image-build work touches `config/docker/image/` or `guest/artifacts/`,
-load the `build-images` skill. The VM runtime has no profile input and no
-build hook: its package set is `runtime_apt_packages` in
+load the `build-images` skill. The VM runtime has no build hook: its package set is `runtime_apt_packages` in
 `config/docker/image/build.toml`, reserved for Capsem's own guest machinery.
 Tools a user or agent works with belong in an OCI image under `images/`. A
 runtime change is only real in a VM after `just build-assets` rebuilds it; boot
 a fresh VM and pay the Ironbank proof for the user-visible behavior.
 
 `config/skills` is not a development skill location. Read `config/README.md`
-before adding any profile-owned skill payload, and keep repository development
+before adding any product skill payload, and keep repository development
 skills in top-level `skills/`.
 
 ## SKILL.md format

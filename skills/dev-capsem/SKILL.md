@@ -40,7 +40,7 @@ then lead with a recommendation. The full contract is
 | `capsem-process` | Per-VM process. Boots VM, bridges vsock, job store. | `main.rs` (vsock setup, IPC handler) |
 | `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
 | `capsem-tui` | Terminal control UI over the gateway API. | `main.rs`, view/state modules |
-| `capsem-admin` | Runtime image build, asset, release, and profile-catalog validation/materialization administration. | `main.rs` |
+| `capsem-admin` | Runtime image build, asset, release, and config validation administration. | `main.rs` |
 | `@capsem/mcp` (`mcp/typescript`) | Separately installed host MCP server for AI agents. Stdio, typed SDK, authenticated gateway HTTP. | `cli.ts`, `server.ts`, tool modules |
 | `capsem-router` | Confined TCP publication companion. Relays declared listeners to granted VSOCK data descriptors; no VM control authority. | `lib.rs`, `main.rs` |
 | `capsem-network` | Private networks between VMs: the u16-framed ethernet frame codec for a cable and the switch's MAC forwarding table. Pure code; the I/O lives in `capsem-router --network`, one L2 switch per network that VMs `plug()` into. | `frames.rs`, `switch.rs` |
@@ -75,7 +75,7 @@ hypervisor, security-engine, and host network runtime in `capsem-core`.
 | `cache/target/assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `web/graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
-| `config/` | Runtime image source (`docker/image`), corp, settings, and profile policy config | `/site-architecture`, `/build-images` |
+| `config/` | Runtime image source (`docker/image`), corp, and settings config | `/site-architecture`, `/build-images` |
 
 ## Skill map
 
@@ -131,22 +131,23 @@ Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM + framed guest MCP), 50
 
 ## Config hierarchy
 
-1. Corp config -- enterprise constraints, reporting endpoints, and locked rule/plugin policy
-2. Profile config -- rules, detections, MCP, plugins, and profile defaults
-3. Settings config -- UI/app preferences only
+1. Corp config (`corp.toml`) -- enterprise constraints, reporting endpoints,
+   and locked rule/plugin policy. Corp wins.
+2. User settings (`~/.capsem/settings.toml`) -- rules, detections, MCP,
+   plugins, and UI/app preferences.
+3. Built-in defaults compiled into the binary.
 
-There is no `user.toml` policy rail. A VM boots a profile; profile/corp own
-security behavior. Settings are not policy.
+The service merges the three into one per-VM policy file,
+`vm/active_policy.toml`, at every boot. There is no `user.toml` policy rail.
 
 Config naming is strict:
 - `schema` validates one contract shape.
-- `catalog` lists profile instances discovered or materialized from profile
-  source.
+- `catalog` lists discovered or materialized instances.
 - UI metadata renders settings only.
 - `admin`, `guest`, and `registry` are not config authority roots.
 - The only top-level config directories are `settings/`, `corp/`,
-  `profiles/`, `docker/`, and `data/`. Adding another root is a contract
-  change and needs a failing guard first.
+  `docker/`, and `data/`. Adding another root is a contract change and needs
+  a failing guard first.
 - `capsem-admin` is a validator/materializer/builder, not an authoring wizard.
   It must not grow `init`, `new`, `add`, provider, registry, or backend
   workspace authoring commands.
@@ -155,11 +156,9 @@ Config naming is strict:
 
 - Guest VM is air-gapped. No real NIC, no real DNS, no direct internet.
 - Guest binaries are read-only (chmod 555). Rootfs mounted read-only.
-- **Sessions run profiles.** A session is created from a profile. The profile
-  selects MCP config, plugins, rules, detections, and UI-facing
-  name/description/icon. Every session boots the one VM runtime; applications
-  come from OCI images. Session status must reflect profile
-  readiness and compatibility.
+- **Every session boots the one VM runtime.** Applications come from OCI
+  images; policy comes from corp + settings + built-in defaults; size comes
+  from create flags with fixed defaults.
 - The binary must be codesigned with `com.apple.security.virtualization`.
 - Domain libraries own reusable logic; binary crates keep entrypoints focused
   on parsing, wiring, lifecycle, and presentation. Do not move unrelated logic

@@ -28,7 +28,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | `capsem-process` | Per-VM runtime | Yes | Compile/no-run | Clippy | Yes |
 | `capsem` | CLI | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-tui` | Terminal UI | Yes | Compile/no-run | Clippy | Yes |
-| `capsem-admin` | Profile/asset/release administration | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-admin` | Runtime image, asset, and release administration | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-router` | Confined TCP publication relay | Yes | Subprocess + Redis E2E | Clippy | Yes |
 | `capsem-network` | smoltcp endpoint over framed packet streams | Yes (smoltcp client over an in-memory link) | Kingslanding tun0 lane | Clippy | Yes |
 | `capsem-mcp-aggregator` | External MCP subprocess manager | Yes | Compile/no-run | Clippy | Yes |
@@ -63,7 +63,6 @@ directories move. Do not copy the config-owned Rust floors into prose.
 | capsem-bootstrap | `bootstrap` | No | Collect; run in full gate after assets exist | No | Yes |
 | capsem-codesign | `codesign` | No | Collect; run in full gate after signing | No | Yes |
 | capsem-rootfs-artifacts | `rootfs` | No | Run | No | Yes |
-| npm MCP profile ledger | `integration` | Yes | Collect | No | Yes |
 | capsem-service | `integration` | Yes | Collect | Yes | Yes |
 | capsem-cli | `integration` | Yes | Collect | Yes | Yes |
 | capsem-gateway | `gateway` | Yes | Collect | Yes | Yes |

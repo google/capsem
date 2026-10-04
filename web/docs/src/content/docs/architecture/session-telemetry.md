@@ -611,7 +611,7 @@ VirtioFS share.
 
 **There is no exclusion list.** `.git/hooks`, `.git/config`, `node_modules`,
 `.venv` and `target` are where a compromise persists, so every path is
-recorded and evaluated by the profile's file rules like any other. Symlinks are
+recorded and evaluated by the active policy's file rules like any other. Symlinks are
 recorded as symlinks and never followed. A change is detected by size, mtime,
 inode change time and inode number, so rewriting a file and restoring its
 timestamp does not hide the write.
@@ -929,7 +929,7 @@ route state.
 ## Frontend Stats And Inspection
 
 The VM **Stats** tab is ledger/database backed. It does not infer security
-state from profile config or live rules. It reads typed service ledger routes
+state from policy config or live rules. It reads typed service ledger routes
 that are backed by the logger DB API and VM-scoped rule routes:
 
 | Stats tab | Primary source |

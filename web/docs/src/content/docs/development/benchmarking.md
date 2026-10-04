@@ -73,7 +73,7 @@ Measures read performance on the compressed rootfs where binaries and libraries 
 
 | Test | Method | Metric |
 |------|--------|--------|
-| Sequential read | Read the largest file in `/usr/bin`, `/usr/lib`, `/opt/ai-clis` in 1MB blocks | Throughput (MB/s) |
+| Sequential read | Read the largest file in `/usr/bin` and `/usr/lib` in 1MB blocks | Throughput (MB/s) |
 | Random 4K read | 5,000 random `pread` calls across all rootfs files (>4KB) | IOPS, throughput |
 | Large binary reads | Cold/warm reads of the largest binaries | Throughput (MB/s), duration |
 | Small package reads | Whole-file reads of small JS/package files | Duration, throughput |

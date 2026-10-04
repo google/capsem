@@ -117,7 +117,7 @@ reference. Key properties:
 |----------|----------|
 | Network mechanics | Port routing, body capture, decompression, provider metadata, and cache behavior |
 | Security authority | `SecurityRuleSet` over normalized `SecurityEvent` fields |
-| Default behavior | Profile defaults compile into normal late-priority rules |
+| Default behavior | Built-in defaults compile into normal late-priority rules |
 | Conflict resolution | Earlier/lower priority enforcement wins; `block` is absolute once effective |
 
 Network mechanics are hot-swappable via `RwLock`. Each HTTP request snapshots
@@ -150,7 +150,7 @@ reason = "Block OpenAI organization GitHub writes"
 match = 'http.host == "github.com" && http.method == "POST" && http.path.matches("^/openai(/|$)")'
 ```
 
-Plugin behavior is configured through profile/corp plugin descriptors, not by
+Plugin behavior is configured through settings/corp plugin descriptors, not by
 calling plugins from CEL rules. Rules decide enforcement and detection over the
 typed `SecurityEvent`; plugins run at their declared stages, own their private
 filtering/scope, and may mutate the event or ledger payload according to their
@@ -272,7 +272,7 @@ The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spaw
 | `capsem-core/src/net/mitm_proxy/` | Connection handling, HTTP forwarding, telemetry hooks, and proxy pipeline |
 | `capsem-core/src/net/cert_authority.rs` | CA loading, leaf cert minting, cache |
 | `capsem-core/src/net/policy.rs` | Network mechanics: ports, capture, decompression, routing, cache settings |
-| `capsem-core/src/net/policy_config/` | Profile/corp config parsing into network mechanics and `SecurityRuleSet` |
+| `capsem-core/src/net/policy_config/` | Settings/corp config parsing into network mechanics and `SecurityRuleSet` |
 | `capsem-core/src/security_engine/` | `SecurityEvent`, `SecurityRuleSet`/CEL evaluation, plugins, endpoint DTOs |
 | `capsem-core/src/net/ai_traffic/` | SSE parsing, provider parsers, events, pricing |
 | `capsem-core/src/net/ai_traffic/mod.rs` | TraceState for multi-turn linking |

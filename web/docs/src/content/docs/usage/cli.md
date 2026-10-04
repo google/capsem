@@ -416,6 +416,9 @@ capsem update
 capsem update -y          # skip confirmation
 ```
 
+An update also deletes the `~/.capsem/profiles` directory an older install
+left behind; nothing reads it any more.
+
 ### doctor
 
 Run diagnostic tests in a fresh session. Boots a VM, runs the capsem-doctor

@@ -70,7 +70,6 @@ build_system/release_site/ Release channel site generator (Astro, writes cache/t
 build_system/scripts/      Thin functional command boundaries for build and release tooling
 config/                   Runtime product config source -- never developer skills (see Skills)
 config/docker/image/      VM runtime build inputs (runtime_apt_packages, kernel and rootfs config)
-config/profiles/<id>/     Service policy catalog (code, co-work), materialized for the dev service; not a build, release, or package input
 images/                   Application OCI images and their catalog (catalog.toml); applications are not part of the VM runtime
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
 cache/target/assets/            Built VM assets (gitignored, per-arch: cache/target/assets/{arch}/)

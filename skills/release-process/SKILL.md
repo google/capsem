@@ -85,12 +85,12 @@ reconcile it against `RELEASE.md` and the executable contract tests first.
 
 ## Tested operational handoffs
 
-Assets and materialized configuration travel as one `RuntimeContent` root.
-Package construction, Debian proof, macOS Tart/physical-VZ proof, and final
-install/glow-up must derive both paths from that one value and validate it
-before Docker or Colima. Release CI stages raw manifest inputs into the paired
-root on the host; the sealed proof never rematerializes them or falls back to
-checkout `assets`/`cache/target/config` selectors.
+Runtime assets travel as one `RuntimeContent` root. Package construction,
+Debian proof, macOS Tart/physical-VZ proof, and final install/glow-up must
+derive the assets path from that one value and validate it before Docker or
+Colima. Release CI stages raw manifest inputs into that root on the host; the
+sealed proof never rematerializes them or falls back to the checkout's
+`assets` selector.
 
 Linux package replacement embeds `deb-preinst.sh` as `DEBIAN/preinst`.
 Ordinary replacement uses `systemctl --user stop capsem.service` and retires

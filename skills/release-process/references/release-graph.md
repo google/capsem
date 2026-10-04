@@ -32,7 +32,7 @@ binaries or public channels.
 Each channel carries at most one runtime:
 
 - stable and nightly publish their runtimes independently;
-- a binary-only first release has no `runtime` key; there is no `profiles` key;
+- a binary-only first release has no `runtime` key;
 - updating one channel's runtime cannot mutate another channel;
 - every immutable runtime URL includes channel and revision
   (`/runtime/releases/<channel>/<revision>/<arch>/<file>`) so the same
@@ -48,7 +48,7 @@ binary lane's exact `source_commit`; binary inventory is nested under it with
 version, installed path, digests, and SBOM component reference. The
 `runtime` document records the runtime lane's exact `source_commit` and owns
 its images, software inventory, OBOM/evidence, digests, architecture coverage,
-and compatible Capsem version bounds. It publishes no profile config. Legacy
+and compatible Capsem version bounds. Legacy
 rows may omit the field; top-level and per-binary source fields are forbidden.
 
 SBOM, OBOM, existing attestations, the manifest, structured gate run log, and

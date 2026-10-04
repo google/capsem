@@ -90,12 +90,12 @@ is qualified against the complete Capsem filesystem, not only a tiny fixture.
 | Excludes | User session mutations, workspace writes, and post-boot state |
 | Published as | `<arch>-obom.cdx.json` with the runtime assets |
 | Integrity | SHA-256 and BLAKE3 recorded in the channel manifest's `runtime` evidence |
-| Runtime API | `GET /profiles/{profile_id}/info` and `GET /profiles/{profile_id}/obom` |
+| Runtime API | `GET /update/status` reports it as the `vm_obom` supply-chain reference |
 
-The profile OBOM descriptor records the OBOM file URL, BLAKE3 hash, size,
-generator, generator version, and the rootfs BLAKE3 hash it describes. Runtime
-routes expose the descriptor as profile evidence; local OBOM documents are
-served only after size and BLAKE3 verification.
+The runtime's OBOM evidence entry records the OBOM file URL, hashes, and size
+in the channel manifest. The service names it in its supply-chain evidence
+(`vm_obom`: CycloneDX, base-image scope, `cdxgen`, produced by
+`release-assets.yaml`).
 
 The per-architecture `build-ledger.log` is separate debug evidence. It records
 the inputs that produced the assets, including the exact kernel version and
@@ -214,8 +214,8 @@ The runtime owns the VM images, software inventory, and OBOM evidence for each
 architecture. It may declare `min_capsem_version` when its images require newer
 client behavior, but it does not select the Capsem binary. The manifest selects
 package and binary metadata; the `runtime` document inside that manifest
-selects image and evidence metadata. There is no `profiles` key and no
-published config file: applications reach a session as OCI images resolved
+selects image and evidence metadata. No config file is published:
+applications reach a session as OCI images resolved
 through the image catalog, not through the release manifest.
 
 Stable and nightly are independent channels. A stable-to-nightly switch is just

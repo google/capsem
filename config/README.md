@@ -1,59 +1,49 @@
 # Capsem Config Layout
 
-`config/` contains source contracts and templates. Generated runtime config
-belongs under `cache/target/config/` and must be produced by `capsem-admin`.
+`config/` contains source contracts and templates. Generated artifacts belong
+under `cache/target/` and must be produced by `capsem-admin` or the gate.
 
-There are exactly five top-level config directories:
+There are exactly four top-level config directories:
 
 - `settings/`
 - `corp/`
-- `profiles/`
 - `docker/`
 - `data/`
 
 Do not add `admin/`, `default/`, `defaults/`, `guest/`, `preset/`,
 `presets/`, `registry/`, `schemas/`, `templates/`, or provider-specific config
-roots. If a new product input is needed, it belongs under settings, corp, or a
-profile, then the existing admin validation and materialization rail must learn
-it.
+roots. If a new product input is needed, it belongs under settings or corp,
+and the existing admin validation rail must learn it.
 
 ## Directories
 
-- `settings/` contains UI/application preference source and generated support
-  artifacts. `settings.toml` is the only settings source file.
-  `schema.generated.json` validates the settings shape. `ui-metadata.toml` and
-  `ui-metadata.generated.json` exist only for UI rendering metadata; they must
-  not control profile runtime behavior.
+- `settings/` contains the settings source and generated support artifacts.
+  `settings.toml` is the only settings source file and holds the default
+  UI/application preferences. `schema.generated.json` validates the settings
+  shape.
+  `ui-metadata.toml` and `ui-metadata.generated.json` exist only for UI
+  rendering metadata; they must not control runtime behavior.
 - `corp/` contains corporate source contracts such as `corp.toml`,
   `enforcement.toml`, and `detection.yaml`.
-- `profiles/<profile_id>/` contains profile source ledgers and profile-owned
-  payloads: rules, Sigma detections, MCP declarations, package lists, build
-  hooks, tips, and guest root seed manifests.
-- `docker/` contains Docker/Jinja templates and image build defaults used by
-  the profile image builder. Profile-specific package lists, build hooks, and
-  root payloads still belong under `profiles/<profile_id>/`.
-  `[build.rootfs]` owns the independent raw-export and packed-EROFS ceilings
-  plus forbidden payload prefixes. The ordinary build must enforce those
-  limits before and after compression; they are release policy, not test data.
+- `docker/` contains the Docker/Jinja templates and `config/docker/image/`,
+  the source of the one VM runtime (package set, EROFS settings, kernel pin
+  and patches). `[build.rootfs]` in `config/docker/image/build.toml` owns the independent
+  raw-export and packed-EROFS ceilings plus forbidden payload prefixes. The
+  ordinary build must enforce those limits before and after compression; they
+  are release policy, not test data.
 - `data/` contains project data embedded or loaded by code, such as model
   pricing tables.
 
-## Source vs Runtime
+## Policy at Runtime
 
-`profile-catalog.toml` names each runtime's default profile. It is compiled
-into the binary and never part of a profile. Profiles are not published: a
-release ships one runtime asset set, and the profile catalog is materialized
-locally from this checkout.
+A VM's policy is the built-in defaults compiled into the binary, overlaid by
+the user's `~/.capsem/settings.toml`, overlaid by `corp.toml`. Corp wins, and
+its locked rules cannot be overridden. The service merges the three into one
+per-VM file, `vm/active_policy.toml`, at every boot. Applications come from
+OCI images, not from config.
 
-Checked-in `config/profiles/<profile_id>/profile.toml` is source. It must not
-contain asset or sibling-file `hash` or `size` pins. `capsem-admin` validates
-source profiles, materializes hashes and sizes into `cache/target/config/`, and uses
-that same materialized output for local builds, CI, packages, and installed
-runtime config.
-
-Do not hand-edit generated `cache/target/config` output. Do not hand-edit profile
-hashes. If a source payload changes, fix the admin materialization rail and its
-tests.
+Do not hand-edit generated output under `cache/target/`. If a source payload
+changes, fix the admin rail and its tests.
 
 ## Naming Contract
 
@@ -62,36 +52,33 @@ tests.
 - `metadata` describes UI rendering hints.
 
 Do not introduce `admin`, `guest`, or `registry` as config authorities.
-`capsem-admin` is a tool; it does not own product configuration. Profiles and
+`capsem-admin` is a tool; it does not own product configuration. Settings and
 corp own runtime behavior. Settings may have generated UI metadata and JSON
-Schema, but those artifacts describe settings only; they do not define profile,
-corp, MCP, AI, package, or security truth. Settings have a schema; profiles may
-have a catalog. Settings do not have a registry.
+Schema, but those artifacts describe the settings shape only. Settings do not
+have a registry.
 
 ## Admin Tool Surface
 
-`capsem-admin` may validate, check, materialize, build, and generate artifacts
-from this config. It must not scaffold product config or create a second source
-of truth.
+`capsem-admin` may validate, check, build, and generate artifacts from this
+config. It must not scaffold product config or create a second source of
+truth.
 
 Supported public rails:
 
-- `profile validate|check|materialize`
 - `settings validate`
 - `enforcement validate`
 - `detection validate`
-- `manifest check|generate`
+- `manifest check|generate|corporate`
+- `assets channel build|check`
 - `image build`
 
-If a new product input is needed, add it to the profile/corp/settings contract
-and make the existing validation/materialization rail understand it. Do not add
-`init`, `new`, `add`, provider-specific, or backend-workspace authoring
-commands.
+If a new product input is needed, add it to the settings or corp contract and
+make the existing validation rail understand it. Do not add `init`, `new`,
+`add`, provider-specific, or backend-workspace authoring commands.
 
 ## Non-Config
 
 Developer skills live in the repository-level `skills/` directory. Product or
-user skills are not mirrored under `config/skills`; when implemented, they must
-be profile-owned payloads with an explicit profile contract.
+user skills are not mirrored under `config/skills`.
 
 Test fixtures belong under `tests/fixtures/`, not in this source config tree.

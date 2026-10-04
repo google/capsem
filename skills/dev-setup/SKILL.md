@@ -199,12 +199,12 @@ See `/dev-just` for the complete recipe reference.
 ## Credentials
 
 Do not create `~/.capsem/user.toml`. Credentials are captured and replayed by
-the credential broker plugin through profile/corp policy. Hermetic tests use
+the credential broker plugin through settings/corp policy. Hermetic tests use
 the local mock server and Ironbank fixtures; real OAuth/API-key manual runs are
 debug evidence, not release proof.
 
-Do not add setup-time admin or guest config roots. Runtime behavior is
-profile/corp-owned; settings are UI/application preferences only. Generated
+Do not add setup-time admin or guest config roots. Runtime policy is
+built-in defaults plus `settings.toml` plus corp, with corp winning. Generated
 settings UI metadata may render controls, but it is not a product config
 authority.
 

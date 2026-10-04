@@ -36,7 +36,7 @@ environment edge when `builder/gate/` lands; do not add a compatibility package.
 | File | What it covers |
 |------|----------------|
 | `test_validate.py` | TOML config linting, error codes E001-E305, warnings W001-W012 |
-| `test_models.py` | Pydantic image and profile-workspace models |
+| `test_models.py` | Pydantic image and image-workspace models |
 | `test_cli.py` | Backend-only Click CLI surface |
 | `test_docker.py` | Jinja rendering and image-build execution primitives |
 | `test_manifest.py` | BOM collection, manifest rendering, package parsers |
@@ -103,5 +103,5 @@ build_system/
     image/
 ```
 
-Product/profile image templates remain under `config/docker/`; they are not
+Runtime image templates remain under `config/docker/`; they are not
 Python package data and do not move into `build_system/`.
