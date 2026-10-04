@@ -733,9 +733,12 @@ else
 fi
 
 # A configured container is session state, so existing cold restart/fork boots
-# its saved command. Runtime namespaces/cgroups belong only to this boot.
+# its saved command. Runtime namespaces/cgroups belong only to this boot, so a
+# previous boot's runtime state goes on every boot: a clone of a running VM
+# carries it in the overlay, and a launch later in this boot refuses to start
+# over what looks like a live workload.
+rm -rf /newroot/var/tmp/capsem-container
 if [ -f /newroot/root/.capsem-image/ready ]; then
-    rm -rf /newroot/var/tmp/capsem-container
     /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py /root/.capsem-image' &
 fi
 
