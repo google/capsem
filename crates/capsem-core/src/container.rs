@@ -88,6 +88,9 @@ pub fn workload_resources(ram_mb: u64, cpus: u32) -> Result<WorkloadResources> {
 
 pub const LAUNCHER: &[u8] = include_bytes!("../../../guest/artifacts/container/launch.py");
 pub const STAGE: &str = ".capsem-image";
+/// The launcher's marker in [`STAGE`] that an image is staged: every boot
+/// (capsem-init) launches what it marks.
+pub const STAGE_READY: &str = "ready";
 /// The launcher's marker in [`STAGE`] that runc started the workload, written
 /// by runc's poststart hook. `ready` says only that the image is staged: it is
 /// written before runc creates anything, and a boot relaunches what it marks.
