@@ -54,6 +54,7 @@ KNOWN_DIRECTORIES = frozenset(
         "data",
         "docker",
         "guest",
+        "images",
         "mcp",
         "scripts",
         "sdk",
@@ -114,6 +115,8 @@ RUST_GUEST_CONFIG_ROOTS = frozenset(
         "crates",
         "data",
         "guest",
+        # Application images: the product lanes boot and test them.
+        "images",
         "security",
     }
 )
