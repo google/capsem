@@ -79,7 +79,9 @@ fn owner_answering_the_surface(uds_path: &StdPath, refuse: bool) -> tokio::task:
 }
 
 fn mark_running(fx: &Fixture) {
-    std::fs::write(fx.workspace.join(".capsem-image/ready"), b"1\n").unwrap();
+    for marker in ["ready", "running"] {
+        std::fs::write(fx.workspace.join(".capsem-image").join(marker), b"1\n").unwrap();
+    }
 }
 
 async fn setup_task_finished(fx: &Fixture) {
