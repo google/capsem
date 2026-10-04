@@ -224,32 +224,58 @@ fn hex32_scan_handles_non_ascii_without_panicking() {
 }
 
 #[test]
-fn root_txt_path_is_extracted_and_stops_at_the_first_disallowed_character() {
+fn target_txt_path_is_extracted_and_stops_at_the_first_disallowed_character() {
     assert_eq!(
-        find_root_txt_path(r#"{"cmd":"cat /root/out.txt"}"#).as_deref(),
+        find_target_txt_path(r#"{"cmd":"cat /root/out.txt"}"#).as_deref(),
         Some("/root/out.txt")
     );
     assert_eq!(
-        find_root_txt_path("/root/nested/dir/file.txt and more").as_deref(),
+        find_target_txt_path("/root/nested/dir/file.txt and more").as_deref(),
         Some("/root/nested/dir/file.txt")
     );
 }
 
 #[test]
-fn root_txt_path_ignores_candidates_without_a_txt_suffix() {
-    assert_eq!(find_root_txt_path("/root/binary.bin"), None);
-    assert_eq!(find_root_txt_path("no path here"), None);
-    assert_eq!(find_root_txt_path(""), None);
+fn target_txt_path_ignores_candidates_without_a_txt_suffix() {
+    assert_eq!(find_target_txt_path("/root/binary.bin"), None);
+    assert_eq!(find_target_txt_path("no path here"), None);
+    assert_eq!(find_target_txt_path(""), None);
 }
 
 #[test]
-fn root_txt_path_takes_the_last_candidate_when_several_appear() {
+fn target_txt_path_takes_the_last_candidate_when_several_appear() {
     // `.last()` is load-bearing: a payload that mentions an earlier path in
     // prose must not beat the one the command actually writes.
     assert_eq!(
-        find_root_txt_path("first /root/a.txt then /root/b.txt").as_deref(),
+        find_target_txt_path("first /root/a.txt then /root/b.txt").as_deref(),
         Some("/root/b.txt")
     );
+}
+
+#[test]
+fn target_txt_path_is_found_under_a_workload_workspace_too() {
+    // A container workload writes under its workspace; its root is read-only.
+    assert_eq!(
+        find_target_txt_path(r#"{"cmd":"printf x > /workspace/out.txt"}"#).as_deref(),
+        Some("/workspace/out.txt")
+    );
+    assert_eq!(
+        find_target_txt_path("first /workspace/a.txt then /root/b.txt").as_deref(),
+        Some("/root/b.txt"),
+        "the last path written wins, whichever root it is under"
+    );
+    assert_eq!(
+        find_target_txt_path("first /root/a.txt then /workspace/b.txt").as_deref(),
+        Some("/workspace/b.txt")
+    );
+    assert_eq!(find_target_txt_path("/home/capsem/out.txt"), None);
+}
+
+#[test]
+fn a_tool_runs_in_the_directory_of_the_file_it_writes() {
+    assert_eq!(target_dir("/workspace/agy-1.txt"), "/workspace");
+    assert_eq!(target_dir("/root/agy-1.txt"), "/root");
+    assert_eq!(target_dir("/workspace/nested/x.txt"), "/workspace/nested");
 }
 
 #[test]

@@ -1054,7 +1054,7 @@ fn google_code_assist_stream(payload: Value) -> Bytes {
                             "id": call_id,
                             "args": {
                                 "CommandLine": shell_write_command(&token, &path),
-                                "Cwd": "/root",
+                                "Cwd": target_dir(&path),
                                 "WaitMsBeforeAsync": 1000,
                                 "toolSummary": "Write proof",
                                 "toolAction": "Writing file"
@@ -1188,10 +1188,12 @@ fn google_model_from_path(path: &str) -> String {
         .to_string()
 }
 
+const TARGET_ROOTS: [&str; 2] = ["/root/", "/workspace/"];
+
 fn write_target(payload: &Value, default_prefix: &str) -> (String, String) {
     let raw = serde_json::to_string(payload).unwrap_or_default();
     let token = find_hex32(&raw).unwrap_or_else(|| EXPECTED_POEM.to_string());
-    let path = find_root_txt_path(&raw).unwrap_or_else(|| format!("/root/{default_prefix}-output.txt"));
+    let path = find_target_txt_path(&raw).unwrap_or_else(|| format!("/root/{default_prefix}-output.txt"));
     (token, path)
 }
 
@@ -1203,8 +1205,12 @@ fn find_hex32(raw: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn find_root_txt_path(raw: &str) -> Option<String> {
-    raw.match_indices("/root/")
+/// Where a client asks a model to write: the last `.txt` path under a VM's
+/// `/root` or a container workload's `/workspace` (its root is read-only).
+fn find_target_txt_path(raw: &str) -> Option<String> {
+    TARGET_ROOTS
+        .iter()
+        .flat_map(|root| raw.match_indices(root))
         .filter_map(|(start, _)| {
             let tail = &raw[start..];
             let end = tail
@@ -1217,10 +1223,17 @@ fn find_root_txt_path(raw: &str) -> Option<String> {
             let candidate = &tail[..end];
             candidate.find(".txt").map(|index| {
                 let end = index + 4;
-                candidate[..end].replace("\\/", "/")
+                (start, candidate[..end].replace("\\/", "/"))
             })
         })
-        .last()
+        .max_by_key(|(start, _)| *start)
+        .map(|(_, path)| path)
+}
+
+/// The directory a tool that writes `path` runs in.
+fn target_dir(path: &str) -> &str {
+    path.rsplit_once('/')
+        .map_or("/", |(dir, _)| if dir.is_empty() { "/" } else { dir })
 }
 
 fn shell_write_command(token: &str, path: &str) -> String {
