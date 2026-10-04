@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from helpers.constants import BIN_DIR, CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import BIN_DIR, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -34,7 +34,6 @@ def _provision_vm(uds_path, name, persistent=False):
     client = UdsHttpClient(uds_path)
     body = {
         "name": name,
-        "profile_id": CODE_PROFILE_ID,
         "ram_mb": DEFAULT_RAM_MB,
         "cpus": DEFAULT_CPUS,
     }
@@ -326,7 +325,7 @@ class TestEnv:
         from helpers.uds_client import UdsHttpClient
         client = UdsHttpClient(uds_path)
         resp = client.post("/vms/create", {
-            "name": name, "profile_id": CODE_PROFILE_ID,
+            "name": name,
             "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
             "persistent": True, "env": {"CAPSEM_TEST_VAR": "hello_from_host"}
         })

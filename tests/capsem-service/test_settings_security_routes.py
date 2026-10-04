@@ -1,9 +1,8 @@
-"""Profile security route contract.
+"""Settings-scope security route contract.
 
-These routes are the UI/TUI contract for profile-owned enforcement,
-detection, plugins, and MCP configuration. They must expose one profile rail:
-typed rules, plugin config, and MCP permission mutations. Retired policy,
-approval, and plugin-man surfaces must stay burned.
+These routes are the UI/TUI contract for plugins and MCP configuration,
+answered from the built-in defaults, settings.toml and the corp config. Retired
+profile, policy, approval, and plugin-man surfaces must stay burned.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-PROFILE = "code"
 SERVER = "local"
 
 
@@ -51,47 +49,68 @@ def _seed_mcp_tool_cache(service_env: Any) -> None:
     )
 
 
-def test_profile_security_routes_expose_single_contract(client: Any, service_env: Any) -> None:
+def test_settings_security_routes_expose_single_contract(client: Any, service_env: Any) -> None:
     _seed_mcp_tool_cache(service_env)
-    refresh = client.post(f"/profiles/{PROFILE}/mcp/servers/{SERVER}/refresh")
+    refresh = client.post(f"/mcp/servers/{SERVER}/refresh")
     assert refresh["success"] is True
     assert refresh["server_id"] == SERVER
 
-    enforcement = client.get(f"/profiles/{PROFILE}/enforcement/rules/list")
-    detection = client.get(f"/profiles/{PROFILE}/detection/rules/list")
-    plugins = client.get(f"/profiles/{PROFILE}/plugins/list")
-    mcp_default = client.get(f"/profiles/{PROFILE}/mcp/default/info")
-    mcp_tools = client.get(f"/profiles/{PROFILE}/mcp/servers/{SERVER}/tools/list")
+    plugins = client.get("/plugins/list")
+    mcp_info = client.get("/mcp/info")
+    mcp_default = client.get("/mcp/default/info")
+    mcp_tools = client.get(f"/mcp/servers/{SERVER}/tools/list")
 
-    assert enforcement["profile_id"] == PROFILE
-    assert all("rule_id" in rule and "action" in rule for rule in enforcement["rules"])
-    assert any(rule["default_rule"] for rule in enforcement["rules"])
-
-    assert detection["profile_id"] == PROFILE
-    assert all("rule_id" in rule and "detection_level" in rule for rule in detection["rules"])
-
-    assert plugins["scope"] == {"kind": "profile", "profile_id": PROFILE}
-    assert plugins["plugins"]
+    assert set(plugins) == {"plugins"}
+    assert {plugin["id"] for plugin in plugins["plugins"]} == {
+        "credential_broker",
+        "dummy_post_allow",
+        "dummy_pre_eicar",
+        "log_sanitizer",
+    }
+    assert all(plugin["name"] and plugin["description"] for plugin in plugins["plugins"])
+    assert all("scope" not in plugin for plugin in plugins["plugins"])
     assert all(plugin["stage"] in {"preprocess", "postprocess", "logging"} for plugin in plugins["plugins"])
     assert all(plugin["config"]["mode"] in {"allow", "ask", "block", "rewrite", "disable"} for plugin in plugins["plugins"])
     assert all("man" not in json.dumps(plugin).lower() for plugin in plugins["plugins"])
 
+    assert mcp_info["builtin_local_enabled"] is True
+    assert mcp_info["server_count"] == mcp_info["manual_server_count"] + 1
+    assert "profile_id" not in mcp_info
+
     assert mcp_default["action"] in {"allow", "ask", "block"}
     assert mcp_default["rule_id"] == "default.mcp"
+    assert mcp_default["source"] in {"corp", "settings", "default"}
 
     assert isinstance(mcp_tools, list)
     assert {tool["namespaced_name"] for tool in mcp_tools} == {"local__echo", "local__fetch_http"}
     for tool in mcp_tools:
         assert {"namespaced_name", "original_name", "server_name", "permission_action", "permission_source"} <= set(tool)
         assert tool["permission_action"] in {"allow", "ask", "block"}
+        assert tool["permission_source"] in {"corp", "settings", "default"}
         assert "approved" not in tool
         assert "policy" not in tool
 
 
-def test_retired_profile_security_routes_stay_burned(client: Any) -> None:
+def test_retired_profile_and_security_routes_stay_burned(client: Any) -> None:
     for method, path in (
-        ("GET", f"/profiles/{PROFILE}/plugins/credential_broker/man"),
-        ("GET", f"/profiles/{PROFILE}/mcp/policy"),
+        ("GET", "/profiles/list"),
+        ("GET", "/profiles/status"),
+        ("POST", "/profiles/reload"),
+        ("GET", "/profiles/code/info"),
+        ("GET", "/profiles/code/obom"),
+        ("POST", "/profiles/code/validate"),
+        ("GET", "/profiles/code/assets/status"),
+        ("GET", "/profiles/code/enforcement/rules/list"),
+        ("POST", "/profiles/code/enforcement/evaluate"),
+        ("GET", "/profiles/code/detection/rules/list"),
+        ("GET", "/profiles/code/skills/list"),
+        ("GET", "/profiles/code/plugins/list"),
+        ("GET", "/profiles/code/mcp/info"),
+        ("GET", "/plugins/info"),
+        ("GET", "/plugins/credential_broker/info"),
+        ("GET", "/plugins/credential_broker/man"),
+        ("PUT", "/mcp/servers/local/edit"),
+        ("DELETE", "/mcp/servers/local/delete"),
         ("GET", "/mcp/policy"),
         ("GET", "/mcp/tools"),
     ):

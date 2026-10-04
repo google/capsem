@@ -5,7 +5,7 @@ Verifies that requests are correctly proxied from TCP to UDS.
 
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.service import exec_output_text
 
@@ -25,7 +25,7 @@ class TestProxyForwarding:
         """POST /vms/create with JSON body returns an id."""
         resp = gw_client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         assert resp is not None
         assert "id" in resp

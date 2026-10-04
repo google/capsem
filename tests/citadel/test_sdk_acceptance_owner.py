@@ -38,7 +38,7 @@ def _problems(files: dict[str, str], ignored: list[str]) -> list[str]:
         problems.append("three-language parameterization")
     if not all(token in suite for token in ("GatewayInstance", "SDK_GATEWAY_TOKEN", "BRAAVOS_SDK_ACCEPTANCE_OK")):
         problems.append("authenticated gateway fixture")
-    required = ("incorrect-token", "profiles", "panics", "triage", "files")
+    required = ("incorrect-token", "mcp", "panics", "triage", "files")
     for language, path in DRIVERS.items():
         if not all(token in files.get(path, "") for token in required):
             problems.append(f"{language} behavior")
@@ -78,9 +78,9 @@ def _tui_problems(files: dict[str, str]) -> list[str]:
     problems = []
     if 'capsem-sdk = { path = "../../sdk/rust" }' not in manifest:
         problems.append("SDK dependency")
-    if ".profiles()" not in provider or ".purge(*all)" not in provider:
+    if ".info()" not in provider or ".purge(*all)" not in provider:
         problems.append("resource facades")
-    if "operations::list_profiles" in provider or 'post(join_url(base_url, &["purge"])' in provider:
+    if "operations::get_hypervisor_info" in provider or 'post(join_url(base_url, &["purge"])' in provider:
         problems.append("raw supported control")
     if not all(token in actions for token in ("capsem_sdk::operations", ".fork(", ".stop()", ".delete()")):
         problems.append("typed actions")

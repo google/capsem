@@ -9,7 +9,7 @@ from urllib.parse import urlencode, urlsplit
 
 import pytest
 from helpers.body_archive import served_security_payload
-from helpers.constants import CODE_PROFILE_ID
+from helpers.settings_policy import apply_settings_rule
 
 from tests.ironbank.kingslanding.test_publish import redis
 from tests.ironbank.kingslanding.test_run import exec_output_text, service, wait_for
@@ -259,16 +259,14 @@ def test_authenticated_container_preview_streams_and_revokes(redis, service):
     assert _refused(url.port, second["id"], control_cookie)
     assert _hits(client, vm_id) == before
 
-    rule = client.put(
-        f"/profiles/{CODE_PROFILE_ID}/enforcement/rules/preview_test/edit",
-        {
-            "name": "preview_test",
-            "action": "block",
-            "match": 'network.mode == "http_preview" && network.action == "preview_request"',
-            "reason": "Kingslanding preview boundary proof.",
-        },
+    reloaded = apply_settings_rule(
+        service,
+        "preview_test",
+        action="block",
+        match='network.mode == "http_preview" && network.action == "preview_request"',
+        reason="Kingslanding preview boundary proof.",
     )
-    assert rule["rule"]["action"] == "block"
+    assert reloaded["reloaded"] >= 1, reloaded
     assert _refused(url.port, exposure["id"], control_cookie)
     assert _hits(client, vm_id) == before
 

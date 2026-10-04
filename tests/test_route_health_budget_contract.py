@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from helpers.route_health_budget import hot_route_budget
+from helpers.route_health_budget import SETTINGS, hot_route_budget
 
 from tests.ironbank.test_route_health import (
     HOT_ROUTE_WINDOW_SAMPLES,
@@ -13,7 +13,7 @@ from tests.ironbank.test_route_health import (
 
 def test_route_health_budget_can_gate_p99_without_single_tail_outlier() -> None:
     timing = RouteTiming(
-        label="service /stats during profile-mutation writes",
+        label="service /stats during policy-mutation writes",
         samples_ms=[1.1] * 95 + [44.2],
         service_cpu_s=0.28,
         gateway_cpu_s=None,
@@ -24,7 +24,7 @@ def test_route_health_budget_can_gate_p99_without_single_tail_outlier() -> None:
 
 def test_route_health_budget_rejects_p99_regression() -> None:
     timing = RouteTiming(
-        label="service /stats during profile-mutation writes",
+        label="service /stats during policy-mutation writes",
         samples_ms=[1.1] * 94 + [41.0, 44.2],
         service_cpu_s=0.32,
         gateway_cpu_s=None,
@@ -40,7 +40,7 @@ def test_route_health_budget_rejects_p99_regression() -> None:
 
 def test_route_health_budget_rejects_cpu_regression() -> None:
     timing = RouteTiming(
-        label="service /stats during profile-mutation writes",
+        label="service /stats during policy-mutation writes",
         samples_ms=[1.1] * 160,
         service_cpu_s=0.36,
         gateway_cpu_s=None,
@@ -66,7 +66,7 @@ def test_cpu_accounting_delta_accepts_an_exact_budget_boundary() -> None:
     assert raw_delta > 0.12
 
     timing = RouteTiming(
-        label="service /profiles/list",
+        label="service /plugins/list",
         samples_ms=[1.0] * HOT_ROUTE_WINDOW_SAMPLES,
         service_cpu_s=_cpu_delta_seconds(after=Decimal("1.12"), before=Decimal("1.0")),
         gateway_cpu_s=None,
@@ -84,7 +84,7 @@ def test_cpu_accounting_delta_accepts_an_exact_budget_boundary() -> None:
 
 def test_cpu_accounting_delta_rejects_the_next_accounted_tick() -> None:
     timing = RouteTiming(
-        label="service /profiles/list",
+        label="service /plugins/list",
         samples_ms=[1.0] * HOT_ROUTE_WINDOW_SAMPLES,
         service_cpu_s=_cpu_delta_seconds(after=Decimal("1.13"), before=Decimal("1.0")),
         gateway_cpu_s=None,
@@ -107,19 +107,19 @@ def test_cpu_accounting_delta_rejects_the_next_accounted_tick() -> None:
 
 def test_hot_route_budget_ignores_one_host_scheduler_outlier() -> None:
     timing = RouteTiming(
-        label="service /profiles/code/mcp/servers/local/tools/list",
+        label="service /mcp/servers/local/tools/list",
         samples_ms=[0.2] * (HOT_ROUTE_WINDOW_SAMPLES - 1) + [9.6],
         service_cpu_s=0.01,
         gateway_cpu_s=None,
     )
 
-    _assert_hot_route_budget(timing, path="/profiles/code/mcp/servers/local/tools/list")
+    _assert_hot_route_budget(timing, path="/mcp/servers/local/tools/list")
 
 
 def test_hot_route_budget_rejects_a_sustained_tail_regression() -> None:
     outliers = 5
     timing = RouteTiming(
-        label="service /profiles/code/mcp/servers/local/tools/list",
+        label="service /mcp/servers/local/tools/list",
         samples_ms=[0.2] * (HOT_ROUTE_WINDOW_SAMPLES - outliers) + [9.6] * outliers,
         service_cpu_s=0.01,
         gateway_cpu_s=None,
@@ -127,7 +127,7 @@ def test_hot_route_budget_rejects_a_sustained_tail_regression() -> None:
 
     try:
         _assert_hot_route_budget(
-            timing, path="/profiles/code/mcp/servers/local/tools/list"
+            timing, path="/mcp/servers/local/tools/list"
         )
     except AssertionError:
         return
@@ -145,9 +145,20 @@ def test_gateway_status_budget_accounts_for_composite_service_work() -> None:
     assert gateway_status_cpu_s == gateway_vm_list_cpu_s
 
 
-def test_profile_inventory_and_readiness_share_the_richer_budget() -> None:
-    """Profile collections must not fall through to the tiny scalar default."""
-    assert hot_route_budget("/profiles/list") == hot_route_budget("/profiles/status")
-    assert hot_route_budget("/profiles/list", gateway=True) == hot_route_budget(
-        "/profiles/status", gateway=True
-    )
+def test_asset_readiness_and_plugin_detail_use_their_own_budgets() -> None:
+    """Asset readiness and plugin detail must not fall through to the scalar default."""
+    for gateway in (False, True):
+        side = "gateway" if gateway else "service"
+        for path, name in (
+            ("/assets/status", "assets_status"),
+            ("/plugins/credential_broker/credentials/info", "plugin_info"),
+            ("/mcp/default/info", "mcp_default"),
+            ("/mcp/servers/list", "mcp_servers"),
+        ):
+            configured = getattr(getattr(SETTINGS.budgets, name), side)
+            budget = hot_route_budget(path, gateway=gateway)
+            assert (budget.p95_ms, budget.p99_ms, budget.cpu_s) == (
+                float(configured.p95_ms),
+                float(configured.p99_ms),
+                float(configured.cpu_s),
+            ), (path, side)

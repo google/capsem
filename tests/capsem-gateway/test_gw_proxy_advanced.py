@@ -8,7 +8,6 @@ import os
 import tempfile
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID
 from helpers.gateway import TcpHttpClient
 
 pytestmark = pytest.mark.gateway
@@ -82,7 +81,7 @@ class TestProxyEndpointCoverage:
 
     def test_post_run(self, gw_client):
         """POST /run one-shot command execution."""
-        resp = gw_client.post("/run", {"command": "echo test", "profile_id": CODE_PROFILE_ID})
+        resp = gw_client.post("/run", {"command": "echo test"})
         assert resp is not None
         assert "stdout" in resp
 
@@ -108,10 +107,10 @@ class TestProxyEndpointCoverage:
         resp = gw_client.delete("/vms/11111111-1111-4111-8111-111111111111/delete")
         assert resp is not None
 
-    def test_post_profile_reload(self, gw_client):
-        """POST /profiles/{profile_id}/reload reloads profile config."""
-        resp = gw_client.post("/profiles/code/reload", {})
-        assert resp is not None
+    def test_post_policy_reload(self, gw_client):
+        """POST /corp/reload reloads every running VM's policy."""
+        resp = gw_client.post("/corp/reload", {})
+        assert resp == {"success": True, "reloaded": 0}
 
 
 class TestProxyEdgeCases:

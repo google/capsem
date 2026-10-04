@@ -101,8 +101,8 @@ def _find_setting_value(tree, dotted_id):
 
     SettingsNode is a tagged enum: groups carry `children`; leaves carry the
     flattened ResolvedSetting fields including `id` (full dotted path) and
-    `effective_value`. Action nodes have neither. MCP is profile-owned and is
-    not part of the settings tree.
+    `effective_value`. Action nodes have neither. MCP lives in settings.toml
+    `[mcp]` and is answered by the /mcp routes, not the settings tree.
     """
 
     def walk(node):

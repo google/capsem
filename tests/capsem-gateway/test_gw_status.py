@@ -38,16 +38,21 @@ class TestStatusEndpoint:
         assert rs["total_ram_mb"] > 0
         assert rs["total_cpus"] > 0
 
-    def test_status_includes_profile_catalog_and_manifest_provenance(self, gw_client):
-        """GET /status preserves profile readiness and installed manifest provenance."""
+    def test_status_includes_asset_readiness_and_manifest_provenance(self, gw_client):
+        """GET /status carries the asset status and installed manifest provenance."""
         resp = gw_client.get("/status")
-        profiles = resp.get("profiles")
-        assert profiles is not None
-        assert profiles["source"] == "profile"
-        assert profiles["profile_count"] == 2
-        assert profiles["ready_count"] == 1
+        assert "profiles" not in resp
+        assets = resp.get("assets")
+        assert assets is not None
+        assert assets["ready"] is False
+        assert assets["asset_version"] == "2026.0613.1"
+        assert {asset["kind"]: asset["status"] for asset in assets["assets"]} == {
+            "kernel": "present",
+            "rootfs": "missing",
+        }
+        assert assets["errors"] == ["rootfs.erofs is missing"]
 
-        manifest = profiles["asset_manifest"]
+        manifest = assets["manifest"]
         assert manifest["origin"] == "package"
         assert manifest["origin_source"] == "file:///tmp/corp/manifest.json"
         assert manifest["origin_path"].endswith("/manifest-metadata.json")
@@ -57,11 +62,10 @@ class TestStatusEndpoint:
         assert manifest["assets_current"] == "2026.0613.1"
         assert manifest["binaries_current"] == "1.3.0"
 
-        by_id = {profile["id"]: profile for profile in profiles["profiles"]}
-        assert by_id["code"]["ready"] is True
-        assert by_id["code"]["asset_count"] == 3
-        assert by_id["co-work"]["ready"] is False
-        assert by_id["co-work"]["missing_assets"][0]["kind"] == "rootfs"
+    def test_status_vms_carry_no_profile(self, gw_client):
+        resp = gw_client.get("/status")
+        assert resp["vms"]
+        assert all("profile_id" not in vm for vm in resp["vms"])
 
     def test_status_caches_within_ttl(self, gw_client):
         """Two rapid calls return identical data (cache TTL is 2s)."""

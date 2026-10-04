@@ -13,7 +13,6 @@ import uuid
 
 import pytest
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
@@ -31,7 +30,6 @@ class TestPersistentCreate:
         name = vm_name("pers")
         resp = client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -52,7 +50,7 @@ class TestPersistentCreate:
         """Unnamed VMs should have persistent=false."""
         resp = client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         vm_id = resp["id"]
         try:
@@ -66,7 +64,6 @@ class TestPersistentCreate:
         name = vm_name("dup")
         client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -74,7 +71,6 @@ class TestPersistentCreate:
         try:
             resp = client.post("/vms/create", {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "persistent": True,
@@ -93,7 +89,6 @@ class TestStopSemantics:
         name = vm_name("stp")
         client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -115,7 +110,7 @@ class TestStopSemantics:
         """Stopping an ephemeral VM should destroy it completely."""
         resp = client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         vm_id = resp["id"]
         wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
@@ -134,7 +129,6 @@ class TestResumeLifecycle:
         # 1. Create persistent VM
         client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -177,7 +171,6 @@ class TestResumeLifecycle:
         name = vm_name("runres")
         create = client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -200,7 +193,7 @@ class TestPersistConvert:
         """The persist endpoint should convert an ephemeral VM to persistent."""
         resp = client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         vm_id = resp["id"]
         wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
@@ -225,7 +218,6 @@ class TestPersistConvert:
         taken = vm_name("taken")
         client.post("/vms/create", {
             "name": taken,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -234,7 +226,7 @@ class TestPersistConvert:
         # Create an ephemeral VM
         resp = client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         vm_id = resp["id"]
 
@@ -254,14 +246,13 @@ class TestPurge:
         persistent_name = vm_name("pkeep")
         client.post("/vms/create", {
             "name": persistent_name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
         })
         eph_resp = client.post(
             "/vms/create",
-            {"profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+            {"ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
         )
         eph_id = eph_resp["id"]
 
@@ -281,7 +272,6 @@ class TestPurge:
         persistent_name = vm_name("pall")
         client.post("/vms/create", {
             "name": persistent_name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -300,7 +290,6 @@ class TestPurge:
         persistent_name = vm_name("pdef")
         client.post("/vms/create", {
             "name": persistent_name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -323,7 +312,6 @@ class TestRunEndpoint:
         """The /run endpoint should exec a command and return output."""
         resp = client.post("/run", {
             "command": "echo hello-from-run",
-            "profile_id": CODE_PROFILE_ID,
             "timeout_secs": EXEC_TIMEOUT_SECS,
         })
         assert resp is not None
@@ -334,18 +322,16 @@ class TestRunEndpoint:
         """The /run endpoint should propagate non-zero exit codes."""
         resp = client.post("/run", {
             "command": "exit 42",
-            "profile_id": CODE_PROFILE_ID,
             "timeout_secs": EXEC_TIMEOUT_SECS,
         })
         assert resp is not None
         assert resp.get("exit_code") == 42
 
     def test_run_invocations_do_not_reuse_stopped_session_directory(self, client):
-        """Consecutive /run calls must get fresh profile-scoped sessions."""
+        """Consecutive /run calls must get fresh sessions."""
         marker = f"capsem-run-ephemeral-{uuid.uuid4().hex}"
         write = client.post("/run", {
             "command": f"echo {marker} > /root/.capsem_run_ephemeral_marker",
-            "profile_id": CODE_PROFILE_ID,
             "timeout_secs": EXEC_TIMEOUT_SECS,
         })
         assert write is not None
@@ -357,7 +343,6 @@ class TestRunEndpoint:
                 "&& echo CAPSEM_RUN_FRESH "
                 "|| { cat /root/.capsem_run_ephemeral_marker; exit 42; }"
             ),
-            "profile_id": CODE_PROFILE_ID,
             "timeout_secs": EXEC_TIMEOUT_SECS,
         })
         assert check is not None
@@ -373,7 +358,6 @@ class TestListPersistence:
         name = vm_name("lstp")
         client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -395,7 +379,6 @@ class TestListPersistence:
         name = vm_name("lpf")
         client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,

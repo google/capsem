@@ -7,8 +7,9 @@ import socket
 
 import pytest
 from helpers.body_archive import served_security_payload, session_archive
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.session_ledger import open_session_ledger
+from helpers.settings_policy import apply_settings_rule, write_settings_rule
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_publish import redis
@@ -26,26 +27,23 @@ def test_container_pull_policy_stops_before_registry_egress_and_redacts_credenti
 
     with registry(tmp_path) as (reference, certificate, requests):
         registry_host = reference.split("/", 1)[0]
-        result = client.put(
-            f"/profiles/{CODE_PROFILE_ID}/enforcement/rules/container_pull_test/edit",
-            {
-                "name": "container_pull_test",
-                "action": "block",
-                "match": (
-                    f'container.registry == "{registry_host}" && '
-                    f'container.image == "{reference}"'
-                ),
-                "reason": "Kingslanding container pull boundary proof.",
-            },
+        # Written before the VM exists: its create materializes it.
+        write_settings_rule(
+            service.home_dir,
+            "container_pull_test",
+            action="block",
+            match=(
+                f'container.registry == "{registry_host}" && '
+                f'container.image == "{reference}"'
+            ),
+            reason="Kingslanding container pull boundary proof.",
         )
-        assert result["rule"]["action"] == "block"
 
         grant_image(service, reference)
         created = client.post(
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "persistent": True,
@@ -161,24 +159,22 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
         assert _redis_command(stream, "PING") == b"PONG"
         if policy == "plugin":
             result = client.patch(
-                f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_post_allow/edit",
+                "/plugins/dummy_post_allow/edit",
                 {"mode": "block", "detection_level": "high"},
             )
             assert result["config"]["mode"] == "block"
         else:
-            result = client.put(
-                f"/profiles/{CODE_PROFILE_ID}/enforcement/rules/expose_test/edit",
-                {
-                    "name": "expose_test",
-                    "action": policy,
-                    "match": 'network.mode == "expose" && network.destination.port == "6379"',
-                    "reason": "Kingslanding expose boundary proof.",
-                },
+            reloaded = apply_settings_rule(
+                service,
+                "expose_test",
+                action=policy,
+                match='network.mode == "expose" && network.destination.port == "6379"',
+                reason="Kingslanding expose boundary proof.",
             )
-            assert result["rule"]["action"] == policy
+            assert reloaded["reloaded"] >= 1, reloaded
 
-        # The edit route returns only after the running owner acknowledged the
-        # reload, so the very next connection must already be refused. Measure
+        # The edit and reload routes return only after the running owner
+        # acknowledged the reload, so the very next connection must already be refused. Measure
         # through the same observer socket so measurement does not perturb
         # Redis's count.
         assert _probe(port)[0], "edited policy still admitted a connection"

@@ -1,11 +1,15 @@
-"""Contracts for the integration-test service helper."""
+"""Contracts for the integration-test service helpers."""
 
+import json
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from tests.helpers import service as service_helper
 from tests.helpers.constants import EXEC_READY_TIMEOUT
+from tests.helpers.persistent_registry import registry_entry, write_registry
+from tests.helpers.settings_policy import write_settings_rule
 
 
 def test_exec_ready_timeout_covers_parallel_kvm_boot_pressure() -> None:
@@ -35,30 +39,6 @@ def test_service_fixture_log_filter_keeps_required_evidence_under_ambient_warn()
         service_helper.test_rust_log_filter({"RUST_LOG": "warn"})
         == "service=info,capsem=debug,warn"
     )
-
-
-def test_materialize_test_profiles_rejects_empty_generated_catalog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    generated = tmp_path / "generated" / "profiles"
-    generated.mkdir(parents=True)
-    monkeypatch.setattr(service_helper, "PROFILES_DIR", generated)
-
-    with pytest.raises(RuntimeError, match=r"contains no profile.toml"):
-        service_helper.materialize_test_profiles(tmp_path / "run")
-
-
-def test_materialize_test_profiles_copies_real_generated_profiles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    generated = tmp_path / "generated" / "profiles"
-    (generated / "code").mkdir(parents=True)
-    (generated / "code" / "profile.toml").write_text('id = "code"\n')
-    monkeypatch.setattr(service_helper, "PROFILES_DIR", generated)
-
-    copied = service_helper.materialize_test_profiles(tmp_path / "run")
-
-    assert (copied / "code" / "profile.toml").read_text() == 'id = "code"\n'
 
 
 def test_service_instance_uses_private_production_shaped_home(
@@ -195,3 +175,101 @@ def test_installed_exec_output_reads_both_published_wire_shapes() -> None:
     assert service_helper.wait_exec_ready(
         _Client({"stdout": "ready\n"}), "vm", timeout=1, read=read
     )
+
+
+def test_service_instance_names_no_profile_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The service reads no profiles; the helper must not hand it one."""
+    home = tmp_path / "capsem-home"
+    home.mkdir()
+    monkeypatch.setattr(service_helper, "make_capsem_tmp_dir", lambda _prefix: home)
+    service = service_helper.ServiceInstance()
+    assert not hasattr(service, "profiles_dir")
+    assert not hasattr(service_helper, "materialize_test_profiles")
+    assert not hasattr(service_helper, "wait_profile_assets_settled")
+
+
+class _StatusClient:
+    def __init__(self, answers: list[dict]) -> None:
+        self.answers = answers
+        self.paths: list[str] = []
+
+    def get(self, path: str) -> dict:
+        self.paths.append(path)
+        return self.answers.pop(0)
+
+
+def test_wait_assets_settled_polls_the_asset_status_route() -> None:
+    client = _StatusClient([{"downloading": True}, {"downloading": False, "ready": True}])
+    assert service_helper.wait_assets_settled(client, timeout=5) == {
+        "downloading": False,
+        "ready": True,
+    }
+    assert client.paths == ["/assets/status", "/assets/status"]
+
+
+def test_settings_rule_replaces_only_its_own_table(tmp_path: Path) -> None:
+    grant = '[images]\nsources = ["127.0.0.1:5000"]\nadmit = ["127.0.0.1:5000"]\n'
+    (tmp_path / "settings.toml").write_text(grant)
+    write_settings_rule(tmp_path, "block_example", action="ask", match='http.host == "example.com"')
+    write_settings_rule(tmp_path, "block_example", action="block", match='http.host == "example.com"')
+    write_settings_rule(tmp_path, "other", action="allow", match="true")
+
+    text = (tmp_path / "settings.toml").read_text()
+    assert text.startswith(grant)
+    assert text.count("[profiles.rules.block_example]") == 1
+    settings = tomllib.loads(text)
+    assert settings["images"]["sources"] == ["127.0.0.1:5000"]
+    assert settings["profiles"]["rules"] == {
+        "block_example": {
+            "name": "block_example",
+            "action": "block",
+            "match": 'http.host == "example.com"',
+        },
+        "other": {"name": "other", "action": "allow", "match": "true"},
+    }
+
+
+def test_registry_entry_has_the_current_shape_and_manifest_pins(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    arch = "arm64" if __import__("platform").machine().lower() in ("arm64", "aarch64") else "x86_64"
+    (assets / "manifest.json").write_text(
+        json.dumps(
+            {
+                "assets": {
+                    "current": "1",
+                    "releases": {
+                        "1": {
+                            "arches": {
+                                arch: {
+                                    "vmlinuz": {"hash": "a" * 64},
+                                    "initrd.img": {"hash": "blake3:" + "b" * 64},
+                                    "rootfs.erofs": {"hash": "c" * 64},
+                                }
+                            }
+                        }
+                    },
+                }
+            }
+        )
+    )
+    run = tmp_path / "run"
+    entry = registry_entry(run, "vm-id", "vm-name", assets_dir=assets)
+    write_registry(run, [entry])
+
+    assert not {key for key in entry if key.startswith("profile")}
+    assert entry["asset_pins"] == {
+        "kernel": {"name": "vmlinuz", "hash": "blake3:" + "a" * 64},
+        "initrd": {"name": "initrd.img", "hash": "blake3:" + "b" * 64},
+        "rootfs": {"name": "rootfs.erofs", "hash": "blake3:" + "c" * 64},
+    }
+    overlay = Path(entry["session_dir"]) / "system" / "rootfs.img"
+    assert overlay.stat().st_size == 1024 * 1024 * 1024
+    registry = json.loads((run / "persistent_registry.json").read_text())
+    assert registry == {"vms": {"vm-name": entry}}
+
+    legacy = registry_entry(run, "old-id", "old-name", assets_dir=assets, overlay=False, profile_id="code")
+    assert legacy["profile_id"] == "code"
+    assert not (Path(legacy["session_dir"]) / "system").exists()

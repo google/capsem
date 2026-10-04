@@ -22,11 +22,9 @@ import pytest
 from helpers.body_archive import session_archive
 from helpers.constants import (
     ASSETS_DIR,
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
@@ -185,7 +183,6 @@ class ModelClientEnv:
 def model_client_env():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     client = None
@@ -304,7 +301,6 @@ def model_client_env():
             "/vms/create",
             {
                 "name": session_name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {"CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"]},
@@ -315,17 +311,17 @@ def model_client_env():
         assert create.get("name") == session_name
         session_id = create["id"]
         assert session_id != session_name
-        active_profile = vm_session_dir(service.tmp_dir, client, session_id) / "vm" / "active_profile.toml"
-        assert active_profile.exists(), f"active profile missing at {active_profile}"
-        active_profile_text = active_profile.read_text(encoding="utf-8")
-        assert ready["dns_udp_addr"] in active_profile_text
-        assert ready["http_addr"] in active_profile_text
-        assert "api.openai.com:443" in active_profile_text
-        assert "api.anthropic.com:443" in active_profile_text
-        assert "generativelanguage.googleapis.com:443" in active_profile_text
-        assert "daily-cloudcode-pa.googleapis.com:443" in active_profile_text
-        assert "antigravity-unleash.goog:443" in active_profile_text
-        assert "runtime-overlay.toml" not in active_profile_text
+        active_policy = vm_session_dir(service.tmp_dir, client, session_id) / "vm" / "active_policy.toml"
+        assert active_policy.exists(), f"active policy missing at {active_policy}"
+        active_policy_text = active_policy.read_text(encoding="utf-8")
+        assert ready["dns_udp_addr"] in active_policy_text
+        assert ready["http_addr"] in active_policy_text
+        assert "api.openai.com:443" in active_policy_text
+        assert "api.anthropic.com:443" in active_policy_text
+        assert "generativelanguage.googleapis.com:443" in active_policy_text
+        assert "daily-cloudcode-pa.googleapis.com:443" in active_policy_text
+        assert "antigravity-unleash.goog:443" in active_policy_text
+        assert "runtime-overlay.toml" not in active_policy_text
         assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
         yield ModelClientEnv(
             service=service,
@@ -352,7 +348,6 @@ def model_client_env():
 @pytest.fixture
 def live_model_client_env():
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before live canary"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     client = None
@@ -394,7 +389,6 @@ def live_model_client_env():
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": vm_env,

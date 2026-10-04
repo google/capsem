@@ -146,20 +146,6 @@ def test_installed_winterfell_roots_accept_one_complete_installed_cohort(
     assert roots.profiles_dir == profiles_dir
 
 
-def test_installed_profiles_are_not_compared_to_an_ambient_runtime_selector(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    bin_dir, assets_dir, profiles_dir = _installed_roots(tmp_path)
-    monkeypatch.setattr(service, "PROFILES_DIR", profiles_dir)
-
-    roots = service.resolve_winterfell_artifact_roots(
-        _environment(bin_dir, assets_dir, profiles_dir)
-    )
-
-    assert roots.installed is True
-    assert roots.profiles_dir == profiles_dir
-
-
 @pytest.mark.parametrize(
     ("bin_dir", "assets_dir", "profiles_dir"),
     [

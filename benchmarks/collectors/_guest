@@ -33,7 +33,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
@@ -180,7 +179,7 @@ def main() -> int:
         print(f"provisioning {name}", file=sys.stderr)
         client.post(
             "/vms/create",
-            {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": guest_cpus(mode)},
+            {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": guest_cpus(mode)},
         )
         if not wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT):
             raise RuntimeError(f"{name} never became exec-ready")

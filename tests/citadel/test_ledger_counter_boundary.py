@@ -67,7 +67,7 @@ POLLED_ROUTE_FILES = {
     "crates/capsem-service/src/ledger_routes/vm_info.rs": "populate_vm_info",
     "crates/capsem-service/src/ledger_routes/activity.rs": "read_counters",
     "crates/capsem-service/src/ledger_routes/security.rs": "security_stats_for_vm",
-    "crates/capsem-service/src/ledger_routes.rs": "hydrate_plugin_execution_runtime",
+    "crates/capsem-service/src/plugin_routes.rs": "hydrate_plugin_execution_runtime",
     "crates/capsem-service/src/vm_lifecycle.rs": "handle_history_counts",
     "crates/capsem-service/src/vm_files.rs": "handle_stats_summary",
     "crates/capsem-gateway/src/status.rs": "fn ",

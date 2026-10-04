@@ -21,7 +21,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers import failures
-from helpers.constants import ASSETS_DIR, EXEC_READY_TIMEOUT, PROFILES_DIR
+from helpers.constants import ASSETS_DIR, EXEC_READY_TIMEOUT
 from helpers.http_transport import Transport
 from helpers.service import make_service_home_run_dirs, preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
@@ -69,7 +69,6 @@ class RealService:
         env["RUST_LOG"] = "capsem=debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.home_dir)
-        env["CAPSEM_PROFILES_DIR"] = str(PROFILES_DIR)
         env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
             self.home_dir / "credential-store.json"
         )

@@ -16,11 +16,9 @@ import pytest
 from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
@@ -156,7 +154,6 @@ def _read_jsonl(path: str | Path) -> list[dict]:
 def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; restore mock server"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     gateway = None
@@ -198,7 +195,6 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -473,7 +469,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
             ),
             timeout_s=20,
         )
-        assert info["profile_id"] == CODE_PROFILE_ID
+        assert "profile_id" not in info
         # The session's totals are the writer's counter snapshot (#223),
         # written with the rows it counts.
         with closing(_connect_session_db(service, vm_id)) as conn:

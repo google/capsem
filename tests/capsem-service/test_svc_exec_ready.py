@@ -13,7 +13,6 @@ import uuid
 
 import pytest
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_TIMEOUT_SECS,
@@ -39,7 +38,6 @@ class TestExecImmediatelyAfterProvision:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -70,7 +68,6 @@ class TestExecImmediatelyAfterProvision:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -93,7 +90,6 @@ class TestExecImmediatelyAfterProvision:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -124,7 +120,6 @@ class TestExecImmediatelyAfterResume:
         #    exec will block until VM is ready (no client poll needed).
         prov_resp = client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,

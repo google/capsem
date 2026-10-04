@@ -22,7 +22,6 @@ import uuid
 
 import pytest
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
@@ -49,7 +48,6 @@ class TestSuspendOverlayDurability:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "persistent": True,
@@ -91,7 +89,6 @@ class TestSuspendOverlayDurability:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "persistent": True,
@@ -143,7 +140,6 @@ class TestSuspendOverlayDurability:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "persistent": True,
@@ -217,7 +213,6 @@ cat /root/held-open.txt""",
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "persistent": True,

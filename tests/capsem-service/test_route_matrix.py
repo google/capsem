@@ -1,16 +1,14 @@
-"""Route matrix for profile-owned service API surfaces.
+"""Route matrix for the settings-scope service API surfaces.
 
-The UI and TUI must be able to build profile pages from explicit profile
-routes. A missing route, fallback route, 404, or 501 is a product bug.
+The UI and TUI build their asset, plugin and MCP pages from these routes. A
+missing route, fallback route, 404, or 501 is a product bug.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from helpers.route_matrix import RouteSpec, assert_profile_route_matrix
-
-PROFILES = ("code", "co-work")
+from helpers.route_matrix import RouteSpec, assert_settings_route_matrix
 
 
 def _uds_request(client: Any, spec: RouteSpec) -> Any:
@@ -19,12 +17,5 @@ def _uds_request(client: Any, spec: RouteSpec) -> Any:
     return payload
 
 
-def test_profile_route_matrix_exists_for_every_ui_profile(client: Any) -> None:
-    listed = client.get("/profiles/list")
-    listed_ids = {profile["id"] for profile in listed["profiles"]}
-    assert set(PROFILES) <= listed_ids
-
-    assert_profile_route_matrix(
-        profiles=PROFILES,
-        request=lambda spec: _uds_request(client, spec),
-    )
+def test_settings_route_matrix_answers_every_ui_surface(client: Any) -> None:
+    assert_settings_route_matrix(lambda spec: _uds_request(client, spec))

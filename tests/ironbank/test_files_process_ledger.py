@@ -14,11 +14,9 @@ from pathlib import Path
 import pytest
 from helpers.body_archive import session_archive
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
 from helpers.service import (
     ServiceInstance,
@@ -193,7 +191,6 @@ def _extract_json_line(output: str, prefix: str) -> dict:
 
 
 def test_file_process_routes_pay_full_ledger_debt_blackbox():
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     session_id = vm_name("ironbank-fps")
@@ -221,7 +218,6 @@ def test_file_process_routes_pay_full_ledger_debt_blackbox():
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },

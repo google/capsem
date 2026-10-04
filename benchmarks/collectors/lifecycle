@@ -24,7 +24,6 @@ sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
@@ -61,7 +60,7 @@ def one_cycle(client, run_dir: Path) -> dict[str, float]:
 
     started = time.monotonic()
     created = client.post(
-        "/vms/create", {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
+        "/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
     )
     provision_ms = (time.monotonic() - started) * 1000
 
@@ -95,7 +94,7 @@ def one_cycle(client, run_dir: Path) -> dict[str, float]:
     started = time.monotonic()
     run = client.post(
         "/run",
-        {"command": "echo ok", "profile_id": CODE_PROFILE_ID, "timeout_secs": 60},
+        {"command": "echo ok", "timeout_secs": 60},
         timeout=180,
     )
     run_ms = (time.monotonic() - started) * 1000

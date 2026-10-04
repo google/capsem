@@ -1,4 +1,4 @@
-"""Ironbank black-box profile MCP ledger tests."""
+"""Ironbank black-box MCP ledger tests: settings-configured servers, packed npm host."""
 
 from __future__ import annotations
 
@@ -13,11 +13,9 @@ import pytest
 from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.npm_mcp import packed_npm_mcp, structured
@@ -88,12 +86,11 @@ def _assert_event_id(value: object) -> None:
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
 
 
-def test_profile_mcp_call_pays_full_ledger_blackbox():
+def test_mcp_call_pays_full_ledger_blackbox():
     assert MOCK_SERVER_BINARY.exists(), (
         f"{MOCK_SERVER_BINARY} missing; restore mock server"
     )
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     mock_proc = None
@@ -101,15 +98,15 @@ def test_profile_mcp_call_pays_full_ledger_blackbox():
     session_id = vm_name("ironbank-mcp")
     vm_id: str | None = None
     try:
-        corp_path = service.tmp_dir / "ironbank-mcp-profile-corp.toml"
+        corp_path = service.tmp_dir / "ironbank-mcp-corp.toml"
         corp_path.write_text(
             """
-[corp.rules.allow_ironbank_mock_mcp_profile_http]
-name = "allow_ironbank_mock_mcp_profile_http"
+[corp.rules.allow_ironbank_mock_mcp_http]
+name = "allow_ironbank_mock_mcp_http"
 action = "allow"
 priority = -100
 detection_level = "informational"
-reason = "Allow the hermetic Ironbank MCP profile fixture HTTP call."
+reason = "Allow the hermetic Ironbank MCP fixture HTTP call."
 match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
 """.lstrip(),
             encoding="utf-8",
@@ -124,7 +121,6 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -156,7 +152,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             )
 
             route_servers = client.get(
-                f"/profiles/{CODE_PROFILE_ID}/mcp/servers/list",
+                "/mcp/servers/list",
                 timeout=30,
             )
             assert isinstance(route_servers, list)
@@ -173,7 +169,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert local_route_server["tool_count"] >= 3
 
             route_tools = client.get(
-                f"/profiles/{CODE_PROFILE_ID}/mcp/servers/local/tools/list",
+                "/mcp/servers/local/tools/list",
                 timeout=30,
             )
             assert isinstance(route_tools, list)
@@ -187,11 +183,11 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert route_http_tool["original_name"] == "http_headers"
             assert route_http_tool["server_name"] == "local"
             assert route_http_tool["permission_action"] in {"allow", "ask"}
-            assert route_http_tool["permission_source"]
+            assert route_http_tool["permission_source"] in {"corp", "settings", "default"}
             assert route_http_tool["pin_changed"] is False
 
             mcp_servers = structured(
-                mcp.call_tool("capsem_mcp_servers", {"profile": CODE_PROFILE_ID})
+                mcp.call_tool("capsem_mcp_servers", {})
             )
             assert isinstance(mcp_servers, dict)
             assert any(server["name"] == "local" for server in mcp_servers["servers"])
@@ -199,10 +195,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             mcp_tools = structured(
                 mcp.call_tool(
                     "capsem_mcp_tools",
-                    {
-                        "profile": CODE_PROFILE_ID,
-                        "server_id": "local",
-                    },
+                    {"server_id": "local"},
                 )
             )
             assert isinstance(mcp_tools, dict)
@@ -228,7 +221,6 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 mcp.call_tool(
                     "capsem_mcp_call",
                     {
-                        "profile": CODE_PROFILE_ID,
                         "server_id": "local",
                         "tool_id": "local__http_headers",
                         "arguments": {"url": url, "method": "GET"},

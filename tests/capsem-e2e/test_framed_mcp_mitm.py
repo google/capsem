@@ -10,7 +10,6 @@ ledger.
 import base64
 import json
 import shlex
-import shutil
 import sqlite3
 import subprocess
 import threading
@@ -20,18 +19,18 @@ from contextlib import contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import blake3
 import pytest
+import tomli_w
 from helpers.body_archive import session_archive
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import (
-    PROFILES_DIR,
     ServiceInstance,
     vm_session_db_path,
     wait_exec_ready,
 )
 from helpers.session_ledger import open_session_ledger
+from helpers.settings_policy import reload_policy, write_settings_rule
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 CLI_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem"
@@ -84,70 +83,21 @@ def _start_service():
     return svc
 
 
-def _start_mutable_profile_service():
-    svc = ServiceInstance()
-    profiles_dir = svc.tmp_dir / "config" / "profiles"
-    shutil.copytree(PROFILES_DIR, profiles_dir)
-    svc.profiles_dir = profiles_dir
-    svc.start()
-    return svc
+def _install_settings_mcp_servers(svc: ServiceInstance, mcp_servers: dict[str, dict]) -> None:
+    """Configure remote MCP servers in the service's settings.toml `[mcp]`."""
+    servers = [
+        {"name": name, "url": server["url"], "enabled": server.get("enabled", True)}
+        for name, server in mcp_servers.items()
+    ]
+    (svc.home_dir / "settings.toml").write_text(
+        tomli_w.dumps({"mcp": {"servers": servers}}), encoding="utf-8"
+    )
 
 
-def _install_profile_mcp_servers(svc: ServiceInstance, mcp_servers: dict[str, dict]) -> None:
-    profiles_dir = svc.tmp_dir / "config" / "profiles"
-    shutil.copytree(PROFILES_DIR, profiles_dir)
-    mcp_path = profiles_dir / CODE_PROFILE_ID / "mcp.json"
-    payload = {
-        "mcpServers": {
-            "capsem": {"command": "/run/capsem-mcp-server"},
-            **mcp_servers,
-        }
-    }
-    data = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    mcp_path.write_text(data, encoding="utf-8")
-    digest = blake3.blake3(data.encode("utf-8")).hexdigest()
-    size = len(data.encode("utf-8"))
-
-    profile_path = profiles_dir / CODE_PROFILE_ID / "profile.toml"
-    lines = profile_path.read_text(encoding="utf-8").splitlines()
-    in_mcp = False
-    rewritten = []
-    for line in lines:
-        if line.startswith("[files."):
-            in_mcp = line == "[files.mcp]"
-        if in_mcp and line.startswith("hash = "):
-            rewritten.append(f'hash = "blake3:{digest}"')
-        elif in_mcp and line.startswith("size = "):
-            rewritten.append(f"size = {size}")
-        else:
-            rewritten.append(line)
-    text = "\n".join(rewritten) + "\n"
-    inline_server_blocks = []
-    for name, server in mcp_servers.items():
-        url = server.get("url")
-        if not url:
-            continue
-        inline_server_blocks.append(
-            "\n".join(
-                [
-                    "[[mcp.servers]]",
-                    f'name = "{name}"',
-                    f'url = "{url}"',
-                    f'enabled = {str(server.get("enabled", True)).lower()}',
-                ]
-            )
-        )
-    if inline_server_blocks:
-        text = text.replace("servers = []\n", "")
-        text = text.replace("[mcp.server_enabled]\n", "\n".join(inline_server_blocks) + "\n\n[mcp.server_enabled]\n")
-    profile_path.write_text(text, encoding="utf-8")
-    svc.profiles_dir = profiles_dir
-
-
-def _start_mock_mcp_profile_service(server_name: str = "fixture"):
+def _start_mock_mcp_service(server_name: str = "fixture"):
     mock_proc, ready = start_mock_server()
     svc = ServiceInstance()
-    _install_profile_mcp_servers(
+    _install_settings_mcp_servers(
         svc,
         {server_name: {"url": ready["base_url"].rstrip("/") + "/mcp"}},
     )
@@ -155,7 +105,7 @@ def _start_mock_mcp_profile_service(server_name: str = "fixture"):
     return svc, mock_proc, server_name
 
 
-def _upsert_profile_enforcement_rule(
+def _write_enforcement_rule(
     svc: ServiceInstance,
     rule_id: str,
     *,
@@ -163,18 +113,9 @@ def _upsert_profile_enforcement_rule(
     action: str = "block",
     reason: str = "test rule",
 ) -> None:
-    response = svc.client().put(
-        f"/profiles/{CODE_PROFILE_ID}/enforcement/rules/{rule_id}/edit",
-        {
-            "name": rule_id,
-            "action": action,
-            "priority": 10,
-            "match": match,
-            "reason": reason,
-        },
-        timeout=15,
+    write_settings_rule(
+        svc.home_dir, rule_id, action=action, priority=10, match=match, reason=reason
     )
-    assert response["compiled_rule_id"] == f"profiles.rules.{rule_id}", response
 
 
 def _create_vm(svc: ServiceInstance, prefix: str, *, persistent: bool = False) -> str:
@@ -183,7 +124,6 @@ def _create_vm(svc: ServiceInstance, prefix: str, *, persistent: bool = False) -
         "/vms/create",
         {
             "name": vm,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": persistent,
@@ -795,7 +735,7 @@ print(json.dumps({
 
 
 def test_framed_guest_mcp_policy_reload_blocks_existing_connection():
-    svc = _start_mutable_profile_service()
+    svc = _start_service()
     vm = None
     proc = None
     try:
@@ -857,14 +797,13 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
             ),
         )
 
-        _upsert_profile_enforcement_rule(
+        _write_enforcement_rule(
             svc,
             "block_local_echo",
             match='mcp.tool_call.name == "local__echo"',
             reason="test blocks local echo through security rules",
         )
-        reload_response = svc.client().post(f"/profiles/{CODE_PROFILE_ID}/reload", {}, timeout=15)
-        assert reload_response["success"] is True
+        assert reload_policy(svc.client())["reloaded"] == 1
         svc.client().upload_file(vm, "/root/reload-go", "go\n", timeout=30)
 
         stdout, stderr = proc.communicate(timeout=60)
@@ -899,11 +838,11 @@ print(json.dumps({"responses": responses, "stderr": proc.stderr.read()}))
 
 def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
     with _local_builtin_http_fixture() as allowed_url:
-        svc = _start_mutable_profile_service()
+        svc = _start_service()
         vm = None
         try:
             allowed_port = allowed_url.rsplit(":", 1)[1]
-            _upsert_profile_enforcement_rule(
+            _write_enforcement_rule(
                 svc,
                 "allow_builtin_http_fixture",
                 action="allow",
@@ -914,16 +853,12 @@ def test_framed_guest_mcp_builtin_http_policy_writes_mcp_and_net_rows():
                 ),
                 reason="test allows the local built-in HTTP fixture explicitly",
             )
-            _upsert_profile_enforcement_rule(
+            _write_enforcement_rule(
                 svc,
                 "block_builtin_http",
                 match='http.host == "blocked-builtin-http.invalid"',
                 reason="test blocks builtin HTTP through security rules",
             )
-            reload_response = svc.client().post(
-                f"/profiles/{CODE_PROFILE_ID}/reload", {}, timeout=15
-            )
-            assert reload_response["success"] is True
 
             vm = _create_vm(svc, "framed-builtin-http")
             script = r'''
@@ -1094,7 +1029,7 @@ print(json.dumps({"results": results}))
 
 
 def test_framed_guest_mcp_remote_http_tool_and_session_db_row():
-    svc, mock_proc, server_name = _start_mock_mcp_profile_service("fixture")
+    svc, mock_proc, server_name = _start_mock_mcp_service("fixture")
     vm = None
     try:
         vm = _create_vm(svc, "framed-remote")
@@ -1157,7 +1092,7 @@ def test_framed_guest_mcp_tool_timeout_records_terminal_error(monkeypatch):
     monkeypatch.setenv("CAPSEM_MCP_TOOL_CALL_TIMEOUT_SECS", "1")
     monkeypatch.setenv("CAPSEM_MCP_TOOL_CALL_TIMEOUT_CEILING_SECS", "1")
 
-    svc, mock_proc, server_name = _start_mock_mcp_profile_service("slow")
+    svc, mock_proc, server_name = _start_mock_mcp_service("slow")
     vm = None
     try:
         vm = _create_vm(svc, "framed-timeout")
@@ -1219,7 +1154,7 @@ sys.exit(proc.returncode)
 def test_framed_guest_mcp_non_tool_timeout_records_terminal_error(monkeypatch):
     monkeypatch.setenv("CAPSEM_MCP_DEFAULT_TIMEOUT_SECS", "1")
 
-    svc, mock_proc, server_name = _start_mock_mcp_profile_service("slowlist")
+    svc, mock_proc, server_name = _start_mock_mcp_service("slowlist")
     vm = None
     try:
         vm = _create_vm(svc, "framed-non-tool-timeout")

@@ -821,9 +821,7 @@ def test_release_functional_helpers_never_hide_host_binary_builds() -> None:
     helper_paths = (
         "build_system/tests/helpers/mock_server.py",
         "tests/helpers/gateway.py",
-        "tests/capsem-service/test_profile_assets.py",
         "tests/capsem-admin/test_profile_materialization.py",
-        "tests/ironbank/test_profile_asset_readiness.py",
         "tests/test_capsem_bench_rust.py",
     )
 
