@@ -1,5 +1,5 @@
-//! `capsem create`: a VM from a profile, kept when named, and with `--image`
-//! an OCI image's workload started detached in it.
+//! `capsem create`: a VM, kept when named, and with `--image` an OCI image's
+//! workload started detached in it.
 
 use anyhow::Result;
 
@@ -13,13 +13,10 @@ pub(super) struct CreateArgs {
     /// Name for the session (makes it persistent -- "if you name it, you keep it")
     #[arg(short = 'n', long)]
     pub name: Option<String>,
-    /// Profile to use for this session
-    #[arg(long, default_value = crate::DEFAULT_PROFILE_ID)]
-    pub profile: String,
-    /// RAM in GB (default: the profile's)
+    /// RAM in GB (default: 12)
     #[arg(long)]
     pub ram: Option<u64>,
-    /// CPU cores (default: the profile's)
+    /// CPU cores (default: 4)
     #[arg(long)]
     pub cpu: Option<u32>,
     /// Set environment variables (repeatable: -e KEY=VALUE; the container's, with --image)
@@ -36,12 +33,10 @@ pub(super) struct CreateArgs {
 }
 
 pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> {
-    client::validate_id(&args.profile)?;
     let persistent = args.name.is_some() || args.from.is_some();
     let workload = Workload::of(&args.image, &args.env)?;
     let request = ProvisionRequest {
         name: args.name.clone(),
-        profile_id: args.profile.clone(),
         ram_mb: ram_mb(args.ram),
         cpus: args.cpu,
         persistent,

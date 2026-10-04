@@ -1,5 +1,5 @@
 //! `capsem run`: one command in a VM that exists only for it -- a shell
-//! command in a profile's VM, or with `--image` an OCI image's workload.
+//! command in a fresh VM, or with `--image` an OCI image's workload.
 //! `capsem exec`: one command in a running session, its workload or its VM.
 
 use std::time::Duration;
@@ -16,18 +16,16 @@ pub(super) struct RunArgs {
     /// Shell command (with --image, the command follows the image instead)
     #[arg(conflicts_with = "image")]
     pub command: Option<String>,
-    #[arg(long, default_value = crate::DEFAULT_PROFILE_ID)]
-    pub profile: String,
     /// Maximum workload duration in seconds
     #[arg(long)]
     pub timeout: Option<u64>,
     /// Environment variables (the container's, with --image)
     #[arg(short = 'e', long = "env")]
     pub env: Vec<String>,
-    /// RAM in GB (default: the profile's)
+    /// RAM in GB (default: 12)
     #[arg(long)]
     pub ram: Option<u64>,
-    /// CPU cores (default: the profile's)
+    /// CPU cores (default: 4)
     #[arg(long)]
     pub cpu: Option<u32>,
     /// Named networks the VM joins at creation (repeatable; with --image)
@@ -86,7 +84,6 @@ pub(super) fn ram_mb(ram_gb: Option<u64>) -> Option<u64> {
 }
 
 pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
-    client::validate_id(&args.profile)?;
     match Workload::of(&args.image, &args.env)? {
         Some(workload) => run_image(client, args, &workload).await,
         None => {
@@ -102,7 +99,6 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
 async fn run_command(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     let request = RunRequest {
         command: args.command.clone().context("run needs a shell command, or --image")?,
-        profile_id: args.profile.clone(),
         timeout_secs: args.timeout,
         ram_mb: ram_mb(args.ram),
         cpus: args.cpu,
@@ -143,7 +139,6 @@ async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) 
     tokio::pin!(cancel);
     let request = ProvisionRequest {
         name: None,
-        profile_id: args.profile.clone(),
         ram_mb: ram_mb(args.ram),
         cpus: args.cpu,
         persistent: false,
