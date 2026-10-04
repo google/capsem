@@ -728,6 +728,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /vms/{id}/container` reports the surface and its exposure id. A
   surface port that is not exactly one port in 1-65535, or one on a
   terminal image, refuses the image before it is staged (google/capsem#289).
+- The gateway opens an image's Xpra surface in the browser.
+  `GET /vms/{id}/surface/` is a launcher holding no secret: it reads the
+  gateway token the way the Capsem UI does, mints a single-use bootstrap
+  with `POST /vms/{id}/surface/session`, and posts it to the surface's
+  preview origin, which sets its session cookie and serves the pinned
+  xpra-html5 21 client (MPL-2.0, vendored unmodified from the package whose
+  SHA-256 the v0.7 spike verified, and checked file by file at build time).
+  The client runs under a policy that allows no inline script and connects
+  only to its own origin, is served only to a browser holding a session the
+  gateway issued there, shows one application with no tray, menu or
+  on-screen keyboard, and sizes the application's window to the browser
+  viewport. No token appears in a URL (google/capsem#289).
 - OCI workloads reach Capsem's MCP tools over streamable HTTP at
   `http://mcp.capsem.internal/mcp`. A container cannot open vsock, so the
   in-guest relay was out of its reach. The session's DNS answers the name

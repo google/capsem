@@ -680,3 +680,25 @@ async fn valid_auth_succeeds_even_after_many_failures() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+/// The exemption is the two static launcher files, never a prefix: the
+/// session route beside them, and anything spelled near them, needs the token.
+#[test]
+fn only_the_surface_launcher_files_are_exempt() {
+    for path in ["/vms/box/surface/", "/vms/box/surface/launch.js"] {
+        assert!(is_surface_launcher_path(path), "{path}");
+    }
+    for path in [
+        "/vms/box/surface",
+        "/vms/box/surface/session",
+        "/vms/box/surface//",
+        "/vms/box/surface/launch.js/",
+        "/vms/box/surface/x/launch.js",
+        "/vms//surface/",
+        "/vms/box/container",
+        "/surface/",
+        "/vms/box/exposures/x/surface/",
+    ] {
+        assert!(!is_surface_launcher_path(path), "{path}");
+    }
+}

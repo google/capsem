@@ -202,8 +202,19 @@ fn is_stream_path(path: &str) -> bool {
     )
 }
 
+/// `/vms/{id}/surface/` and its `launch.js`: the static launcher of a VM's
+/// app surface. A browser opens it by URL, so it cannot carry a bearer
+/// header; it holds nothing secret and fetches the token itself, from
+/// `/token`, under the same loopback and Host checks as the Capsem UI.
+fn is_surface_launcher_path(path: &str) -> bool {
+    matches!(
+        path.trim_start_matches('/').split('/').collect::<Vec<_>>().as_slice(),
+        ["vms", id, "surface", "" | "launch.js"] if !id.is_empty()
+    )
+}
+
 /// Axum middleware: refuse foreign hosts, then require a Bearer token on all
-/// routes except `GET /health` and `GET /token`.
+/// routes except `GET /health`, `GET /token` and the surface launcher.
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     req: Request<axum::body::Body>,
@@ -220,7 +231,9 @@ pub async fn auth_middleware(
 
     // Health check and token endpoint are unauthenticated (token has its own IP check)
     let path = req.uri().path();
-    if req.method() == http::Method::GET && (path == "/" || path == "/health" || path == "/token") {
+    if req.method() == http::Method::GET
+        && (path == "/" || path == "/health" || path == "/token" || is_surface_launcher_path(path))
+    {
         return next.run(req).await;
     }
 

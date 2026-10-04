@@ -33,12 +33,32 @@ const HANDOFF_DEADLINE: Duration = Duration::from_secs(5);
 const MAX_ADMITTING_CONNECTIONS: usize = 64;
 use capsem_proto::{PREVIEW_COOKIE, PREVIEW_SESSION_LIFETIME_SECS};
 
+/// Sessions remembered per origin for serving a surface's client. The VM
+/// owner bounds the sessions themselves; this only bounds the gateway's copy.
+const MAX_SCOPE_SESSIONS: usize = 16;
+
 #[derive(Clone)]
 struct Scope {
     vm_id: String,
     exposure_id: String,
     owner_generation: String,
     expires: Instant,
+    /// The exposure is an image's Xpra surface: the gateway serves its client
+    /// under `surface::CLIENT_ROOT` on this origin.
+    surface: bool,
+    /// Sessions this gateway set as cookies on this origin, and when each
+    /// ends. Only the surface client is served against them; every
+    /// connection to the workload is still admitted by the VM owner.
+    sessions: Vec<(String, Instant)>,
+}
+
+impl Scope {
+    fn issued(&self, cookie: &str) -> bool {
+        let now = Instant::now();
+        self.sessions
+            .iter()
+            .any(|(session, expires)| *expires > now && crate::auth::token_matches(cookie, session))
+    }
 }
 
 pub struct PreviewState {
@@ -54,11 +74,27 @@ impl PreviewState {
         }
     }
 
+    /// The preview listener's port, part of every preview origin.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
     fn scope(&self, label: &str) -> Option<Scope> {
         let now = Instant::now();
         let mut scopes = self.scopes.lock().unwrap();
         scopes.retain(|_, scope| scope.expires > now);
         scopes.get(label).cloned()
+    }
+
+    fn remember_session(&self, label: &str, session: String, lifetime: Duration) {
+        let now = Instant::now();
+        if let Some(scope) = self.scopes.lock().unwrap().get_mut(label) {
+            scope.sessions.retain(|(_, expires)| *expires > now);
+            if scope.sessions.len() == MAX_SCOPE_SESSIONS {
+                scope.sessions.remove(0);
+            }
+            scope.sessions.push((session, now + lifetime));
+        }
     }
 }
 
@@ -69,26 +105,44 @@ pub async fn create_session(
     if !safe_id(&vm_id) || !safe_dns_label(&exposure_id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    mint(&state, vm_id, exposure_id, false).await
+}
+
+/// Ask the VM owner for a single-use bootstrap on preview exposure
+/// `exposure_id` and open its origin for it. `surface` marks the exposure as
+/// an image's Xpra surface, whose client this gateway serves there.
+pub(crate) async fn mint(state: &AppState, vm_id: String, exposure_id: String, surface: bool) -> Response {
     let path = format!("/internal/vms/{vm_id}/exposures/{exposure_id}/preview-session");
-    let material: PreviewSessionMaterial = match service_json(&state, &path, serde_json::json!({})).await {
-        Ok(material) => material,
-        Err(response) => return response,
-    };
+    let material: PreviewSessionMaterial =
+        match service_json(state, http::Method::POST, &path, Some(serde_json::json!({}))).await {
+            Ok(material) => material,
+            Err(response) => return response,
+        };
     if material.exposure.id != exposure_id || material.exposure.host_port.is_some() {
         return StatusCode::BAD_GATEWAY.into_response();
     }
     let lifetime =
         Duration::from_secs(u64::from(PREVIEW_SESSION_LIFETIME_SECS) + u64::from(material.expires_in_seconds));
-    state.previews.scopes.lock().unwrap().insert(
-        exposure_id.clone(),
-        Scope {
-            vm_id,
-            exposure_id: exposure_id.clone(),
-            owner_generation: material.owner_generation,
-            expires: Instant::now() + lifetime,
-        },
-    );
-    tracing::info!(%exposure_id, "preview bootstrap issued");
+    let expires = Instant::now() + lifetime;
+    let mut scopes = state.previews.scopes.lock().unwrap();
+    let scope = scopes.entry(exposure_id.clone()).or_insert_with(|| Scope {
+        vm_id: vm_id.clone(),
+        exposure_id: exposure_id.clone(),
+        owner_generation: material.owner_generation.clone(),
+        expires,
+        surface,
+        sessions: Vec::new(),
+    });
+    // A restarted owner issued none of the sessions remembered for it.
+    if scope.owner_generation != material.owner_generation || scope.vm_id != vm_id {
+        scope.sessions.clear();
+    }
+    scope.vm_id = vm_id;
+    scope.owner_generation = material.owner_generation;
+    scope.expires = expires;
+    scope.surface |= surface;
+    drop(scopes);
+    tracing::info!(%exposure_id, surface, "preview bootstrap issued");
     axum::Json(PreviewSessionResponse {
         url: format!(
             "http://{exposure_id}.localhost:{}/_capsem/bootstrap",
@@ -213,6 +267,12 @@ async fn admit(
             .map(|()| None)
             .map_err(|error| refuse("400 Bad Request", EXPIRED, error));
     }
+    if scope.surface && !head.websocket && head.path.starts_with(crate::surface::CLIENT_ROOT) {
+        return serve_surface_client(stream, state, &scope, &head)
+            .await
+            .map(|()| None)
+            .map_err(|error| refuse("400 Bad Request", MALFORMED, error));
+    }
     let session_token = head.cookie.ok_or_else(|| {
         refuse(
             "401 Unauthorized",
@@ -231,13 +291,15 @@ async fn admit(
     );
     let body = serde_json::to_value(PreviewConnectionAdmissionRequest { session_token, kind })
         .map_err(|error| refuse("500 Internal Server Error", DENIED, error))?;
-    let admitted: PreviewConnectionAdmissionResponse = service_json(state, &path, body).await.map_err(|response| {
-        refuse(
-            "403 Forbidden",
-            DENIED,
-            anyhow::anyhow!("preview admission refused with {}", response.status()),
-        )
-    })?;
+    let admitted: PreviewConnectionAdmissionResponse = service_json(state, http::Method::POST, &path, Some(body))
+        .await
+        .map_err(|response| {
+            refuse(
+                "403 Forbidden",
+                DENIED,
+                anyhow::anyhow!("preview admission refused with {}", response.status()),
+            )
+        })?;
     if admitted.owner_generation != scope.owner_generation {
         return Err(refuse(
             "409 Conflict",
@@ -265,18 +327,58 @@ async fn exchange_bootstrap(
     );
     let exchanged: PreviewBootstrapExchangeResponse = service_json(
         state,
+        http::Method::POST,
         &path,
-        serde_json::to_value(PreviewBootstrapExchangeRequest { bootstrap_token: token })?,
+        Some(serde_json::to_value(PreviewBootstrapExchangeRequest {
+            bootstrap_token: token,
+        })?),
     )
     .await
     .map_err(|response| anyhow::anyhow!("preview bootstrap refused with {}", response.status()))?;
+    // A surface opens on its client; any other preview on the workload's root.
+    let location = if scope.surface {
+        crate::surface::CLIENT_ROOT
+    } else {
+        "/"
+    };
     let response = format!(
-        "HTTP/1.1 303 See Other\r\nLocation: /\r\nSet-Cookie: {PREVIEW_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        "HTTP/1.1 303 See Other\r\nLocation: {location}\r\nSet-Cookie: {PREVIEW_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
         exchanged.session_token, exchanged.expires_in_seconds
+    );
+    state.previews.remember_session(
+        &head.label,
+        exchanged.session_token,
+        Duration::from_secs(u64::from(exchanged.expires_in_seconds)),
     );
     stream.write_all(response.as_bytes()).await?;
     stream.shutdown().await?;
     tracing::info!(exposure_id = %scope.exposure_id, "preview bootstrap exchanged");
+    Ok(())
+}
+
+/// Answer a request for the surface's client here, without the workload: the
+/// gateway serves the pinned client, and only to a browser holding a session
+/// it set on this origin. The client's websocket is then admitted by the VM
+/// owner like any preview connection.
+async fn serve_surface_client(
+    stream: &mut tokio::net::TcpStream,
+    state: &AppState,
+    scope: &Scope,
+    head: &Head,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        head.content_length == 0 && !head.transfer_encoded,
+        "surface client requests carry no body"
+    );
+    // Consume the request the head was peeked from, so closing after the
+    // response does not reset the connection under it.
+    let mut request = vec![0; head.header_bytes];
+    tokio::time::timeout(HEADER_DEADLINE, stream.read_exact(&mut request)).await??;
+    let authenticated = head.cookie.as_deref().is_some_and(|cookie| scope.issued(cookie));
+    let origin = format!("{}.localhost:{}", head.label, state.previews.port);
+    let response = crate::surface::client_response(&head.method, &head.path, authenticated, &origin);
+    stream.write_all(&response).await?;
+    stream.shutdown().await?;
     Ok(())
 }
 
@@ -421,18 +523,24 @@ fn parse_head(bytes: &[u8]) -> anyhow::Result<Head> {
     })
 }
 
-async fn service_json<T: serde::de::DeserializeOwned>(
+/// One bounded JSON call to the service; a failure is the response to give.
+pub(crate) async fn service_json<T: serde::de::DeserializeOwned>(
     state: &AppState,
+    method: http::Method,
     path: &str,
-    body: serde_json::Value,
+    body: Option<serde_json::Value>,
 ) -> Result<T, Response> {
-    let bytes = serde_json::to_vec(&body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
-    let request = Request::builder()
-        .method("POST")
-        .uri(format!("http://localhost{path}"))
-        .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(bytes))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+    let request = Request::builder().method(method).uri(format!("http://localhost{path}"));
+    let request = match body {
+        Some(body) => {
+            let bytes = serde_json::to_vec(&body).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+            request
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(bytes))
+        }
+        None => request.body(Body::empty()),
+    }
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
     let response = state
         .service_client
         .request(request)
@@ -450,7 +558,7 @@ async fn service_json<T: serde::de::DeserializeOwned>(
     serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_GATEWAY.into_response())
 }
 
-fn safe_id(value: &str) -> bool {
+pub(crate) fn safe_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && value

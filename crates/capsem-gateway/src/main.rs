@@ -7,6 +7,7 @@ mod schema;
 mod service_client;
 mod status;
 mod stream;
+mod surface;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -243,6 +244,9 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
             "/vms/{id}/exposures/{exposure_id}/preview-session",
             post(preview::create_session).delete(proxy::handle_proxy),
         )
+        .route("/vms/{id}/surface/", get(surface::launcher))
+        .route("/vms/{id}/surface/launch.js", get(surface::launcher_script))
+        .route("/vms/{id}/surface/session", post(surface::create_session))
         .route("/vms/{id}/logs", get(proxy::handle_proxy))
         .route("/vms/{id}/exec", post(proxy::handle_proxy))
         .route("/vms/{id}/stop", post(proxy::handle_proxy))
