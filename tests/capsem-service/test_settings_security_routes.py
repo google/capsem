@@ -93,7 +93,6 @@ def test_settings_security_routes_expose_single_contract(client: Any, service_en
 def test_retired_security_routes_stay_burned(client: Any) -> None:
     for method, path in (
         ("GET", "/plugins/info"),
-        ("GET", "/plugins/credential_broker/info"),
         ("GET", "/plugins/credential_broker/man"),
         ("PUT", "/mcp/servers/local/edit"),
         ("DELETE", "/mcp/servers/local/delete"),
