@@ -6,40 +6,10 @@ images, which tests/images/ proves; the runtime rootfs does not ship them.
 
 import json
 import textwrap
-import zipfile
 
 import pytest
 
 from .diagnostic_support import run
-
-
-def _write_python_wheel(output_dir, distribution, module, module_source):
-    """Create a tiny pure-Python wheel without touching a package index."""
-    version = "0.1.0"
-    wheel_name = f"{distribution.replace('-', '_')}-{version}-py3-none-any.whl"
-    wheel_path = output_dir / wheel_name
-    dist_info = f"{distribution.replace('-', '_')}-{version}.dist-info"
-    files = {
-        f"{module}/__init__.py": textwrap.dedent(module_source).lstrip(),
-        f"{dist_info}/METADATA": (
-            "Metadata-Version: 2.1\n"
-            f"Name: {distribution}\n"
-            f"Version: {version}\n"
-        ),
-        f"{dist_info}/WHEEL": (
-            "Wheel-Version: 1.0\n"
-            "Generator: capsem-doctor\n"
-            "Root-Is-Purelib: true\n"
-            "Tag: py3-none-any\n"
-        ),
-    }
-    record_rows = [f"{path},," for path in files]
-    record_rows.append(f"{dist_info}/RECORD,,")
-    files[f"{dist_info}/RECORD"] = "\n".join(record_rows) + "\n"
-    with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for path, data in files.items():
-            zf.writestr(path, data)
-    return wheel_path
 
 
 def _write_deb_package(output_dir):
@@ -70,37 +40,13 @@ def _write_deb_package(output_dir):
     return deb_path
 
 
-@pytest.mark.parametrize("runtime", ["python3", "pip3"])
+@pytest.mark.parametrize("runtime", ["python3"])
 def test_runtime_version(runtime):
     """Each runtime the minimal guest ships must respond to --version."""
     result = run(f"{runtime} --version")
     assert result.returncode == 0, f"{runtime} --version failed: {result.stderr}"
 
 
-def test_pip_install_works(output_dir):
-    """pip install must work without PEP 668 or permission errors.
-
-    The guest VM activates a venv at /root/.venv so packages install
-    to a writable location (rootfs is read-only).
-    """
-    wheel = _write_python_wheel(
-        output_dir,
-        "capsem-pip-hello",
-        "capsem_pip_hello",
-        """
-        __version__ = "0.1.0"
-        def ping():
-            return "capsem-pip-ok"
-        """,
-    )
-    result = run(f"pip install --no-index {wheel} 2>&1", timeout=30)
-    assert result.returncode == 0, f"pip install failed: {result.stdout}"
-    assert "externally-managed" not in result.stdout.lower(), (
-        "PEP 668 EXTERNALLY-MANAGED error not suppressed"
-    )
-    result = run("python3 -c 'import capsem_pip_hello; print(capsem_pip_hello.ping())'")
-    assert result.returncode == 0, f"import local pip wheel failed: {result.stderr}"
-    assert "capsem-pip-ok" in result.stdout
 
 
 def test_apt_install_works(output_dir):
