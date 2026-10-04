@@ -2282,6 +2282,15 @@ binary_variable = "CAPSEM_TEST_BINARY"
 assets_variable = "CAPSEM_TEST_ASSETS_DIR"
 assets_dir_variable = "CAPSEM_ASSETS_DIR"
 
+# Image qualification (tests/qualification): mandatory groups every image
+# passes, and the groups its images/<name>/qualify.toml capabilities add. The
+# main gate runs it on the reference image; `capsem-gate image-qualify --image
+# NAME --layout PATH` runs it on a candidate, consumed as built.
+[functional.qualification]
+suite_path = "tests/qualification"
+image_variable = "CAPSEM_QUALIFY_IMAGE"
+layout_variable = "CAPSEM_QUALIFY_LAYOUT"
+
 # The chaos suite shares kingslanding's fixture and runs after it.
 [functional.greyjoy]
 suite_path = "tests/ironbank/greyjoy"

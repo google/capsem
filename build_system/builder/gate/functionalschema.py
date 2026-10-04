@@ -28,6 +28,16 @@ class GreyjoyConfig(Strict):
     suite_path: str
 
 
+class QualificationConfig(Strict):
+    """The image qualification harness (tests/qualification): the suite, and
+    the two variables naming a candidate image and its layout. Unset, it
+    qualifies the reference image."""
+
+    suite_path: str
+    image_variable: str
+    layout_variable: str
+
+
 class PinnedImageConfig(Strict):
     """An image the suites serve by digest: capsem-debug, the test-tooling
     image, and the reference image, the official image every runtime test boots.

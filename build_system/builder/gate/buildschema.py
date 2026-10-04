@@ -16,7 +16,12 @@ from pydantic import PositiveFloat, PositiveInt, StringConstraints, model_valida
 from ..cache.tools import CachedToolPolicy
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import SafeToken, Strict
-from .functionalschema import GreyjoyConfig, KingslandingConfig, PinnedImageConfig
+from .functionalschema import (
+    GreyjoyConfig,
+    KingslandingConfig,
+    PinnedImageConfig,
+    QualificationConfig,
+)
 from .releaseschema import ReleasePairingEnvironment, TransitionSettings
 
 
@@ -86,6 +91,7 @@ class FunctionalConfig(Strict):
     greyjoy: GreyjoyConfig
     debug_image: PinnedImageConfig
     reference_image: PinnedImageConfig
+    qualification: QualificationConfig
     injection_script: str
     integration_script: str
     binary: str

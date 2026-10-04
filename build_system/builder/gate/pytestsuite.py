@@ -64,6 +64,8 @@ class Suite:
     project: str = ""
     require_artifacts: bool = True
     contends: tuple[Exclusive, ...] = field(default_factory=tuple)
+    #: Further variables the suite reads, such as the image it qualifies.
+    variables: tuple[tuple[str, str], ...] = ()
 
     def argv(self, config: GateConfig) -> list[str]:
         settings = config.suites.pytest
@@ -107,6 +109,7 @@ class Suite:
         env[settings.run_id_variable] = self.label
         if self.assets_dir:
             env.update(config.environment.content(assets=self.assets_dir))
+        env.update(self.variables)
         return env
 
     def as_step(self, config: GateConfig) -> Step:

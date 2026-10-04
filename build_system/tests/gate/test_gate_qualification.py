@@ -368,6 +368,8 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
         "test-kingslanding",
         # The adversarial container owner boots the same qualified assets.
         "test-greyjoy",
+        # Image qualification boots the qualified runtime with a candidate image.
+        "image-qualify",
         # The per-lane verbs CI calls, which compose the three modules above.
         "qualify-assets",
         "qualify-binaries",
