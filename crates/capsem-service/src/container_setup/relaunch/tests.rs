@@ -13,8 +13,11 @@ fn record(exposure_id: Option<&str>) -> LaunchRecord {
             exposure_id: exposure_id.map(str::to_owned),
         }),
         resolved: Some("registry.example/app@sha256:aa".into()),
+        manifest: Some(MANIFEST.into()),
     }
 }
+
+const MANIFEST: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 fn write_record(session_dir: &std::path::Path, record: &LaunchRecord) {
     std::fs::create_dir_all(session_dir).unwrap();
@@ -39,6 +42,7 @@ fn a_clone_carries_the_launch_record_without_the_sources_exposure() {
     let carried = read_launch_record(&clone).expect("carried");
     assert_eq!(carried.image, IMAGE);
     assert_eq!(carried.resolved.as_deref(), Some("registry.example/app@sha256:aa"));
+    assert_eq!(carried.manifest.as_deref(), Some(MANIFEST));
     assert_eq!(carried.surface.unwrap().exposure_id, None);
     assert!(read_launch_record(&source)
         .unwrap()
@@ -74,6 +78,8 @@ fn a_clone_taking_a_new_image_forgets_the_whole_carried_stage() {
     )
     .unwrap();
     std::fs::write(session.join("guest/workspace/notes.txt"), b"kept").unwrap();
+    let share = capsem_core::session::prepare_image_share(&session).unwrap();
+    std::fs::write(share.join(MANIFEST.trim_start_matches("sha256:")), b"{}").unwrap();
     let outside = dir.path().join("host-file");
     std::fs::write(&outside, b"keep").unwrap();
     std::os::unix::fs::symlink(&outside, stage.join("running")).unwrap();
@@ -81,6 +87,10 @@ fn a_clone_taking_a_new_image_forgets_the_whole_carried_stage() {
     drop_carried_image(&session).unwrap();
 
     assert!(!session.join(LAUNCH_RECORD).exists());
+    assert!(
+        capsem_core::session::image_share_blobs(&session).unwrap().is_empty(),
+        "no blob of the source's image is left for the new one"
+    );
     assert!(!stage.join("ready").exists());
     assert!(std::fs::symlink_metadata(stage.join("running")).is_err());
     assert_eq!(std::fs::read(&outside).unwrap(), b"keep");
@@ -115,6 +125,11 @@ async fn a_new_owner_restores_the_recorded_workload_without_its_old_exposure() {
     assert_eq!(live.image, IMAGE);
     assert_eq!(live.digest.as_deref(), Some("sha256:aa"));
     assert_eq!(live.surface.unwrap().exposure_id, None);
+    assert_eq!(
+        state.containers.manifest("box").as_deref(),
+        Some(MANIFEST),
+        "the pin survives the next launch record"
+    );
 
     restore(&state, "absent");
     assert!(state.containers.status("absent").is_none());

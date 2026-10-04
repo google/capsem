@@ -1,11 +1,13 @@
 use super::*;
 
+const MANIFEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+/// The stage holds only the two control files: the image is in the share,
+/// named here by its manifest digest, and no layer byte is staged.
 #[test]
-fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
+fn stage_plan_writes_only_the_options_and_the_launcher() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("index.json"), b"{}").unwrap();
-    std::fs::write(root.path().join("oci-layout"), b"").unwrap();
-    let files = [PathBuf::from("index.json"), PathBuf::from("oci-layout")];
     let env = [("LANG".to_string(), "C".to_string())].into();
     let resources = super::super::workload_resources(2048, 2).unwrap();
     let surface = image_surface(root.path()).unwrap();
@@ -14,25 +16,17 @@ fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
         DeclaredSurface::Terminal,
         "a layout naming no manifest declares nothing"
     );
-    let plan = stage_plan(root.path(), &files, &["serve".to_string()], &env, resources, surface).unwrap();
+    let plan = stage_plan(MANIFEST, &["serve".to_string()], &env, resources, surface).unwrap();
     let names: Vec<&str> = plan.iter().map(|file| file.name.as_str()).collect();
-    assert_eq!(names, ["0-0", "transfer.json", "options.json", "launch.py"]);
-    assert!(matches!(&plan[0].content, StagedContent::File(path) if path == &root.path().join("index.json")));
-    let StagedContent::Bytes(transfer) = &plan[1].content else {
-        panic!("transfer.json is generated")
-    };
-    let transfer: serde_json::Value = serde_json::from_slice(transfer).unwrap();
-    assert_eq!(transfer[1]["parts"], 0);
-    let StagedContent::Bytes(options) = &plan[2].content else {
-        panic!("options.json is generated")
-    };
+    assert_eq!(names, ["options.json", "launch.py"]);
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(options).unwrap(),
+        serde_json::from_slice::<serde_json::Value>(&plan[0].bytes).unwrap(),
         // The launcher mounts the VM workspace where the service says the
         // container sees it: one owner for that path, not two.
         // The host decides the workload's capabilities, syscall filter and
         // user-namespace map.
         serde_json::json!({
+            "manifest": MANIFEST,
             "args": ["serve"],
             "env": {"LANG": "C"},
             "workspace": super::super::CONTAINER_WORKSPACE,
@@ -44,7 +38,61 @@ fn stage_plan_writes_parts_then_the_files_the_launcher_reads() {
         })
     );
     assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");
-    assert!(matches!(&plan[3].content, StagedContent::Bytes(bytes) if bytes.as_slice() == LAUNCHER));
+    assert_eq!(plan[1].bytes, LAUNCHER);
+    let resources = super::super::workload_resources(2048, 2).unwrap();
+    assert!(
+        stage_plan("sha256:short", &[], &BTreeMap::new(), resources, surface).is_err(),
+        "the stage only ever names a valid manifest digest"
+    );
+}
+
+/// A pulled layout: index -> manifest -> config and one layer, every blob
+/// listed the way the puller lists its verified files.
+fn layout(root: &Path) -> Vec<PathBuf> {
+    let blobs = root.join("blobs/sha256");
+    std::fs::create_dir_all(&blobs).unwrap();
+    let hex = |byte: char| byte.to_string().repeat(64);
+    let manifest = serde_json::json!({
+        "config": {"digest": format!("sha256:{}", hex('c'))},
+        "layers": [{"digest": format!("sha256:{}", hex('d'))}],
+    });
+    std::fs::write(blobs.join(hex('a')), serde_json::to_vec(&manifest).unwrap()).unwrap();
+    std::fs::write(
+        root.join("index.json"),
+        serde_json::to_vec(&serde_json::json!({"manifests": [{"digest": MANIFEST}]})).unwrap(),
+    )
+    .unwrap();
+    let mut files = vec![PathBuf::from("index.json"), PathBuf::from("oci-layout")];
+    for byte in ['a', 'c', 'd'] {
+        files.push(PathBuf::from("blobs/sha256").join(hex(byte)));
+    }
+    files
+}
+
+#[test]
+fn image_blobs_are_the_verified_blobs_and_the_manifest_the_index_names() {
+    let root = tempfile::tempdir().unwrap();
+    let files = layout(root.path());
+    let image = image_blobs(root.path(), &files).unwrap();
+    assert_eq!(image.manifest, MANIFEST);
+    assert_eq!(image.blobs, ["a", "c", "d"].map(|byte| byte.repeat(64)));
+}
+
+#[test]
+fn a_manifest_naming_a_blob_the_pull_did_not_verify_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let mut files = layout(root.path());
+    let layer = files.pop().unwrap();
+    let error = image_blobs(root.path(), &files).unwrap_err().to_string();
+    assert!(error.contains("did not verify"), "{error}");
+    files.push(layer);
+    files.push(PathBuf::from("blobs/sha256/not-a-digest"));
+    assert!(image_blobs(root.path(), &files).is_err());
+    std::fs::write(root.path().join("index.json"), b"{\"manifests\":[]}").unwrap();
+    assert!(
+        image_blobs(root.path(), &files[..files.len() - 1]).is_err(),
+        "no manifest, no image"
+    );
 }
 
 #[test]

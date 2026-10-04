@@ -105,17 +105,16 @@ fn irq_to_gsi(irq: u32) -> u32 {
 
 #[cfg(target_arch = "x86_64")]
 fn virtio_mmio_device_count(config: &VmConfig, vsock_ports: &[u32]) -> u32 {
-    let mut device_count = 1; // console at slot 0
-    if config.disk_path.is_some() {
-        device_count += 1;
+    // Slots are fixed (console 0, disk 1, scratch 2, vsock 3, shares from 4), so
+    // the guest is told of every slot up to the highest in use; an absent one
+    // floats (0xFF) and its probe is skipped. Counting present devices only
+    // hid the last share whenever an earlier device was absent.
+    match () {
+        _ if !config.virtio_fs_shares.is_empty() => 4 + config.virtio_fs_shares.len() as u32,
+        _ if !vsock_ports.is_empty() => 4,
+        _ if config.scratch_disk_path.is_some() => 3,
+        _ => 1 + u32::from(config.disk_path.is_some()),
     }
-    if config.scratch_disk_path.is_some() {
-        device_count += 1;
-    }
-    if !vsock_ports.is_empty() {
-        device_count += 1;
-    }
-    device_count + config.virtio_fs_shares.len() as u32
 }
 
 impl Hypervisor for KvmHypervisor {

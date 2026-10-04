@@ -229,11 +229,23 @@ fn main() -> Result<()> {
     }
 
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
-    let virtiofs_shares = vec![VirtioFsShare {
-        tag: "capsem".into(),
-        host_path: guest_dir,
-        read_only: false,
-    }];
+    // The image share is attached to every session, read-only at the device:
+    // a device cannot be added after boot, and an image is pulled only once
+    // the VM runs (its owner admits the pull). It stays empty until the
+    // service publishes an image's verified blobs into it, and a guest root
+    // that remounts it read-write still cannot write it.
+    let virtiofs_shares = vec![
+        VirtioFsShare {
+            tag: "capsem".into(),
+            host_path: guest_dir,
+            read_only: false,
+        },
+        VirtioFsShare {
+            tag: capsem_core::session::IMAGE_SHARE_TAG.into(),
+            host_path: capsem_core::session::prepare_image_share(&session_dir)?,
+            read_only: true,
+        },
+    ];
 
     // Attach the system-overlay rootfs.img as a virtio-blk device (/dev/vdb in
     // the guest). capsem-init mounts it as the overlayfs upper directly --

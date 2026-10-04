@@ -637,6 +637,9 @@ mod containment_tests;
 #[path = "tests/ownership.rs"]
 mod ownership_tests;
 #[cfg(test)]
+#[path = "tests/read_only.rs"]
+mod read_only_tests;
+#[cfg(test)]
 #[path = "tests/reset.rs"]
 mod reset_tests;
 #[cfg(test)]
