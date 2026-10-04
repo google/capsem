@@ -52,10 +52,11 @@ def stage_candidate_assets(
 
 
 def stage_release_site(manifest: Path, asset_share: Path, candidate: Path, channel: str) -> None:
-    """Lay the candidate out as the release site does: the channel manifest at
-    `assets/<channel>/manifest.json` and every runtime blob at
-    `assets/releases/<asset_version>/<arch>-<name>`, where an installed service
-    repairs a missing asset from (the runtime document names no other base)."""
+    """Lay the candidate out as the release site does: the channel manifest in
+    its channel directory, and every runtime blob under the site's releases
+    directory as `<asset_version>/<arch>-<name>` -- where an installed service
+    repairs a missing asset from, since the runtime document names no other
+    asset base."""
     stage_file(manifest, candidate / "assets" / channel / "manifest.json")
     for blob in sorted(path for path in asset_share.rglob("*") if path.is_file()):
         stage_file(blob, candidate / "assets" / "releases" / blob.relative_to(asset_share))
