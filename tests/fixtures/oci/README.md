@@ -131,7 +131,10 @@ the broker's hermetic OAuth endpoint -- stays a `"target": "vm"` exec.
 2. `uv run --project build_system --frozen capsem-gate debug-image` builds it
    for this host's platform into the cache stage and loads it into Docker as
    `capsem-debug:<arch>`. It prints the line to pin.
-3. Put that digest in `[functional.debug_image] digests` and run the suites
+3. Qualify the candidate using the layout path printed by the build:
+   `uv run --project build_system --frozen capsem-gate image-qualify --image capsem-debug --layout <built-layout>`.
+   Only after qualification passes, put that digest in
+   `[functional.debug_image] digests` and run the suites
    against it: `uv run --project build_system --frozen capsem-gate focus-test kingslanding --slow`.
    The prefetch finds the local layout, so nothing is pulled.
 4. Publish exactly those bytes, so the registry serves the pinned digest. With
