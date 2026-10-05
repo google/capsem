@@ -19,7 +19,7 @@ pub(super) struct EnvVarGuard {
 /// Make the builtin MCP binary the profile routes look for exist beside the
 /// test executable. The route checks for it on every request.
 ///
-/// Never removed: that directory is the shared `target/*/deps`, so every
+/// Never removed: that directory is cargo's shared `deps` output, so every
 /// test process -- nextest's per-test processes, other worktrees' runs --
 /// sees the same file. A guard that deleted the placeholder it had created
 /// pulled it out from under another process mid-request, and the builtin
