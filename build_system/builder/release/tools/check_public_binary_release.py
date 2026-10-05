@@ -5,20 +5,16 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
-import functools
 import hashlib
-import http.server
 import json
 import os
 import platform
 import shlex
 import shutil
 import socket
-import socketserver
 import subprocess
 import sys
 import tempfile
-import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -113,14 +109,6 @@ def main() -> int:
         action="store_true",
         help="After Docker install, run the binary updater against the named nightly channel.",
     )
-    parser.add_argument(
-        "--docker-transition-from-manifest",
-        help=(
-            "Frozen pre-deploy release manifest. Runs a Docker install, genuine "
-            "package upgrade, and genuine package downgrade between this document "
-            "and --manifest-url; the two compiled package versions must differ."
-        ),
-    )
     parser.add_argument("--stable-manifest-url")
     parser.add_argument("--nightly-manifest-url")
     parser.add_argument("--docker-image", default="ubuntu:24.04")
@@ -214,30 +202,6 @@ def main() -> int:
                     channel_switch=args.docker_channel_switch,
                     upgrade=args.docker_upgrade,
                     docker_image=args.docker_image,
-                )
-            if args.docker_transition_from_manifest:
-                previous_manifest = json.loads(
-                    fetch_bytes(args.docker_transition_from_manifest).decode("utf-8")
-                )
-                previous_version = linux_amd64_current_package(previous_manifest)["version"]
-                current_version = linux_amd64_current_package(manifest)["version"]
-                previous_key = numeric_release_version(previous_version)
-                current_key = numeric_release_version(current_version)
-                if previous_key == current_key:
-                    raise ValueError(
-                        "binary transition gate requires two different genuine package versions"
-                    )
-                older_manifest, newer_manifest = (
-                    (previous_manifest, manifest)
-                    if previous_key < current_key
-                    else (manifest, previous_manifest)
-                )
-                run_docker_binary_transition_smoke(
-                    older_manifest=older_manifest,
-                    newer_manifest=newer_manifest,
-                    install_script_url=args.install_script_url,
-                    docker_image=args.docker_image,
-                    work_dir=work_dir / "binary-transition",
                 )
 
         if failures:
@@ -595,191 +559,6 @@ def sbom_file_hashes(sbom: dict[str, Any]) -> set[tuple[str, str]]:
             ):
                 rows.add((file_name, checksum["checksumValue"].lower()))
     return rows
-
-
-def linux_amd64_current_package(manifest: dict[str, Any]) -> dict[str, Any]:
-    matches = [
-        package
-        for package in manifest.get("packages", [])
-        if isinstance(package, dict)
-        and package.get("status") == "current"
-        and package.get("kind") == "debian_package"
-        and package.get("platform") == "linux"
-        and package.get("architecture") == "amd64"
-        and isinstance(package.get("version"), str)
-    ]
-    if len(matches) != 1:
-        raise ValueError(
-            "binary transition manifest must contain exactly one current linux/amd64 package"
-        )
-    return matches[0]
-
-
-def numeric_release_version(version: str) -> tuple[int, int, int]:
-    parts = version.split(".")
-    if len(parts) != 3 or not all(part.isdigit() for part in parts):
-        raise ValueError(f"binary transition package version is not numeric semver: {version}")
-    return int(parts[0]), int(parts[1]), int(parts[2])
-
-
-@contextlib.contextmanager
-def local_transition_server(root: Path):
-    class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-        daemon_threads = True
-
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
-    server = ThreadingServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        host = str(server.server_address[0])
-        port = int(server.server_address[1])
-        yield f"http://{host}:{port}"
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-
-def run_docker_binary_transition_smoke(
-    *,
-    older_manifest: dict[str, Any],
-    newer_manifest: dict[str, Any],
-    install_script_url: str,
-    docker_image: str,
-    work_dir: Path,
-) -> None:
-    if shutil.which("docker") is None:
-        raise OSError("docker is required for the binary transition gate")
-    older_version = str(linux_amd64_current_package(older_manifest)["version"])
-    newer_version = str(linux_amd64_current_package(newer_manifest)["version"])
-    if numeric_release_version(older_version) >= numeric_release_version(newer_version):
-        raise ValueError(
-            f"binary transition versions are not ordered: {older_version} -> {newer_version}"
-        )
-
-    import blake3
-
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
-    for channel in ("stable", "nightly"):
-        (work_dir / "assets" / channel).mkdir(parents=True, exist_ok=True)
-    manifest_bytes = {
-        "stable": (json.dumps(older_manifest, sort_keys=True) + "\n").encode(),
-        "nightly": (json.dumps(newer_manifest, sort_keys=True) + "\n").encode(),
-    }
-    for channel, content in manifest_bytes.items():
-        (work_dir / "assets" / channel / "manifest.json").write_bytes(content)
-
-    with local_transition_server(work_dir) as release_base_url:
-        channels: dict[str, Any] = {
-            "version": 1,
-            "generated_at": "2030-01-01T00:00:00Z",
-            "release_site": f"{release_base_url}/",
-            "channels": {},
-        }
-        for channel, label in (("stable", "Stable"), ("nightly", "Nightly")):
-            content = manifest_bytes[channel]
-            manifest = older_manifest if channel == "stable" else newer_manifest
-            channels["channels"][channel] = {
-                "label": label,
-                "manifests": [
-                    {
-                        "version": str(manifest.get("version", "1.0.0")),
-                        "status": "current",
-                        "url": f"/assets/{channel}/manifest.json",
-                        "digest": {
-                            "sha256": hashlib.sha256(content).hexdigest(),
-                            "blake3": blake3.blake3(content).hexdigest(),
-                        },
-                    }
-                ],
-            }
-        (work_dir / "channels.json").write_text(
-            json.dumps(channels, sort_keys=True) + "\n", encoding="utf-8"
-        )
-
-        helpers = " ".join(
-            shlex.quote(binary)
-            for binary in (
-                "capsem",
-                "capsem-admin",
-                "capsem-gateway",
-
-                "capsem-router",
-                "capsem-mcp-aggregator",
-                "capsem-mcp-builtin",
-                "capsem-process",
-                "capsem-service",
-                "capsem-tray",
-                "capsem-tui",
-                "capsem-mock-server",
-            )
-        )
-        install_pipeline = (
-            f"curl -fsSL {shlex.quote(install_script_url)} | "
-            "CAPSEM_CHANNEL=stable "
-            f"CAPSEM_RELEASE_BASE_URL={shlex.quote(release_base_url)} sh"
-        )
-        script = f"""
-set -euxo pipefail
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y ca-certificates curl sudo
-useradd -m -s /bin/bash capsemtest
-printf '%s\n' 'capsemtest ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/capsemtest
-chmod 0440 /etc/sudoers.d/capsemtest
-check_binary_versions() {{
-  expected="$1"
-  # Each installed package is held to the binaries it owns: the older one
-  # predates capsem-router (it shipped capsem-port-router).
-  owned=$(dpkg -L capsem)
-  for bin in {helpers}; do
-    printf '%s\n' "$owned" | grep -Fqx "/usr/bin/$bin" || continue
-    su capsemtest -c "test -x \"\\$HOME/.capsem/bin/$bin\""
-    su capsemtest -c "\"\\$HOME/.capsem/bin/$bin\" --version" | grep -F "$expected"
-  done
-}}
-check_installed_version() {{
-  expected="$1"
-  dpkg-query -W -f='${{Version}}' capsem | grep -Fx "$expected"
-  check_binary_versions "$expected"
-  su capsemtest -c '"$HOME/.capsem/bin/capsem" status' > /tmp/capsem-transition-status.txt
-  grep -F "Installed: true" /tmp/capsem-transition-status.txt
-  grep -F "Running:   true" /tmp/capsem-transition-status.txt
-  grep -F "Service:   ok" /tmp/capsem-transition-status.txt
-  grep -F "Gateway:   ok" /tmp/capsem-transition-status.txt
-}}
-su capsemtest -c {shlex.quote(install_pipeline)}
-su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={release_base_url}/channels.json "$HOME/.capsem/bin/capsem" update --assets --channel stable'
-check_installed_version {shlex.quote(older_version)}
-grep -F {shlex.quote(f'{release_base_url}/assets/stable/manifest.json')} /home/capsemtest/.capsem/assets/manifest-metadata.json
-python3 /src/build_system/scripts/release/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/stable/manifest.json --channel stable --package-version {shlex.quote(older_version)}
-su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={release_base_url}/channels.json DEBIAN_FRONTEND=noninteractive "$HOME/.capsem/bin/capsem" update --yes --channel nightly'
-check_installed_version {shlex.quote(newer_version)}
-grep -F {shlex.quote(f'{release_base_url}/assets/nightly/manifest.json')} /home/capsemtest/.capsem/assets/manifest-metadata.json
-python3 /src/build_system/scripts/release/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/nightly/manifest.json --channel nightly --package-version {shlex.quote(newer_version)}
-su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={release_base_url}/channels.json DEBIAN_FRONTEND=noninteractive "$HOME/.capsem/bin/capsem" update --yes --channel stable'
-check_installed_version {shlex.quote(older_version)}
-grep -F {shlex.quote(f'{release_base_url}/assets/stable/manifest.json')} /home/capsemtest/.capsem/assets/manifest-metadata.json
-python3 /src/build_system/scripts/release/verify-installed-release.py --capsem /home/capsemtest/.capsem/bin/capsem --capsem-home /home/capsemtest/.capsem --manifest-url {release_base_url}/assets/stable/manifest.json --channel stable --package-version {shlex.quote(older_version)}
-"""
-        subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--pull=missing",
-                "--network=host",
-                "-v",
-                f"{PROJECT_ROOT}:/src:ro",
-                docker_image,
-                "bash",
-                "-lc",
-                script,
-            ],
-            check=True,
-        )
 
 
 def run_docker_install_smoke(

@@ -18,8 +18,7 @@ uv run --project build_system --frozen python3 build_system/scripts/release/chec
   --install-script-url https://capsem.org/install.sh \
   --docker-linux-install \
   --docker-channel-switch \
-  --docker-upgrade \
-  --docker-transition-from-manifest /path/to/frozen-predeploy-manifest.json
+  --docker-upgrade
 ```
 
 Use `build_system/scripts/release/check-public-binary-release.py` for post-deploy glow-up instead of
@@ -30,17 +29,24 @@ install, stable/nightly asset switching, and the binary updater path. Package
 scripts must not normalize or convert manifest JSON; the selected channel
 manifest is the only runtime manifest format.
 
-Binary transition proof must use two manifests that reference two genuinely
-compiled package cohorts with different versions. Rewriting only Debian control
-metadata, package provenance, filenames, or manifest package versions is a test
-bypass and is forbidden. The release workflow freezes the selected channel
-manifest before deployment, installs its real Linux package, updates to the real
-candidate package, verifies every installed binary reports the candidate
-version, then explicitly downgrades to the frozen package and verifies every
-binary again. Equal-version cohorts do not satisfy this gate. The hermetic local
-glow-up may use one genuine cohort to prove curl install, stable/nightly asset
-switching, and corporate locking; it must never claim binary upgrade or
-downgrade coverage unless a second genuinely compiled cohort is supplied.
+Binary transition proof must use two genuinely compiled package cohorts with
+different versions. Rewriting only Debian control metadata, package provenance,
+filenames, or manifest package versions is a test bypass and is forbidden. The
+candidate gate's `transition` phase (`build_system/builder/gate/transition.py`)
+is that proof: before release it installs the deployed public package in a
+systemd container with the release lane's glow-up script, lets it update
+itself to the candidate, and probes the result. The public `install.sh` is
+proven separately against the live channel after deploy. Downgrade is not
+proven anywhere.
+
+The hosted post-deploy job used to run a plain-Docker transition. It was
+removed after 0.6.5, the first release to reach it: with no systemd the
+installer cannot register the service, so its `Installed: true` check could
+never pass. Do not reintroduce a post-deploy transition outside a systemd
+container. The hermetic local glow-up may use one genuine cohort to prove curl
+install, stable/nightly asset switching, and corporate locking; it must never
+claim binary upgrade or downgrade coverage unless a second genuinely compiled
+cohort is supplied.
 
 Binary GitHub releases publish host packages and the canonical host SBOM
 artifact, `capsem-sbom.spdx.json`; the SBOM attestation subject list must cover

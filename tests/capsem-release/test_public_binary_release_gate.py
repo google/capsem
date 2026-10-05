@@ -487,7 +487,6 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
 
     assert "--docker-channel-switch" in source
     assert "--docker-upgrade" in source
-    assert "--docker-transition-from-manifest" in source
     assert "update --assets --channel nightly" in source
     assert "update --assets --channel stable" in source
     assert "CAPSEM_RELEASE_CHANNELS_URL=" in source
@@ -504,58 +503,10 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
     assert "name: binary-channel-before" in workflow
     assert "cache/target/binary-channel/*/manifest.before.json" in workflow
-    assert (
-        '--docker-transition-from-manifest "/tmp/binary-channel-before/$RELEASE_CHANNEL/manifest.before.json"'
-        in workflow
-    )
-
-
-def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    gate = _load_release_gate()
-    calls: list[list[str]] = []
-    monkeypatch.setattr(gate.shutil, "which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr(
-        gate.subprocess,
-        "run",
-        lambda args, **_kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0),
-    )
-
-    def package(version: str) -> dict[str, object]:
-        return {
-            "name": f"Capsem_{version}_amd64.deb",
-            "version": version,
-            "kind": "debian_package",
-            "platform": "linux",
-            "architecture": "amd64",
-            "status": "current",
-            "url": f"https://example.test/v{version}/Capsem_{version}_amd64.deb",
-            "bytes": 100,
-            "digest": {"sha256": "1" * 64, "blake3": "2" * 64},
-        }
-
-    older = {"version": "1.0.1", "packages": [package("1.5.100")], "profiles": {}}
-    newer = {"version": "1.0.2", "packages": [package("1.5.101")], "profiles": {}}
-
-    gate.run_docker_binary_transition_smoke(
-        older_manifest=older,
-        newer_manifest=newer,
-        install_script_url="https://capsem.org/install.sh",
-        docker_image="ubuntu:24.04",
-        work_dir=tmp_path,
-    )
-
-    script = calls[0][-1]
-    assert "CAPSEM_CHANNEL=stable" in script
-    assert "update --yes --channel nightly" in script
-    assert "check_installed_version 1.5.101" in script
-    assert "update --yes --channel stable" in script
-    assert script.count("check_installed_version 1.5.100") == 2
-    assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$expected\"" in script
-    assert 'check_binary_versions "$expected"' in script
-    assert script.count("build_system/scripts/release/verify-installed-release.py") == 3
+    # The hosted plain-Docker transition was removed: with no systemd it could
+    # never see an installed service. The candidate gate's transition phase
+    # proves the public-before -> candidate update in a systemd container.
+    assert "--docker-transition-from-manifest" not in workflow
 
 
 def test_public_binary_release_gate_requires_fail_closed_installer_integrity() -> None:
