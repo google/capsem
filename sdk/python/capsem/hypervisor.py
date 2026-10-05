@@ -36,6 +36,10 @@ class Hypervisor(Client):
     async def list(self) -> models.ListResponse:
         return await api.list_vms(self._transport)
 
+    def vm(self, *, id: str | None = None, name: str | None = None) -> VM:
+        """Attach by ID or name, borrowing this connection without making a request."""
+        return VM._attach(self._transport, id=id, name=name)
+
     async def create(self, *, name: str = "", cpus: int | None = None,
                      memory: int | None = None, env: dict[str, str] | None = None,
                      networks: Sequence[models.NetworkInfo] = (), image: str | None = None,

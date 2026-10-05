@@ -39,6 +39,10 @@ async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
     await vm.ports.close(port)
     await vm.stop()
 
+    # Attach to an existing session using this hypervisor's connection.
+    async with hv.vm(name="workspace") as existing:
+        info = await existing.info()
+
 # Or select an existing VM by exactly one name or canonical ID.
 async with VM("http://127.0.0.1:19222", token, name="workspace") as vm:
     info = await vm.info()  # includes AI/model/MCP, network and file information
@@ -62,10 +66,14 @@ Printing an execution result prints its decoded stdout. `stdout_bytes` and
 `stderr_bytes` preserve exact bytes regardless of whether the wire value uses
 UTF-8 or base64; the exit code and typed wire fields remain available.
 
-A VM selected by name resolves once, then retains its canonical ID. Handles
-returned by `create` and `fork` share their parent's connection. Close the
-owning client with `async with` or `await close()`; closing a shared VM handle
-does not close sibling handles. Closing a client does not stop or delete VMs.
+A VM selected by name resolves once, then retains its canonical ID.
+`hv.vm(id="canonical-id")` or `hv.vm(name="workspace")` attaches without an HTTP
+request; names resolve on the first operation. Select exactly one nonempty ID
+or name. Handles returned by `vm`, `create` and `fork` share their parent's
+connection. Close the owning client with `async with` or `await close()`;
+closing a shared VM handle does not close its parent or sibling handles.
+Closing the parent ends the shared connection, so further requests from its
+handles fail. Closing a client does not stop or delete VMs.
 File import/export requires a running VM's security ledger; copying from or to
 a stopped VM returns `HttpError` with status 409. Stopped workspace listing
 remains available.

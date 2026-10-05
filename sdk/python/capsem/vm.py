@@ -36,10 +36,15 @@ class VM(Client):
         self.ports = Ports(self)
 
     @classmethod
+    def _attach(cls, transport: Transport, *, id: str | None, name: str | None) -> VM:
+        vm = cls._from_transport(transport)
+        vm._select(name=name, id=id)
+        return vm
+
+    @classmethod
     def _bind(cls, transport: Transport, *, id: str, name: str | None = None,
               container: bool | None = None) -> VM:
-        vm = cls._from_transport(transport)
-        vm._select(name=None, id=id)
+        vm = cls._attach(transport, id=id, name=None)
         vm._name = name
         vm._has_container = container
         return vm

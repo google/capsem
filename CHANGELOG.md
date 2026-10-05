@@ -822,6 +822,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The Python SDK can attach to an existing session with `hv.vm(id=...)` or
+  `hv.vm(name=...)`, sharing the hypervisor's authenticated connection. Attachment
+  makes no HTTP request; names resolve once on the first operation. Closing a
+  handle leaves its parent connection and session running.
 - Images can be named from the catalog. The service reads
   `ghcr.io/google/capsem/catalog:stable` (or the mirror `[images] catalog`
   names, trusting `[images] catalog_ca` for it; `catalog = false` turns it
