@@ -34,7 +34,8 @@ for path in "$FIXTURE_DIR" "$DIST_DIR" "$EVIDENCE_DIR"; do
 done
 
 uv run --project build_system --frozen python build_system/release_site/scripts/write-release-site-ci-fixture.py "$FIXTURE_DIR"
-cargo run -p capsem-admin -- assets channel build \
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- \
+    cargo run -p capsem-admin -- assets channel build \
     --manifest "file://$FIXTURE_DIR/assets/manifest.json" \
     --assets-dir "$FIXTURE_DIR/assets" \
     --channel "$CHANNEL" \
@@ -43,7 +44,8 @@ cargo run -p capsem-admin -- assets channel build \
 CAPSEM_RELEASE_GRAPH="$DIST_DIR" \
     CAPSEM_RELEASE_CHANNEL_DIST="$DIST_DIR" \
     bash build_system/scripts/web/check-web-surface.sh release-site-build
-cargo run -p capsem-admin -- assets channel check \
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- \
+    cargo run -p capsem-admin -- assets channel check \
     --channel "$CHANNEL" \
     --dist "$DIST_DIR"
 mkdir -p "$EVIDENCE_DIR"

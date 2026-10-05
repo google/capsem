@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import socketserver
 import subprocess
@@ -147,6 +148,22 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "bash build_system/scripts/release/rehearse-asset-channel-staging.sh" in staging
     assert "build_system/release_site/scripts/write-release-site-ci-fixture.py" not in staging
     assert "--without-binary-files" not in staging
+
+
+def test_asset_staging_rehearsal_compiles_under_the_machine_lease() -> None:
+    source = (PROJECT_ROOT / "build_system/scripts/release/rehearse-asset-channel-staging.sh").read_text()
+    commands = [
+        shlex.split(line)
+        for line in source.replace("\\\n", " ").splitlines()
+        if "cargo run -p capsem-admin" in line
+    ]
+    assert len(commands) == 2
+    for command in commands:
+        assert command[:3] == [
+            "python3", "build_system/scripts/ci/run-bounded-command.py", "--timeout-seconds",
+        ], "source-contract rehearsals must lease shared Cargo builds instead of bypassing an active gate"
+        assert int(command[3]) > 0
+        assert command[4:8] == ["--", "cargo", "run", "-p"]
 
 
 def test_asset_staging_rehearsal_builds_a_complete_public_shape(tmp_path: Path) -> None:
