@@ -1903,8 +1903,8 @@ def test_a_stale_first_attempt_does_not_leak_into_a_later_snapshot(tmp_path: Pat
     retained across attempts so they are not downloaded twice -- were counted
     as evidence in every later snapshot as `extra`."""
     site = "https://release.capsem.org"
-    old_asset = "https://github.example.test/profile-0.6.1/rootfs.erofs"
-    new_asset = "https://github.example.test/profile-0.6.5/rootfs.erofs"
+    old_asset = "https://github.example.test/profile-previous/rootfs.erofs"
+    new_asset = "https://github.example.test/profile-current/rootfs.erofs"
     serving = iter(["old", "new"])
     checker = SimpleNamespace(_FETCH_BYTES_CACHE={})
 
