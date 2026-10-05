@@ -31,7 +31,7 @@ import secrets
 import shutil
 from pathlib import Path
 
-from . import buildcache, cachelayout, cachetooling, cargotarget, snapshot
+from . import buildcache, cachelayout, cachetooling, cargotarget, runtransfer, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy
 from .prefixidentity import for_source_commit, for_working_tree
@@ -164,7 +164,11 @@ def run_from_private_copy(
     identity = (
         secrets.token_hex(config.prefix.name_length)
         if candidate is not None and candidate.exists()
-        else (candidate.name if candidate is not None else secrets.token_hex(config.prefix.name_length))
+        else (
+            candidate.name
+            if candidate is not None
+            else secrets.token_hex(config.prefix.name_length)
+        )
     )
     path = reuse or expected or allocate(config, identity)
     if path.is_symlink():
@@ -230,7 +234,9 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
     child_env = {
         config.environment.source_checkout: str(config.root),
         config.environment.repository_root: str(path),
-        cachelayout.cache_paths(config).policy.authority_environment: str(cachelayout.authority(config)),
+        cachelayout.cache_paths(config).policy.authority_environment: str(
+            cachelayout.authority(config)
+        ),
         config.environment.cargo_target: str(cargotarget.path(config)),
         **cachetooling.environment(config, key=str(commit or path.name), source_root=path),
     }
@@ -266,7 +272,7 @@ def reclaim(config: GateConfig, path: Path) -> None:
     """
     root = parent_dir(config).resolve()
     resolved = Path(os.path.abspath(path))
-    if resolved.parent != root or resolved == root:
+    if resolved.parent != root or resolved == root or resolved.is_symlink():
         raise GateError(
             f"refusing to reclaim {resolved}: a prefix is a direct child of {root}, "
             "and this is not one"
@@ -278,6 +284,9 @@ def reclaim(config: GateConfig, path: Path) -> None:
     # selected asset tree into the shared cache strips the exact asset path
     # that its continuation consumes. Deleting 42 GiB of `cache/target/` was the
     # whole reason a new commit qualified cold; see `buildcache`.
+    # A caller can disappear before exporting a finished child's journal.
+    # Import it through the history owner before the next sweep deletes it.
+    runtransfer.export(resolved, config.root, config)
     buildcache.salvage(config, resolved)
     shutil.rmtree(resolved, ignore_errors=True)
     if resolved.exists():
