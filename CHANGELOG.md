@@ -222,6 +222,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Running `capsem-pty-agent` inside a VM no longer freezes it. A second
+  copy connected to the host's control socket and took it over from the
+  running agent, so the terminal and exec stopped answering. The agent now
+  holds a single-instance lock, a second copy exits with a message, and
+  `--help` and `--version` answer without touching the socket (#198).
+
 - Installs and updates ride out a transient server error from the release
   host. A release download retried 5xx and 429 answers for only 1.75 seconds
   in all, and a 25-second burst of GitHub 500s failed a package install; it

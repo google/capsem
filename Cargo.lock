@@ -724,6 +724,7 @@ name = "capsem-agent"
 version = "0.6.5"
 dependencies = [
  "capsem-foundation",
+ "capsem-guard",
  "capsem-proto",
  "nix 0.29.0",
  "serde",

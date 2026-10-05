@@ -3,6 +3,7 @@
 
 mod audit;
 mod boot_timing;
+mod cli;
 mod control_reader;
 mod control_writer;
 use control_reader::control_loop;
@@ -199,6 +200,30 @@ fn current_boot_trace_id() -> String {
 // ---------------------------------------------------------------------------
 
 fn main() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let cli::CliAction::Exit { code, message } = cli::cli_action(&arguments) {
+        if code == 0 {
+            println!("{message}");
+        } else {
+            eprintln!("{message}");
+        }
+        process::exit(code);
+    }
+    // One agent per VM: a second one would displace the first's vsock links.
+    let _singleton = match capsem_guard::Singleton::try_acquire(std::path::Path::new(cli::LOCK_PATH)) {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            eprintln!("capsem-pty-agent is already running in this VM; not starting a second one");
+            process::exit(1);
+        }
+        Err(error) => {
+            eprintln!(
+                "capsem-pty-agent: cannot take its singleton lock {}: {error}",
+                cli::LOCK_PATH
+            );
+            process::exit(1);
+        }
+    };
     let _telemetry = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-pty-agent",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
