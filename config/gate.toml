@@ -2073,6 +2073,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_doctor.py",
     "build_system/tests/gate/test_gate_exec_boundary.py",
     "build_system/tests/gate/test_gate_execute_funnel.py",
+    "build_system/tests/gate/test_gate_incomplete_reports.py",
     "build_system/tests/gate/test_gate_fileactions.py",
     "build_system/tests/gate/test_gate_hardening.py",
     "build_system/tests/gate/test_gate_has_no_literal_data.py",
