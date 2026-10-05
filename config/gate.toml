@@ -2315,17 +2315,17 @@ benchmark_paths = [
 # `digests` pins each platform's OCI image manifest. The kingslanding prefetch
 # verifies the pinned layout in the shared `cache_stage`, pulling it from
 # `repository` by digest only when absent; `capsem-gate debug-image` builds it
-# locally into the same place and prints the digest to pin here. x86_64 is
-# built on a Linux x86_64 host (Colima here emulates no amd64), so only arm64
-# is pinned until that lane publishes one. tests/fixtures/oci/README.md has
-# the maintainer's publish steps.
+# locally into the same place and prints the digest to qualify and pin here.
+# Qualify each candidate before moving its native platform pin. x86_64 images
+# are built on a Linux x86_64 host (Colima here emulates no amd64).
+# tests/fixtures/oci/README.md has the qualification and publish steps.
 [functional.debug_image]
 name = "capsem-debug"
 context = "images/capsem-debug"
 script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/capsem-debug"
 cache_stage = "test-images"
-digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6" }
+digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6", "linux/amd64" = "sha256:5cd02c592445a0223a1284b9b3f96c3ab94ae4842ddb7e5fc2882b0304834a2b" }
 
 # The reference image: a pinned digest of the official `dev` image. Every
 # runtime test that boots a workload boots this one, so main development
