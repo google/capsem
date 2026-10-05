@@ -12,8 +12,11 @@ conventions.
 `just test` is **one process, one machine lock, one workspace, one plan**. Its
 dry run reports the current totals; conditional asset staging makes a literal
 step/action count depend on machine state. Its exact-source journal is the
-proof both release commands require before they tag or dispatch
-(`qualificationflow.decide`, `qualificationevidence.find_release_proof`).
+proof both release commands require before they tag or dispatch. Only the
+unattended nightly scheduler is exempt (`[release].unattended_channels` in
+[`config/gate.toml`](../../config/gate.toml); see
+[`RELEASE.md`](../../RELEASE.md) section 8). Proof selection is owned by
+`qualificationflow.decide` and `qualificationevidence.find_release_proof`.
 
 ## The rule everything else follows from
 
@@ -103,8 +106,10 @@ the Seatbelt-style attempted-egress ledger.
 ordinary actions through the config-owned environment name. Outside-sandbox
 actions clear it. Host Doctor combines owning-command policy with live kernel
 state; the machine-lock marker proves only lock ownership, never enforcement.
-Candidate produces optional local qualification; release commands dispatch
-hosted qualification. All three accept only `enforce`: explicit `off` or `report` is
+Candidate produces the complete local qualification journal required by the
+public release commands under the policy above. Those commands then dispatch
+independent hosted qualification. All three accept only `enforce`: explicit
+`off` or `report` is
 refused before plan construction, re-exec, or resource acquisition. Measure a
 changing rule through an incomplete module, whose evidence cannot qualify.
 

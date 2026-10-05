@@ -74,9 +74,13 @@ can proceed. It does not prove the complete current tree.
 
 Never use diagnostic continuation with `release-binaries` or
 `release-assets`, and never let it authorize publication. After the fix, use
-the smallest owning `focus-test` group. Run `just test <commit>` when complete
-local whole-system proof is useful. It is not required before release: the
-hosted release lane owns qualification and never consumes the local journal.
+the smallest owning `focus-test` group. Before release, run `just test <commit>`
+to success: the public release command requires its complete local journal for
+that commit or an identical Git tree. Only the unattended nightly scheduler is
+exempt (`[release].unattended_channels` in
+[`config/gate.toml`](../../config/gate.toml); see
+[`RELEASE.md`](../../RELEASE.md) section 8). The hosted lane then independently
+qualifies the artifact pairing it publishes.
 
 ## Step 1: Reproduce with a test
 
