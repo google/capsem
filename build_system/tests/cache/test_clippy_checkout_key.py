@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from capsem_builder.gate import clippyrun
 from capsem_builder.gate.tools.ci import run_bounded_command
+from helpers.bounded import bounded
 
 ROOT = Path(__file__).resolve().parents[3]
 WRAPPER = tomllib.loads((ROOT / "config/gate.toml").read_text())["toolchain"]["clippy_workspace_wrapper"]
@@ -50,7 +51,11 @@ def _clippy(tree: Path, target: Path) -> subprocess.CompletedProcess[str]:
         "CARGO_TARGET_DIR": str(target),
         **keyed,
     }
-    return subprocess.run(argv, cwd=tree, env=environment, capture_output=True, text=True, timeout=120)
+    return subprocess.run(
+        bounded(argv, 120, env={"CARGO_TARGET_DIR": str(target),
+                              **dict.fromkeys(unwrapped, ""), **keyed}),
+        cwd=tree, env=environment, capture_output=True, text=True,
+    )
 
 
 @pytest.mark.skipif(shutil.which("cargo") is None, reason="needs the Rust toolchain")

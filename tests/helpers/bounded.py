@@ -12,13 +12,22 @@ at once, since the lock is already held.
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from helpers.constants import PROJECT_ROOT
 
 WRAPPER = PROJECT_ROOT / "build_system" / "scripts" / "ci" / "run-bounded-command.py"
 
 
-def bounded(argv: Sequence[str], timeout_seconds: int) -> list[str]:
-    """`argv` run through the bounded-command wrapper."""
+def bounded(
+    argv: Sequence[str], timeout_seconds: int, *, env: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Bound `argv`, applying explicit probe settings after cache containment.
+
+    Pass only fixture-owned overrides, never the inherited environment: the
+    wrapper still owns cache defaults and the genuine parent-run marker.
+    `env NAME=value cargo ...` remains visible to its machine-lease predicate.
+    """
+    if env:
+        argv = ["env", *(f"{key}={value}" for key, value in env.items()), *argv]
     return [sys.executable, str(WRAPPER), "--timeout-seconds", str(timeout_seconds), "--", *argv]

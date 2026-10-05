@@ -40,7 +40,6 @@ def built_binaries():
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
-        timeout=300,
     )
     assert result.returncode == 0, f"cargo build failed:\n{result.stderr}"
     return DAEMON_BINARIES

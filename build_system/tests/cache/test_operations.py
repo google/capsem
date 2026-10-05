@@ -16,6 +16,7 @@ from capsem_builder.cache.models import (
 )
 from capsem_builder.cache.operations import apply_prune
 from capsem_builder.cache.paths import CachePaths
+from helpers.bounded import bounded
 
 
 def paths(repository: Path, *, stage_path: Path = Path("target/objects"), external=False):
@@ -203,7 +204,8 @@ def test_holding_a_cargo_lock_leaves_a_target_directory_cargo_can_clean(tmp_path
     (crate / "src/lib.rs").write_text("")
     for target in (root, root / "llvm-cov-target"):
         cleaned = subprocess.run(
-            [cargo, "clean", "--manifest-path", str(crate / "Cargo.toml"), "--target-dir", str(target)],
+            bounded([cargo, "clean", "--manifest-path", str(crate / "Cargo.toml"), "--target-dir", str(target)], 60,
+                    env={"CARGO_TARGET_DIR": str(target)}),
             capture_output=True, text=True, check=False, env={**os.environ, "CARGO_TARGET_DIR": str(target)},
         )
         assert cleaned.returncode == 0, cleaned.stderr

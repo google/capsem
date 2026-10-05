@@ -13,6 +13,7 @@ from capsem_builder.gate.rustinventory import (
     RustTarget,
     RustTestInventory,
 )
+from helpers.bounded import bounded
 
 ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = ROOT / "tests" / "fixtures" / "rust-test-inventory" / "Cargo.toml"
@@ -24,7 +25,7 @@ def _cargo_env(target_dir: Path) -> dict[str, str]:
 
 def _json_output(*argv: str, target_dir: Path) -> object:
     result = subprocess.run(
-        argv,
+        bounded(argv, 120, env={"CARGO_TARGET_DIR": str(target_dir)}),
         cwd=ROOT,
         env=_cargo_env(target_dir),
         check=False,
@@ -114,7 +115,8 @@ def test_doctests_are_owned_separately_from_nextest(cargo_target_dir: Path) -> N
     assert nextest.doctest == frozenset()
 
     subprocess.run(
-        ["cargo", "test", "--doc", "--manifest-path", str(FIXTURE)],
+        bounded(["cargo", "test", "--doc", "--manifest-path", str(FIXTURE)], 120,
+                env={"CARGO_TARGET_DIR": str(cargo_target_dir)}),
         cwd=ROOT,
         env=_cargo_env(cargo_target_dir),
         check=True,
@@ -154,7 +156,7 @@ def test_bins_only_selection_is_mechanically_rejected(cargo_target_dir: Path) ->
 
 def test_host_platform_sentinel_is_listed(cargo_target_dir: Path) -> None:
     listing = subprocess.run(
-        [
+        bounded([
             "cargo",
             "nextest",
             "list",
@@ -162,7 +164,7 @@ def test_host_platform_sentinel_is_listed(cargo_target_dir: Path) -> None:
             str(FIXTURE),
             "--message-format",
             "json",
-        ],
+        ], 120, env={"CARGO_TARGET_DIR": str(cargo_target_dir)}),
         cwd=ROOT,
         env=_cargo_env(cargo_target_dir),
         check=True,

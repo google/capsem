@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,12 +27,10 @@ class FakeRunner:
         *,
         cwd: Path,
         check: bool,
-        timeout: int,
     ) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
         assert cwd == ROOT
         assert check is True
-        assert timeout == 120
         self.binary.parent.mkdir(parents=True, exist_ok=True)
         self.binary.write_bytes(b"locally built")
         self.binary.chmod(0o755)
@@ -92,8 +91,24 @@ def test_local_mode_builds_a_missing_binary(tmp_path: Path) -> None:
         runner=runner,
     )
 
-    assert runner.commands == [("cargo", "build", "-p", "capsem-gateway")]
+    assert runner.commands == [(
+        sys.executable, str(ROOT / "build_system/scripts/ci/run-bounded-command.py"),
+        "--timeout-seconds", "120", "--", "cargo", "build", "-p", "capsem-gateway",
+    )]
     assert binary.read_bytes() == b"locally built"
+
+
+def test_local_binary_fallback_takes_the_machine_lease(tmp_path: Path) -> None:
+    runner = FakeRunner(tmp_path / "capsem-gateway")
+    HELPER.ensure_host_test_binary(
+        runner.binary, source_paths=(),
+        build_command=("cargo", "build", "-p", "capsem-gateway"),
+        project_root=ROOT, env={}, runner=runner,
+    )
+    assert runner.commands == [(
+        sys.executable, str(ROOT / "build_system/scripts/ci/run-bounded-command.py"),
+        "--timeout-seconds", "120", "--", "cargo", "build", "-p", "capsem-gateway",
+    )], "a local fixture fallback must not rebuild shared binaries outside the machine lease"
 
 
 def test_local_mode_rebuilds_only_when_source_is_newer(tmp_path: Path) -> None:
@@ -117,4 +132,7 @@ def test_local_mode_rebuilds_only_when_source_is_newer(tmp_path: Path) -> None:
         runner=runner,
     )
 
-    assert runner.commands == [("cargo", "build", "-p", "capsem-admin")]
+    assert runner.commands == [(
+        sys.executable, str(ROOT / "build_system/scripts/ci/run-bounded-command.py"),
+        "--timeout-seconds", "120", "--", "cargo", "build", "-p", "capsem-admin",
+    )]

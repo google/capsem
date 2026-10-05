@@ -48,7 +48,6 @@ def test_workspace_has_no_warnings():
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
-        timeout=300,
     )
     assert result.returncode == 0, (
         "Workspace crates have compiler warnings (treated as errors):\n"

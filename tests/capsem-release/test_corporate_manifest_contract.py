@@ -7,6 +7,8 @@ import subprocess
 from copy import deepcopy
 from pathlib import Path
 
+from helpers.bounded import bounded
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_BASE = "https://releases.acme.test/acme/"
 SOURCE_COMMIT = "1" * 40
@@ -17,7 +19,7 @@ FIXTURE_GRAPH = (
 
 def _run_admin(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["cargo", "run", "-p", "capsem-admin", "--quiet", "--", *args],
+        bounded(["cargo", "run", "-p", "capsem-admin", "--quiet", "--", *args], 180),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
