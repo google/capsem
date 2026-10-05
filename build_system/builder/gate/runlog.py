@@ -183,12 +183,11 @@ class RunLog(EventJournal):
         """Where a step's own output goes, so concurrent lanes stay readable."""
         return self._steps / f"{label}.log"
 
-    def step_output(self) -> Path | None:
-        """The running step's log, or nothing outside a step.
+    def step_output(self) -> Path:
+        """The running step's log, or the sequential resource commands' log.
 
-        Resources acquire and release outside the step graph, so there are
-        real commands with no step to file under. Refusing to run those would
-        be a worse answer than not filing their output.
+        Acquire and release can fail before any step runs. Their diagnostics
+        must survive terminal loss without inventing a graph step.
         """
         label = _CURRENT.get()
-        return self.step_log(label) if label else None
+        return self.step_log(label) if label else self._steps / self.settings.resource_log

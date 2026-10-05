@@ -192,6 +192,7 @@ class RunLogConfig(Strict):
     events: str
     event_schema: str
     step_log_dir: str
+    resource_log: str
     summary: str
     latest_link: str
     #: Trees each run watches for filesystem faults, relative to the checkout.

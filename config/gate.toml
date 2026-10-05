@@ -2888,6 +2888,8 @@ events = "run.jsonl"
 # field named `schema` shadows a BaseModel attribute.
 event_schema = "capsem.gate.runlog.v1"
 step_log_dir = "steps"
+# Sequential resource acquire/release commands run outside the step graph.
+resource_log = "resources.log"
 summary = "summary.txt"
 # What each run watches for filesystem faults, and where it writes them the
 # moment they happen -- not at the end, and not only into `run.jsonl`, because
