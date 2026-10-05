@@ -11,13 +11,8 @@ from helpers.image_session import WORKSPACE, workload_exec
 pytestmark = pytest.mark.integration
 
 
-def requires(candidate, capability):
-    if capability not in candidate.capabilities:
-        pytest.skip(f"{candidate.name} does not declare {capability}")
-
-
+@pytest.mark.capability("toolchain")
 def test_toolchain_builds_and_runs_a_program(service, candidate, session):
-    requires(candidate, "toolchain")
     result = workload_exec(
         service.client(),
         session,
@@ -28,8 +23,8 @@ def test_toolchain_builds_and_runs_a_program(service, candidate, session):
     assert result["stdout_text"].split() == ["42", "42", "42"], result
 
 
+@pytest.mark.capability("ollama")
 def test_ollama_serves_on_the_workload_loopback(service, candidate, session):
-    requires(candidate, "ollama")
     result = workload_exec(
         service.client(),
         session,

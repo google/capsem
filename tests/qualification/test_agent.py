@@ -42,9 +42,8 @@ def model_service(tmp_path):
                 os.environ["CAPSEM_CORP_CONFIG"] = previous
 
 
+@pytest.mark.capability("agent")
 def test_the_agent_completes_a_turn_and_its_tool_call_lands(model_service, candidate, tmp_path):
-    if "agent" not in candidate.capabilities:
-        pytest.skip(f"{candidate.name} does not declare agent")
     expect = candidate.expect
     assert expect.get("turn"), f"{candidate.name} declares agent but no [expect] turn"
     token, target = uuid.uuid4().hex, f"{WORKSPACE}/agent-turn.txt"
