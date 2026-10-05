@@ -15,6 +15,7 @@ surfacing forty minutes into a run as a `KeyError` inside a Docker call.
 from __future__ import annotations
 
 import re
+from importlib import import_module, util
 from pathlib import Path
 
 import pytest
@@ -473,3 +474,78 @@ def test_every_architecture_knows_its_own_key() -> None:
     hand back something that disagrees with how it was looked up."""
     for name, arch in CONFIG.architectures.items():
         assert arch.name == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "ModulesConfig", "FunctionalConfig", "DependencyAuditConfig", "AuditsConfig",
+        "KingslandingConfig", "GreyjoyConfig", "PinnedImageConfig", "QualificationConfig",
+    ),
+)
+def test_qualification_schema_reexports_keep_one_model_identity(name: str) -> None:
+    module = "capsem_builder.gate.qualifyschema"
+    assert util.find_spec(module) is not None, "qualification schemas need their own module"
+    qualify = import_module(module)
+    build = import_module("capsem_builder.gate.buildschema")
+    assert getattr(build, name) is getattr(qualify, name)
+    if name in {"KingslandingConfig", "GreyjoyConfig", "PinnedImageConfig", "QualificationConfig"}:
+        canonical = import_module("capsem_builder.gate.functionalschema")
+        assert getattr(qualify, name) is getattr(canonical, name)
+
+
+def _source_package_type():
+    build = import_module("capsem_builder.gate.buildschema")
+    source = getattr(build, "SourcePackageConfig", None)
+    assert source is not None, "hand-written packages need a schema without specification"
+    return source
+
+
+def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> None:
+    from capsem_builder.gate.buildschema import SdkConfig
+
+    source = _source_package_type()
+    fields = ("project", "manifest", "source", "tests", "build_output")
+    assert tuple(source.model_fields) == fields
+    assert all(field.is_required() for field in source.model_fields.values())
+    assert issubclass(SdkConfig, source)
+    # Pydantic puts inherited fields first: specification moves from third to
+    # last, while remaining mandatory and preserving every SDK owner type.
+    assert tuple(SdkConfig.model_fields) == (*fields, "specification")
+    assert all(field.is_required() for field in SdkConfig.model_fields.values())
+    for owner in ("sdk_python", "sdk_typescript", "sdk_rust"):
+        assert gate_config.GateConfig.model_fields[owner].annotation is SdkConfig
+        assert isinstance(getattr(CONFIG, owner), SdkConfig)
+
+
+def test_hand_written_source_package_needs_no_codegen_specification() -> None:
+    source = _source_package_type()
+    values = CONFIG.sdk_python.model_dump(exclude={"specification"})
+    assert source.model_validate(values).model_dump() == values
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        source.model_validate(CONFIG.sdk_python.model_dump())
+
+
+@pytest.mark.parametrize("field", ("project", "manifest", "source", "tests", "build_output"))
+def test_source_package_cannot_omit_a_required_input(field: str) -> None:
+    source = _source_package_type()
+    values = CONFIG.sdk_python.model_dump(exclude={"specification", field})
+    with pytest.raises(ValidationError, match="Field required"):
+        source.model_validate(values)
+
+
+def test_sdk_cannot_lose_its_generated_source_specification() -> None:
+    from capsem_builder.gate.buildschema import SdkConfig
+
+    with pytest.raises(ValidationError, match="specification"):
+        SdkConfig.model_validate(CONFIG.sdk_python.model_dump(exclude={"specification"}))
+
+
+def test_source_package_retains_strict_frozen_configuration() -> None:
+    source = _source_package_type()
+    values = CONFIG.sdk_python.model_dump(exclude={"specification"})
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        source.model_validate({**values, "unknown": "input"})
+    package = source.model_validate(values)
+    with pytest.raises(ValidationError, match="frozen_instance"):
+        package.project = "changed"
