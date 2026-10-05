@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "07cfe4f46d6d9df3d573f34cfac432811a6318304c4eff7f4e6f1e923039d01a"
-reason = "#198: capsem-agent takes a capsem-guard singleton so a second capsem-pty-agent cannot steal the host vsock; one first-party path dependency edge"
+sha256 = "f1db6144ddc375b46f556a8ce7a1c3a811e8e72f4999442af6a545f328c5ca7e"
+reason = "release: workspace version 0.6.5 -> 0.6.6 for the post-0.6.5 integration batch (#198 capsem-guard edge already recorded); only first-party package versions move"
