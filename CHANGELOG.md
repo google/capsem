@@ -222,6 +222,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The service no longer logs a `hash mismatch` warning for every VM image on
+  its first start after an update, and its asset hash cache now warms. The
+  startup prewarm checked the images it resolved for the installed release
+  against the hashes of the manifest's current release, so any update that
+  changed images paired each file with another release's hash (#297).
+
 - Running `capsem-pty-agent` inside a VM no longer freezes it. A second
   copy connected to the host's control socket and took it over from the
   running agent, so the terminal and exec stopped answering. The agent now

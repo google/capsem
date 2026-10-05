@@ -392,9 +392,9 @@ fn manifest_rejects_wrong_format() {
 }
 
 #[test]
-fn expected_hashes_current_returns_arch_hashes() {
+fn expected_hashes_returns_arch_hashes() {
     let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
-    let h = m.expected_hashes_current("arm64").unwrap();
+    let h = m.expected_hashes("2026.0415.1", "arm64").unwrap();
     assert_eq!(
         h.kernel,
         "a65f925ebe0b0cc76afe0fe4945431473cb1a32c4f47a9e9b1592e92c46c829c"
@@ -410,27 +410,27 @@ fn expected_hashes_current_returns_arch_hashes() {
 }
 
 #[test]
-fn expected_hashes_current_returns_none_for_unknown_arch() {
+fn expected_hashes_returns_none_for_unknown_arch() {
     let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
-    assert!(m.expected_hashes_current("riscv64").is_none());
+    assert!(m.expected_hashes("2026.0415.1", "riscv64").is_none());
 }
 
 #[test]
-fn expected_hashes_current_returns_none_when_canonical_asset_missing() {
+fn expected_hashes_returns_none_when_canonical_asset_missing() {
     // Manifest with arm64 present but missing any known rootfs entry.
     let json = SAMPLE_V2_MANIFEST.replace(
         r#""rootfs.erofs": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }"#,
         r#""rootfs.placeholder": { "hash": "b8199dc4a83069b99f41e1eb3829992d12777d09e2ce8295276f9d3a1abb1eee", "size": 454230016 }"#,
     );
     let m = ManifestV2::from_json(&json).unwrap();
-    assert!(m.expected_hashes_current("arm64").is_none());
+    assert!(m.expected_hashes("2026.0415.1", "arm64").is_none());
 }
 
 #[test]
-fn expected_hashes_current_rejects_squashfs_manifest() {
+fn expected_hashes_rejects_squashfs_manifest() {
     let json = SAMPLE_V2_MANIFEST.replace("rootfs.erofs", "rootfs.squashfs");
     let m = ManifestV2::from_json(&json).unwrap();
-    assert!(m.expected_hashes_current("arm64").is_none());
+    assert!(m.expected_hashes("2026.0415.1", "arm64").is_none());
 }
 
 #[test]
@@ -806,4 +806,36 @@ fn cleanup_rejects_unsafe_architecture_directory_before_removing_files() {
 
     assert!(format!("{error:#}").contains("invalid asset architecture directory"));
     assert!(orphan.exists(), "validation must finish before cleanup starts");
+}
+
+/// The service's startup prewarm resolved paths for the release the running
+/// binary can use, then verified them against `assets.current` -- a newer
+/// release after an update, so every image reported a hash mismatch (#297).
+/// The expected hashes now come from the release `resolve` chose.
+#[test]
+fn expected_hashes_follow_the_release_resolve_chose() {
+    let mut doc: serde_json::Value = serde_json::from_str(SAMPLE_V2_MANIFEST).unwrap();
+    let mut newer = doc["assets"]["releases"]["2026.0415.1"].clone();
+    newer["min_binary"] = serde_json::json!("9.0.0");
+    for (name, hash) in [("vmlinuz", "11"), ("initrd.img", "22"), ("rootfs.erofs", "33")] {
+        newer["arches"]["arm64"][name]["hash"] = serde_json::json!(hash.repeat(32));
+    }
+    doc["assets"]["releases"]["2026.0501.1"] = newer;
+    doc["assets"]["current"] = serde_json::json!("2026.0501.1");
+    let m = ManifestV2::from_json(&doc.to_string()).unwrap();
+
+    let resolved = m.resolve("1.0.1776269479", "arm64", Path::new("/assets")).unwrap();
+    assert_eq!(
+        resolved.asset_version, "2026.0415.1",
+        "the binary cannot use 2026.0501.1"
+    );
+    let expected = m.expected_hashes(&resolved.asset_version, "arm64").unwrap();
+    for (path, hash) in [
+        (&resolved.kernel, &expected.kernel),
+        (&resolved.initrd, &expected.initrd),
+        (&resolved.rootfs, &expected.rootfs),
+    ] {
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(name.contains(&hash[..16]), "{name} is not named for {hash}");
+    }
 }

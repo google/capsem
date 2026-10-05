@@ -275,7 +275,7 @@ fn every_profiles_boot_hashes_are_retrievable_without_a_global_pointer() {
     // And the global pointer must not be the thing anyone verifies against: it
     // answers for exactly one profile out of three.
     let global = manifest
-        .expected_hashes_current(arch)
+        .expected_hashes(&manifest.assets.current, arch)
         .expect("a flat manifest still answers for its default");
     let profiles_it_covers = ["profile1", "profile2", "profile3"]
         .into_iter()
