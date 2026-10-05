@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The dashboard and documentation sites resolve `postcss-selector-parser`
+  7.1.6 instead of 6.1.4 (GHSA-rj75-hqrm-r3gf: quadratic flat-selector
+  parsing lets hostile CSS exhaust the CPU).
+
 - A guest could make the host walk arbitrary host directories on every
   `/vms/<id>/info` for a stopped persistent VM. The session disk-usage walk
   checked each entry without following links but then read directories by
