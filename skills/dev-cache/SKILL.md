@@ -157,6 +157,15 @@ this, a dead run aged like a retained generation below a 200 GiB maximum:
 one ~7 GB run per release precheck and 1,900 lock files filled the disk while
 `prune` offered 21 MB.
 
+That liveness does not depend on the authority, so such a stage is swept
+whole (`cache/namespaces.py`, issue #272): every other `sha256(authority)[:8]`
+namespace's runs and leases are entries keyed `<namespace>/<run>` under the
+same lease guard, and an emptied namespace is removed with `rmdir`, never
+recursively. Only a real directory with a namespace name is entered; a
+symlink, a pre-namespace `capsem-test-*` directory, or a file that is not a
+run or a lease is never touched. Prune once saw only its own namespace, and
+about 350 retired ones held 2.4 GB.
+
 The source-keyed Python stages (`python-pycache`, `python-pytest`) gain a
 generation for every Python-source state any checkout launches a gate or
 bounded command from, and nothing but a complete gate's package and install

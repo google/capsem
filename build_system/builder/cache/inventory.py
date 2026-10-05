@@ -2,49 +2,18 @@
 
 from __future__ import annotations
 
-import fnmatch
 import time
 from pathlib import Path
 
 from .cargounits import unaccounted_size, unit_entries
 from .contract import PruneStrategy
+from .generations import directory_entries, entry_size
 from .inventorymodels import RetentionInventory
-from .leases import active_path, held_locks, lease_key
-from .measure import measure
+from .leases import held_locks
 from .models import CacheEntry, CacheInventory, CachePolicy, StageInventory
+from .namespaces import foreign_entries, sweeps
 from .objectunits import object_entries
 from .paths import CachePaths
-
-
-def _lease_active(stage_path: Path, template: str | None, key: str) -> bool:
-    if template is None:
-        return False
-    lease = stage_path / template.format(key=key)
-    if not lease.is_file() or lease.is_symlink():
-        return False
-    return active_path(lease)
-
-
-def _managed(stage_policy, name: str) -> bool:
-    return any(fnmatch.fnmatchcase(name, pattern) for pattern in stage_policy.managed_globs)
-
-
-def _lease_files(template: str | None, children: list[Path], stage_policy) -> dict[str, str]:
-    """Map each lease file's name to the generation key it holds."""
-    if template is None:
-        return {}
-    found = {}
-    for child in children:
-        key = lease_key(template, child.name)
-        if key is not None and not _managed(stage_policy, child.name) and not child.is_symlink() \
-                and child.is_file():
-            found[child.name] = key
-    return found
-
-
-def _entry_size(path: Path, allocated_seen: set[tuple[int, int]]) -> tuple[int, int]:
-    measured = measure(path, allocated_seen)
-    return measured.logical_bytes, measured.allocated_bytes
 
 
 def _stage_inventory(
@@ -73,47 +42,15 @@ def _stage_inventory(
     unmanaged_allocated = 0
     held = held_locks(stage_root, stage_policy.mutation_locks)
     busy = bool(held)
+    sweep = sweeps(stage_policy)
     if stage_path.is_dir():
-        children = sorted(stage_path.iterdir(), key=lambda item: item.name)
-        names = {child.name for child in children}
-        managed_names = {name for name in names if _managed(stage_policy, name)}
-        leases = _lease_files(stage_policy.lease_template, children, stage_policy)
-        for child in children:
-            key = leases.get(child.name)
-            if key is not None and key in managed_names:
-                continue  # removed and accounted with its generation
-            if key in names:
-                key = None  # the lease of an unmanaged sibling stays unmanaged
-            logical, allocated = _entry_size(child, allocated_seen)
-            stat = child.lstat()
-            lease_only = key is not None
-            managed = lease_only or child.name in managed_names
-            members: tuple[Path, ...] = ()
-            if managed and not lease_only and stage_policy.lease_template is not None:
-                lease = stage_policy.lease_template.format(key=child.name)
-                if lease in leases:
-                    members = (Path(lease),)
-                    lease_logical, lease_allocated = _entry_size(stage_path / lease, allocated_seen)
-                    logical += lease_logical
-                    allocated += lease_allocated
-            entries.append(
-                CacheEntry(
-                    key=key or child.name,
-                    relative_path=Path(child.name),
-                    member_paths=members,
-                    logical_bytes=logical,
-                    allocated_bytes=allocated,
-                    created_ns=stat.st_ctime_ns,
-                    last_used_ns=stat.st_atime_ns,
-                    managed=managed,
-                    lease_only=lease_only,
-                    protected=managed
-                    and (
-                        busy or (key or child.name) in referenced
-                        or _lease_active(stage_path, stage_policy.lease_template, key or child.name)
-                    ),
-                )
-            )
+        entries = directory_entries(
+            stage_path, stage_policy, allocated_seen, busy=busy, referenced=referenced,
+            relative=Path(stage_path.name) if sweep else Path("."),
+        )
+    if sweep:
+        entries += foreign_entries(stage_path, stage_policy, allocated_seen)
+        stage_path = stage_path.parent
     if entry_root != Path(".") and stage_root.is_dir():
         # Account for siblings at every level, excluding the managed subtree
         # exactly once even when its entry_root is nested (Cargo incremental).
@@ -123,7 +60,7 @@ def _stage_inventory(
             if ancestor.is_dir():
                 for child in ancestor.iterdir():
                     if child != selected:
-                        logical, allocated = _entry_size(child, allocated_seen)
+                        logical, allocated = entry_size(child, allocated_seen)
                         unmanaged_logical += logical
                         unmanaged_allocated += allocated
             ancestor = selected
@@ -216,7 +153,7 @@ def _unclassified_inventory(
             for child in sorted(path.iterdir(), key=lambda item: item.name):
                 visit(child, relative / child.name)
             return
-        logical, allocated = _entry_size(path, allocated_seen)
+        logical, allocated = entry_size(path, allocated_seen)
         stat = path.lstat()
         entries.append(
             CacheEntry(

@@ -227,3 +227,214 @@ shutil.rmtree(source)
     assert directory.is_relative_to(tmp_path / "scratch/capsem-tests")
     assert not directory.exists(), result.stderr
     assert result.stderr == ""
+
+
+# Issue #272: test-temp is namespaced by sha256(authority)[:8], and prune only
+# ever looked at its own authority's namespace. A namespace whose authority was
+# gone -- a deleted worktree, a test's temporary checkout -- was never looked at
+# again: ~350 of them held 2.4 GB on one machine. Liveness is the run lock's,
+# whichever namespace it is in, so every namespace is swept.
+
+FOREIGN = "deadbeef"
+
+
+def foreign(paths: CachePaths, namespace: str = FOREIGN) -> Path:
+    directory = paths.stage("test-temp").parent / namespace
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def foreign_run(namespace: Path, key: str) -> Path:
+    directory = namespace / key
+    (directory / "pytest").mkdir(parents=True)
+    (directory / "pytest/payload").write_bytes(b"y" * 64)
+    (namespace / f".{key}.lock").touch()
+    return directory
+
+
+def own_live_run(paths: CachePaths) -> tuple[Path, Path]:
+    directory = run(paths, "run-3")
+    lease = paths.stage("test-temp") / ".run-3.lock"
+    leases.retain_path(lease)
+    return directory, lease
+
+
+def test_a_retired_namespace_is_reclaimed_whole_and_the_current_one_is_untouched(
+    tmp_path: Path,
+) -> None:
+    paths = scratch(tmp_path)
+    own, lease = own_live_run(paths)
+    retired = foreign(paths)
+    foreign_run(retired, "run-11")
+    (retired / ".run-12.lock").touch()
+    empty = foreign(paths, "0123abcd")
+    try:
+        inventory = scan_inventory(paths, paths.policy)
+        keys = {entry.key for entry in inventory.stages[0].entries}
+        assert {"run-3", f"{FOREIGN}/run-11", f"{FOREIGN}/run-12"} <= keys
+        _, result = prune(paths)
+    finally:
+        leases.release_path(lease)
+
+    assert not retired.exists() and not empty.exists()
+    assert retired in result.removed and empty in result.removed
+    assert sorted(path.name for path in paths.stage("test-temp").iterdir()) == [
+        ".run-3.lock", "run-3",
+    ]
+    assert (own / "pytest/payload").exists()
+
+
+def test_an_empty_current_namespace_is_never_removed(tmp_path: Path) -> None:
+    paths = scratch(tmp_path)
+    paths.stage("test-temp").mkdir(parents=True)
+
+    plan, _ = prune(paths)
+
+    assert plan.actions == ()
+    assert paths.stage("test-temp").is_dir()
+
+
+def test_a_held_run_lock_keeps_its_run_and_its_namespace(tmp_path: Path) -> None:
+    paths = scratch(tmp_path)
+    namespace = foreign(paths)
+    live = foreign_run(namespace, "run-21")
+    dead = foreign_run(namespace, "run-22")
+
+    with (namespace / ".run-21.lock").open("rb") as descriptor:
+        fcntl.flock(descriptor, fcntl.LOCK_SH)
+        plan, _ = prune(paths)
+
+    assert f"{FOREIGN}/run-21" not in {action.key for action in plan.actions}
+    assert (live / "pytest/payload").exists() and (namespace / ".run-21.lock").exists()
+    assert not dead.exists() and not (namespace / ".run-22.lock").exists()
+
+
+def test_a_foreign_owner_that_leases_after_the_plan_keeps_its_run(tmp_path: Path) -> None:
+    paths = scratch(tmp_path)
+    namespace = foreign(paths)
+    directory = foreign_run(namespace, "run-31")
+    plan = plan_prune(scan_inventory(paths, paths.policy), paths.policy)
+    assert [action.key for action in plan.actions] == [f"{FOREIGN}/run-31"] * 2
+
+    lease = namespace / ".run-31.lock"
+    leases.retain_path(lease)
+    try:
+        result = apply_prune(paths, plan, reason="test")
+    finally:
+        leases.release_path(lease)
+
+    assert (directory / "pytest/payload").exists() and lease.exists()
+    assert directory in result.busy and result.removed == ()
+
+
+def test_a_symlinked_namespace_is_never_followed(tmp_path: Path) -> None:
+    paths = scratch(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    foreign_run(elsewhere, "run-41")
+    paths.stage("test-temp").mkdir(parents=True)
+    link = paths.stage("test-temp").parent / "cafebabe"
+    link.symlink_to(elsewhere, target_is_directory=True)
+
+    plan, _ = prune(paths)
+
+    assert plan.actions == ()
+    assert link.is_symlink()
+    assert (elsewhere / "run-41/pytest/payload").exists() and (elsewhere / ".run-41.lock").exists()
+
+
+def test_only_run_and_lease_names_in_namespace_names_are_touched(tmp_path: Path) -> None:
+    paths = scratch(tmp_path)
+    root = paths.stage("test-temp").parent
+    namespace = foreign(paths)
+    foreign_run(namespace, "run-51")
+    (namespace / "notes.txt").write_text("keep", encoding="utf-8")
+    (namespace / "capsem-test-old").mkdir()
+    (namespace / "run-52").symlink_to(tmp_path / "outside", target_is_directory=True)
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside/keep").write_bytes(b"keep")
+    legacy = root / "capsem-test-0904"
+    foreign_run(legacy, "run-53")
+    not_hex = root / "DEADBEEF"
+    foreign_run(not_hex, "run-54")
+    (root / "a1b2c3d4").write_text("a file, not a namespace", encoding="utf-8")
+
+    prune(paths)
+
+    assert not (namespace / "run-51").exists()
+    assert (namespace / "notes.txt").exists() and (namespace / "capsem-test-old").is_dir()
+    assert not (namespace / "run-52").is_symlink(), "a run link is removed as a link"
+    assert (tmp_path / "outside/keep").exists()
+    assert (legacy / "run-53/pytest/payload").exists() and (legacy / ".run-53.lock").exists()
+    assert (not_hex / "run-54/pytest/payload").exists()
+    assert (root / "a1b2c3d4").is_file()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "capsem-test-0904/run-1",
+        "DEADBEEF/run-1",
+        "deadbeef/../outside/run-1",
+        "deadbeef/run-1/pytest",
+        "cafebabe/run-1",
+        "cafebabe",
+        "0123abcd/run-1",
+        "deadbeef/notes.txt",
+        "deadbeef/.run-2.lock",
+    ],
+)
+def test_apply_refuses_a_forged_target_outside_a_real_namespace(
+    tmp_path: Path, target: str
+) -> None:
+    from capsem_builder.cache.models import PruneAction, PrunePlan
+
+    paths = scratch(tmp_path)
+    root = paths.stage("test-temp").parent
+    for name in ("capsem-test-0904", "DEADBEEF", "outside"):
+        foreign_run(root / name, "run-1")
+    foreign_run(foreign(paths), "run-1")
+    (foreign(paths) / "notes.txt").write_text("keep", encoding="utf-8")
+    (foreign(paths) / ".run-2.lock").touch()
+    foreign_run(foreign(paths, "0123abcd"), "run-1")
+    elsewhere = tmp_path / "elsewhere"
+    foreign_run(elsewhere, "run-1")
+    (root / "cafebabe").symlink_to(elsewhere, target_is_directory=True)
+    before = sorted(str(path) for path in tmp_path.rglob("*"))
+    plan = PrunePlan(
+        generated_ns=1, reclaim_bytes=0, violations=(),
+        actions=(PruneAction(
+            stage_id="test-temp", key="deadbeef/run-1", path=root / target,
+            logical_bytes=0, reason="forged",
+        ),),
+    )
+
+    with pytest.raises(ValueError, match="outside cache stage"):
+        apply_prune(paths, plan, reason="forged")
+
+    assert sorted(str(path) for path in tmp_path.rglob("*")) == before
+
+
+def test_a_lease_retakes_a_namespace_a_prune_removed_while_it_was_empty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A prune removes an empty namespace between an owner creating it and
+    creating its lease; the owner recreates it rather than failing."""
+    namespace = tmp_path / FOREIGN
+    lease = namespace / ".run-61.lock"
+    real_open = os.open
+    raced = []
+
+    def racing_open(path, *args, **kwargs):
+        if not raced:
+            raced.append(True)
+            os.rmdir(namespace)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(leases.os, "open", racing_open)
+    descriptor = leases.retain_path(lease)
+    monkeypatch.undo()
+    try:
+        assert raced and lease.is_file()
+        assert os.fstat(descriptor.fileno()).st_ino == lease.stat().st_ino
+    finally:
+        leases.release_path(lease)

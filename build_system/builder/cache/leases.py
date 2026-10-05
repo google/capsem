@@ -36,11 +36,13 @@ def retain_path(path: Path) -> BinaryIO:
     existing = _HELD.get(lease)
     if existing is not None and not existing.closed:
         return existing
-    lease.parent.mkdir(parents=True, exist_ok=True)
     while True:
-        descriptor = os.fdopen(
-            os.open(lease, os.O_APPEND | os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "a+b"
-        )
+        lease.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            opened = os.open(lease, os.O_APPEND | os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        except FileNotFoundError:
+            continue  # a prune removed the empty namespace directory meanwhile
+        descriptor = os.fdopen(opened, "a+b")
         try:
             fcntl.flock(descriptor, fcntl.LOCK_SH)
             if _same_file(descriptor, lease):
