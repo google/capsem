@@ -32,4 +32,13 @@ if [ -n "$profile" ] && [ -n "$unit" ]; then
     fi
   done
 fi
+# Cargo runs a workspace unit as `$RUSTC_WRAPPER <this script> /abs/rustc ...`.
+# sccache 0.17 drops the compiler argument only when it is spelled `rustc`, so
+# it took the absolute path for a second input ("multiple input files") and
+# cached no workspace unit (issue #277). It ran this script uncached instead;
+# hand the exact compiler to the same sccache here, where it is the executable.
+# Clippy (`clippy-driver /abs/rustc ...`) is left as it was.
+if [ "${RUSTC_WRAPPER##*/}" = sccache ] && [ "${1##*/}" = rustc ]; then
+  exec "$RUSTC_WRAPPER" "$@"
+fi
 exec "$@"

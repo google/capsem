@@ -231,6 +231,15 @@ rebuild. The gate owns sccache as a scoped `CompilerCache` resource, exports
 `SCCACHE_BASEDIRS` (plural), uses client-side mode, and stops the server during
 resource teardown. Do not manage its daemon in shell.
 
+Cargo runs a workspace unit as `sccache <workspace wrapper> /abs/rustc ...`.
+sccache 0.17 drops that compiler argument only when it is spelled `rustc`, so
+it parsed the absolute path as a second input ("multiple input files") and ran
+every workspace unit uncached (issue #277). The rustc workspace wrapper
+therefore hands a `rustc` unit to `$RUSTC_WRAPPER` itself when that is
+sccache; `test_cargo_workspace_cache.py` proves the second compile is a hit.
+Watch `sccache --show-stats` for hits on workspace crates, not just a low
+non-cacheable count: the outer call still counts as non-cacheable.
+
 Gate commands and bounded builds compile with `CARGO_INCREMENTAL=0`
 (`[toolchain] cargo_incremental` in `config/gate.toml`, exported by
 `gatelaunch.contained_environment` and `cachetooling.compiler_environment`).
