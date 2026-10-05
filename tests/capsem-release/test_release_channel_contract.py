@@ -1909,3 +1909,55 @@ def test_release_channel_contract_rejects_a_manifest_that_is_not_an_object(
 
     assert exit_code == 1
     assert "is not an object" in stderr, stderr
+
+
+def test_a_stale_first_attempt_does_not_leak_into_a_later_snapshot(tmp_path: Path) -> None:
+    """A stable channel activation was rolled back after 30 attempts:
+    the first attempts ran while the previous distribution was still served,
+    fetched every co-work and code 0.6.1 asset, and those immutable bodies --
+    retained across attempts so they are not downloaded twice -- were counted
+    as evidence in every later snapshot as `extra`."""
+    site = "https://release.capsem.org"
+    old_asset = "https://github.example.test/profile-previous/rootfs.erofs"
+    new_asset = "https://github.example.test/profile-current/rootfs.erofs"
+    serving = iter(["old", "new"])
+    checker = SimpleNamespace(_FETCH_BYTES_CACHE={})
+
+    def contract(**_kwargs: object) -> int:
+        cache = checker._FETCH_BYTES_CACHE
+        state = next(serving)
+        cache[f"{site}/channels.json"] = SimpleNamespace(data=state.encode(), error=None)
+        cache[f"{site}/assets/stable/manifest.json"] = SimpleNamespace(
+            data=state.encode(), error=None
+        )
+        asset = old_asset if state == "old" else new_asset
+        cache[asset] = SimpleNamespace(data=b"immutable " + asset.encode(), error=None)
+        return 0
+
+    expected = {
+        "schema": "capsem.release_site_snapshot.v1",
+        "entries": {
+            "/channels.json": {"bytes": 3, "sha256": hashlib.sha256(b"new").hexdigest()},
+            "/assets/stable/manifest.json": {
+                "bytes": 3,
+                "sha256": hashlib.sha256(b"new").hexdigest(),
+            },
+            new_asset: {
+                "bytes": len(b"immutable " + new_asset.encode()),
+                "sha256": hashlib.sha256(b"immutable " + new_asset.encode()).hexdigest(),
+            },
+        },
+    }
+    expected_path = tmp_path / "candidate.json"
+    SNAPSHOT.write_snapshot(expected_path, expected)
+
+    SNAPSHOT.snapshot_distribution_bytes(
+        checker,
+        site,
+        populate=contract,
+        attempts=2,
+        delay_seconds=0,
+        snapshot_out=None,
+        expect_snapshot=expected_path,
+        same_origin_only=False,
+    )

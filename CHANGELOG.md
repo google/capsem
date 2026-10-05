@@ -416,6 +416,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on FUSE filesystems whose server does not support them, so these tools
   fall back to chmod, and host workspace files no longer collect inert
   `system.posix_acl_*` xattrs.
+- Installs and updates ride out a transient server error from the release
+  host. A release download retried 5xx and 429 answers for only 1.75 seconds
+  in all, and a 25-second burst of GitHub 500s failed a package install; it
+  now retries six times over about half a minute before giving up.
+
 - Updating from Capsem 0.6.3 no longer leaves a service that will not start.
   0.6.4 refused the session ledger 0.6.3 wrote (`~/.capsem/sessions/main.db`,
   and a persistent VM's own ledger) because it predates ledger format v4, so
