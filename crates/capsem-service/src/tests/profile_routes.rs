@@ -1061,7 +1061,7 @@ match = 'file.import.content.contains("EICAR")'
 #[tokio::test]
 async fn mounted_mcp_routes_are_profile_scoped_mechanics_only() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let _builtin_guard = ensure_test_builtin_mcp_binary();
+    ensure_test_builtin_mcp_binary();
 
     let dir = tempfile::tempdir().unwrap();
     let (_env_guard, user_path, _) = install_empty_settings_env(&dir);
