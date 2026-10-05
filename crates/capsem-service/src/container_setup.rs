@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering;
 
 pub(crate) mod images;
 mod relaunch;
-pub(crate) use relaunch::{carry_launch_record, drop_carried_image, restore};
+pub(crate) use relaunch::{carry_launch_record, drop_carried_image, forget_previous_run, restore};
 
 const CREATE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(110);
 

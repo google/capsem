@@ -167,3 +167,60 @@ async fn only_a_staged_workload_that_never_got_ready_is_relaunched_by_the_owner(
         "the boot relaunches a ready stage itself"
     );
 }
+
+fn stage_of(session_dir: &std::path::Path) -> std::path::PathBuf {
+    session_dir
+        .join(capsem_core::GUEST_SHARE_DIR)
+        .join(capsem_core::session::WORKSPACE_DIR)
+        .join(capsem_core::container::STAGE)
+}
+
+fn staged(session_dir: &std::path::Path, markers: &[&str]) {
+    let stage = stage_of(session_dir);
+    std::fs::create_dir_all(&stage).unwrap();
+    for marker in markers {
+        std::fs::write(stage.join(marker), "1\n").unwrap();
+    }
+}
+
+/// A fork of a running session copies its `running` marker. Until the
+/// fork's own launcher clears it, the service would report a workload that is
+/// still unpacking as running and route exec to nothing.
+#[test]
+fn a_clone_starts_without_its_sources_run_markers() {
+    use capsem_core::container::{STAGE_EXITED, STAGE_FAILED, STAGE_READY, STAGE_RUNNING};
+    let dir = tempfile::tempdir().unwrap();
+    let (source, clone) = (dir.path().join("source"), dir.path().join("clone"));
+    write_record(&source, &record(None));
+    staged(
+        &clone,
+        &[STAGE_READY, "options.json", STAGE_RUNNING, STAGE_FAILED, STAGE_EXITED],
+    );
+
+    carry_launch_record(&source, &clone).unwrap();
+
+    let left: std::collections::BTreeSet<_> = std::fs::read_dir(stage_of(&clone))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(left, [STAGE_READY, "options.json"].map(String::from).into());
+}
+
+/// The stage is guest-written: a marker replaced by a link is removed as the
+/// link, and what it pointed at is never touched.
+#[test]
+fn forgetting_a_run_never_follows_a_marker_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = dir.path().join("session");
+    staged(&session, &[]);
+    let outside = dir.path().join("host-file");
+    std::fs::write(&outside, "keep").unwrap();
+    std::os::unix::fs::symlink(&outside, stage_of(&session).join(capsem_core::container::STAGE_RUNNING)).unwrap();
+
+    forget_previous_run(&session).unwrap();
+
+    assert!(std::fs::symlink_metadata(stage_of(&session).join(capsem_core::container::STAGE_RUNNING)).is_err());
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
+    // A session that never staged an image has nothing to forget.
+    forget_previous_run(&dir.path().join("bare")).unwrap();
+}

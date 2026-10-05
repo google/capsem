@@ -339,6 +339,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A fork (or `create --from`) of a running image session runs its workload.
+  The clone carried the source's live `running` marker, so the service
+  reported the fork's workload running while it was still unpacking, and exec
+  answered "no container workload is running". A cold resume dropped the same
+  way the previous boot's markers; a warm restore keeps them.
 - `capsem update` (and the service's automatic polling) installs a republished
   release manifest whose artifacts did not change. 0.7 fetched it and then did
   nothing, so a channel's new compatibility bounds never reached an installed
@@ -1185,6 +1190,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An image session's root filesystem is writable, like a Docker container
+  layer: the session's own copy of the image, kept by a named session and
+  discarded with an ephemeral one. Images that keep state under `$HOME`
+  (claude-code, codex, ollama, git and npm config) could not write it.
 - An image session's terminal is its workload's own command: opening a
   `claude-code` session shows Claude Code, and a `dev` session its shell.
   Leaving the terminal leaves the workload running, and attaching again

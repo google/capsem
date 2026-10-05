@@ -101,6 +101,7 @@ impl ServiceState {
 
         // Pass checkpoint path for warm restore from suspended state only
         // when the completion marker proves save_state + fsync finished.
+        let mut warm = false;
         if entry.suspended {
             if let Some(ref cp) = entry.checkpoint_path {
                 let full_checkpoint = entry.session_dir.join(cp);
@@ -108,10 +109,17 @@ impl ServiceState {
                 if full_checkpoint.exists() && complete.exists() {
                     child_cmd.arg("--checkpoint-path").arg(&full_checkpoint);
                     info!(name, checkpoint = %full_checkpoint.display(), "warm restore from checkpoint");
+                    warm = true;
                 } else {
                     tracing::warn!(name, checkpoint = %full_checkpoint.display(), complete = %complete.display(), "checkpoint incomplete, cold booting");
                 }
             }
+        }
+        // A cold boot relaunches the workload; the last boot's markers would
+        // report it running (or exited) before this boot's launcher starts. A
+        // warm restore resumes that same workload, so its markers stay true.
+        if !warm {
+            crate::container_setup::forget_previous_run(&entry.session_dir).map_err(|e| anyhow!(e))?;
         }
 
         // Clear inherited env to prevent API key/token leakage, then

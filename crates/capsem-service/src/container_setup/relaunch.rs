@@ -29,7 +29,38 @@ pub(crate) fn carry_launch_record(source: &std::path::Path, destination: &std::p
     }
     let bytes = serde_json::to_vec(&record).map_err(|e| format!("encode launch record: {e}"))?;
     capsem_foundation::unix::fs::atomic_write_private(&destination.join(LAUNCH_RECORD), &bytes)
-        .map_err(|e| format!("write launch record: {e}"))
+        .map_err(|e| format!("write launch record: {e}"))?;
+    // A clone of a running session carries its live markers; the clone has
+    // not booted, and its own launcher has not run.
+    forget_previous_run(destination)
+}
+
+/// Forget how a previous boot's workload ran, before session `session_dir`
+/// boots again: its markers would otherwise report a workload running (or
+/// exited) until this boot's launcher clears them, and exec would be routed
+/// to a workload that is not there. The stage is guest-written, so it is
+/// reached and cleared without following links. Never call on a booted VM.
+pub(crate) fn forget_previous_run(session_dir: &std::path::Path) -> Result<(), String> {
+    use capsem_core::container::{STAGE, STAGE_EXITED, STAGE_FAILED, STAGE_RUNNING};
+    use std::ffi::OsStr;
+    let absent = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+    let workspace = match capsem_core::session::open_workspace(session_dir) {
+        Ok(workspace) => workspace,
+        Err(e) if absent(&e) => return Ok(()),
+        Err(e) => return Err(format!("open workspace of {}: {e}", session_dir.display())),
+    };
+    let stage = match workspace.descend(OsStr::new(STAGE)) {
+        Ok(stage) => stage,
+        Err(e) if absent(&e) => return Ok(()),
+        Err(e) => return Err(format!("open the workload stage of {}: {e}", session_dir.display())),
+    };
+    for marker in [STAGE_RUNNING, STAGE_FAILED, STAGE_EXITED] {
+        match stage.remove_non_directory(OsStr::new(marker)) {
+            Err(e) if !absent(&e) => return Err(format!("clear the {marker} marker: {e}")),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Put VM `id`'s recorded workload back under this owner: live again, with
