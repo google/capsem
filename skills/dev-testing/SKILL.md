@@ -270,9 +270,9 @@ The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each
 
 ### Orphan processes across runs are a product bug (not a test bug)
 
-If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker death, host crash) and the NEXT run flakes with "vm-ready never asserted", UDS "connection refused", or mysterious HTTP 500s -- the cause is companion processes from the interrupted run still alive under PID 1. `pkill -f "cache/target/cargo/debug/capsem-(service|process|gateway|tray|mcp)"` will make the flake vanish, but that is cleanup-after-the-fact. The fix is on the COMPANION side: every spawned companion (gateway, tray, and any new one) must use `capsem-guard::install(parent_pid, lock_path)` to enforce (a) refuse-standalone, (b) singleton, (c) self-exit on parent death. See `/dev-rust-patterns` lesson 18. Regression tests live in `tests/capsem-service/test_companion_lifecycle.py` -- never remove them; when adding a new companion, extend that file.
+After an interrupted test run, readiness failures, UDS connection refusals, or HTTP 500s can come from companions that survived their parent. Confirm the failing run's owned processes before diagnosing a leak. Use the repository's PID-file and owned process-tree control modules to stop only that run's exact PIDs. AGENTS.md's "Never kill by pattern" rule applies to binary-path patterns too: they can match another session's processes.
 
-**Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "cache/target/cargo/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
+Fix the companion lifecycle when a leak is confirmed. Every spawned companion must use `capsem-guard::install(parent_pid, lock_path)` to refuse standalone launches, enforce its singleton, and exit when its parent dies. See `/dev-rust-patterns` lesson 18. Preserve `tests/capsem-service/test_companion_lifecycle.py` and extend its regressions when adding a new companion.
 
 ### Apple VZ lifecycle serialization is part of the product
 
