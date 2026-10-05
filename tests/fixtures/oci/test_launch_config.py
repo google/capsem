@@ -59,9 +59,8 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
     assert process["user"] == {"uid": 0, "gid": 0}
     assert process["cwd"] == "/data"
     assert process["noNewPrivileges"] is True
-    # The session's own unpacked copy: written like a container layer, kept
-    # with a named session, gone with an ephemeral one.
-    assert config["root"] == {"path": "rootfs", "readonly": False}
+    # The image under the session's layer: writable, the image never written.
+    assert config["root"] == {"path": str(launcher.MERGED), "readonly": False}
     assert set(config["hooks"]) == {"prestart", "poststart"}
     hooks = config["hooks"]["prestart"]
     assert len(hooks) == 1 and hooks[0]["path"] == "/usr/bin/python3"
@@ -791,3 +790,51 @@ def test_the_workload_has_its_own_pseudo_terminals(launcher):
     assert not any(option.startswith("gid=") for option in mount["options"])
     destinations = [m["destination"] for m in config["mounts"]]
     assert destinations.index("/dev/pts") > destinations.index("/dev"), "mounted inside /dev, after it"
+
+
+def _layer(launcher, tmp_path, monkeypatch, mounted):
+    monkeypatch.setattr(launcher, "LAYER", tmp_path / "layer")
+    monkeypatch.setattr(launcher, "MERGED", tmp_path / "merged")
+    (tmp_path / "layer").mkdir()
+    monkeypatch.setattr(launcher.os.path, "ismount", lambda path: mounted and Path(path) == tmp_path / "layer")
+    monkeypatch.setattr(launcher.os, "chown", lambda *args: None)
+    lower = tmp_path / "roots" / "aa" / "rootfs"
+    lower.mkdir(parents=True, mode=0o755)
+    calls = []
+    return lower, calls
+
+
+def test_the_session_layer_sits_above_whichever_image_runs(launcher, tmp_path, monkeypatch):
+    """The workload writes a copy-on-write layer over the image. It belongs to
+    the session, not the image: index, redirects and metacopy stay off, so
+    the same layer mounts over a different image after the session changes
+    image, keeping what the session wrote."""
+    lower, calls = _layer(launcher, tmp_path, monkeypatch, mounted=True)
+    launcher.mount_layer(lower, run=lambda *argv: calls.append(argv))
+    (mount,) = calls
+    assert mount[:5] == ("mount", "-t", "overlay", "overlay", "-o")
+    options = dict(option.split("=", 1) for option in mount[5].split(","))
+    assert options["lowerdir"] == str(lower)
+    assert options["upperdir"] == str(tmp_path / "layer" / "upper")
+    assert options["workdir"] == str(tmp_path / "layer" / "work")
+    assert {options[key] for key in ("index", "redirect_dir", "metacopy")} == {"off"}
+    assert mount[6] == str(tmp_path / "merged")
+    # The merged / is the image's /: same mode (owner too, chown stubbed here).
+    assert (tmp_path / "layer" / "upper").stat().st_mode & 0o7777 == lower.stat().st_mode & 0o7777
+
+    # A new image: the same upper, under a different lower.
+    other = tmp_path / "roots" / "bb" / "rootfs"
+    other.mkdir(parents=True)
+    calls.clear()
+    launcher.mount_layer(other, run=lambda *argv: calls.append(argv))
+    assert f"upperdir={tmp_path / 'layer' / 'upper'}" in calls[0][5]
+    assert f"lowerdir={other}" in calls[0][5]
+
+
+def test_a_session_without_its_layer_refuses_to_launch(launcher, tmp_path, monkeypatch):
+    """Never an overlay upper on the VM's own overlay root, which the kernel
+    refuses anyway, and never a silently ephemeral layer: no layer, no launch."""
+    lower, calls = _layer(launcher, tmp_path, monkeypatch, mounted=False)
+    with pytest.raises(RuntimeError, match="not mounted"):
+        launcher.mount_layer(lower, run=lambda *argv: calls.append(argv))
+    assert calls == []

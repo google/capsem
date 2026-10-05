@@ -37,6 +37,14 @@ VOLUMES = Path("/var/lib/capsem/volumes")
 # Unpacked image roots, one per digest, on the same overlay: a named session
 # unpacks its image once instead of on every launch.
 ROOTS = Path("/var/lib/capsem/roots")
+# The session's own layer: everything the workload writes to its root, above
+# whichever image it runs. capsem-init binds it from the VM's ext4 system disk
+# (an overlay upper cannot sit on the VM's own overlay root), so it is kept by
+# a named session, copied by a fork, gone with an ephemeral one -- and kept
+# when the session changes image, because it never belonged to one.
+LAYER = Path("/var/lib/capsem/layer")
+# Where the workload's root is assembled: the image below, the layer above.
+MERGED = Path("/var/lib/capsem/rootfs")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 # The image's blobs, each named by its SHA-256: the host's read-only VirtioFS
 # device (capsem-core `session::IMAGE_SHARE_TAG`), holding that image and
@@ -274,10 +282,9 @@ def configure(unpacked, image, options, detached=False):
         )
     return {
         "ociVersion": "1.0.2",
-        # The session's own unpacked copy (unpacked_root), so it is the
-        # container layer: writable, kept with a named session, gone with an
-        # ephemeral one. Image tools write their state under $HOME.
-        "root": {"path": "rootfs", "readonly": False},
+        # The image under the session's layer (mount_layer): writable like a
+        # container, and the image itself is never written.
+        "root": {"path": str(MERGED), "readonly": False},
         "hostname": HOSTNAME,
         "process": process,
         "mounts": mounts,
@@ -383,9 +390,8 @@ def prepare_volumes(volumes, rootfs, id_map):
         seed = rootfs / path.lstrip("/")
         staging = target.with_name(target.name + ".new")
         shutil.rmtree(staging, ignore_errors=True)
-        # The workload writes its root, so any component may by now be a link
-        # to the VM's own files; this runs as VM root. Seed only a real
-        # directory reached without one.
+        # This runs as VM root, and a link on the way could reach the VM's
+        # own files. Seed only a real directory reached without one.
         if seed.is_dir() and seed.resolve() == rootfs.resolve() / path.lstrip("/"):
             command("cp", "-a", "--", str(seed), str(staging))
         else:
@@ -768,6 +774,30 @@ def unpacked_root(digest, id_map, share=image_share):
     )
 
 
+def mount_layer(lower, run=None):
+    """Assemble the workload's root at MERGED: the image's unpacked root as the
+    read-only lower, the session's layer as upper. A lower that changed since
+    the layer was written is allowed: index, redirects and metacopy are off,
+    so the layer records only whole files and whiteouts and applies to any
+    image."""
+    run = run or command
+    if not os.path.ismount(LAYER):
+        raise RuntimeError(f"{LAYER} is not mounted: capsem-init gives every session its layer")
+    upper, work = LAYER / "upper", LAYER / "work"
+    for directory in (upper, work):
+        directory.mkdir(mode=0o755, exist_ok=True)
+    # The merged root takes its owner and mode from the upper: the image's
+    # root, so container root owns / as it does in the image.
+    image_root = lower.stat()
+    os.chown(upper, image_root.st_uid, image_root.st_gid)
+    upper.chmod(image_root.st_mode & 0o7777)
+    MERGED.mkdir(mode=0o711, exist_ok=True)
+    if os.path.ismount(MERGED):  # a launch this boot that never got to unmount
+        run("umount", str(MERGED))
+    options = f"lowerdir={lower},upperdir={upper},workdir={work},index=off,redirect_dir=off,metacopy=off"
+    run("mount", "-t", "overlay", "overlay", "-o", options, str(MERGED))
+
+
 def run(stage, detached=False):
     # A second workload cannot overwrite live state. Traversable, not listable:
     # runc sets the container up as the mapped root, which must reach the
@@ -786,6 +816,7 @@ def run(stage, detached=False):
             WORKSPACE_VIEW.mkdir(mode=0o700, exist_ok=True)
             idmap_workspace(id_map, WORKSPACE_VIEW)
         config_path = bundle / "config.json"
+        mount_layer(bundle / "rootfs")
         config = configure(unpacked, image, options, detached=detached)
         # configure() has refused any unsafe volume path by now.
         prepare_volumes(
@@ -828,6 +859,8 @@ def run(stage, detached=False):
             command(*RUNC, "delete", "--force", CONTAINER)
         if process is not None and process.poll() is None:
             process.wait(timeout=5)
+        if os.path.ismount(MERGED):
+            command("umount", str(MERGED))
         shutil.rmtree(RUNTIME)
 
 

@@ -1190,10 +1190,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- An image session's root filesystem is writable, like a Docker container
-  layer: the session's own copy of the image, kept by a named session and
-  discarded with an ephemeral one. Images that keep state under `$HOME`
-  (claude-code, codex, ollama, git and npm config) could not write it.
+- An image session's root filesystem is writable: a copy-on-write layer the
+  session owns, above the read-only image. A named session keeps it, a fork
+  copies it, an ephemeral session discards it, and changing the session's
+  image (`create --from SESSION --image OTHER`) keeps it over the new image.
+  Images that keep state under `$HOME` (claude-code, codex, ollama, git and
+  npm config) could not write it before.
 - An image session's terminal is its workload's own command: opening a
   `claude-code` session shows Claude Code, and a `dev` session its shell.
   Leaving the terminal leaves the workload running, and attaching again

@@ -250,6 +250,17 @@ else
     boot_mark "overlayfs"
 fi
 
+# The image workload's own layer (container/launch.py LAYER): an overlay upper,
+# so it needs a real filesystem, not this overlay root. On the ext4 system disk
+# it lives and dies with the session's other state; block mode has only tmpfs.
+if [ "$STORAGE_MODE" = "virtiofs" ]; then LAYER_BACKING=/mnt/system/workload; else LAYER_BACKING=/mnt/b/workload; fi
+mkdir -p "$LAYER_BACKING" /newroot/var/lib/capsem/layer
+chmod 700 "$LAYER_BACKING"
+mount --bind "$LAYER_BACKING" /newroot/var/lib/capsem/layer || {
+    echo "[capsem-init] FATAL: cannot bind the workload layer -- aborting" >&2
+    exit 1
+}
+
 # The overlay root can inherit a restrictive mount-point mode from the initrd
 # staging directory. Unprivileged tools such as apt's `_apt` sandbox must be
 # able to traverse `/` even though most writes remain constrained elsewhere.
