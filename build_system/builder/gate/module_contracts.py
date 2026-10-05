@@ -22,22 +22,21 @@ class ReleaseContractsModule(
     name="test-release-contracts",
     help="the release and composition contracts, without artifacts",
 ):
-    """Cheap, and deliberately excludes what needs a built tree.
+    """No prebuilt artifacts required; some contracts build their own fixtures.
 
     The build-chain suites that require artifacts are the artifacts module's
     job. Running them here would either fail on a fresh checkout or pass
     vacuously, and both are worse than not running them.
 
-    Deliberately **not** exclusive, unlike every other module -- and the one
-    place the "anything that writes takes the machine lock" rule is wrong.
-    This command runs the source-contract suite, which contains the gate's own
-    tests: holding the machine lock while running tests that exercise the gate
-    stalls the command outright. Measured at 27 minutes wall for 27 seconds of
-    CPU, against 4 minutes 41 for the identical selection run directly.
+    The standalone command deliberately does not take the machine lock: its
+    kernel-lease regressions need to acquire that lock in child probes. Holding
+    it here stalled the command for 27 minutes against 4 minutes 41 directly.
 
-    Its real contention is `astro_build` and `node_modules`, declared on the
-    step where the graph can act on them. A command that *runs tests* is not a
-    command that mutates shared artifacts, whatever the general rule says.
+    The collectors include native Cargo fixtures that can mutate shared build
+    outputs. Standalone builds need the bounded-command lease; inside a
+    candidate they reuse its outer lease. Both steps therefore declare
+    `workspace_binaries` alongside `astro_build` and `node_modules`, so the
+    composed scheduler excludes other workspace users while the tests run.
     """
 
     sandboxed = sandbox.ENFORCE
@@ -122,22 +121,23 @@ def release_contracts(
             require_artifacts=False,
             # Ten minutes seventeen in one process: over half of what
             # `fast-test` costs, and more than the whole lane's budget allows.
-            # These are source-level contracts -- they read workflows, plans and
-            # configuration -- and `--dist=loadfile` keeps each file's tests on
-            # one worker, so the fixtures that build at fixed paths stay inside
-            # the file that builds them.
+            # Contracts read workflows, plans and configuration; some also
+            # build native or release-site fixtures. `--dist=loadfile` keeps
+            # each file's fixtures on one worker, while contention excludes
+            # other gate steps that use the same shared outputs.
             parallel=True,
             coverage=(
                 pytestsuite.CoverageMode.SEED
                 if seed_coverage
                 else pytestsuite.CoverageMode.NONE
             ),
-            # It builds release-site fixtures at fixed paths and installs the
-            # workspace's node modules. As its own command a machine lock made
-            # that safe by accident; in a shared plan it has to be declared.
+            # Release-site and native Cargo fixtures mutate shared outputs.
+            # A candidate's outer lease excludes other processes; these claims
+            # also exclude competing steps in this same plan.
             contends=(
                 config.exclusive("astro_build"),
                 config.exclusive("node_modules"),
+                config.exclusive("workspace_binaries"),
             ),
         ).as_step(config),
         after=prerequisites,
@@ -158,6 +158,7 @@ def release_contracts(
             contends=(
                 config.exclusive("astro_build"),
                 config.exclusive("node_modules"),
+                config.exclusive("workspace_binaries"),
             ),
         ).as_step(config),
         after=(*prerequisites, root, generated),

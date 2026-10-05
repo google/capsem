@@ -23,14 +23,24 @@ from pathlib import Path
 import pytest
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.actions import Call
+from capsem_builder.gate.contention import can_overlap
 from capsem_builder.gate.context import Context
 from capsem_builder.gate.execution import step
+from capsem_builder.gate.module_contracts import ReleaseContractsModule
 from capsem_builder.gate.opacity import CallJustification, OpaqueKind
 from capsem_builder.gate.plan import Plan
-from helpers.gate import RecordingRunner
+from helpers.gate import RecordingRunner, gate_plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
+
+CONTRACT_CARGO_RATIONALE = (
+    "Both contract collectors contain native Cargo fixtures. Inside an exclusive "
+    "candidate the bounded wrapper correctly reuses the outer kernel lease; "
+    "each collector must therefore claim workspace_binaries exclusively in the "
+    "same plan, alongside its existing Astro/Node claims. See config/gate.toml "
+    "[execution.exclusives.workspace_binaries] and skills/dev-gate/SKILL.md."
+)
 
 
 def _overlap_probe():
@@ -167,3 +177,40 @@ def test_a_shared_claim_names_a_declared_exclusive() -> None:
 
     with pytest.raises(GateError, match="unknown exclusive"):
         CONFIG.shared("not-a-real-resource")
+
+
+@pytest.mark.parametrize("command", ["candidate", "test-release-contracts"])
+@pytest.mark.parametrize("label", ["contracts.release", "contracts.build-system"])
+def test_contract_collectors_claim_the_workspace_their_cargo_fixtures_use(
+    command: str, label: str,
+) -> None:
+    plan = gate_plan(command)
+    plan.validate(CONFIG)
+    assert plan.step_named(label).contends == (
+        CONFIG.exclusive("astro_build"),
+        CONFIG.exclusive("node_modules"),
+        CONFIG.exclusive("workspace_binaries"),
+    ), CONTRACT_CARGO_RATIONALE
+
+
+@pytest.mark.parametrize("label", ["contracts.release", "contracts.build-system"])
+def test_contract_collectors_exclude_real_workspace_writers_and_readers(label: str) -> None:
+    plan = gate_plan("candidate")
+    collector = plan.step_named(label)
+    users = [
+        other for other in plan.steps
+        if other.label != label
+        and any(claim.name == "workspace_binaries" for claim in other.contends)
+    ]
+    assert users, "the actual candidate no longer declares any workspace users"
+    assert not [other.label for other in users if can_overlap(collector, other)], (
+        CONTRACT_CARGO_RATIONALE
+    )
+
+
+def test_standalone_contract_command_does_not_take_a_nonreentrant_outer_lease() -> None:
+    assert not ReleaseContractsModule.exclusive, (
+        "The standalone owner runs gate kernel-lease regressions; taking the "
+        "outer lease would deadlock its child probes. Keep Cargo fixture leases "
+        "in the bounded wrapper and same-plan contention on the actual steps."
+    )
