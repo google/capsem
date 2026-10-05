@@ -482,36 +482,7 @@ enum SessionCommands {
 #[derive(Subcommand)]
 enum MiscCommands {
     /// Check for updates and install the latest version
-    Update {
-        /// Skip confirmation prompt
-        #[arg(long, short)]
-        yes: bool,
-        /// Check the release channel and refresh update status without applying changes.
-        #[arg(long, conflicts_with_all = ["yes", "assets", "manifest", "install_manifest_stdin", "corp"])]
-        check: bool,
-        /// Refresh only VM assets (kernel/initrd/rootfs) from the release URL.
-        /// Useful when an asset-only release ships independently of binaries.
-        #[arg(long)]
-        assets: bool,
-        /// Select a named public release channel (for example stable or nightly).
-        #[arg(long, value_name = "NAME", value_parser = validate_update_channel, conflicts_with = "manifest")]
-        channel: Option<String>,
-        /// Override the asset manifest endpoint for this update.
-        #[arg(long, value_name = "URL", value_parser = validate_update_manifest_url)]
-        manifest: Option<String>,
-        /// Read preverified manifest bytes from stdin while --manifest remains
-        /// their logical URL. Reserved for the native package handoff.
-        #[arg(
-            long,
-            requires_all = ["manifest", "assets"],
-            conflicts_with_all = ["yes", "check", "channel", "corp"],
-            hide = true
-        )]
-        install_manifest_stdin: bool,
-        /// Fetch and install corporate policy config from this URL.
-        #[arg(long, value_name = "URL", value_parser = validate_update_corp_url, conflicts_with = "assets")]
-        corp: Option<String>,
-    },
+    Update(update::cli::UpdateArgs),
     /// Run diagnostic tests in a fresh session
     ///
     /// Boots a temporary session, runs the capsem-doctor test suite, and reports
@@ -576,18 +547,6 @@ enum MiscCommands {
     Start,
     /// Stop the background service
     Stop,
-}
-
-fn validate_update_manifest_url(value: &str) -> std::result::Result<String, String> {
-    update::validate_source_url_arg("--manifest", value)
-}
-
-fn validate_update_channel(value: &str) -> std::result::Result<String, String> {
-    update::validate_channel_name(value).map_err(|error| error.to_string())
-}
-
-fn validate_update_corp_url(value: &str) -> std::result::Result<String, String> {
-    update::validate_source_url_arg("--corp", value)
 }
 
 fn print_asset_status(status: &AssetStatusResponse) {
@@ -1128,7 +1087,7 @@ fn should_refresh_update_cache_for_command(command: &Commands) -> bool {
                 | MiscCommands::Status
                 | MiscCommands::Start
                 | MiscCommands::Stop
-                | MiscCommands::Update { .. }
+                | MiscCommands::Update(_)
                 | MiscCommands::Completions { .. }
                 | MiscCommands::Uninstall { .. }
                 | MiscCommands::SupportBundle { .. }
@@ -1175,7 +1134,7 @@ fn command_is_handled_before_service_api(command: &Commands) -> bool {
                 | MiscCommands::Status
                 | MiscCommands::Start
                 | MiscCommands::Stop
-                | MiscCommands::Update { .. }
+                | MiscCommands::Update(_)
                 | MiscCommands::Completions { .. }
                 | MiscCommands::Uninstall { .. }
                 | MiscCommands::SupportBundle { .. }
@@ -1444,27 +1403,7 @@ async fn main() -> Result<()> {
             uninstall::run_uninstall(*yes).await?;
             return Ok(());
         }
-        Commands::Misc(MiscCommands::Update {
-            yes,
-            check,
-            assets,
-            channel,
-            manifest,
-            install_manifest_stdin,
-            corp,
-        }) => {
-            update::run_update(
-                *yes,
-                *check,
-                *assets,
-                channel.as_deref(),
-                manifest.as_deref(),
-                *install_manifest_stdin,
-                corp.as_deref(),
-            )
-            .await?;
-            return Ok(());
-        }
+        Commands::Misc(MiscCommands::Update(args)) => return args.run().await,
         _ => {}
     }
 
@@ -1924,7 +1863,7 @@ async fn main() -> Result<()> {
         }
         Commands::Misc(
             MiscCommands::Version
-            | MiscCommands::Update { .. }
+            | MiscCommands::Update(_)
             | MiscCommands::Completions { .. }
             | MiscCommands::Uninstall { .. }
             | MiscCommands::Install

@@ -6,6 +6,7 @@
 //! from VM asset hydration.
 
 mod asset_install;
+pub(crate) mod cli;
 mod published_profile_catalog;
 mod verified_update;
 
@@ -166,24 +167,6 @@ impl BinaryInstallerApplyPlan {
             .map(BinaryInstallerApplyCommand::command_line)
             .collect()
     }
-}
-
-async fn apply_binary_installer_plan(plan: &BinaryInstallerApplyPlan) -> Result<()> {
-    for command in &plan.commands {
-        let line = command.command_line();
-        info!("applying binary update with package manager: {line}");
-        let status = tokio::process::Command::new(&command.program)
-            .args(&command.args)
-            .status()
-            .await
-            .with_context(|| format!("run binary update apply command: {line}"))?;
-        if !status.success() {
-            anyhow::bail!(
-                "binary update apply command failed with {status}: {line}. Current installation was left for the package manager to preserve or repair."
-            );
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2101,7 +2084,7 @@ pub async fn run_update(
     let candidate_assets_dir = capsem_assets::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
     let candidate_previous_state = installed_asset_audit_state(&candidate_assets_dir);
-    let staged_update = if yes {
+    let mut staged_update = if yes {
         append_update_audit(serde_json::json!({
             "event": "release_candidate_fetched",
             "action": "release_candidate",
@@ -2198,7 +2181,7 @@ pub async fn run_update(
                 manifest = %staged.manifest_path.display(),
                 installer = ?staged.installer_path,
                 assets = ?staged.assets_dir,
-                profiles = ?staged.profiles_dir,
+                profiles = ?staged.profiles.as_ref().map(|profiles| &profiles.dir),
                 "verified every changed update artifact before mutation"
             );
             Some(staged)
@@ -2231,7 +2214,7 @@ pub async fn run_update(
                             println!("  {command}");
                         }
                         apply_binary_installer_plan(&plan).await?;
-                        Ok(())
+                        validate_staged_profiles_with_new_binary(staged_update.as_mut(), &layout).await
                     }
                     .await;
                     match update_result {

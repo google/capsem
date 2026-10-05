@@ -90,7 +90,12 @@ fn detect_layout_from_path_with_macos_pkg_marker(exe: &std::path::Path, macos_pk
 
 /// Return the install bin directory for the current layout.
 pub fn install_bin_dir() -> Option<PathBuf> {
-    match detect_install_layout() {
+    install_bin_dir_for(&detect_install_layout())
+}
+
+/// The bin directory a package of this layout installs into.
+pub fn install_bin_dir_for(layout: &InstallLayout) -> Option<PathBuf> {
+    match layout {
         InstallLayout::MacosPkg => Some(capsem_foundation::paths::capsem_bin_dir()),
         InstallLayout::LinuxDeb => Some(PathBuf::from("/usr/bin")),
         InstallLayout::UserDir => Some(capsem_foundation::paths::capsem_bin_dir()),

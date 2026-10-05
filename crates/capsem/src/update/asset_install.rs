@@ -735,7 +735,8 @@ pub(super) async fn hydrate_release_channel_profile_configs(
     let profiles_dir = capsem_home.join("profiles");
     let _ = std::fs::remove_dir_all(&stage);
     let _ = std::fs::remove_dir_all(&backup);
-    if let Err(error) = stage_release_channel_profile_configs(manifest_source, downloads, runtime_pins, &stage).await {
+    let staged = stage_release_channel_profile_configs(manifest_source, downloads, runtime_pins, &stage).await;
+    if let Err(error) = staged.and_then(|()| validate_profile_catalog_dir(&stage)) {
         let _ = std::fs::remove_dir_all(&stage);
         return Err(error);
     }
@@ -762,6 +763,7 @@ pub(super) async fn hydrate_release_channel_profile_configs(
     Ok(())
 }
 
+/// Verifies every payload's digests; which parser then judges the tree is the caller's call.
 pub(super) async fn stage_release_channel_profile_configs(
     manifest_source: &str,
     downloads: &[ReleaseChannelProfileConfigDownload],
@@ -802,8 +804,6 @@ pub(super) async fn stage_release_channel_profile_configs(
             materialize_release_channel_profile_toml(&source, &profile_id, manifest_source, runtime_pins)?;
         atomic_write(&profile_toml, materialized.as_bytes())?;
     }
-    ProfileCatalog::load_from_dir(stage)
-        .map_err(|error| anyhow::anyhow!("validate staged profile catalog: {error}"))?;
     Ok(())
 }
 

@@ -228,6 +228,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against the hashes of the manifest's current release, so any update that
   changed images paired each file with another release's hash (#297).
 
+- An update that installs a newer Capsem now lets that binary check the
+  profiles shipping with it. The installed binary used to parse them with its
+  own strict schema before installing the new one, so a profile field added
+  in a release failed every automatic update to it -- 0.6.3 refused 0.6.4's
+  `default_for`. The updater now verifies the staged profiles' digests,
+  installs the package, runs the new `capsem` on exactly that staged tree,
+  and activates only if it accepts them; a refusal, a missing binary, a
+  timeout or a tree changed after verification leaves the previous profiles
+  in place. Updates without a binary change, and channel switches to an older
+  binary, still parse in-process. New profile fields can ship once every
+  updating binary in the field carries this change (#288).
+
 - Running `capsem-pty-agent` inside a VM no longer freezes it. A second
   copy connected to the host's control socket and took it over from the
   running agent, so the terminal and exec stopped answering. The agent now

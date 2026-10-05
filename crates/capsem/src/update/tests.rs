@@ -2420,7 +2420,7 @@ fn staged_channel_switch_records_correlated_asset_audit() {
         manifest_path: staged_root.join("manifest.json"),
         installer_path: None,
         assets_dir: None,
-        profiles_dir: None,
+        profiles: None,
     };
     let check = UpdateCheck {
         checked_at: now_secs(),
@@ -2500,7 +2500,7 @@ fn failed_staged_channel_switch_never_records_asset_completion() {
         manifest_path: staged_root.join("manifest.json"),
         installer_path: None,
         assets_dir: None,
-        profiles_dir: None,
+        profiles: None,
     };
     let mut check = cached_notice_check();
     check.source = Some(source.into());

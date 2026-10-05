@@ -204,7 +204,7 @@ fn shared_release_payload_parser_rejects_missing_runtime_image_revision() {
     );
 }
 
-fn update_plan_check(binary: bool, profiles: bool, assets: bool, images: bool) -> UpdateCheck {
+pub(super) fn update_plan_check(binary: bool, profiles: bool, assets: bool, images: bool) -> UpdateCheck {
     UpdateCheck {
         checked_at: 1,
         latest_version: Some(if binary { "2.0.0" } else { "1.0.0" }.to_string()),
@@ -355,8 +355,20 @@ fn complete_update_plan_requires_a_verified_installer_for_binary_change() {
 }
 
 fn staged_profile_fixture(release_dir: &Path, corrupt_rootfs: bool) -> (Vec<u8>, String, Vec<u8>) {
+    staged_profile_fixture_with(release_dir, corrupt_rootfs, "")
+}
+
+/// `top_level_toml` lands ahead of every table, where a field a later release
+/// adds to `profile.toml` would sit.
+pub(super) fn staged_profile_fixture_with(
+    release_dir: &Path,
+    corrupt_rootfs: bool,
+    top_level_toml: &str,
+) -> (Vec<u8>, String, Vec<u8>) {
     std::fs::create_dir_all(release_dir).unwrap();
-    let profile = br#"id = "code"
+    let mut profile = top_level_toml.as_bytes().to_vec();
+    profile.extend_from_slice(
+        br#"id = "code"
 name = "Code"
 description = "Staged code profile"
 revision = "profiles-2"
@@ -389,8 +401,8 @@ url = "https://release.capsem.org/assets/releases/images-2/x86_64-initrd.img"
 [assets.arch.x86_64.rootfs]
 name = "rootfs.erofs"
 url = "https://release.capsem.org/assets/releases/images-2/x86_64-rootfs.erofs"
-"#
-    .to_vec();
+"#,
+    );
     let kernel = b"verified-kernel".to_vec();
     let initrd = b"verified-initrd".to_vec();
     let rootfs = b"verified-rootfs".to_vec();
@@ -461,7 +473,7 @@ url = "https://release.capsem.org/assets/releases/images-2/x86_64-rootfs.erofs"
     (body, source, kernel)
 }
 
-fn profile_stage_plan() -> VerifiedUpdatePlan {
+pub(super) fn profile_stage_plan() -> VerifiedUpdatePlan {
     VerifiedUpdatePlan {
         installed_binary: env!("CARGO_PKG_VERSION").to_string(),
         selected_binary: env!("CARGO_PKG_VERSION").to_string(),
@@ -469,7 +481,7 @@ fn profile_stage_plan() -> VerifiedUpdatePlan {
     }
 }
 
-fn assert_profile_uses_release_manifest_pins(profile_path: &Path, release_dir: &Path) {
+pub(super) fn assert_profile_uses_release_manifest_pins(profile_path: &Path, release_dir: &Path) {
     let profile: toml::Value = toml::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
     let arch = capsem_assets::asset_manager::host_manifest_arch();
     let assets = &profile["assets"]["arch"][arch];
@@ -540,7 +552,7 @@ async fn stage_verified_update_downloads_every_profile_artifact_without_mutating
         kernel
     );
     assert_profile_uses_release_manifest_pins(
-        &staged.profiles_dir.as_ref().unwrap().join("code/profile.toml"),
+        &staged.profiles.as_ref().unwrap().dir.join("code/profile.toml"),
         &release_dir,
     );
     assert!(staged.installer_path.is_none());

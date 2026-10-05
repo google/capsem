@@ -18,7 +18,184 @@ pub(super) struct StagedUpdate {
     pub(super) manifest_path: PathBuf,
     pub(super) installer_path: Option<PathBuf>,
     pub(super) assets_dir: Option<PathBuf>,
-    pub(super) profiles_dir: Option<PathBuf>,
+    pub(super) profiles: Option<StagedProfiles>,
+}
+
+/// Which binary's parser has accepted a staged profile catalog.
+///
+/// Profiles are parsed with `deny_unknown_fields`, so a binary refuses any
+/// field added after it was built. When an update also installs a newer
+/// binary, the installed one is the wrong judge: 0.6.3 refused 0.6.4's
+/// `default_for` and failed every automatic update to it (#288). Those
+/// profiles wait for the binary that will read them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StagedProfileValidation {
+    /// This process parsed them while staging; no newer binary is coming.
+    InProcess,
+    /// Digests verified; the newly installed binary has not yet parsed them.
+    AwaitingNewBinary,
+    /// The newly installed binary parsed exactly the staged tree.
+    NewBinary,
+}
+
+/// A staged profile catalog and the digest of the tree its artifacts were
+/// verified into. Validation and activation both answer for that tree only.
+#[derive(Debug)]
+pub(super) struct StagedProfiles {
+    pub(super) dir: PathBuf,
+    pub(super) tree_digest: String,
+    pub(super) validation: StagedProfileValidation,
+}
+
+/// How long the newly installed binary may take to parse a staged catalog.
+const NEW_BINARY_PROFILE_VALIDATION_TIMEOUT: Duration = Duration::from_secs(120);
+
+impl VerifiedUpdatePlan {
+    /// A downgrade keeps the in-process parse: the older binary may predate
+    /// `--validate-profile-catalog`, and its profiles use only fields this
+    /// binary already knows.
+    pub(super) fn profile_validation(&self) -> StagedProfileValidation {
+        let deferred = self.steps.contains(&UpdatePlanStep::Binary)
+            && self.steps.contains(&UpdatePlanStep::Profiles)
+            && is_newer(&self.selected_binary, &self.installed_binary);
+        if deferred {
+            StagedProfileValidation::AwaitingNewBinary
+        } else {
+            StagedProfileValidation::InProcess
+        }
+    }
+}
+
+impl StagedProfiles {
+    /// Ask `validator` -- the binary the package just installed -- to parse
+    /// the staged tree with its own schema.
+    pub(super) async fn validate_with(&mut self, validator: &Path, timeout: Duration) -> Result<()> {
+        let mut command = tokio::process::Command::new(validator);
+        command
+            .args(["update", "--validate-profile-catalog"])
+            .arg(&self.dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        let output = tokio::time::timeout(timeout, command.output())
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "new capsem {} did not validate the staged profile catalog within {timeout:?}",
+                    validator.display()
+                )
+            })?
+            .with_context(|| format!("run new capsem {} to validate staged profiles", validator.display()))?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "new capsem {} refused the staged profile catalog {} ({}): {}",
+                validator.display(),
+                self.dir.display(),
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        self.verify_tree(&self.dir)
+            .context("staged profile catalog changed while the new capsem validated it")?;
+        self.validation = StagedProfileValidation::NewBinary;
+        Ok(())
+    }
+
+    fn verify_tree(&self, root: &Path) -> Result<()> {
+        let actual = profile_tree_digest(root)?;
+        if actual != self.tree_digest {
+            anyhow::bail!(
+                "staged profile catalog {} changed after its artifacts were verified",
+                root.display()
+            );
+        }
+        Ok(())
+    }
+}
+
+pub(super) async fn apply_binary_installer_plan(plan: &BinaryInstallerApplyPlan) -> Result<()> {
+    for command in &plan.commands {
+        let line = command.command_line();
+        info!("applying binary update with package manager: {line}");
+        let status = tokio::process::Command::new(&command.program)
+            .args(&command.args)
+            .status()
+            .await
+            .with_context(|| format!("run binary update apply command: {line}"))?;
+        if !status.success() {
+            anyhow::bail!(
+                "binary update apply command failed with {status}: {line}. Current installation was left for the package manager to preserve or repair."
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Run after the package manager installed the selected binary, before
+/// anything activates: deferred profiles must be accepted by that binary.
+pub(super) async fn validate_staged_profiles_with_new_binary(
+    staged: Option<&mut StagedUpdate>,
+    layout: &InstallLayout,
+) -> Result<()> {
+    let Some(profiles) = staged
+        .and_then(|staged| staged.profiles.as_mut())
+        .filter(|profiles| profiles.validation == StagedProfileValidation::AwaitingNewBinary)
+    else {
+        return Ok(());
+    };
+    let bin_dir = platform::install_bin_dir_for(layout)
+        .context("staged profiles wait for the new capsem, but this installation has no binary directory")?;
+    profiles
+        .validate_with(&bin_dir.join("capsem"), NEW_BINARY_PROFILE_VALIDATION_TIMEOUT)
+        .await
+}
+
+/// The profile parse every staged catalog must pass: `capsem update
+/// --validate-profile-catalog` runs it in the newly installed binary.
+pub(super) fn validate_profile_catalog_dir(dir: &Path) -> Result<()> {
+    ProfileCatalog::load_from_dir(dir).map_err(|error| anyhow::anyhow!("validate staged profile catalog: {error}"))?;
+    Ok(())
+}
+
+/// BLAKE3 over every entry's kind, relative path and bytes. Anything other
+/// than a regular file or directory is refused rather than followed.
+pub(super) fn profile_tree_digest(root: &Path) -> Result<String> {
+    let mut entries = Vec::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(&directory).with_context(|| format!("read {}", directory.display()))? {
+            let entry = entry.with_context(|| format!("read entry under {}", directory.display()))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("inspect {}", path.display()))?;
+            if file_type.is_dir() {
+                directories.push(path.clone());
+            } else if !file_type.is_file() {
+                anyhow::bail!("staged profile catalog contains unsupported entry {}", path.display());
+            }
+            entries.push((path, file_type.is_dir()));
+        }
+    }
+    entries.sort();
+    let mut hasher = blake3::Hasher::new();
+    for (path, is_dir) in entries {
+        let relative = path
+            .strip_prefix(root)
+            .context("staged profile entry escaped its root")?
+            .as_os_str()
+            .as_encoded_bytes();
+        hasher.update(if is_dir { b"d" } else { b"f" });
+        hasher.update(&(relative.len() as u64).to_le_bytes());
+        hasher.update(relative);
+        if !is_dir {
+            let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+            hasher.update(&(bytes.len() as u64).to_le_bytes());
+            hasher.update(&bytes);
+        }
+    }
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 pub(super) fn plan_verified_update(
@@ -203,7 +380,8 @@ pub(super) async fn stage_verified_update_at(
     }
     std::fs::create_dir(&stage_root).with_context(|| format!("create {}", stage_root.display()))?;
 
-    let stage_result: Result<Option<PathBuf>> = async {
+    let validation = plan.profile_validation();
+    let stage_result: Result<(Option<PathBuf>, Option<String>)> = async {
         atomic_write(&stage_root.join("manifest.json"), manifest_bytes)?;
         let installer_path = if plan.steps.contains(&UpdatePlanStep::Binary) {
             let installer = check
@@ -215,14 +393,24 @@ pub(super) async fn stage_verified_update_at(
             None
         };
         if plan.steps.contains(&UpdatePlanStep::Profiles) {
-            stage_profile_candidate(&stage_root, source, manifest_bytes, &plan.selected_binary, check).await?;
+            stage_profile_candidate(
+                &stage_root,
+                source,
+                manifest_bytes,
+                &plan.selected_binary,
+                check,
+                validation,
+            )
+            .await?;
         }
-        Ok(installer_path)
+        let profiles = stage_root.join("profiles");
+        let tree_digest = profiles.is_dir().then(|| profile_tree_digest(&profiles)).transpose()?;
+        Ok((installer_path, tree_digest))
     }
     .await;
 
-    let installer_path = match stage_result {
-        Ok(path) => path,
+    let (installer_path, profiles_tree_digest) = match stage_result {
+        Ok(staged) => staged,
         Err(error) => {
             let _ = std::fs::remove_dir_all(&stage_root);
             return Err(error).context("stage verified update candidate");
@@ -241,12 +429,15 @@ pub(super) async fn stage_verified_update_at(
     })?;
 
     let assets_dir = final_root.join("assets");
-    let profiles_dir = final_root.join("profiles");
     Ok(StagedUpdate {
         manifest_path: final_root.join("manifest.json"),
         installer_path,
         assets_dir: assets_dir.is_dir().then_some(assets_dir),
-        profiles_dir: profiles_dir.is_dir().then_some(profiles_dir),
+        profiles: profiles_tree_digest.map(|tree_digest| StagedProfiles {
+            dir: final_root.join("profiles"),
+            tree_digest,
+            validation,
+        }),
     })
 }
 
@@ -256,6 +447,7 @@ pub(super) async fn stage_profile_candidate(
     manifest_bytes: &[u8],
     selected_binary: &str,
     check: &UpdateCheck,
+    validation: StagedProfileValidation,
 ) -> Result<()> {
     let body = std::str::from_utf8(manifest_bytes)
         .with_context(|| format!("manifest URL did not return UTF-8 JSON: {source}"))?;
@@ -274,6 +466,9 @@ pub(super) async fn stage_profile_candidate(
             &stage_root.join("profiles"),
         )
         .await?;
+        if validation == StagedProfileValidation::InProcess && !graph.config_downloads.is_empty() {
+            validate_profile_catalog_dir(&stage_root.join("profiles"))?;
+        }
         return Ok(());
     }
 
@@ -310,6 +505,13 @@ pub(super) fn activate_staged_update_at(
     check: &UpdateCheck,
     transition: &ChannelTransition,
 ) -> Result<()> {
+    if staged
+        .profiles
+        .as_ref()
+        .is_some_and(|profiles| profiles.validation == StagedProfileValidation::AwaitingNewBinary)
+    {
+        anyhow::bail!("staged profiles ship with a new binary, and the new capsem has not accepted them");
+    }
     let source = check
         .source
         .as_deref()
@@ -343,8 +545,9 @@ pub(super) fn activate_staged_update_at(
                 .with_context(|| format!("activate staged profile assets from {}", candidate_assets.display()))?;
         }
 
-        if let Some(candidate_profiles) = staged.profiles_dir.as_deref() {
-            copy_directory_tree(candidate_profiles, &profile_stage)?;
+        if let Some(candidate_profiles) = staged.profiles.as_ref() {
+            copy_directory_tree(&candidate_profiles.dir, &profile_stage)?;
+            candidate_profiles.verify_tree(&profile_stage)?;
             if profiles_dir.exists() {
                 if !profiles_dir.is_dir() {
                     anyhow::bail!(
@@ -583,3 +786,6 @@ impl ReleaseChannelUpdateTarget {
         self.latest.clone().or_else(|| self.current.clone())
     }
 }
+
+#[cfg(test)]
+mod tests;

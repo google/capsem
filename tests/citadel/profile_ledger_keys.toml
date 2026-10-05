@@ -4,8 +4,15 @@
 # deny_unknown_fields before installing the new binary, so a key it does not
 # know fails every automatic update from it. `default_for` did that to
 # the next release. Add a path here only when every binary on the update path parses
-# it -- for a struct field that means after the updater lets the new binary
-# validate staged profiles (see tests/citadel/test_profile_ledger_stays_stageable.py).
+# it (see tests/citadel/test_profile_ledger_stays_stageable.py).
+#
+# How this lifts (#288): an updater that installs a newer binary now stages
+# that release's profiles with digests verified but without its own strict
+# parse, runs the new binary's hidden `capsem update --validate-profile-catalog
+# <staged dir>`, and activates only on its yes (StagedProfileValidation in
+# crates/capsem/src/update/verified_update.rs). Raise oldest_stager to the
+# first release carrying that change once no older binary still updates
+# itself; until then 0.6.3's strict parse stays on the path.
 
 oldest_stager = "0.6.3"
 

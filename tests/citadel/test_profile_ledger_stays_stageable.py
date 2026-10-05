@@ -8,6 +8,9 @@ after hours of qualification. The local gate never staged a real older
 release, so nothing caught it sooner.
 
 This holds every key path to the inventory the oldest updating binary knows.
+Updaters from #288 on hand staged profiles to the binary they just installed
+(`capsem update --validate-profile-catalog`), so the restriction lifts once
+`oldest_stager` reaches the first release with that handoff.
 """
 
 from __future__ import annotations

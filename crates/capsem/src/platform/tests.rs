@@ -70,3 +70,21 @@ fn install_bin_dir_development_returns_none() {
     // In test context we're Development
     assert_eq!(install_bin_dir(), None);
 }
+
+/// The updater runs the binary a package just installed, so the directory
+/// must come from the layout it detected before the package replaced the
+/// running executable, not from re-reading `current_exe` afterwards.
+#[test]
+fn install_bin_dir_for_names_each_layout_package_directory() {
+    assert_eq!(
+        install_bin_dir_for(&InstallLayout::LinuxDeb),
+        Some(PathBuf::from("/usr/bin"))
+    );
+    for layout in [InstallLayout::MacosPkg, InstallLayout::UserDir] {
+        assert_eq!(
+            install_bin_dir_for(&layout),
+            Some(capsem_foundation::paths::capsem_bin_dir())
+        );
+    }
+    assert_eq!(install_bin_dir_for(&InstallLayout::Development), None);
+}
