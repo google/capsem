@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   7.1.6 instead of 6.1.4 (GHSA-rj75-hqrm-r3gf: quadratic flat-selector
   parsing lets hostile CSS exhaust the CPU).
 
+- The npm MCP server resolves `proxy-addr` 2.0.8 instead of 2.0.7
+  (GHSA-jqcg-44mw-7w3h: an IPv4-mapped IPv6 trust subnet trusted spoofed
+  `X-Forwarded-For` hops).
+
+- The SDK, MCP server, dashboard, documentation, marketing and
+  release-channel sites resolve `source-map-js` 1.2.2 instead of 1.2.1
+  (GHSA-68fv-2mgg-jv7q: an indexed source map could block the event loop).
+
 - A guest could make the host walk arbitrary host directories on every
   `/vms/<id>/info` for a stopped persistent VM. The session disk-usage walk
   checked each entry without following links but then read directories by
