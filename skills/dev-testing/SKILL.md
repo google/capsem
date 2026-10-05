@@ -152,7 +152,7 @@ Write tests first:
 3. Write minimal implementation to pass them
 4. Refactor
 
-Without a failing test first, tests can pass by accident. Cargo fixtures, including tiny probes, use `tests/helpers/bounded.py`: its `env` argument applies explicit probe target/compiler overrides after containment; never serialize inherited secrets. The wrapper owns the finite child timeout after its machine-lease wait; do not add an outer subprocess timeout.
+Without a failing test first, tests can pass by accident. Cargo fixtures, including tiny probes, use `tests/helpers/bounded.py`: its `env` argument applies explicit probe compiler and target overrides after containment; never serialize inherited secrets. The wrapper owns the finite child timeout after its machine-lease wait; do not add an outer subprocess timeout.
 
 ## Functional slice proof matrix
 
