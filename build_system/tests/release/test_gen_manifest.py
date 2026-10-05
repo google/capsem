@@ -9,6 +9,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from helpers.bounded import bounded
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -22,7 +24,7 @@ def _write_asset_set(base: Path, arch: str | None = None, marker: bytes = b"") -
 
 def _run_admin_manifest_generate(path: Path, version: str = "1.0.1") -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [
+        bounded([
             "cargo",
             "run",
             "-p",
@@ -33,7 +35,7 @@ def _run_admin_manifest_generate(path: Path, version: str = "1.0.1") -> subproce
             str(path),
             "--version",
             version,
-        ],
+        ], 180),
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

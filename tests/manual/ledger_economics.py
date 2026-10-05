@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from helpers.body_archive import generation_path_for_db
+from helpers.bounded import bounded
 from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
 
 from tests.fixtures.oci.registry import registry
@@ -232,18 +233,10 @@ def keep_ledger(session_dir: Path) -> None:
         "RUSTC_WRAPPER": "",
     }
     subprocess.run(
-        [
-            "cargo",
-            "run",
-            "--quiet",
-            "-p",
-            "capsem-logger",
-            "--example",
-            "snapshot_session_ledger",
-            "--",
-            str(session_dir),
-            str(dest),
-        ],
+        bounded([
+            "cargo", "run", "--quiet", "-p", "capsem-logger", "--example",
+            "snapshot_session_ledger", "--", str(session_dir), str(dest),
+        ], 180, env={"RUSTC_WRAPPER": "", "CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER": "/usr/bin/env"}),
         cwd=root,
         env=env,
         check=True,

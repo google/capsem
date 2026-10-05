@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from helpers.bounded import bounded
 from helpers.constants import ASSETS_DIR
 from helpers.gateway import GatewayInstance
 from helpers.service import ServiceInstance
@@ -38,12 +39,12 @@ def test_braavos_sdk_against_real_gateway_and_stopped_workspace(
             "rust": ["cargo", "run", "--frozen", "--quiet", "-p", "capsem-sdk", "--example", "gateway_acceptance"],
         }
         result = subprocess.run(
-            commands[language],
+            bounded(commands[language], 60),
             cwd=project,
             env={**{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
                  "SDK_GATEWAY_URL": f"http://127.0.0.1:{gateway.port}",
                  "SDK_GATEWAY_TOKEN": gateway.token, "SDK_VM_ID": VM_ID},
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True, text=True, check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "BRAAVOS_SDK_ACCEPTANCE_OK" in result.stdout

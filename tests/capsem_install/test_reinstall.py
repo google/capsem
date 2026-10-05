@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from helpers.bounded import bounded
 
 from .conftest import (
     BINARIES,
@@ -47,7 +48,7 @@ class TestReinstall:
         assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
 
         # Build 1: compile and install
-        subprocess.run(["cargo", "build", "-p", "capsem"], check=True, timeout=300)
+        subprocess.run(bounded(["cargo", "build", "-p", "capsem"], 300), check=True)
         subprocess.run(
             ["bash", str(SCRIPT), bin_src, assets_src],
             check=True, timeout=60,
@@ -56,10 +57,10 @@ class TestReinstall:
         file_hash_1 = hashlib.sha256(capsem_bin.read_bytes()).hexdigest()
 
         # Force recompile by cleaning the capsem crate
-        subprocess.run(["cargo", "clean", "-p", "capsem"], check=True, timeout=60)
+        subprocess.run(bounded(["cargo", "clean", "-p", "capsem"], 60), check=True)
 
         # Build 2: compile and install
-        subprocess.run(["cargo", "build", "-p", "capsem"], check=True, timeout=300)
+        subprocess.run(bounded(["cargo", "build", "-p", "capsem"], 300), check=True)
         subprocess.run(
             ["bash", str(SCRIPT), bin_src, assets_src],
             check=True, timeout=60,

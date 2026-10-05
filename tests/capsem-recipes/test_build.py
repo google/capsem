@@ -18,7 +18,6 @@ def test_cargo_build_workspace():
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
-        timeout=300,
     )
     assert result.returncode == 0, f"cargo build failed:\n{result.stderr}"
 

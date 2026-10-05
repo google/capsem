@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
@@ -46,11 +47,13 @@ def ensure_host_test_binary(
         if all(binary_mtime >= source.stat().st_mtime for source in sources):
             return
 
+    # The wrapper's child timeout starts after its kernel-lease wait. An outer
+    # runner timeout would spend that wait and abandon the owning wrapper.
     runner(
-        tuple(build_command),
+        (sys.executable, str(project_root / "build_system/scripts/ci/run-bounded-command.py"),
+         "--timeout-seconds", str(timeout), "--", *build_command),
         cwd=project_root,
         check=True,
-        timeout=timeout,
     )
     if not binary.is_file():
         raise FileNotFoundError(f"local build did not create required binary: {binary}")

@@ -36,6 +36,7 @@ from capsem_builder.release.tools import (
 from capsem_builder.release.tools import (
     check_channel_deploy_freshness as DEPLOY_FRESHNESS,
 )
+from helpers.bounded import bounded
 from helpers.release_site import build_release_channel_site
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -1117,11 +1118,10 @@ def _run(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        command,
+        bounded(command, timeout),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
-        timeout=timeout,
         check=False,
         env={**os.environ, **env} if env else None,
     )
@@ -1755,25 +1755,11 @@ def test_local_channel_copy_fails_closed_on_asset_byte_mutation(tmp_path: Path) 
     )
     (assets_dir / arch / rootfs_name).write_bytes(b"tampered but locally present\n")
     result = subprocess.run(
-        [
-            "cargo",
-            "run",
-            "-p",
-            "capsem-admin",
-            "--quiet",
-            "--",
-            "assets",
-            "channel",
-            "build",
-            "--manifest",
-            manifest_path.resolve().as_uri(),
-            "--assets-dir",
-            str(assets_dir),
-            "--channel",
-            CHANNEL,
-            "--out-dir",
-            str(dist),
-        ],
+        bounded([
+            "cargo", "run", "-p", "capsem-admin", "--quiet", "--",
+            "assets", "channel", "build", "--manifest", manifest_path.resolve().as_uri(),
+            "--assets-dir", str(assets_dir), "--channel", CHANNEL, "--out-dir", str(dist),
+        ], 180),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,

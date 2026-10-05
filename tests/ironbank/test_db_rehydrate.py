@@ -10,12 +10,14 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from helpers.bounded import bounded
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_logger_db_query_exact_after_flush_and_restart() -> None:
     result = subprocess.run(
-        [
+        bounded([
             "cargo",
             "test",
             "-p",
@@ -23,7 +25,7 @@ def test_logger_db_query_exact_after_flush_and_restart() -> None:
             "db_query_exact_after_flush_and_restart",
             "--",
             "--nocapture",
-        ],
+        ], 180),
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,

@@ -11,6 +11,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from helpers.bounded import bounded
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -69,10 +70,11 @@ def test_shared_target_isolates_workspace_source_and_keeps_dependencies_warm(
     target = tmp_path / "cache/target/cargo"
     env = dict(os.environ, CARGO_TARGET_DIR=str(target))
     # Exercise Cargo freshness itself, independent of any ambient compiler cache.
-    for key in (
+    unwrapped = (
         "CARGO", "RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER",
         "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
-    ):
+    )
+    for key in unwrapped:
         env.pop(key, None)
     if outer_cache:
         # sccache's nested-wrapper detection requires CARGO, including probes
@@ -83,8 +85,10 @@ def test_shared_target_isolates_workspace_source_and_keeps_dependencies_warm(
         env["RUSTC_WRAPPER"] = str(cache)
     for index, root in enumerate((roots[1], roots[0], roots[1], roots[1])):
         build = subprocess.run(
-            ["cargo", "build", "--offline", "--message-format=json"],
-            cwd=root, env=env, capture_output=True, text=True, timeout=30,
+            bounded(["cargo", "build", "--offline", "--message-format=json"], 30,
+                    env={"CARGO_TARGET_DIR": str(target),
+                         **{key: env.get(key, "") for key in unwrapped}}),
+            cwd=root, env=env, capture_output=True, text=True,
         )
         assert build.returncode == 0, build.stderr
         messages = [json.loads(line) for line in build.stdout.splitlines()]

@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from helpers.bounded import bounded
 from helpers.gate import RecordingRunner
 from test_gate_socket_length import OWNER_SOCKET_SUFFIX, SUN_LEN
 
@@ -169,7 +170,9 @@ def test_cargo_cannot_reuse_a_newer_binary_for_an_older_source_snapshot(tmp_path
         # Built then executed directly: the checked-in config runs binaries
         # through the macOS signing runner, which this fixture does not carry.
         build = subprocess.run(
-            ["cargo", "build", "--offline", "--quiet"], cwd=directory, env=environment,
+            bounded(["cargo", "build", "--offline", "--quiet"], 120,
+                    env={"CARGO_TARGET_DIR": str(target), "RUSTC_WRAPPER": ""}),
+            cwd=directory, env=environment,
             capture_output=True, text=True,
         )
         assert build.returncode == 0, build.stderr
