@@ -99,6 +99,28 @@ EROFS rootfs, and build provenance, and are appended to the channel's image
 catalog; a catalog name resolves to the newest version this host can run,
 pinned by digest.
 
+### The Session Layer
+
+The workload's root filesystem is an overlay: the image's unpacked root is the
+read-only lower layer, and the session's own layer is the writable upper.
+Everything the workload writes outside `/workspace` and the image's declared
+volumes -- `$HOME`, installed packages, configuration -- lands in that layer.
+
+The layer lives on the session's system disk, not in the image, so it follows
+the session:
+
+| Session event | The layer |
+|---|---|
+| Stop and resume a named session | kept |
+| Fork, or `create --from` | copied |
+| `create --from SESSION --image OTHER` | kept, now above `OTHER` |
+| Ephemeral session ends | discarded |
+
+Because the layer records whole files and deletions only (no overlay index,
+redirects or metadata-only copies), it applies over any image: an image
+upgrade keeps the agent's login, history and installed tools. A file the
+session changed shadows the new image's version of it.
+
 ### Runtime Packages
 
 The runtime's whole package set is `runtime_apt_packages` in
