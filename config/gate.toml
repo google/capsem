@@ -2347,7 +2347,7 @@ cache_stage = "test-images"
 # replay) boot this image from the layout this variable names, mounted into
 # their container at its own path.
 layout_variable = "CAPSEM_REFERENCE_IMAGE_LAYOUT"
-digests = { "linux/arm64" = "sha256:64729596d6cdf9e5005c6d0d4745c842b1d159eea95b7e4025350d1d830b80b1" }
+digests = { "linux/arm64" = "sha256:64729596d6cdf9e5005c6d0d4745c842b1d159eea95b7e4025350d1d830b80b1", "linux/amd64" = "sha256:aa823bfde4361684dc3f496bd591b2d10c64f8a2c2654204b98f57d479786b3d" }
 
 [modules]
 # The build-chain suites that need built artifacts. The release-contracts
