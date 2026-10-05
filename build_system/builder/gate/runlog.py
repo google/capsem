@@ -28,6 +28,7 @@ from typing import Any
 
 from ..gatelaunch import PYCACHE
 from . import digestreport, runledger
+from .cancellation import Terminated
 from .config import GateConfig
 from .harnessschema import RunLogConfig
 from .journal import _CURRENT, FAILED, OK, EventJournal
@@ -84,6 +85,9 @@ class RunLog(EventJournal):
         log._begin(config, argv, source_commit)
         try:
             yield log
+        except (KeyboardInterrupt, Terminated) as error:
+            log.close(FAILED, failures={command: f"cancelled: {str(error) or 'interrupted'}"})
+            raise
         except BaseException as error:
             log.close(FAILED, failures={command: str(error)})
             raise

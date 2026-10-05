@@ -60,21 +60,22 @@ class Timing:
     themselves faster does not touch it.
     """
 
-    recorded_status: str = "ok"
+    recorded_status: str = "incomplete"
     """What `run.end` said, as distinct from what the steps said.
 
     A run can fail outside every step: the machine lock, a resource that would
     not acquire, a teardown that raised. `status` is the per-step map; this is
     the run's own outcome, and reading only the former reported a run whose
     every step passed and whose workspace then refused to release as a success.
+    Without a terminal outcome, the surviving journal remains incomplete.
     """
 
     @property
     def outcome(self) -> str:
-        """`failed` if the run failed, by any route."""
-        if self.recorded_status != "ok" or self.failures:
+        """Success requires a terminal outcome, not only passing steps."""
+        if self.failures or self.recorded_status not in ("ok", "incomplete"):
             return "failed"
-        return "ok"
+        return self.recorded_status
 
     @property
     def critical_ms(self) -> float:
@@ -114,7 +115,7 @@ def measure(events: list[dict]) -> Timing:
             # Defaulted, because a truncated log is a real case: a killed
             # gate leaves the events it managed to write, and reading one
             # should degrade rather than raise.
-            timing.recorded_status = event.get("status", "ok")
+            timing.recorded_status = event.get("status", "incomplete")
             timing.run_failures = dict(event.get("failures") or {})
 
     timing.critical_path = longest_chain(order, edges, timing.steps)
@@ -149,7 +150,7 @@ def report(timing: Timing, *, command: str, settings: RunLogConfig, run_id: str)
     # `outcome`, not `failures`: the steps are only half of what a run can
     # fail at. Classifying by them reported a run whose workspace refused to
     # release as a success.
-    status = "FAILED" if timing.outcome == "failed" else "ok"
+    status = timing.outcome.upper() if timing.outcome != "ok" else "ok"
     lines = [f"{command} -- {clock(timing.total_ms)} -- {status}", ""]
 
     if timing.critical_path:

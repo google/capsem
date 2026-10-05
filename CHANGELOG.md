@@ -339,6 +339,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gate reports and summaries mark unfinished journals as incomplete instead
+  of successful, and interrupted lock waits retain their cancellation cause.
+
 - A fork (or `create --from`) of a running image session runs its workload.
   The clone carried the source's live `running` marker, so the service
   reported the fork's workload running while it was still unpacking, and exec
