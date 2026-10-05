@@ -9,12 +9,22 @@ better than it is, so both are asserted here rather than left to inspection.
 from __future__ import annotations
 
 import shutil
+import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import runledger
+from capsem_builder.gate.actions import Run
+from capsem_builder.gate.context import Context
+from capsem_builder.gate.errors import GateError
+from capsem_builder.gate.execution import step
+from capsem_builder.gate.funnel import GuardedRunner
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.proc import Runner
 from capsem_builder.gate.rundigest import advice, analyse
+from capsem_builder.gate.runhistory import read
 from capsem_builder.gate.runledger import LedgerRow, StepRow
 from capsem_builder.gate.runlog import RunLog
 from capsem_builder.gate.runlogschema import PlanShape, RunStart, StepEnd
@@ -454,3 +464,129 @@ def test_the_named_trends_are_bounded_and_ranked_by_time_lost() -> None:
     lost = [trend.current_ms - trend.median_ms for trend in analysis.regressions]
     assert lost == sorted(lost, reverse=True), "the ones that fit must be the ones that cost most"
     assert analysis.regressions[0].label == "step20"
+
+
+@pytest.fixture
+def preflight_failure(checkout: Path) -> tuple[gate_config.GateConfig, RunLog, list[dict]]:
+    """The real resource-acquisition failure: a child exits before any graph."""
+    config = gate_config.load(checkout)
+    with (
+        pytest.raises(GateError, match=r"failed \(101\)"),
+        RunLog.open(config, "image-qualify", argv=("image-qualify",)) as log,
+    ):
+        runner = GuardedRunner.sized_by(Runner(config.root), config, journal=log)
+        runner.run([sys.executable, "-c", "raise SystemExit(101)"])
+    events = read(log.directory, config.runlog)
+    assert [event["exit"] for event in events if event["event"] == "exec"] == [101]
+    assert not any(event["event"] == "plan" for event in events)
+    assert events[-1]["status"] == "failed"
+    return config, log, events
+
+
+def test_a_native_preflight_failure_is_recorded_and_reported(preflight_failure) -> None:
+    config, log, _events = preflight_failure
+    recorded = runledger.rows(config)
+    assert len(recorded) == 1, "a completed preflight failure must not disappear from history"
+    assert recorded[0].run_id == log.run_id
+    assert recorded[0].status == "failed"
+    assert recorded[0].steps == {}
+    assert recorded[0].critical_path == ()
+    digest = config.path(config.runlog.digest.path).read_text(encoding="utf-8")
+    assert f"**Last run** `{log.run_id}` -- FAILED" in digest
+    assert "no step (it failed outside the plan)" in digest
+
+
+def test_an_absent_plan_is_distinct_from_a_real_empty_plan(preflight_failure) -> None:
+    config, _failed, failed_events = preflight_failure
+    with RunLog.open(config, "image-qualify", argv=("image-qualify",)) as empty:
+        runner = GuardedRunner.sized_by(Runner(config.root), config, journal=empty)
+        Plan("image-qualify").run(Context(runner, config, journal=empty))
+    failed_row = runledger.distill(failed_events, config.runlog.ledger)
+    empty_row = runledger.distill(read(empty.directory, config.runlog), config.runlog.ledger)
+    assert failed_row is not None
+    assert empty_row is not None
+    assert failed_row.identity != empty_row.identity
+    assert empty_row.status == "ok"
+
+
+@pytest.mark.parametrize(
+    ("shape", "expected"),
+    (
+        (PlanShape(steps=("build",), edges=()), "80c23a245c9bd831eb37f3d8094a818b"),
+        (PlanShape(steps=(), edges=()), "70a2b3c942721167932bb5dbf65798de"),
+    ),
+)
+def test_normal_plan_identity_hashes_stay_unchanged(shape: PlanShape, expected: str) -> None:
+    start = RunStart(
+        command="candidate", argv=("candidate",), head="0" * 40,
+        platform="Linux", machine="x86_64", cores=8, free_gb=100.0,
+        gate_source="src", pycache="cache",
+    )
+    assert runledger.identity_digest(start, shape) == expected
+
+
+@pytest.mark.parametrize(
+    "damage",
+    (
+        "missing-start", "duplicate-start", "malformed-start", "missing-end",
+        "duplicate-end", "malformed-end", "success", "incomplete", "malformed-plan",
+        "duplicate-plan", "orphan-step", "scoped-exec", "critical-path", "skipped",
+    ),
+)
+def test_invalid_preflight_journals_are_not_distilled(preflight_failure, damage: str) -> None:
+    config, _log, original = preflight_failure
+    events = deepcopy(original)
+    if damage == "missing-start":
+        del events[0]
+    elif damage == "duplicate-start":
+        events.insert(0, deepcopy(events[0]))
+    elif damage == "malformed-start":
+        del events[0]["command"]
+    elif damage == "missing-end":
+        events.pop()
+    elif damage == "duplicate-end":
+        events.append(deepcopy(events[-1]))
+    elif damage == "malformed-end":
+        events[-1]["duration_ms"] = "not a duration"
+    elif damage in ("success", "incomplete"):
+        events[-1]["status"] = "ok" if damage == "success" else "incomplete"
+    elif damage == "malformed-plan":
+        events.insert(1, {"event": "plan", "steps": []})
+    elif damage == "duplicate-plan":
+        events[1:1] = [PlanShape(steps=(), edges=()).model_dump() for _ in range(2)]
+    elif damage == "orphan-step":
+        events.insert(1, {"event": "step.end", "step": "lost", "status": "failed", "duration_ms": 1.0})
+    elif damage == "scoped-exec":
+        events[1]["step"] = "lost"
+    elif damage == "critical-path":
+        events[-1]["critical_path"] = ["lost"]
+    else:
+        events[-1]["skipped"] = ["lost"]
+    assert runledger.distill(events, config.runlog.ledger) is None
+
+
+def test_a_started_step_without_a_plan_is_not_a_preflight_failure(checkout: Path) -> None:
+    config = gate_config.load(checkout)
+    argv = [sys.executable, "-c", "raise SystemExit(101)"]
+    with pytest.raises(GateError), RunLog.open(config, "image-qualify") as log:
+        runner = GuardedRunner.sized_by(Runner(config.root), config, journal=log)
+        with log.step(step("started", Run(argv))):
+            runner.run(argv)
+    assert runledger.distill(read(log.directory, config.runlog), config.runlog.ledger) is None
+
+
+def test_a_success_without_a_plan_is_not_recorded(checkout: Path) -> None:
+    config = gate_config.load(checkout)
+    with RunLog.open(config, "image-qualify") as log:
+        runner = GuardedRunner.sized_by(Runner(config.root), config, journal=log)
+        runner.run([sys.executable, "-c", "pass"])
+    assert runledger.rows(config) == []
+
+
+def test_a_torn_preflight_journal_is_not_recorded(preflight_failure) -> None:
+    config, log, _events = preflight_failure
+    runledger.path(config).unlink(missing_ok=True)
+    events = log.directory / config.runlog.events
+    events.write_bytes(events.read_bytes() + b'{"event":"exec"\n')
+    assert runledger.append(config, log.directory, config.runlog) is None
+    assert runledger.rows(config) == []

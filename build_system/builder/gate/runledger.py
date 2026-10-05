@@ -30,13 +30,13 @@ from .filesystem import write_text
 from .harnessschema import RunLogConfig
 from .runhistory import history_locked, recover, runs
 from .runledgerschema import LedgerRow, StepRow
-from .runlogschema import OK, PlanShape, RunEnd, RunStart
+from .runlogschema import FAILED, OK, PlanShape, RunEnd, RunStart
 from .timing import measure
 
 Model = TypeVar("Model", RunStart, PlanShape, RunEnd)
 
 
-def identity(start: RunStart, shape: PlanShape) -> tuple:
+def identity(start: RunStart, shape: PlanShape | None) -> tuple:
     """The fields that make two runs' elapsed times comparable.
 
     One definition, because there is one rule. The release ratchet asks the
@@ -54,12 +54,12 @@ def identity(start: RunStart, shape: PlanShape) -> tuple:
         start.platform,
         start.machine,
         start.cores,
-        shape.steps,
-        shape.edges,
+        None if shape is None else shape.steps,
+        None if shape is None else shape.edges,
     )
 
 
-def identity_digest(start: RunStart, shape: PlanShape) -> str:
+def identity_digest(start: RunStart, shape: PlanShape | None) -> str:
     """`identity` as a short stable string, for a row that must stay small."""
     encoded = json.dumps(identity(start, shape), sort_keys=True, default=list)
     return hashlib.blake2b(encoded.encode(), digest_size=16).hexdigest()
@@ -90,12 +90,23 @@ def distill(events: list[dict], settings: LedgerConfig) -> LedgerRow | None:
 
     A run with no `run.end` crashed, and rotation deliberately keeps those --
     the directory is the artifact there. Writing a row for one would put a
-    truncated duration into a median.
+    truncated duration into a median. A failed resource acquisition can finish
+    before the graph; its absent shape is distinct from a real empty graph.
     """
     start = one_event(events, RunStart)
     shape = one_event(events, PlanShape)
     ended = one_event(events, RunEnd)
-    if start is None or shape is None or ended is None:
+    if start is None or ended is None:
+        return None
+    if shape is None and (
+        ended.status != FAILED or ended.skipped or ended.critical_path
+        or any(
+            event.get("event") == "plan"
+            or str(event.get("event", "")).startswith("step.")
+            or event.get("step")
+            for event in events
+        )
+    ):
         return None
 
     timing = measure(events)
