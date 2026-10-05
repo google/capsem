@@ -115,6 +115,35 @@ def test_docker_inventory_reconciles_native_categories_and_owned_resources(creat
     assert report.resources[0].owned is True
 
 
+@pytest.mark.parametrize(("state", "owned_bytes"), [("running", 0), ("exited", 72_400_000_000)])
+def test_docker_running_container_is_live_work_not_retained_cache(state: str, owned_bytes: int) -> None:
+    """The overlay2 graph driver sizes a container by apparent bytes, so the
+    installed service's 64 GiB sparse overlay template made the gate's own
+    live install container read 72 GB and failed every hosted test-install
+    for days. A running container is the work the gate holds and tears down;
+    it becomes cache, and counts, only once it stops."""
+
+    def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
+        if argv[1:3] == ("container", "ls"):
+            return command(
+                argv,
+                '{"ID":"container-1","Names":"capsem-install-test","Image":"capsem-install-test:one",'
+                f'"State":"{state}","Size":"72.4GB (virtual 77GB)",'
+                '"CreatedAt":"2026-10-04 20:42:04 +0000 UTC"}',
+            )
+        if argv[1:4] == ("system", "df", "-v"):
+            return command(argv, '{"Volumes":[]}')
+        if argv[1:3] in (("system", "df"), ("image", "ls")):
+            return command(argv)
+        raise AssertionError(argv)
+
+    report = dockeradapter.inventory("docker", docker_policy(), runner=runner, now_ns=1)
+
+    container = next(row for row in report.resources if row.kind == ResourceKind.CONTAINER)
+    assert container.logical_bytes == 72_400_000_000
+    assert report.owned_bytes == owned_bytes
+
+
 def test_docker_unavailable_is_typed_without_guessing_empty_state() -> None:
     def runner(argv: tuple[str, ...], _timeout: int) -> RuntimeCommandResult:
         return command(argv, returncode=127)
