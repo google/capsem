@@ -1,3 +1,4 @@
+# check=skip=InvalidDefaultArgInFrom
 # Codex CLI on the Capsem base. BASE is the base image by digest. npm checks
 # the registry's integrity hash for the exact version.
 ARG BASE

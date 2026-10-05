@@ -1,3 +1,4 @@
+# check=skip=InvalidDefaultArgInFrom
 # Antigravity (agy) on the Capsem base. BASE is the base image by digest. The
 # session is the sandbox, so agy runs without its own permission prompts.
 ARG BASE

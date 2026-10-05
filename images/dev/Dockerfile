@@ -1,3 +1,4 @@
+# check=skip=InvalidDefaultArgInFrom
 # A development session without an agent: the Capsem base plus a compiler
 # toolchain and everyday tools. BASE is the base image by digest.
 ARG BASE

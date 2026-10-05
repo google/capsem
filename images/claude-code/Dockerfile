@@ -1,3 +1,4 @@
+# check=skip=InvalidDefaultArgInFrom
 # Claude Code on the Capsem base. BASE is the base image by digest.
 ARG BASE
 FROM ${BASE}

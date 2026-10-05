@@ -1,3 +1,4 @@
+# check=skip=InvalidDefaultArgInFrom
 # Claude Desktop on the Capsem base, served as one application over Xpra's
 # websocket protocol. BASE is the base image by digest. arm64 only:
 # install-gui.sh refuses any other architecture, and the publication workflow
