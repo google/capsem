@@ -422,6 +422,7 @@ mod restart;
 mod route_query_plans;
 mod session_identity;
 mod settings_files;
+mod stop_cleanup;
 mod system_contracts;
 mod telemetry_export;
 mod transcript;

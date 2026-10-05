@@ -485,10 +485,17 @@ pub(super) async fn handle_stop(
     // get bash history + filesystem sync before teardown.
     if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await? {
         if !persistent {
-            let dir = session_dir;
-            tokio::task::spawn_blocking(move || {
-                let _ = std::fs::remove_dir_all(&dir);
-            });
+            // Ephemeral stop owns deletion just like DELETE: wait for the
+            // contained cleanup and surface errors before acknowledging it.
+            state
+                .off_worker(move |state| state.delete_session_dir(&session_dir))
+                .await?
+                .map_err(|error| {
+                    AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("ephemeral session cleanup failed: {error:#}"),
+                    )
+                })?;
         }
         Ok(Json(api::StopResponse {
             success: true,
