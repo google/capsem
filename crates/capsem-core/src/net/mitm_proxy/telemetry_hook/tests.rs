@@ -65,11 +65,13 @@ struct EnvGuard {
     _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     old_home: Option<String>,
     old_store: Option<String>,
+    // Last field: released only after Drop has restored the environment.
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
     fn install(
-        _lock: &tokio::sync::MutexGuard<'_, ()>,
+        lock: tokio::sync::MutexGuard<'static, ()>,
         capsem_home: &std::path::Path,
         home: &std::path::Path,
         test_store: &std::path::Path,
@@ -82,6 +84,7 @@ impl EnvGuard {
             _capsem_paths: capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home),
             old_home,
             old_store,
+            _lock: lock,
         }
     }
 }
@@ -101,13 +104,15 @@ impl Drop for EnvGuard {
 
 struct TraceEnvGuard {
     old_trace: Option<String>,
+    // Last field: released only after Drop has restored the environment.
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 impl TraceEnvGuard {
-    fn install(_lock: &tokio::sync::MutexGuard<'_, ()>, trace_id: &str) -> Self {
+    fn install(lock: tokio::sync::MutexGuard<'static, ()>, trace_id: &str) -> Self {
         let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
         std::env::set_var("CAPSEM_TRACE_ID", trace_id);
-        Self { old_trace }
+        Self { old_trace, _lock: lock }
     }
 }
 
@@ -378,8 +383,10 @@ fn agy_google_tool_call_survives_into_ledger_counters() {
 
 #[test]
 fn openai_non_streaming_tool_call_carries_request_trace() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
-    let _trace_guard = TraceEnvGuard::install(&_lock, "feedfacecafebeef");
+    let _trace_guard = TraceEnvGuard::install(
+        crate::credential_broker::TEST_ENV_LOCK.blocking_lock(),
+        "feedfacecafebeef",
+    );
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.domain = "127.0.0.1".into();
     req_ctx.ai_provider = Some(ProviderKind::OpenAi);
