@@ -59,7 +59,9 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
     assert process["user"] == {"uid": 0, "gid": 0}
     assert process["cwd"] == "/data"
     assert process["noNewPrivileges"] is True
-    assert config["root"] == {"path": "rootfs", "readonly": True}
+    # The session's own unpacked copy: written like a container layer, kept
+    # with a named session, gone with an ephemeral one.
+    assert config["root"] == {"path": "rootfs", "readonly": False}
     assert set(config["hooks"]) == {"prestart", "poststart"}
     hooks = config["hooks"]["prestart"]
     assert len(hooks) == 1 and hooks[0]["path"] == "/usr/bin/python3"
@@ -682,6 +684,23 @@ def test_a_volume_is_seeded_from_the_image_once_and_then_kept(launcher, tmp_path
     (seeded / "seed").write_text("from the session")
     launcher.prepare_volumes({"/data": {}}, rootfs, SECURITY["id_map"])
     assert (seeded / "seed").read_text() == "from the session"
+
+
+def test_a_volume_is_never_seeded_through_a_symlink_the_workload_planted(launcher, tmp_path, monkeypatch):
+    """The root is writable, so by a later launch the workload may have made a
+    volume's parent a symlink to the VM's own files. Seeding runs as VM root
+    and must not copy what that link reaches into the workload's volume."""
+    monkeypatch.setattr(launcher, "VOLUMES", tmp_path / "volumes")
+    monkeypatch.setattr(launcher.os, "chown", lambda *args: None)
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    secret = tmp_path / "vm-only"
+    (secret / "data").mkdir(parents=True)
+    (secret / "data" / "key").write_text("VM secret")
+    (rootfs / "var").symlink_to(secret)
+    launcher.prepare_volumes({"/var/data": {}}, rootfs, SECURITY["id_map"])
+    volume = launcher.volume_dir("/var/data")
+    assert volume.is_dir() and not any(volume.iterdir())
 
 
 

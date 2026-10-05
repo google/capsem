@@ -274,7 +274,10 @@ def configure(unpacked, image, options, detached=False):
         )
     return {
         "ociVersion": "1.0.2",
-        "root": {"path": "rootfs", "readonly": True},
+        # The session's own unpacked copy (unpacked_root), so it is the
+        # container layer: writable, kept with a named session, gone with an
+        # ephemeral one. Image tools write their state under $HOME.
+        "root": {"path": "rootfs", "readonly": False},
         "hostname": HOSTNAME,
         "process": process,
         "mounts": mounts,
@@ -380,7 +383,10 @@ def prepare_volumes(volumes, rootfs, id_map):
         seed = rootfs / path.lstrip("/")
         staging = target.with_name(target.name + ".new")
         shutil.rmtree(staging, ignore_errors=True)
-        if seed.is_dir() and not seed.is_symlink():
+        # The workload writes its root, so any component may by now be a link
+        # to the VM's own files; this runs as VM root. Seed only a real
+        # directory reached without one.
+        if seed.is_dir() and seed.resolve() == rootfs.resolve() / path.lstrip("/"):
             command("cp", "-a", "--", str(seed), str(staging))
         else:
             staging.mkdir(mode=0o755)
