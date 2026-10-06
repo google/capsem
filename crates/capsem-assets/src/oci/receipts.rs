@@ -133,6 +133,12 @@ impl CacheReceipt {
     pub(super) fn blobs(&self) -> &[BlobRef] {
         &self.record.blobs
     }
+    pub(super) fn matches_image(&self, verified: &Self) -> bool {
+        self.identity == verified.identity
+            && self.native_digest == verified.native_digest
+            && self.origin() == verified.origin()
+            && self.blobs() == verified.blobs()
+    }
     pub(super) fn root(&self) -> Option<&RootReceipt> {
         self.record.root.as_ref()
     }

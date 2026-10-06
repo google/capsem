@@ -32,6 +32,7 @@ const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 const CATALOG_LIMIT: u64 = 1024 * 1024;
 
 mod offline;
+mod reconcile;
 
 #[derive(Clone, Copy)]
 enum BlobUse {
@@ -75,6 +76,7 @@ pub struct ImageLayout {
     pub image_digest: String,
     files: Vec<PathBuf>,
     cache_identity: CacheIdentity,
+    materialization: CacheReceipt,
 }
 
 impl ImageLayout {
@@ -431,6 +433,23 @@ impl Puller {
             &self.architecture,
             RUNTIME_CONTRACT,
         )?;
+        let mut required = vec![BlobRef::new(&image_digest, first.len() as u64, BlobKind::Metadata)?];
+        if image_digest != source_digest {
+            required.push(BlobRef::new(&source_digest, bytes.len() as u64, BlobKind::Metadata)?);
+        }
+        for descriptor in std::iter::once(&manifest.config).chain(layers.values().copied()) {
+            required.push(BlobRef::new(
+                &descriptor.digest,
+                u64::try_from(descriptor.size)?,
+                BlobKind::Private,
+            )?);
+        }
+        let materialization = CacheReceipt::new(
+            cache_identity.clone(),
+            &reference,
+            ContentDigest::parse(&source_digest)?,
+            required,
+        )?;
         if let Some(cache) = &self.cache {
             let cache = cache.for_repository(&reference);
             if !cache_only {
@@ -440,29 +459,12 @@ impl Puller {
                 }
             }
             if !cache_only || cache.read_receipt(&cache_identity.key()).await?.is_none() {
-                let mut required = vec![BlobRef::new(&image_digest, first.len() as u64, BlobKind::Metadata)?];
-                if image_digest != source_digest {
-                    required.push(BlobRef::new(&source_digest, bytes.len() as u64, BlobKind::Metadata)?);
-                }
-                for descriptor in std::iter::once(&manifest.config).chain(layers.values().copied()) {
-                    required.push(BlobRef::new(
-                        &descriptor.digest,
-                        u64::try_from(descriptor.size)?,
-                        BlobKind::Private,
-                    )?);
-                }
-                cache
-                    .publish_receipt(CacheReceipt::new(
-                        cache_identity.clone(),
-                        &reference,
-                        ContentDigest::parse(&source_digest)?,
-                        required,
-                    )?)
-                    .await?;
+                cache.publish_receipt(materialization.clone()).await?;
             }
         }
         Ok(ImageLayout {
             cache_identity,
+            materialization,
             directory,
             source_digest,
             image_digest,
