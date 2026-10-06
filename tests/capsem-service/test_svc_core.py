@@ -1,17 +1,12 @@
 """Core no-state service endpoints: /version, /stats, /service-logs, profile reload."""
 
-import os
 import subprocess
-import tomllib
-from pathlib import Path
 
 import pytest
-from helpers.constants import BIN_DIR, BIN_VARIABLE
+from helpers.service import SERVICE_BINARY
 from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestVersion:
@@ -22,23 +17,22 @@ class TestVersion:
         version = resp.get("version")
         assert isinstance(version, str) and version, f"empty version: {resp}"
         # The real property is that the daemon reports the version it was
-        # built from. From source that is Cargo.toml's. A release lane pulls a
-        # published package instead -- a profile release pairs the new profile
-        # with the public binary while the source has already moved on -- so
-        # there the binary itself is the authority. Comparing that to
-        # Cargo.toml failed the 0.6.6 code-profile release on a correct 0.6.5
-        # service.
-        if os.environ.get(BIN_VARIABLE):
-            built = subprocess.run(
-                [str(BIN_DIR / "capsem-service"), "--version"],
-                capture_output=True, text=True, timeout=30, check=True,
-            ).stdout.split()[-1]
-            source = f"{BIN_DIR}/capsem-service --version"
-        else:
-            workspace = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
-            built = workspace["workspace"]["package"]["version"]
-            source = "the workspace"
-        assert version == built, f"service reports {version!r} but {source} declares {built!r}"
+        # built from, so the authority is the binary the fixture launched, not
+        # Cargo.toml: a profile release qualifies against the published
+        # package while the source has already moved on, and comparing with
+        # the workspace failed the 0.6.6 code-profile release on a correct
+        # 0.6.5 service. Whether that binary is fresh is the artifact gate's
+        # question, not this route's.
+        built = subprocess.run(
+            [str(SERVICE_BINARY), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        ).stdout.split()[-1]
+        assert version == built, (
+            f"service reports {version!r} but {SERVICE_BINARY} --version is {built!r}"
+        )
 
 
 class TestStats:
