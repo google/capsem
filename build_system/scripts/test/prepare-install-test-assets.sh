@@ -212,4 +212,5 @@ cp -R "$ASSETS_DIR/$arch/." "$ASSETS_DIR/current/"
 
 VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
 cd "$ROOT"
-cargo run -p capsem-admin -- manifest generate "$ASSETS_DIR" --version "$VERSION"
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 180 -- \
+    cargo run -p capsem-admin -- manifest generate "$ASSETS_DIR" --version "$VERSION"
