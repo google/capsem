@@ -17,6 +17,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -57,6 +58,10 @@ IMAGE_SHARE = Path("/run/capsem-image")
 MANIFEST_LIMIT = 4 * 1024 * 1024
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 BLOB_CHUNK = 1024 * 1024
+# Published filesystem artifacts use the image puller's 4 GiB bound and the
+# mapping images/ci/rootfs.py packs into the EROFS inode owners.
+ROOTFS_LIMIT = 4 * 1024**3
+PUBLISHED_ID_MAP = {"containerID": 0, "hostID": 100000, "size": 65536}
 # Every id the workload maps lies at or above this, clear of the VM's own
 # system and user ids, so container root is no uid the VM trusts.
 LOWEST_MAPPED_ID = 65536
@@ -650,11 +655,13 @@ def manifest_digest(options):
     return digest
 
 
-def copy_verified(share, digest, destination, size=None, limit=None):
-    """Copy the blob `digest` from the share to `destination`, refusing it
-    unless its bytes hash to that digest and, when the referrer gave one, its
-    size. The share is read-only to the guest; this is what makes a blob that
-    is not the one named -- whoever put it there -- fail the launch."""
+@contextlib.contextmanager
+def verified_blob(share, digest, size=None, limit=None, destination=None):
+    """Hold the exact regular blob verified, optionally copying its bytes.
+
+    A filesystem mount uses this descriptor, so checking and using cannot
+    follow different names. The share stays read-only while it is held.
+    """
     if not (isinstance(digest, str) and DIGEST.match(digest)):
         raise ValueError(f"refusing OCI blob digest {digest!r}")
     if size is not None and not (type(size) is int and size >= 0):
@@ -662,19 +669,37 @@ def copy_verified(share, digest, destination, size=None, limit=None):
     hexdigest = digest.removeprefix("sha256:")
     hasher = hashlib.sha256()
     count = 0
-    with (share / hexdigest).open("rb") as source, destination.open("xb") as output:
-        while chunk := source.read(BLOB_CHUNK):
-            count += len(chunk)
-            if (size is not None and count > size) or (limit is not None and count > limit):
-                raise ValueError(f"OCI blob {digest} is larger than its descriptor")
-            hasher.update(chunk)
-            output.write(chunk)
-    if hasher.hexdigest() != hexdigest or (size is not None and count != size):
-        raise ValueError(f"OCI blob digest mismatch: {digest}")
-    return count
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+    with os.fdopen(os.open(share / hexdigest, flags), "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise ValueError(f"OCI blob {digest} is not a regular file")
+        output_context = (
+            destination.open("xb") if destination is not None else contextlib.nullcontext()
+        )
+        with output_context as output:
+            while chunk := source.read(BLOB_CHUNK):
+                count += len(chunk)
+                if (size is not None and count > size) or (limit is not None and count > limit):
+                    raise ValueError(f"OCI blob {digest} is larger than its descriptor")
+                hasher.update(chunk)
+                if output is not None:
+                    output.write(chunk)
+        if hasher.hexdigest() != hexdigest or (size is not None and count != size):
+            raise ValueError(f"OCI blob digest mismatch: {digest}")
+        source.seek(0)
+        yield source, count
 
 
-def assemble(share, digest, layout):
+def copy_verified(share, digest, destination, size=None, limit=None):
+    """Copy a verified blob for the universal OCI unpack path."""
+    with verified_blob(share, digest, size=size, limit=limit, destination=destination) as (
+        _,
+        count,
+    ):
+        return count
+
+
+def assemble(share, digest, layout, layers=True):
     """A private OCI layout of the image `digest` names, every blob copied
     from the share and verified before umoci sees it: the manifest against
     the digest the host pinned, its config and layers against the manifest's
@@ -684,7 +709,9 @@ def assemble(share, digest, layout):
     manifest_path = blobs / digest.removeprefix("sha256:")
     size = copy_verified(share, digest, manifest_path, limit=MANIFEST_LIMIT)
     manifest = json.loads(manifest_path.read_bytes())
-    descriptors = [manifest["config"], *manifest["layers"]]
+    descriptors = [manifest["config"]]
+    if layers:
+        descriptors.extend(manifest["layers"])
     for descriptor in descriptors:
         target = blobs / str(descriptor["digest"]).removeprefix("sha256:")
         # A layer listed twice is one blob, verified once.
@@ -717,6 +744,78 @@ def image_share(run=None):
         yield IMAGE_SHARE
     finally:
         run("umount", str(IMAGE_SHARE), check=False)
+
+
+@contextlib.contextmanager
+def published_root(options, id_map, share=None, run=None):
+    """A published, verified EROFS lower and the usual umoci runtime config.
+
+    The host already bound the artifact to the admitted platform image. The
+    guest verifies its payload and holds the same descriptor through mount
+    and use; no filesystem bytes are copied into the session overlay.
+    """
+    descriptor = options.get("rootfs")
+    if (
+        not isinstance(descriptor, dict)
+        or set(descriptor) != {"digest", "size"}
+        or not isinstance(descriptor["digest"], str)
+        or not DIGEST.fullmatch(descriptor["digest"])
+        or type(descriptor["size"]) is not int
+        or not 0 < descriptor["size"] <= ROOTFS_LIMIT
+    ):
+        raise ValueError(f"refusing published rootfs descriptor {descriptor!r}")
+    if checked_id_map(id_map) != PUBLISHED_ID_MAP:
+        raise ValueError("published rootfs inode mapping differs from the workload mapping")
+    digest = manifest_digest(options)
+    share, run = share or image_share, run or command
+    bundle, layout = RUNTIME / "bundle", RUNTIME / "image"
+    lower = bundle / "rootfs"
+    lower.mkdir(mode=0o711, parents=True)
+    bundle.chmod(0o711)
+    with share() as blobs:
+        assemble(blobs, digest, layout, layers=False)
+        manifest = json.loads(
+            (layout / "blobs/sha256" / digest.removeprefix("sha256:")).read_bytes()
+        )
+        image = json.loads(
+            (
+                layout / "blobs/sha256" / manifest["config"]["digest"].removeprefix("sha256:")
+            ).read_bytes()
+        )
+        with verified_blob(
+            blobs, descriptor["digest"], size=descriptor["size"], limit=ROOTFS_LIMIT
+        ) as (blob, _):
+            try:
+                run(
+                    "mount",
+                    "-t",
+                    "erofs",
+                    "-o",
+                    "loop,ro,nosuid,nodev",
+                    f"/proc/self/fd/{blob.fileno()}",
+                    str(lower),
+                    pass_fds=(blob.fileno(),),
+                )
+                mapping = f"{id_map['containerID']}:{id_map['hostID']}:{id_map['size']}"
+                run(
+                    "umoci",
+                    "raw",
+                    "runtime-config",
+                    "--uid-map",
+                    mapping,
+                    "--gid-map",
+                    mapping,
+                    "--image",
+                    f"{layout}:image",
+                    "--rootfs",
+                    str(lower),
+                    str(bundle / "config.json"),
+                )
+                runtime = json.loads((bundle / "config.json").read_bytes())
+                shutil.rmtree(layout)
+                yield bundle, image, runtime
+            finally:
+                run("umount", str(lower), check=False)
 
 
 def unpacked_root(digest, id_map, share=image_share):

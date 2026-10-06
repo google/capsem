@@ -442,6 +442,186 @@ def test_the_image_is_assembled_from_the_share_and_verified(launcher, tmp_path):
         assert json.loads((layout / "oci-layout").read_text()) == {"imageLayoutVersion": "1.0.0"}
 
 
+def test_runtime_config_layout_copies_metadata_without_layers(launcher, tmp_path):
+    share, digest, (layer,) = _share(tmp_path)
+    (share / layer.removeprefix("sha256:")).unlink()
+    layout = tmp_path / "layout"
+    launcher.assemble(share, digest, layout, layers=False)
+    manifest = json.loads((layout / "blobs/sha256" / digest.removeprefix("sha256:")).read_bytes())
+    assert not (layout / "blobs/sha256" / layer.removeprefix("sha256:")).exists()
+    assert (
+        layout / "blobs/sha256" / manifest["config"]["digest"].removeprefix("sha256:")
+    ).is_file()
+    assert json.loads((layout / "index.json").read_text())["manifests"][0]["digest"] == digest
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_published_root_uses_read_only_descriptor_and_umoci_then_releases_mounts(
+    launcher, tmp_path, monkeypatch, fail
+):
+    import os
+
+    monkeypatch.setattr(launcher, "RUNTIME", tmp_path / "runtime")
+    launcher.RUNTIME.mkdir()
+    share, manifest, _ = _share(tmp_path)
+    data = b"opaque published EROFS fixture"
+    digest = _blob(share, data)
+    events, inherited = [], []
+
+    @contextlib.contextmanager
+    def mounted():
+        events.append("share-open")
+        try:
+            yield share
+        finally:
+            events.append("share-close")
+
+    def command(*argv, **kwargs):
+        events.append(argv)
+        if argv[0] == "mount":
+            (fd,) = kwargs["pass_fds"]
+            inherited.append(fd)
+            assert argv[5] == f"/proc/self/fd/{fd}"
+            assert os.read(fd, len(data)) == data
+            os.lseek(fd, 0, os.SEEK_SET)
+        elif argv[:3] == ("umoci", "raw", "runtime-config"):
+            assert argv[argv.index("--rootfs") + 1] == str(launcher.RUNTIME / "bundle/rootfs")
+            assert argv[argv.index("--uid-map") + 1] == "0:100000:65536"
+            assert argv[argv.index("--gid-map") + 1] == "0:100000:65536"
+            if fail:
+                raise RuntimeError("converter failed")
+            Path(argv[-1]).write_text(json.dumps(unpacked()))
+
+    options = {"manifest": manifest, "rootfs": {"digest": digest, "size": len(data)}}
+
+    def use():
+        with launcher.published_root(
+            options, SECURITY["id_map"], share=mounted, run=command
+        ) as result:
+            bundle, metadata, runtime = result
+            assert bundle == launcher.RUNTIME / "bundle"
+            assert metadata == image() and runtime == unpacked()
+            assert events[0] == "share-open" and "share-close" not in events
+            assert events[1][:5] == ("mount", "-t", "erofs", "-o", "loop,ro,nosuid,nodev")
+            assert not (launcher.RUNTIME / "image").exists()
+            assert not any(path.name.endswith(".erofs") for path in launcher.RUNTIME.rglob("*"))
+
+    if fail:
+        with pytest.raises(RuntimeError, match="converter failed"):
+            use()
+    else:
+        use()
+    assert events[-2] == ("umount", str(launcher.RUNTIME / "bundle/rootfs"))
+    assert events[-1] == "share-close"
+    with pytest.raises(OSError):
+        os.fstat(inherited[0])
+
+
+@pytest.mark.parametrize(
+    "rootfs",
+    [
+        None,
+        {},
+        {"digest": "../bad", "size": 1},
+        {"digest": "sha256:" + "a" * 64, "size": True},
+        {"digest": "sha256:" + "a" * 64, "size": 0},
+        {"digest": "sha256:" + "a" * 64, "size": 2**32 + 1},
+        {"digest": "sha256:" + "a" * 64, "size": 1, "path": "/foreign"},
+    ],
+)
+def test_invalid_published_root_descriptor_is_refused_before_share_access(launcher, rootfs):
+    @contextlib.contextmanager
+    def forbidden():
+        raise AssertionError("invalid descriptor reached the share")
+        yield
+
+    with (
+        pytest.raises(ValueError, match="rootfs"),
+        launcher.published_root({"rootfs": rootfs}, SECURITY["id_map"], share=forbidden),
+    ):
+        raise AssertionError("invalid descriptor was accepted")
+
+
+@pytest.mark.parametrize("victim", ["tampered", "size", "symlink", "fifo"])
+def test_published_root_refuses_unverified_or_special_payload_before_mount(
+    launcher, tmp_path, monkeypatch, victim
+):
+    import errno
+    import os
+
+    monkeypatch.setattr(launcher, "RUNTIME", tmp_path / "runtime")
+    launcher.RUNTIME.mkdir()
+    share, manifest, _ = _share(tmp_path)
+    data = b"published payload"
+    digest = _blob(share, data)
+    path = share / digest.removeprefix("sha256:")
+    size = len(data)
+    if victim == "tampered":
+        path.write_bytes(b"x" * size)
+    elif victim == "size":
+        size += 1
+    else:
+        path.unlink()
+        if victim == "symlink":
+            foreign = tmp_path / "foreign"
+            foreign.write_bytes(data)
+            path.symlink_to(foreign)
+        else:
+            os.mkfifo(path)
+    calls, closed = [], []
+
+    @contextlib.contextmanager
+    def mounted():
+        try:
+            yield share
+        finally:
+            closed.append(True)
+
+    expected = OSError if victim == "symlink" else ValueError
+    with (
+        pytest.raises(expected) as error,
+        launcher.published_root(
+            {"manifest": manifest, "rootfs": {"digest": digest, "size": size}},
+            SECURITY["id_map"],
+            share=mounted,
+            run=lambda *argv, **_: calls.append(argv),
+        ),
+    ):
+        raise AssertionError("invalid payload was mounted")
+    if victim == "symlink":
+        assert isinstance(error.value, OSError)
+        assert error.value.errno == errno.ELOOP
+    elif victim == "fifo":
+        assert "regular file" in str(error.value)
+    else:
+        assert "digest mismatch" in str(error.value)
+    assert calls == [] and closed == [True]
+
+
+@pytest.mark.parametrize(
+    "id_map",
+    [
+        {"containerID": 0, "hostID": 200000, "size": 65536},
+        {"containerID": 0, "hostID": 100000, "size": 1},
+    ],
+)
+def test_published_root_refuses_a_mapping_different_from_its_inode_contract(launcher, id_map):
+    @contextlib.contextmanager
+    def forbidden():
+        raise AssertionError("mismatched mapping reached the share")
+        yield
+
+    with (
+        pytest.raises(ValueError, match="mapping"),
+        launcher.published_root(
+            {"rootfs": {"digest": "sha256:" + "a" * 64, "size": 1}},
+            id_map,
+            share=forbidden,
+        ),
+    ):
+        raise AssertionError("mismatched mapping was accepted")
+
+
 @pytest.mark.parametrize("victim", ["manifest", "layer"])
 def test_a_share_blob_that_is_not_the_one_named_is_refused(launcher, tmp_path, victim):
     share, digest, (layer,) = _share(tmp_path)
@@ -731,7 +911,6 @@ def test_a_volume_is_never_seeded_through_a_symlink_the_workload_planted(launche
     launcher.prepare_volumes({"/var/data": {}}, rootfs, SECURITY["id_map"])
     volume = launcher.volume_dir("/var/data")
     assert volume.is_dir() and not any(volume.iterdir())
-
 
 
 def _fake_unpack(launcher, tmp_path, monkeypatch):
