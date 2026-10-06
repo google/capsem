@@ -683,7 +683,7 @@ def _ar_member(name: str, data: bytes) -> bytes:
 def test_live_install_proof_fetches_its_own_manifest(workflow: str) -> None:
     """b44f57547 moved the manifest download into a script, and the live proof
     kept reading `/tmp/verify/manifest.json`, which nothing wrote any more. The
-    0.6.6 post-publication proof failed on that path without reaching the
+    next post-publication proof failed on that path without reaching the
     install. The proof now takes the URL and fetches the manifest itself."""
     text = (PROJECT_ROOT / workflow).read_text(encoding="utf-8")
     call = text.split("build_system/scripts/build/prove-live-public-install.sh", maxsplit=1)[1]
