@@ -35,6 +35,7 @@ mod container_setup;
 mod host_ledger;
 mod instance;
 mod instance_reaper;
+pub mod managed_sessions;
 use instance::InstanceInfo;
 mod network_routes;
 mod policy_mutation;
@@ -192,7 +193,7 @@ const PROCESS_ENV_ALLOWLIST: &[&str] = &[
 const ACTIVE_POLICY_DIR: &str = "vm";
 const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 
-struct ServiceState {
+pub struct ServiceState {
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
     retirements: instance_reaper::Retirements,
     /// Logger-owned DB handles keyed by session/VM id. Logged-data routes

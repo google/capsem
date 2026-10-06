@@ -12,21 +12,24 @@ use uuid::Uuid;
 /// past retention. Nothing here can fail the deletion: the VM is gone either
 /// way, and what could not be recorded is logged with the reason.
 pub(super) async fn vm_deleted(state: &Arc<ServiceState>, vm_id: &str) {
+    if let Err(error) = vm_deleted_checked(state, vm_id).await {
+        tracing::warn!(vm_id, %error, "deleted VM left a network membership behind");
+        switches::unplug_everywhere(state, vm_id).await;
+    }
+}
+
+pub(crate) async fn vm_deleted_checked(state: &Arc<ServiceState>, vm_id: &str) -> Result<()> {
     // Memberships go first, cables second: a plug finishing in between finds
     // no membership and unplugs itself.
     let now_unix_ms = vm_lifecycle::unix_time_ms();
     let mut registry = state.networks.lock().await;
-    let retired = match registry.vm_deleted(vm_id, now_unix_ms).await {
-        Ok(departures) => departures
-            .iter()
-            .filter(|departure| departure.retired)
-            .map(|departure| departure.network)
-            .collect(),
-        Err(error) => {
-            tracing::warn!(vm_id, %error, "deleted VM left a network membership behind");
-            Vec::new()
-        }
-    };
+    let retired: Vec<_> = registry
+        .vm_deleted(vm_id, now_unix_ms)
+        .await?
+        .iter()
+        .filter(|departure| departure.retired)
+        .map(|departure| departure.network)
+        .collect();
     sweep_retired(&mut registry, now_unix_ms);
     drop(registry);
     switches::unplug_everywhere(state, vm_id).await;
@@ -34,6 +37,7 @@ pub(super) async fn vm_deleted(state: &Arc<ServiceState>, vm_id: &str) {
         tracing::info!(vm_id, %network, "network retired with its last member");
         switches::retire(state, network).await;
     }
+    Ok(())
 }
 
 /// The retention sweep, run wherever a network retires and at startup.

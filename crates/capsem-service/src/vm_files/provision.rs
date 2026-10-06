@@ -160,7 +160,7 @@ pub(crate) async fn finish_create(
     created
 }
 
-async fn complete_create(
+pub(crate) async fn complete_create(
     state: &Arc<ServiceState>,
     id: &str,
     networks: &[uuid::Uuid],
