@@ -180,8 +180,7 @@ impl BlobCache {
 }
 
 fn watched_directory(cache: &BlobCache, watch: &mut ChangeWatch) -> Result<ContainedDir> {
-    let mut directory = ContainedDir::open_root(&cache.root)?;
-    watch.add(directory.as_fd())?;
+    let mut directory = watch.open_directory(&cache.root)?;
     for component in cache.policy.entry_root.components() {
         let std::path::Component::Normal(name) = component else {
             anyhow::bail!("cache entry root must contain plain relative names");

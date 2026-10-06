@@ -4,8 +4,8 @@ use super::super::{CacheKey, CacheSnapshot};
 use super::*;
 
 impl Puller {
-    /// Cheap owner observation: memory plus a nonblocking kernel notification
-    /// batch. No cache path traversal, file bytes, hashes or registry requests.
+    /// Cheap owner observation: memory plus bounded nonblocking kernel reads.
+    /// No cache path traversal, file bytes, hashes or registry requests.
     pub fn cache_snapshot(&self, key: &CacheKey) -> Result<CacheSnapshot> {
         self.cache
             .as_ref()

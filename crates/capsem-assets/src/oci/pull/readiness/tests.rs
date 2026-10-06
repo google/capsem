@@ -2,6 +2,50 @@ use super::super::tests::{digest, Registry};
 use super::super::*;
 
 #[tokio::test]
+async fn ancestor_rebinding_invalidates_ready_and_missing_cache_observations() {
+    use std::os::unix::fs::DirBuilderExt;
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let ancestor = root.path().join("ancestor");
+    let cache_root = ancestor.join("cache");
+    let mut puller = registry.puller();
+    puller.cache = Some(BlobCache::at(&cache_root).unwrap());
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    drop(image);
+    registry.task.abort();
+    assert_eq!(
+        puller.reconcile_cache(&key, parent.path()).await.unwrap().state,
+        super::super::super::CacheState::Ready
+    );
+    std::fs::rename(&ancestor, root.path().join("previous-ancestor")).unwrap();
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&cache_root)
+        .unwrap();
+    assert!(
+        puller.cache_snapshot(&key).unwrap().verification_pending,
+        "an unchanged old root inode cannot preserve readiness at a replaced path"
+    );
+    assert_eq!(
+        puller.reconcile_cache(&key, parent.path()).await.unwrap().state,
+        super::super::super::CacheState::Missing
+    );
+    std::fs::rename(&ancestor, root.path().join("empty-ancestor")).unwrap();
+    std::fs::rename(root.path().join("previous-ancestor"), &ancestor).unwrap();
+    assert!(
+        puller.cache_snapshot(&key).unwrap().verification_pending,
+        "restoring the original ancestor must invalidate the missing observation"
+    );
+    assert_eq!(
+        puller.reconcile_cache(&key, parent.path()).await.unwrap().state,
+        super::super::super::CacheState::Ready
+    );
+}
+
+#[tokio::test]
 async fn reconciling_another_image_preserves_readiness_and_retained_inode_facts() {
     use std::os::unix::fs::MetadataExt;
     let first = Registry::start(|_, _| {}).await;
