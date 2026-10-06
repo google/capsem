@@ -79,6 +79,8 @@ pub struct ImageLayout {
     files: Vec<PathBuf>,
     cache_identity: CacheIdentity,
     materialization: CacheReceipt,
+    /// Protect cache dependencies while the caller stages this layout.
+    _permit: Option<capsem_foundation::unix::lock::FileLock>,
 }
 
 impl ImageLayout {
@@ -176,6 +178,14 @@ impl Puller {
         tokio::time::timeout(PULL_TIMEOUT, self.pull_inner(reference, parent, false))
             .await
             .context("OCI pull exceeded five minutes")?
+    }
+
+    fn resolved_cache_identity(&self, reference: &Reference, digest: &str) -> Result<CacheIdentity> {
+        CacheIdentity::from_resolved(
+            ImageReference::try_from(reference)?.resolve(ContentDigest::parse(digest)?)?,
+            &self.architecture,
+            RUNTIME_CONTRACT,
+        )
     }
 
     /// Fetch and validate the image catalog at `reference`, usually
@@ -333,6 +343,14 @@ impl Puller {
         if let Some(cache) = &self.cache {
             cache.prepare().await?;
         }
+        let mut permit = match (&self.cache, reference.digest()) {
+            (Some(cache), Some(digest)) => Some(
+                cache
+                    .materialization_lease(&self.resolved_cache_identity(&reference, digest)?.key())
+                    .await?,
+            ),
+            _ => None,
+        };
         let token = if cache_only {
             None
         } else {
@@ -346,6 +364,12 @@ impl Puller {
             self.manifest(&reference, token.as_deref()).await?
         };
         let image_digest = sha256(&first);
+        let cache_identity = self.resolved_cache_identity(&reference, &image_digest)?;
+        if permit.is_none() {
+            if let Some(cache) = &self.cache {
+                permit = Some(cache.materialization_lease(&cache_identity.key()).await?);
+            }
+        }
         let bytes = match serde_json::from_slice::<OciManifest>(&first)? {
             OciManifest::Image(_) => first.clone(),
             OciManifest::ImageIndex(index) => {
@@ -430,11 +454,6 @@ impl Puller {
         {
             files.push(PathBuf::from("blobs/sha256").join(digest_hex(digest)?));
         }
-        let cache_identity = CacheIdentity::from_resolved(
-            ImageReference::try_from(&reference)?.resolve(ContentDigest::parse(&image_digest)?)?,
-            &self.architecture,
-            RUNTIME_CONTRACT,
-        )?;
         let mut required = vec![BlobRef::new(&image_digest, first.len() as u64, BlobKind::Metadata)?];
         if image_digest != source_digest {
             required.push(BlobRef::new(&source_digest, bytes.len() as u64, BlobKind::Metadata)?);
@@ -467,6 +486,7 @@ impl Puller {
         Ok(ImageLayout {
             cache_identity,
             materialization,
+            _permit: permit,
             directory,
             source_digest,
             image_digest,

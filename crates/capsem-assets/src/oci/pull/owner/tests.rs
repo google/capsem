@@ -3,6 +3,57 @@ use super::super::tests::Registry;
 use super::super::*;
 
 #[tokio::test]
+async fn layouts_hold_shared_image_leases_until_the_last_materialization_drops() {
+    use capsem_foundation::unix::lock::{try_acquire_existing, LockAttempt, LockMode};
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let owner = ImageCache::at(root.path()).unwrap();
+    let puller = registry.puller().with_cache(&owner);
+    let first = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = first.cache_identity().key();
+    let lock = root
+        .path()
+        .join("locks")
+        .join(format!("materialize-{}.lock", key.as_str()));
+    assert!(matches!(
+        try_acquire_existing(&lock, LockMode::Exclusive).unwrap(),
+        LockAttempt::Contended
+    ));
+    let reference = registry
+        .reference()
+        .replace(":latest", &format!("@{}", first.image_digest));
+    registry.task.abort();
+    let second = puller.pull_cached(&reference, parent.path()).await.unwrap();
+    drop(first);
+    assert!(matches!(
+        try_acquire_existing(&lock, LockMode::Exclusive).unwrap(),
+        LockAttempt::Contended
+    ));
+    drop(second);
+    assert!(matches!(
+        try_acquire_existing(&lock, LockMode::Exclusive).unwrap(),
+        LockAttempt::Acquired(_)
+    ));
+    let corrupt = root.path().join("blobs").join(
+        owner
+            .inner
+            .for_repository(&image_reference(&reference).unwrap())
+            .entry_name(&super::super::tests::digest(&registry.layer))
+            .unwrap(),
+    );
+    std::fs::write(&corrupt, b"corrupt").unwrap();
+    assert!(puller.pull_cached(&reference, parent.path()).await.is_err());
+    assert!(
+        matches!(
+            try_acquire_existing(&lock, LockMode::Exclusive).unwrap(),
+            LockAttempt::Acquired(_)
+        ),
+        "failure must release its materialization permit"
+    );
+}
+
+#[tokio::test]
 async fn request_transports_share_owner_proof_without_sharing_credentials() {
     let registry = Registry::start(|_, _| {}).await;
     let parent = tempfile::tempdir().unwrap();

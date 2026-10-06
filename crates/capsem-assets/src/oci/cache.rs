@@ -134,6 +134,19 @@ impl BlobCache {
         lock(self.root.join("locks").join(format!("{}.lock", &hex[..2]))).await
     }
 
+    /// Shared for the complete image/layout lifetime, separate from blob
+    /// stripes so a nested blob lookup can never reacquire its parent's lock.
+    pub(super) async fn materialization_lease(&self, key: &super::CacheKey) -> Result<FileLock> {
+        lock_with(
+            self.root
+                .join("locks")
+                .join(format!("materialize-{}.lock", key.as_str())),
+            LockAccess::Prepare,
+            LockMode::Shared,
+        )
+        .await
+    }
+
     fn mutation_lock(&self) -> PathBuf {
         self.root.join(&self.policy.mutation_locks[0])
     }
@@ -382,25 +395,25 @@ enum LockAccess {
 }
 
 async fn lock(path: PathBuf) -> Result<FileLock> {
-    lock_with(path, LockAccess::Prepare).await
+    lock_with(path, LockAccess::Prepare, LockMode::Exclusive).await
 }
 
 async fn read_lock(path: PathBuf) -> Result<FileLock> {
-    lock_with(path, LockAccess::Read).await
+    lock_with(path, LockAccess::Read, LockMode::Exclusive).await
 }
 
-async fn lock_with(path: PathBuf, access: LockAccess) -> Result<FileLock> {
+async fn lock_with(path: PathBuf, access: LockAccess, mode: LockMode) -> Result<FileLock> {
     poll_until(PollOpts::new("oci-cache-lock", Duration::from_secs(30)), || {
         let path = path.clone();
         async move {
             match tokio::task::spawn_blocking(move || {
                 if matches!(access, LockAccess::Read) {
-                    match try_acquire_existing(&path, LockMode::Exclusive) {
+                    match try_acquire_existing(&path, mode) {
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                         result => return result,
                     }
                 }
-                try_acquire(&path, LockMode::Exclusive)
+                try_acquire(&path, mode)
             })
             .await
             {
