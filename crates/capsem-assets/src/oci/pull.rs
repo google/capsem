@@ -32,6 +32,7 @@ const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 const CATALOG_LIMIT: u64 = 1024 * 1024;
 
 mod offline;
+mod owner;
 mod readiness;
 mod reconcile;
 

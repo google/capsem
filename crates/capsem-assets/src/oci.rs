@@ -7,6 +7,8 @@ use serde::Deserialize;
 mod cache;
 mod catalog;
 mod identity;
+mod owner;
+pub use owner::ImageCache;
 mod inventory;
 pub use identity::{CacheIdentity, CacheKey};
 pub use inventory::CacheUsage;
