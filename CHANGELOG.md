@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Boot audit setup confirms kernel registration and fails if execve rules
   cannot be installed or locked, preventing false audit-readiness reports.
 
+- Update Sharp to 0.35.5 across the app, documentation, marketing and release
+  site to fix the vulnerable bundled librsvg dependency (GHSA-wq5f-xc86-pv6w).
+
 - Docker build contexts exclude local Sprinty records and diagnostic artifacts,
   keeping agent state out of build containers and retained build contexts.
 
