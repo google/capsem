@@ -10,7 +10,7 @@ mod identity;
 mod owner;
 mod removal;
 pub use owner::ImageCache;
-pub use removal::RemovalPreview;
+pub use removal::{RemovalPreview, RemovalResult};
 mod inventory;
 pub use identity::{CacheIdentity, CacheKey};
 pub use inventory::CacheUsage;

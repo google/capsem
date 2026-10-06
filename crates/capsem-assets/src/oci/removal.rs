@@ -3,12 +3,13 @@
 use std::{collections::HashSet, fs::Metadata, os::unix::fs::MetadataExt};
 
 use anyhow::{ensure, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::{receipts::BlobKind, CacheKey, ImageCache, METADATA_LIMIT};
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct FileState {
     pub(super) dev: u64,
     pub(super) ino: u64,
@@ -40,7 +41,8 @@ impl FileState {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct BlobState {
     pub(super) name: String,
     pub(super) kind: BlobKind,
@@ -48,13 +50,14 @@ pub(super) struct BlobState {
     pub(super) shared: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Witness {
-    key: String,
-    generation: String,
+    pub(super) key: String,
+    pub(super) generation: String,
     references: Vec<(String, String)>,
-    receipt: FileState,
-    blobs: Vec<BlobState>,
+    pub(super) receipt: FileState,
+    pub(super) blobs: Vec<BlobState>,
     materializing: bool,
 }
 
@@ -64,7 +67,7 @@ pub(super) struct Witness {
 pub struct RemovalPreview {
     key: CacheKey,
     token: String,
-    witness: Witness,
+    pub(super) witness: Witness,
     reclaimable_bytes: u64,
 }
 
@@ -99,17 +102,10 @@ impl RemovalPreview {
             blobs,
             materializing,
         };
-        let bytes = serde_json::to_vec(&witness)?;
-        ensure!(
-            bytes.len() <= METADATA_LIMIT,
-            "OCI removal preview exceeds metadata limit"
-        );
-        let mut digest = Sha256::new();
-        digest.update(b"capsem-oci-removal-preview-v1\0");
-        digest.update(&bytes);
+        let token = preview_token(&witness)?;
         Ok(Self {
             key,
-            token: format!("remove-{:x}", digest.finalize()),
+            token,
             witness,
             reclaimable_bytes,
         })
@@ -138,9 +134,40 @@ impl RemovalPreview {
     }
 }
 
+pub(super) fn preview_token(witness: &Witness) -> Result<String> {
+    let bytes = serde_json::to_vec(witness)?;
+    ensure!(
+        bytes.len() <= METADATA_LIMIT,
+        "OCI removal preview exceeds metadata limit"
+    );
+    let mut digest = Sha256::new();
+    digest.update(b"capsem-oci-removal-preview-v1\0");
+    digest.update(&bytes);
+    Ok(format!("remove-{:x}", digest.finalize()))
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemovalResult {
+    pub removed_allocated_bytes: u64,
+    pub removed_entries: u64,
+    pub already_missing_entries: u64,
+    pub retained_entries: u64,
+    pub complete: bool,
+}
+
 impl ImageCache {
     /// Read current ownership without creating controls or changing payloads.
     pub async fn preview_removal(&self, key: &CacheKey) -> Result<RemovalPreview> {
         self.inner.preview_removal(key).await
+    }
+    pub async fn apply_removal(&self, key: &CacheKey, token: &str, reason: &str) -> Result<RemovalResult> {
+        super::Digest::parse(&format!(
+            "sha256:{}",
+            token.strip_prefix("remove-").context("invalid removal token")?
+        ))?;
+        ensure!(!reason.trim().is_empty(), "removal requires a reason");
+        ensure!(reason.len() <= METADATA_LIMIT, "removal reason exceeds metadata limit");
+        self.inner.apply_removal(key, token, reason).await
     }
 }

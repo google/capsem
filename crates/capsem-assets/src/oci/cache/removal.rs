@@ -9,6 +9,8 @@ use super::super::{
     CacheKey, RemovalPreview,
 };
 use super::*;
+mod apply;
+mod journal;
 
 impl BlobCache {
     pub(in super::super) async fn preview_removal(&self, key: &CacheKey) -> Result<RemovalPreview> {
@@ -26,23 +28,27 @@ impl BlobCache {
 }
 
 fn preview(cache: &BlobCache, root: &ContainedDir, directory: &ContainedDir, key: &CacheKey) -> Result<RemovalPreview> {
+    observe(cache, root, directory, key, true)
+}
+
+fn preview_without_barrier(
+    cache: &BlobCache,
+    root: &ContainedDir,
+    directory: &ContainedDir,
+    key: &CacheKey,
+) -> Result<RemovalPreview> {
+    observe(cache, root, directory, key, false)
+}
+
+fn observe(
+    cache: &BlobCache,
+    root: &ContainedDir,
+    directory: &ContainedDir,
+    key: &CacheKey,
+    probe_barrier: bool,
+) -> Result<RemovalPreview> {
     let receipt = receipts::read(directory, key)?.context("cache receipt is missing")?;
-    let mut references = Vec::new();
-    let mut retained = BTreeSet::new();
-    for entry in directory.entries()? {
-        let name = entry.name.to_string_lossy();
-        let Some(candidate) = name.strip_prefix("receipt-") else {
-            continue;
-        };
-        let candidate = CacheKey::parse(candidate).context("unrecognized receipt prevents reference-safe removal")?;
-        if candidate == *key {
-            continue;
-        }
-        let other = receipts::read(directory, &candidate)?.context("receipt changed during removal preview")?;
-        retained.extend(names(cache, &other)?.into_keys());
-        references.push((candidate.as_str().to_owned(), other.generation()?));
-    }
-    references.sort();
+    let (references, retained) = references(cache, directory, key)?;
     let blobs = names(cache, &receipt)?
         .into_iter()
         .map(|(name, kind)| {
@@ -70,8 +76,34 @@ fn preview(cache: &BlobCache, root: &ContainedDir, directory: &ContainedDir, key
         references,
         FileState::from_metadata(&control.metadata()?)?,
         blobs,
-        materializing(root)?,
+        materializing_with(root, probe_barrier)?,
     )
+}
+
+type References = (Vec<(String, String)>, BTreeSet<String>);
+
+fn other_names(cache: &BlobCache, directory: &ContainedDir, key: &CacheKey) -> Result<BTreeSet<String>> {
+    Ok(references(cache, directory, key)?.1)
+}
+
+fn references(cache: &BlobCache, directory: &ContainedDir, key: &CacheKey) -> Result<References> {
+    let mut references = Vec::new();
+    let mut retained = BTreeSet::new();
+    for entry in directory.entries()? {
+        let name = entry.name.to_string_lossy();
+        let Some(candidate) = name.strip_prefix("receipt-") else {
+            continue;
+        };
+        let candidate = CacheKey::parse(candidate).context("unrecognized receipt prevents reference-safe removal")?;
+        if candidate == *key {
+            continue;
+        }
+        let other = receipts::read(directory, &candidate)?.context("receipt changed during removal preview")?;
+        retained.extend(names(cache, &other)?.into_keys());
+        references.push((candidate.as_str().to_owned(), other.generation()?));
+    }
+    references.sort();
+    Ok((references, retained))
 }
 
 fn names(cache: &BlobCache, receipt: &CacheReceipt) -> Result<BTreeMap<String, BlobKind>> {
@@ -93,13 +125,15 @@ fn names(cache: &BlobCache, receipt: &CacheReceipt) -> Result<BTreeMap<String, B
     Ok(names)
 }
 
-fn materializing(root: &ContainedDir) -> Result<bool> {
+fn materializing_with(root: &ContainedDir, probe_barrier: bool) -> Result<bool> {
     let directory = root.descend("locks".as_ref())?;
-    match try_acquire_existing(&directory.path().join("materialization.lock"), LockMode::Exclusive) {
-        Ok(LockAttempt::Contended) => return Ok(true),
-        Ok(LockAttempt::Acquired(_lease)) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
+    if probe_barrier {
+        match try_acquire_existing(&directory.path().join("materialization.lock"), LockMode::Exclusive) {
+            Ok(LockAttempt::Contended) => return Ok(true),
+            Ok(LockAttempt::Acquired(_lease)) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
     }
     for entry in directory.entries()? {
         let name = entry.name.to_string_lossy();

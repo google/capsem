@@ -1,5 +1,6 @@
 use super::*;
 use std::os::unix::fs::MetadataExt;
+mod apply;
 
 #[tokio::test]
 async fn removal_preview_keeps_bytes_referenced_by_another_runtime_receipt() {
@@ -54,6 +55,21 @@ async fn removal_preview_keeps_bytes_referenced_by_another_runtime_receipt() {
             .collect::<Vec<_>>(),
         names
     );
+    let result = owner
+        .apply_removal(&key, shared.token(), "drop one shared receipt")
+        .await
+        .unwrap();
+    assert_eq!(result.removed_allocated_bytes, allocated);
+    assert_eq!(result.removed_entries, 1);
+    assert!(puller.cached_receipt(&other_key).await.unwrap().is_some());
+    for blob in receipt.blobs() {
+        let scoped = owner.inner.for_repository(&image_reference(receipt.origin()).unwrap());
+        assert!(root
+            .path()
+            .join("blobs")
+            .join(scoped.entry_name(&blob.digest).unwrap())
+            .exists());
+    }
 }
 
 #[tokio::test]
@@ -149,6 +165,9 @@ async fn removal_preview_refuses_materializing_layouts_and_retained_root_links()
     let protected = owner.preview_removal(&key).await.unwrap();
     assert!(!protected.allowed());
     assert_eq!(protected.protected_roots(), 1);
+    assert!(owner.apply_removal(&key, protected.token(), "held root").await.is_err());
+    assert!(filesystem.path().exists());
+    assert!(puller.cached_receipt(&key).await.unwrap().is_some());
     drop(filesystem);
     assert!(owner.preview_removal(&key).await.unwrap().allowed());
 }

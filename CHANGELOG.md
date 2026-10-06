@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The OCI cache owner supports generation-bound removal previews and reasoned
+  apply with durable retry intent. Active materializations and retained roots
+  block cleanup; shared, unrelated and republished data remain intact.
+
 - OCI creation and prefetch retain verified published filesystem facts under
   the actual resolved image's cache key after admission.
 - Verified OCI materialization retains durable cache receipts for immutable
