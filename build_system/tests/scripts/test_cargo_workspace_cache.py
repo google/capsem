@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.config import load
+from capsem_builder.gate.lifecycle import held
+from capsem_builder.gate.locks import ExclusiveLock
 from helpers.bounded import bounded
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -116,3 +121,101 @@ def test_shared_target_isolates_workspace_source_and_keeps_dependencies_warm(
         }
         assert owners == {root.resolve() for root in roots}
         assert not list(fingerprints.glob("external-dependency-*/capsem-owner"))
+
+
+def _recorder(directory: Path, name: str) -> Path:
+    """An executable called `name` that prints its own name and arguments."""
+    directory.mkdir(parents=True, exist_ok=True)
+    program = directory / name
+    program.write_text(
+        f'#!/bin/sh\nprintf "%s\\n" {name} "$@"\n'
+    )
+    program.chmod(0o755)
+    return program
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "compiler", "cached"),
+    [
+        ("sccache", "rustc", True),
+        ("sccache", "clippy-driver", False),
+        ("not-sccache", "rustc", False),
+        (None, "rustc", False),
+    ],
+)
+def test_workspace_wrapper_hands_a_rustc_unit_to_the_compiler_cache(
+    tmp_path: Path, wrapper: str | None, compiler: str, cached: bool,
+) -> None:
+    """Issue #277: sccache took the wrapper for the compiler and the absolute
+    rustc path for a second input, so every workspace unit was non-cacheable."""
+    script = ROOT / "build_system/scripts/build/rustc-workspace-wrapper.sh"
+    real = _recorder(tmp_path / "toolchain/bin", compiler)
+    env = {key: value for key, value in os.environ.items() if key != "RUSTC_WRAPPER"}
+    if wrapper is not None:
+        env["RUSTC_WRAPPER"] = str(_recorder(tmp_path / "cache", wrapper))
+    result = subprocess.run(
+        [str(script), str(real), "--crate-name", "unit", "src/lib.rs"],
+        env=env, capture_output=True, text=True, timeout=5, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    called = result.stdout.splitlines()
+    expected = [str(real), "--crate-name", "unit", "src/lib.rs"]
+    assert called == (["sccache", *expected] if cached else [compiler, *expected[1:]])
+
+
+def test_a_workspace_unit_is_served_from_sccache_on_a_second_build(tmp_path: Path) -> None:
+    """The real pipeline Cargo runs, `sccache <wrapper> /abs/rustc ...`, twice
+    into an empty output directory: the second compile is a cache hit."""
+    sccache = shutil.which("sccache")
+    rustc = subprocess.run(
+        ["rustc", "--print", "sysroot"], capture_output=True, text=True, timeout=30, check=False,
+    )
+    if sccache is None or rustc.returncode:
+        pytest.skip("needs sccache and rustc")
+    compiler = Path(rustc.stdout.strip()) / "bin/rustc"
+    short = Path(tempfile.mkdtemp(prefix="sccache-", dir="/tmp"))  # a socket path is short
+    with held(ExclusiveLock.for_gate(load(ROOT), purpose="native workspace sccache probe", announce=print)):
+        _check_native_cache_hit(tmp_path, short, sccache, compiler)
+
+
+def _check_native_cache_hit(tmp_path: Path, short: Path, sccache: str, compiler: Path) -> None:
+    try:
+        env = {
+            **os.environ, "CARGO": "cargo", "RUSTC_WRAPPER": sccache,
+            "SCCACHE_DIR": str(short / "cache"), "SCCACHE_SERVER_UDS": str(short / "s.sock"),
+            "SCCACHE_CLIENT_SIDE": "1", "SCCACHE_IDLE_TIMEOUT": "0",
+            "SCCACHE_BASEDIRS": str(tmp_path), "CARGO_INCREMENTAL": "0",
+        }
+        overrides = {key: env[key] for key in (
+            "CARGO", "RUSTC_WRAPPER", "SCCACHE_DIR", "SCCACHE_SERVER_UDS", "SCCACHE_CLIENT_SIDE",
+            "SCCACHE_IDLE_TIMEOUT", "SCCACHE_BASEDIRS", "CARGO_INCREMENTAL",
+        )}
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src/lib.rs").write_text("pub fn unit() -> u32 { 277 }\n")
+        hits = []
+        artifacts = []
+        for _ in range(2):
+            subprocess.run([sccache, "--zero-stats"], env=env, capture_output=True, timeout=30)
+            out = tmp_path / "out"
+            shutil.rmtree(out, ignore_errors=True)
+            out.mkdir()
+            build = subprocess.run(
+                bounded([sccache, str(ROOT / "build_system/scripts/build/rustc-workspace-wrapper.sh"),
+                 str(compiler), "--crate-name", "unit", "--edition=2021", "src/lib.rs",
+                 "--crate-type", "lib", "--emit=dep-info,metadata,link",
+                 "-C", "metadata=277", "-C", "extra-filename=-277", "--out-dir", str(out)], 120, env=overrides),
+                cwd=tmp_path, env=env, capture_output=True, text=True, check=False,
+            )
+            assert build.returncode == 0, build.stderr
+            assert (out / "libunit-277.rlib").is_file()
+            artifacts.append(hashlib.sha256((out / "libunit-277.rlib").read_bytes()).hexdigest())
+            stats = subprocess.run(
+                [sccache, "--show-stats", "--stats-format=json"],
+                env=env, capture_output=True, text=True, timeout=30, check=True,
+            )
+            hits.append(json.loads(stats.stdout)["stats"]["cache_hits"]["counts"].get("Rust", 0))
+        assert hits == [0, 1]
+        assert artifacts[0] == artifacts[1]
+    finally:
+        subprocess.run([sccache, "--stop-server"], env=env, capture_output=True, timeout=30)
+        shutil.rmtree(short, ignore_errors=True)
