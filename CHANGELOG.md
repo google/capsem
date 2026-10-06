@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Verified OCI materialization retains durable cache receipts for immutable
+  manifests, configuration, layers, and bound published filesystems. Receipt
+  metadata is bounded and loaded without claiming readiness or execution
+  permission; required bytes are rechecked before publication.
 - OCI creation prefers verified local pinned image and published filesystem
   bytes after admission. Explicit prefetch and moving tags continue resolving
   through the registry, while cache misses use the existing online pull path.

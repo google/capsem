@@ -1,5 +1,29 @@
 use super::*;
 
+#[tokio::test]
+async fn a_receipt_shaped_name_does_not_make_unrecognized_bytes_prunable() {
+    let root = super::super::tests::private_dir();
+    let mut cache = BlobCache::at(root.path()).unwrap();
+    cache.prepare().await.unwrap();
+    cache.policy.warm_size_bytes = 8;
+    cache.policy.max_size_bytes = 16;
+    let path = root
+        .path()
+        .join("blobs")
+        .join(format!("receipt-oci-{}", "a".repeat(64)));
+    let unknown = b"unrecognized receipt bytes";
+    std::fs::write(&path, unknown).unwrap();
+    let directory = ContainedDir::open_root(root.path())
+        .unwrap()
+        .walk(&cache.policy.entry_root)
+        .unwrap();
+    assert!(
+        cache.prune(&directory).is_err(),
+        "unknown bytes must cause capacity refusal, not broad deletion"
+    );
+    assert_eq!(std::fs::read(path).unwrap(), unknown);
+}
+
 fn identity(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }

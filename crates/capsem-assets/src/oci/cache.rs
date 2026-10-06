@@ -23,6 +23,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::digest_hex;
+mod receipts;
 
 #[derive(Clone, Deserialize)]
 struct Policy {
@@ -290,9 +291,15 @@ impl BlobCache {
     }
 
     fn prune(&self, directory: &ContainedDir) -> Result<()> {
+        self.prune_for(directory, 0)
+    }
+
+    fn prune_for(&self, directory: &ContainedDir, reservation: u64) -> Result<()> {
         let mut entries = directory.entries()?;
         entries.sort_by_key(|entry| (entry.mtime_secs, entry.name.clone()));
-        let mut used: u64 = entries.iter().map(|entry| entry.size).sum();
+        let mut used = entries.iter().try_fold(reservation, |used, entry| {
+            used.checked_add(entry.size).context("OCI cache usage overflow")
+        })?;
         let target = if used > self.policy.max_size_bytes {
             self.policy.warm_size_bytes
         } else {
@@ -303,13 +310,22 @@ impl BlobCache {
             let stale = now.saturating_sub(entry.mtime_secs) > self.policy.maximum_age_hours * 3600;
             let name = entry.name.to_string_lossy();
             let partial = name.starts_with(".partial-");
+            let receipt = name
+                .strip_prefix("receipt-")
+                .and_then(|key| super::CacheKey::parse(key).ok());
             let identity = name.strip_prefix("immutable-").unwrap_or(&name);
             let owned = partial
+                || receipt.is_some()
                 || (matches!(identity.len(), 64 | 129)
                     && identity
                         .split('-')
                         .all(|part| digest_hex(&format!("sha256:{part}")).is_ok()));
             if entry.kind == EntryKind::File && owned && (stale || used > target || partial) {
+                if let Some(key) = &receipt {
+                    if !matches!(receipts::read(directory, key), Ok(Some(_))) {
+                        continue;
+                    }
+                }
                 if self.policy.protect_hardlinks
                     && directory
                         .open_file(&entry.name, ContainedOpenOptions::read_only())?

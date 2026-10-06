@@ -17,15 +17,15 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
+use super::receipts::{BlobKind, BlobRef, CacheReceipt, RootReceipt};
 use super::{
     cache::BlobCache,
     catalog::{Catalog, CATALOG_MEDIA_TYPE},
     digest_hex, image_reference,
     selector::Digest as ContentDigest,
-    verify_platform, CacheIdentity, ImageReference, RUNTIME_CONTRACT,
+    verify_platform, CacheIdentity, ImageReference, METADATA_LIMIT, RUNTIME_CONTRACT,
 };
 
-const METADATA_LIMIT: usize = 4 * 1024 * 1024;
 const LAYER_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 const PULL_TIMEOUT: Duration = Duration::from_secs(300);
@@ -48,6 +48,7 @@ pub const ROOTFS_MEDIA_TYPE: &str = "application/vnd.capsem.rootfs.erofs.v1";
 pub struct RootfsLayout {
     directory: tempfile::TempDir,
     digest: ContentDigest,
+    receipt: RootReceipt,
 }
 
 impl RootfsLayout {
@@ -268,7 +269,19 @@ impl Puller {
                     .await?;
             }
         }
-        Ok(RootfsLayout { directory, digest })
+        Ok(RootfsLayout {
+            receipt: RootReceipt {
+                origin: reference.to_string(),
+                subject: expected_subject.to_string(),
+                subject_size: u64::try_from(subject.size)?,
+                blobs: vec![
+                    BlobRef::new(&sha256(&bytes), bytes.len() as u64, BlobKind::Metadata)?,
+                    BlobRef::new(&layer.digest, u64::try_from(layer.size)?, BlobKind::ImmutableRoot)?,
+                ],
+            },
+            directory,
+            digest,
+        })
     }
 
     async fn fetch_catalog_inner(&self, reference: &str, parent: &Path) -> Result<(ContentDigest, Catalog)> {
@@ -413,21 +426,43 @@ impl Puller {
         {
             files.push(PathBuf::from("blobs/sha256").join(digest_hex(digest)?));
         }
-        if !cache_only {
-            if let Some(cache) = &self.cache {
-                let cache = cache.for_repository(&reference);
+        let cache_identity = CacheIdentity::from_resolved(
+            ImageReference::try_from(&reference)?.resolve(ContentDigest::parse(&image_digest)?)?,
+            &self.architecture,
+            RUNTIME_CONTRACT,
+        )?;
+        if let Some(cache) = &self.cache {
+            let cache = cache.for_repository(&reference);
+            if !cache_only {
                 cache.publish_metadata(&source_digest, &bytes).await?;
                 if image_digest != source_digest {
                     cache.publish_metadata(&image_digest, &first).await?;
                 }
             }
+            if !cache_only || cache.read_receipt(&cache_identity.key()).await?.is_none() {
+                let mut required = vec![BlobRef::new(&image_digest, first.len() as u64, BlobKind::Metadata)?];
+                if image_digest != source_digest {
+                    required.push(BlobRef::new(&source_digest, bytes.len() as u64, BlobKind::Metadata)?);
+                }
+                for descriptor in std::iter::once(&manifest.config).chain(layers.values().copied()) {
+                    required.push(BlobRef::new(
+                        &descriptor.digest,
+                        u64::try_from(descriptor.size)?,
+                        BlobKind::Private,
+                    )?);
+                }
+                cache
+                    .publish_receipt(CacheReceipt::new(
+                        cache_identity.clone(),
+                        &reference,
+                        ContentDigest::parse(&source_digest)?,
+                        required,
+                    )?)
+                    .await?;
+            }
         }
         Ok(ImageLayout {
-            cache_identity: CacheIdentity::from_resolved(
-                ImageReference::try_from(&reference)?.resolve(ContentDigest::parse(&image_digest)?)?,
-                &self.architecture,
-                RUNTIME_CONTRACT,
-            )?,
+            cache_identity,
             directory,
             source_digest,
             image_digest,

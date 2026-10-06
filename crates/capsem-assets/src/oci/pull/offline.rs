@@ -3,6 +3,19 @@
 use super::*;
 
 impl Puller {
+    /// Read durable verification metadata. It must be reconciled before a
+    /// caller reports readiness, and it never supplies execution authority.
+    pub async fn cached_receipt(&self, key: &super::super::CacheKey) -> Result<Option<CacheReceipt>> {
+        let cache = self.cache.as_ref().context("receipt lookup requires an image cache")?;
+        cache.prepare().await?;
+        cache.read_receipt(key).await
+    }
+
+    /// Bind a verified published filesystem to its original image receipt.
+    pub async fn retain_cached_root(&self, key: &super::super::CacheKey, root: &RootfsLayout) -> Result<()> {
+        let cache = self.cache.as_ref().context("root retention requires an image cache")?;
+        cache.bind_root_receipt(key, root.receipt.clone()).await
+    }
     /// Prefer verified local bytes for an admitted immutable image. Moving
     /// tags still resolve online; a miss uses the normal registry transport.
     pub async fn pull_prefer_cached(&self, reference: &str, parent: &Path) -> Result<ImageLayout> {

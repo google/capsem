@@ -2,6 +2,151 @@ use super::super::tests::{digest, Registry};
 use super::*;
 
 #[tokio::test]
+async fn verified_legacy_cache_materialization_publishes_its_missing_receipt_offline() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(BlobCache::at(root.path()).unwrap());
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    std::fs::remove_file(root.path().join("blobs").join(format!("receipt-{}", key.as_str()))).unwrap();
+    let reference = registry
+        .reference()
+        .replace(":latest", &format!("@{}", image.image_digest));
+    registry.task.abort();
+    let local = puller.pull_cached(&reference, parent.path()).await.unwrap();
+    assert_eq!(local.cache_identity(), image.cache_identity());
+    assert!(
+        puller.cached_receipt(&key).await.unwrap().is_some(),
+        "verified pre-receipt cache data needs owner metadata too"
+    );
+}
+
+#[tokio::test]
+async fn published_filesystem_receipts_bind_the_exact_native_manifest_descriptor() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(BlobCache::at(root.path()).unwrap());
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    let original = puller.cached_receipt(&key).await.unwrap().unwrap();
+    let wrong_reference = registry.published_filesystem(&image.source_digest, Some(1));
+    let subject = ContentDigest::parse(&image.source_digest).unwrap();
+    let wrong = puller
+        .fetch_rootfs(&wrong_reference, &subject, parent.path())
+        .await
+        .unwrap();
+    assert!(
+        puller.retain_cached_root(&key, &wrong).await.is_err(),
+        "filesystem receipt must bind native subject size as well as digest"
+    );
+    assert_eq!(
+        puller
+            .cached_receipt(&key)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation()
+            .unwrap(),
+        original.generation().unwrap()
+    );
+    let reference = registry.published_filesystem(&image.source_digest, None);
+    let filesystem = puller.fetch_rootfs(&reference, &subject, parent.path()).await.unwrap();
+    let namespace = puller
+        .cache
+        .as_ref()
+        .unwrap()
+        .for_repository(&image_reference(&registry.reference()).unwrap());
+    let config = root
+        .path()
+        .join("blobs")
+        .join(namespace.entry_name(&digest(&registry.config)).unwrap());
+    std::fs::write(&config, vec![b'x'; registry.config.len()]).unwrap();
+    assert!(
+        puller.retain_cached_root(&key, &filesystem).await.is_err(),
+        "a failed byte recheck must not publish an updated receipt"
+    );
+    assert_eq!(
+        puller
+            .cached_receipt(&key)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation()
+            .unwrap(),
+        original.generation().unwrap()
+    );
+    std::fs::write(&config, &registry.config).unwrap();
+    puller.retain_cached_root(&key, &filesystem).await.unwrap();
+    let retained = puller.cached_receipt(&key).await.unwrap().unwrap();
+    assert!(retained.root().is_some());
+    assert_ne!(retained.generation().unwrap(), original.generation().unwrap());
+    registry.task.abort();
+    let fresh = puller.cached_receipt(&key).await.unwrap().unwrap();
+    assert_eq!(fresh.generation().unwrap(), retained.generation().unwrap());
+}
+
+#[tokio::test]
+async fn successful_pull_retains_a_durable_receipt_without_registry_secrets_or_ready_claims() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let cache = BlobCache::at(root.path()).unwrap();
+    let mut puller = registry.puller();
+    puller.authentication = RegistryAuth::Basic("test-account".into(), "private-registry-secret".into());
+    puller.cache = Some(cache.clone());
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    let receipt = puller.cached_receipt(&key).await.unwrap().unwrap();
+    assert_eq!(receipt.identity(), image.cache_identity());
+    assert_eq!(receipt.native_digest().as_str(), image.source_digest);
+    assert!(receipt.verified_at_unix_ns() > 0);
+    let bytes = receipt.encode().unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        document.get("ready").is_none(),
+        "loaded metadata must not declare readiness"
+    );
+    assert!(!String::from_utf8(bytes).unwrap().contains("private-registry-secret"));
+    let mut fresh = registry.puller();
+    fresh.cache = Some(cache);
+    assert_eq!(
+        fresh.cached_receipt(&key).await.unwrap().unwrap().generation().unwrap(),
+        receipt.generation().unwrap()
+    );
+    let path = root.path().join("blobs").join(format!("receipt-{}", key.as_str()));
+    let valid = std::fs::read(&path).unwrap();
+    let target = parent.path().join("foreign-receipt");
+    std::fs::write(&target, &valid).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+    assert!(
+        fresh.cached_receipt(&key).await.is_err(),
+        "receipt reader must not follow links"
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), valid);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, &valid).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len((METADATA_LIMIT + 1) as u64)
+        .unwrap();
+    assert!(
+        fresh.cached_receipt(&key).await.is_err(),
+        "oversized disk records must be bounded before allocation"
+    );
+    std::fs::write(&path, b"{\"schema_version\":999}").unwrap();
+    assert!(fresh.cached_receipt(&key).await.is_err());
+    std::fs::remove_file(&path).unwrap();
+    assert!(fresh.cached_receipt(&key).await.unwrap().is_none());
+}
+
+#[tokio::test]
 async fn cache_preferred_images_fetch_cold_pins_refresh_tags_and_work_without_registry() {
     let registry = Registry::start(|_, _| {}).await;
     let parent = tempfile::tempdir().unwrap();

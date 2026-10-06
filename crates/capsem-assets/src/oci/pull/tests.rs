@@ -359,6 +359,25 @@ impl Drop for Registry {
 }
 
 impl Registry {
+    pub(super) fn published_filesystem(&self, subject: &str, subject_size: Option<u64>) -> String {
+        let mut blobs = self.blobs.lock().unwrap();
+        let size = blobs[&format!("/v2/team/image/manifests/{subject}")].len() as u64;
+        let manifest = serde_json::to_vec(&json!({
+            "schemaVersion": 2, "mediaType": OCI_IMAGE_MEDIA_TYPE, "artifactType": ROOTFS_MEDIA_TYPE,
+            "config": descriptor("application/vnd.oci.empty.v1+json", b"{}"),
+            "subject": {"mediaType": IMAGE_MANIFEST_MEDIA_TYPE, "digest": subject, "size": subject_size.unwrap_or(size)},
+            "layers": [descriptor(ROOTFS_MEDIA_TYPE, ROOTFS_BYTES)]
+        })).unwrap();
+        let artifact = digest(&manifest);
+        blobs.insert(format!("/v2/team/image/manifests/{artifact}"), manifest);
+        blobs.insert(
+            format!("/v2/team/image/blobs/{}", digest(ROOTFS_BYTES)),
+            ROOTFS_BYTES.to_vec(),
+        );
+        drop(blobs);
+        format!("{}/team/image@{artifact}", self.address)
+    }
+
     pub(super) async fn start(change: impl FnOnce(&mut Value, &mut BTreeMap<String, Vec<u8>>)) -> Self {
         Self::start_with_auth(change, false).await
     }
