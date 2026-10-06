@@ -2,8 +2,37 @@
 
 use std::{collections::HashSet, os::unix::fs::MetadataExt};
 
+use super::{CacheReceipt, CacheSnapshot};
 use anyhow::{Context, Result};
 use capsem_foundation::unix::contained::{ContainedDir, EntryKind};
+
+/// Metadata observation only. Rows and reclaim estimates grant neither
+/// readiness nor deletion authority; an apply operation revalidates its plan.
+#[derive(Clone, Debug)]
+pub struct CacheInventory {
+    pub usage: CacheUsage,
+    pub logical_bytes: u64,
+    pub associated_allocated_bytes: u64,
+    pub control_allocated_bytes: u64,
+    pub unassociated_allocated_bytes: u64,
+    pub unmanaged_allocated_bytes: u64,
+    /// Every receipt-shaped entry decoded; this is not full image verification.
+    pub reference_graph_complete: bool,
+    pub invalid_receipts: u64,
+    pub images: Vec<ImageInventory>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ImageInventory {
+    pub receipt: CacheReceipt,
+    pub snapshot: CacheSnapshot,
+    pub logical_bytes: u64,
+    pub allocated_bytes: u64,
+    pub shared_allocated_bytes: u64,
+    pub reclaimable_allocated_bytes: u64,
+    pub missing_blobs: u64,
+    pub busy: bool,
+}
 
 /// Observed physical usage, including unknown files and cache controls.
 /// External writers can change it during traversal; it grants no readiness

@@ -15,7 +15,7 @@ pub use owner::ImageCache;
 pub use removal::{RemovalPreview, RemovalResult};
 mod inventory;
 pub use identity::{CacheIdentity, CacheKey};
-pub use inventory::CacheUsage;
+pub use inventory::{CacheInventory, CacheUsage, ImageInventory};
 mod readiness;
 mod receipts;
 pub use readiness::{CacheSnapshot, CacheState};

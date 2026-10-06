@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use super::{cache::BlobCache, CacheKey, CacheSnapshot, CacheUsage};
+use super::{cache::BlobCache, CacheInventory, CacheKey, CacheSnapshot, CacheUsage};
 
 #[derive(Clone)]
 pub struct ImageCache {
@@ -25,6 +25,12 @@ impl ImageCache {
     pub async fn usage(&self) -> Result<CacheUsage> {
         self.inner.prepare().await?;
         self.inner.usage().await
+    }
+
+    /// Explicit descriptor-owned inventory, never an idle polling operation.
+    pub async fn inventory(&self) -> Result<CacheInventory> {
+        self.inner.prepare().await?;
+        self.inner.inventory().await
     }
 
     #[cfg(test)]

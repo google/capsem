@@ -24,6 +24,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::digest_hex;
+mod inventory;
 mod readiness;
 mod receipts;
 mod removal;

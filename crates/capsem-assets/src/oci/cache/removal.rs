@@ -106,7 +106,7 @@ fn references(cache: &BlobCache, directory: &ContainedDir, key: &CacheKey) -> Re
     Ok((references, retained))
 }
 
-fn names(cache: &BlobCache, receipt: &CacheReceipt) -> Result<BTreeMap<String, BlobKind>> {
+pub(super) fn names(cache: &BlobCache, receipt: &CacheReceipt) -> Result<BTreeMap<String, BlobKind>> {
     let mut names = BTreeMap::new();
     for (origin, blobs) in std::iter::once((receipt.origin(), receipt.blobs()))
         .chain(receipt.root().map(|root| (root.origin.as_str(), root.blobs.as_slice())))
@@ -125,7 +125,7 @@ fn names(cache: &BlobCache, receipt: &CacheReceipt) -> Result<BTreeMap<String, B
     Ok(names)
 }
 
-fn materializing_with(root: &ContainedDir, probe_barrier: bool) -> Result<bool> {
+pub(super) fn materializing_with(root: &ContainedDir, probe_barrier: bool) -> Result<bool> {
     let directory = root.descend("locks".as_ref())?;
     if probe_barrier {
         match try_acquire_existing(&directory.path().join("materialization.lock"), LockMode::Exclusive) {
