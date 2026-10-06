@@ -279,6 +279,16 @@ def _docker_excluded(relative: str, patterns: list[str]) -> bool:
     return excluded
 
 
+@pytest.mark.parametrize("relative", [
+    ".sprinty/current", ".sprinty/artifacts/registry/server.key",
+    "nested/.sprinty/sprints/001.json",
+])
+def test_local_sprint_records_do_not_enter_build_contexts(relative: str) -> None:
+    patterns = (PROJECT_ROOT / ".dockerignore").read_text().splitlines()
+    patterns = [line.strip() for line in patterns if line.strip() and not line.startswith("#")]
+    assert _docker_excluded(relative, patterns), "local agent state is not container source"
+
+
 def test_every_tracked_rust_source_reaches_the_build_context() -> None:
     """The lane compiles the workspace from the copied context, so no tracked
     Rust source may be excluded from it. `**/private` keeps signing material

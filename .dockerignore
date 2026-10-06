@@ -9,6 +9,8 @@
 **/.venv
 **/dist
 .claude
+# Local sprint records and diagnostics belong to the agent, not build containers.
+**/.sprinty
 .git
 **/.pnpm-store
 # Local benchmark-framework experiments are source checkouts with their own

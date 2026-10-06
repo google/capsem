@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Docker build contexts exclude local Sprinty records and diagnostic artifacts,
+  keeping agent state out of build containers and retained build contexts.
+
 - Astro build dependencies use `http-cache-semantics` 4.3.0 with a local guard
   that requires revalidation of zero-lifetime responses. Cookie responses can
   no longer bypass that boundary through max-stale, stale-while-revalidate or
