@@ -444,6 +444,25 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+      # Same reason as the binary pairing gate: a hosted-only failure has to
+      # be diagnosable from outside the runner. google/capsem#282's second
+      # sighting failed here with its process.log preserved on the runner and
+      # nowhere else. qualify-assets keeps its prefix worktree on failure, and
+      # the evidence is preserved inside it.
+      - name: Upload pairing evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: profile-pairing-evidence-${{ github.run_attempt }}
+          path: |
+            cache/target/tests/evidence/
+            cache/target/gate-runs/
+            cache/worktrees/*/cache/target/tests/evidence/
+            cache/worktrees/*/cache/target/gate-runs/
+          retention-days: 7
+          include-hidden-files: true
+          if-no-files-found: warn
+
       - name: Record deferred profile staging boundary
         if: ${{ needs.author-profile-release.outputs.activation_ready != 'true' }}
         env:
