@@ -116,6 +116,8 @@ pub struct ContainedEntry {
 /// ctime is strictly older than the moment the first identity was taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EntryIdentity {
+    /// Inode numbers are unique only within this device.
+    pub dev: u64,
     pub ino: u64,
     pub size: u64,
     /// (seconds, nanoseconds) since the epoch.
@@ -205,6 +207,11 @@ impl ContainedDir {
             fd: self.fd.try_clone()?,
             path: self.path.clone(),
         })
+    }
+
+    /// Metadata of the open directory, even if its path has been replaced.
+    pub fn metadata(&self) -> io::Result<std::fs::Metadata> {
+        File::from(self.fd.try_clone()?).metadata()
     }
 
     /// Verify that this opened descriptor names a current-user-owned mode
@@ -539,7 +546,12 @@ impl ContainedDir {
 }
 
 fn identity_of(stat: &nix::sys::stat::FileStat) -> EntryIdentity {
+    #[cfg(target_os = "macos")]
+    let dev = u64::from(stat.st_dev.cast_unsigned());
+    #[cfg(not(target_os = "macos"))]
+    let dev = stat.st_dev;
     EntryIdentity {
+        dev,
         ino: stat.st_ino,
         size: u64::try_from(stat.st_size).unwrap_or(0),
         mtime: (stat.st_mtime, stat.st_mtime_nsec),

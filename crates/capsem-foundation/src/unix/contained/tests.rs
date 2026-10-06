@@ -8,6 +8,24 @@ use nix::sys::stat::Mode;
 use super::*;
 
 #[test]
+fn inventory_metadata_stays_bound_to_opened_inodes() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("blob"), b"cached bytes").unwrap();
+    let file = std::fs::metadata(tree.root_path.join("blob")).unwrap();
+    let entry = tree.root.entries().unwrap().remove(0);
+    assert_eq!(entry.identity.dev, file.dev());
+    assert_eq!(entry.identity.ino, file.ino());
+    assert_eq!(entry.allocated, file.blocks() * 512);
+
+    let original = std::fs::metadata(&tree.root_path).unwrap();
+    std::fs::rename(&tree.root_path, tree.outside.join("saved")).unwrap();
+    symlink(&tree.outside, &tree.root_path).unwrap();
+    let opened = tree.root.metadata().unwrap();
+    assert_eq!((opened.dev(), opened.ino()), (original.dev(), original.ino()));
+    assert_eq!(opened.blocks(), original.blocks());
+}
+
+#[test]
 fn link_reads_are_relative_to_the_open_directory_after_an_ancestor_is_replaced() {
     let tree = tree();
     let original = tree.root_path.join("child");
