@@ -406,6 +406,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OCI retention counts allocated disk blocks once per inode, including cache
+  receipts, partials and controls. Sparse files no longer consume their logical
+  length; receipt publication reserves actual allocation before committing,
+  while active filesystem roots remain protected from eviction.
+
 - Container startup applies its firewall chains in one restore call, reducing
   process overhead while preserving VM interception, isolation and network rules.
 

@@ -63,21 +63,27 @@ pub(super) fn read(directory: &ContainedDir, key: &CacheKey) -> Result<Option<Ca
 
 fn publish(cache: &BlobCache, directory: &ContainedDir, receipt: CacheReceipt) -> Result<()> {
     let bytes = receipt.encode()?;
-    cache.prune_for(directory, bytes.len() as u64)?;
-    verify(cache, directory, receipt.origin(), receipt.blobs())?;
-    if let Some(root) = receipt.root() {
-        verify(cache, directory, &root.origin, &root.blobs)?;
-    }
     let mut temporary = tempfile::Builder::new()
         .prefix(".partial-receipt-")
         .tempfile_in(directory.path())?;
     temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;
+    let metadata = temporary.as_file().metadata()?;
+    cache.prune_keeping(directory, Some((metadata.dev(), metadata.ino())))?;
+    verify(cache, directory, receipt.origin(), receipt.blobs())?;
+    if let Some(root) = receipt.root() {
+        verify(cache, directory, &root.origin, &root.blobs)?;
+    }
     let name = format!("receipt-{}", receipt.key().as_str());
     temporary.persist(directory.path().join(&name))?;
-    if let Err(error) = directory.sync() {
+    if let Err(error) = directory
+        .sync()
+        .map_err(anyhow::Error::from)
+        .and_then(|()| cache.check_capacity(&ContainedDir::open_root(&cache.root)?))
+    {
         directory.remove_non_directory(name.as_ref())?;
-        return Err(error.into());
+        directory.sync()?;
+        return Err(error);
     }
     Ok(())
 }

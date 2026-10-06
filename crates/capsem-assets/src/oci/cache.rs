@@ -306,15 +306,20 @@ impl BlobCache {
     }
 
     fn prune(&self, directory: &ContainedDir) -> Result<()> {
-        self.prune_for(directory, 0)
+        self.prune_keeping(directory, None)
     }
 
-    fn prune_for(&self, directory: &ContainedDir, reservation: u64) -> Result<()> {
+    fn prune_keeping(&self, directory: &ContainedDir, keep: Option<(u64, u64)>) -> Result<()> {
+        let root = ContainedDir::open_root(&self.root)?;
+        let expected = root.walk(&self.policy.entry_root)?.metadata()?;
+        let actual = directory.metadata()?;
+        ensure!(
+            (expected.dev(), expected.ino()) == (actual.dev(), actual.ino()),
+            "OCI cache directory changed before pruning"
+        );
         let mut entries = directory.entries()?;
         entries.sort_by_key(|entry| (entry.mtime_secs, entry.name.clone()));
-        let mut used = entries.iter().try_fold(reservation, |used, entry| {
-            used.checked_add(entry.size).context("OCI cache usage overflow")
-        })?;
+        let mut used = super::inventory::measure(&root)?.allocated_bytes;
         let target = if used > self.policy.max_size_bytes {
             self.policy.warm_size_bytes
         } else {
@@ -322,6 +327,9 @@ impl BlobCache {
         };
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
         for entry in entries {
+            if keep == Some((entry.identity.dev, entry.identity.ino)) {
+                continue;
+            }
             let stale = now.saturating_sub(entry.mtime_secs) > self.policy.maximum_age_hours * 3600;
             let name = entry.name.to_string_lossy();
             let partial = name.starts_with(".partial-");
@@ -351,12 +359,16 @@ impl BlobCache {
                     continue;
                 }
                 directory.remove_non_directory(&entry.name)?;
-                tracing::debug!(entry = %name, bytes = entry.size, stale, "pruned OCI cache entry");
-                used = used.saturating_sub(entry.size);
+                tracing::debug!(entry = %name, allocated_bytes = entry.allocated, stale, "pruned OCI cache entry");
+                used = used.saturating_sub(entry.allocated);
             }
         }
+        self.check_capacity(&root)
+    }
+
+    fn check_capacity(&self, root: &ContainedDir) -> Result<()> {
         ensure!(
-            used <= self.policy.max_size_bytes,
+            super::inventory::measure(root)?.allocated_bytes <= self.policy.max_size_bytes,
             "OCI cache capacity is held by protected or unrecognized entries"
         );
         Ok(())

@@ -1,18 +1,67 @@
 use super::*;
 
 #[tokio::test]
+async fn capacity_retains_sparse_and_hardlinked_bytes_below_physical_limit() {
+    use std::io::{Seek, SeekFrom};
+    let root = super::super::tests::private_dir();
+    let mut cache = BlobCache::at(root.path()).unwrap();
+    cache.prepare().await.unwrap();
+    cache.policy.warm_size_bytes = 512 * 1024;
+    cache.policy.max_size_bytes = 1024 * 1024;
+    let path = root.path().join("blobs").join("a".repeat(64));
+    let mut file = File::create(&path).unwrap();
+    file.seek(SeekFrom::Start(64 * 1024 * 1024)).unwrap();
+    file.write_all(b"sparse bytes").unwrap();
+    file.sync_all().unwrap();
+    std::fs::hard_link(&path, root.path().join("locks/alias")).unwrap();
+    let used = cache.usage().await.unwrap().allocated_bytes;
+    assert!(used < cache.policy.max_size_bytes);
+    let directory = ContainedDir::open_root(root.path())
+        .unwrap()
+        .walk(&cache.policy.entry_root)
+        .unwrap();
+    cache.prune(&directory).unwrap();
+    assert!(
+        path.exists(),
+        "logical file length must not consume the physical budget"
+    );
+}
+
+#[tokio::test]
+async fn capacity_refuses_unprunable_control_bytes_outside_the_blob_directory() {
+    let root = super::super::tests::private_dir();
+    let mut cache = BlobCache::at(root.path()).unwrap();
+    cache.prepare().await.unwrap();
+    let baseline = cache.usage().await.unwrap().allocated_bytes;
+    let control = root.path().join("locks/control");
+    std::fs::write(&control, vec![7; 128 * 1024]).unwrap();
+    cache.policy.warm_size_bytes = baseline + 1024;
+    cache.policy.max_size_bytes = baseline + 64 * 1024;
+    let directory = ContainedDir::open_root(root.path())
+        .unwrap()
+        .walk(&cache.policy.entry_root)
+        .unwrap();
+    assert!(
+        cache.prune(&directory).is_err(),
+        "control allocation is part of the same budget"
+    );
+    assert!(control.exists(), "control entries must not be broadly reclaimed");
+}
+
+#[tokio::test]
 async fn a_receipt_shaped_name_does_not_make_unrecognized_bytes_prunable() {
     let root = super::super::tests::private_dir();
     let mut cache = BlobCache::at(root.path()).unwrap();
     cache.prepare().await.unwrap();
-    cache.policy.warm_size_bytes = 8;
-    cache.policy.max_size_bytes = 16;
+    let baseline = cache.usage().await.unwrap().allocated_bytes;
     let path = root
         .path()
         .join("blobs")
         .join(format!("receipt-oci-{}", "a".repeat(64)));
     let unknown = b"unrecognized receipt bytes";
     std::fs::write(&path, unknown).unwrap();
+    cache.policy.warm_size_bytes = baseline.max(1);
+    cache.policy.max_size_bytes = baseline + std::fs::metadata(&path).unwrap().blocks() * 256;
     let directory = ContainedDir::open_root(root.path())
         .unwrap()
         .walk(&cache.policy.entry_root)
@@ -26,6 +75,81 @@ async fn a_receipt_shaped_name_does_not_make_unrecognized_bytes_prunable() {
 
 fn identity(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+async fn set_one_payload_capacity(cache: &mut BlobCache, source: &Path) {
+    let used = cache.usage().await.unwrap().allocated_bytes;
+    cache.policy.warm_size_bytes = used;
+    cache.policy.max_size_bytes = used + std::fs::metadata(source).unwrap().blocks() * 256;
+}
+
+#[tokio::test]
+async fn receipt_publication_reserves_actual_allocation_and_keeps_its_live_temporary() {
+    use super::super::receipts::{BlobKind, BlobRef, CacheReceipt};
+    let root = super::super::tests::private_dir();
+    let staging = tempfile::tempdir().unwrap();
+    let manifest = b"manifest bytes";
+    let config = b"configuration bytes";
+    let manifest_digest = identity(manifest);
+    let config_digest = identity(config);
+    let reference = super::super::image_reference(&format!("localhost/team/image@{manifest_digest}")).unwrap();
+    let mut cache = BlobCache::at(root.path()).unwrap().for_repository(&reference);
+    cache.prepare().await.unwrap();
+    for (digest, bytes) in [
+        (&manifest_digest, manifest.as_slice()),
+        (&config_digest, config.as_slice()),
+    ] {
+        cache.publish_metadata(digest, bytes).await.unwrap();
+        std::fs::hard_link(
+            root.path().join("blobs").join(cache.entry_name(digest).unwrap()),
+            staging.path().join(digest_hex(digest).unwrap()),
+        )
+        .unwrap();
+    }
+    let receipt = CacheReceipt::new(
+        super::super::CacheIdentity::new(&reference.to_string(), "amd64", super::super::RUNTIME_CONTRACT).unwrap(),
+        &reference,
+        super::super::Digest::parse(&manifest_digest).unwrap(),
+        vec![
+            BlobRef::new(&manifest_digest, manifest.len() as u64, BlobKind::Metadata).unwrap(),
+            BlobRef::new(&config_digest, config.len() as u64, BlobKind::Private).unwrap(),
+        ],
+    )
+    .unwrap();
+    let bytes = receipt.encode().unwrap();
+    let calibration = staging.path().join("receipt-allocation");
+    std::fs::write(&calibration, &bytes).unwrap();
+    let allocation = std::fs::metadata(&calibration).unwrap().blocks() * 512;
+    assert!(
+        allocation > bytes.len() as u64,
+        "fixture must distinguish allocation from encoded length"
+    );
+    let used = cache.usage().await.unwrap().allocated_bytes;
+    cache.policy.warm_size_bytes = used;
+    cache.policy.max_size_bytes = used + bytes.len() as u64;
+    assert!(
+        cache.publish_receipt(receipt.clone()).await.is_err(),
+        "receipt allocation must fit before success"
+    );
+    assert!(cache.read_receipt(&receipt.key()).await.unwrap().is_none());
+    assert_eq!(
+        std::fs::read_dir(root.path().join("blobs")).unwrap().count(),
+        2,
+        "failed live reservation cleans its temporary and keeps protected bytes"
+    );
+    cache.policy.max_size_bytes = used + allocation;
+    cache.publish_receipt(receipt.clone()).await.unwrap();
+    assert_eq!(
+        cache
+            .read_receipt(&receipt.key())
+            .await
+            .unwrap()
+            .unwrap()
+            .generation()
+            .unwrap(),
+        receipt.generation().unwrap()
+    );
+    assert!(cache.usage().await.unwrap().allocated_bytes <= cache.policy.max_size_bytes);
 }
 
 fn readonly_payload(path: &Path, bytes: &[u8]) {
@@ -104,13 +228,12 @@ async fn root_retention_preserves_holders_and_reclaims_after_the_last_link() {
     let root = super::super::tests::private_dir();
     let staging = tempfile::tempdir().unwrap();
     let mut cache = BlobCache::at(root.path()).unwrap();
-    cache.policy.warm_size_bytes = 6;
-    cache.policy.max_size_bytes = 10;
     cache.prepare().await.unwrap();
     let a = identity(b"aaaaaa");
     let producer = staging.path().join("a");
     readonly_payload(&producer, b"aaaaaa");
     cache.publish_root(&a, &producer).await.unwrap();
+    set_one_payload_capacity(&mut cache, &producer).await;
     let retained = cached_root(root.path());
     File::open(&retained)
         .unwrap()
@@ -132,12 +255,11 @@ async fn root_capacity_refusal_rolls_back_the_new_link_without_mutating_active_b
     let root = super::super::tests::private_dir();
     let staging = tempfile::tempdir().unwrap();
     let mut cache = BlobCache::at(root.path()).unwrap();
-    cache.policy.warm_size_bytes = 6;
-    cache.policy.max_size_bytes = 10;
     cache.prepare().await.unwrap();
     let a = staging.path().join("a");
     readonly_payload(&a, b"aaaaaa");
     cache.publish_root(&identity(b"aaaaaa"), &a).await.unwrap();
+    set_one_payload_capacity(&mut cache, &a).await;
     let b = staging.path().join("b");
     readonly_payload(&b, b"bbbbbb");
     assert!(cache.publish_root(&identity(b"bbbbbb"), &b).await.is_err());
@@ -186,14 +308,13 @@ async fn retention_leaves_active_staging_intact_and_removes_old_blobs() {
     let root = super::super::tests::private_dir();
     let staging = tempfile::tempdir().unwrap();
     let mut cache = BlobCache::at(root.path()).unwrap();
-    cache.policy.warm_size_bytes = 6;
-    cache.policy.max_size_bytes = 10;
     cache.prepare().await.unwrap();
     let source = staging.path().join("source");
     let a = identity(b"aaaaaa");
     let b = identity(b"bbbbbb");
     std::fs::write(&source, b"aaaaaa").unwrap();
     cache.publish(&a, &source).await.unwrap();
+    set_one_payload_capacity(&mut cache, &source).await;
     let active = staging.path().join("active");
     assert!(cache.copy_hit(&a, 6, &active).await.unwrap());
     File::open(root.path().join("blobs").join(digest_hex(&a).unwrap()))
