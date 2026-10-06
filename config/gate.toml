@@ -2326,7 +2326,7 @@ context = "images/capsem-debug"
 script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/capsem-debug"
 cache_stage = "test-images"
-digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6", "linux/amd64" = "sha256:5cd02c592445a0223a1284b9b3f96c3ab94ae4842ddb7e5fc2882b0304834a2b" }
+digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6", "linux/amd64" = "sha256:10ad075005f89fc5fbf930d4cfa772fd0cce09bc44c0e265efc9691ff8472e33" }
 
 # The reference image: a pinned digest of the official `dev` image. Every
 # runtime test that boots a workload boots this one, so main development
