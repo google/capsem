@@ -29,6 +29,8 @@ PACKAGE_LOCAL_TEST_SOURCES = frozenset({"build_system/release_site/src/lib/relea
 BOUNDARY_FILES = frozenset(
     {
         "build_system/tests/gate/test_ci_tool_module_boundary.py",
+        "build_system/tests/gate/test_fixture_cargo_leases.py",
+        "build_system/tests/gate/test_gate_incomplete_reports.py",
         "build_system/tests/gate/test_criterion_collector.py",
         "build_system/tests/gate/test_gate_transition.py",
         "build_system/tests/cache/test_admission.py",
@@ -96,6 +98,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/helpers/protocol_fixture_recorder.py",
         "build_system/tests/helpers/prove_installed_shell.py",
         "build_system/tests/image/test_image_module_boundary.py",
+        "build_system/tests/image/test_asset_tools.py",
         "build_system/tests/image/test_componentcache.py",
         "build_system/tests/image/test_guest_binary_source_contract.py",
         "build_system/tests/image/test_kernel_config_honored.py",
