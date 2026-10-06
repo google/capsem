@@ -176,11 +176,6 @@ pub(crate) enum JobResult {
         data: Option<Vec<u8>>,
         error: Option<String>,
     },
-    LogFileBoundary {
-        success: bool,
-        data: Option<Vec<u8>>,
-        error: Option<String>,
-    },
     CloneState {
         result: Result<u64, String>,
     },

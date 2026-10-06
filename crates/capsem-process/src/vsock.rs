@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
-use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
+use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::{self as proto, GuestToHost, HostToGuest, HostVsockService};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, trace, warn};
 
@@ -29,8 +29,12 @@ mod exec_input;
 mod exec_output;
 mod shutdown;
 
-type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
-type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
+use crate::ipc::file_boundary::{
+    emit_explicit_file_security_event, file_content_preview, FileSecurityBoundary, PluginPolicyHandle,
+    SecurityRulesHandle,
+};
+#[cfg(test)]
+use crate::ipc::file_boundary::{rewritten_file_content, FILE_SECURITY_CONTENT_PREVIEW_MAX};
 
 /// Maximum attempts for the initial handshake before giving up.
 ///
@@ -482,7 +486,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let vm_id_for_cmd = vm_id_original;
     let vm_handle_for_cmd = vm_handle_original;
     let db_for_cmd = Arc::clone(&db);
-    let security_rules_for_cmd = Arc::clone(&security_rules);
     let pty_log_for_cmd = pty_log.clone();
     let shutdown_for_cmd = Arc::clone(&shutdown);
     let exec_dispatch = exec_dispatch::ExecDispatch {
@@ -565,55 +568,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         .unwrap()
                         .insert(id, ActiveFileOp::Read { path: path.clone() });
                     capsem_core::try_send!("hub_file_read", hub_tx.send(HostToGuest::FileRead { id, path }).await);
-                }
-                ServiceToProcess::LogFileBoundary {
-                    id,
-                    action,
-                    path,
-                    data,
-                    size,
-                    mime_type,
-                } => {
-                    let file_action = match action {
-                        FileBoundaryAction::Import => capsem_logger::FileAction::Imported,
-                        FileBoundaryAction::Export => capsem_logger::FileAction::Exported,
-                    };
-                    let event_id = emit_explicit_file_security_event(
-                        &db_for_cmd,
-                        &security_rules_for_cmd,
-                        &plugin_policy,
-                        FileSecurityBoundary {
-                            action: file_action,
-                            path,
-                            size: Some(size),
-                            content: Some(file_content_preview(&data)),
-                            mime_type,
-                        },
-                    )
-                    .await;
-                    let (success, data, error) = match event_id {
-                        Ok(Some(emission)) if emission.enforcement.is_allowed() => {
-                            (true, rewritten_file_content(&data, size, &emission.event), None)
-                        }
-                        Ok(Some(emission)) => (
-                            false,
-                            None,
-                            Some(
-                                emission
-                                    .enforcement
-                                    .reason
-                                    .unwrap_or_else(|| "file boundary blocked by security policy".into()),
-                            ),
-                        ),
-                        Ok(None) => (false, None, Some("failed to write file boundary security event".into())),
-                        Err(error) => (false, None, Some(error)),
-                    };
-                    if let Some(tx) = js_for_cmd.jobs.lock().unwrap().remove(&id) {
-                        capsem_core::try_send!(
-                            "job_result_log_file_boundary",
-                            tx.send(JobResult::LogFileBoundary { success, data, error })
-                        );
-                    }
                 }
                 ServiceToProcess::CloneState { id, destination } => {
                     clone_state::spawn(&hub_tx, &js_for_cmd, &db_for_cmd, &session_dir, id, destination);
@@ -1062,20 +1016,6 @@ fn read_bounded_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option
     Ok(Some(payload))
 }
 
-const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
-
-struct FileSecurityBoundary {
-    action: capsem_logger::FileAction,
-    path: String,
-    size: Option<u64>,
-    content: Option<String>,
-    mime_type: Option<String>,
-}
-
-fn file_content_preview(data: &[u8]) -> String {
-    String::from_utf8_lossy(&data[..data.len().min(FILE_SECURITY_CONTENT_PREVIEW_MAX)]).into_owned()
-}
-
 /// The message to fail an exec job with, or `None` when the command may run.
 ///
 /// A boundary that could not be evaluated refuses too: the exec rail is decided
@@ -1113,70 +1053,6 @@ fn exec_boundary_refusal(
             warn!(id, error, "failed to evaluate exec boundary");
             Some(format!("capsem: command refused, security evaluation failed: {error}"))
         }
-    }
-}
-
-async fn emit_explicit_file_security_event(
-    db: &Arc<capsem_logger::DbWriter>,
-    security_rules: &SecurityRulesHandle,
-    plugin_policy: &PluginPolicyHandle,
-    boundary: FileSecurityBoundary,
-) -> Result<Option<capsem_core::security_engine::SecurityRuleEmission>, String> {
-    let rules = security_rules.read().unwrap().clone();
-    let plugins = plugin_policy.read().unwrap().clone();
-    capsem_core::security_engine::emit_explicit_file_security_write_and_rules_with_plugins(
-        db,
-        &rules,
-        plugins,
-        capsem_core::security_engine::ExplicitFileSecurityEvent {
-            action: boundary.action,
-            path: boundary.path,
-            size: boundary.size,
-            content: boundary.content,
-            mime_type: boundary.mime_type,
-            trace_id: None,
-            credential_ref: None,
-        },
-    )
-    .await
-}
-
-fn rewritten_file_content(
-    original_preview: &[u8],
-    original_size: u64,
-    event: &capsem_core::security_engine::SecurityEvent,
-) -> Option<Vec<u8>> {
-    if original_preview.len() as u64 != original_size {
-        return None;
-    }
-    let mutating_rewrite = event.plugin_executions.iter().any(|execution| {
-        execution.applied
-            && !matches!(
-                execution.stage,
-                capsem_core::security_engine::SecurityPluginStage::Logging
-            )
-            && event.detections.iter().any(|detection| {
-                detection.plugin_id.as_deref() == Some(execution.plugin_id.as_str())
-                    && detection.plugin_mode == Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite)
-            })
-    });
-    if !mutating_rewrite {
-        return None;
-    }
-    let file = event.file.as_ref()?;
-    let content = file
-        .import_content
-        .as_deref()
-        .or(file.export_content.as_deref())
-        .or(file.read_content.as_deref())
-        .or(file.write_content.as_deref())
-        .or(file.create_content.as_deref())
-        .or(file.delete_content.as_deref())
-        .or(file.content.as_deref())?;
-    if content.as_bytes() == original_preview {
-        None
-    } else {
-        Some(content.as_bytes().to_vec())
     }
 }
 

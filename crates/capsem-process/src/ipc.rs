@@ -17,6 +17,7 @@ use crate::terminal::TerminalRelay;
 
 mod container_pull;
 mod exec;
+pub(crate) mod file_boundary;
 mod private;
 mod publication;
 
@@ -620,107 +621,8 @@ pub(crate) async fn handle_ipc_connection(
                     }
                 });
             }
-            ServiceToProcess::LogFileBoundary {
-                id,
-                action,
-                path,
-                data,
-                size,
-                mime_type,
-            } => {
-                let job_store = job_store.clone();
-                let ctrl_tx = ctrl_tx.clone();
-                let ipc_tx_out = ipc_tx_out.clone();
-                let db = Arc::clone(&net_state.db);
-                tokio::spawn(async move {
-                    debug!(id, ?action, path, size, "Received LogFileBoundary command via IPC");
-                    let (j_tx, j_rx) = oneshot::channel();
-                    job_store.jobs.lock().unwrap().insert(id, j_tx);
-                    capsem_core::try_send!(
-                        "ctrl_log_file_boundary",
-                        ctrl_tx
-                            .send(ServiceToProcess::LogFileBoundary {
-                                id,
-                                action,
-                                path,
-                                data,
-                                size,
-                                mime_type,
-                            })
-                            .await
-                    );
-                    match tokio::time::timeout(Duration::from_secs(5), j_rx).await {
-                        Ok(Ok(JobResult::LogFileBoundary { success, data, error })) => {
-                            db.flush().await;
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success,
-                                        data,
-                                        error,
-                                    })
-                                    .await
-                            );
-                        }
-                        Ok(Ok(JobResult::Error { message })) => {
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result_err",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success: false,
-                                        data: None,
-                                        error: Some(message),
-                                    })
-                                    .await
-                            );
-                        }
-                        Ok(Ok(other)) => {
-                            error!(id, result = ?other, "unexpected job result for LogFileBoundary");
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result_unexpected",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success: false,
-                                        data: None,
-                                        error: Some("unexpected log file boundary result".into()),
-                                    })
-                                    .await
-                            );
-                        }
-                        Ok(Err(_)) => {
-                            let _ = job_store.jobs.lock().unwrap().remove(&id);
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result_closed",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success: false,
-                                        data: None,
-                                        error: Some("log file boundary result channel closed".into()),
-                                    })
-                                    .await
-                            );
-                        }
-                        Err(_) => {
-                            let _ = job_store.jobs.lock().unwrap().remove(&id);
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result_timeout",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success: false,
-                                        data: None,
-                                        error: Some("log file boundary timed out".into()),
-                                    })
-                                    .await
-                            );
-                        }
-                    }
-                });
+            message @ ServiceToProcess::LogFileBoundary { .. } => {
+                file_boundary::spawn(&net_state, &mcp_runtime, &ipc_tx_out, message);
             }
             ServiceToProcess::CloneState { id, destination } => {
                 let job_store = job_store.clone();

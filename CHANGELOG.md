@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the read-only image share; a promised artifact that cannot be verified
   stops setup before staging. Verified filesystem payloads are shared across
   sessions, with active links protected from cache eviction.
+- Host file import/export audits run through the VM owner's IPC handler before
+  the guest control connection is ready, so container staging overlaps boot
+  while preserving policy enforcement and the session ledger.
 
 ### Security
 

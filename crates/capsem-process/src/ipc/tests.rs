@@ -83,22 +83,28 @@ async fn malformed_handshake_is_refused_before_typed_ipc_starts() {
 
 /// The owner's IPC dispatcher as `main.rs` wires it, on a fixture policy
 /// with an in-memory ledger and a canned MCP aggregator.
-struct Dispatcher {
+pub(in crate::ipc) struct Dispatcher {
     job_store: Arc<JobStore>,
     term_relay: Arc<TerminalRelay>,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     events_tx: broadcast::Sender<ProcessToService>,
-    net_state: Arc<capsem_core::SandboxNetworkState>,
-    mcp_runtime: Arc<McpRuntime>,
+    pub(in crate::ipc) net_state: Arc<capsem_core::SandboxNetworkState>,
+    pub(in crate::ipc) mcp_runtime: Arc<McpRuntime>,
     runtime_source: RuntimePolicySource,
-    ready: Arc<AtomicBool>,
+    pub(in crate::ipc) ready: Arc<AtomicBool>,
 }
 
 impl Dispatcher {
-    fn new(temp: &std::path::Path) -> (Self, mpsc::Receiver<ServiceToProcess>) {
+    pub(in crate::ipc) fn new(temp: &std::path::Path) -> (Self, mpsc::Receiver<ServiceToProcess>) {
+        Self::with_db(temp, Arc::new(capsem_logger::DbWriter::open_in_memory(64).unwrap()))
+    }
+
+    pub(in crate::ipc) fn with_db(
+        temp: &std::path::Path,
+        db: Arc<capsem_logger::DbWriter>,
+    ) -> (Self, mpsc::Receiver<ServiceToProcess>) {
         let active_policy = temp.join("active_policy.toml");
         std::fs::write(&active_policy, "[user_rules]\n[corp_rules]\n[network]\n").unwrap();
-        let db = Arc::new(capsem_logger::DbWriter::open_in_memory(64).unwrap());
         let net_state = Arc::new(
             capsem_core::create_net_state_with_policy(
                 "ipc-dispatch-test",
@@ -193,7 +199,7 @@ impl Dispatcher {
     }
 
     /// Serve one service connection the way the owner's accept loop does.
-    fn connection(&self, stream: tokio::net::UnixStream) -> tokio::task::JoinHandle<Result<()>> {
+    pub(in crate::ipc) fn connection(&self, stream: tokio::net::UnixStream) -> tokio::task::JoinHandle<Result<()>> {
         tokio::spawn(handle_ipc_connection(
             stream,
             self.ctrl_tx.clone(),
@@ -542,119 +548,6 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
             data: None,
             error: Some(error),
         } if error == "read fixture failed"
-    ));
-
-    service_tx
-        .send(ServiceToProcess::LogFileBoundary {
-            id: 13,
-            action: capsem_proto::ipc::FileBoundaryAction::Export,
-            path: "/root/out.txt".to_string(),
-            data: Vec::new(),
-            size: 4,
-            mime_type: Some("text/plain".to_string()),
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        ctrl_rx.recv().await.unwrap(),
-        ServiceToProcess::LogFileBoundary { id: 13, .. }
-    ));
-    job_store
-        .jobs
-        .lock()
-        .unwrap()
-        .remove(&13)
-        .unwrap()
-        .send(JobResult::LogFileBoundary {
-            success: true,
-            data: None,
-            error: None,
-        })
-        .unwrap();
-    assert!(matches!(
-        service_rx.recv().await.unwrap(),
-        ProcessToService::LogFileBoundaryResult {
-            id: 13,
-            success: true,
-            ..
-        }
-    ));
-
-    for (id, result, expected_error) in [
-        (
-            21,
-            JobResult::Error {
-                message: "boundary fixture failed".to_string(),
-            },
-            "boundary fixture failed",
-        ),
-        (
-            22,
-            JobResult::ReadFile {
-                data: None,
-                error: None,
-            },
-            "unexpected log file boundary result",
-        ),
-    ] {
-        service_tx
-            .send(ServiceToProcess::LogFileBoundary {
-                id,
-                action: capsem_proto::ipc::FileBoundaryAction::Import,
-                path: "/root/in.txt".to_string(),
-                data: Vec::new(),
-                size: 0,
-                mime_type: None,
-            })
-            .await
-            .unwrap();
-        assert!(matches!(
-            ctrl_rx.recv().await.unwrap(),
-            ServiceToProcess::LogFileBoundary { id: actual, .. } if actual == id
-        ));
-        job_store
-            .jobs
-            .lock()
-            .unwrap()
-            .remove(&id)
-            .unwrap()
-            .send(result)
-            .unwrap();
-        assert!(matches!(
-            service_rx.recv().await.unwrap(),
-            ProcessToService::LogFileBoundaryResult {
-                id: actual,
-                success: false,
-                error: Some(error),
-                ..
-            } if actual == id && error == expected_error
-        ));
-    }
-
-    service_tx
-        .send(ServiceToProcess::LogFileBoundary {
-            id: 23,
-            action: capsem_proto::ipc::FileBoundaryAction::Export,
-            path: "/root/closed.txt".to_string(),
-            data: Vec::new(),
-            size: 0,
-            mime_type: None,
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        ctrl_rx.recv().await.unwrap(),
-        ServiceToProcess::LogFileBoundary { id: 23, .. }
-    ));
-    drop(job_store.jobs.lock().unwrap().remove(&23).unwrap());
-    assert!(matches!(
-        service_rx.recv().await.unwrap(),
-        ProcessToService::LogFileBoundaryResult {
-            id: 23,
-            success: false,
-            error: Some(error),
-            ..
-        } if error == "log file boundary result channel closed"
     ));
 
     service_tx
