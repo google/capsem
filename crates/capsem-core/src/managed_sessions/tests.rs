@@ -57,3 +57,82 @@ fn contained_ownership_record_refuses_links_corruption_and_nil_request() {
     assert_eq!(std::fs::read(&path).unwrap(), b"broken JSON");
     assert!(store.reserve(uuid::Uuid::nil(), &capability).is_err());
 }
+
+#[test]
+fn close_before_create_is_a_durable_tombstone() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ownership");
+    let store = Registry::open(&path).unwrap();
+    let request = Uuid::new_v4();
+    let cap = Capability::from_bytes([3; 32]);
+    let closed = store.close(request, &cap).unwrap();
+    assert_eq!(closed.state(), State::Closed);
+    let reopened = Registry::open(&path).unwrap();
+    let Reservation::Existing(existing) = reopened.reserve(request, &cap).unwrap() else {
+        panic!("close must prevent later creation");
+    };
+    assert_eq!(existing.generation(), closed.generation());
+    assert_eq!(existing.state(), State::Closed);
+    assert!(reopened.close(request, &Capability::from_bytes([4; 32])).is_err());
+}
+
+#[test]
+fn close_racing_create_requires_matching_vm_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Registry::open(&root.path().join("ownership")).unwrap();
+    let request = Uuid::new_v4();
+    let cap = Capability::from_bytes([5; 32]);
+    let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
+        panic!()
+    };
+    assert!(store.begin_create(&ticket).unwrap());
+    assert!(!store.begin_create(&ticket).unwrap());
+    assert_eq!(store.close(request, &cap).unwrap().state(), State::Closing);
+    let binding = VmBinding::new("vm-123".into(), Uuid::new_v4()).unwrap();
+    let late = store.bind_created(&ticket, binding.clone()).unwrap();
+    assert_eq!(late.state(), State::Closing);
+    assert_eq!(late.vm(), Some(&binding));
+    let wrong = VmBinding::new("vm-123".into(), Uuid::new_v4()).unwrap();
+    assert!(store.complete_cleanup(&ticket, &wrong).is_err());
+    assert_eq!(store.close(request, &cap).unwrap().state(), State::Closing);
+    let closed = store.complete_cleanup(&ticket, &binding).unwrap();
+    assert_eq!(closed.state(), State::Closed);
+    assert!(closed.vm().is_none());
+    assert!(store.bind_created(&ticket, binding).is_err());
+}
+
+#[test]
+fn create_and_close_transitions_refuse_stale_tickets_and_vm_rebinding() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Registry::open(&root.path().join("ownership")).unwrap();
+    let request = Uuid::new_v4();
+    let cap = Capability::from_bytes([6; 32]);
+    let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
+        panic!()
+    };
+    let stale = Ticket {
+        request,
+        generation: Uuid::new_v4(),
+    };
+    assert!(store.begin_create(&stale).is_err());
+    assert!(store.begin_create(&ticket).unwrap());
+    let binding = VmBinding::new("vm-456".into(), Uuid::new_v4()).unwrap();
+    assert_eq!(
+        store.bind_created(&ticket, binding.clone()).unwrap().state(),
+        State::Active
+    );
+    assert!(store.complete_cleanup(&ticket, &binding).is_err());
+    assert!(store
+        .bind_created(&ticket, VmBinding::new("other".into(), Uuid::new_v4()).unwrap())
+        .is_err());
+    assert_eq!(
+        store.bind_created(&ticket, binding.clone()).unwrap().state(),
+        State::Active
+    );
+    store.close(request, &cap).unwrap();
+    assert!(store.complete_cleanup(&stale, &binding).is_err());
+    store.complete_cleanup(&ticket, &binding).unwrap();
+    assert!(!store.begin_create(&ticket).unwrap());
+    assert!(VmBinding::new("".into(), Uuid::new_v4()).is_err());
+    assert!(VmBinding::new("valid".into(), Uuid::nil()).is_err());
+}

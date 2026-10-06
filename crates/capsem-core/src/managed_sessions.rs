@@ -10,7 +10,7 @@ use anyhow::{ensure, Context, Result};
 use capsem_foundation::unix::{
     contained::{ContainedDir, ContainedOpenOptions},
     fs::ensure_private_dir,
-    lock::{try_acquire, LockAttempt, LockMode},
+    lock::{try_acquire, FileLock, LockAttempt, LockMode},
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -57,6 +57,34 @@ struct Record {
     generation: Uuid,
     capability_hash: [u8; 32],
     state: State,
+    #[serde(default)]
+    vm: Option<VmBinding>,
+}
+
+/// A service-proven VM identity. Generation must identify the actual spawn,
+/// rather than a recyclable PID or a user-visible VM name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmBinding {
+    id: String,
+    generation: Uuid,
+}
+
+impl VmBinding {
+    pub fn new(id: String, generation: Uuid) -> Result<Self> {
+        ensure!(
+            !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_control),
+            "invalid managed VM identity"
+        );
+        ensure!(!generation.is_nil(), "managed VM generation is nil");
+        Ok(Self { id, generation })
+    }
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    pub fn generation(&self) -> Uuid {
+        self.generation
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +92,7 @@ pub struct Snapshot {
     request: Uuid,
     generation: Uuid,
     state: State,
+    vm: Option<VmBinding>,
 }
 
 impl Snapshot {
@@ -76,6 +105,9 @@ impl Snapshot {
     pub fn state(&self) -> State {
         self.state
     }
+    pub fn vm(&self) -> Option<&VmBinding> {
+        self.vm.as_ref()
+    }
 }
 
 impl From<&Record> for Snapshot {
@@ -84,6 +116,7 @@ impl From<&Record> for Snapshot {
             request: record.request,
             generation: record.generation,
             state: record.state,
+            vm: record.vm.clone(),
         }
     }
 }
@@ -125,10 +158,7 @@ impl Registry {
 
     pub fn reserve(&self, request: Uuid, capability: &Capability) -> Result<Reservation> {
         ensure!(!request.is_nil(), "managed request identity is nil");
-        let _lease = match try_acquire(&self.root.path().join("registry.lock"), LockMode::Exclusive)? {
-            LockAttempt::Acquired(lease) => lease,
-            LockAttempt::Contended => anyhow::bail!("managed ownership store is busy"),
-        };
+        let _lease = self.lease()?;
         if let Some(record) = self.read(request)? {
             // blake3::Hash equality is constant-time for these 32-byte hashes.
             ensure!(
@@ -143,12 +173,29 @@ impl Registry {
             generation: Uuid::new_v4(),
             capability_hash: *capability.hash(request).as_bytes(),
             state: State::Reserved,
+            vm: None,
         };
         self.write(&record)?;
         Ok(Reservation::New(Ticket {
             request,
             generation: record.generation,
         }))
+    }
+
+    fn lease(&self) -> Result<FileLock> {
+        match try_acquire(&self.root.path().join("registry.lock"), LockMode::Exclusive)? {
+            LockAttempt::Acquired(lease) => Ok(lease),
+            LockAttempt::Contended => anyhow::bail!("managed ownership store is busy"),
+        }
+    }
+
+    fn ticket_record(&self, ticket: &Ticket) -> Result<Record> {
+        let record = self.read(ticket.request)?.context("managed reservation is missing")?;
+        ensure!(
+            record.generation == ticket.generation,
+            "managed reservation generation mismatch"
+        );
+        Ok(record)
     }
 
     fn read(&self, request: Uuid) -> Result<Option<Record>> {
@@ -174,6 +221,17 @@ impl Registry {
         ensure!(
             record.schema_version == 1 && record.request == request && !record.generation.is_nil(),
             "managed ownership identity mismatch"
+        );
+        if let Some(vm) = &record.vm {
+            VmBinding::new(vm.id.clone(), vm.generation)?;
+        }
+        ensure!(
+            match record.state {
+                State::Reserved | State::Creating | State::Closed => record.vm.is_none(),
+                State::Active => record.vm.is_some(),
+                State::Closing | State::Unknown => true,
+            },
+            "managed ownership state and VM binding disagree"
         );
         Ok(Some(record))
     }
@@ -203,6 +261,8 @@ impl Registry {
         result
     }
 }
+
+mod transitions;
 
 #[cfg(test)]
 mod tests;
