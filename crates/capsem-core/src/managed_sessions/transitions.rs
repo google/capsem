@@ -40,6 +40,7 @@ impl Registry {
                 state: State::Closed,
                 vm: None,
                 lease: None,
+                spawn_intent: None,
             },
         };
         record.state = match record.state {
@@ -69,6 +70,10 @@ impl Registry {
             matches!(record.state, State::Creating | State::Active | State::Closing),
             "managed creation is no longer admissible"
         );
+        ensure!(
+            record.spawn_intent.as_ref() == Some(&binding),
+            "managed VM does not match durable spawn intent"
+        );
         if let Some(existing) = &record.vm {
             ensure!(existing == &binding, "managed VM generation cannot be rebound");
         }
@@ -80,6 +85,27 @@ impl Registry {
         if ready && record.state == State::Creating {
             record.state = State::Active;
         }
+        self.write(&record)?;
+        Ok(Snapshot::from(&record))
+    }
+
+    /// The producer must persist its exact target before spawning any VM.
+    /// This is an intent, not evidence that a VM exists or is ready.
+    pub fn prepare_spawn(&self, ticket: &Ticket, binding: VmBinding, clock: LeaseClock) -> Result<Snapshot> {
+        let _lease = self.lease()?;
+        let mut record = self.ticket_record(ticket)?;
+        ensure!(
+            record.state == State::Creating,
+            "managed spawn admission is no longer live"
+        );
+        if let Some(original) = &record.spawn_intent {
+            ensure!(original == &binding, "managed spawn generation cannot be replaced");
+        }
+        let mut deadlines = self.runtime_deadlines()?;
+        let expired = self.expire_if_due(&mut record, clock, &mut deadlines)?;
+        drop(deadlines);
+        ensure!(!expired, "managed spawn lease expired");
+        record.spawn_intent = Some(binding);
         self.write(&record)?;
         Ok(Snapshot::from(&record))
     }

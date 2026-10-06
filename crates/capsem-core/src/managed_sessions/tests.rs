@@ -1,5 +1,75 @@
 use super::*;
 
+#[test]
+fn prepared_spawn_identity_survives_restart_without_claiming_a_live_vm() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ownership");
+    let store = Registry::open(&path).unwrap();
+    let request = Uuid::new_v4();
+    let cap = Capability::from_bytes([30; 32]);
+    let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
+        panic!()
+    };
+    initialize_test_lease(&store, &ticket);
+    store.begin_create(&ticket, test_lease_clock()).unwrap();
+    let intent = VmBinding::new("chosen-before-spawn".into(), Uuid::new_v4()).unwrap();
+    let prepared = store
+        .prepare_spawn(&ticket, intent.clone(), test_lease_clock())
+        .unwrap();
+    assert_eq!(prepared.state(), State::Creating);
+    assert!(prepared.vm().is_none());
+    assert_eq!(prepared.spawn_intent(), Some(&intent));
+    let other = VmBinding::new(intent.id().into(), Uuid::new_v4()).unwrap();
+    assert!(store.prepare_spawn(&ticket, other.clone(), test_lease_clock()).is_err());
+    assert!(store.bind_created(&ticket, other, test_lease_clock()).is_err());
+    drop(store);
+    let restarted = Registry::open(&path).unwrap();
+    let (_, unknown) = restarted.recover_interrupted(request).unwrap().unwrap();
+    assert_eq!(unknown.state(), State::Unknown);
+    assert!(unknown.vm().is_none());
+    assert_eq!(unknown.spawn_intent(), Some(&intent));
+    assert_eq!(unknown.generation(), ticket.generation());
+}
+
+#[test]
+fn close_and_expiry_refuse_unprepared_vm_side_effects() {
+    use std::time::{Duration, Instant};
+    let root = tempfile::tempdir().unwrap();
+    let store = Registry::open(&root.path().join("ownership")).unwrap();
+    let cap = Capability::from_bytes([31; 32]);
+    let now = Instant::now();
+    for closing in [false, true] {
+        let request = Uuid::new_v4();
+        let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
+            panic!()
+        };
+        store
+            .start_lease(
+                &ticket,
+                LeasePolicy::new(Duration::from_secs(2)).unwrap(),
+                LeaseClock::new(1000, now),
+            )
+            .unwrap();
+        store.begin_create(&ticket, LeaseClock::new(1000, now)).unwrap();
+        let clock = if closing {
+            store.close(request, &cap).unwrap();
+            LeaseClock::new(1000, now)
+        } else {
+            LeaseClock::new(4000, now + Duration::from_secs(3))
+        };
+        assert!(store
+            .prepare_spawn(
+                &ticket,
+                VmBinding::new("never-spawn".into(), Uuid::new_v4()).unwrap(),
+                clock
+            )
+            .is_err());
+        let pending = store.inspect(request, &cap).unwrap().unwrap();
+        assert_eq!(pending.state(), State::Closing);
+        assert!(pending.spawn_intent().is_none());
+    }
+}
+
 fn test_lease_clock() -> LeaseClock {
     LeaseClock::new(1000, std::time::Instant::now())
 }
@@ -102,8 +172,11 @@ fn close_racing_create_requires_matching_vm_cleanup() {
     initialize_test_lease(&store, &ticket);
     assert!(store.begin_create(&ticket, test_lease_clock()).unwrap());
     assert!(!store.begin_create(&ticket, test_lease_clock()).unwrap());
-    assert_eq!(store.close(request, &cap).unwrap().state(), State::Closing);
     let binding = VmBinding::new("vm-123".into(), Uuid::new_v4()).unwrap();
+    store
+        .prepare_spawn(&ticket, binding.clone(), test_lease_clock())
+        .unwrap();
+    assert_eq!(store.close(request, &cap).unwrap().state(), State::Closing);
     let late = store
         .bind_created(&ticket, binding.clone(), test_lease_clock())
         .unwrap();
@@ -139,6 +212,9 @@ fn create_and_close_transitions_refuse_stale_tickets_and_vm_rebinding() {
     assert!(store.begin_create(&stale, test_lease_clock()).is_err());
     assert!(store.begin_create(&ticket, test_lease_clock()).unwrap());
     let binding = VmBinding::new("vm-456".into(), Uuid::new_v4()).unwrap();
+    store
+        .prepare_spawn(&ticket, binding.clone(), test_lease_clock())
+        .unwrap();
     assert_eq!(
         store
             .bind_created(&ticket, binding.clone(), test_lease_clock())
@@ -231,6 +307,9 @@ fn recovery_of_reserved_and_active_records_is_conservative_and_durable() {
     store.begin_create(&active_ticket, test_lease_clock()).unwrap();
     let binding = VmBinding::new("live".into(), Uuid::new_v4()).unwrap();
     store
+        .prepare_spawn(&active_ticket, binding.clone(), test_lease_clock())
+        .unwrap();
+    store
         .bind_created(&active_ticket, binding.clone(), test_lease_clock())
         .unwrap();
     drop(store);
@@ -273,6 +352,7 @@ fn managed_lease_renewal_is_bounded_and_cannot_resurrect_expired_ownership() {
     assert!(store.start_lease(&ticket, policy, clock).is_err());
     store.begin_create(&ticket, clock).unwrap();
     let binding = VmBinding::new("leased".into(), Uuid::new_v4()).unwrap();
+    store.prepare_spawn(&ticket, binding.clone(), clock).unwrap();
     store.bind_created(&ticket, binding.clone(), clock).unwrap();
     let renewed = store
         .renew_lease(request, &cap, LeaseClock::new(4000, now + Duration::from_secs(3)))
@@ -329,12 +409,12 @@ fn restart_and_wall_rollback_cannot_extend_a_managed_lease() {
             )
             .unwrap();
         store.begin_create(&ticket, LeaseClock::new(10000, now)).unwrap();
+        let binding = VmBinding::new(id.into(), Uuid::new_v4()).unwrap();
         store
-            .bind_created(
-                &ticket,
-                VmBinding::new(id.into(), Uuid::new_v4()).unwrap(),
-                LeaseClock::new(10000, now),
-            )
+            .prepare_spawn(&ticket, binding.clone(), LeaseClock::new(10000, now))
+            .unwrap();
+        store
+            .bind_created(&ticket, binding, LeaseClock::new(10000, now))
             .unwrap();
         requests.push((request, ticket));
     }
@@ -422,6 +502,9 @@ fn late_create_result_after_lease_expiry_is_bound_only_for_cleanup() {
         .unwrap();
     assert!(store.begin_create(&ticket, LeaseClock::new(1000, now)).unwrap());
     let binding = VmBinding::new("late-leased".into(), Uuid::new_v4()).unwrap();
+    store
+        .prepare_spawn(&ticket, binding.clone(), LeaseClock::new(1000, now))
+        .unwrap();
     let late = store
         .bind_created(
             &ticket,

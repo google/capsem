@@ -63,6 +63,8 @@ struct Record {
     vm: Option<VmBinding>,
     #[serde(default)]
     lease: Option<LeaseFacts>,
+    #[serde(default)]
+    spawn_intent: Option<VmBinding>,
 }
 
 /// A service-proven VM identity. Generation must identify the actual spawn,
@@ -98,6 +100,7 @@ pub struct Snapshot {
     state: State,
     vm: Option<VmBinding>,
     expires_wall_ms: Option<u64>,
+    spawn_intent: Option<VmBinding>,
 }
 
 impl Snapshot {
@@ -116,6 +119,9 @@ impl Snapshot {
     pub fn expires_wall_ms(&self) -> Option<u64> {
         self.expires_wall_ms
     }
+    pub fn spawn_intent(&self) -> Option<&VmBinding> {
+        self.spawn_intent.as_ref()
+    }
 }
 
 impl From<&Record> for Snapshot {
@@ -126,6 +132,7 @@ impl From<&Record> for Snapshot {
             state: record.state,
             vm: record.vm.clone(),
             expires_wall_ms: record.lease.as_ref().map(|lease| lease.expires_wall_ms),
+            spawn_intent: record.spawn_intent.clone(),
         }
     }
 }
@@ -188,6 +195,7 @@ impl Registry {
             state: State::Reserved,
             vm: None,
             lease: None,
+            spawn_intent: None,
         };
         self.write(&record)?;
         Ok(Reservation::New(Ticket {
@@ -244,6 +252,13 @@ impl Registry {
         );
         if let Some(vm) = &record.vm {
             VmBinding::new(vm.id.clone(), vm.generation)?;
+        }
+        if let Some(intent) = &record.spawn_intent {
+            VmBinding::new(intent.id.clone(), intent.generation)?;
+            ensure!(
+                record.vm.as_ref().is_none_or(|vm| vm == intent),
+                "managed spawn intent and VM binding disagree"
+            );
         }
         if let Some(lease) = &record.lease {
             lease.validate()?;

@@ -57,6 +57,10 @@ impl Registry {
             matches!(record.state, State::Unknown | State::Closing),
             "managed recovery is not pending"
         );
+        ensure!(
+            record.spawn_intent.as_ref().is_none_or(|intent| intent == &binding),
+            "managed recovery VM differs from spawn intent"
+        );
         if let Some(existing) = &record.vm {
             ensure!(existing == &binding, "managed VM generation cannot be rebound");
         }

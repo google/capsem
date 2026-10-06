@@ -15,7 +15,7 @@ pub type EffectFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 pub trait Effects: Send + Sync {
     fn create(&self, ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding>;
     fn cleanup(&self, ticket: Ticket, binding: VmBinding) -> EffectFuture<()>;
-    fn reconcile(&self, ticket: Ticket) -> EffectFuture<Option<VmBinding>>;
+    fn reconcile(&self, ticket: Ticket, intent: Option<VmBinding>) -> EffectFuture<Option<VmBinding>>;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -99,6 +99,15 @@ pub struct BindingReporter {
 }
 
 impl BindingReporter {
+    /// Must complete before any VM spawn side effect. The selected canonical
+    /// ID and generation survive a crash before registration can be reported.
+    pub async fn prepare(&self, binding: VmBinding) -> ControlResult<Snapshot> {
+        self.work.upgrade().ok_or(Failure::RecoveryPending)?;
+        let ticket = self.ticket.clone();
+        self.owner
+            .io(move |registry| registry.prepare_spawn(&ticket, binding, LeaseClock::now()?))
+            .await
+    }
     pub async fn registered(&self, binding: VmBinding) -> ControlResult<Snapshot> {
         let work = self.work.upgrade().ok_or(Failure::RecoveryPending)?;
         work.remember_binding(binding.clone())?;
@@ -378,10 +387,11 @@ impl Controller {
             .clone()
             .or(snapshot.vm);
         let registry_owner = self.clone();
+        let intent = snapshot.spawn_intent;
         let cleaned = bounded(self.0.bounds.cleanup, async move {
             let binding = match known {
                 Some(binding) => Some(binding),
-                None => effects.reconcile(cleanup_ticket.clone()).await?,
+                None => effects.reconcile(cleanup_ticket.clone(), intent).await?,
             };
             if let Some(binding) = binding {
                 let bind_ticket = cleanup_ticket.clone();

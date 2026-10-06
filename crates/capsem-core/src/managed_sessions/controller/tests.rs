@@ -40,6 +40,7 @@ impl Effects for Arc<Fixture> {
     fn create(&self, _ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding> {
         let fixture = Arc::clone(self);
         Box::pin(async move {
+            reporter.prepare(fixture.binding.clone()).await?;
             fixture.creates.fetch_add(1, Ordering::SeqCst);
             if fixture.report_pending.load(Ordering::SeqCst) {
                 assert_eq!(
@@ -72,7 +73,12 @@ impl Effects for Arc<Fixture> {
             Ok(())
         })
     }
-    fn reconcile(&self, _ticket: Ticket) -> EffectFuture<Option<VmBinding>> {
+    fn reconcile(&self, _ticket: Ticket, intent: Option<VmBinding>) -> EffectFuture<Option<VmBinding>> {
+        if self.creates.load(Ordering::SeqCst) > 0 {
+            assert_eq!(intent.as_ref(), Some(&self.binding));
+        } else {
+            assert!(intent.is_none());
+        }
         self.reconciles.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok(None) })
     }
