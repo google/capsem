@@ -1,5 +1,7 @@
 mod snapshots;
 use snapshots::buffer_to_svg;
+mod create;
+use create::create_lines;
 
 use anyhow::Result;
 use ratatui::backend::TestBackend;
@@ -496,7 +498,7 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
         AppOverlay::Help => 21,
         AppOverlay::Stats => 12,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
-        AppOverlay::Create => 7,
+        AppOverlay::Create => 13,
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
@@ -536,18 +538,6 @@ fn confirm_lines(action: Option<&ControlAction>) -> Vec<Line<'static>> {
         overlay_pair("target", action.target()),
         overlay_line("Enter confirms; Esc cancels"),
     ]
-}
-
-fn create_lines(draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
-    let mut lines = vec![logo_line(), overlay_title("new session")];
-    let name = draft
-        .map(|draft| draft.name.as_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or(" ");
-    lines.push(focus_pair("name", name));
-    lines.push(overlay_line("active input: name; type to edit; Backspace deletes"));
-    lines.push(overlay_line("Enter creates; Esc cancels"));
-    lines
 }
 
 fn fork_lines(state: &AppState, draft: Option<&ForkDraft>) -> Vec<Line<'static>> {

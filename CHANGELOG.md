@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TUI session creation offers catalog OCI images alongside Plain VM, shows
+  compatibility and unknown cache state, and preserves failed creation drafts.
+  Image catalogs load on demand without delaying status polling.
+
 - TUI lifecycle controls honor the gateway's available actions, start stopped
   sessions through the correct endpoint, and reject stale confirmations and
   fork requests when service permissions change.

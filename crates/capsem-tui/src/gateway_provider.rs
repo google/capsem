@@ -149,6 +149,38 @@ impl GatewayProvider {
         let (hypervisor, transport) = self.clients(&token)?;
         invoke_action(&hypervisor, &transport, action).await
     }
+
+    pub fn list_images(&self) -> Result<capsem_sdk::models::ImageListResponse> {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        runtime.block_on(self.list_images_async())
+    }
+
+    pub async fn list_images_async(&self) -> Result<capsem_sdk::models::ImageListResponse> {
+        tokio::time::timeout(Duration::from_secs(30), self.fetch_images())
+            .await
+            .context("image catalog request timed out")?
+    }
+
+    async fn fetch_images(&self) -> Result<capsem_sdk::models::ImageListResponse> {
+        let token = self.token().await?;
+        let (_, transport) = self.clients(&token)?;
+        capsem_sdk::operations::list_images(
+            &transport,
+            &capsem_sdk::operations::ListImagesParams { refresh: Some(false) },
+            capsem_sdk::transport::CallOptions::default(),
+        )
+        .await
+        .map_err(|error| {
+            let error = crate::sdk_actions::display_error(error)
+                .to_string()
+                .replace(&token, "[redacted]");
+            anyhow::anyhow!(error
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(512)
+                .collect::<String>())
+        })
+    }
 }
 
 impl StateProvider for GatewayProvider {

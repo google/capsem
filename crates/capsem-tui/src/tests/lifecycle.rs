@@ -284,7 +284,10 @@ fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_l
     );
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
-        AppAction::Invoke(ControlAction::CreateSession { name: None })
+        AppAction::Invoke(ControlAction::CreateSession {
+            name: None,
+            image: None
+        })
     );
 
     let mut created = app.state().clone();

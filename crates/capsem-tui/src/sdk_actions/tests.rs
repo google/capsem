@@ -176,6 +176,7 @@ async fn gateway_provider_invokes_named_create_over_authenticated_gateway() {
     let outcome = GatewayProvider::new(format!("http://{addr}"))
         .invoke_async(&ControlAction::CreateSession {
             name: Some("vm-1-proof".to_string()),
+            image: None,
         })
         .await
         .expect("invoke create");
@@ -213,7 +214,10 @@ async fn gateway_provider_preserves_service_owned_persistent_names() {
     });
 
     let outcome = GatewayProvider::new(format!("http://{addr}"))
-        .invoke_async(&ControlAction::CreateSession { name: None })
+        .invoke_async(&ControlAction::CreateSession {
+            name: None,
+            image: None,
+        })
         .await
         .expect("invoke create");
 

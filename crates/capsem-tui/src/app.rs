@@ -3,6 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::model::{AppState, ServiceStatus, SessionLifecycle};
 
+mod create;
+pub use create::{CreateDraft, CreateField, ImageCatalog};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppAction {
     Consumed,
@@ -27,15 +30,41 @@ pub enum AppOverlay {
 pub enum ControlAction {
     StartService,
     Update,
-    CreateSession { name: Option<String> },
-    Fork { id: String, name: String },
-    Start { id: String, label: String },
-    Resume { id: String, label: String },
-    Checkpoint { id: String, label: String },
-    Suspend { id: String, label: String },
-    Stop { id: String, label: String },
-    Delete { id: String, label: String },
-    Purge { all: bool },
+    CreateSession {
+        name: Option<String>,
+        image: Option<String>,
+    },
+    Fork {
+        id: String,
+        name: String,
+    },
+    Start {
+        id: String,
+        label: String,
+    },
+    Resume {
+        id: String,
+        label: String,
+    },
+    Checkpoint {
+        id: String,
+        label: String,
+    },
+    Suspend {
+        id: String,
+        label: String,
+    },
+    Stop {
+        id: String,
+        label: String,
+    },
+    Delete {
+        id: String,
+        label: String,
+    },
+    Purge {
+        all: bool,
+    },
 }
 
 impl ControlAction {
@@ -76,7 +105,7 @@ impl ControlAction {
             Self::StartService => "Capsem service",
             Self::Update => "complete verified release",
             Self::CreateSession { name: Some(name), .. } => name,
-            Self::CreateSession { name: None } => "new session",
+            Self::CreateSession { name: None, .. } => "new session",
             Self::Fork { name, .. } => name,
             Self::Start { label, .. }
             | Self::Resume { label, .. }
@@ -99,12 +128,10 @@ pub struct App {
     pending_focus_session: Option<String>,
     control_progress: Option<String>,
     create_draft: Option<CreateDraft>,
+    pending_create: Option<CreateDraft>,
+    catalog_generation: u64,
+    catalog_request: Option<u64>,
     fork_draft: Option<ForkDraft>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CreateDraft {
-    pub name: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -128,6 +155,9 @@ impl App {
             pending_focus_session: None,
             control_progress: None,
             create_draft: None,
+            pending_create: None,
+            catalog_generation: 0,
+            catalog_request: None,
             fork_draft: None,
         };
         app.ensure_active_tab_visible();
@@ -519,15 +549,6 @@ impl App {
         self.state.active_session().map(|session| session.id.clone())
     }
 
-    fn open_create(&mut self) {
-        self.pending_action = None;
-        self.fork_draft = None;
-        self.create_draft = Some(CreateDraft {
-            name: next_session_name(&self.state),
-        });
-        self.overlay = AppOverlay::Create;
-    }
-
     fn open_fork(&mut self) -> bool {
         if !self
             .state
@@ -547,47 +568,6 @@ impl App {
         });
         self.overlay = AppOverlay::Fork;
         true
-    }
-
-    fn handle_create_key(&mut self, key: KeyEvent) -> AppAction {
-        match key.code {
-            KeyCode::Esc => {
-                self.create_draft = None;
-                self.overlay = AppOverlay::None;
-                AppAction::Consumed
-            }
-            KeyCode::Enter => {
-                let Some(draft) = self.create_draft.clone() else {
-                    self.overlay = AppOverlay::None;
-                    return AppAction::Consumed;
-                };
-                let name = draft.name.trim().to_string();
-                if name.is_empty() {
-                    return AppAction::Consumed;
-                }
-                let name = (name != next_session_name(&self.state)).then_some(name);
-                self.create_draft = None;
-                self.overlay = AppOverlay::None;
-                AppAction::Invoke(ControlAction::CreateSession { name })
-            }
-            KeyCode::Backspace => {
-                if let Some(draft) = &mut self.create_draft {
-                    draft.name.pop();
-                }
-                AppAction::Consumed
-            }
-            KeyCode::Char(ch)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
-            {
-                if let Some(draft) = &mut self.create_draft {
-                    draft.name.push(ch);
-                }
-                AppAction::Consumed
-            }
-            _ => AppAction::Consumed,
-        }
     }
 
     fn handle_fork_key(&mut self, key: KeyEvent) -> AppAction {

@@ -14,7 +14,7 @@ use crate::gateway_provider::ActionOutcome;
 pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &ControlAction) -> Result<ActionOutcome> {
     let vm = |id: &str| hypervisor.vm(VmSelector::Id(id.into()));
     match action {
-        ControlAction::CreateSession { name } => {
+        ControlAction::CreateSession { name, image } => {
             // TUI workspaces persist even when the service chooses their name.
             let input = api::CreateVmParams {
                 body: ProvisionRequest {
@@ -25,7 +25,13 @@ pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &Con
                     env: None,
                     from: None,
                     networks: Vec::new(),
-                    container: None,
+                    container: image.as_ref().map(|image| capsem_sdk::models::ContainerSpec {
+                        image: image.clone(),
+                        args: Vec::new(),
+                        env: Default::default(),
+                        registry: None,
+                        attach: false,
+                    }),
                 },
             };
             let vm = api::create_vm(transport, &input, CallOptions::default()).await?;

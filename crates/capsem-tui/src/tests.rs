@@ -1,4 +1,5 @@
 mod gateway_fixtures;
+mod image_creation;
 mod lifecycle;
 mod updates;
 use gateway_fixtures::*;
@@ -351,6 +352,7 @@ fn create_overlay_edits_prefilled_name() {
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::CreateSession {
             name: Some("vm-1-proof".to_string()),
+            image: None,
         })
     );
 }
@@ -381,7 +383,10 @@ fn create_overlay_default_name_lets_service_assign_id() {
     );
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
-        AppAction::Invoke(ControlAction::CreateSession { name: None })
+        AppAction::Invoke(ControlAction::CreateSession {
+            name: None,
+            image: None
+        })
     );
 }
 

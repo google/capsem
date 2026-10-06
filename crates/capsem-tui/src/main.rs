@@ -168,8 +168,23 @@ fn run_loop(
     let mut connected_terminal = None;
     let mut needs_draw = true;
     let input_events = spawn_input_reader();
+    let image_bridge = live_provider.clone().map(ImageCatalogBridge::spawn);
     let refresh_bridge = live_provider.map(RefreshBridge::spawn);
     loop {
+        if let Some(bridge) = &image_bridge {
+            for (generation, result) in bridge.events.try_iter() {
+                app.apply_image_catalog(generation, result);
+                needs_draw = true;
+            }
+            if let Some(generation) = app.take_catalog_request() {
+                if bridge.commands.try_send(generation).is_err() {
+                    app.retry_catalog_request(generation);
+                }
+            }
+        } else if let Some(generation) = app.take_catalog_request() {
+            app.apply_image_catalog(generation, Err("image catalog unavailable in fixture mode".into()));
+            needs_draw = true;
+        }
         if let Some(bridge) = &refresh_bridge {
             for event in bridge.drain_events() {
                 needs_draw |= apply_refresh_event(app, event);
@@ -184,7 +199,10 @@ fn run_loop(
                         app.set_control_message(format!("{label}..."));
                         app.set_control_progress(label);
                     }
-                    ControlEvent::Finished(Ok(outcome)) => {
+                    ControlEvent::Finished(action, Ok(outcome)) => {
+                        if matches!(action, ControlAction::CreateSession { .. }) {
+                            app.complete_create(true);
+                        }
                         app.clear_control_progress();
                         app.set_control_message(outcome.message);
                         if let Some(session_id) = outcome.focus_session {
@@ -192,7 +210,10 @@ fn run_loop(
                         }
                         should_refresh = true;
                     }
-                    ControlEvent::Finished(Err(error)) => {
+                    ControlEvent::Finished(action, Err(error)) => {
+                        if matches!(action, ControlAction::CreateSession { .. }) {
+                            app.complete_create(false);
+                        }
                         app.clear_control_progress();
                         app.set_control_message(error);
                         should_refresh = true;
@@ -308,6 +329,9 @@ fn handle_terminal_event(
                 if let Some(bridge) = control_bridge {
                     bridge.invoke(action);
                 } else {
+                    if matches!(action, ControlAction::CreateSession { .. }) {
+                        app.complete_create(false);
+                    }
                     app.set_control_message("fixture action ignored");
                 }
             }
@@ -343,7 +367,7 @@ impl ControlBridge {
                 let result = provider
                     .invoke(&action)
                     .map_err(|error| format!("{} failed: {error}", action.label()));
-                let _ = event_tx.send(ControlEvent::Finished(result));
+                let _ = event_tx.send(ControlEvent::Finished(action, result));
             }
         });
         Self {
@@ -367,7 +391,30 @@ impl ControlBridge {
 
 enum ControlEvent {
     Started(String),
-    Finished(std::result::Result<ActionOutcome, String>),
+    Finished(ControlAction, std::result::Result<ActionOutcome, String>),
+}
+
+struct ImageCatalogBridge {
+    commands: mpsc::SyncSender<u64>,
+    events: mpsc::Receiver<(u64, std::result::Result<capsem_sdk::models::ImageListResponse, String>)>,
+}
+
+impl ImageCatalogBridge {
+    fn spawn(provider: GatewayProvider) -> Self {
+        let (commands, requests) = mpsc::sync_channel::<u64>(1);
+        let (results, events) = mpsc::channel();
+        thread::spawn(move || {
+            while let Ok(generation) = requests.recv() {
+                let result = provider
+                    .list_images()
+                    .map_err(|error| format!("image catalog unavailable: {error}"));
+                if results.send((generation, result)).is_err() {
+                    break;
+                }
+            }
+        });
+        Self { commands, events }
+    }
 }
 
 struct RefreshBridge {
