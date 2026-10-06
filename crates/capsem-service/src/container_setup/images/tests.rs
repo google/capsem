@@ -56,9 +56,20 @@ struct CatalogImages {
     catalog: Arc<Mutex<Option<Value>>>,
     catalog_reads: Arc<Mutex<Vec<String>>>,
     pulls: Arc<Mutex<Vec<String>>>,
+    roots: Arc<Mutex<Vec<(String, String, RegistryAccess)>>>,
 }
 
 impl ImageSource for CatalogImages {
+    fn fetch_rootfs(
+        &self,
+        reference: String,
+        subject: String,
+        access: RegistryAccess,
+        _parent: PathBuf,
+    ) -> RootfsFuture {
+        self.roots.lock().unwrap().push((reference, subject, access));
+        Box::pin(async { anyhow::bail!("fixture artifact unavailable") })
+    }
     fn policy(&self) -> PolicyFuture {
         let settings = self.settings.clone();
         Box::pin(async move { ImagePolicy::from_files(&settings, &SettingsFile::default()) })
@@ -99,6 +110,7 @@ struct Fixture {
     catalog: Arc<Mutex<Option<Value>>>,
     catalog_reads: Arc<Mutex<Vec<String>>>,
     pulls: Arc<Mutex<Vec<String>>>,
+    roots: Arc<Mutex<Vec<(String, String, RegistryAccess)>>>,
 }
 
 impl Fixture {
@@ -106,6 +118,7 @@ impl Fixture {
         let catalog = Arc::new(Mutex::new(Some(catalog_document())));
         let catalog_reads = Arc::new(Mutex::new(Vec::new()));
         let pulls = Arc::new(Mutex::new(Vec::new()));
+        let roots = Arc::new(Mutex::new(Vec::new()));
         let mut state = crate::tests::make_test_state_owned();
         state.containers = ContainerSetups::with_source(Box::new(CatalogImages {
             settings: SettingsFile {
@@ -115,12 +128,14 @@ impl Fixture {
             catalog: Arc::clone(&catalog),
             catalog_reads: Arc::clone(&catalog_reads),
             pulls: Arc::clone(&pulls),
+            roots: Arc::clone(&roots),
         }));
         Self {
             state: Arc::new(state),
             catalog,
             catalog_reads,
             pulls,
+            roots,
         }
     }
 
@@ -157,6 +172,81 @@ fn grants(sources: &[&str], admit: &[&str]) -> ImagePolicyConfig {
         admit: admit.iter().map(|s| s.to_string()).collect(),
         ..Default::default()
     }
+}
+
+#[tokio::test]
+async fn prefetch_selects_catalog_root_after_admission_with_original_platform_subject_and_access() {
+    let fx = Fixture::default_policy();
+    {
+        let mut document = fx.catalog.lock().unwrap();
+        document.as_mut().unwrap()["entries"]["codex-cli"]["versions"][1]["erofs"] = json!({host(): digest('8')});
+        drop(document);
+    }
+    let (status, body) = fx.call(axum::http::Method::POST, "/images/pull", Some(json!({
+        "image": "codex-cli", "registry": {"username": "account", "password": "private-test-password", "ca_pem": "private-test-ca"}
+    }))).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(body.to_string().contains("fixture artifact unavailable"));
+    let roots = fx.roots.lock().unwrap();
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].0, format!("ghcr.io/google/capsem/codex-cli@{}", digest('8')));
+    assert_eq!(
+        roots[0].1,
+        digest('7'),
+        "root subject is the original platform manifest, not index b"
+    );
+    assert_eq!(roots[0].2.username.as_deref(), Some("account"));
+    assert_eq!(roots[0].2.password.as_deref(), Some("private-test-password"));
+    assert_eq!(roots[0].2.ca_pem.as_deref(), Some("private-test-ca"));
+    assert!(!body.to_string().contains("private-test-password") && !body.to_string().contains("private-test-ca"));
+    drop(roots);
+}
+
+#[tokio::test]
+async fn denied_image_does_not_fetch_any_catalog_filesystem() {
+    let fx = Fixture::new(ImagePolicyConfig {
+        catalog: Some(CatalogSetting::Enabled(false)),
+        ..grants(&["ghcr.io"], &[])
+    });
+    let (status, _) = fx
+        .pull(&format!("ghcr.io/google/capsem/codex-cli@{}", digest('b')))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(fx.roots.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn conflicting_catalog_filesystem_bindings_fail_before_artifact_fetch() {
+    let fx = Fixture::default_policy();
+    {
+        let mut guard = fx.catalog.lock().unwrap();
+        let document = guard.as_mut().unwrap();
+        let version = &mut document["entries"]["codex-cli"]["versions"][1];
+        version["erofs"] = json!({host(): digest('8')});
+        let mut alias = version.clone();
+        alias["erofs"] = json!({host(): digest('6')});
+        document["entries"]["alias"] = json!({"description": "same image", "versions": [alias]});
+        drop(guard);
+    }
+    let (status, body) = fx.pull("codex-cli").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(fx.roots.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_missing_compatible_catalog_root_keeps_the_universal_pull_path() {
+    let fx = Fixture::default_policy();
+    {
+        let mut document = fx.catalog.lock().unwrap();
+        document.as_mut().unwrap()["entries"]["codex-cli"]["versions"][2]["erofs"] = json!({host(): digest('8')});
+        drop(document);
+    }
+    let (status, body) = fx.pull("codex-cli").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        fx.roots.lock().unwrap().is_empty(),
+        "a newer incompatible version cannot supply the root"
+    );
 }
 
 #[tokio::test]

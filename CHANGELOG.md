@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Catalog images with a compatible published EROFS filesystem now fetch and
+  verify that artifact for creation and prefetch. Workloads mount its payload
+  from the read-only image share; a promised artifact that cannot be verified
+  stops setup before staging.
+
 ### Security
 
 - Docker build contexts exclude local Sprinty records and diagnostic artifacts,

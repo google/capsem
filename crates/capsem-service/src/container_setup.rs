@@ -32,6 +32,7 @@ pub(crate) struct PulledImage {
 }
 
 pub(crate) type PullFuture = Pin<Box<dyn Future<Output = anyhow::Result<PulledImage>> + Send>>;
+pub(crate) type RootfsFuture = Pin<Box<dyn Future<Output = anyhow::Result<capsem_assets::oci::RootfsLayout>> + Send>>;
 
 /// Where images come from, and which may be fetched and run. Production
 /// pulls from registries under the installation's policy; tests substitute.
@@ -40,6 +41,17 @@ pub(crate) trait ImageSource: Send + Sync {
 
     /// Read the catalog `source` names, anonymously: catalogs are public.
     fn fetch_catalog(&self, source: CatalogSource, parent: PathBuf) -> images::CatalogFuture;
+
+    /// Fetch a filesystem bound to an already admitted platform image.
+    fn fetch_rootfs(
+        &self,
+        _reference: String,
+        _subject: String,
+        _access: RegistryAccess,
+        _parent: PathBuf,
+    ) -> RootfsFuture {
+        Box::pin(async { anyhow::bail!("image source does not provide published filesystems") })
+    }
 
     /// The image policy for one decision, read fresh each time.
     fn policy(&self) -> PolicyFuture {
@@ -58,21 +70,25 @@ pub(crate) type PolicyFuture =
 
 pub(crate) struct RegistryImages;
 
+fn registry_puller(access: RegistryAccess) -> anyhow::Result<capsem_assets::oci::Puller> {
+    let authentication = match (access.username, access.password) {
+        (Some(username), Some(password)) => capsem_assets::oci::RegistryAuth::Basic(username, password),
+        (None, None) => capsem_assets::oci::RegistryAuth::Anonymous,
+        _ => anyhow::bail!("registry access needs both username and password"),
+    };
+    capsem_assets::oci::Puller::new_with_root_certificate(
+        stage::oci_architecture()?,
+        authentication,
+        access.ca_pem.as_deref().map(str::as_bytes),
+    )
+}
+
 impl ImageSource for RegistryImages {
     fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf) -> PullFuture {
         Box::pin(async move {
             capsem_assets::oci::image_reference(&image)
                 .context("container image expects docker://IMAGE or registry/repository:tag")?;
-            let authentication = match (access.username, access.password) {
-                (Some(username), Some(password)) => capsem_assets::oci::RegistryAuth::Basic(username, password),
-                (None, None) => capsem_assets::oci::RegistryAuth::Anonymous,
-                _ => anyhow::bail!("registry access needs both username and password"),
-            };
-            let puller = capsem_assets::oci::Puller::new_with_root_certificate(
-                stage::oci_architecture()?,
-                authentication,
-                access.ca_pem.as_deref().map(str::as_bytes),
-            )?;
+            let puller = registry_puller(access)?;
             let layout = puller.pull(&image, &parent).await?;
             Ok(PulledImage {
                 root: layout.path().to_path_buf(),
@@ -100,6 +116,21 @@ impl ImageSource for RegistryImages {
                 ca.as_deref(),
             )?;
             puller.fetch_catalog(&source.reference, &parent).await
+        })
+    }
+
+    fn fetch_rootfs(
+        &self,
+        reference: String,
+        subject: String,
+        access: RegistryAccess,
+        parent: PathBuf,
+    ) -> RootfsFuture {
+        Box::pin(async move {
+            let subject = capsem_assets::oci::Digest::parse(&subject)?;
+            registry_puller(access)?
+                .fetch_rootfs(&reference, &subject, &parent)
+                .await
         })
     }
 }
@@ -351,18 +382,16 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         }
         other => return Err(format!("unexpected container pull admission reply: {other:?}")),
     }
+    let access = spec.registry.unwrap_or_default();
     let image = state
         .containers
         .source
-        .pull(
-            requested.pull.clone(),
-            spec.registry.unwrap_or_default(),
-            decision.parent.clone(),
-        )
+        .pull(requested.pull.clone(), access.clone(), decision.parent.clone())
         .await
         .map_err(|e| format!("pull {}: {e:#}", requested.pull))?;
     // Admission is on the resolved digest, before anything is staged.
     let resolved = decision.admit(&requested, &image).await?;
+    let rootfs = decision.published_root(&requested, &image, &resolved, access).await?;
     // An image whose surface labels are not exactly one valid declaration is
     // refused here, before staging: nothing of it runs and nothing is exposed.
     let declared = tokio::task::spawn_blocking({
@@ -390,11 +419,17 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         .map(|vm| (vm.ram_mb, vm.cpus))
         .ok_or_else(|| format!("VM {id} stopped before its container was staged"))?;
     let resources = capsem_core::container::workload_resources(ram_mb, cpus).map_err(|e| format!("{e:#}"))?;
-    let manifest = share_image(state, id, &image).await?;
+    let (manifest, rootfs) = share_image(state, id, &image, rootfs).await?;
     if !state.containers.pin_manifest(id, generation, Some(manifest.clone())) {
         return Ok(());
     }
-    let plan = stage::stage_plan(&manifest, &spec.args, &spec.env, resources, declared)
+    let staged_image = stage::StageImage {
+        manifest: &manifest,
+        rootfs: rootfs
+            .as_ref()
+            .map(|(digest, size)| stage::RootfsFile { digest, size: *size }),
+    };
+    let plan = stage::stage_plan(staged_image, &spec.args, &spec.env, resources, declared)
         .map_err(|e| format!("plan stage: {e:#}"))?;
     for file in plan {
         if !state.containers.advance(id, generation, |_| {}) {
@@ -729,15 +764,42 @@ fn staged_marker(state: &ServiceState, id: &str, marker: &str) -> bool {
 /// answer the manifest digest they are held under. Every blob is linked from
 /// the pull's private layout, which nothing but the service can write; the
 /// guest-writable workspace is never a source.
-async fn share_image(state: &ServiceState, id: &str, image: &PulledImage) -> Result<String, String> {
+async fn share_image(
+    state: &ServiceState,
+    id: &str,
+    image: &PulledImage,
+    rootfs: Option<capsem_assets::oci::RootfsLayout>,
+) -> Result<(String, Option<(String, u64)>), String> {
     let session_dir = resolve_session_dir(state, id).map_err(|e| e.1)?;
     let (root, files) = (image.root.clone(), image.files.clone());
-    tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
-        let image = stage::image_blobs(&root, &files)?;
+    tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let mut image = stage::image_blobs(&root, &files)?;
         let blobs = capsem_foundation::unix::contained::ContainedDir::open_root(&root)?
             .walk(std::path::Path::new("blobs/sha256"))?;
+        let rootfs = rootfs
+            .map(|rootfs| -> anyhow::Result<_> {
+                use capsem_foundation::unix::{contained::ContainedDir, tree_clone};
+                let path = rootfs.path();
+                let name = path
+                    .file_name()
+                    .ok_or_else(|| anyhow::anyhow!("rootfs has no blob name"))?;
+                let source =
+                    ContainedDir::open_root(path.parent().ok_or_else(|| anyhow::anyhow!("rootfs has no parent"))?)?;
+                let size = source
+                    .open_file(name, ContainedOpenOptions::read_only())?
+                    .metadata()?
+                    .len();
+                tree_clone::link_file(&source, name, &blobs, name)?;
+                image.blobs.push(
+                    name.to_str()
+                        .ok_or_else(|| anyhow::anyhow!("rootfs name is not UTF-8"))?
+                        .to_owned(),
+                );
+                Ok((rootfs.digest().to_string(), size))
+            })
+            .transpose()?;
         capsem_core::session::publish_image_share(&session_dir, &blobs, &image.blobs)?;
-        Ok(image.manifest)
+        Ok((image.manifest, rootfs))
     })
     .await
     .map_err(|e| format!("share image: {e}"))?

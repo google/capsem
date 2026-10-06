@@ -3,6 +3,7 @@ use crate::tests::{insert_fake_instance_with_session_dir, spawn_fake_process};
 use capsem_api::RegistryAccess;
 use tokio::sync::Notify;
 
+mod published;
 mod surface;
 
 /// An image source serving a fixed two-file layout, optionally held at the
@@ -14,6 +15,8 @@ struct FixtureImages {
     /// Image config labels; `None` serves an image with none.
     labels: Option<serde_json::Value>,
     catalog_reads: Arc<std::sync::atomic::AtomicUsize>,
+    catalog: Option<serde_json::Value>,
+    root_calls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 const MANIFEST_BLOB: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -61,10 +64,27 @@ impl ImageSource for FixtureImages {
         )
     }
 
-    /// No catalog can be read here: only the fixture grants admit anything.
     fn fetch_catalog(&self, _source: CatalogSource, _parent: PathBuf) -> images::CatalogFuture {
         self.catalog_reads.fetch_add(1, Ordering::Relaxed);
-        Box::pin(async { anyhow::bail!("no catalog in this fixture") })
+        let catalog = self.catalog.clone();
+        Box::pin(async move {
+            let catalog = catalog.ok_or_else(|| anyhow::anyhow!("no catalog in this fixture"))?;
+            Ok((
+                capsem_assets::oci::Digest::parse(&format!("sha256:{MANIFEST_BLOB}"))?,
+                capsem_assets::oci::Catalog::parse(&serde_json::to_vec(&catalog)?)?,
+            ))
+        })
+    }
+
+    fn fetch_rootfs(
+        &self,
+        _reference: String,
+        _subject: String,
+        _access: RegistryAccess,
+        _parent: PathBuf,
+    ) -> RootfsFuture {
+        self.root_calls.fetch_add(1, Ordering::Relaxed);
+        Box::pin(async { anyhow::bail!("fixture artifact unavailable") })
     }
 
     fn pull(&self, _image: String, access: RegistryAccess, _parent: PathBuf) -> PullFuture {
@@ -164,6 +184,8 @@ fn images() -> FixtureImages {
         access: Arc::new(Mutex::new(None)),
         labels: None,
         catalog_reads: Default::default(),
+        catalog: None,
+        root_calls: Default::default(),
     }
 }
 

@@ -271,6 +271,53 @@ impl<'a> Decision<'a> {
         self.load(false).await;
         admit(&self.policy, &requested.identity, image).map_err(ImageError::Refused)
     }
+
+    /// A compatible filesystem for this admitted image, fetched only from
+    /// the same repository and with its original platform manifest as subject.
+    /// Explicit grants that never loaded a catalog stay on the universal path.
+    pub(crate) async fn published_root(
+        &self,
+        requested: &Requested,
+        image: &PulledImage,
+        resolved: &ResolvedImage,
+        access: RegistryAccess,
+    ) -> Result<Option<capsem_assets::oci::RootfsLayout>, ImageError> {
+        let Some(loaded) = &self.catalog else {
+            return Ok(None);
+        };
+        let architecture = stage::catalog_architecture().map_err(|e| ImageError::Failed(format!("{e:#}")))?;
+        let roots: BTreeSet<_> = loaded
+            .catalog
+            .entries()
+            .values()
+            .flat_map(|entry| entry.versions())
+            .filter(|version| {
+                version.image().digest() == resolved.digest()
+                    && version.contract() <= RUNTIME_CONTRACT
+                    && version.platforms().contains(&architecture)
+            })
+            .filter_map(|version| version.erofs(architecture).map(ToString::to_string))
+            .collect();
+        if roots.len() > 1 {
+            return Err(ImageError::Failed(
+                "catalog binds the image to conflicting published filesystems".into(),
+            ));
+        }
+        let Some(digest) = roots.first() else {
+            return Ok(None);
+        };
+        let reference = format!("{}@{digest}", requested.identity.repository());
+        let artifact = super::images::requested(&reference)?;
+        self.policy
+            .check_source(&artifact.identity)
+            .map_err(|e| ImageError::Refused(format!("{e:#}")))?;
+        self.setups
+            .source
+            .fetch_rootfs(reference.clone(), image.digest.clone(), access, self.parent.clone())
+            .await
+            .map(Some)
+            .map_err(|e| ImageError::Failed(format!("fetch published filesystem {reference}: {e:#}")))
+    }
 }
 
 fn requested(image: &str) -> Result<Requested, ImageError> {
@@ -348,17 +395,15 @@ pub(crate) async fn handle_pull_image(
     let mut decision = Decision::new(&state).await?;
     let requested = decision.resolve(&request.image).await?;
     decision.check_source(&requested).await?;
+    let access = request.registry.unwrap_or_default();
     let image = state
         .containers
         .source
-        .pull(
-            requested.pull.clone(),
-            request.registry.unwrap_or_default(),
-            decision.parent.clone(),
-        )
+        .pull(requested.pull.clone(), access.clone(), decision.parent.clone())
         .await
         .map_err(|e| ImageError::Failed(format!("pull {}: {e:#}", requested.pull)))?;
     let resolved = decision.admit(&requested, &image).await?;
+    decision.published_root(&requested, &image, &resolved, access).await?;
     info!(image = %request.image, resolved = %resolved, "pulled image into the host cache");
     Ok(Json(ImagePullResponse {
         image: request.image,
