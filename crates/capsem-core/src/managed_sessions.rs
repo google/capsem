@@ -285,6 +285,7 @@ impl Registry {
     }
 }
 
+pub mod controller;
 mod leases;
 mod recovery;
 mod transitions;

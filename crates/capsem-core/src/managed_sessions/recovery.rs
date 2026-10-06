@@ -1,6 +1,15 @@
 use super::*;
 
 impl Registry {
+    pub(super) fn creation_failed(&self, ticket: &Ticket) -> Result<()> {
+        let _lease = self.lease()?;
+        let mut record = self.ticket_record(ticket)?;
+        if record.state == State::Creating {
+            record.state = State::Unknown;
+            self.write(&record)?;
+        }
+        Ok(())
+    }
     /// Authenticated observation only. This does not grant a create ticket or
     /// renew a lifetime; the service must reconcile before any renewal.
     pub fn inspect(&self, request: Uuid, capability: &Capability) -> Result<Option<Snapshot>> {

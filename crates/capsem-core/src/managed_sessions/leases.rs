@@ -30,6 +30,13 @@ impl LeaseClock {
     pub fn new(wall_ms: u64, monotonic: Instant) -> Self {
         Self { wall_ms, monotonic }
     }
+
+    pub(super) fn now() -> Result<Self> {
+        let wall = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        Ok(Self::new(u64::try_from(wall.as_millis())?, Instant::now()))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -57,6 +64,19 @@ pub(super) struct RuntimeLease {
 }
 
 impl Registry {
+    pub(super) fn runtime_deadline(&self, ticket: &Ticket) -> Result<Instant> {
+        let deadlines = self.runtime_deadlines()?;
+        let runtime = deadlines
+            .get(&ticket.request)
+            .context("managed runtime deadline is missing")?;
+        ensure!(
+            runtime.generation == ticket.generation,
+            "managed runtime generation mismatch"
+        );
+        let deadline = runtime.expires;
+        drop(deadlines);
+        Ok(deadline)
+    }
     /// Initialize once while still Reserved, before begin_create or VM effects.
     pub fn start_lease(&self, ticket: &Ticket, policy: LeasePolicy, clock: LeaseClock) -> Result<Snapshot> {
         let _lease = self.lease()?;
