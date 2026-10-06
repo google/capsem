@@ -1,0 +1,135 @@
+use super::super::tests::{digest, Registry};
+use super::super::*;
+
+#[tokio::test]
+async fn readiness_starts_pending_and_external_changes_invalidate_verified_bytes() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(BlobCache::at(root.path()).unwrap());
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    let reference = registry.published_filesystem(&image.source_digest, None);
+    let filesystem = puller
+        .fetch_rootfs(
+            &reference,
+            &ContentDigest::parse(&image.source_digest).unwrap(),
+            parent.path(),
+        )
+        .await
+        .unwrap();
+    puller.retain_cached_root(&key, &filesystem).await.unwrap();
+    drop(filesystem);
+    drop(image);
+    assert!(puller.cache_snapshot(&key).unwrap().verification_pending);
+    registry.task.abort();
+    let checked = puller.reconcile_cache(&key, parent.path()).await.unwrap();
+    assert_eq!(checked.state, super::super::super::CacheState::Ready);
+    assert!(checked.verified_at_unix_ns.is_some());
+    assert_eq!(puller.cache_snapshot(&key).unwrap(), checked);
+    let mut fresh = registry.puller();
+    fresh.cache = Some(BlobCache::at(root.path()).unwrap());
+    assert!(fresh.cached_receipt(&key).await.unwrap().is_some());
+    let startup = fresh.cache_snapshot(&key).unwrap();
+    assert!(
+        startup.verification_pending,
+        "a fresh owner cannot recover readiness from receipt metadata"
+    );
+    assert!(startup.verified_at_unix_ns.is_none());
+    assert_eq!(
+        puller.cache_snapshot(&key).unwrap(),
+        checked,
+        "metadata reads must remain quiet"
+    );
+    let cache = puller
+        .cache
+        .as_ref()
+        .unwrap()
+        .for_repository(&image_reference(&registry.reference()).unwrap());
+    let layer = root
+        .path()
+        .join("blobs")
+        .join(cache.entry_name(&digest(&registry.layer)).unwrap());
+    std::fs::write(&layer, vec![b'x'; registry.layer.len()]).unwrap();
+    let invalid = puller.cache_snapshot(&key).unwrap();
+    assert!(invalid.verification_pending);
+    assert_eq!(invalid.state, super::super::super::CacheState::Unknown);
+    assert!(invalid.epoch > checked.epoch);
+    assert!(invalid.verified_at_unix_ns.is_none());
+    assert!(puller.reconcile_cache(&key, parent.path()).await.is_err());
+    assert_eq!(
+        puller.cache_snapshot(&key).unwrap().state,
+        super::super::super::CacheState::Partial
+    );
+    std::fs::write(&layer, &registry.layer).unwrap();
+    let repaired = puller.reconcile_cache(&key, parent.path()).await.unwrap();
+    assert_eq!(repaired.state, super::super::super::CacheState::Ready);
+    let receipt = root.path().join("blobs").join(format!("receipt-{}", key.as_str()));
+    let bytes = std::fs::read(&receipt).unwrap();
+    std::fs::write(&receipt, bytes).unwrap();
+    assert!(
+        puller.cache_snapshot(&key).unwrap().verification_pending,
+        "same-content receipt rewrites invalidate the observation"
+    );
+    puller.reconcile_cache(&key, parent.path()).await.unwrap();
+    std::fs::remove_file(&layer).unwrap();
+    std::os::unix::fs::symlink("foreign", &layer).unwrap();
+    assert!(puller.cache_snapshot(&key).unwrap().verification_pending);
+    assert!(puller.reconcile_cache(&key, parent.path()).await.is_err());
+}
+
+#[tokio::test]
+async fn cancelled_reconciliation_invalidates_its_epoch() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(BlobCache::at(root.path()).unwrap());
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    drop(image);
+    registry.task.abort();
+    puller.reconcile_cache(&key, parent.path()).await.unwrap();
+    let lease = puller.cache.as_ref().unwrap().mutation_lease().await.unwrap();
+    let before = puller.cache_snapshot(&key).unwrap().epoch;
+    let mut operation = Box::pin(puller.reconcile_cache(&key, parent.path()));
+    assert!(futures::poll!(operation.as_mut()).is_pending());
+    let active = puller.cache_snapshot(&key).unwrap().epoch;
+    assert!(active > before, "verification must issue a new epoch before waiting");
+    drop(operation);
+    let cancelled = puller.cache_snapshot(&key).unwrap();
+    assert!(
+        cancelled.epoch > active,
+        "cancellation must obsolete a pending verification ticket"
+    );
+    assert!(cancelled.verification_pending);
+    drop(lease);
+    assert_eq!(
+        puller.reconcile_cache(&key, parent.path()).await.unwrap().state,
+        super::super::super::CacheState::Ready
+    );
+}
+
+#[tokio::test]
+async fn own_mutation_invalidates_before_publication_finishes() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(BlobCache::at(root.path()).unwrap());
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    drop(image);
+    registry.task.abort();
+    let ready = puller.reconcile_cache(&key, parent.path()).await.unwrap();
+    let cache = puller.cache.as_ref().unwrap();
+    let lease = cache.mutation_lease().await.unwrap();
+    let invalid = puller.cache_snapshot(&key).unwrap();
+    assert!(invalid.epoch > ready.epoch);
+    assert!(
+        invalid.verification_pending,
+        "must invalidate while lease held, before mutation or success"
+    );
+    drop(lease);
+}

@@ -6,7 +6,7 @@ use super::*;
 
 impl BlobCache {
     pub(in super::super) async fn read_receipt(&self, key: &CacheKey) -> Result<Option<CacheReceipt>> {
-        let lease = lock(self.mutation_lock()).await?;
+        let lease = read_lock(self.mutation_lock()).await?;
         let (cache, key) = (self.clone(), key.clone());
         tokio::task::spawn_blocking(move || {
             let _lease = lease;
@@ -17,7 +17,7 @@ impl BlobCache {
     }
 
     pub(in super::super) async fn publish_receipt(&self, receipt: CacheReceipt) -> Result<()> {
-        let lease = lock(self.mutation_lock()).await?;
+        let lease = self.mutation_lease().await?;
         let cache = self.clone();
         tokio::task::spawn_blocking(move || {
             let _lease = lease;
@@ -28,7 +28,7 @@ impl BlobCache {
     }
 
     pub(in super::super) async fn bind_root_receipt(&self, key: &CacheKey, root: RootReceipt) -> Result<()> {
-        let lease = lock(self.mutation_lock()).await?;
+        let lease = self.mutation_lease().await?;
         let (cache, key) = (self.clone(), key.clone());
         tokio::task::spawn_blocking(move || {
             let _lease = lease;
@@ -82,7 +82,7 @@ fn publish(cache: &BlobCache, directory: &ContainedDir, receipt: CacheReceipt) -
     Ok(())
 }
 
-fn verify(cache: &BlobCache, directory: &ContainedDir, origin: &str, blobs: &[BlobRef]) -> Result<()> {
+pub(super) fn verify(cache: &BlobCache, directory: &ContainedDir, origin: &str, blobs: &[BlobRef]) -> Result<()> {
     let scoped = cache.for_repository(&image_reference(origin)?);
     for blob in blobs {
         let name = scoped.entry_name(&blob.digest)?;

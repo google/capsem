@@ -6,6 +6,7 @@ use std::{
     io::{Read, Write},
     os::{fd::AsFd, unix::fs::MetadataExt},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
 
@@ -16,13 +17,14 @@ use capsem_foundation::{
     unix::{
         contained::{ContainedDir, ContainedOpenOptions, EntryKind},
         fs::ensure_private_dir,
-        lock::{try_acquire, FileLock, LockAttempt, LockMode},
+        lock::{try_acquire, try_acquire_existing, FileLock, LockAttempt, LockMode},
     },
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::digest_hex;
+mod readiness;
 mod receipts;
 
 #[derive(Clone, Deserialize)]
@@ -44,11 +46,12 @@ pub(super) struct BlobCache {
     root: PathBuf,
     policy: Policy,
     namespace: String,
+    tracking: Arc<Mutex<super::readiness::Tracking>>,
 }
 
 impl BlobCache {
     pub(super) async fn usage(&self) -> Result<super::CacheUsage> {
-        let lease = lock(self.mutation_lock()).await?;
+        let lease = read_lock(self.mutation_lock()).await?;
         let cache = self.clone();
         tokio::task::spawn_blocking(move || {
             let _lease = lease;
@@ -63,6 +66,7 @@ impl BlobCache {
             root: paths::capsem_home().join(root).join(&policy.path),
             policy,
             namespace: String::new(),
+            tracking: Arc::default(),
         })
     }
 
@@ -91,6 +95,7 @@ impl BlobCache {
             root: root.to_owned(),
             policy: Self::policy()?.1,
             namespace: String::new(),
+            tracking: Arc::default(),
         })
     }
 
@@ -134,7 +139,7 @@ impl BlobCache {
     }
 
     pub(super) async fn copy_hit(&self, digest: &str, size: u64, destination: &Path) -> Result<bool> {
-        let lease = lock(self.mutation_lock()).await?;
+        let lease = self.mutation_lease().await?;
         let cache = self.clone();
         let hex = self.entry_name(digest)?;
         let opened = tokio::task::spawn_blocking(move || -> Result<Option<File>> {
@@ -167,7 +172,7 @@ impl BlobCache {
             self.policy.protect_hardlinks,
             "published roots require cache link protection"
         );
-        let lease = lock(self.mutation_lock()).await?;
+        let lease = self.mutation_lease().await?;
         let cache = self.clone();
         let name = format!("immutable-{}", self.entry_name(digest)?);
         let (digest, destination) = (digest.to_owned(), destination.to_owned());
@@ -210,7 +215,7 @@ impl BlobCache {
             self.policy.protect_hardlinks,
             "published roots require cache link protection"
         );
-        let lease = lock(self.mutation_lock()).await?;
+        let lease = self.mutation_lease().await?;
         let cache = self.clone();
         let name = format!("immutable-{}", self.entry_name(digest)?);
         let source = source.to_owned();
@@ -240,7 +245,7 @@ impl BlobCache {
     }
 
     pub(super) async fn publish(&self, digest: &str, source: &Path) -> Result<()> {
-        let lease = lock(self.mutation_lock()).await?;
+        let lease = self.mutation_lease().await?;
         let cache = self.clone();
         let hex = self.entry_name(digest)?;
         let source = source.to_owned();
@@ -260,7 +265,7 @@ impl BlobCache {
 
     /// Metadata is bounded and rehashed before it can drive offline blob reads.
     pub(super) async fn read_metadata(&self, digest: &str, maximum: usize) -> Result<Option<Vec<u8>>> {
-        let lease = lock(self.mutation_lock()).await?;
+        let lease = self.mutation_lease().await?;
         let cache = self.clone();
         let name = self.entry_name(digest)?;
         let digest = digest.to_owned();
@@ -358,11 +363,35 @@ impl BlobCache {
     }
 }
 
+#[derive(Clone, Copy)]
+enum LockAccess {
+    Prepare,
+    Read,
+}
+
 async fn lock(path: PathBuf) -> Result<FileLock> {
+    lock_with(path, LockAccess::Prepare).await
+}
+
+async fn read_lock(path: PathBuf) -> Result<FileLock> {
+    lock_with(path, LockAccess::Read).await
+}
+
+async fn lock_with(path: PathBuf, access: LockAccess) -> Result<FileLock> {
     poll_until(PollOpts::new("oci-cache-lock", Duration::from_secs(30)), || {
         let path = path.clone();
         async move {
-            match tokio::task::spawn_blocking(move || try_acquire(&path, LockMode::Exclusive)).await {
+            match tokio::task::spawn_blocking(move || {
+                if matches!(access, LockAccess::Read) {
+                    match try_acquire_existing(&path, LockMode::Exclusive) {
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        result => return result,
+                    }
+                }
+                try_acquire(&path, LockMode::Exclusive)
+            })
+            .await
+            {
                 Ok(Ok(LockAttempt::Contended)) => None,
                 Ok(Ok(LockAttempt::Acquired(lease))) => Some(Ok(lease)),
                 Ok(Err(error)) => Some(Err(anyhow::Error::from(error))),
