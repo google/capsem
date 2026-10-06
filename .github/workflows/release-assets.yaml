@@ -432,6 +432,18 @@ jobs:
           "$PWD"
           "$ACTIVATION_READY"
 
+      # Hosted timing evidence. A hosted lane seeds its VM timing ratchet until
+      # a hosted recording is checked in as reviewed evidence; this is
+      # where that recording comes from, pass or fail.
+      - name: Upload hosted benchmark recordings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hosted-benchmarks-profile-${{ inputs.profile }}-${{ github.run_attempt }}
+          path: cache/target/tests/benchmarks/
+          retention-days: 30
+          if-no-files-found: ignore
+
       - name: Record deferred profile staging boundary
         if: ${{ needs.author-profile-release.outputs.activation_ready != 'true' }}
         env:
