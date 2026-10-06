@@ -220,7 +220,7 @@ async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
     // Resolved first: a teardown that fails -- a ledger too damaged to read --
     // must not also lose the ledger it could not read.
     let session_dir = resolve_session_dir(state, id).ok();
-    if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::Retain).await {
+    if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::Retain, None).await {
         error!(vm_id = id, error = %error.1, "failed create did not shut down cleanly");
     }
     if let Some(session_dir) = session_dir {

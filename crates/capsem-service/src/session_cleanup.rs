@@ -96,7 +96,7 @@ pub(super) async fn handle_preserve_failure(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
+    let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
     let _preserved = ensure_failed_session_preserved(Arc::clone(&state), id.clone(), shutdown_result)
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;

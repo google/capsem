@@ -1,6 +1,51 @@
 use super::*;
 use crate::tests::{make_test_state, test_instance};
 
+#[tokio::test]
+async fn stale_shutdown_binding_leaves_replacement_socket_and_ledger_intact() {
+    let state = make_test_state();
+    let socket = state.run_dir.join("replacement.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let ready = socket.with_extension("ready");
+    std::fs::write(&ready, b"replacement ready").unwrap();
+    let mut instance = test_instance();
+    instance.id = "replacement".into();
+    instance.pid = 0;
+    instance.uds_path = socket.clone();
+    let generation = instance.generation;
+    state.instances.lock().unwrap().insert("replacement".into(), instance);
+    let ledger = Arc::clone(&state.host_ledger);
+    state
+        .session_db_handles
+        .lock()
+        .unwrap()
+        .insert("replacement".into(), Arc::clone(&ledger));
+    let result = shutdown_vm_process(&state, "replacement", ShutdownMode::Discard, Some(uuid::Uuid::new_v4())).await;
+    assert_eq!(result.unwrap_err().0, StatusCode::CONFLICT);
+    assert_eq!(
+        state.instances.lock().unwrap().get("replacement").unwrap().generation,
+        generation
+    );
+    assert!(Arc::ptr_eq(
+        state.session_db_handles.lock().unwrap().get("replacement").unwrap(),
+        &ledger
+    ));
+    assert!(std::os::unix::net::UnixStream::connect(&socket).is_ok());
+    assert_eq!(std::fs::read(&ready).unwrap(), b"replacement ready");
+    drop(listener);
+}
+
+#[tokio::test]
+async fn bound_shutdown_reports_missing_ownership_without_fabricating_completion() {
+    let state = make_test_state();
+    assert!(
+        shutdown_vm_process(&state, "absent", ShutdownMode::Discard, Some(uuid::Uuid::new_v4()))
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
 #[test]
 fn selected_spawn_generation_is_durable_and_corruption_cannot_be_overwritten() {
     let root = tempfile::tempdir().unwrap();

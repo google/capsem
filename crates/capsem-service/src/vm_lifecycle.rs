@@ -246,6 +246,7 @@ pub(super) async fn shutdown_vm_process(
     state: &ServiceState,
     id: &str,
     mode: ShutdownMode,
+    expected_generation: Option<uuid::Uuid>,
 ) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
     // Teardown must not overlap save/restore, but independent cold starts may.
     let _vz_guard = state.lifecycle.vz.read().await;
@@ -261,6 +262,12 @@ pub(super) async fn shutdown_vm_process(
         let Some(i) = instances.get(id) else {
             return Ok(None);
         };
+        if expected_generation.is_some_and(|expected| expected != i.generation) {
+            return Err(AppError(
+                StatusCode::CONFLICT,
+                "VM spawn generation changed; cleanup ownership refused".into(),
+            ));
+        }
         let result = (
             i.uds_path.clone(),
             i.session_dir.clone(),
@@ -489,7 +496,7 @@ pub(super) async fn handle_stop(
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
     // get bash history + filesystem sync before teardown.
-    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await? {
+    if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await? {
         if !persistent {
             // Ephemeral stop owns deletion just like DELETE: wait for the
             // contained cleanup and surface errors before acknowledging it.
@@ -519,7 +526,7 @@ pub(super) async fn handle_delete(
     // Delete fast-paths through direct process teardown: the session dir is
     // about to be removed, so guest sync() and bash history don't matter.
     let session_dir =
-        if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, ShutdownMode::Discard).await? {
+        if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, ShutdownMode::Discard, None).await? {
             session_dir
         } else {
             // Not running -- check persistent registry for stopped VM
@@ -697,7 +704,7 @@ pub(super) async fn handle_purge(
             // Purge fast-paths for the same reason as delete: every VM
             // here is being destroyed, so the 2.5s graceful floor is pure
             // waste per VM. join_all still runs them concurrently.
-            shutdown_vm_process(state_ref, &id, ShutdownMode::Discard)
+            shutdown_vm_process(state_ref, &id, ShutdownMode::Discard, None)
                 .await
                 .map(|result| result.map(|(session_dir, _, _pid)| (id, session_dir, persistent)))
         }
@@ -842,7 +849,7 @@ pub(super) async fn handle_run(
             // fallback) and cleans the UDS socket inline. Graceful because
             // preserve_failed_session_dir inspects session logs that capsem-process
             // is still flushing.
-            let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
+            let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
             preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result).await?;
             return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
         }
@@ -870,7 +877,7 @@ pub(super) async fn handle_run(
     // blocks until the process is actually gone -- the leak detector needs
     // that guarantee. Route handlers must not mine session.db before returning;
     // durable telemetry is recovered by the ledger rails.
-    let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
+    let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
     let failed = !matches!(&exec_result, Ok(ProcessToService::ExecResult { .. }));
     finalize_one_shot_session(Arc::clone(&state), id.clone(), shutdown_result, failed).await?;
 
