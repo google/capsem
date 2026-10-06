@@ -13,6 +13,7 @@ import json
 import os
 import re
 import selectors
+import shlex
 import shutil
 import signal
 import socket
@@ -603,49 +604,30 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
     redirects = derive_redirects(rules)
     if not redirects:
         raise ValueError("VM has no interception rules for the container to mirror")
-    for table, chain in (("nat", NAT_CHAIN), ("filter", INPUT_CHAIN)):
-        table_args = ["-t", table] if table == "nat" else []
-        run(IPTABLES, *table_args, "-N", chain, check=False)
-        run(IPTABLES, *table_args, "-F", chain)
+    # Restore only our chains. --noflush preserves the VM's interception and
+    # network rules; each table commits its complete replacement together.
+    nat = [f":{NAT_CHAIN} - [0:0]", f"-F {NAT_CHAIN}"]
+    incoming = [f":{INPUT_CHAIN} - [0:0]", f"-F {INPUT_CHAIN}"]
     # Member traffic returns before any proxy DNAT can claim it, as in the VM.
     for destination in derive_returns(rules):
-        run(IPTABLES, "-t", "nat", "-A", NAT_CHAIN, "-i", HOST_LINK, "-d", destination, "-j", "RETURN")
+        nat.append(shlex.join(["-A", NAT_CHAIN, "-i", HOST_LINK, "-d", destination, "-j", "RETURN"]))
     for protocol, port, proxy, destination in redirects:
         match_args = ["-d", destination] if destination else []
         if port is not None:
             match_args += ["--dport", str(port)]
-        run(
-            IPTABLES,
-            "-t",
-            "nat",
-            "-A",
-            NAT_CHAIN,
-            "-i",
-            HOST_LINK,
-            "-p",
-            protocol,
-            *match_args,
-            "-j",
-            "DNAT",
-            "--to-destination",
-            f"127.0.0.1:{proxy}",
-        )
-        run(
-            IPTABLES,
-            "-A",
-            INPUT_CHAIN,
-            "-i",
-            HOST_LINK,
-            "-d",
-            "127.0.0.1",
-            "-p",
-            protocol,
-            "--dport",
-            str(proxy),
-            "-j",
-            "ACCEPT",
-        )
-    run(IPTABLES, "-A", INPUT_CHAIN, "-i", HOST_LINK, "-j", "DROP")
+        nat.append(shlex.join([
+            "-A", NAT_CHAIN, "-i", HOST_LINK, "-p", protocol, *match_args,
+            "-j", "DNAT", "--to-destination", f"127.0.0.1:{proxy}",
+        ]))
+        incoming.append(shlex.join([
+            "-A", INPUT_CHAIN, "-i", HOST_LINK, "-d", "127.0.0.1", "-p", protocol,
+            "--dport", str(proxy), "-j", "ACCEPT",
+        ]))
+    incoming.append(shlex.join(["-A", INPUT_CHAIN, "-i", HOST_LINK, "-j", "DROP"]))
+    run(
+        IPTABLES + "-restore", "--noflush", text=True,
+        input="\n".join(["*nat", *nat, "COMMIT", "*filter", *incoming, "COMMIT", ""]),
+    )
     for table_args, parent, target in (
         (["-t", "nat"], "PREROUTING", ["-j", NAT_CHAIN]),
         ([], "INPUT", ["-j", INPUT_CHAIN]),

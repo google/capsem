@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import importlib.util
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -202,11 +203,23 @@ class FakeRun:
 
     def __init__(self, rules, jump_exists=False):
         self.calls = []
+        self.batches = []
         self.rules = rules
         self.jump_exists = jump_exists
 
     def __call__(self, *argv, check=True, **kwargs):
         self.calls.append(list(argv))
+        if argv[0] == "iptables-nft-restore":
+            self.batches.append((list(argv), kwargs))
+            table = None
+            for line in kwargs["input"].splitlines():
+                if line.startswith("*"):
+                    table = line[1:]
+                elif line.startswith("-"):
+                    # Decode the delivered restore grammar independently of
+                    # the producer so existing policy assertions see its rules.
+                    prefix = ["iptables-nft", "-t", table] if table == "nat" else ["iptables-nft"]
+                    self.calls.append([*prefix, *shlex.split(line)])
         stdout = ""
         returncode = 0
         if "-S" in argv:
@@ -306,6 +319,24 @@ def test_network_ready_hook_pins_the_container_to_the_vm_proxies(launcher, tmp_p
         launcher.NAT_CHAIN,
     ] in calls
     assert [iptables, "-I", "INPUT", "-j", launcher.INPUT_CHAIN] in calls
+
+
+def test_network_ready_batches_only_workload_owned_chains(launcher, tmp_path):
+    run = FakeRun(VM_OUTPUT_RULES)
+    launcher.network_ready(4242, run=run, sysctl_root=hook_environment(tmp_path))
+    assert len(run.batches) == 1, "one transaction replaces repeated firewall processes"
+    argv, kwargs = run.batches[0]
+    assert argv == ["iptables-nft-restore", "--noflush"]
+    assert kwargs["text"] is True
+    lines = kwargs["input"].splitlines()
+    assert [line for line in lines if line.startswith("*")] == ["*nat", "*filter"]
+    assert [line.split()[0] for line in lines if line.startswith(":")] == [
+        ":" + launcher.NAT_CHAIN, ":" + launcher.INPUT_CHAIN,
+    ], "the VM's existing chains and policies belong to their current owner"
+    assert [line for line in lines if line.startswith("-F ")] == [
+        "-F " + launcher.NAT_CHAIN, "-F " + launcher.INPUT_CHAIN,
+    ]
+    assert lines.count("COMMIT") == 2
 
 
 def test_network_ready_hook_does_not_duplicate_chain_jumps(launcher, tmp_path):

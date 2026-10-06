@@ -365,6 +365,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Container startup applies its firewall chains in one restore call, reducing
+  process overhead while preserving VM interception, isolation and network rules.
+
 - Linux x86 VMs start with a 4 MiB DMA bounce pool that grows when needed,
   reducing boot time and resident memory while retaining DMA support and the
   default 12 GiB RAM and four CPUs.
