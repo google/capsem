@@ -414,6 +414,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Revoke GUI preview exposures admitted after their workload generation was
+  replaced, preventing an unrecorded surface from remaining published.
+
 - Wait for cancelled container setup and blocking stage writes before session
   cleanup, preserving retirement order for shutdown and crash evidence.
 

@@ -7,6 +7,83 @@ use capsem_proto::{PublicationAccess, PublicationTarget};
 const EXPOSURE: &str = "0199df26-d0f2-74f2-a304-ef67b79d1217";
 const PREVIEW_LISTENER: u16 = 19444;
 
+#[tokio::test]
+async fn late_preview_admission_is_revoked_after_workload_generation_changes() {
+    let fx = gui_fixture(xpra_on("14500"));
+    let generation = fx.state.containers.begin("box", "old-image");
+    fx.state.containers.advance("box", generation, |status| {
+        status.state = ContainerState::Running;
+        status.surface = Some(ContainerSurface {
+            kind: ContainerSurfaceKind::Xpra,
+            port: 14500,
+            exposure_id: None,
+        });
+    });
+    let entered = Arc::new(tokio::sync::Semaphore::new(0));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let owner = {
+        let entered = Arc::clone(&entered);
+        let release = Arc::clone(&release);
+        spawn_fake_process(&fx.uds_path, 2, move |message| {
+            let entered = Arc::clone(&entered);
+            let release = Arc::clone(&release);
+            let message = message.clone();
+            Box::pin(async move {
+                Some(match message {
+                    ServiceToProcess::DeclarePreview {
+                        id, guest_port, target, ..
+                    } => {
+                        entered.add_permits(1);
+                        release.acquire().await.unwrap().forget();
+                        ProcessToService::PortPublished {
+                            id,
+                            publication: Some(capsem_proto::ipc::PublicationInfo {
+                                id: EXPOSURE.into(),
+                                host_port: None,
+                                guest_port,
+                                target,
+                                access: PublicationAccess::HttpPreview,
+                                router_pid: 4242,
+                            }),
+                            error: None,
+                            policy_refused: false,
+                        }
+                    }
+                    ServiceToProcess::RevokeExposure { id, exposure_id } => {
+                        assert_eq!(exposure_id, EXPOSURE);
+                        ProcessToService::ExposureRevoked {
+                            id,
+                            revoked: true,
+                            error: None,
+                        }
+                    }
+                    other => panic!("unexpected late surface IPC: {other:?}"),
+                })
+            })
+        })
+    };
+    let grant = {
+        let state = Arc::clone(&fx.state);
+        tokio::spawn(async move {
+            grant_surface(&state, "box", generation).await;
+        })
+    };
+    entered.acquire().await.unwrap().forget();
+    let replacement = fx.state.containers.begin("box", "replacement-image");
+    release.add_permits(1);
+    grant.await.unwrap();
+    let messages = tokio::time::timeout(std::time::Duration::from_millis(500), owner)
+        .await
+        .expect("late exposure was not revoked")
+        .unwrap();
+    assert_eq!(messages.len(), 2);
+    let current = fx.state.containers.status("box").unwrap();
+    assert_eq!(current.image, "replacement-image");
+    assert!(current.surface.is_none());
+    assert_ne!(replacement, generation);
+    fx.state.containers.cancel_and_wait("box").await;
+}
+
 fn xpra_on(port: &str) -> FixtureImages {
     FixtureImages {
         labels: Some(json!({"org.capsem.surface": "xpra", "org.capsem.surface.port": port})),

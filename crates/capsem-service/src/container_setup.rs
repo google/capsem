@@ -618,6 +618,9 @@ pub(crate) async fn grant_surface(state: &Arc<ServiceState>, id: &str, generatio
         target: capsem_api::ExposureTarget::Container,
         access: capsem_api::ExposureAccess::HttpPreview,
     };
+    if !state.containers.advance(id, generation, |_| {}) {
+        return;
+    }
     let exposure = match crate::router_runtime::exposures::create_exposure(state, id, request).await {
         Ok(exposure) => exposure,
         Err(AppError(status, error)) => {
@@ -631,6 +634,18 @@ pub(crate) async fn grant_surface(state: &Arc<ServiceState>, id: &str, generatio
         }
     });
     if !recorded {
+        // The admission RPC can outlive this workload generation. Its new
+        // exposure belongs to this attempt and must not escape retirement.
+        let revoked = crate::router_runtime::exposures::handle_delete_exposure(
+            State(Arc::clone(state)),
+            Path((id.to_owned(), exposure.id.clone())),
+        )
+        .await;
+        if let Err(AppError(status, error)) = revoked {
+            if status != StatusCode::NOT_FOUND {
+                warn!(vm_id = id, exposure_id = exposure.id.as_str(), %status, %error, "late container exposure could not be revoked");
+            }
+        }
         return;
     }
     info!(
