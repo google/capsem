@@ -7,7 +7,9 @@ use serde::Deserialize;
 mod cache;
 mod catalog;
 mod identity;
+mod inventory;
 pub use identity::{CacheIdentity, CacheKey};
+pub use inventory::CacheUsage;
 mod receipts;
 pub use receipts::CacheReceipt;
 

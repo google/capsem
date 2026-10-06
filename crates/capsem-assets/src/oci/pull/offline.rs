@@ -3,6 +3,14 @@
 use super::*;
 
 impl Puller {
+    /// Traverse owner-managed disk usage off the async worker. This is a
+    /// reconciliation operation, not a cheap polling snapshot or readiness.
+    pub async fn cache_usage(&self) -> Result<super::super::CacheUsage> {
+        let cache = self.cache.as_ref().context("inventory requires an image cache")?;
+        cache.prepare().await?;
+        cache.usage().await
+    }
+
     /// Read durable verification metadata. It must be reconciled before a
     /// caller reports readiness, and it never supplies execution authority.
     pub async fn cached_receipt(&self, key: &super::super::CacheKey) -> Result<Option<CacheReceipt>> {

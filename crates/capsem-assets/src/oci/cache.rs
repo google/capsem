@@ -47,6 +47,16 @@ pub(super) struct BlobCache {
 }
 
 impl BlobCache {
+    pub(super) async fn usage(&self) -> Result<super::CacheUsage> {
+        let lease = lock(self.mutation_lock()).await?;
+        let cache = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            super::inventory::measure(&ContainedDir::open_root(&cache.root)?)
+        })
+        .await?
+    }
+
     pub(super) fn installed() -> Result<Self> {
         let (root, policy) = Self::policy()?;
         Ok(Self {
