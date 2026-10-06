@@ -90,6 +90,7 @@ pub struct SessionSummary {
     pub title: String,
     pub repo_path: Option<String>,
     pub can_resume: bool,
+    pub available_actions: Vec<capsem_sdk::models::VmAction>,
     pub resume_blocked_reason: Option<String>,
     pub branch: Option<String>,
     pub persistent: bool,

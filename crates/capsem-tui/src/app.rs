@@ -1,3 +1,4 @@
+use capsem_sdk::models::VmAction;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::model::{AppState, ServiceStatus, SessionLifecycle};
@@ -28,6 +29,7 @@ pub enum ControlAction {
     Update,
     CreateSession { name: Option<String> },
     Fork { id: String, name: String },
+    Start { id: String, label: String },
     Resume { id: String, label: String },
     Checkpoint { id: String, label: String },
     Suspend { id: String, label: String },
@@ -43,6 +45,7 @@ impl ControlAction {
             Self::Update => "update",
             Self::CreateSession { .. } => "create",
             Self::Fork { .. } => "fork",
+            Self::Start { .. } => "start",
             Self::Resume { .. } => "resume",
             Self::Checkpoint { .. } => "checkpoint",
             Self::Suspend { .. } => "suspend",
@@ -58,6 +61,7 @@ impl ControlAction {
             Self::Update => "updating",
             Self::CreateSession { .. } => "creating",
             Self::Fork { .. } => "forking",
+            Self::Start { .. } => "starting",
             Self::Resume { .. } => "resuming",
             Self::Checkpoint { .. } => "checkpointing",
             Self::Suspend { .. } => "suspending",
@@ -74,7 +78,8 @@ impl ControlAction {
             Self::CreateSession { name: Some(name), .. } => name,
             Self::CreateSession { name: None } => "new session",
             Self::Fork { name, .. } => name,
-            Self::Resume { label, .. }
+            Self::Start { label, .. }
+            | Self::Resume { label, .. }
             | Self::Checkpoint { label, .. }
             | Self::Suspend { label, .. }
             | Self::Stop { label, .. }
@@ -387,7 +392,16 @@ impl App {
             KeyCode::Enter => {
                 self.pending_action = None;
                 self.overlay = AppOverlay::None;
-                Some(AppAction::Invoke(pending))
+                if self.action_available(&pending) {
+                    Some(AppAction::Invoke(pending))
+                } else {
+                    self.set_control_message(format!(
+                        "{} is no longer available for {}",
+                        pending.label(),
+                        pending.target()
+                    ));
+                    Some(AppAction::Consumed)
+                }
             }
             KeyCode::Esc => {
                 self.pending_action = None;
@@ -406,8 +420,12 @@ impl App {
             KeyCode::Char('r' | 'R') => self.active_resume_action(),
             KeyCode::Char('c' | 'C') => self.active_checkpoint_action(),
             KeyCode::Char('s' | 'S') => self.active_suspend_action(),
-            KeyCode::Char('t' | 'T') => self.active_session_action(|id, label| ControlAction::Stop { id, label }),
-            KeyCode::Char('d' | 'D') => self.active_session_action(|id, label| ControlAction::Delete { id, label }),
+            KeyCode::Char('t' | 'T') => {
+                self.active_session_action(VmAction::Stop, |id, label| ControlAction::Stop { id, label })
+            }
+            KeyCode::Char('d' | 'D') => {
+                self.active_session_action(VmAction::Delete, |id, label| ControlAction::Delete { id, label })
+            }
             KeyCode::Char('p' | 'P') => Some(ControlAction::Purge { all: false }),
             KeyCode::Char('u' | 'U') => Some(ControlAction::Update),
             _ => None,
@@ -431,10 +449,15 @@ impl App {
         if resume_blocked_reason(session).is_some() {
             return None;
         }
-        Some(ControlAction::Resume {
-            id: session.id.clone(),
-            label: session.title.clone(),
-        })
+        let id = session.id.clone();
+        let label = session.title.clone();
+        if session.available_actions.contains(&VmAction::Start) {
+            Some(ControlAction::Start { id, label })
+        } else if session.available_actions.contains(&VmAction::Resume) {
+            Some(ControlAction::Resume { id, label })
+        } else {
+            None
+        }
     }
 
     fn active_resume_blocked_reason(&self) -> Option<&str> {
@@ -443,7 +466,7 @@ impl App {
 
     fn active_checkpoint_action(&self) -> Option<ControlAction> {
         let session = self.state.active_session()?;
-        if !session.persistent || !matches!(session.lifecycle, SessionLifecycle::Working) {
+        if !session.available_actions.contains(&VmAction::Pause) {
             return None;
         }
         Some(ControlAction::Checkpoint {
@@ -454,7 +477,7 @@ impl App {
 
     fn active_suspend_action(&self) -> Option<ControlAction> {
         let session = self.state.active_session()?;
-        if !session.persistent || !matches!(session.lifecycle, SessionLifecycle::Working) {
+        if !session.available_actions.contains(&VmAction::Pause) {
             return None;
         }
         Some(ControlAction::Suspend {
@@ -463,9 +486,33 @@ impl App {
         })
     }
 
-    fn active_session_action(&self, action: impl FnOnce(String, String) -> ControlAction) -> Option<ControlAction> {
+    fn active_session_action(
+        &self,
+        required: VmAction,
+        action: impl FnOnce(String, String) -> ControlAction,
+    ) -> Option<ControlAction> {
         let session = self.state.active_session()?;
+        if !session.available_actions.contains(&required) {
+            return None;
+        }
         Some(action(session.id.clone(), session.title.clone()))
+    }
+
+    fn action_available(&self, action: &ControlAction) -> bool {
+        let (id, required) = match action {
+            ControlAction::Start { id, .. } => (id, VmAction::Start),
+            ControlAction::Resume { id, .. } => (id, VmAction::Resume),
+            ControlAction::Checkpoint { id, .. } | ControlAction::Suspend { id, .. } => (id, VmAction::Pause),
+            ControlAction::Stop { id, .. } => (id, VmAction::Stop),
+            ControlAction::Delete { id, .. } => (id, VmAction::Delete),
+            ControlAction::Fork { id, .. } => (id, VmAction::Fork),
+            _ => return true,
+        };
+        self.state.sessions.iter().any(|session| {
+            session.id == *id
+                && session.available_actions.contains(&required)
+                && (!matches!(required, VmAction::Start | VmAction::Resume) || session.can_resume)
+        })
     }
 
     fn active_id(&self) -> Option<String> {
@@ -482,6 +529,13 @@ impl App {
     }
 
     fn open_fork(&mut self) -> bool {
+        if !self
+            .state
+            .active_session()
+            .is_some_and(|session| session.available_actions.contains(&VmAction::Fork))
+        {
+            return false;
+        }
         let Some(source_id) = self.active_id() else {
             return false;
         };
@@ -554,10 +608,16 @@ impl App {
                 }
                 self.fork_draft = None;
                 self.overlay = AppOverlay::None;
-                AppAction::Invoke(ControlAction::Fork {
+                let action = ControlAction::Fork {
                     id: draft.source_id,
                     name,
-                })
+                };
+                if self.action_available(&action) {
+                    AppAction::Invoke(action)
+                } else {
+                    self.set_control_message("fork is no longer available for this session");
+                    AppAction::Consumed
+                }
             }
             KeyCode::Backspace => {
                 if let Some(draft) = &mut self.fork_draft {
@@ -623,7 +683,12 @@ pub fn resume_blocked_reason(session: &crate::model::SessionSummary) -> Option<&
     ) {
         return None;
     }
-    if session.can_resume {
+    if session.can_resume
+        && session
+            .available_actions
+            .iter()
+            .any(|action| matches!(action, VmAction::Start | VmAction::Resume))
+    {
         return None;
     }
     Some(

@@ -43,6 +43,10 @@ pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &Con
                 focus_session: vm.id().map(str::to_owned),
             })
         }
+        ControlAction::Start { id, label } => {
+            vm(id)?.start().await?;
+            Ok(focused(id, format!("started {label}")))
+        }
         ControlAction::Resume { id, label } => {
             vm(id)?.resume().await?;
             Ok(focused(id, format!("resumed {label}")))

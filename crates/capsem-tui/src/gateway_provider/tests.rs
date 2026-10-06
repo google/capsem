@@ -55,6 +55,69 @@ fn unknown_gateway_enums_are_errors_instead_of_idle_sessions() {
 }
 
 #[test]
+fn gateway_actions_control_tui_keys_and_revoke_stale_intent() {
+    use crate::app::{App, AppAction, AppOverlay};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let state = |actions: &[&str], status: &str| {
+        let mut value: serde_json::Value = serde_json::from_str(&overview("running", status)).unwrap();
+        value["vms"][0]["available_actions"] = serde_json::json!(actions);
+        value["vms"][0]["can_resume"] = serde_json::json!(true);
+        state_from_status_json_for_test(&value.to_string(), Duration::ZERO).unwrap()
+    };
+    let alt = |ch| KeyEvent::new(KeyCode::Char(ch), KeyModifiers::ALT);
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    for ch in ['s', 'c', 't', 'd', 'f'] {
+        let mut app = App::new(state(&[], "Running"));
+        assert!(!matches!(app.handle_key(alt(ch)), AppAction::Invoke(_)));
+        assert_eq!(app.overlay(), AppOverlay::None, "unadvertised {ch}");
+        assert!(app.pending_action().is_none());
+    }
+    let mut app = App::new(state(&["stop"], "Running"));
+    app.handle_key(alt('t'));
+    assert_eq!(app.overlay(), AppOverlay::Confirm);
+    app.replace_state(state(&[], "Running"));
+    assert!(!matches!(app.handle_key(enter), AppAction::Invoke(_)));
+    assert_eq!(app.overlay(), AppOverlay::None);
+    assert!(app
+        .state()
+        .service
+        .control_message
+        .as_deref()
+        .unwrap()
+        .contains("no longer available"));
+
+    let mut app = App::new(state(&["fork"], "Running"));
+    app.handle_key(alt('f'));
+    assert_eq!(app.overlay(), AppOverlay::Fork);
+    app.replace_state(state(&[], "Running"));
+    assert!(!matches!(app.handle_key(enter), AppAction::Invoke(_)));
+    assert!(app.fork_draft().is_none());
+
+    for (status, advertised, expected) in [("Stopped", "start", "start"), ("Suspended", "resume", "resume")] {
+        let mut app = App::new(state(&[advertised], status));
+        let AppAction::Invoke(action) = app.handle_key(enter) else {
+            panic!("{status} should {expected}")
+        };
+        assert_eq!(action.label(), expected);
+    }
+    let mut app = App::new(state(&[], "Stopped"));
+    assert!(
+        !matches!(app.handle_key(enter), AppAction::Invoke(_)),
+        "can_resume alone grants no action"
+    );
+    let mut app = App::new(state(&["resume"], "Suspended"));
+    app.handle_key(alt('r'));
+    let mut revoked = state(&["resume"], "Suspended");
+    revoked.sessions[0].can_resume = false;
+    app.replace_state(revoked);
+    assert!(
+        !matches!(app.handle_key(enter), AppAction::Invoke(_)),
+        "checkpoint readiness is rechecked at confirmation"
+    );
+}
+
+#[test]
 fn cost_projection_handles_missing_nonfinite_and_extreme_values() {
     for value in [None, Some(f64::NAN), Some(f64::INFINITY), Some(0.0), Some(-1.0)] {
         assert_eq!(cost_to_micros(value), 0);

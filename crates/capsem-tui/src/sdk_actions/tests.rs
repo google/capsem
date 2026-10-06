@@ -36,6 +36,22 @@ fn request_body(request: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn start_uses_existing_start_endpoint_and_preserves_focus() {
+    let outcome = invoke_with_response(
+        ControlAction::Start {
+            id: "vm-1".into(),
+            label: "workspace".into(),
+        },
+        r#"{"id":"vm-1","name":"workspace","status":"Running","available_actions":[]}"#,
+        "POST /vms/vm-1/start ",
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.message, "started workspace");
+    assert_eq!(outcome.focus_session.as_deref(), Some("vm-1"));
+}
+
+#[tokio::test]
 async fn resume_suspend_and_delete_keep_tui_focus_and_labels() {
     let id = "vm-1".to_string();
     let label = "workspace".to_string();

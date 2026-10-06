@@ -279,6 +279,7 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         title,
         repo_path: None,
         can_resume: vm.can_resume,
+        available_actions: vm.available_actions,
         resume_blocked_reason: vm.resume_blocked_reason,
         branch: None,
         persistent: vm.persistent,

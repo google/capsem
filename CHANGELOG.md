@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TUI lifecycle controls honor the gateway's available actions, start stopped
+  sessions through the correct endpoint, and reject stale confirmations and
+  fork requests when service permissions change.
+
 - Tray lifecycle failures remain visible across ordinary status polls and show
   bounded service explanations with gateway credentials redacted.
 
