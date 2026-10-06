@@ -927,6 +927,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The co-work profile advances to 0.6.4 and the code profile to 0.6.6, so
+  the published images carry the guest agent that refuses a second
+  `capsem-pty-agent` instead of freezing the VM (#198). Stable co-work 0.6.3
+  and code 0.6.5 are published immutably from before that fix.
+
 - The code profile advances to 0.6.5. Code 0.6.4 named itself the default
   profile with a `default_for` field that Capsem 0.6.3 does not know, and
   0.6.3's updater parses staged profiles strictly, so every automatic update
