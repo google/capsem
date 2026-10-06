@@ -219,6 +219,7 @@ def test_release_prefix_reexec_uses_commit_identity_not_source_checkout(
     assert populated == [(tmp_path / str(commit), commit)]
     assert environments == [
         {
+            "VIRTUAL_ENV": "",
             config.environment.source_checkout: str(config.root),
             # The child must resolve every repository-owned path against its
             # immutable source snapshot, never the mutable invoking checkout.
