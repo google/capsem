@@ -11,7 +11,7 @@ mod asset_wait;
 mod instance_reaper;
 mod policy_push;
 
-static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[cfg(target_os = "linux")]
 #[test]

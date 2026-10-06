@@ -4,6 +4,7 @@ use capsem_api::RegistryAccess;
 use tokio::sync::Notify;
 
 mod published;
+mod registry;
 mod surface;
 
 /// An image source serving a fixed two-file layout, optionally held at the

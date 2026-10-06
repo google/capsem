@@ -77,27 +77,46 @@ pub(crate) trait ImageSource: Send + Sync {
 pub(crate) type PolicyFuture =
     Pin<Box<dyn Future<Output = anyhow::Result<capsem_core::container::admission::ImagePolicy>> + Send>>;
 
-pub(crate) struct RegistryImages;
+#[derive(Clone, Default)]
+pub(crate) struct RegistryImages {
+    cache: Arc<std::sync::OnceLock<capsem_assets::oci::ImageCache>>,
+}
 
-fn registry_puller(access: RegistryAccess) -> anyhow::Result<capsem_assets::oci::Puller> {
-    let authentication = match (access.username, access.password) {
-        (Some(username), Some(password)) => capsem_assets::oci::RegistryAuth::Basic(username, password),
-        (None, None) => capsem_assets::oci::RegistryAuth::Anonymous,
-        _ => anyhow::bail!("registry access needs both username and password"),
-    };
-    capsem_assets::oci::Puller::new_with_root_certificate(
-        stage::oci_architecture()?,
-        authentication,
-        access.ca_pem.as_deref().map(str::as_bytes),
-    )
+impl RegistryImages {
+    fn cache(&self) -> anyhow::Result<capsem_assets::oci::ImageCache> {
+        if self.cache.get().is_none() {
+            // Concurrent initializers all use the same installed contract;
+            // the winner owns the service lifetime, and losers borrow it.
+            let _ = self.cache.set(capsem_assets::oci::ImageCache::installed()?);
+        }
+        self.cache
+            .get()
+            .cloned()
+            .context("image cache owner initialization failed")
+    }
+
+    fn registry_puller(&self, access: RegistryAccess) -> anyhow::Result<capsem_assets::oci::Puller> {
+        let authentication = match (access.username, access.password) {
+            (Some(username), Some(password)) => capsem_assets::oci::RegistryAuth::Basic(username, password),
+            (None, None) => capsem_assets::oci::RegistryAuth::Anonymous,
+            _ => anyhow::bail!("registry access needs both username and password"),
+        };
+        Ok(capsem_assets::oci::Puller::new_with_root_certificate(
+            stage::oci_architecture()?,
+            authentication,
+            access.ca_pem.as_deref().map(str::as_bytes),
+        )?
+        .with_cache(&self.cache()?))
+    }
 }
 
 impl ImageSource for RegistryImages {
     fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf, mode: ImageFetch) -> PullFuture {
+        let source = self.clone();
         Box::pin(async move {
             capsem_assets::oci::image_reference(&image)
                 .context("container image expects docker://IMAGE or registry/repository:tag")?;
-            let puller = registry_puller(access)?;
+            let puller = source.registry_puller(access)?;
             let layout = match mode {
                 ImageFetch::Fresh => puller.pull(&image, &parent).await?,
                 ImageFetch::PreferCached => puller.pull_prefer_cached(&image, &parent).await?,
@@ -114,6 +133,7 @@ impl ImageSource for RegistryImages {
     }
 
     fn fetch_catalog(&self, source: CatalogSource, parent: PathBuf) -> images::CatalogFuture {
+        let images = self.clone();
         Box::pin(async move {
             let ca = match &source.ca {
                 Some(path) => Some(
@@ -127,7 +147,8 @@ impl ImageSource for RegistryImages {
                 stage::oci_architecture()?,
                 capsem_assets::oci::RegistryAuth::Anonymous,
                 ca.as_deref(),
-            )?;
+            )?
+            .with_cache(&images.cache()?);
             puller.fetch_catalog(&source.reference, &parent).await
         })
     }
@@ -141,9 +162,10 @@ impl ImageSource for RegistryImages {
         mode: ImageFetch,
         cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
+        let source = self.clone();
         Box::pin(async move {
             let subject = capsem_assets::oci::Digest::parse(&subject)?;
-            let puller = registry_puller(access)?;
+            let puller = source.registry_puller(access)?;
             let root = match mode {
                 ImageFetch::Fresh => puller.fetch_rootfs(&reference, &subject, &parent).await?,
                 ImageFetch::PreferCached => puller.fetch_rootfs_prefer_cached(&reference, &subject, &parent).await?,
@@ -176,7 +198,7 @@ pub(crate) struct ContainerSetups {
 
 impl Default for ContainerSetups {
     fn default() -> Self {
-        Self::with_source(Box::new(RegistryImages))
+        Self::with_source(Box::new(RegistryImages::default()))
     }
 }
 
