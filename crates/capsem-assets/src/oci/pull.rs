@@ -31,6 +31,14 @@ const IMAGE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 const CATALOG_LIMIT: u64 = 1024 * 1024;
 
+pub(super) fn validate_architecture(architecture: &str) -> Result<()> {
+    ensure!(
+        matches!(architecture, "arm64" | "amd64"),
+        "unsupported container architecture"
+    );
+    Ok(())
+}
+
 mod offline;
 mod owner;
 mod readiness;
@@ -129,10 +137,7 @@ impl Puller {
         protocol: ClientProtocol,
         certificate: Option<&[u8]>,
     ) -> Result<Self> {
-        ensure!(
-            matches!(architecture, "arm64" | "amd64"),
-            "unsupported container architecture"
-        );
+        validate_architecture(architecture)?;
         let secure = matches!(protocol, ClientProtocol::Https);
         let roots = certificate
             .map(reqwest::Certificate::from_pem_bundle)
@@ -708,4 +713,4 @@ fn validate_manifest(manifest: &mut OciImageManifest) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::oci) mod tests;

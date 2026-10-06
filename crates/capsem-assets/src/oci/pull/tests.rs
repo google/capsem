@@ -292,7 +292,7 @@ async fn concurrent_published_root_acquisitions_fetch_and_retain_one_physical_pa
     );
 }
 
-pub(super) fn digest(bytes: &[u8]) -> String {
+pub(in crate::oci) fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
@@ -342,12 +342,12 @@ async fn another_registry_cannot_retrieve_cached_private_blobs_by_digest() {
     );
 }
 
-pub(super) struct Registry {
+pub(in crate::oci) struct Registry {
     address: String,
     source_digest: String,
     pub(super) config: Vec<u8>,
-    pub(super) layer: Vec<u8>,
-    pub(super) task: tokio::task::JoinHandle<()>,
+    pub(in crate::oci) layer: Vec<u8>,
+    pub(in crate::oci) task: tokio::task::JoinHandle<()>,
     pub(super) requests: Arc<Mutex<Vec<RegistryRequest>>>,
     blobs: RegistryBlobs,
 }
@@ -378,7 +378,7 @@ impl Registry {
         format!("{}/team/image@{artifact}", self.address)
     }
 
-    pub(super) async fn start(change: impl FnOnce(&mut Value, &mut BTreeMap<String, Vec<u8>>)) -> Self {
+    pub(in crate::oci) async fn start(change: impl FnOnce(&mut Value, &mut BTreeMap<String, Vec<u8>>)) -> Self {
         Self::start_with_auth(change, false).await
     }
 
@@ -469,11 +469,11 @@ impl Registry {
         }
     }
 
-    pub(super) fn puller(&self) -> Puller {
+    pub(in crate::oci) fn puller(&self) -> Puller {
         Puller::configured("arm64", RegistryAuth::Anonymous, ClientProtocol::Http, None).unwrap()
     }
 
-    pub(super) fn reference(&self) -> String {
+    pub(in crate::oci) fn reference(&self) -> String {
         format!("{}/team/image:latest", self.address)
     }
 }

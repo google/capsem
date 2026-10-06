@@ -8,6 +8,8 @@ mod cache;
 mod catalog;
 mod identity;
 mod owner;
+mod worker;
+pub use worker::CacheReconciler;
 mod removal;
 pub use owner::ImageCache;
 pub use removal::{RemovalPreview, RemovalResult};
