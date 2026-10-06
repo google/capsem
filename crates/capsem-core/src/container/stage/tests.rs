@@ -2,6 +2,54 @@ use super::*;
 
 const MANIFEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+#[test]
+fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
+    let rootfs = RootfsFile {
+        digest: MANIFEST,
+        size: 12345,
+    };
+    let image = StageImage {
+        manifest: MANIFEST,
+        rootfs: Some(rootfs),
+    };
+    let resources = super::super::workload_resources(2048, 2).unwrap();
+    let plan = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
+    assert_eq!(
+        plan.iter().map(|file| file.name.as_str()).collect::<Vec<_>>(),
+        ["options.json", "launch.py"]
+    );
+    let options: serde_json::Value = serde_json::from_slice(&plan[0].bytes).unwrap();
+    assert_eq!(options["manifest"], MANIFEST);
+    assert_eq!(
+        options["rootfs"],
+        serde_json::json!({"digest": MANIFEST, "size": 12345})
+    );
+    assert_eq!(
+        options["id_map"],
+        serde_json::json!({"containerID": 0, "hostID": 100000, "size": 65536})
+    );
+
+    let owned = MANIFEST.to_owned();
+    let without = stage_plan(&owned, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
+    let options: serde_json::Value = serde_json::from_slice(&without[0].bytes).unwrap();
+    assert!(
+        options.get("rootfs").is_none(),
+        "old callers retain exactly the universal-path options"
+    );
+}
+
+#[test]
+fn published_root_stage_metadata_rejects_bad_digests_and_out_of_bound_sizes() {
+    let resources = super::super::workload_resources(2048, 2).unwrap();
+    for (digest, size) in [("sha256:../bad", 1), (MANIFEST, 0), (MANIFEST, 4 * 1024u64.pow(3) + 1)] {
+        let image = StageImage {
+            manifest: MANIFEST,
+            rootfs: Some(RootfsFile { digest, size }),
+        };
+        assert!(stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).is_err());
+    }
+}
+
 /// The stage holds only the two control files: the image is in the share,
 /// named here by its manifest digest, and no layer byte is staged.
 #[test]

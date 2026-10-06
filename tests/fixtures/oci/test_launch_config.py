@@ -622,6 +622,76 @@ def test_published_root_refuses_a_mapping_different_from_its_inode_contract(laun
         raise AssertionError("mismatched mapping was accepted")
 
 
+@pytest.mark.parametrize("published", [False, True])
+@pytest.mark.parametrize("fail", [False, True])
+def test_run_selects_its_root_and_releases_overlay_before_published_lower(
+    launcher, tmp_path, monkeypatch, published, fail
+):
+    runtime = tmp_path / "runtime"
+    monkeypatch.setattr(launcher, "RUNTIME", runtime)
+    monkeypatch.setattr(launcher, "MERGED", tmp_path / "merged")
+    monkeypatch.setattr(launcher, "VOLUMES", tmp_path / "volumes")
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    options = {**SECURITY, "manifest": "sha256:" + "a" * 64, "args": [], "env": {}}
+    if published:
+        options["rootfs"] = {"digest": "sha256:" + "b" * 64, "size": 123}
+    (stage / "options.json").write_text(json.dumps(options))
+    events = []
+
+    def result():
+        bundle = runtime / "bundle"
+        (bundle / "rootfs").mkdir(parents=True)
+        return bundle, {"config": {}}, unpacked()
+
+    def universal(digest, id_map):
+        assert not published, "a published root must not unpack the OCI layers"
+        assert digest == options["manifest"] and id_map == SECURITY["id_map"]
+        events.append("unpack")
+        return result()
+
+    @contextlib.contextmanager
+    def selected(selected_options, id_map):
+        assert published and selected_options == options and id_map == SECURITY["id_map"]
+        events.append("published-lower")
+        try:
+            yield result()
+        finally:
+            events.extend(["lower-close", "share-close"])
+
+    class Workload:
+        def __init__(self, argv):
+            assert argv[argv.index("--bundle") + 1] == str(runtime / "bundle")
+            events.append("workload")
+            launcher.workload_started(stage)
+
+        def wait(self, timeout=None):
+            if fail and timeout is None:
+                raise RuntimeError("workload failed")
+            return 0
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(launcher, "unpacked_root", universal)
+    monkeypatch.setattr(launcher, "published_root", selected)
+    monkeypatch.setattr(launcher, "mount_layer", lambda lower: events.append("overlay"))
+    monkeypatch.setattr(launcher.os.path, "ismount", lambda path: path == launcher.MERGED)
+    monkeypatch.setattr(launcher, "command", lambda *argv, **_: events.append("overlay-close"))
+    monkeypatch.setattr(launcher.subprocess, "Popen", Workload)
+    if fail:
+        with pytest.raises(RuntimeError, match="workload failed"):
+            launcher.run(stage)
+    else:
+        assert launcher.run(stage) == 0
+    expected = ["published-lower" if published else "unpack", "overlay", "workload", "overlay-close"]
+    if published:
+        expected.extend(["lower-close", "share-close"])
+    assert events == expected
+    assert not runtime.exists()
+    assert (stage / "ready").read_text() == "1\n"
+
+
 @pytest.mark.parametrize("victim", ["manifest", "layer"])
 def test_a_share_blob_that_is_not_the_one_named_is_refused(launcher, tmp_path, victim):
     share, digest, (layer,) = _share(tmp_path)

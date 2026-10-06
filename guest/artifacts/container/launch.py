@@ -888,11 +888,15 @@ def run(stage, detached=False):
     state = RUNTIME / "state"
     process = None
     code = None
+    roots = contextlib.ExitStack()
     clear_launch_markers(stage)
     try:
         options = json.loads((stage / "options.json").read_text())
         id_map = checked_id_map(options.get("id_map"))
-        bundle, image, unpacked = unpacked_root(manifest_digest(options), id_map)
+        if options.get("rootfs") is None:
+            bundle, image, unpacked = unpacked_root(manifest_digest(options), id_map)
+        else:
+            bundle, image, unpacked = roots.enter_context(published_root(options, id_map))
         if options.get("workspace") is not None:
             WORKSPACE_VIEW.mkdir(mode=0o700, exist_ok=True)
             idmap_workspace(id_map, WORKSPACE_VIEW)
@@ -935,13 +939,16 @@ def run(stage, detached=False):
         code = process.wait()
         return code
     finally:
-        launch_ended(stage, code)
-        if (state / CONTAINER).exists():
-            command(*RUNC, "delete", "--force", CONTAINER)
-        if process is not None and process.poll() is None:
-            process.wait(timeout=5)
-        if os.path.ismount(MERGED):
-            command("umount", str(MERGED))
+        # The merged overlay releases its lower before the published-root
+        # context releases the EROFS mount, descriptor and image share.
+        with roots:
+            launch_ended(stage, code)
+            if (state / CONTAINER).exists():
+                command(*RUNC, "delete", "--force", CONTAINER)
+            if process is not None and process.poll() is None:
+                process.wait(timeout=5)
+            if os.path.ismount(MERGED):
+                command("umount", str(MERGED))
         shutil.rmtree(RUNTIME)
 
 

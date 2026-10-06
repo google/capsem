@@ -26,6 +26,32 @@ pub struct ImageBlobs {
     pub blobs: Vec<String>,
 }
 
+/// One verified, published filesystem payload in the read-only image share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RootfsFile<'a> {
+    pub digest: &'a str,
+    pub size: u64,
+}
+
+/// The image to stage, optionally with its catalog-selected filesystem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StageImage<'a> {
+    pub manifest: &'a str,
+    pub rootfs: Option<RootfsFile<'a>>,
+}
+
+impl<'a> From<&'a str> for StageImage<'a> {
+    fn from(manifest: &'a str) -> Self {
+        Self { manifest, rootfs: None }
+    }
+}
+
+impl<'a> From<&'a String> for StageImage<'a> {
+    fn from(manifest: &'a String) -> Self {
+        Self::from(manifest.as_str())
+    }
+}
+
 /// The blobs of the pulled single-image layout at `root`, whose verified
 /// files are `files`. The manifest the index names, its config and every
 /// layer must be among them: a share missing one could not be unpacked, and
@@ -73,32 +99,44 @@ pub fn image_blobs(root: &Path, files: &[PathBuf]) -> Result<ImageBlobs> {
 /// and resources the workload gets), then the launcher. `surface` is what
 /// [`image_surface`] read from the image; `manifest` is the digest the image
 /// share holds the image under ([`image_blobs`]).
-pub fn stage_plan(
-    manifest: &str,
+pub fn stage_plan<'a>(
+    image: impl Into<StageImage<'a>>,
     args: &[String],
     env: &BTreeMap<String, String>,
     resources: super::WorkloadResources,
     surface: DeclaredSurface,
 ) -> Result<Vec<StagedFile>> {
-    digest_hex(manifest)?;
+    let image = image.into();
+    digest_hex(image.manifest)?;
     let surface = surface.seccomp();
+    let mut options = serde_json::json!({
+        "manifest": image.manifest,
+        "args": args,
+        "env": env,
+        "workspace": super::CONTAINER_WORKSPACE,
+        "capabilities": super::seccomp::WORKLOAD_CAPABILITIES,
+        "seccomp": super::seccomp::workload_seccomp(oci_architecture()?, surface)?,
+        "id_map": super::WORKLOAD_ID_MAP,
+        "resources": resources,
+        "surface": match surface {
+            super::seccomp::Surface::Terminal => "terminal",
+            super::seccomp::Surface::Xpra => "xpra",
+        },
+    });
+    if let Some(rootfs) = image.rootfs {
+        digest_hex(rootfs.digest)?;
+        // The published-root wire contract has the image puller's 4 GiB
+        // ceiling; the guest enforces it independently before mounting.
+        anyhow::ensure!(
+            0 < rootfs.size && rootfs.size <= 4 * 1024u64.pow(3),
+            "invalid published rootfs size"
+        );
+        options["rootfs"] = serde_json::json!({"digest": rootfs.digest, "size": rootfs.size});
+    }
     Ok(vec![
         StagedFile {
             name: "options.json".into(),
-            bytes: serde_json::to_vec(&serde_json::json!({
-                "manifest": manifest,
-                "args": args,
-                "env": env,
-                "workspace": super::CONTAINER_WORKSPACE,
-                "capabilities": super::seccomp::WORKLOAD_CAPABILITIES,
-                "seccomp": super::seccomp::workload_seccomp(oci_architecture()?, surface)?,
-                "id_map": super::WORKLOAD_ID_MAP,
-                "resources": resources,
-                "surface": match surface {
-                    super::seccomp::Surface::Terminal => "terminal",
-                    super::seccomp::Surface::Xpra => "xpra",
-                },
-            }))?,
+            bytes: serde_json::to_vec(&options)?,
         },
         StagedFile {
             name: "launch.py".into(),
