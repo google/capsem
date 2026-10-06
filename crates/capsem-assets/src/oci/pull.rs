@@ -31,11 +31,14 @@ const IMAGE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 const CATALOG_LIMIT: u64 = 1024 * 1024;
 
+mod offline;
+
 #[derive(Clone, Copy)]
 enum BlobUse {
     Private,
     PublishedRoot,
     CacheOnly,
+    PublishedRootCacheOnly,
 }
 /// The CI-produced filesystem artifact and its sole layer use the same type.
 pub const ROOTFS_MEDIA_TYPE: &str = "application/vnd.capsem.rootfs.erofs.v1";
@@ -164,36 +167,6 @@ impl Puller {
             .context("OCI pull exceeded five minutes")?
     }
 
-    /// Reconstruct a pinned native layout using only verified local bytes.
-    /// The caller must independently admit this source under current policy;
-    /// cached content never grants execution authority.
-    pub async fn pull_cached(&self, reference: &str, parent: &Path) -> Result<ImageLayout> {
-        ensure!(
-            image_reference(reference)?.digest().is_some(),
-            "cache-only images must be pinned by digest"
-        );
-        ensure!(
-            self.cache.is_some(),
-            "cache-only materialization requires an image cache"
-        );
-        tokio::time::timeout(PULL_TIMEOUT, self.pull_inner(reference, parent, true))
-            .await
-            .context("cached OCI materialization exceeded five minutes")?
-    }
-
-    async fn cached_manifest(&self, reference: &Reference) -> Result<Vec<u8>> {
-        self.cache
-            .as_ref()
-            .context("cache-only materialization requires an image cache")?
-            .for_repository(reference)
-            .read_metadata(
-                reference.digest().context("cache-only manifest must be pinned")?,
-                METADATA_LIMIT,
-            )
-            .await?
-            .context("required OCI manifest is missing or corrupt in the local cache")
-    }
-
     /// Fetch and validate the image catalog at `reference`, usually
     /// `ghcr.io/google/capsem/catalog:<channel>`. The manifest is re-read on
     /// every call because the channel tag moves; the returned digest names
@@ -209,7 +182,7 @@ impl Puller {
     /// image. The caller supplies that image's verified original manifest
     /// digest, rather than its multi-platform index or normalized layout.
     pub async fn fetch_rootfs(&self, reference: &str, subject: &ContentDigest, parent: &Path) -> Result<RootfsLayout> {
-        tokio::time::timeout(PULL_TIMEOUT, self.fetch_rootfs_inner(reference, subject, parent))
+        tokio::time::timeout(PULL_TIMEOUT, self.fetch_rootfs_inner(reference, subject, parent, false))
             .await
             .context("rootfs fetch exceeded five minutes")?
     }
@@ -219,17 +192,25 @@ impl Puller {
         reference: &str,
         expected_subject: &ContentDigest,
         parent: &Path,
+        cache_only: bool,
     ) -> Result<RootfsLayout> {
         let reference = image_reference(reference)?;
         ensure!(reference.digest().is_some(), "rootfs artifact must be pinned by digest");
         if let Some(cache) = &self.cache {
             cache.prepare().await?;
         }
-        let token = self
-            .registry
-            .auth(&reference, &self.authentication, RegistryOperation::Pull)
-            .await?;
-        let bytes = self.manifest(&reference, token.as_deref()).await?;
+        let token = if cache_only {
+            None
+        } else {
+            self.registry
+                .auth(&reference, &self.authentication, RegistryOperation::Pull)
+                .await?
+        };
+        let bytes = if cache_only {
+            self.cached_manifest(&reference).await?
+        } else {
+            self.manifest(&reference, token.as_deref()).await?
+        };
         let manifest: OciImageManifest = serde_json::from_slice(&bytes).context("expected rootfs artifact manifest")?;
         ensure!(
             manifest.schema_version == 2
@@ -267,8 +248,20 @@ impl Puller {
         );
         let digest = ContentDigest::parse(&layer.digest)?;
         let directory = staging(parent).await?;
-        self.blob(&reference, layer, directory.path(), BlobUse::PublishedRoot)
-            .await?;
+        let usage = if cache_only {
+            BlobUse::PublishedRootCacheOnly
+        } else {
+            BlobUse::PublishedRoot
+        };
+        self.blob(&reference, layer, directory.path(), usage).await?;
+        if !cache_only {
+            if let Some(cache) = &self.cache {
+                cache
+                    .for_repository(&reference)
+                    .publish_metadata(&sha256(&bytes), &bytes)
+                    .await?;
+            }
+        }
         Ok(RootfsLayout { directory, digest })
     }
 
@@ -506,7 +499,7 @@ impl Puller {
                             .copy_hit(&descriptor.digest, descriptor.size as u64, &destination)
                             .await?
                     }
-                    BlobUse::PublishedRoot => {
+                    BlobUse::PublishedRoot | BlobUse::PublishedRootCacheOnly => {
                         cache
                             .link_root_hit(&descriptor.digest, descriptor.size as u64, &destination)
                             .await?
@@ -521,7 +514,7 @@ impl Puller {
             None => None,
         };
         ensure!(
-            !matches!(usage, BlobUse::CacheOnly),
+            !matches!(usage, BlobUse::CacheOnly | BlobUse::PublishedRootCacheOnly),
             "required OCI blob is missing or corrupt in the local cache"
         );
         let mut chunks = self.registry.pull_blob_stream(reference, descriptor).await?;
@@ -572,7 +565,9 @@ impl Puller {
             match usage {
                 BlobUse::Private => cache.publish(&descriptor.digest, &destination).await?,
                 BlobUse::PublishedRoot => cache.publish_root(&descriptor.digest, &destination).await?,
-                BlobUse::CacheOnly => anyhow::bail!("cache-only materialization cannot publish a download"),
+                BlobUse::CacheOnly | BlobUse::PublishedRootCacheOnly => {
+                    anyhow::bail!("cache-only materialization cannot publish a download")
+                }
             }
         }
         Ok(())
