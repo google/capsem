@@ -82,7 +82,11 @@ def apply_prune(paths: CachePaths, plan: PrunePlan, *, reason: str) -> ApplyResu
     busy: list[Path] = []
     with mutation_locks(paths, (action.stage_id for action in plan.actions)) as locks:
         for (stage_id, key), selected in generations.items():
-            template = paths.policy.stages[stage_id].lease_template
+            policy = paths.policy.stages[stage_id]
+            if policy.protect_hardlinks and any(_linked_file(path) for path in selected):
+                busy.extend(selected)
+                continue
+            template = policy.lease_template
             root = paths.stage(stage_id)
             lease = None if template is None or not root.is_dir() else root / template.format(key=key)
             with ExitStack() as stack:
@@ -113,6 +117,14 @@ def apply_prune(paths: CachePaths, plan: PrunePlan, *, reason: str) -> ApplyResu
     return ApplyResult(
         removed=tuple(removed), missing=tuple(missing), busy=tuple(busy), journal=journal
     )
+
+
+def _linked_file(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISREG(metadata.st_mode) and metadata.st_nlink > 1
 
 
 def reclaim_generation(paths: CachePaths, stage_id: str, key: str, *, reason: str) -> ApplyResult:

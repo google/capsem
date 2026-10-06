@@ -148,6 +148,8 @@ max_size_bytes = 8589934592
 prune_strategy = "lru"
 maximum_age_hours = 168
 mutation_locks = ["cache.lock"]
+# Immutable filesystem payloads have one link per active image share.
+protect_hardlinks = true
 
 [stages.prefix-products]
 description = "Cargo outputs lent between source-isolated gate worktrees."

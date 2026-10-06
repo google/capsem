@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import stat as stat_mode
 import time
 from pathlib import Path
 
@@ -110,6 +111,8 @@ def _stage_inventory(
                     protected=managed
                     and (
                         busy or (key or child.name) in referenced
+                        or (stage_policy.protect_hardlinks
+                            and stat_mode.S_ISREG(stat.st_mode) and stat.st_nlink > 1)
                         or _lease_active(stage_path, stage_policy.lease_template, key or child.name)
                     ),
                 )
