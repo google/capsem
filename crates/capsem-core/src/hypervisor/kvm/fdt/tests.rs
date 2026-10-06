@@ -79,7 +79,7 @@ fn fdt_eight_cpus() {
 fn fdt_with_long_cmdline() {
     let mut config = minimal_config();
     config.cmdline =
-        "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 capsem.storage=virtiofs"
+        "console=hvc0 root=/dev/vda ro init_on_alloc=0 init_on_free=0 slab_nomerge page_alloc.shuffle=1 capsem.storage=virtiofs"
             .to_string();
     let blob = build_fdt(&config).unwrap();
     assert!(!blob.is_empty());
@@ -182,7 +182,7 @@ fn fdt_full_config() {
         ram_base: memory::RAM_BASE,
         ram_size: 4 * 1024 * 1024 * 1024,
         cpu_count: 4,
-        cmdline: "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge".to_string(),
+        cmdline: "console=hvc0 root=/dev/vda ro init_on_alloc=0 init_on_free=0 slab_nomerge".to_string(),
         initrd_start: 0x1_3000_0000,
         initrd_end: 0x1_3500_0000,
         virtio_devices: vec![

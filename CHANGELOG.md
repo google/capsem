@@ -100,10 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line-discipline autoload, no ICMP redirects or source routing, and SYN
   cookies. Yama and SYN cookies are now built into the kernel for this.
 
-- Guest VMs now boot with `init_on_free=1`, so freed kernel heap memory is
-  zeroed as well as new allocations, and with `oops=panic`, so a kernel oops
-  ends the VM instead of leaving it running on a kernel in an unknown state.
-  capsem-doctor checks both are in effect.
+- Guest VMs now boot with `oops=panic`, so a kernel oops ends the VM instead
+  of leaving it running on a kernel in an unknown state. capsem-doctor checks
+  this is in effect.
 
 - The guest kernel is now built from allnoconfig, so it enables nothing the
   defconfig does not pin. It used to fill every unpinned option with the
@@ -338,6 +337,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the VM owner or session ledger.
 
 ### Fixed
+
+- VM startup no longer wipes guest heap memory on allocation or free. This
+  removes the eager boot-time pass over all VM RAM, including the default
+  12 GiB. Fresh anonymous host memory still starts zeroed; existing checkpoint
+  contents are preserved on resume.
 
 - Gate reports and summaries mark unfinished journals as incomplete instead
   of successful, and interrupted lock waits retain their cancellation cause.

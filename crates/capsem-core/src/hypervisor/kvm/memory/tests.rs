@@ -103,6 +103,19 @@ fn guest_memory_new_valid() {
 }
 
 #[test]
+fn fresh_guest_memory_is_zeroed_without_reusing_a_previous_guests_bytes() {
+    let size = 2 * 1024 * 1024;
+    {
+        let old = GuestMemory::new(size).unwrap();
+        old.write_at(0, &vec![0xa5; size as usize]).unwrap();
+    }
+    let fresh = GuestMemory::new(size).unwrap();
+    let mut bytes = vec![0xff; size as usize];
+    fresh.read_at(0, &mut bytes).unwrap();
+    assert!(bytes.iter().all(|byte| *byte == 0));
+}
+
+#[test]
 fn guest_memory_new_zero_fails() {
     assert!(GuestMemory::new(0).is_err());
 }

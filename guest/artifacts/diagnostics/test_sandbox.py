@@ -389,25 +389,33 @@ def test_no_kallsyms():
 # -- Kernel cmdline hardening --
 
 
-def test_init_on_alloc():
-    """Kernel cmdline must include init_on_alloc=1 for heap zeroing."""
+def test_guest_heap_wiping_is_explicitly_disabled():
+    """Explicit zeros override kernel defaults without touching every RAM page."""
     result = run("cat /proc/cmdline")
     assert result.returncode == 0
-    assert "init_on_alloc=1" in result.stdout, f"init_on_alloc=1 not in cmdline: {result.stdout}"
+    flags = result.stdout.split()
+    for name in ("init_on_alloc", "init_on_free"):
+        values = [flag for flag in flags if flag.startswith(f"{name}=")]
+        assert values == [f"{name}=0"], result.stdout
 
 
-def test_heap_is_zeroed_on_alloc_and_on_free():
-    """init_on_alloc=1 and init_on_free=1 are in effect, not only on the cmdline.
+def test_guest_heap_wiping_is_off_in_the_running_kernel():
+    """Both guest heap wiping settings are off, not only on the cmdline.
 
     The kernel reports what it applied in one boot line, e.g.
-    "mem auto-init: stack:off, heap alloc:on, heap free:on".
+    "mem auto-init: stack:all(zero), heap alloc:off, heap free:off".
     """
     result = run("dmesg")
     assert result.returncode == 0, f"dmesg failed: {result.stderr}"
     lines = [line for line in result.stdout.splitlines() if "mem auto-init:" in line]
-    # The kernel may add an informational line, e.g. that clearing memory at
-    # boot takes time; the settings line is the one naming both heap modes.
-    assert any("heap alloc:on" in line and "heap free:on" in line for line in lines), lines
+    assert any("heap alloc:off" in line and "heap free:off" in line for line in lines), lines
+
+
+def test_guest_boot_does_not_eagerly_clear_system_memory():
+    """Sparse VM memory must not be faulted in by an eager boot-time wipe."""
+    result = run("dmesg")
+    assert result.returncode == 0, f"dmesg failed: {result.stderr}"
+    assert "clearing system memory may take some time" not in result.stdout, result.stdout
 
 
 def test_an_oops_panics_the_vm():

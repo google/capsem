@@ -16,8 +16,9 @@ const MAX_RAM: u64 = 16 * 1024 * 1024 * 1024; // 16 GB
 /// - `loglevel=4 quiet`: kernel warnings and errors still reach the serial
 ///   console the test fixtures keep. At `loglevel=1` a guest whose every
 ///   VSOCK link ended in one millisecond left a console that said nothing.
-/// - `init_on_alloc=1 init_on_free=1`: heap pages are zeroed when allocated
-///   and when freed, so neither stale nor freed data reaches a later reader.
+/// - `init_on_alloc=0 init_on_free=0`: guest heap wiping is disabled, including
+///   kernels with allocation wiping enabled by default. Fresh host memory is
+///   already zero-initialized; guest boot must not eagerly touch all VM RAM.
 /// - `slab_nomerge`: every slab cache stays separate, so an overflow in one
 ///   object type cannot reach objects of another merged into its cache.
 /// - `page_alloc.shuffle=1`: page allocation order is randomized.
@@ -26,7 +27,7 @@ const MAX_RAM: u64 = 16 * 1024 * 1024 * 1024; // 16 GB
 /// - `random.trust_cpu=1`: the CPU's RNG seeds the pool at boot.
 macro_rules! guest_kernel_flags {
     () => {
-        "root=/dev/vda ro loglevel=4 quiet init_on_alloc=1 init_on_free=1 slab_nomerge \
+        "root=/dev/vda ro loglevel=4 quiet init_on_alloc=0 init_on_free=0 slab_nomerge \
          page_alloc.shuffle=1 oops=panic random.trust_cpu=1"
     };
 }

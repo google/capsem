@@ -597,8 +597,6 @@ fn kernel_cmdline_carries_every_hardening_flag() {
     for flag in [
         "root=/dev/vda",
         "ro",
-        "init_on_alloc=1",
-        "init_on_free=1",
         "slab_nomerge",
         "page_alloc.shuffle=1",
         "oops=panic",
@@ -609,4 +607,15 @@ fn kernel_cmdline_carries_every_hardening_flag() {
     assert!(flags.contains(&"console=ttyS0"));
     #[cfg(not(target_arch = "x86_64"))]
     assert!(flags.contains(&"console=hvc0"));
+}
+
+#[test]
+fn kernel_cmdline_disables_guest_heap_wiping_even_with_kernel_defaults_on() {
+    let flags: Vec<&str> = KERNEL_CMDLINE.split_whitespace().collect();
+    for name in ["init_on_alloc", "init_on_free"] {
+        let prefix = format!("{name}=");
+        let settings: Vec<_> = flags.iter().copied().filter(|flag| flag.starts_with(&prefix)).collect();
+        let expected = format!("{name}=0");
+        assert_eq!(settings, [expected.as_str()], "{KERNEL_CMDLINE}");
+    }
 }
