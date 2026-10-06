@@ -70,7 +70,7 @@ impl Applied {
 #[serde(untagged)]
 pub(super) enum Saved {
     Applied(Applied),
-    Pending(Journal),
+    Pending(Box<Journal>),
 }
 
 impl Journal {

@@ -45,7 +45,7 @@ fn apply(
                 if journal.result.complete {
                     return Ok(journal.result);
                 }
-                journal
+                *journal
             }
         }
     } else {
