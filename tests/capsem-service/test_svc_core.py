@@ -2,10 +2,10 @@
 
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 from helpers.constants import BIN_DIR, BIN_VARIABLE
 from log_streams import assert_service_log_evidence
 
