@@ -1,5 +1,6 @@
 //! Small, owned Unix primitives shared by host-side Capsem crates.
 
+pub mod change_watch;
 pub mod contained;
 mod errno;
 pub mod fd;
