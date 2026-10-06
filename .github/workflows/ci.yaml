@@ -590,7 +590,7 @@ jobs:
           name: install-glowup-evidence-${{ github.run_attempt }}
           path: |
             cache/target/gate-runs/
-            cache/target/release/staging/local-glowup-evidence/
+            cache/target/tests/evidence/installed/
           retention-days: 7
           # Input resolution can fail before a gate exists. Preserve that
           # primary failure without adding a misleading upload failure, while
