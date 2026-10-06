@@ -4,6 +4,7 @@ use std::{
     collections::BTreeMap,
     fs::{File, FileTimes},
     io::{Read, Write},
+    os::{fd::AsFd, unix::fs::MetadataExt},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -33,6 +34,8 @@ struct Policy {
     maximum_age_hours: u64,
     #[serde(default)]
     mutation_locks: Vec<PathBuf>,
+    #[serde(default)]
+    protect_hardlinks: bool,
 }
 
 #[derive(Clone)]
@@ -146,6 +149,85 @@ impl BlobCache {
         tokio::task::spawn_blocking(move || verified_copy(file, &destination, &digest, size)).await?
     }
 
+    /// Published roots use a separate immutable namespace. A layout's link
+    /// protects the generation until its session share holds another link.
+    pub(super) async fn link_root_hit(&self, digest: &str, size: u64, destination: &Path) -> Result<bool> {
+        ensure!(
+            self.policy.protect_hardlinks,
+            "published roots require cache link protection"
+        );
+        let lease = lock(self.mutation_lock()).await?;
+        let cache = self.clone();
+        let name = format!("immutable-{}", self.entry_name(digest)?);
+        let (digest, destination) = (digest.to_owned(), destination.to_owned());
+        tokio::task::spawn_blocking(move || -> Result<bool> {
+            let _lease = lease;
+            let directory = ContainedDir::open_root(&cache.root)?.walk(&cache.policy.entry_root)?;
+            let file = match directory.open_file(name.as_ref(), ContainedOpenOptions::read_only()) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => return Err(error.into()),
+            };
+            let metadata = file.metadata()?;
+            let valid = metadata.mode() & 0o777 == 0o444 && verified_bytes(file, &digest, size, |_| Ok(()))?;
+            if !valid {
+                ensure!(
+                    metadata.nlink() == 1,
+                    "active immutable cache payload is corrupt or writable"
+                );
+                directory.remove_non_directory(name.as_ref())?;
+                return Ok(false);
+            }
+            let target = ContainedDir::open_root(destination.parent().context("root destination parent")?)?;
+            directory.hard_link(
+                name.as_ref(),
+                &target,
+                destination.file_name().context("root destination name")?,
+            )?;
+            directory
+                .open_file(name.as_ref(), ContainedOpenOptions::read_only())?
+                .set_times(FileTimes::new().set_modified(SystemTime::now()))?;
+            Ok(true)
+        })
+        .await?
+    }
+
+    /// The producer has already verified this private, read-only payload.
+    /// Publish its inode once; this namespace never overwrites a generation.
+    pub(super) async fn publish_root(&self, digest: &str, source: &Path) -> Result<()> {
+        ensure!(
+            self.policy.protect_hardlinks,
+            "published roots require cache link protection"
+        );
+        let lease = lock(self.mutation_lock()).await?;
+        let cache = self.clone();
+        let name = format!("immutable-{}", self.entry_name(digest)?);
+        let source = source.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let _lease = lease;
+            let directory = ContainedDir::open_root(&cache.root)?.walk(&cache.policy.entry_root)?;
+            let from = ContainedDir::open_root(source.parent().context("root source parent")?)?;
+            let leaf = source.file_name().context("root source name")?;
+            let file = from.open_file(leaf, ContainedOpenOptions::read_only())?;
+            ensure!(
+                file.metadata()?.mode() & 0o777 == 0o444,
+                "published root must be read-only"
+            );
+            capsem_foundation::unix::fs::sync(file.as_fd())?;
+            from.hard_link(leaf, &directory, name.as_ref())?;
+            if let Err(error) = directory
+                .sync()
+                .map_err(anyhow::Error::from)
+                .and_then(|()| cache.prune(&directory))
+            {
+                directory.remove_non_directory(name.as_ref())?;
+                return Err(error);
+            }
+            Ok(())
+        })
+        .await?
+    }
+
     pub(super) async fn publish(&self, digest: &str, source: &Path) -> Result<()> {
         let lease = lock(self.mutation_lock()).await?;
         let cache = self.clone();
@@ -179,20 +261,30 @@ impl BlobCache {
             let stale = now.saturating_sub(entry.mtime_secs) > self.policy.maximum_age_hours * 3600;
             let name = entry.name.to_string_lossy();
             let partial = name.starts_with(".partial-");
+            let identity = name.strip_prefix("immutable-").unwrap_or(&name);
             let owned = partial
-                || (matches!(name.len(), 64 | 129)
-                    && name
+                || (matches!(identity.len(), 64 | 129)
+                    && identity
                         .split('-')
                         .all(|part| digest_hex(&format!("sha256:{part}")).is_ok()));
             if entry.kind == EntryKind::File && owned && (stale || used > target || partial) {
-                std::fs::remove_file(directory.path().join(&entry.name))?;
+                if self.policy.protect_hardlinks
+                    && directory
+                        .open_file(&entry.name, ContainedOpenOptions::read_only())?
+                        .metadata()?
+                        .nlink()
+                        > 1
+                {
+                    continue;
+                }
+                directory.remove_non_directory(&entry.name)?;
                 tracing::debug!(entry = %name, bytes = entry.size, stale, "pruned OCI cache entry");
                 used = used.saturating_sub(entry.size);
             }
         }
         ensure!(
             used <= self.policy.max_size_bytes,
-            "OCI cache capacity is held by unrecognized entries"
+            "OCI cache capacity is held by protected or unrecognized entries"
         );
         Ok(())
     }
@@ -214,11 +306,27 @@ async fn lock(path: PathBuf) -> Result<FileLock> {
     .map_err(|error| anyhow::anyhow!("OCI cache lock timed out: {error:?}"))?
 }
 
-fn verified_copy(mut source: File, destination: &Path, expected: &str, size: u64) -> Result<bool> {
+fn verified_copy(source: File, destination: &Path, expected: &str, size: u64) -> Result<bool> {
     if source.metadata()?.len() != size {
         return Ok(false);
     }
     let mut target = tempfile::NamedTempFile::new_in(destination.parent().context("blob destination parent")?)?;
+    if !verified_bytes(source, expected, size, |bytes| target.write_all(bytes))? {
+        return Ok(false);
+    }
+    target.persist_noclobber(destination)?;
+    Ok(true)
+}
+
+fn verified_bytes(
+    mut source: File,
+    expected: &str,
+    size: u64,
+    mut consume: impl FnMut(&[u8]) -> std::io::Result<()>,
+) -> Result<bool> {
+    if source.metadata()?.len() != size {
+        return Ok(false);
+    }
     let mut digest = Sha256::new();
     let mut count = 0u64;
     let mut bytes = vec![0; 65536];
@@ -232,12 +340,11 @@ fn verified_copy(mut source: File, destination: &Path, expected: &str, size: u64
             return Ok(false);
         }
         digest.update(&bytes[..read]);
-        target.write_all(&bytes[..read])?;
+        consume(&bytes[..read])?;
     }
     if count != size || format!("sha256:{:x}", digest.finalize()) != expected {
         return Ok(false);
     }
-    target.persist_noclobber(destination)?;
     Ok(true)
 }
 

@@ -30,17 +30,24 @@ const LAYER_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 const CATALOG_LIMIT: u64 = 1024 * 1024;
+
+#[derive(Clone, Copy)]
+enum BlobUse {
+    Private,
+    PublishedRoot,
+}
 /// The CI-produced filesystem artifact and its sole layer use the same type.
 pub const ROOTFS_MEDIA_TYPE: &str = "application/vnd.capsem.rootfs.erofs.v1";
 
-/// Verified, opaque filesystem bytes. Dropping the layout reclaims its staging.
+/// Verified, opaque read-only filesystem bytes. Its staging link may retain
+/// an immutable cache generation; dropping the layout reclaims only the link.
 pub struct RootfsLayout {
     directory: tempfile::TempDir,
     digest: ContentDigest,
 }
 
 impl RootfsLayout {
-    /// The payload remains private to this layout; the host never unpacks it.
+    /// A private link keeps the verified bytes alive; the host never unpacks them.
     pub fn path(&self) -> PathBuf {
         self.directory
             .path()
@@ -229,7 +236,8 @@ impl Puller {
         );
         let digest = ContentDigest::parse(&layer.digest)?;
         let directory = staging(parent).await?;
-        self.blob(&reference, layer, directory.path()).await?;
+        self.blob(&reference, layer, directory.path(), BlobUse::PublishedRoot)
+            .await?;
         Ok(RootfsLayout { directory, digest })
     }
 
@@ -268,7 +276,7 @@ impl Puller {
             "external catalog URLs are unsupported"
         );
         let directory = staging(parent).await?;
-        self.blob(&reference, layer, directory.path()).await?;
+        self.blob(&reference, layer, directory.path(), BlobUse::Private).await?;
         let document = tokio::fs::read(directory.path().join(digest_hex(&layer.digest)?)).await?;
         Ok((identity, Catalog::parse(&document)?))
     }
@@ -325,7 +333,8 @@ impl Puller {
         let directory = staging(parent).await?;
         let blob_dir = directory.path().join("blobs/sha256");
         tokio::fs::create_dir_all(&blob_dir).await?;
-        self.blob(&reference, &manifest.config, &blob_dir).await?;
+        self.blob(&reference, &manifest.config, &blob_dir, BlobUse::Private)
+            .await?;
         let config = tokio::fs::read(blob_dir.join(digest_hex(&manifest.config.digest)?)).await?;
         verify_platform(&config, &self.architecture)?;
         // Deduplicate shared layer descriptors before concurrent, create-new writes.
@@ -336,7 +345,7 @@ impl Puller {
             .collect();
         let downloads: Vec<_> = layers
             .values()
-            .map(|layer| self.blob(&reference, layer, &blob_dir))
+            .map(|layer| self.blob(&reference, layer, &blob_dir, BlobUse::Private))
             .collect();
         stream::iter(downloads)
             .buffer_unordered(4)
@@ -424,16 +433,31 @@ impl Puller {
         Ok(body)
     }
 
-    async fn blob(&self, reference: &Reference, descriptor: &OciDescriptor, directory: &Path) -> Result<()> {
+    async fn blob(
+        &self,
+        reference: &Reference,
+        descriptor: &OciDescriptor,
+        directory: &Path,
+        usage: BlobUse,
+    ) -> Result<()> {
         let destination = directory.join(digest_hex(&descriptor.digest)?);
         let cache = self.cache.as_ref().map(|cache| cache.for_repository(reference));
         let _lease = match &cache {
             Some(cache) => {
                 let lease = cache.lease(&descriptor.digest).await?;
-                if cache
-                    .copy_hit(&descriptor.digest, descriptor.size as u64, &destination)
-                    .await?
-                {
+                let hit = match usage {
+                    BlobUse::Private => {
+                        cache
+                            .copy_hit(&descriptor.digest, descriptor.size as u64, &destination)
+                            .await?
+                    }
+                    BlobUse::PublishedRoot => {
+                        cache
+                            .link_root_hit(&descriptor.digest, descriptor.size as u64, &destination)
+                            .await?
+                    }
+                };
+                if hit {
                     tracing::debug!(digest = %descriptor.digest, "OCI blob cache hit");
                     return Ok(());
                 }
@@ -466,8 +490,30 @@ impl Puller {
         );
         file.flush().await?;
         drop(file);
+        if matches!(usage, BlobUse::PublishedRoot) {
+            tokio::task::spawn_blocking({
+                let destination = destination.clone();
+                move || -> std::io::Result<()> {
+                    use capsem_foundation::unix::{
+                        contained::{ContainedDir, ContainedOpenOptions},
+                        fs,
+                    };
+                    use std::os::fd::AsFd;
+                    let directory = ContainedDir::open_root(destination.parent().expect("blob has parent"))?;
+                    let file = directory.open_file(
+                        destination.file_name().expect("blob has name"),
+                        ContainedOpenOptions::read_only(),
+                    )?;
+                    fs::set_mode(file.as_fd(), 0o444)
+                }
+            })
+            .await??;
+        }
         if let Some(cache) = &cache {
-            cache.publish(&descriptor.digest, &destination).await?;
+            match usage {
+                BlobUse::Private => cache.publish(&descriptor.digest, &destination).await?,
+                BlobUse::PublishedRoot => cache.publish_root(&descriptor.digest, &destination).await?,
+            }
         }
         Ok(())
     }

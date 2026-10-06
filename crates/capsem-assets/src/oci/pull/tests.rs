@@ -190,6 +190,7 @@ async fn truncated_published_rootfs_is_refused_and_staging_reclaimed() {
 
 #[tokio::test]
 async fn published_rootfs_cache_hit_survives_eviction_from_registry_but_stays_repository_scoped() {
+    use std::os::unix::fs::MetadataExt;
     let registry = rootfs_registry(|_, _| {}).await;
     let parent = tempfile::tempdir().unwrap();
     let cache_root = super::super::tests::private_dir();
@@ -212,6 +213,15 @@ async fn published_rootfs_cache_hit_survives_eviction_from_registry_but_stays_re
         .await
         .unwrap();
     assert_eq!(std::fs::read(second.path()).unwrap(), ROOTFS_BYTES);
+    let original = std::fs::metadata(first.path()).unwrap();
+    let reused = std::fs::metadata(second.path()).unwrap();
+    assert_eq!(
+        (original.dev(), original.ino()),
+        (reused.dev(), reused.ino()),
+        "warm published filesystems must share one physical payload"
+    );
+    assert_eq!(original.mode() & 0o777, 0o444);
+    assert_eq!(reused.mode() & 0o777, 0o444);
     assert_eq!(
         registry.blob_requests(),
         count,
@@ -250,6 +260,36 @@ async fn published_rootfs_cache_hit_survives_eviction_from_registry_but_stays_re
 #[test]
 fn invalid_additional_registry_certificate_is_refused() {
     assert!(Puller::new_with_root_certificate("arm64", RegistryAuth::Anonymous, Some(b"not a certificate")).is_err());
+}
+
+#[tokio::test]
+async fn concurrent_published_root_acquisitions_fetch_and_retain_one_physical_payload() {
+    use std::os::unix::fs::MetadataExt;
+    let registry = rootfs_registry(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let cache_root = super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(super::super::cache::BlobCache::at(cache_root.path()).unwrap());
+    let reference = rootfs_reference(&registry);
+    let subject = rootfs_subject();
+    let (a, b, c) = tokio::join!(
+        puller.fetch_rootfs(&reference, &subject, parent.path()),
+        puller.fetch_rootfs(&reference, &subject, parent.path()),
+        puller.fetch_rootfs(&reference, &subject, parent.path()),
+    );
+    let layouts = [a.unwrap(), b.unwrap(), c.unwrap()];
+    let inode = std::fs::metadata(layouts[0].path()).unwrap().ino();
+    for layout in &layouts {
+        let metadata = std::fs::metadata(layout.path()).unwrap();
+        assert_eq!(metadata.ino(), inode);
+        assert_eq!(metadata.mode() & 0o777, 0o444);
+        assert_eq!(std::fs::read(layout.path()).unwrap(), ROOTFS_BYTES);
+    }
+    assert_eq!(
+        registry.blob_requests(),
+        1,
+        "concurrent readers coalesce the verified download"
+    );
 }
 
 fn digest(bytes: &[u8]) -> String {
