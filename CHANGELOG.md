@@ -248,6 +248,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Profile releases can be stacked before the binary release that activates
+  them, as RELEASE.md allows. A second profile release used to be refused
+  because the first, staged and still inert, made the delta two profiles;
+  the selected profile now only has to be part of that delta.
+
 - The service no longer logs a `hash mismatch` warning for every VM image on
   its first start after an update, and its asset hash cache now warms. The
   startup prewarm checked the images it resolved for the installed release

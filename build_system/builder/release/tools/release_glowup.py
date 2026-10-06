@@ -499,8 +499,6 @@ def validate_pairing_inputs(
             raise GlowupContractError(
                 f"{transition_kind.value} release pairing requires changed profiles"
             )
-        if transition_kind is TransitionKind.PROFILE_ONLY and len(changed_profile_ids) != 1:
-            raise GlowupContractError("profile_only release pairing requires exactly one profile")
         for profile_id in changed_profile_ids:
             if profile_id not in after_profile_map:
                 raise GlowupContractError(

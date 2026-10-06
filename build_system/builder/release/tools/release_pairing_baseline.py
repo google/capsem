@@ -56,16 +56,19 @@ def validate_selected_profile_scope(
     selected_profile: str | None,
     changed_profiles: tuple[str, ...],
 ) -> None:
-    """Keep one profile release owned while a channel switch stages its graph."""
+    """The selected profile must be part of the delta it claims to release.
+
+    It need not be all of it. Profile releases may run one after another before
+    the binary release activates them, so an earlier staged, still-inert
+    profile is a legitimate member of the delta beside the selected one, and a
+    channel switch stages the whole target graph. What a profile release can
+    change is bounded upstream: `capsem-admin release` authors only the
+    selected profile into the staged channel manifest.
+    """
     if selected_profile is None:
         return
-    if transition is TransitionKind.CHANNEL_SWITCH:
-        if selected_profile not in changed_profiles:
-            raise SystemExit(
-                "exact pairing selected profile is absent from the cross-channel target"
-            )
+    if selected_profile in changed_profiles:
         return
-    if changed_profiles != (selected_profile,):
-        raise SystemExit(
-            "exact pairing selected profile does not match the classified manifest delta"
-        )
+    if transition is TransitionKind.CHANNEL_SWITCH:
+        raise SystemExit("exact pairing selected profile is absent from the cross-channel target")
+    raise SystemExit("exact pairing selected profile does not match the classified manifest delta")

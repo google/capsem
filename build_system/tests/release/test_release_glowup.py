@@ -918,6 +918,32 @@ def test_exact_profile_pairing_allows_only_the_selected_profile_to_change(
         )
 
 
+def test_exact_profile_pairing_accepts_an_earlier_staged_profile_beside_the_selected_one(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    artifact = _artifact(tmp_path, module)
+    before_manifest = _manifest(artifact)
+    before_manifest["channel"] = "stable"
+    before_manifest["profiles"] = {
+        "code": {"revision": "0.6.5"},
+        "co-work": {"revision": "0.6.3"},
+    }
+    after_manifest = json.loads(json.dumps(before_manifest))
+    after_manifest["profiles"]["code"]["revision"] = "0.6.6"
+    after_manifest["profiles"]["co-work"]["revision"] = "0.6.4"
+
+    module.validate_pairing_inputs(
+        kind=module.TransitionKind.PROFILE_ONLY,
+        channel="stable",
+        before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
+        after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
+        before_artifact=artifact,
+        after_artifact=artifact,
+        changed_profiles=("co-work", "code"),
+    )
+
+
 def test_exact_profile_pairing_allows_first_profile_in_empty_channel(
     tmp_path: Path,
 ) -> None:
@@ -1120,8 +1146,28 @@ def test_cross_channel_profile_release_stages_the_complete_target_but_owns_one_p
         module.validate_selected_profile_scope(
             transition=module.TransitionKind.PROFILE_ONLY,
             selected_profile="code",
-            changed_profiles=("co-work", "code"),
+            changed_profiles=("co-work",),
         )
+
+
+def test_serial_profile_releases_stack_before_the_binary() -> None:
+    """RELEASE.md lets profile commands run one after another before the binary
+    release activates them. The 0.6.6 co-work release was refused because code
+    0.6.6, staged minutes earlier and still inert, made the delta two profiles.
+    The selected profile must be in the delta; an earlier staged release may be
+    beside it."""
+    module = _load_local_glowup()
+
+    module.validate_selected_profile_scope(
+        transition=module.TransitionKind.PROFILE_ONLY,
+        selected_profile="co-work",
+        changed_profiles=("co-work", "code"),
+    )
+    module.validate_selected_profile_scope(
+        transition=module.TransitionKind.PROFILE_THEN_BINARY,
+        selected_profile="co-work",
+        changed_profiles=("co-work", "code"),
+    )
 
 
 def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
