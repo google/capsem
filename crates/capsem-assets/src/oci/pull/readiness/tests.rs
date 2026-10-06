@@ -63,6 +63,10 @@ async fn readiness_starts_pending_and_external_changes_invalidate_verified_bytes
         super::super::super::CacheState::Partial
     );
     std::fs::write(&layer, &registry.layer).unwrap();
+    assert!(
+        puller.cache_snapshot(&key).unwrap().verification_pending,
+        "external repair must invalidate a partial observation before reconciliation"
+    );
     let repaired = puller.reconcile_cache(&key, parent.path()).await.unwrap();
     assert_eq!(repaired.state, super::super::super::CacheState::Ready);
     let receipt = root.path().join("blobs").join(format!("receipt-{}", key.as_str()));
@@ -77,6 +81,45 @@ async fn readiness_starts_pending_and_external_changes_invalidate_verified_bytes
     std::os::unix::fs::symlink("foreign", &layer).unwrap();
     assert!(puller.cache_snapshot(&key).unwrap().verification_pending);
     assert!(puller.reconcile_cache(&key, parent.path()).await.is_err());
+    assert_eq!(
+        puller.cache_snapshot(&key).unwrap().state,
+        super::super::super::CacheState::Partial
+    );
+    std::fs::remove_file(&layer).unwrap();
+    std::fs::write(&layer, &registry.layer).unwrap();
+    assert!(
+        puller.cache_snapshot(&key).unwrap().verification_pending,
+        "replacement of a nonregular required entry must invalidate partial state"
+    );
+}
+
+#[tokio::test]
+async fn missing_receipt_watch_invalidates_external_creation_and_directory_replacement() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(BlobCache::at(root.path()).unwrap());
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    drop(image);
+    registry.task.abort();
+    let receipt = root.path().join("blobs").join(format!("receipt-{}", key.as_str()));
+    let bytes = std::fs::read(&receipt).unwrap();
+    std::fs::remove_file(&receipt).unwrap();
+    let missing = puller.reconcile_cache(&key, parent.path()).await.unwrap();
+    assert_eq!(missing.state, super::super::super::CacheState::Missing);
+    assert_eq!(puller.cache_snapshot(&key).unwrap(), missing);
+    std::fs::write(&receipt, &bytes).unwrap();
+    let invalid = puller.cache_snapshot(&key).unwrap();
+    assert!(invalid.verification_pending);
+    assert!(invalid.epoch > missing.epoch);
+    std::fs::remove_file(&receipt).unwrap();
+    puller.reconcile_cache(&key, parent.path()).await.unwrap();
+    let directory = root.path().join("blobs");
+    std::fs::rename(&directory, root.path().join("previous-blobs")).unwrap();
+    std::fs::create_dir(&directory).unwrap();
+    assert!(puller.cache_snapshot(&key).unwrap().verification_pending);
 }
 
 #[tokio::test]

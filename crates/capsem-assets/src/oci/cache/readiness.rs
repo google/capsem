@@ -62,12 +62,58 @@ impl BlobCache {
             .snapshot(key)
     }
 
-    pub(in super::super) fn incomplete(&self, key: &CacheKey, state: CacheState) -> Result<()> {
-        self.tracking
+    /// Reobserve negative facts after installing inode/name watches. A prior
+    /// error alone cannot publish a fresh observation: external repair may
+    /// already have happened while the failed materialization was unwinding.
+    pub(in super::super) async fn incomplete(&self, key: &CacheKey) -> Result<CacheSnapshot> {
+        let lease = read_lock(self.mutation_lock()).await?;
+        let epoch = self
+            .tracking
             .lock()
             .map_err(|_| anyhow::anyhow!("OCI tracking lock poisoned"))?
-            .observed(key.clone(), state, None, None);
-        Ok(())
+            .epoch();
+        let (cache, key) = (self.clone(), key.clone());
+        tokio::task::spawn_blocking(move || -> Result<CacheSnapshot> {
+            let _lease = lease;
+            let mut watch = ChangeWatch::new()?;
+            let directory = watched_directory(&cache, &mut watch)?;
+            let name = format!("receipt-{}", key.as_str());
+            attach_existing(&directory, &mut watch, &name)?;
+            let state = match receipts::read(&directory, &key) {
+                Ok(None) => CacheState::Missing,
+                Err(_) => CacheState::Partial,
+                Ok(Some(receipt)) => {
+                    attach(&cache, &directory, &mut watch, receipt.origin(), receipt.blobs(), false)?;
+                    if let Some(root) = receipt.root() {
+                        attach(&cache, &directory, &mut watch, &root.origin, &root.blobs, false)?;
+                    }
+                    let valid =
+                        receipts::verify(&cache, &directory, receipt.origin(), receipt.blobs()).and_then(|()| {
+                            if let Some(root) = receipt.root() {
+                                receipts::verify(&cache, &directory, &root.origin, &root.blobs)?;
+                            }
+                            Ok(())
+                        });
+                    if valid.is_err() {
+                        CacheState::Partial
+                    } else {
+                        CacheState::Unknown
+                    }
+                }
+            };
+            ensure!(!watch.changed()?, "cache changed during incomplete observation");
+            let mut tracking = cache
+                .tracking
+                .lock()
+                .map_err(|_| anyhow::anyhow!("OCI tracking lock poisoned"))?;
+            ensure!(
+                tracking.epoch() == epoch && epoch != u64::MAX,
+                "incomplete observation was invalidated"
+            );
+            tracking.observed(key.clone(), state, None, Some(watch));
+            tracking.snapshot(&key)
+        })
+        .await?
     }
 
     /// The full graph was independently reconciled. Watch every required
@@ -82,20 +128,24 @@ impl BlobCache {
         let cache = self.clone();
         tokio::task::spawn_blocking(move || -> Result<CacheSnapshot> {
             let _lease = lease;
-            let root = ContainedDir::open_root(&cache.root)?;
-            let directory = root.walk(&cache.policy.entry_root)?;
             let mut watch = ChangeWatch::new()?;
-            watch.add(root.as_fd())?;
-            watch.add(directory.as_fd())?;
+            let directory = watched_directory(&cache, &mut watch)?;
             let key = receipt.key();
             let control = directory.open_file(
                 format!("receipt-{}", key.as_str()).as_ref(),
                 ContainedOpenOptions::read_only(),
             )?;
             watch.add(control.as_fd())?;
-            attach(&cache, &directory, &mut watch, receipt.origin(), receipt.blobs())?;
+            attach(&cache, &directory, &mut watch, receipt.origin(), receipt.blobs(), true)?;
             if let Some(filesystem) = receipt.root() {
-                attach(&cache, &directory, &mut watch, &filesystem.origin, &filesystem.blobs)?;
+                attach(
+                    &cache,
+                    &directory,
+                    &mut watch,
+                    &filesystem.origin,
+                    &filesystem.blobs,
+                    true,
+                )?;
             }
             let current = receipts::read(&directory, &key)?.context("receipt disappeared before proof")?;
             ensure!(
@@ -123,12 +173,34 @@ impl BlobCache {
     }
 }
 
+fn watched_directory(cache: &BlobCache, watch: &mut ChangeWatch) -> Result<ContainedDir> {
+    let mut directory = ContainedDir::open_root(&cache.root)?;
+    watch.add(directory.as_fd())?;
+    for component in cache.policy.entry_root.components() {
+        let std::path::Component::Normal(name) = component else {
+            anyhow::bail!("cache entry root must contain plain relative names");
+        };
+        directory = directory.descend(name)?;
+        watch.add(directory.as_fd())?;
+    }
+    Ok(directory)
+}
+
+fn attach_existing(directory: &ContainedDir, watch: &mut ChangeWatch, name: &str) -> Result<()> {
+    if directory.entry_kind(name.as_ref())? == Some(EntryKind::File) {
+        let file = directory.open_file(name.as_ref(), ContainedOpenOptions::read_only())?;
+        watch.add(file.as_fd())?;
+    }
+    Ok(())
+}
+
 fn attach(
     cache: &BlobCache,
     directory: &ContainedDir,
     watch: &mut ChangeWatch,
     origin: &str,
     blobs: &[BlobRef],
+    required: bool,
 ) -> Result<()> {
     let scoped = cache.for_repository(&super::super::image_reference(origin)?);
     for blob in blobs {
@@ -138,8 +210,12 @@ fn attach(
         } else {
             name
         };
-        let file = directory.open_file(name.as_ref(), ContainedOpenOptions::read_only())?;
-        watch.add(file.as_fd())?;
+        if required {
+            let file = directory.open_file(name.as_ref(), ContainedOpenOptions::read_only())?;
+            watch.add(file.as_fd())?;
+        } else {
+            attach_existing(directory, watch, &name)?;
+        }
     }
     Ok(())
 }

@@ -1,6 +1,6 @@
 //! Owner readiness separates verification work from polling.
 
-use super::super::{CacheKey, CacheSnapshot, CacheState};
+use super::super::{CacheKey, CacheSnapshot};
 use super::*;
 
 impl Puller {
@@ -21,16 +21,13 @@ impl Puller {
                 Ok(Some(receipt)) => match cache.verify_snapshot(receipt).await {
                     Ok(snapshot) => Ok(snapshot),
                     Err(error) => {
-                        cache.incomplete(key, CacheState::Partial)?;
+                        cache.incomplete(key).await?;
                         Err(error)
                     }
                 },
-                Ok(None) => {
-                    cache.incomplete(key, CacheState::Missing)?;
-                    cache.snapshot(key)
-                }
+                Ok(None) => cache.incomplete(key).await,
                 Err(error) => {
-                    cache.incomplete(key, CacheState::Partial)?;
+                    cache.incomplete(key).await?;
                     Err(error)
                 }
             }
