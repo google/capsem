@@ -337,11 +337,189 @@ async fn logged<T>(body: impl std::future::Future<Output = T>) -> (T, Vec<serde_
 }
 
 fn stalls(events: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+    reports(events, WRITE_STALL)
+}
+
+fn reports<'a>(events: &'a [serde_json::Value], message: &str) -> Vec<&'a serde_json::Value> {
     events
         .iter()
-        .filter(|event| event["fields"]["message"] == "stream write made no progress")
+        .filter(|event| event["fields"]["message"] == message)
         .map(|event| &event["fields"])
         .collect()
+}
+
+/// Let real sockets fill before paused time moves. With the clock paused a
+/// report tick can fire before the kernel has delivered a single readiness
+/// event; a blocking task holds auto-advance off while the pipeline runs.
+async fn saturate() {
+    tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(300)))
+        .await
+        .unwrap();
+}
+
+/// A reader the runtime never wakes. It holds a real socket, so bytes queue
+/// in the kernel, but its read never registers for them: the shape a lost
+/// readiness edge takes from inside the copy.
+struct Deaf(tokio::net::UnixStream);
+
+impl AsyncRead for Deaf {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        _: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Pending
+    }
+}
+
+impl AsyncWrite for Deaf {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        std::pin::Pin::new(&mut self.0).poll_write(context, bytes)
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_flush(context)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_shutdown(context)
+    }
+}
+
+impl Endpoint for Deaf {
+    fn socket(&self) -> Option<BorrowedFd<'_>> {
+        self.0.socket()
+    }
+}
+
+/// google/capsem#282: a published port stalled with the reverse leg in a
+/// write and the forward leg in a read, and nothing said which socket was
+/// full. The report now names the endpoint and what its kernel holds.
+#[tokio::test(start_paused = true)]
+async fn a_write_stall_names_the_endpoint_whose_peer_stopped_reading() {
+    let ((), events) = logged(async {
+        let (mut client, mut source) = tokio::net::UnixStream::pair().unwrap();
+        let (_server, mut destination) = tokio::net::UnixStream::pair().unwrap();
+        let relay =
+            tokio::spawn(async move { copy(&mut source, &mut destination, Framings::RAW, Limits::default()).await });
+        let writer = tokio::spawn(async move { while client.write_all(&[7; BUFFER_SIZE]).await.is_ok() {} });
+        saturate().await;
+        sleep(Duration::from_secs(11)).await;
+        relay.abort();
+        writer.abort();
+    })
+    .await;
+    let stalls = stalls(&events);
+    assert_eq!(stalls.len(), 1, "{events:?}");
+    let stall = stalls[0];
+    assert_eq!(stall["stalled"], "forward");
+    assert_eq!(stall["stalled_endpoint"], "destination");
+    assert!(
+        stall["source_unread"].as_u64().unwrap() > 0,
+        "the client's bytes queue behind the stalled write: {stall}"
+    );
+    #[cfg(target_os = "linux")]
+    assert!(
+        stall["destination_unsent"].as_u64().unwrap() > 0,
+        "the full endpoint holds what its peer has not read: {stall}"
+    );
+    assert!(
+        stall.get("destination_untransmitted").is_none(),
+        "a Unix stream has no window to report: {stall}"
+    );
+    assert!(reports(&events, MISSED_READ).is_empty(), "{events:?}");
+}
+
+/// The other half of telling #282 apart: bytes the kernel holds for a read
+/// that is never woken are a copy bug, not a slow peer, and are reported as
+/// such once per episode.
+#[tokio::test(start_paused = true)]
+async fn a_read_left_waiting_on_queued_bytes_is_reported_once() {
+    let ((), events) = logged(async {
+        let (mut client, source) = tokio::net::UnixStream::pair().unwrap();
+        let mut source = Deaf(source);
+        let (_server, mut destination) = tokio::net::UnixStream::pair().unwrap();
+        let relay =
+            tokio::spawn(async move { copy(&mut source, &mut destination, Framings::RAW, Limits::default()).await });
+        client.write_all(b"request").await.unwrap();
+        sleep(Duration::from_secs(60)).await;
+        relay.abort();
+    })
+    .await;
+    let missed = reports(&events, MISSED_READ);
+    assert_eq!(missed.len(), 1, "one report per episode: {events:?}");
+    let report = missed[0];
+    assert_eq!(report["stalled"], "forward");
+    assert_eq!(report["stalled_endpoint"], "source");
+    assert_eq!(report["forward_phase"], "read");
+    assert_eq!(report["source_unread"], 7);
+    assert!(stalls(&events).is_empty(), "{events:?}");
+}
+
+/// Bytes that arrive just before a report tick and are read right after it
+/// are a woken copy, not a missed read, however often that lines up.
+#[tokio::test(start_paused = true)]
+async fn a_trickle_that_is_read_as_it_arrives_is_not_a_missed_read() {
+    let ((), events) = logged(async {
+        let (mut client, mut source) = tokio::net::UnixStream::pair().unwrap();
+        let (mut server, mut destination) = tokio::net::UnixStream::pair().unwrap();
+        let relay =
+            tokio::spawn(async move { copy(&mut source, &mut destination, Framings::RAW, Limits::default()).await });
+        let mut sink = [0; 1];
+        for _ in 0..24 {
+            sleep(Duration::from_millis(4_999)).await;
+            client.write_all(b"x").await.unwrap();
+            server.read_exact(&mut sink).await.unwrap();
+        }
+        // Then a long quiet spell on real sockets: nothing queued, nothing due.
+        sleep(Duration::from_secs(120)).await;
+        relay.abort();
+    })
+    .await;
+    assert!(reports(&events, MISSED_READ).is_empty(), "{events:?}");
+    assert!(stalls(&events).is_empty(), "{events:?}");
+}
+
+/// A TCP peer that stopped reading shuts its window: the report shows the
+/// bytes it kept from ever being transmitted, which is what separates a
+/// stopped reader from a lost wakeup on the writer. The other endpoint is an
+/// in-process pipe and reports no queue at all.
+#[cfg(target_os = "linux")]
+#[tokio::test(start_paused = true)]
+async fn a_tcp_peer_that_stopped_reading_shows_the_bytes_its_window_kept_out() {
+    use nix::sys::socket::{setsockopt, sockopt};
+    let ((), events) = logged(async {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        setsockopt(&listener, sockopt::RcvBuf, &(16 * 1024)).unwrap();
+        let stream = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (_peer, _) = listener.accept().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let mut destination = tokio::net::TcpStream::from_std(stream).unwrap();
+        let (mut client, mut source) = duplex(BUFFER_SIZE);
+        let relay =
+            tokio::spawn(async move { copy(&mut source, &mut destination, Framings::RAW, Limits::default()).await });
+        let writer = tokio::spawn(async move { while client.write_all(&[7; BUFFER_SIZE]).await.is_ok() {} });
+        saturate().await;
+        sleep(Duration::from_secs(11)).await;
+        relay.abort();
+        writer.abort();
+    })
+    .await;
+    let stalls = stalls(&events);
+    assert_eq!(stalls.len(), 1, "{events:?}");
+    let stall = stalls[0];
+    assert_eq!(stall["stalled_endpoint"], "destination");
+    assert!(stall["destination_untransmitted"].as_u64().unwrap() > 0, "{stall}");
+    assert!(stall["destination_probes"].is_u64(), "{stall}");
+    assert!(stall.get("source_unread").is_none(), "{stall}");
 }
 
 #[tokio::test(start_paused = true)]

@@ -70,7 +70,14 @@ applied again by the child; setup refuses an unsupported buffer configuration.
 The relay uses 16 KiB per direction and preserves TCP half-close. Each successful
 write renews a 60-second stall deadline; no deadline applies to quiet reads. After
 one direction drains and sends FIN, the reverse direction has 60 seconds to
-finish. Host and guest reuse the same bounded copier. Its tasks and
+finish. A write that takes no bytes for five seconds is logged once per episode
+(`stream write made no progress`), and so is a read still waiting five seconds
+after the kernel queued bytes for it (`stream read left queued bytes unread`:
+the copy was not woken). Both reports name the stuck endpoint and give each
+socket's kernel queues: unread, unsent and, for TCP, untransmitted bytes and
+zero-window probe state. In the router `source` is the host client's TCP socket
+and `destination` the guest's VSOCK leg; in the guest bridge `source` is the
+service's TCP socket. Host and guest reuse the same bounded copier. Its tasks and
 control reader belong to JoinSets and are cancelled and joined on control failure.
 Publication removal cancels its broker and aborts its flows; late acknowledgements
 are discarded until Closed without interrupting other publications. VM shutdown

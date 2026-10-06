@@ -685,6 +685,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A published-port stream that stops moving now says which socket stopped it
+  (google/capsem#282). The stall warning names the stuck endpoint and each
+  socket's kernel queues -- unread, unsent and, for TCP, bytes the peer's
+  shut window kept out and the zero-window probe backoff -- and a read left
+  waiting on bytes the kernel already holds is reported as a missed wakeup.
+
 - OpenTelemetry metric export. Set the corp config's `open_telemetry` to an
   OTLP/HTTP base endpoint (metrics go to `/v1/metrics`), or the standard
   `OTEL_EXPORTER_OTLP_*` environment for the service. The service exports its

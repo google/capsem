@@ -400,5 +400,13 @@ impl AsyncWrite for AsyncVsock {
     }
 }
 
+/// The guest bridge's VSOCK leg is a socket the relay's stall report can
+/// read the kernel queues of.
+impl capsem_foundation::unix::router_stream::Endpoint for AsyncVsock {
+    fn socket(&self) -> Option<BorrowedFd<'_>> {
+        Some(self.inner.get_ref().as_fd())
+    }
+}
+
 // No custom Drop: inner AsyncFd<UnixStream> owns the fd via from_raw_fd
 // and closes it automatically. Manual libc::close would double-close.
