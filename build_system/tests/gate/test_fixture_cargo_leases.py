@@ -11,6 +11,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,42 @@ from helpers.bounded import WRAPPER, bounded
 from test_bounded_machine_lease import _environment, _gate_holds_the_machine
 
 ROOT = Path(__file__).resolve().parents[3]
+REHEARSAL = "build_system/scripts/release/rehearse-asset-channel-staging.sh"
+
+
+@pytest.mark.parametrize("prefix", [["bash"], ["/bin/bash"], ["env", "BUILD_PROFILE=probe", "bash"]])
+def test_asset_rehearsal_takes_the_lease_before_preparing_its_fixture(prefix: list[str]) -> None:
+    command = [*prefix, REHEARSAL, "staging", "1.0.2", "fixture", "dist", "evidence"]
+    assert boundedlease.machine_work(command, config.load(ROOT).locks.bounded), (
+        "the rehearsal's outer timeout must start after its Cargo lease wait"
+    )
+
+
+def test_rehearsal_script_wait_does_not_spend_its_command_budget(tmp_path: Path) -> None:
+    """Real wrapper and kernel lease; shim observes script startup, not artifact correctness."""
+    record = tmp_path / "script-started"
+    environment = _environment(tmp_path)
+    bash = tmp_path / "bin/bash"
+    bash.write_text(f"#!/bin/sh\nprintf '%s' \"$CAPSEM_GATE_RUN\" > '{record}'\n")
+    bash.chmod(0o755)
+    with _gate_holds_the_machine(tmp_path):
+        waiting = subprocess.Popen(
+            bounded(["bash", REHEARSAL, "staging", "1.0.2", "fixture", "dist", "evidence"], 1),
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            assert waiting.stderr is not None
+            assert "waiting:" in waiting.stderr.readline()
+            time.sleep(1.25)
+            assert waiting.poll() is None, "a lock wait consumed the script's execution timeout"
+            assert not record.exists(), "fixture preparation started before acquiring the lease"
+        except BaseException:
+            waiting.terminate()
+            waiting.communicate(timeout=20)
+            raise
+    _, error = waiting.communicate(timeout=30)
+    assert waiting.returncode == 0, error
+    assert record.read_text().startswith("bounded: bash " + REHEARSAL)
 
 
 @pytest.mark.parametrize("owner", ["inventory", "clippy", "provenance"])

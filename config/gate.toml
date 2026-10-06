@@ -1228,9 +1228,12 @@ run_marker = "CAPSEM_GATE_RUN"
 # for ninety minutes of a day. A queue the kernel owns replaces all three:
 # it names its holder, and it is released when the holder dies.
 programs = ["cargo"]
-# This fixture script compiles after preparing its inputs. Its outer timeout
-# must start after the lease wait; leasing only its nested Cargo is too late.
-command_prefixes = [["bash", "build_system/scripts/test/prepare-install-test-assets.sh"]]
+# These fixture scripts compile after preparing inputs. Their outer timeout
+# starts after the lease wait; leasing only nested Cargo is too late.
+command_prefixes = [
+    ["bash", "build_system/scripts/test/prepare-install-test-assets.sh"],
+    ["bash", "build_system/scripts/release/rehearse-asset-channel-staging.sh"],
+]
 # Stepped over when finding the program, with any `NAME=value` that follows.
 wrappers = ["env", "caffeinate", "nice", "time"]
 # Neither compile nor write the target directory, so queueing them behind a
