@@ -2,6 +2,70 @@ use super::super::tests::{digest, Registry};
 use super::*;
 
 #[tokio::test]
+async fn cache_preferred_images_fetch_cold_pins_refresh_tags_and_work_without_registry() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let original = registry
+        .puller()
+        .pull(&registry.reference(), parent.path())
+        .await
+        .unwrap();
+    let pin = registry
+        .reference()
+        .replace(":latest", &format!("@{}", original.source_digest));
+    let root = super::super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(BlobCache::at(root.path()).unwrap());
+    let cold = puller.pull_prefer_cached(&pin, parent.path()).await.unwrap();
+    assert_eq!(cold.source_digest, original.source_digest);
+    let before = registry.requests.lock().unwrap().len();
+    let fresh = puller
+        .pull_prefer_cached(&registry.reference(), parent.path())
+        .await
+        .unwrap();
+    assert_eq!(fresh.source_digest, original.source_digest);
+    assert!(
+        registry.requests.lock().unwrap().len() > before,
+        "moving tags must be resolved again"
+    );
+    registry.task.abort();
+    let local = puller.pull_prefer_cached(&pin, parent.path()).await.unwrap();
+    assert_eq!(local.files(), cold.files());
+    for file in local.files() {
+        assert_eq!(
+            std::fs::read(local.path().join(file)).unwrap(),
+            std::fs::read(cold.path().join(file)).unwrap()
+        );
+    }
+}
+
+#[tokio::test]
+async fn cache_preferred_published_roots_fetch_cold_and_preserve_warm_inodes_offline() {
+    use super::super::tests::{rootfs_reference, rootfs_registry, rootfs_subject};
+    use std::os::unix::fs::MetadataExt;
+    let registry = rootfs_registry(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    puller.cache = Some(BlobCache::at(root.path()).unwrap());
+    let reference = rootfs_reference(&registry);
+    let cold = puller
+        .fetch_rootfs_prefer_cached(&reference, &rootfs_subject(), parent.path())
+        .await
+        .unwrap();
+    registry.task.abort();
+    let warm = puller
+        .fetch_rootfs_prefer_cached(&reference, &rootfs_subject(), parent.path())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::metadata(cold.path()).unwrap().ino(),
+        std::fs::metadata(warm.path()).unwrap().ino()
+    );
+    assert_eq!(cold.digest(), warm.digest());
+}
+
+#[tokio::test]
 async fn cached_published_root_preserves_the_verified_inode_without_registry_access() {
     use super::super::tests::{rootfs_reference, rootfs_registry, rootfs_subject, ROOTFS_BYTES};
     use std::os::unix::fs::MetadataExt;
