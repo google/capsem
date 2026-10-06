@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- All four sites resolve `sharp` 0.35.5 instead of 0.35.4
+  (GHSA-wq5f-xc86-pv6w: vulnerable bundled librsvg, CVE-2026-96889).
+
 - All four sites resolve `smol-toml` 1.9.0 instead of 1.7.1
   (GHSA-r4xh-jqrq-34v2: quadratic-time parse on long documents).
 
