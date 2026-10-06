@@ -1,9 +1,12 @@
 """Core no-state service endpoints: /version, /stats, /service-logs, profile reload."""
 
-import tomllib
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
+import tomllib
+from helpers.constants import BIN_DIR, BIN_VARIABLE
 from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
@@ -18,18 +21,24 @@ class TestVersion:
         assert resp is not None
         version = resp.get("version")
         assert isinstance(version, str) and version, f"empty version: {resp}"
-        # Compared against Cargo.toml rather than a prefix literal. The old
-        # assertion was `startswith("1.")` for a "1.0.<timestamp>" convention
-        # that no longer exists, so it failed the release rather than the
-        # service. The real property is that the daemon reports the version it
-        # was built from.
-        workspace = tomllib.loads(
-            (PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8")
-        )
-        declared = workspace["workspace"]["package"]["version"]
-        assert version == declared, (
-            f"service reports {version!r} but the workspace declares {declared!r}"
-        )
+        # The real property is that the daemon reports the version it was
+        # built from. From source that is Cargo.toml's. A release lane pulls a
+        # published package instead -- a profile release pairs the new profile
+        # with the public binary while the source has already moved on -- so
+        # there the binary itself is the authority. Comparing that to
+        # Cargo.toml failed the 0.6.6 code-profile release on a correct 0.6.5
+        # service.
+        if os.environ.get(BIN_VARIABLE):
+            built = subprocess.run(
+                [str(BIN_DIR / "capsem-service"), "--version"],
+                capture_output=True, text=True, timeout=30, check=True,
+            ).stdout.split()[-1]
+            source = f"{BIN_DIR}/capsem-service --version"
+        else:
+            workspace = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+            built = workspace["workspace"]["package"]["version"]
+            source = "the workspace"
+        assert version == built, f"service reports {version!r} but {source} declares {built!r}"
 
 
 class TestStats:
