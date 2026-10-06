@@ -1216,8 +1216,8 @@ poll_interval_seconds = 0.25
 run_marker = "CAPSEM_GATE_RUN"
 
 [locks.bounded]
-# Direct commands that are machine work take the lock above, through the
-# bounded-command wrapper every direct command already has to use.
+# Explicit --machine-lease diagnostics use this selection. Routine bounded
+# compilation and local TDD do not acquire the global machine lock.
 #
 # The lock used to coordinate `capsem-gate` processes and nothing else, while
 # that wrapper routed every worktree's cargo into the one shared target

@@ -29,6 +29,15 @@ let five through; the rule is now a whitelist for that reason.
 
 ## Test execution
 
+Write code first with TDD and minimal focused feedback. During routine edits
+run the regression being changed and only necessary file/behavior checks.
+Broad workspace, contract, Citadel, VM, installed-package and performance runs
+belong at major phase boundaries, not after every edit or commit. Pending full
+proof must not block independent implementation. Qualify the complete phase
+before calling it qualified, and retain the exact-source merge/release gates.
+The bounded wrapper provides timeout and cleanup without a default machine
+lease; reserve `--machine-lease` for explicitly isolated qualification work.
+
 | Command | What | VM? |
 |---------|------|-----|
 | `just fast-test` | Incomplete source feedback only | No |
@@ -38,9 +47,9 @@ let five through; the rule is now a whitelist for that reason.
 
 A release requires a passing `just test` for its source first; hosted release
 lanes then qualify what they publish.
-`just fast-test` is incomplete feedback, and `just focus-test <group>` is the normal
-targeted regression path. During TDD use the smallest native test; run `just test`
-when complete local whole-system verification is useful.
+`just fast-test` and `just focus-test <group>` are broader feedback tools for a
+phase boundary or a failure that needs their scope. During TDD use the smallest
+native test directly; use complete verification at major phase boundaries.
 
 Pick the narrowest lens, in this order: one test file run directly with pytest
 in the latest `cache/worktrees/<run>` (it reuses that run's built assets; rebuild
@@ -152,11 +161,11 @@ Write tests first:
 3. Write minimal implementation to pass them
 4. Refactor
 
-Without a failing test first, tests can pass by accident. Cargo fixtures, including tiny probes, use `tests/helpers/bounded.py`: its `env` argument applies explicit probe compiler and target overrides after containment; never serialize inherited secrets. The wrapper owns the finite child timeout after its machine-lease wait; do not add an outer subprocess timeout.
+Without a failing test first, tests can pass by accident. Cargo fixtures, including tiny probes, use `tests/helpers/bounded.py`: its `env` argument applies explicit probe compiler and target overrides after containment; never serialize inherited secrets. The wrapper owns the finite child timeout and cleanup; routine probes do not acquire a machine lease. Do not add an outer subprocess timeout.
 
 ## Functional slice proof matrix
 
-Every non-trivial feature slice needs evidence in all of these categories before it can be called done. A green unit suite or a benchmark is not a substitute for functional or end-to-end proof.
+Use the matrix below for qualification at each major phase boundary. During implementation run only the focused checks needed for the changed behavior and record outstanding phase proof. A green unit suite or a benchmark is not a substitute for complete phase qualification.
 
 | Category | What it proves | Minimum expectation |
 |----------|----------------|---------------------|
@@ -481,11 +490,11 @@ so meaningful coverage gains raise their ratchets in the same change.
 Read `references/mcp-debug-tools.md` for interactive VM debugging through the
 capsem MCP server: tool table, one-shot vs iterative workflows, and common
 session-DB queries. MCP tools are for fast targeted checks; just recipes are
-for comprehensive validation before committing.
+for complete validation at major phase boundaries and before merge or release.
 
 ## End-to-end validation is not optional
 
-After any change touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
+At the major phase boundary for changes touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
 
 1. `just exec "capsem-doctor"` -- verifies sandbox integrity inside the VM
 2. After telemetry/logging changes: run a real session and verify with `python3 build_system/scripts/doctor/check_session.py` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols

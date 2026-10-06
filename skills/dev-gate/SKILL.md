@@ -96,6 +96,12 @@ Never overridden — a contract test fails if a subclass defines it. In order:
 
 ## The host kernel owns the network boundary
 
+During implementation, prefer minimal native TDD/regression checks instead of
+running gate plans repeatedly. Qualify the full outcome at major phase
+boundaries and before merge/release. Routine bounded commands do not take the
+global machine lock; use `--machine-lease` only when deliberately selecting
+isolated machine work. Complete gate/release isolation remains authoritative.
+
 Candidate, both release commands, and directly invoked private test modules
 run under Bubblewrap on Linux or Seatbelt on macOS. Linux receives loopback and
 the configured UNIX sockets but no external interface; macOS uses the generated
@@ -158,14 +164,12 @@ are `threading.Lock`s: they order steps inside one plan and coordinate nothing
 between two `capsem-gate` processes. `just _sign` in one terminal could replace
 the codesigned binaries a qualification in another was executing.
 
-Direct commands are the other half. `boundedlease` makes the bounded-command
-wrapper take this same lock for the programs `[locks.bounded]` names (cargo,
-minus subcommands that neither compile nor write), seen through `env` and
-assignments, and skipped inside a run because the lock is not reentrant. Until
-it did, the lock ordered gates while every worktree's cargo went unarbitrated
-into the shared target directory: a 0%-CPU deadlock on an incremental session
-lock, VM start deadlines missed under another session's compile, and agents
-trading "VMs done" messages. Add a program there; do not add a second lock.
+Direct commands retain finite timeout and process-tree cleanup without a
+global lease. An explicit `--machine-lease` selects `boundedlease` for the
+programs and command prefixes in `[locks.bounded]`, seen through `env` and
+assignments. Inside a gate run it reuses the parent's isolation rather than
+waiting for its own lock. Routine compilation and focused TDD use the default
+unleased path; phase qualification retains the gate's machine isolation.
 
 The machine `flock` and holder record are config-owned user-home paths, never
 checkout-relative paths. Every linked worktree, clone, and detached full-SHA

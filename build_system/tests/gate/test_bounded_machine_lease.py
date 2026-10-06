@@ -1,15 +1,6 @@
-"""A direct `cargo` shares the machine with the gate, so it takes the gate's lock.
+"""Focused diagnostics run freely; machine isolation is an explicit option.
 
-The machine lock coordinated `capsem-gate` processes and nothing else. The
-mandated wrapper for direct commands routed every worktree's `cargo` into the
-one shared target directory and onto every core, arbitrated by nobody: two
-sessions deadlocked on an incremental session lock at 0% CPU, a compile
-starved another session's VM boot deadlines, and agents invented a
-"starting VMs" / "VMs done" protocol over chat to cope. One session sat paused
-for ninety minutes of a working day on that etiquette.
-
-Every test here drives the real launcher in a subprocess against a fake
-`cargo`, with `HOME` moved so the user-scoped lock resolves under `tmp_path`.
+Real launcher subprocesses use a Cargo shim and an isolated kernel lock.
 """
 
 from __future__ import annotations
@@ -73,10 +64,11 @@ def _environment(tmp_path: Path, **extra: str) -> dict[str, str]:
 
 
 @contextlib.contextmanager
-def _bounded(tmp_path: Path, *command: str, **extra: str) -> Iterator[subprocess.Popen[str]]:
+def _bounded(tmp_path: Path, *command: str, machine_lease: bool = True, **extra: str) -> Iterator[subprocess.Popen[str]]:
     """The real launcher around `command`; killed and drained on the way out."""
     with subprocess.Popen(
-        [sys.executable, str(BOUNDED), "--timeout-seconds", "30", "--", *command],
+        [sys.executable, str(BOUNDED), "--timeout-seconds", "30",
+         *(["--machine-lease"] if machine_lease else []), "--", *command],
         env=_environment(tmp_path, **extra),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -118,6 +110,17 @@ def _finished_within(process: subprocess.Popen[str], seconds: float) -> bool:
     except subprocess.TimeoutExpired:
         return False
     return True
+
+
+@pytest.mark.parametrize("subcommand", ["build", "test"])
+def test_focused_cargo_does_not_wait_for_the_machine_lock(tmp_path: Path, subcommand: str) -> None:
+    with (_gate_holds_the_machine(tmp_path),
+          _bounded(tmp_path, "cargo", subcommand, machine_lease=False) as free):
+        assert _finished_within(free, 5), "routine focused work must not wait for a machine-wide gate"
+        out, err = free.communicate()
+    assert free.returncode == 0, err
+    assert f"cargo ran: {subcommand}" in out
+    assert "waiting:" not in err
 
 
 def test_cargo_waits_for_a_running_gate_and_says_who_it_waits_for(tmp_path: Path) -> None:
@@ -282,6 +285,6 @@ def test_a_wait_that_runs_out_is_not_mistaken_for_the_commands_own_failure(
     for name, value in _environment(tmp_path).items():
         monkeypatch.setenv(name, value)
     with _gate_holds_the_machine(tmp_path):
-        code = run_bounded_command.run(["--timeout-seconds", "30", "--", "cargo", "build"])
+        code = run_bounded_command.run(["--timeout-seconds", "30", "--machine-lease", "--", "cargo", "build"])
     assert code == LEASE.wait_exit_code
     assert code != run_bounded_command.TIMEOUT_EXIT

@@ -11,6 +11,12 @@ Never fix code before you understand why it broke. The temptation to "just make 
 
 ## Choose the cheapest truthful feedback loop
 
+Keep implementation moving. Use a minimal reproducer and focused TDD checks
+during coding, then return to the next implementation item. Broad qualification
+runs belong at the end of a major phase; a small fix does not justify another
+whole contract/workspace/VM/install run. The bounded wrapper retains timeout
+and cleanup without a routine machine lease.
+
 Capsem now has two distinct execution surfaces:
 
 - Just exposes the small public product interface.

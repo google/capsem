@@ -1,4 +1,4 @@
-"""Compiler fixtures use the existing bounded launcher, including its wait.
+"""Compiler fixtures use the existing bounded timeout and cleanup launcher.
 
 Literal command routing is source-checkable; dynamic fixture helper routing
 and contained environment preservation have subprocess tests in the gate owner.
@@ -17,9 +17,9 @@ from pydantic import ValidationError
 ROOT = Path(__file__).resolve().parents[2]
 SETTINGS = config.load(ROOT).locks.bounded
 LEASE_RATIONALE = (
-    "AGENTS.md 'Bound Direct Diagnostics': Cargo fixtures share the machine lease. "
-    "The bounded wrapper owns a finite child timeout after its lock wait; an "
-    "outer subprocess timeout can abandon the owning launcher while it queues."
+    "AGENTS.md 'Bound Direct Diagnostics': Cargo fixtures use bounded timeout and cleanup. "
+    "Routine checks do not take the global lock; explicit --machine-lease work "
+    "may queue, so outer subprocess timeouts must not abandon its launcher."
 )
 
 

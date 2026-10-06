@@ -68,6 +68,14 @@ row-exists checks, internal-only expectations, or skipped tests.
 
 ## Build with project rules
 
+Prioritize writing the implementation across the requested scope. During the
+edit loop use TDD and the minimum focused checks needed for changed behavior;
+do not start broad contract, workspace, VM, install or benchmark runs as a
+routine habit. Direct bounded commands do not take a machine lease by default.
+Keep coding independent work while local checks run. Separate implementation
+dependencies from qualification holds so pending broad proof does not stall
+later work that can be implemented safely.
+
 Load the relevant project skills before coding:
 
 - `/dev-debugging` for reproduce-first bug investigation;
@@ -107,9 +115,12 @@ uncommitted work or a commit that does not contain its files.
 
 ## Verify proportionally, then verify completely
 
-Every item gets the smallest focused proof that fully covers its outcome.
-Every sprint ends with the repository-authoritative final gates required by
-its scope.
+Every implementation item gets its necessary focused TDD/regression proof.
+Full qualification belongs at the end of each major phase, covering the whole
+phase outcome, and at final merge/release readiness. Do not repeat broad gates
+per item or commit. Track qualification separately and never claim a phase is
+qualified from a small local check. Public-contract and publication approvals
+remain explicit decisions.
 
 The proof matrix should consider:
 

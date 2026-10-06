@@ -95,6 +95,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--timeout-seconds", required=True, type=_positive_seconds)
     parser.add_argument("--grace-seconds", default=10.0, type=_nonnegative_seconds)
+    parser.add_argument("--machine-lease", action="store_true",
+                        help="explicitly isolate this command on the gate machine lock")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser
 
@@ -110,7 +112,7 @@ def run(argv: Sequence[str]) -> int:
     root = _repository_root()
     command, keyed = _keyed_clippy(command, root)
     try:
-        with _machine(command, root) as exported:
+        with _machine(command, root, requested=args.machine_lease) as exported:
             return _run(command, {**keyed, **exported}, args)
     except _MachineBusy as busy:
         print(f"bounded command never started: {busy}", file=sys.stderr)
@@ -139,10 +141,9 @@ class _MachineBusy(Exception):
 
 
 @contextmanager
-def _machine(command: Sequence[str], root: Path | None) -> Iterator[dict[str, str]]:
-    """The machine lease, when `command` is machine work. Waiting is not running:
-    it happens before the child exists, so it never spends the command's timeout."""
-    if root is None:
+def _machine(command: Sequence[str], root: Path | None, *, requested: bool) -> Iterator[dict[str, str]]:
+    """Isolate deliberately selected work; routine diagnostics never queue."""
+    if root is None or not requested:
         yield {}
         return
     from capsem_builder.gate import boundedlease, config

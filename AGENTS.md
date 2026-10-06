@@ -12,6 +12,13 @@ comparing them.
 
 ## Quick Start
 
+Prioritize implementation. During routine development run only the smallest
+TDD regression and checks needed for the changed behavior. Do not run broad
+workspace, contract, VM, install, or benchmark suites after every edit or commit.
+Qualify the complete result at the end of each major phase and before merge or
+release. Keep implementation progress separate from qualification status;
+pending broad proof must not prevent independent coding on later phases.
+
 ```bash
 just doctor        # Check tools (first time)
 just doctor fix    # Install prerequisites and materialize missing VM assets
@@ -248,19 +255,13 @@ cannot leave a Docker client, compiler, test runner, or helper behind. Do not
 use it around `just test` or either release command: the gate's config-owned
 timeouts, journal, resource teardown, and resumable graph remain authoritative.
 
-The wrapper also owns **who has the machine**. A wrapped `cargo` that compiles
-takes the same kernel lock a gate run holds (`[locks.bounded]` in
-`config/gate.toml`), so it queues behind a running gate or another session's
-compile, names the holder on stderr, and starts by itself when the machine is
-free. The wait happens before the child exists and never spends
-`--timeout-seconds`; exit 75 means the wait itself ran out. Run a long wait in
-the background rather than killing it.
-
-So: never run a bare `cargo`, and never coordinate machine use with another
-session by message. "Starting VMs" / "VMs done" handshakes and "hold your
-compiles" requests are the failure this replaced -- one session spent ninety
-minutes of a day paused on them. If two pieces of work collide, the fix is a
-lease in the wrapper or the gate, not etiquette.
+Routine bounded commands do not acquire the global machine lock. Keep finite
+timeouts and process-tree cleanup, use Cargo's own build coordination, and
+continue writing code while focused checks run. Do not wait behind a broad gate
+for ordinary compilation or local TDD. The wrapper's `--machine-lease` option
+is reserved for an explicitly selected isolated measurement or qualification
+fixture; it is not the default development path. Complete qualification and
+release commands retain their own locking and exact-source isolation.
 
 ## Serialized Orthogonal Releases
 
@@ -424,14 +425,14 @@ Read `/dev-gate` before changing any of it.
 
 How to spend effort and the shared machine. Each one is a mistake that already happened.
 
-- **Scale verification to the change.** Per commit: `cargo fmt`, clippy and tests for the crates it touches, plus the shape guard (Rust 1000-line and script 300-line ceilings). Once, on the final head before the PR: the whole workspace, citadel, and the VM lanes. Iterate on a failing gate step with `capsem-gate <module>`, not a full `just test`. Start VM runs only after the code they measure has landed.
+- **Write code, verify locally, qualify by phase.** During implementation use TDD and only the focused tests, formatting, type or lint checks necessary for the changed files and behavior. Do not run whole crates, workspace/Citadel suites, VM/install lanes or benchmarks as a routine per-commit ritual. At each major phase boundary qualify its complete outcome; before merge or release run the authoritative final proof on the exact source. Iterate on failures with the smallest reproducer. Record incomplete proof honestly and keep independent implementation moving.
 - **Use the most focused lens that proves the change.** A handful of VM tests run directly with pytest in the latest `cache/worktrees/<run>`, against the assets that run already built (minutes). A subsystem uses its `focus-test <owner>` (`kingslanding` for containers, `assets` for a guest rebuild). `focus-test functional --slow` runs once, on the final head; a two-hour lane between five-line changes is how a sprint stops moving. If no owner fits, ask the user before adding one.
 - **A narrow suite is not verification.** `tests/test_gate_*.py` alone misses what the contract suites catch; the final run is the whole suite.
 - **A guard must not fake what it guards.** Stubbing the input under test makes the test green by construction.
 - **Measure before and after, twice.** Establish the noise floor by running the unchanged code twice before blaming a difference on a change. Performance work reports both runs side by side.
 - **Polled API reads stay in milliseconds.** Info, stats and status routes are what the TUI, tray and web poll. A memory or disk fix never buys itself a slower poll: record the reader benches before and after, keep an idle poll well under 1 ms, and index a slow query instead of caching it in RAM.
 - **Check real exit codes.** Use `pipefail` and `$?`; never judge a run through `grep`-filtered output.
-- **One machine, shared builds.** Every checkout builds into the main checkout's `cache/target/cargo`. Run cargo through `build_system/scripts/ci/run-bounded-command.py`, which takes the gate's machine lock and waits its turn. Do not set a private `CARGO_TARGET_DIR`: it defeats cross-checkout reuse and poisons sccache keys. A stalled rustc under sccache is lock contention, not a wedged sccache.
+- **Shared builds, local checks.** Every checkout builds into the main checkout's `cache/target/cargo`. Run Cargo through the bounded wrapper for timeout and cleanup, without a routine machine lease. Do not set a private `CARGO_TARGET_DIR`; retain cross-checkout reuse. Do not diagnose build contention by restarting sccache or serializing agents through chat.
 - **Never kill by pattern.** `pkill -f` with options parsed as extra patterns once killed every user process. Process control is a tested Python module acting on exact pids.
 - **Work in your assigned worktree.** Editing the main checkout once killed a running release at `source.verify`. One agent commits in a worktree at a time.
 - **Never `git stash` to inspect.** Read old content with `git show <rev>:<path>`; a stash pulls uncommitted work out from under running builds.

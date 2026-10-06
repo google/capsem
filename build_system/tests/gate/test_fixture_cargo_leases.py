@@ -40,7 +40,9 @@ def test_rehearsal_script_wait_does_not_spend_its_command_budget(tmp_path: Path)
     bash.chmod(0o755)
     with _gate_holds_the_machine(tmp_path):
         waiting = subprocess.Popen(
-            bounded(["bash", REHEARSAL, "staging", "1.0.2", "fixture", "dist", "evidence"], 1),
+            [sys.executable, str(WRAPPER), "--machine-lease", *bounded(
+                ["bash", REHEARSAL, "staging", "1.0.2", "fixture", "dist", "evidence"], 1
+            )[2:]],
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         try:
@@ -130,7 +132,9 @@ def test_probe_overrides_do_not_hide_cargo_from_the_real_kernel_lease(tmp_path: 
     with (
         _gate_holds_the_machine(tmp_path),
         subprocess.Popen(
-            bounded(["cargo", "build"], 30, env={"CARGO_TARGET_DIR": str(tmp_path / "probe")}),
+            [sys.executable, str(WRAPPER), "--machine-lease", *bounded(
+                ["cargo", "build"], 30, env={"CARGO_TARGET_DIR": str(tmp_path / "probe")}
+            )[2:]],
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         ) as waiting,
     ):
