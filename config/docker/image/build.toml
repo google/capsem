@@ -88,6 +88,10 @@ debian_snapshot_id = "20260810T000000Z"
 materialize_network = "default"
 runtime_network = "none"
 
+[build.asset_tools.erofs_source]
+url = "https://codeload.github.com/erofs/erofs-utils/tar.gz/refs/tags/v1.9.2"
+sha256 = "d915b45646a928174917c44a2c84ba005b161e84ab732cd5d2560371560b8d13"
+
 [build.asset_tools.architectures.arm64.cdxgen]
 url = "https://github.com/CycloneDX/cdxgen/releases/download/v12.7.0/cdxgen-linux-arm64"
 sha256 = "b9df01473f0cd28a1911b276feb81a8ed410c947eb84266b59333513ec8afdc5"

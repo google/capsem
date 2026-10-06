@@ -102,7 +102,7 @@ class GuestRustBuilderConfig(BaseModel):
 
 
 class AssetToolBinaryConfig(BaseModel):
-    """One upstream standalone binary admitted to the asset helper."""
+    """One upstream binary or source archive admitted to the asset helper."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -131,6 +131,7 @@ class AssetToolsConfig(BaseModel):
     debian_snapshot_id: str = Field(pattern=r"^\d{8}T\d{6}Z$")
     materialize_network: Literal[BuildNetwork.DEFAULT]
     runtime_network: Literal[ContainerNetwork.NONE]
+    erofs_source: AssetToolBinaryConfig
     architectures: dict[str, AssetToolsArchitectureConfig]
 
     @model_validator(mode="after")

@@ -74,6 +74,7 @@ def _build(**kw):
             debian_snapshot_id="20260810T000000Z",
             materialize_network=BuildNetwork.DEFAULT,
             runtime_network=ContainerNetwork.NONE,
+            erofs_source=binary,
             architectures={
                 name: AssetToolsArchitectureConfig(
                     cdxgen=binary,

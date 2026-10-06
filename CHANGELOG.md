@@ -365,6 +365,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OCI rootfs preparation uses a hash-pinned EROFS packer that supports
+  workload ownership offsets. Root and non-root file owners stay distinct
+  instead of preparation failing on Bookworm's older packer.
+
 - Container startup overlaps admitted image pulls and staging with guest boot,
   while keeping security checks before registry access and file writes and
   guest readiness before workload launch. Create observes a ready workload

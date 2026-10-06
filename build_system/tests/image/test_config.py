@@ -90,6 +90,10 @@ debian_snapshot_id = "20260810T000000Z"
 materialize_network = "default"
 runtime_network = "none"
 
+[build.asset_tools.erofs_source]
+url = "https://example.test/erofs.tar.gz"
+sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
 [build.asset_tools.architectures.arm64.cdxgen]
 url = "https://example.test/cdxgen-arm64"
 sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
@@ -418,6 +422,10 @@ debian_security_snapshot_base = "http://snapshot.example/debian-security"
 debian_snapshot_id = "20260810T000000Z"
 materialize_network = "default"
 runtime_network = "none"
+
+[build.asset_tools.erofs_source]
+url = "https://example.test/erofs.tar.gz"
+sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 
 [build.asset_tools.architectures.arm64.cdxgen]
 url = "https://example.test/cdxgen-arm64"

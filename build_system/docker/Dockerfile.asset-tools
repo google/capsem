@@ -12,6 +12,8 @@ FROM ${BASE}
 ARG DEBIAN_SNAPSHOT_BASE
 ARG DEBIAN_SECURITY_SNAPSHOT_BASE
 ARG DEBIAN_SNAPSHOT_ID
+ARG EROFS_SOURCE_URL
+ARG EROFS_SOURCE_SHA256
 ARG CDXGEN_URL
 ARG CDXGEN_SHA256
 ARG CDX_VALIDATE_URL
@@ -40,8 +42,28 @@ RUN set -eux; \
         "${DEBIAN_SECURITY_SNAPSHOT_BASE}" "${DEBIAN_SNAPSHOT_ID}" \
         >> /etc/apt/sources.list; \
     apt-get -o Acquire::Check-Date=false update; \
-    apt-get install -y --no-install-recommends ca-certificates curl erofs-utils; \
+    apt-get install -y --no-install-recommends ca-certificates curl \
+        build-essential autoconf automake libtool pkg-config liblz4-dev uuid-dev; \
     rm -rf /var/lib/apt/lists/*
+
+# Bookworm's erofs-utils 1.5 cannot shift inode ownership into a workload's
+# user namespace. Build the hash-pinned upstream tool in the materializer.
+RUN set -eux; \
+    curl -fsSL "${EROFS_SOURCE_URL}" -o /tmp/erofs-utils.tar.gz; \
+    printf '%s  %s\n' "${EROFS_SOURCE_SHA256}" /tmp/erofs-utils.tar.gz | sha256sum -c -; \
+    mkdir /tmp/erofs-utils; \
+    tar -xzf /tmp/erofs-utils.tar.gz --strip-components=1 -C /tmp/erofs-utils; \
+    cd /tmp/erofs-utils; \
+    ./autogen.sh; \
+    ./configure --enable-lz4 --disable-fuse --without-liblzma --without-libzstd; \
+    make -j"$(nproc)"; \
+    make install; \
+    cd /; \
+    rm -rf /tmp/erofs-utils /tmp/erofs-utils.tar.gz; \
+    mkfs.erofs --help > /tmp/erofs-help 2>&1; \
+    grep -F -- '--uid-offset' /tmp/erofs-help; \
+    grep -F -- '--gid-offset' /tmp/erofs-help; \
+    rm /tmp/erofs-help
 
 RUN set -eux; \
     curl -fsSL "${CDXGEN_URL}" -o /tmp/cdxgen; \

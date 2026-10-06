@@ -352,7 +352,8 @@ def test_declared_asset_materializers_match_the_exact_mutator_inventory() -> Non
             {"apt": 5, "apt-get": 2, "wget": 2}
         ),
         "config/docker/Dockerfile.rootfs-dependencies.j2": Counter({"apt": 10, "apt-get": 3}),
-        "build_system/docker/Dockerfile.asset-tools": Counter({"apt": 5, "curl": 3, "apt-get": 2}),
+        # EROFS source joins the two scanners; every download is hash-pinned.
+        "build_system/docker/Dockerfile.asset-tools": Counter({"apt": 5, "curl": 4, "apt-get": 2}),
         "build_system/docker/Dockerfile.guest-rust-builder": Counter(
             {"rustup": 3, "cargo": 2, "apk": 1}
         ),
