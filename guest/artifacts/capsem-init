@@ -645,12 +645,32 @@ boot_mark "deploy"
 if [ -x /newroot/usr/sbin/auditd ]; then
     mkdir -p /newroot/var/log/audit
     chroot /newroot /usr/sbin/auditd -s disable 2>/dev/null &
-    # Brief wait for auditd to create its socket
-    sleep 0.1
+    # A nonzero kernel audit PID confirms registration; a fixed sleep does not.
+    _i=0
+    while [ "$_i" -lt 100 ]; do
+        if _audit_status=$(chroot /newroot /usr/sbin/auditctl -s 2>/dev/null) \
+            && printf '%s\n' "$_audit_status" | awk '
+                $1 == "pid" { pids++; ready = NF == 2 && $2 ~ /^[1-9][0-9]*$/ }
+                END { exit !(pids == 1 && ready) }'; then
+            break
+        fi
+        _i=$((_i + 1))
+        sleep 0.05
+    done
+    if [ "$_i" -ge 100 ]; then
+        echo "[capsem-init] FATAL: auditd did not register with the kernel" >&2
+        exit 1
+    fi
     # Record all execve syscalls with the capsem_exec key
-    chroot /newroot /usr/sbin/auditctl -a always,exit -F arch=b64 -S execve -k capsem_exec 2>/dev/null || true
+    if ! chroot /newroot /usr/sbin/auditctl -a always,exit -F arch=b64 -S execve -k capsem_exec 2>/dev/null; then
+        echo "[capsem-init] FATAL: could not install the execve audit rule" >&2
+        exit 1
+    fi
     # Lock audit config: even root cannot disable until reboot
-    chroot /newroot /usr/sbin/auditctl -e 2 2>/dev/null || true
+    if ! chroot /newroot /usr/sbin/auditctl -e 2 2>/dev/null; then
+        echo "[capsem-init] FATAL: could not lock the audit configuration" >&2
+        exit 1
+    fi
     echo "[capsem-init] auditd started, rules locked"
 fi
 boot_mark "audit"
