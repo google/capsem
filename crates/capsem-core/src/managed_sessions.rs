@@ -262,6 +262,7 @@ impl Registry {
     }
 }
 
+mod recovery;
 mod transitions;
 
 #[cfg(test)]
