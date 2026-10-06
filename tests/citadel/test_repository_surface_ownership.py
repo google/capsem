@@ -34,6 +34,7 @@ EXPECTED_TARGETS = frozenset(
         "build_system/builder/",
         "build_system/docker/",
         "build_system/packaging/",
+        "build_system/patches/",
         "build_system/release_site/",
         "build_system/scripts/",
         "build_system/tests/",

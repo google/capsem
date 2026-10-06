@@ -65,6 +65,18 @@ debt = "tests/citadel/repository_path_debt.toml"
 reason = "Host build and package containers are build-system owned; product image templates stay in config/docker."
 
 [[surface]]
+id = "build-system-dependency-patches"
+state = "retained"
+current = ["build_system/patches/"]
+targets = ["build_system/patches/"]
+lint = ["fast.citadel"]
+tests = ["build_system/tests/scripts/test_http_cache_dependency.py", "build_system/tests/gate/test_host_docker_ownership.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "docs-build", "site-build", "release-site-build", "pr-gate"]
+coverage = "not-applicable: upstream dependency patches are exercised through installed-package behavior and exact-package builds"
+debt = "none: dependency patch bytes are declared build-image inputs"
+reason = "One shared patch authority serves all static-site dependencies and reaches each dependency materialization stage."
+
+[[surface]]
 id = "build-system-packaging"
 state = "migrating"
 current = ["build_system/packaging/", "packages/"]

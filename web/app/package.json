@@ -10,8 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@capsem/sdk": "link:../../sdk/typescript",
     "@astrojs/svelte": "^9.0.1",
+    "@capsem/sdk": "link:../../sdk/typescript",
     "@shikijs/langs": "4.0.2",
     "@shikijs/themes": "4.0.2",
     "@tauri-apps/api": "^2.11.0",
@@ -43,6 +43,9 @@
       "svgo": "^4.1.0",
       "smol-toml": "1.9.0",
       "postcss-selector-parser": "^7.1.6"
+    },
+    "patchedDependencies": {
+      "http-cache-semantics@4.3.0": "../../build_system/patches/http-cache-semantics@4.3.0.patch"
     }
   }
 }

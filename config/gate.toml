@@ -318,6 +318,7 @@ identity_inputs = [
     "build_system/release_site/package.json",
     "build_system/release_site/pnpm-lock.yaml",
     "build_system/release_site/pnpm-workspace.yaml",
+    "build_system/patches/http-cache-semantics@4.3.0.patch",
     "build_system/docker/Dockerfile.install-builder",
     "build_system/scripts/build/rustc-workspace-wrapper.sh",
     "build_system/docker/materialize-install-os.sh",
@@ -597,6 +598,7 @@ identity_inputs = [
     "web/app/package.json",
     "web/app/pnpm-lock.yaml",
     "web/app/pnpm-workspace.yaml",
+    "build_system/patches/http-cache-semantics@4.3.0.patch",
     "build_system/docker/Dockerfile.package-builder",
     "build_system/scripts/build/rustc-workspace-wrapper.sh",
     "build_system/docker/swap-dev-libs.sh",
@@ -1577,7 +1579,7 @@ lane_tag = "capsem-linux-rust:latest"
 # Not the workspace manifests: `cargo fetch --locked` fetches everything the
 # lock resolves regardless of features, so a manifest edit that leaves
 # `Cargo.lock` alone leaves the sealed lane with every source it needs.
-identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "sdk/typescript/pnpm-lock.yaml", "web/app/pnpm-lock.yaml", "build_system/pyproject.toml", "build_system/uv.lock"]
+identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "sdk/typescript/pnpm-lock.yaml", "web/app/pnpm-lock.yaml", "build_system/pyproject.toml", "build_system/uv.lock", "build_system/patches/http-cache-semantics@4.3.0.patch"]
 # Named here so the lane's refusal and the recipe that answers it cannot drift
 # apart. `test_every_recipe_the_gate_tells_an_operator_to_run_exists` checks
 # this resolves to a real recipe -- the last time a message named one that did

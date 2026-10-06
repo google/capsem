@@ -1,0 +1,37 @@
+diff --git a/index.js b/index.js
+index 56c26025074cbcf218e3ec4d810662da93f8024e..6159b2aaa50938510dc6962055fcdc174f429f80 100644
+--- a/index.js
++++ b/index.js
+@@ -395,6 +395,12 @@ module.exports = class CachePolicy {
+     evaluateRequest(req) {
+         this._assertRequestHasHeaders(req);
+ 
++        // Zero lifetime also protects uncacheable/private cookie responses.
++        // Client staleness directives must never override that boundary.
++        if (this.maxAge() === 0) {
++            return this._evaluateRequestMissResult(req);
++        }
++
+         // In all circumstances, a cache MUST NOT ignore the must-revalidate directive
+         if (this._rescc['must-revalidate']) {
+             return this._evaluateRequestMissResult(req);
+@@ -706,7 +712,8 @@ module.exports = class CachePolicy {
+      * @returns {boolean} `true` if `stale-if-error` condition allows use of a stale response.
+      */
+     _useStaleIfError() {
+-        return this.maxAge() + toNumberOrZero(this._rescc['stale-if-error']) > this.age();
++        const lifetime = this.maxAge();
++        return lifetime > 0 && lifetime + toNumberOrZero(this._rescc['stale-if-error']) > this.age();
+     }
+ 
+     /** See `evaluateRequest()` for a more complete solution
+@@ -714,7 +721,8 @@ module.exports = class CachePolicy {
+      */
+     useStaleWhileRevalidate() {
+         const swr = toNumberOrZero(this._rescc['stale-while-revalidate']);
+-        return swr > 0 && this.maxAge() + swr > this.age();
++        const lifetime = this.maxAge();
++        return lifetime > 0 && swr > 0 && lifetime + swr > this.age();
+     }
+ 
+     /**

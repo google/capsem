@@ -48,11 +48,6 @@ reason = "unic-ucd-version unmaintained, via urlpattern in tauri-utils; no repla
 # or binary. Drop each entry as soon as upstream ships a fix.
 
 [[IgnoredVulns]]
-id = "GHSA-ch52-4w7c-c8xp"
-ignoreUntil = 2026-11-02T00:00:00Z
-reason = "http-cache-semantics <= 4.2.0, no patched release; pulled by astro itself for build-time remote-fetch caching in every Astro site, not in the static output"
-
-[[IgnoredVulns]]
 id = "GHSA-vfj7-8cjw-p6xm"
 ignoreUntil = 2026-11-02T00:00:00Z
 reason = "braces <= 3.0.3, no patched release; tailwindcss 3 build-time globbing pulled by layerchart -> @layerstack/tailwind in web/app, not in the static output"

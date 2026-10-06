@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Astro build dependencies use `http-cache-semantics` 4.3.0 with a local guard
+  that requires revalidation of zero-lifetime responses. Cookie responses can
+  no longer bypass that boundary through max-stale, stale-while-revalidate or
+  stale-if-error; ordinary stale caching still works. Mixed `Vary` wildcards
+  are also respected, and the obsolete max-stale audit exception is removed.
+
 - The debug OCI image resolves `multidict` 6.9.1 instead of 6.7.1,
   closing the items-view reference leak (GHSA-54p9-h82j-f925). Its hashed
   dependency lock retains every other package version.

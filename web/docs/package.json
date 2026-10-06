@@ -26,6 +26,9 @@
       "smol-toml": "1.9.0",
       "postcss-selector-parser": "^7.1.6",
       "katex": "^0.18.2"
+    },
+    "patchedDependencies": {
+      "http-cache-semantics@4.3.0": "../../build_system/patches/http-cache-semantics@4.3.0.patch"
     }
   }
 }
