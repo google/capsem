@@ -385,7 +385,7 @@ pub(crate) async fn handle_list_images(
             cached: ImageCacheState::Unknown,
         })
         .collect();
-    let keys = images
+    let mut keys = images
         .iter()
         .filter_map(|image| image.image.as_deref())
         .map(|image| {
@@ -394,6 +394,15 @@ pub(crate) async fn handle_list_images(
         })
         .collect::<anyhow::Result<Vec<_>>>()
         .map_err(|error| ImageError::Failed(format!("cache identity: {error:#}")))?;
+    keys.extend(
+        state
+            .containers
+            .active_cache_owners(&state)
+            .into_iter()
+            .map(|owner| owner.key),
+    );
+    keys.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
+    keys.dedup();
     if let Err(error) = decision.setups.source.observe_cache(&keys, &decision.parent) {
         warn!(%error, "catalog cache verification remains pending");
     }

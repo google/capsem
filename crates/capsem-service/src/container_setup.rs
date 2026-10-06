@@ -16,6 +16,7 @@ use std::pin::Pin;
 use std::sync::atomic::Ordering;
 
 mod activity;
+mod cache_owners;
 mod registry;
 use registry::RegistryImages;
 pub(crate) mod images;
@@ -91,6 +92,7 @@ struct ContainerRecord {
     /// The manifest digest the image share holds the image under, once
     /// published: what the launch record pins for a relaunch.
     manifest: Option<String>,
+    cache_owner: Option<cache_owners::CacheOwner>,
     task: Option<tokio::task::AbortHandle>,
     activity: activity::Activity,
 }
@@ -172,6 +174,7 @@ impl ContainerSetups {
                     surface: None,
                 },
                 manifest: None,
+                cache_owner: None,
                 task: None,
                 activity: activity::Activity::new(id, generation, &self.retiring),
             },
@@ -186,28 +189,6 @@ impl ContainerSetups {
             drop(records);
         }
         generation
-    }
-
-    /// The manifest digest VM `id`'s image share holds, once published.
-    fn manifest(&self, id: &str) -> Option<String> {
-        self.records
-            .lock()
-            .unwrap()
-            .get(id)
-            .and_then(|record| record.manifest.clone())
-    }
-
-    /// Record the manifest the image share now holds, if this generation
-    /// still owns the VM's record.
-    fn pin_manifest(&self, id: &str, generation: u64, manifest: Option<String>) -> bool {
-        let mut records = self.records.lock().unwrap();
-        match records.get_mut(id) {
-            Some(record) if record.generation == generation => {
-                record.manifest = manifest;
-                true
-            }
-            _ => false,
-        }
     }
 
     /// Apply `update` if this generation still owns the VM's record.
@@ -336,7 +317,15 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         registry: requested.registry.clone(),
         digest: requested.identity.digest().map(ToString::to_string),
     };
-    let uds_path = running_uds_path(state, id).map_err(|error| error.1)?;
+    let (uds_path, vm_generation) = {
+        let instances = state.instances.lock().unwrap();
+        let instance = instances.get(id).ok_or_else(|| format!("sandbox not found: {id}"))?;
+        let snapshot = (instance.uds_path.clone(), instance.generation);
+        drop(instances);
+        snapshot
+    };
+    let vm = capsem_core::managed_sessions::VmBinding::new(id.to_owned(), vm_generation)
+        .map_err(|error| error.to_string())?;
     // Admission and staging are host work. The launched owner has its
     // security context and ledger; guest readiness is needed only to exec.
     use crate::vm_files::launch::{wait_for_launch, LaunchWait};
@@ -413,7 +402,11 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         .ok_or_else(|| format!("VM {id} stopped before its container was staged"))?;
     let resources = capsem_core::container::workload_resources(ram_mb, cpus).map_err(|e| format!("{e:#}"))?;
     let (manifest, rootfs) = share_image(state, id, generation, &image, rootfs).await?;
-    if !state.containers.pin_manifest(id, generation, Some(manifest.clone())) {
+    let cache_owner = image.cache_key.clone().map(|key| cache_owners::CacheOwner { key, vm });
+    if !state
+        .containers
+        .pin_image(id, generation, Some(manifest.clone()), cache_owner)
+    {
         return Ok(());
     }
     let staged_image = stage::StageImage {
@@ -599,6 +592,9 @@ struct LaunchRecord {
     /// and the one its launcher unpacks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     manifest: Option<String>,
+    /// Producer identity only; no cached receipt or legacy pin invents this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cache_key: Option<String>,
 }
 
 impl LaunchRecord {
@@ -664,17 +660,10 @@ async fn wait_observed(
 
 pub(crate) fn record_launched(state: &ServiceState, id: &str) -> Result<(), String> {
     let session_dir = resolve_session_dir(state, id).map_err(|e| e.1)?;
-    let Some(status) = state.containers.status(id) else {
+    let Some(record) = state.containers.launch_record(id) else {
         return Ok(());
     };
-    let record = serde_json::to_vec(&LaunchRecord {
-        image: status.image,
-        digest: status.digest.unwrap_or_default(),
-        surface: status.surface,
-        resolved: status.resolved,
-        manifest: state.containers.manifest(id),
-    })
-    .map_err(|e| format!("encode launch record: {e}"))?;
+    let record = serde_json::to_vec(&record).map_err(|e| format!("encode launch record: {e}"))?;
     capsem_foundation::unix::fs::atomic_write_private(&session_dir.join(LAUNCH_RECORD), &record)
         .map_err(|e| format!("write launch record: {e}"))
 }

@@ -200,7 +200,7 @@ async fn catalog_listing_schedules_native_compatible_cache_keys_without_waiting_
     let fixture = Fixture::default_policy();
     let (status, response) = fixture.list().await;
     assert_eq!(status, StatusCode::OK);
-    let expected = ['b', 'd']
+    let mut expected = ['b', 'd']
         .into_iter()
         .map(|pin| {
             let name = if pin == 'b' { "codex-cli" } else { "redis" };
@@ -213,6 +213,7 @@ async fn catalog_listing_schedules_native_compatible_cache_keys_without_waiting_
             .key()
         })
         .collect::<Vec<_>>();
+    expected.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
     assert_eq!(*fixture.observations.lock().unwrap(), vec![expected]);
     assert!(fixture.pulls().is_empty());
     for image in response["images"].as_array().unwrap() {

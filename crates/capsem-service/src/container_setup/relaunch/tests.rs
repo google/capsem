@@ -14,6 +14,7 @@ fn record(exposure_id: Option<&str>) -> LaunchRecord {
         }),
         resolved: Some("registry.example/app@sha256:aa".into()),
         manifest: Some(MANIFEST.into()),
+        cache_key: None,
     }
 }
 
@@ -126,7 +127,7 @@ async fn a_new_owner_restores_the_recorded_workload_without_its_old_exposure() {
     assert_eq!(live.digest.as_deref(), Some("sha256:aa"));
     assert_eq!(live.surface.unwrap().exposure_id, None);
     assert_eq!(
-        state.containers.manifest("box").as_deref(),
+        state.containers.launch_record("box").unwrap().manifest.as_deref(),
         Some(MANIFEST),
         "the pin survives the next launch record"
     );

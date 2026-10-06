@@ -74,13 +74,33 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
         return;
     };
     let manifest = record.manifest.clone();
+    let owner = match record
+        .cache_key
+        .as_deref()
+        .map(capsem_assets::oci::CacheKey::parse)
+        .transpose()
+    {
+        Ok(Some(key)) if manifest.is_some() => {
+            let instances = state.instances.lock().unwrap();
+            instances.get(id).and_then(|instance| {
+                capsem_core::managed_sessions::VmBinding::new(id.to_owned(), instance.generation)
+                    .ok()
+                    .map(|vm| cache_owners::CacheOwner { key, vm })
+            })
+        }
+        Err(error) => {
+            warn!(vm_id = id, %error, "recorded cache identity is invalid");
+            None
+        }
+        _ => None,
+    };
     let mut status = record.starting();
     if let Some(surface) = status.surface.as_mut() {
         surface.exposure_id = None;
     }
     let generation = state.containers.begin(id, &status.image);
     state.containers.advance(id, generation, |live| *live = status);
-    state.containers.pin_manifest(id, generation, manifest);
+    state.containers.pin_image(id, generation, manifest, owner);
     if needs_relaunch(state, id) {
         relaunch_in_background(state, id, generation);
     }
