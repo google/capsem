@@ -51,6 +51,11 @@ debug = "line-tables-only"
 [profile.dev.package.blake3]
 opt-level = 3
 
+# OCI cache hits verify full blobs too; unoptimized SHA-256 dominates warm
+# image startup and holds cache acquisition locks for large published roots.
+[profile.dev.package.sha2]
+opt-level = 3
+
 # Always optimize hot wire-format codecs in dev/install builds. `just install`
 # and manual release validation use debug binaries, so leaving these crates at
 # opt-level 0 makes the gateway and ledger paths look broken when the real bug is
