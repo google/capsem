@@ -75,3 +75,42 @@ def test_missing_disabled_or_duplicate_metadata_pins_are_refused(mutation):
 
 def test_parallel_metadata_pins_are_accepted():
     assert_parallel_page_metadata("CONFIG_64BIT=y\nCONFIG_SMP=y\nCONFIG_SPARSEMEM=y\nCONFIG_DEFERRED_STRUCT_PAGE_INIT=y\n")
+
+
+DMA_POOL_RATIONALE = """\
+Large x86 guests start with a small DMA bounce pool and grow it on demand.
+The old 64 MiB pool took about 318 ms to initialize before userspace.
+Dynamic growth must remain enabled: never disable DMA bouncing to make boot fast.
+"""
+
+
+def assert_dynamic_dma_pool(pins: str, flags: str) -> None:
+    for name in ("SWIOTLB", "SWIOTLB_DYNAMIC"):
+        values = re.findall(rf"^CONFIG_{name}=(.*)$", pins, re.MULTILINE)
+        assert values == ["y"], f"CONFIG_{name} values {values}: {DMA_POOL_RATIONALE}"
+    values = re.findall(r"(?<!\S)swiotlb=([^\s\\]+)", flags)
+    assert values == ["2048"], f"swiotlb values {values}: {DMA_POOL_RATIONALE}"
+
+
+def test_x86_initial_dma_pool_keeps_dynamic_growth():
+    pins = (ROOT / "config/docker/image/kernel/defconfig.x86_64").read_text()
+    source = (ROOT / "crates/capsem-core/src/vm/config.rs").read_text()
+    x86 = source.split('#[cfg(target_arch = "x86_64")]', 1)[1].split(";", 1)[0]
+    assert_dynamic_dma_pool(pins, x86.replace('"', " "))
+
+
+@pytest.mark.parametrize("mutation", ["", "CONFIG_SWIOTLB_DYNAMIC=n\n", "CONFIG_SWIOTLB_DYNAMIC=y\nCONFIG_SWIOTLB_DYNAMIC=y\n"])
+def test_missing_disabled_or_duplicate_dynamic_dma_pins_are_refused(mutation):
+    pins = "CONFIG_SWIOTLB=y\n" + mutation
+    with pytest.raises(AssertionError, match="Large x86 guests"):
+        assert_dynamic_dma_pool(pins, "swiotlb=2048")
+
+
+@pytest.mark.parametrize("flags", ["", "swiotlb=noforce", "swiotlb=2048 swiotlb=noforce", "swiotlb=0"])
+def test_disabled_or_overridden_dma_bouncing_is_refused(flags):
+    with pytest.raises(AssertionError, match="Large x86 guests"):
+        assert_dynamic_dma_pool("CONFIG_SWIOTLB=y\nCONFIG_SWIOTLB_DYNAMIC=y\n", flags)
+
+
+def test_small_initial_dma_pool_with_growth_is_accepted():
+    assert_dynamic_dma_pool("CONFIG_SWIOTLB=y\nCONFIG_SWIOTLB_DYNAMIC=y\n", "swiotlb=2048")

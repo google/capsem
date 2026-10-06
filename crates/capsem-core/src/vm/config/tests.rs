@@ -619,3 +619,15 @@ fn kernel_cmdline_disables_guest_heap_wiping_even_with_kernel_defaults_on() {
         assert_eq!(settings, [expected.as_str()], "{KERNEL_CMDLINE}");
     }
 }
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn x86_default_boot_keeps_dma_bouncing_with_a_small_initial_pool() {
+    let config = VmConfigBuilder::default();
+    let pools: Vec<_> = config
+        .kernel_cmdline
+        .split_whitespace()
+        .filter(|flag| flag.starts_with("swiotlb="))
+        .collect();
+    assert_eq!(pools, ["swiotlb=2048"], "bouncing must not be disabled or overridden");
+}

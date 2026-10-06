@@ -365,6 +365,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux x86 VMs start with a 4 MiB DMA bounce pool that grows when needed,
+  reducing boot time and resident memory while retaining DMA support and the
+  default 12 GiB RAM and four CPUs.
+
 - OCI rootfs preparation uses a hash-pinned EROFS packer that supports
   workload ownership offsets. Root and non-root file owners stay distinct
   instead of preparation failing on Bookworm's older packer.

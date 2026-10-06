@@ -34,7 +34,9 @@ macro_rules! guest_kernel_flags {
 
 /// The guest kernel command line: the one every Capsem VM boots with.
 #[cfg(target_arch = "x86_64")]
-pub const KERNEL_CMDLINE: &str = concat!("console=ttyS0 ", guest_kernel_flags!());
+// 2048 two-KiB slabs: 4 MiB initially, with CONFIG_SWIOTLB_DYNAMIC growth.
+// The x86 guest's 64-bit VirtIO devices normally need no bouncing.
+pub const KERNEL_CMDLINE: &str = concat!("console=ttyS0 swiotlb=2048 ", guest_kernel_flags!());
 /// The guest kernel command line: the one every Capsem VM boots with.
 #[cfg(not(target_arch = "x86_64"))]
 pub const KERNEL_CMDLINE: &str = concat!("console=hvc0 ", guest_kernel_flags!());

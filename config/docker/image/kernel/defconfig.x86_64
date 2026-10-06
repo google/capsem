@@ -28,6 +28,11 @@ CONFIG_KVM_GUEST=y
 CONFIG_SPARSEMEM=y
 CONFIG_DEFERRED_STRUCT_PAGE_INIT=y
 
+# Start the DMA bounce pool small and grow it only when a device needs it.
+# The x86 command line bounds initialization; bouncing stays available.
+CONFIG_SWIOTLB=y
+CONFIG_SWIOTLB_DYNAMIC=y
+
 # ==========================================
 # 2. BOOT ESSENTIALS
 # ==========================================
