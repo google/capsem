@@ -13,10 +13,13 @@ import pytest
 from helpers.benchmark_ratchet import (
     BenchmarkCategory,
     BenchmarkMetric,
+    HostClass,
     assert_within_evidence,
     latest_checked_in_benchmark,
     maximum_factor,
+    measuring_host,
     metric_value,
+    vm_lifecycle_factor,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -310,6 +313,156 @@ def test_a_lane_selects_its_own_evidence_over_a_newer_foreign_one(tmp_path: Path
     selected = latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "co-work")
 
     assert selected is not None and selected["identity"] == "mine"
+
+
+# ---------------------------------------------------------------------------
+# Host class. The fork and lifecycle evidence was recorded on the build box; a
+# GitHub-hosted runner is different hardware, and ratcheting it against the
+# build box's floor failed a release on `fork_ms.min` 212 ms against 173.9 ms
+# for a commit whose previous hosted attempt had passed the same check.
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_without_a_host_class_is_the_build_box_s(tmp_path: Path) -> None:
+    """Every file predating the field was recorded locally, so reading it as
+    local keeps the guard the build box has always enforced."""
+    root = _evidence_repo(tmp_path, {"old.json": {"timestamp": 1, "identity": "unlabelled"}})
+
+    local = latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "code", HostClass.LOCAL)
+
+    assert local is not None and local["identity"] == "unlabelled"
+    assert latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "code") == local, (
+        "a caller that names no host class is the local lane, as it always was"
+    )
+
+
+def test_a_hosted_lane_is_never_measured_against_local_numbers(tmp_path: Path) -> None:
+    root = _evidence_repo(
+        tmp_path,
+        {
+            "unlabelled.json": {"timestamp": 1, "identity": "unlabelled", "profile": "code"},
+            "local.json": {
+                "timestamp": 9,
+                "identity": "local",
+                "profile": "code",
+                "host_class": "local",
+            },
+        },
+    )
+
+    assert (
+        latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "code", HostClass.HOSTED)
+        is None
+    ), "a hosted lane with no hosted evidence seeds; it does not ratchet against the build box"
+
+
+def test_a_hosted_lane_selects_its_own_evidence_over_newer_local_evidence(
+    tmp_path: Path,
+) -> None:
+    root = _evidence_repo(
+        tmp_path,
+        {
+            "hosted.json": {
+                "timestamp": 1,
+                "identity": "hosted",
+                "profile": "code",
+                "host_class": "hosted",
+            },
+            "local.json": {"timestamp": 9, "identity": "local", "profile": "code"},
+            "hosted-co-work.json": {
+                "timestamp": 5,
+                "identity": "hosted-co-work",
+                "profile": "co-work",
+                "host_class": "hosted",
+            },
+        },
+    )
+
+    hosted = latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "code", HostClass.HOSTED)
+    local = latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "code", HostClass.LOCAL)
+
+    assert hosted is not None and hosted["identity"] == "hosted"
+    assert local is not None and local["identity"] == "local", (
+        "hosted evidence must never become the build box's floor either"
+    )
+
+
+def test_the_base_local_lane_still_refuses_to_have_no_evidence(tmp_path: Path) -> None:
+    """Seeding is for a lane that has never recorded. The build box's base lane
+    always has, so its evidence vanishing is a defect, not a fresh start."""
+    root = _evidence_repo(
+        tmp_path,
+        {"hosted.json": {"timestamp": 1, "profile": "code", "host_class": "hosted"}},
+    )
+
+    with pytest.raises(AssertionError, match="no checked-in fork benchmark evidence"):
+        latest_checked_in_benchmark(root, BenchmarkCategory.FORK, "code", HostClass.LOCAL)
+
+
+def test_hosted_lanes_get_their_own_wider_factor_and_local_keeps_its_own() -> None:
+    config = tomllib.loads((PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
+    regression = config["benchmark_regression"]
+
+    assert vm_lifecycle_factor(PROJECT_ROOT) == 1.2
+    assert vm_lifecycle_factor(PROJECT_ROOT, HostClass.LOCAL) == 1.2
+    assert vm_lifecycle_factor(PROJECT_ROOT, HostClass.HOSTED) == (
+        regression["hosted_vm_lifecycle_factor"]
+    )
+    assert regression["vm_lifecycle_factor"] < regression["hosted_vm_lifecycle_factor"] <= 2.0, (
+        "the hosted envelope is wider than the build box's, and still a ratchet"
+    )
+
+
+def test_the_hosted_factor_absorbs_the_observed_hosted_spread() -> None:
+    """Run 37432830392, one hosted runner, three samples each.
+
+    The ratchet compares a run's least-contended sample with the evidence's,
+    so what it has to absorb is how far one runner's floor sits from another's.
+    One runner's own spread is the floor of that: 1.18x for fork and 1.19x for
+    boot-ready, already at the build box's 1.2. The same commit then passed and
+    failed `fork_ms.min` on consecutive attempts, at 1.22x of the evidence.
+    """
+    hosted = vm_lifecycle_factor(PROJECT_ROOT, HostClass.HOSTED)
+    within_one_runner = {"fork_ms": (212.0, 251.0), "boot_ready_ms": (509.0, 604.0)}
+    for slowest, fastest in ((high, low) for low, high in within_one_runner.values()):
+        assert slowest / fastest * 1.2 <= hosted, (
+            "a second runner's floor must be able to sit a whole run's spread "
+            "beyond the first's, with the build box's margin left over"
+        )
+
+    baseline = {"fork": {"fork_ms": {"min": 173.9}}}
+    with pytest.raises(AssertionError, match=r"regressed 1\.22x"):
+        assert_within_evidence(
+            metric=BenchmarkMetric.FORK_DURATION,
+            current=212.0,
+            baseline=baseline,
+            factor=vm_lifecycle_factor(PROJECT_ROOT, HostClass.LOCAL),
+        )
+    assert_within_evidence(
+        metric=BenchmarkMetric.FORK_DURATION,
+        current=212.0,
+        baseline=baseline,
+        factor=hosted,
+    )
+
+
+def test_the_host_class_comes_from_the_gate_owned_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tomllib.loads((PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
+    variable = config["benchmark_regression"]["host_class_variable"]
+
+    monkeypatch.delenv(variable, raising=False)
+    assert measuring_host(PROJECT_ROOT) is HostClass.LOCAL, (
+        "a direct pytest run with no gate is the developer's own machine"
+    )
+    monkeypatch.setenv(variable, "hosted")
+    assert measuring_host(PROJECT_ROOT) is HostClass.HOSTED
+    monkeypatch.setenv(variable, "local")
+    assert measuring_host(PROJECT_ROOT) is HostClass.LOCAL
+    monkeypatch.setenv(variable, "laptop")
+    with pytest.raises(ValueError):
+        measuring_host(PROJECT_ROOT)
 
 
 # ---------------------------------------------------------------------------

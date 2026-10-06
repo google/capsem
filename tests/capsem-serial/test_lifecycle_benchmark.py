@@ -3,8 +3,9 @@
 Profiles individual operations: provision, exec-ready wait, exec, delete,
 fork, boot-from-image. Reports per-operation timings as a Rich table + JSON.
 
-Fork and lifecycle gates compare against the latest checked-in evidence using
-the config-owned regression factor. Boot-from-image also verifies data.
+Fork and lifecycle gates compare against the latest checked-in evidence for
+this profile and host class, using that host class's config-owned regression
+factor. Boot-from-image also verifies data.
 """
 
 import contextlib
@@ -20,8 +21,10 @@ from helpers.benchmark_output import benchmark_output_dir
 from helpers.benchmark_ratchet import (
     BenchmarkCategory,
     BenchmarkMetric,
+    HostClass,
     assert_within_evidence,
     latest_checked_in_benchmark,
+    measuring_host,
     measuring_profile,
     metric_value,
     vm_lifecycle_factor,
@@ -54,12 +57,16 @@ def _save_benchmark(category, data):
     silently overwrote the base lane's recording and a run that measured two
     profiles kept one number. The stamp is what lets the ratchet compare a
     lane against itself rather than against whichever lane was checked in last.
+    A hosted recording says so in its name too, so checking one in cannot be
+    mistaken for refreshing the build box's evidence.
     """
     version = _project_version()
     profile = measuring_profile(PROJECT_ROOT)
-    data = {**data, "profile": profile}
+    host = measuring_host(PROJECT_ROOT)
+    data = {**data, "profile": profile, "host_class": host.value}
     out_dir = benchmark_output_dir(PROJECT_ROOT, category)
-    out_path = out_dir / f"data_{version}_{profile}.json"
+    suffix = "" if host == HostClass.LOCAL else f"_{host.value}"
+    out_path = out_dir / f"data_{version}_{profile}{suffix}.json"
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)
     print(f"Benchmark saved to {out_path}")
@@ -257,10 +264,11 @@ def test_lifecycle_benchmark():
         r["provision_ms"] + r["exec_ready_ms"] + r["exec_ms"] + r["delete_ms"] for r in runs
     ]
     summary["operations"]["total_ms"] = _summary([round(v, 1) for v in total_values])
+    host = measuring_host(PROJECT_ROOT)
     baseline = latest_checked_in_benchmark(
-        PROJECT_ROOT, BenchmarkCategory.LIFECYCLE, measuring_profile(PROJECT_ROOT)
+        PROJECT_ROOT, BenchmarkCategory.LIFECYCLE, measuring_profile(PROJECT_ROOT), host
     )
-    factor = vm_lifecycle_factor(PROJECT_ROOT)
+    factor = vm_lifecycle_factor(PROJECT_ROOT, host)
 
     # Rich table
     print()
@@ -284,11 +292,7 @@ def test_lifecycle_benchmark():
     _save_benchmark("lifecycle", summary)
 
     if baseline is None:
-        print(
-            f"no checked-in {'lifecycle'} evidence for profile "
-            f"{measuring_profile(PROJECT_ROOT)}; this run records it rather than "
-            "ratcheting against another profile's numbers"
-        )
+        _seeding("lifecycle", host)
         return
     for metric in (
         BenchmarkMetric.LIFECYCLE_PROVISION,
@@ -348,10 +352,11 @@ def test_fork_benchmark():
             "max": mx(op),
             "values": [r[op] for r in runs],
         }
+    host = measuring_host(PROJECT_ROOT)
     baseline = latest_checked_in_benchmark(
-        PROJECT_ROOT, BenchmarkCategory.FORK, measuring_profile(PROJECT_ROOT)
+        PROJECT_ROOT, BenchmarkCategory.FORK, measuring_profile(PROJECT_ROOT), host
     )
-    factor = vm_lifecycle_factor(PROJECT_ROOT)
+    factor = vm_lifecycle_factor(PROJECT_ROOT, host)
 
     # Rich table
     print()
@@ -370,7 +375,9 @@ def test_fork_benchmark():
     # JSON output
     _save_benchmark("fork", summary)
 
-    if baseline is not None:
+    if baseline is None:
+        _seeding("fork", host)
+    else:
         _ratchet_fork(summary, baseline, factor)
 
     # Gate: data survival is a correctness claim, not a performance one, so it
@@ -378,6 +385,14 @@ def test_fork_benchmark():
     for i, r in enumerate(runs):
         assert r["pkg_survived"], f"run {i + 1}: packages did not survive fork"
         assert r["ws_survived"], f"run {i + 1}: workspace files did not survive fork"
+
+
+def _seeding(category, host):
+    print(
+        f"no checked-in {category} evidence for profile "
+        f"{measuring_profile(PROJECT_ROOT)} on {host.value} hosts; this run "
+        "records it rather than ratcheting against another lane's numbers"
+    )
 
 
 def _ratchet_fork(summary, baseline, factor):

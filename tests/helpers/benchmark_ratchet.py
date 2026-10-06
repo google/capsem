@@ -11,6 +11,14 @@ The 18 files predating this carry no profile at all. They are read as the base
 profile's, because that is the lane that recorded them -- which keeps the guard
 enforced where it has always meant something, rather than dropping it for
 everyone to make one lane pass.
+
+Host class is the same axis again. Every file was recorded on the build box,
+and a GitHub-hosted runner ratcheted against it failed `fork_ms.min` at 1.22x
+for a commit its previous hosted attempt had passed. Unlabelled files are
+`local`; a hosted lane reads only hosted evidence, seeds until it has some, and
+is held to its own config-owned factor. The gate tells each pytest step which
+host it is on (`[benchmark_regression] host_class_variable`), because nothing
+ambient reliably reaches a functional test.
 """
 
 from __future__ import annotations
@@ -98,6 +106,13 @@ class BenchmarkCategory(StrEnum):
     FORK = "fork"
 
 
+class HostClass(StrEnum):
+    """The gate's `pytestsuite.HostClass`, as the test process reads it."""
+
+    LOCAL = "local"
+    HOSTED = "hosted"
+
+
 def base_profile(project_root: Path) -> str:
     """The lane whose numbers the unlabelled historical evidence describes."""
     config = tomllib.loads((project_root / "config" / "gate.toml").read_text(encoding="utf-8"))
@@ -109,10 +124,21 @@ def measuring_profile(project_root: Path) -> str:
     return os.environ.get("CAPSEM_TEST_PROFILE") or base_profile(project_root)
 
 
+def measuring_host(project_root: Path) -> HostClass:
+    """The host this test process is measuring on, as the gate stated it.
+
+    Absent is a direct pytest run on a developer's machine, which is local. A
+    value the enum does not know is refused rather than read as either.
+    """
+    variable = str(_regression_config(project_root)["host_class_variable"])
+    return HostClass(os.environ.get(variable) or HostClass.LOCAL)
+
+
 def latest_checked_in_benchmark(
     project_root: Path,
     category: BenchmarkCategory,
     profile: str | None = None,
+    host: HostClass = HostClass.LOCAL,
 ) -> dict[str, Any] | None:
     candidates: list[tuple[float, Path, dict[str, Any]]] = []
     # Only when a lane is actually being selected for. Unfiltered callers -- the
@@ -138,13 +164,17 @@ def latest_checked_in_benchmark(
         # guard that has been meaningful since the first one was committed.
         if profile is not None and (document.get("profile") or base) != profile:
             continue
+        # Unlabelled is local for the same reason: the build box recorded all
+        # of it, and no hosted number has ever been checked in without the field.
+        if profile is not None and (document.get("host_class") or HostClass.LOCAL) != host:
+            continue
         candidates.append((float(document["timestamp"]), path, document))
     if not candidates:
-        if profile is not None and profile != base:
+        if profile is not None and (profile != base or host != HostClass.LOCAL):
             # A lane with no evidence of its own is seeded by this run rather
             # than measured against another lane's. Returning the base
-            # profile's numbers here is exactly the comparison this exists to
-            # stop making.
+            # profile's numbers, or the build box's, here is exactly the
+            # comparison this exists to stop making.
             return None
         raise AssertionError(f"no checked-in {category.value} benchmark evidence")
     return max(candidates, key=lambda row: (row[0], row[1].name))[2]
@@ -154,13 +184,19 @@ def maximum_factor(project_root: Path) -> float:
     return _regression(project_root, "maximum_factor")
 
 
-def vm_lifecycle_factor(project_root: Path) -> float:
+def vm_lifecycle_factor(project_root: Path, host: HostClass = HostClass.LOCAL) -> float:
+    if host == HostClass.HOSTED:
+        return _regression(project_root, "hosted_vm_lifecycle_factor")
     return _regression(project_root, "vm_lifecycle_factor")
 
 
 def _regression(project_root: Path, key: str) -> float:
+    return float(_regression_config(project_root)[key])
+
+
+def _regression_config(project_root: Path) -> dict[str, Any]:
     config = tomllib.loads((project_root / "config" / "gate.toml").read_text(encoding="utf-8"))
-    return float(config["benchmark_regression"][key])
+    return config["benchmark_regression"]
 
 
 def metric_value(document: dict[str, Any], metric: BenchmarkMetric) -> float:
