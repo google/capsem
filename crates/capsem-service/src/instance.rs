@@ -32,6 +32,14 @@ pub(crate) struct InstanceInfo {
 #[cfg(test)]
 mod tests;
 
+/// Host-only durable identity precedes launch. It is a matching fact for
+/// recovery, never authority to signal a PID without live ownership proof.
+pub(crate) fn persist_spawn_identity(session_dir: &StdPath, id: &str, generation: uuid::Uuid) -> Result<()> {
+    let binding = capsem_core::managed_sessions::VmBinding::new(id.to_owned(), generation)?;
+    let session = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?;
+    capsem_core::session::write_spawn_identity(&session, &binding)
+}
+
 impl ServiceState {
     /// Remove a running instance record. The removal is the ownership token
     /// for teardown: of two callers racing to evict one VM, only one gets

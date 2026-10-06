@@ -2,6 +2,15 @@ use super::*;
 
 impl ServiceState {
     pub(crate) fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
+        self.provision_sandbox_generation(options, uuid::Uuid::new_v4())
+    }
+
+    pub(crate) fn provision_sandbox_generation(
+        self: &Arc<Self>,
+        options: ProvisionOptions,
+        generation: uuid::Uuid,
+    ) -> Result<()> {
+        anyhow::ensure!(!generation.is_nil(), "VM spawn generation is nil");
         let _launch = self.lifecycle.admit()?;
         let ProvisionOptions {
             id,
@@ -149,6 +158,7 @@ impl ServiceState {
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
+        crate::instance::persist_spawn_identity(&session_dir, id, generation)?;
         info!(id, version, asset_version = %resolved.asset_version, "spawning capsem-process");
 
         let mut child_cmd = tokio::process::Command::new(&self.process_binary);
@@ -318,7 +328,7 @@ impl ServiceState {
         instances.insert(
             id.to_string(),
             InstanceInfo {
-                generation: uuid::Uuid::new_v4(),
+                generation,
                 id: id.to_string(),
                 name: name.to_string(),
                 asset_pins,

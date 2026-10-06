@@ -137,6 +137,8 @@ impl ServiceState {
             child_cmd.env(k, v);
         }
 
+        let generation = uuid::Uuid::new_v4();
+        crate::instance::persist_spawn_identity(&entry.session_dir, &vm_id, generation)?;
         let process_spawn_span = tracing::debug_span!(
             target: "capsem.launch",
             capsem_foundation::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
@@ -222,7 +224,7 @@ impl ServiceState {
         instances.insert(
             vm_id.clone(),
             InstanceInfo {
-                generation: uuid::Uuid::new_v4(),
+                generation,
                 id: vm_id.clone(),
                 name: entry.name.clone(),
                 asset_pins: entry.asset_pins.clone(),
