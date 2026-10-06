@@ -2,6 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn catalog_root_failure_refuses_create_before_staging_or_launch() {
+    let fetches = Arc::new(Mutex::new(Vec::new()));
     let root_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let arch = stage::catalog_architecture().unwrap();
     let catalog = json!({
@@ -16,6 +17,7 @@ async fn catalog_root_failure_refuses_create_before_staging_or_launch() {
         }]}}
     });
     let fx = fixture(FixtureImages {
+        fetches: Arc::clone(&fetches),
         catalog: Some(catalog),
         root_calls: Arc::clone(&root_calls),
         ..images()
@@ -31,6 +33,10 @@ async fn catalog_root_failure_refuses_create_before_staging_or_launch() {
         "a catalog-promised root must not silently fall back to layer extraction"
     );
     assert_eq!(root_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        *fetches.lock().unwrap(),
+        vec![ImageFetch::PreferCached, ImageFetch::PreferCached]
+    );
     assert!(!fx.workspace.join(capsem_core::container::STAGE).exists());
     assert!(!fx.workspace.join(".capsem-container-running").exists());
 }

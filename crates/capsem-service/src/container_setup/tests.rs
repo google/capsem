@@ -17,6 +17,7 @@ struct FixtureImages {
     catalog_reads: Arc<std::sync::atomic::AtomicUsize>,
     catalog: Option<serde_json::Value>,
     root_calls: Arc<std::sync::atomic::AtomicUsize>,
+    fetches: Arc<Mutex<Vec<ImageFetch>>>,
 }
 
 const MANIFEST_BLOB: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -82,12 +83,15 @@ impl ImageSource for FixtureImages {
         _subject: String,
         _access: RegistryAccess,
         _parent: PathBuf,
+        mode: ImageFetch,
     ) -> RootfsFuture {
+        self.fetches.lock().unwrap().push(mode);
         self.root_calls.fetch_add(1, Ordering::Relaxed);
         Box::pin(async { anyhow::bail!("fixture artifact unavailable") })
     }
 
-    fn pull(&self, _image: String, access: RegistryAccess, _parent: PathBuf) -> PullFuture {
+    fn pull(&self, _image: String, access: RegistryAccess, _parent: PathBuf, mode: ImageFetch) -> PullFuture {
+        self.fetches.lock().unwrap().push(mode);
         let (fail, gate, seen) = (self.fail, self.gate.clone(), Arc::clone(&self.access));
         let labels = self.labels.clone();
         Box::pin(async move {
@@ -186,14 +190,17 @@ fn images() -> FixtureImages {
         catalog_reads: Default::default(),
         catalog: None,
         root_calls: Default::default(),
+        fetches: Default::default(),
     }
 }
 
 #[tokio::test]
 async fn admitted_pull_progresses_while_the_guest_is_still_booting() {
+    let fetches = Arc::new(Mutex::new(Vec::new()));
     let access = Arc::new(Mutex::new(None));
     let gate = Arc::new(Notify::new());
     let fx = fixture(FixtureImages {
+        fetches: Arc::clone(&fetches),
         access: Arc::clone(&access),
         gate: Some(gate),
         ..images()
@@ -221,6 +228,7 @@ async fn admitted_pull_progresses_while_the_guest_is_still_booting() {
     })
     .await
     .expect("host-admitted image pull must overlap guest boot");
+    assert_eq!(*fetches.lock().unwrap(), vec![ImageFetch::PreferCached]);
     assert!(!fx.uds_path.with_extension("ready").exists());
     owner.await.unwrap();
     fx.state.containers.cancel("box");
@@ -460,8 +468,10 @@ fn owner_admitting_pull(uds_path: &StdPath) -> tokio::task::JoinHandle<Vec<Servi
 
 #[tokio::test]
 async fn refused_pull_admission_never_calls_the_image_source() {
+    let fetches = Arc::new(Mutex::new(Vec::new()));
     let access = Arc::new(Mutex::new(None));
     let fx = fixture(FixtureImages {
+        fetches: Arc::clone(&fetches),
         access: Arc::clone(&access),
         ..images()
     });
@@ -497,6 +507,10 @@ async fn refused_pull_admission_never_calls_the_image_source() {
         "a refused admission must send zero registry requests"
     );
     assert!(!fx.workspace.join(".capsem-image").exists());
+    assert!(
+        fetches.lock().unwrap().is_empty(),
+        "owner denial must precede either materialization mode"
+    );
 }
 
 async fn wait_for(

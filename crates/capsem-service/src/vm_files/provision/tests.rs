@@ -1,5 +1,5 @@
 use super::*;
-use crate::container_setup::{ContainerSetups, ImageSource, PullFuture};
+use crate::container_setup::{ContainerSetups, ImageFetch, ImageSource, PullFuture};
 use crate::tests::{insert_fake_instance_with_session_dir, spawn_fake_process};
 
 /// An image source whose registry refuses every pull. Its policy grants that
@@ -23,7 +23,7 @@ impl ImageSource for RefusingImages {
         )
     }
 
-    fn pull(&self, _image: String, _access: api::RegistryAccess, _parent: PathBuf) -> PullFuture {
+    fn pull(&self, _image: String, _access: api::RegistryAccess, _parent: PathBuf, _mode: ImageFetch) -> PullFuture {
         Box::pin(async { anyhow::bail!("registry refused the image") })
     }
 

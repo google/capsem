@@ -281,6 +281,7 @@ impl<'a> Decision<'a> {
         image: &PulledImage,
         resolved: &ResolvedImage,
         access: RegistryAccess,
+        mode: ImageFetch,
     ) -> Result<Option<capsem_assets::oci::RootfsLayout>, ImageError> {
         let Some(loaded) = &self.catalog else {
             return Ok(None);
@@ -313,7 +314,13 @@ impl<'a> Decision<'a> {
             .map_err(|e| ImageError::Refused(format!("{e:#}")))?;
         self.setups
             .source
-            .fetch_rootfs(reference.clone(), image.digest.clone(), access, self.parent.clone())
+            .fetch_rootfs(
+                reference.clone(),
+                image.digest.clone(),
+                access,
+                self.parent.clone(),
+                mode,
+            )
             .await
             .map(Some)
             .map_err(|e| ImageError::Failed(format!("fetch published filesystem {reference}: {e:#}")))
@@ -399,11 +406,18 @@ pub(crate) async fn handle_pull_image(
     let image = state
         .containers
         .source
-        .pull(requested.pull.clone(), access.clone(), decision.parent.clone())
+        .pull(
+            requested.pull.clone(),
+            access.clone(),
+            decision.parent.clone(),
+            ImageFetch::Fresh,
+        )
         .await
         .map_err(|e| ImageError::Failed(format!("pull {}: {e:#}", requested.pull)))?;
     let resolved = decision.admit(&requested, &image).await?;
-    decision.published_root(&requested, &image, &resolved, access).await?;
+    decision
+        .published_root(&requested, &image, &resolved, access, ImageFetch::Fresh)
+        .await?;
     info!(image = %request.image, resolved = %resolved, "pulled image into the host cache");
     Ok(Json(ImagePullResponse {
         image: request.image,

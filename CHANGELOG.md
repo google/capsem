@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OCI creation prefers verified local pinned image and published filesystem
+  bytes after admission. Explicit prefetch and moving tags continue resolving
+  through the registry, while cache misses use the existing online pull path.
 - OCI image pulls retain verified manifest and index metadata alongside cached
   blobs, enabling pinned local-only materialization that rechecks every byte
   without registry authentication or network fallback. Published EROFS

@@ -52,6 +52,7 @@ fn catalog_document() -> Value {
 /// An image source whose policy, catalog and registry the test sets, and
 /// which records every catalog read and every pull.
 struct CatalogImages {
+    fetches: Arc<Mutex<Vec<ImageFetch>>>,
     settings: SettingsFile,
     catalog: Arc<Mutex<Option<Value>>>,
     catalog_reads: Arc<Mutex<Vec<String>>>,
@@ -66,7 +67,9 @@ impl ImageSource for CatalogImages {
         subject: String,
         access: RegistryAccess,
         _parent: PathBuf,
+        mode: ImageFetch,
     ) -> RootfsFuture {
+        self.fetches.lock().unwrap().push(mode);
         self.roots.lock().unwrap().push((reference, subject, access));
         Box::pin(async { anyhow::bail!("fixture artifact unavailable") })
     }
@@ -88,7 +91,8 @@ impl ImageSource for CatalogImages {
     }
 
     /// Serves any reference: a pinned one at its pin, a tag at digest `f`.
-    fn pull(&self, image: String, _access: RegistryAccess, _parent: PathBuf) -> PullFuture {
+    fn pull(&self, image: String, _access: RegistryAccess, _parent: PathBuf, mode: ImageFetch) -> PullFuture {
+        self.fetches.lock().unwrap().push(mode);
         self.pulls.lock().unwrap().push(image.clone());
         Box::pin(async move {
             let image_digest = image
@@ -106,6 +110,7 @@ impl ImageSource for CatalogImages {
 }
 
 struct Fixture {
+    fetches: Arc<Mutex<Vec<ImageFetch>>>,
     state: Arc<ServiceState>,
     catalog: Arc<Mutex<Option<Value>>>,
     catalog_reads: Arc<Mutex<Vec<String>>>,
@@ -115,12 +120,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(images: ImagePolicyConfig) -> Self {
+        let fetches = Arc::new(Mutex::new(Vec::new()));
         let catalog = Arc::new(Mutex::new(Some(catalog_document())));
         let catalog_reads = Arc::new(Mutex::new(Vec::new()));
         let pulls = Arc::new(Mutex::new(Vec::new()));
         let roots = Arc::new(Mutex::new(Vec::new()));
         let mut state = crate::tests::make_test_state_owned();
         state.containers = ContainerSetups::with_source(Box::new(CatalogImages {
+            fetches: Arc::clone(&fetches),
             settings: SettingsFile {
                 images: Some(images),
                 ..Default::default()
@@ -131,6 +138,7 @@ impl Fixture {
             roots: Arc::clone(&roots),
         }));
         Self {
+            fetches,
             state: Arc::new(state),
             catalog,
             catalog_reads,
@@ -199,6 +207,7 @@ async fn prefetch_selects_catalog_root_after_admission_with_original_platform_su
     assert_eq!(roots[0].2.password.as_deref(), Some("private-test-password"));
     assert_eq!(roots[0].2.ca_pem.as_deref(), Some("private-test-ca"));
     assert!(!body.to_string().contains("private-test-password") && !body.to_string().contains("private-test-ca"));
+    assert_eq!(*fx.fetches.lock().unwrap(), vec![ImageFetch::Fresh, ImageFetch::Fresh]);
     drop(roots);
 }
 
@@ -213,6 +222,11 @@ async fn denied_image_does_not_fetch_any_catalog_filesystem() {
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(fx.roots.lock().unwrap().is_empty());
+    assert_eq!(
+        *fx.fetches.lock().unwrap(),
+        vec![ImageFetch::Fresh],
+        "prefetch resolves the manifest before final digest admission; refused images never fetch a filesystem"
+    );
 }
 
 #[tokio::test]

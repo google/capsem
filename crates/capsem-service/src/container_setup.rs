@@ -34,10 +34,16 @@ pub(crate) struct PulledImage {
 pub(crate) type PullFuture = Pin<Box<dyn Future<Output = anyhow::Result<PulledImage>> + Send>>;
 pub(crate) type RootfsFuture = Pin<Box<dyn Future<Output = anyhow::Result<capsem_assets::oci::RootfsLayout>> + Send>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ImageFetch {
+    Fresh,
+    PreferCached,
+}
+
 /// Where images come from, and which may be fetched and run. Production
 /// pulls from registries under the installation's policy; tests substitute.
 pub(crate) trait ImageSource: Send + Sync {
-    fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf) -> PullFuture;
+    fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf, mode: ImageFetch) -> PullFuture;
 
     /// Read the catalog `source` names, anonymously: catalogs are public.
     fn fetch_catalog(&self, source: CatalogSource, parent: PathBuf) -> images::CatalogFuture;
@@ -49,6 +55,7 @@ pub(crate) trait ImageSource: Send + Sync {
         _subject: String,
         _access: RegistryAccess,
         _parent: PathBuf,
+        _mode: ImageFetch,
     ) -> RootfsFuture {
         Box::pin(async { anyhow::bail!("image source does not provide published filesystems") })
     }
@@ -84,12 +91,15 @@ fn registry_puller(access: RegistryAccess) -> anyhow::Result<capsem_assets::oci:
 }
 
 impl ImageSource for RegistryImages {
-    fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf) -> PullFuture {
+    fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf, mode: ImageFetch) -> PullFuture {
         Box::pin(async move {
             capsem_assets::oci::image_reference(&image)
                 .context("container image expects docker://IMAGE or registry/repository:tag")?;
             let puller = registry_puller(access)?;
-            let layout = puller.pull(&image, &parent).await?;
+            let layout = match mode {
+                ImageFetch::Fresh => puller.pull(&image, &parent).await?,
+                ImageFetch::PreferCached => puller.pull_prefer_cached(&image, &parent).await?,
+            };
             Ok(PulledImage {
                 root: layout.path().to_path_buf(),
                 files: layout.files().to_vec(),
@@ -125,12 +135,15 @@ impl ImageSource for RegistryImages {
         subject: String,
         access: RegistryAccess,
         parent: PathBuf,
+        mode: ImageFetch,
     ) -> RootfsFuture {
         Box::pin(async move {
             let subject = capsem_assets::oci::Digest::parse(&subject)?;
-            registry_puller(access)?
-                .fetch_rootfs(&reference, &subject, &parent)
-                .await
+            let puller = registry_puller(access)?;
+            match mode {
+                ImageFetch::Fresh => puller.fetch_rootfs(&reference, &subject, &parent).await,
+                ImageFetch::PreferCached => puller.fetch_rootfs_prefer_cached(&reference, &subject, &parent).await,
+            }
         })
     }
 }
@@ -386,12 +399,19 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     let image = state
         .containers
         .source
-        .pull(requested.pull.clone(), access.clone(), decision.parent.clone())
+        .pull(
+            requested.pull.clone(),
+            access.clone(),
+            decision.parent.clone(),
+            ImageFetch::PreferCached,
+        )
         .await
         .map_err(|e| format!("pull {}: {e:#}", requested.pull))?;
     // Admission is on the resolved digest, before anything is staged.
     let resolved = decision.admit(&requested, &image).await?;
-    let rootfs = decision.published_root(&requested, &image, &resolved, access).await?;
+    let rootfs = decision
+        .published_root(&requested, &image, &resolved, access, ImageFetch::PreferCached)
+        .await?;
     // An image whose surface labels are not exactly one valid declaration is
     // refused here, before staging: nothing of it runs and nothing is exposed.
     let declared = tokio::task::spawn_blocking({
