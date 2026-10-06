@@ -10,6 +10,7 @@ pub enum Action {
     Delete(String),
     Suspend(String),
     Resume(String),
+    Start(String),
     /// Convert an ephemeral VM to persistent. Delegated to the UI because
     /// a tray menu can't prompt for the new name.
     Save(String),
@@ -91,18 +92,25 @@ fn vm_submenu_spec(vm: &VmSummary) -> MenuEntry {
     // use lowercase -- compare case-insensitively.
     let status = vm.status.to_ascii_lowercase();
     let is_running = status == "running";
-    let is_suspended = status == "suspended";
+    let allowed = |action| vm.available_actions.contains(&action);
+    use capsem_api::VmAction;
     let mut items = Vec::new();
 
-    // Reachability: "Connect" for running, "Resume" for suspended, nothing
-    // otherwise (stopped persistent VMs need an explicit resume).
+    // Opening a running session is navigation. Lifecycle mutations come
+    // from the service's advertised actions, including blocked checkpoints.
     if is_running {
         items.push(MenuEntry::Item {
             id: format!("connect:{id}"),
             label: "Connect".into(),
             enabled: true,
         });
-    } else if is_suspended {
+    } else if allowed(VmAction::Start) {
+        items.push(MenuEntry::Item {
+            id: format!("start:{id}"),
+            label: "Start".into(),
+            enabled: true,
+        });
+    } else if allowed(VmAction::Resume) {
         items.push(MenuEntry::Item {
             id: format!("resume:{id}"),
             label: "Resume".into(),
@@ -110,41 +118,67 @@ fn vm_submenu_spec(vm: &VmSummary) -> MenuEntry {
         });
     }
 
+    if allowed(VmAction::Pause) {
+        items.push(MenuEntry::Item {
+            id: format!("suspend:{id}"),
+            label: "Pause".into(),
+            enabled: true,
+        });
+    }
+
     if vm.persistent {
         // Persistent VMs: stop preserves state (only when running); delete
         // is destructive; fork clones to an image.
-        if is_running {
+        if allowed(VmAction::Stop) {
             items.push(MenuEntry::Item {
                 id: format!("stop:{id}"),
                 label: "Stop".into(),
                 enabled: true,
             });
         }
-        items.push(MenuEntry::Item {
-            id: format!("fork:{id}"),
-            label: "Fork...".into(),
-            enabled: true,
-        });
-        items.push(MenuEntry::Item {
-            id: format!("delete:{id}"),
-            label: "Delete".into(),
-            enabled: true,
-        });
+        if allowed(VmAction::Fork) {
+            items.push(MenuEntry::Item {
+                id: format!("fork:{id}"),
+                label: "Fork...".into(),
+                enabled: true,
+            });
+        }
+        if allowed(VmAction::Delete) {
+            items.push(MenuEntry::Item {
+                id: format!("delete:{id}"),
+                label: "Delete".into(),
+                enabled: true,
+            });
+        }
     } else {
         // Ephemeral VMs: no "stop" (stopping == destruction). Save converts
         // to persistent; delete destroys.
-        if is_running {
+        if is_running && allowed(VmAction::Fork) {
             items.push(MenuEntry::Item {
                 id: format!("save:{id}"),
                 label: "Save...".into(),
                 enabled: true,
             });
         }
-        items.push(MenuEntry::Item {
-            id: format!("delete:{id}"),
-            label: "Delete".into(),
-            enabled: true,
-        });
+        if allowed(VmAction::Delete) {
+            items.push(MenuEntry::Item {
+                id: format!("delete:{id}"),
+                label: "Delete".into(),
+                enabled: true,
+            });
+        }
+    }
+    for (kind, reason) in [
+        ("error", vm.last_error.as_ref()),
+        ("blocked", vm.resume_blocked_reason.as_ref()),
+    ] {
+        if let Some(reason) = reason {
+            items.push(MenuEntry::Item {
+                id: format!("{kind}:{id}"),
+                label: reason.replace(['\n', '\r'], " "),
+                enabled: false,
+            });
+        }
     }
 
     MenuEntry::Sub { label, items }
@@ -293,6 +327,9 @@ pub fn parse_action(id: &MenuId) -> Option<Action> {
     }
     if let Some(vm_id) = s.strip_prefix("resume:") {
         return Some(Action::Resume(vm_id.to_string()));
+    }
+    if let Some(vm_id) = s.strip_prefix("start:") {
+        return Some(Action::Start(vm_id.to_string()));
     }
     if let Some(vm_id) = s.strip_prefix("save:") {
         return Some(Action::Save(vm_id.to_string()));

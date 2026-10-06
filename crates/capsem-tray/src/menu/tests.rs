@@ -2,6 +2,54 @@ use super::*;
 use crate::gateway::{UpdateCompatibilityState, UpdateStatusResponse, UpdateTrackState, UpdateTrackStatus};
 use muda::MenuId;
 
+#[test]
+fn lifecycle_menu_uses_service_authority_instead_of_inferring_from_running_status() {
+    let vm: VmSummary = serde_json::from_value(serde_json::json!({
+        "id": "opaque-id", "name": "display-alias", "status": "Running", "persistent": true,
+        "available_actions": ["delete"]
+    }))
+    .unwrap();
+    let ids = submenu_child_ids(&vm_submenu_spec(&vm));
+    assert_eq!(ids, vec!["connect:opaque-id", "delete:opaque-id"]);
+}
+
+#[test]
+fn stopped_startable_image_has_start_but_blocked_suspended_image_has_no_resume() {
+    let startable: VmSummary = serde_json::from_value(serde_json::json!({
+        "id": "stopped", "name": "image-session", "status": "Stopped", "persistent": true,
+        "available_actions": ["start", "fork", "delete"]
+    }))
+    .unwrap();
+    assert_eq!(
+        submenu_child_ids(&vm_submenu_spec(&startable)),
+        vec!["start:stopped", "fork:stopped", "delete:stopped"]
+    );
+    let blocked: VmSummary = serde_json::from_value(serde_json::json!({
+        "id": "blocked", "name": null, "status": "Suspended", "persistent": true,
+        "available_actions": ["fork", "delete"], "resume_blocked_reason": "Image checkpoint incompatible"
+    }))
+    .unwrap();
+    let MenuEntry::Sub { items, .. } = vm_submenu_spec(&blocked) else {
+        panic!()
+    };
+    assert!(!collect_ids(&items).iter().any(|id| id.starts_with("resume:")));
+    assert!(items.iter().any(|entry| matches!(entry, MenuEntry::Item { label, enabled: false, .. } if label.contains("checkpoint incompatible"))));
+}
+
+#[test]
+fn incompatible_session_shows_only_advertised_delete_and_its_error() {
+    let vm: VmSummary = serde_json::from_value(serde_json::json!({
+        "id": "bad", "name": "failed-image", "status": "Incompatible", "persistent": true,
+        "available_actions": ["delete"], "last_error": "Image runtime is incompatible"
+    }))
+    .unwrap();
+    let MenuEntry::Sub { items, .. } = vm_submenu_spec(&vm) else {
+        panic!()
+    };
+    assert!(!collect_ids(&items).iter().any(|id| id.starts_with("fork:")));
+    assert!(items.iter().any(|entry| matches!(entry, MenuEntry::Item { label, enabled: false, .. } if label.contains("runtime is incompatible"))));
+}
+
 fn make_status(vms: Vec<VmSummary>) -> StatusResponse {
     let vm_count = vms.len() as u32;
     StatusResponse {
@@ -87,6 +135,9 @@ fn named_vm(id: &str, name: &str, status: &str) -> VmSummary {
         name: Some(name.into()),
         status: status.into(),
         persistent: true,
+        available_actions: actions(status),
+        last_error: None,
+        resume_blocked_reason: None,
     }
 }
 
@@ -96,6 +147,19 @@ fn temp_vm(id: &str, status: &str) -> VmSummary {
         name: None,
         status: status.into(),
         persistent: false,
+        available_actions: actions(status),
+        last_error: None,
+        resume_blocked_reason: None,
+    }
+}
+
+fn actions(status: &str) -> Vec<capsem_api::VmAction> {
+    use capsem_api::VmLifecycleState;
+    match status.to_ascii_lowercase().as_str() {
+        "running" => VmLifecycleState::Running.available_actions(false),
+        "suspended" => VmLifecycleState::Suspended.available_actions(true),
+        "stopped" => VmLifecycleState::Stopped.available_actions(false),
+        _ => VmLifecycleState::Defunct.available_actions(false),
     }
 }
 
@@ -179,6 +243,14 @@ fn parse_resume() {
 }
 
 #[test]
+fn parse_start() {
+    assert_eq!(
+        parse_action(&MenuId::new("start:opaque-id")),
+        Some(Action::Start("opaque-id".into()))
+    );
+}
+
+#[test]
 fn parse_new_session() {
     assert_eq!(parse_action(&MenuId::new("new-session")), Some(Action::NewSession));
 }
@@ -232,6 +304,9 @@ fn label_short_unnamed_id() {
         name: None,
         status: "stopped".into(),
         persistent: false,
+        available_actions: vec![capsem_api::VmAction::Delete],
+        last_error: None,
+        resume_blocked_reason: None,
     };
     assert_eq!(vm_label(&vm), "ab -- stopped");
 }
@@ -383,7 +458,7 @@ fn persistent_running_vm_has_connect_stop_fork_delete() {
     let spec = menu_spec(&make_status(vec![named_vm("n1", "prod", "running")]));
     let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
-    assert_eq!(ids, vec!["connect:n1", "stop:n1", "fork:n1", "delete:n1"]);
+    assert_eq!(ids, vec!["connect:n1", "suspend:n1", "stop:n1", "fork:n1", "delete:n1"]);
 }
 
 #[test]
@@ -393,7 +468,7 @@ fn ephemeral_running_vm_has_connect_save_delete() {
     let spec = menu_spec(&make_status(vec![temp_vm("t1", "running")]));
     let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
-    assert_eq!(ids, vec!["connect:t1", "save:t1", "delete:t1"]);
+    assert_eq!(ids, vec!["connect:t1", "suspend:t1", "save:t1", "delete:t1"]);
 }
 
 #[test]

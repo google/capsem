@@ -347,6 +347,11 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
             info!(id = %id, ok = r.is_ok(), "resume_vm");
             r
         }
+        Action::Start(id) => {
+            let r = client.start_vm(id).await;
+            info!(id = %id, ok = r.is_ok(), "start_vm");
+            r
+        }
         Action::NewSession => {
             info!("opening the new session launcher");
             launch_ui(None);

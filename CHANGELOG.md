@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tray session menus follow the service's available lifecycle actions, expose
+  supported pause/start operations, and show checkpoint and image errors.
+
 - The OCI cache owner supports generation-bound removal previews and reasoned
   apply with durable retry intent. Active materializations and retained roots
   block cleanup; shared, unrelated and republished data remain intact.

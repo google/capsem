@@ -27,6 +27,11 @@ pub struct VmSummary {
     pub name: Option<String>,
     pub status: String,
     pub persistent: bool,
+    pub available_actions: Vec<capsem_api::VmAction>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub resume_blocked_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -228,6 +233,11 @@ impl GatewayClient {
 
     pub async fn resume_vm(&self, id: &str) -> Result<()> {
         self.post(&format!("/vms/{id}/resume")).await?;
+        Ok(())
+    }
+
+    pub async fn start_vm(&self, id: &str) -> Result<()> {
+        self.post(&format!("/vms/{id}/start")).await?;
         Ok(())
     }
 }

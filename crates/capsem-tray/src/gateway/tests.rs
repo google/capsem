@@ -70,8 +70,8 @@ fn deserialize_status_response() {
             "service": "running",
             "vm_count": 2,
             "vms": [
-                {"id": "abc123", "name": "dev", "status": "running", "persistent": true},
-                {"id": "def456", "name": null, "status": "stopped", "persistent": false}
+                {"id": "abc123", "name": "dev", "status": "running", "persistent": true, "available_actions": ["pause", "stop", "fork", "delete"]},
+                {"id": "def456", "name": null, "status": "stopped", "persistent": false, "available_actions": ["delete"]}
             ]
         }"#;
     let resp: StatusResponse = serde_json::from_str(json).unwrap();
@@ -111,6 +111,7 @@ fn deserialize_vm_extra_fields_ignored() {
             "name": "test",
             "status": "running",
             "persistent": true,
+            "available_actions": ["delete"],
             "ram_mb": 512,
             "cpus": 4
         }"#;
@@ -296,8 +297,7 @@ fn captured_auth(captures: &Arc<Mutex<Vec<String>>>) -> Option<String> {
 
 #[tokio::test]
 async fn status_parses_and_measures_latency() {
-    let body =
-        r#"{"service":"running","vm_count":1,"vms":[{"id":"abc","name":"dev","status":"running","persistent":true}]}"#;
+    let body = r#"{"service":"running","vm_count":1,"vms":[{"id":"abc","name":"dev","status":"running","persistent":true,"available_actions":["delete"]}]}"#;
     let (base, captures, handle) = spawn_http_probe("GET", "/status", 200, body).await;
     let client = GatewayClient::new_with_base_url(base, "tok".into());
     let status = client.status().await.unwrap();
@@ -412,6 +412,22 @@ async fn resume_vm_sends_post() {
     client.resume_vm("vm-42").await.unwrap();
     handle.await.unwrap();
     assert!(captures.lock().unwrap()[0].starts_with("POST /vms/vm-42/resume "));
+}
+
+#[tokio::test]
+async fn start_vm_uses_advertised_start_endpoint_and_gateway_auth() {
+    let (base, captures, handle) = spawn_http_probe("POST", "/vms/opaque-id/start", 200, "{}").await;
+    let client = GatewayClient::new_with_base_url(base, "fixture-token".into());
+    client.start_vm("opaque-id").await.unwrap();
+    handle.await.unwrap();
+    assert!(captures.lock().unwrap()[0].starts_with("POST /vms/opaque-id/start "));
+    assert_eq!(captured_auth(&captures).as_deref(), Some("Bearer fixture-token"));
+}
+
+#[test]
+fn missing_lifecycle_authority_is_refused_instead_of_guessed() {
+    let vm = r#"{"id":"opaque-id","name":null,"status":"Running","persistent":false}"#;
+    assert!(serde_json::from_str::<VmSummary>(vm).is_err());
 }
 
 #[tokio::test]
