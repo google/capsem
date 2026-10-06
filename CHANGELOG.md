@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The debug OCI image resolves `multidict` 6.9.1 instead of 6.7.1,
+  closing the items-view reference leak (GHSA-54p9-h82j-f925). Its hashed
+  dependency lock retains every other package version.
+
 - The network proxy now judges a guest's HTTP and HTTPS requests by the
   address it will actually connect to. It used to evaluate the rules on the
   name alone and then dial the name, so the built-in "ask before local

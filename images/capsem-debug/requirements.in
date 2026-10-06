@@ -8,3 +8,5 @@ requests==2.34.2
 httpx==0.28.1
 # requests alone resolves urllib3 2.7.0 (PYSEC-2026-4175/4176/4177).
 urllib3>=2.8.0
+# aiohttp's transitive header container must include GHSA-54p9-h82j-f925's fix.
+multidict>=6.9.1
