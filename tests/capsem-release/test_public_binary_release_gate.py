@@ -675,3 +675,22 @@ def _write_minimal_deb(
 def _ar_member(name: str, data: bytes) -> bytes:
     header = (f"{name + '/':<16}{0:<12}{0:<6}{0:<6}{100644:<8}{len(data):<10}`\n").encode("ascii")
     return header + data + (b"\n" if len(data) % 2 else b"")
+
+
+@pytest.mark.parametrize(
+    "workflow", [".github/workflows/release.yaml", ".github/workflows/release-publication-recovery.yaml"]
+)
+def test_live_install_proof_fetches_its_own_manifest(workflow: str) -> None:
+    """b44f57547 moved the manifest download into a script, and the live proof
+    kept reading `/tmp/verify/manifest.json`, which nothing wrote any more. The
+    0.6.6 post-publication proof failed on that path without reaching the
+    install. The proof now takes the URL and fetches the manifest itself."""
+    text = (PROJECT_ROOT / workflow).read_text(encoding="utf-8")
+    call = text.split("build_system/scripts/build/prove-live-public-install.sh", maxsplit=1)[1]
+    arguments = call.split("\n\n", maxsplit=1)[0].split()
+    assert arguments == ['"$ASSET_MANIFEST_URL"', '"$RELEASE_CHANNEL"']
+    live_proof = (PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "(($# != 2))" in live_proof
+    assert 'curl -fsSL "$manifest_url" -o "$manifest_path"' in live_proof
