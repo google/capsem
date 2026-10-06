@@ -410,6 +410,9 @@ def test_evidence_tolerance_and_route_budgets_are_separate_knobs() -> None:
         "maximum_factor",
         "minimum_time_resolution_ms",
         "vm_lifecycle_factor",
+        "hosted_vm_lifecycle_factor",
+        "host_class_variable",
+        "hosted_environment",
     }
     # Whole-boot timings get their own, wider envelope; it must never be the
     # one the rest of the product is held to.

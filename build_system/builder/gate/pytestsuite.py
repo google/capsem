@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from . import hostclass
 from .actions import Run
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
@@ -107,6 +108,9 @@ class Suite:
             # against a tree whose assets were never built.
             env[settings.require_artifacts] = "1"
         env[settings.run_id_variable] = self.label
+        # Every step, not only the timing ones: a benchmark added to any suite
+        # must not silently fall back to the build box's evidence.
+        env[config.benchmark_regression.host_class_variable] = hostclass.of(config).value
         if self.profile:
             env[settings.profile_variable] = self.profile
         if self.assets_dir or self.profiles_dir:

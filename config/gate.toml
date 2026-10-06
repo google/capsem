@@ -3343,6 +3343,29 @@ maximum_factor = 1.1
 # exec-ready ranged 969-1108 ms run to run, wider than the 10% envelope, so a
 # baseline recorded at one end failed at the other. They keep a 20% margin.
 vm_lifecycle_factor = 1.2
+# Evidence is scoped by host class as well as profile. Everything checked in
+# before the field was recorded on the build box and reads as `local`. A
+# GitHub-hosted runner is other hardware: run 37432830392 measured fork
+# 212-251 ms, boot-provision 196-202 ms and boot-ready 509-604 ms, where the
+# build box's evidence says fork 173.9 and boot-provision 842.5. Ratcheting one
+# against the other failed `fork_ms.min` at 1.22x for a commit whose previous
+# hosted attempt had passed, so a hosted lane only ever compares with hosted
+# evidence, and seeds (records, does not ratchet) until it has some.
+#
+# One hosted runner's own spread is already 1.18x (fork) and 1.19x
+# (boot-ready), the whole of the local envelope. The ratchet compares floors,
+# and another runner's floor can sit that spread beyond the first's; 1.5 keeps
+# the build box's 20% on top of it (1.19 x 1.2 = 1.43) and still catches a
+# regression that doubles a boot.
+hosted_vm_lifecycle_factor = 1.5
+# Told to every pytest step by the gate, which reads `hosted_environment` in
+# its own process. pytest cannot ask the runner itself: tests/conftest.py strips
+# the release variables, and nothing else the workflow sets is guaranteed to
+# reach a functional test.
+host_class_variable = "CAPSEM_BENCHMARK_HOST_CLASS"
+# The same signal `config/cache.toml [budget] ephemeral_environment` uses. A
+# self-hosted runner is our own hardware and stays `local`.
+hosted_environment = { RUNNER_ENVIRONMENT = "github-hosted" }
 # A percentage attached to nanoseconds is not product performance. Time
 # changes remain visible below this resolution but have no release authority.
 minimum_time_resolution_ms = 1.0
