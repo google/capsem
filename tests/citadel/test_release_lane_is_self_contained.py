@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.qualification import from_environment
 from helpers.gate import built_command
@@ -237,7 +238,7 @@ def test_what_a_suite_needs_is_built_before_it_runs() -> None:
         )
 
 
-def test_the_fixture_clears_every_variable_that_picks_a_lane() -> None:
+def test_the_fixture_clears_every_variable_that_picks_a_lane(request: pytest.FixtureRequest) -> None:
     """A test that builds a plan must not inherit the release it runs inside.
 
     `qualify-binaries` runs the suite with these exported, and two tests asked
@@ -246,8 +247,10 @@ def test_the_fixture_clears_every_variable_that_picks_a_lane() -> None:
     rather than restated: a fourth variable that decides a lane has to be
     cleared too, and nothing else would say so.
     """
-    # Read as a module: the fixture's list is the subject, not a helper to call.
-    import conftest as suite_conftest
+    # A child suite's conftest can replace the bare module name during
+    # collection. Pytest owns the root fixture module under its exact path.
+    suite_conftest = request.config.pluginmanager.get_plugin(str(ROOT / "tests/conftest.py"))
+    assert suite_conftest is not None
 
     config = gate_config.load(ROOT)
     settings = config.modules
