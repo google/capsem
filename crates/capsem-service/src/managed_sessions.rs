@@ -4,7 +4,7 @@
 use super::*;
 use capsem_core::managed_sessions::{
     controller::{BindingReporter, EffectFuture, Effects},
-    Ticket, VmBinding,
+    Snapshot, Ticket, VmBinding,
 };
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -18,7 +18,7 @@ pub trait GrantRetirement: Send + Sync {
 #[derive(Clone)]
 pub struct ManagedLifecycle {
     state: Arc<ServiceState>,
-    request: ProvisionRequest,
+    request: Option<ProvisionRequest>,
     binding: VmBinding,
     grants: Arc<dyn GrantRetirement>,
     work: Arc<Work>,
@@ -48,11 +48,41 @@ impl ManagedLifecycle {
         );
         Ok(Self {
             state,
-            request,
+            request: Some(request),
             binding: VmBinding::new(new_persistent_vm_id(), uuid::Uuid::new_v4())?,
             grants,
             work: Arc::new(Work {
                 scope: Default::default(),
+                continuation: tokio::sync::Mutex::new(None),
+                cancel: CancellationToken::new(),
+            }),
+        })
+    }
+
+    /// Cleanup-only adoption of the durable original target. Process metadata
+    /// remains evidence of intent, never proof that an untracked child exited.
+    pub fn for_recovery(
+        state: Arc<ServiceState>,
+        snapshot: &Snapshot,
+        grants: Arc<dyn GrantRetirement>,
+    ) -> Result<Self> {
+        let binding = snapshot
+            .vm()
+            .or_else(|| snapshot.spawn_intent())
+            .context("managed recovery has no prepared service target")?
+            .clone();
+        let id = uuid::Uuid::parse_str(binding.id())?;
+        anyhow::ensure!(
+            !id.is_nil() && id.to_string() == binding.id(),
+            "managed recovery requires a canonical service VM id"
+        );
+        Ok(Self {
+            state,
+            request: None,
+            binding,
+            grants,
+            work: Arc::new(Work {
+                scope: std::sync::OnceLock::from((snapshot.request(), snapshot.generation())),
                 continuation: tokio::sync::Mutex::new(None),
                 cancel: CancellationToken::new(),
             }),
@@ -106,6 +136,7 @@ impl ManagedLifecycle {
         cancel: CancellationToken,
         reporter: BindingReporter,
     ) -> Result<VmBinding> {
+        let request = self.request.as_ref().context("managed recovery cannot create")?;
         self.scope(&ticket)?;
         reporter.prepare(self.binding.clone()).await?;
         anyhow::ensure!(
@@ -122,11 +153,11 @@ impl ManagedLifecycle {
         {
             anyhow::bail!("managed runtime assets are unavailable");
         }
-        let networks =
-            network_routes::resolve_network_names(&*self.state.networks.lock().await, &self.request.networks)
-                .map_err(app_error)?;
+        let networks = network_routes::resolve_network_names(&*self.state.networks.lock().await, &request.networks)
+            .map_err(app_error)?;
         let binding = self.binding.clone();
-        let request = self.request.clone();
+        let container = request.container.clone();
+        let request = request.clone();
         let _vz = self.state.lifecycle.vz.read().await;
         let _host = vm_lifecycle::acquire_vz_host_lock(startup::VzHostLockMode::Shared)
             .await
@@ -180,7 +211,7 @@ impl ManagedLifecycle {
             () = self.work.cancel.cancelled() => anyhow::bail!("managed creation cancelled"),
         }
         tokio::select! {
-            created = vm_files::complete_create(&self.state, self.binding.id(), &networks, self.request.container.clone()) => { created.map_err(app_error)?; },
+            created = vm_files::complete_create(&self.state, self.binding.id(), &networks, container) => { created.map_err(app_error)?; },
             () = cancel.cancelled() => anyhow::bail!("managed workload setup cancelled"),
             () = self.work.cancel.cancelled() => anyhow::bail!("managed workload setup cancelled"),
         }
@@ -242,6 +273,7 @@ impl Effects for ManagedLifecycle {
     fn create(&self, ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding> {
         let owner = self.clone();
         Box::pin(async move {
+            anyhow::ensure!(owner.request.is_some(), "managed recovery cannot create");
             owner.scope(&ticket)?;
             let mut continuation = owner.work.continuation.lock().await;
             anyhow::ensure!(continuation.is_none(), "managed creation cannot replay");

@@ -41,6 +41,21 @@ async fn grant_failure_prevents_session_cleanup_and_retry_awaits_original_retire
     };
     adapter.scope(&ticket).unwrap();
     let binding = adapter.binding.clone();
+    let clock = capsem_core::managed_sessions::LeaseClock::new(100, std::time::Instant::now());
+    registry
+        .start_lease(
+            &ticket,
+            capsem_core::managed_sessions::LeasePolicy::new(std::time::Duration::from_secs(10)).unwrap(),
+            clock,
+        )
+        .unwrap();
+    registry.begin_create(&ticket, clock).unwrap();
+    registry.prepare_spawn(&ticket, binding.clone(), clock).unwrap();
+    registry.bind_created(&ticket, binding.clone(), clock).unwrap();
+    let snapshot = registry.inspect(ticket.request(), &cap).unwrap().unwrap();
+    let adapter = ManagedLifecycle::for_recovery(Arc::clone(&state), &snapshot, Arc::new(Arc::clone(&grants))).unwrap();
+    assert!(adapter.request.is_none());
+    assert_eq!(adapter.binding, binding);
     let session = state.run_dir.join("sessions").join(binding.id());
     std::fs::create_dir_all(&session).unwrap();
     crate::instance::persist_spawn_identity(&session, binding.id(), binding.generation()).unwrap();
@@ -102,6 +117,63 @@ impl GrantRetirement for RefuseGrants {
     fn revoke(&self, _ticket: Ticket, _binding: VmBinding) -> EffectFuture<()> {
         Box::pin(async { anyhow::bail!("fixture grant retirement refused") })
     }
+}
+
+#[tokio::test]
+async fn recovery_adapter_keeps_untracked_original_child_unknown_and_preserves_session() {
+    use capsem_core::managed_sessions::{Capability, LeaseClock, LeasePolicy, Registry, Reservation, State};
+    let state = make_test_state();
+    let root = tempfile::tempdir().unwrap();
+    let registry = Registry::open(&root.path().join("ownership")).unwrap();
+    let request = uuid::Uuid::new_v4();
+    let capability = Capability::from_bytes([54; 32]);
+    let Reservation::New(ticket) = registry.reserve(request, &capability).unwrap() else {
+        panic!()
+    };
+    let clock = LeaseClock::new(100, std::time::Instant::now());
+    registry
+        .start_lease(
+            &ticket,
+            LeasePolicy::new(std::time::Duration::from_secs(10)).unwrap(),
+            clock,
+        )
+        .unwrap();
+    registry.begin_create(&ticket, clock).unwrap();
+    let binding = VmBinding::new(new_persistent_vm_id(), uuid::Uuid::new_v4()).unwrap();
+    registry.prepare_spawn(&ticket, binding.clone(), clock).unwrap();
+    let snapshot = registry.inspect(request, &capability).unwrap().unwrap();
+    let adapter = ManagedLifecycle::for_recovery(Arc::clone(&state), &snapshot, Arc::new(RefuseGrants)).unwrap();
+    assert_eq!(adapter.binding, binding);
+    assert!(adapter.request.is_none());
+    adapter.scope(&ticket).unwrap();
+    let session = state.run_dir.join("sessions").join(binding.id());
+    std::fs::create_dir_all(&session).unwrap();
+    crate::instance::persist_spawn_identity(&session, binding.id(), binding.generation()).unwrap();
+    let owner = capsem_core::managed_sessions::controller::Controller::new(
+        registry,
+        capsem_core::managed_sessions::controller::EffectBounds::new(
+            std::time::Duration::from_secs(2),
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap(),
+    );
+    assert!(owner.recover(request, Arc::new(adapter.clone())).await.is_err());
+    assert_eq!(
+        owner.inspect(request, capability).await.unwrap().unwrap().state(),
+        State::Unknown
+    );
+    assert!(session.exists(), "metadata alone cannot prove the old child exited");
+    assert!(owner
+        .create(
+            uuid::Uuid::new_v4(),
+            Capability::from_bytes([55; 32]),
+            LeasePolicy::new(std::time::Duration::from_secs(10)).unwrap(),
+            Arc::new(adapter.clone()),
+        )
+        .await
+        .is_err());
+    assert!(state.instances.lock().unwrap().is_empty());
+    assert!(adapter.work.continuation.lock().await.is_none());
 }
 
 #[tokio::test]
