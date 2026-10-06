@@ -18,6 +18,8 @@ struct FixtureImages {
     catalog: Option<serde_json::Value>,
     root_calls: Arc<std::sync::atomic::AtomicUsize>,
     fetches: Arc<Mutex<Vec<ImageFetch>>>,
+    cache_key: Option<capsem_assets::oci::CacheKey>,
+    root_keys: Arc<Mutex<Vec<Option<capsem_assets::oci::CacheKey>>>>,
 }
 
 const MANIFEST_BLOB: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -84,7 +86,9 @@ impl ImageSource for FixtureImages {
         _access: RegistryAccess,
         _parent: PathBuf,
         mode: ImageFetch,
+        cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
+        self.root_keys.lock().unwrap().push(cache_key);
         self.fetches.lock().unwrap().push(mode);
         self.root_calls.fetch_add(1, Ordering::Relaxed);
         Box::pin(async { anyhow::bail!("fixture artifact unavailable") })
@@ -94,6 +98,7 @@ impl ImageSource for FixtureImages {
         self.fetches.lock().unwrap().push(mode);
         let (fail, gate, seen) = (self.fail, self.gate.clone(), Arc::clone(&self.access));
         let labels = self.labels.clone();
+        let cache_key = self.cache_key.clone();
         Box::pin(async move {
             *seen.lock().unwrap() = Some(access);
             if let Some(gate) = gate {
@@ -107,6 +112,7 @@ impl ImageSource for FixtureImages {
                 files,
                 digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into(),
                 image_digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".into(),
+                cache_key,
                 _hold: Box::new(root),
             })
         })
@@ -191,6 +197,8 @@ fn images() -> FixtureImages {
         catalog: None,
         root_calls: Default::default(),
         fetches: Default::default(),
+        cache_key: None,
+        root_keys: Default::default(),
     }
 }
 
@@ -922,6 +930,7 @@ fn admission_takes_either_content_address_and_nothing_else() {
         files: Vec::new(),
         digest: digest.into(),
         image_digest: image_digest.into(),
+        cache_key: None,
         _hold: Box::new(()),
     };
     admit(&policy, &requested, &pulled(&a, &b)).unwrap();

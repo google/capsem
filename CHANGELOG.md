@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OCI creation and prefetch retain verified published filesystem facts under
+  the actual resolved image's cache key after admission.
 - Verified OCI materialization retains durable cache receipts for immutable
   manifests, configuration, layers, and bound published filesystems. Receipt
   metadata is bounded and loaded without claiming readiness or execution

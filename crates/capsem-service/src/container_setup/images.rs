@@ -320,6 +320,7 @@ impl<'a> Decision<'a> {
                 access,
                 self.parent.clone(),
                 mode,
+                image.cache_key.clone(),
             )
             .await
             .map(Some)

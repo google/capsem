@@ -28,6 +28,7 @@ pub(crate) struct PulledImage {
     pub(crate) digest: String,
     /// What the reference resolved to (the index, when there was one).
     pub(crate) image_digest: String,
+    pub(crate) cache_key: Option<capsem_assets::oci::CacheKey>,
     pub(crate) _hold: Box<dyn Send + Sync>,
 }
 
@@ -56,6 +57,7 @@ pub(crate) trait ImageSource: Send + Sync {
         _access: RegistryAccess,
         _parent: PathBuf,
         _mode: ImageFetch,
+        _cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
         Box::pin(async { anyhow::bail!("image source does not provide published filesystems") })
     }
@@ -105,6 +107,7 @@ impl ImageSource for RegistryImages {
                 files: layout.files().to_vec(),
                 digest: layout.source_digest.clone(),
                 image_digest: layout.image_digest.clone(),
+                cache_key: Some(layout.cache_identity().key()),
                 _hold: Box::new(layout),
             })
         })
@@ -136,14 +139,19 @@ impl ImageSource for RegistryImages {
         access: RegistryAccess,
         parent: PathBuf,
         mode: ImageFetch,
+        cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
         Box::pin(async move {
             let subject = capsem_assets::oci::Digest::parse(&subject)?;
             let puller = registry_puller(access)?;
-            match mode {
-                ImageFetch::Fresh => puller.fetch_rootfs(&reference, &subject, &parent).await,
-                ImageFetch::PreferCached => puller.fetch_rootfs_prefer_cached(&reference, &subject, &parent).await,
+            let root = match mode {
+                ImageFetch::Fresh => puller.fetch_rootfs(&reference, &subject, &parent).await?,
+                ImageFetch::PreferCached => puller.fetch_rootfs_prefer_cached(&reference, &subject, &parent).await?,
+            };
+            if let Some(key) = cache_key {
+                puller.retain_cached_root(&key, &root).await?;
             }
+            Ok(root)
         })
     }
 }

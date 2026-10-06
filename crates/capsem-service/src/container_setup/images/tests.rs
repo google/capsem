@@ -51,13 +51,15 @@ fn catalog_document() -> Value {
 
 /// An image source whose policy, catalog and registry the test sets, and
 /// which records every catalog read and every pull.
+type RootCall = (String, String, RegistryAccess, Option<capsem_assets::oci::CacheKey>);
+
 struct CatalogImages {
     fetches: Arc<Mutex<Vec<ImageFetch>>>,
     settings: SettingsFile,
     catalog: Arc<Mutex<Option<Value>>>,
     catalog_reads: Arc<Mutex<Vec<String>>>,
     pulls: Arc<Mutex<Vec<String>>>,
-    roots: Arc<Mutex<Vec<(String, String, RegistryAccess)>>>,
+    roots: Arc<Mutex<Vec<RootCall>>>,
 }
 
 impl ImageSource for CatalogImages {
@@ -68,9 +70,14 @@ impl ImageSource for CatalogImages {
         access: RegistryAccess,
         _parent: PathBuf,
         mode: ImageFetch,
+        cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
+        assert!(
+            cache_key.is_some(),
+            "published filesystem requests must carry the producer cache key"
+        );
         self.fetches.lock().unwrap().push(mode);
-        self.roots.lock().unwrap().push((reference, subject, access));
+        self.roots.lock().unwrap().push((reference, subject, access, cache_key));
         Box::pin(async { anyhow::bail!("fixture artifact unavailable") })
     }
     fn policy(&self) -> PolicyFuture {
@@ -98,11 +105,16 @@ impl ImageSource for CatalogImages {
             let image_digest = image
                 .rsplit_once('@')
                 .map_or_else(|| digest('f'), |(_, pin)| pin.to_owned());
+            let requested =
+                capsem_assets::oci::ImageReference::try_from(&capsem_assets::oci::image_reference(&image)?)?;
+            let resolved = requested.resolve(Digest::parse(&image_digest)?)?;
+            let identity = capsem_assets::oci::CacheIdentity::new(&resolved.to_string(), host(), RUNTIME_CONTRACT)?;
             Ok(PulledImage {
                 root: PathBuf::new(),
                 files: Vec::new(),
                 digest: digest('7'),
                 image_digest,
+                cache_key: Some(identity.key()),
                 _hold: Box::new(()),
             })
         })
@@ -115,7 +127,7 @@ struct Fixture {
     catalog: Arc<Mutex<Option<Value>>>,
     catalog_reads: Arc<Mutex<Vec<String>>>,
     pulls: Arc<Mutex<Vec<String>>>,
-    roots: Arc<Mutex<Vec<(String, String, RegistryAccess)>>>,
+    roots: Arc<Mutex<Vec<RootCall>>>,
 }
 
 impl Fixture {
@@ -206,6 +218,18 @@ async fn prefetch_selects_catalog_root_after_admission_with_original_platform_su
     assert_eq!(roots[0].2.username.as_deref(), Some("account"));
     assert_eq!(roots[0].2.password.as_deref(), Some("private-test-password"));
     assert_eq!(roots[0].2.ca_pem.as_deref(), Some("private-test-ca"));
+    let expected_key = capsem_assets::oci::CacheIdentity::new(
+        &format!("ghcr.io/google/capsem/codex-cli@{}", digest('b')),
+        host(),
+        RUNTIME_CONTRACT,
+    )
+    .unwrap()
+    .key();
+    assert_eq!(
+        roots[0].3,
+        Some(expected_key),
+        "filesystem retention uses the resolved index key, not its artifact or native manifest digest"
+    );
     assert!(!body.to_string().contains("private-test-password") && !body.to_string().contains("private-test-ca"));
     assert_eq!(*fx.fetches.lock().unwrap(), vec![ImageFetch::Fresh, ImageFetch::Fresh]);
     drop(roots);
