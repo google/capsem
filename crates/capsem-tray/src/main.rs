@@ -1,3 +1,4 @@
+mod feedback;
 mod gateway;
 mod icons;
 mod menu;
@@ -41,6 +42,7 @@ struct Args {
 enum PollResult {
     Status(Box<gateway::StatusResponse>),
     Unavailable(String),
+    ActionResult(Option<String>),
 }
 
 fn main() -> Result<()> {
@@ -164,13 +166,15 @@ fn main() -> Result<()> {
 
     let mut last_state = Some(initial_state);
     let mut last_status: Option<gateway::StatusResponse> = None;
+    let mut feedback = feedback::ActionFeedback::default();
 
     loop {
         // Process poll results (non-blocking)
         while let Ok(result) = poll_rx.try_recv() {
             match result {
                 PollResult::Status(status) => {
-                    let status = *status;
+                    let mut status = *status;
+                    feedback.apply(&mut status);
                     let service_available = menu::service_available(&status);
                     let desired_state = if service_available {
                         TrayState::Idle
@@ -198,12 +202,24 @@ fn main() -> Result<()> {
                     if last_state != Some(TrayState::Error) {
                         tray.set_icon_with_as_template(Some(icon_error.clone()), true)
                             .unwrap_or_else(|e| warn!(error = %e, "failed to set icon"));
-                        tray.set_menu(Some(Box::new(menu::build_unavailable_menu())));
+                        tray.set_menu(Some(Box::new(menu::build_unavailable_menu_with_error(
+                            feedback.message(),
+                        ))));
                         last_state = Some(TrayState::Error);
                         last_status = None;
                     }
 
                     warn!("gateway unavailable: {reason}");
+                }
+                PollResult::ActionResult(message) => {
+                    feedback.record(message);
+                    let next_menu = if let Some(status) = last_status.as_mut() {
+                        feedback.apply(status);
+                        menu::build_menu(status)
+                    } else {
+                        menu::build_unavailable_menu_with_error(feedback.message())
+                    };
+                    tray.set_menu(Some(Box::new(next_menu)));
                 }
             }
         }
@@ -308,7 +324,13 @@ async fn async_worker(
                 }
             }
             Some(action) = action_rx.recv() => {
-                dispatch_action(&client, action).await;
+                if let Some(result) = dispatch_action(&client, action).await {
+                    let message = result.err().map(|error| {
+                        error!(%error, "tray action failed");
+                        format!("Action failed: {error}")
+                    });
+                    let _ = poll_tx.send(PollResult::ActionResult(message));
+                }
                 // After an action, trigger an immediate status poll to update UI
                 poll_interval.reset(); // Optional: reset interval if we want to delay next poll
                 // OR just poll immediately:
@@ -320,12 +342,12 @@ async fn async_worker(
     }
 }
 
-async fn dispatch_action(client: &GatewayClient, action: Action) {
+async fn dispatch_action(client: &GatewayClient, action: Action) -> Option<Result<()>> {
     info!(action = ?action, "dispatching tray action");
     let result = match &action {
         Action::Connect(id) => {
             launch_ui(Some(id));
-            return;
+            return None;
         }
         Action::Stop(id) => {
             let r = client.stop_vm(id).await;
@@ -355,22 +377,20 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
         Action::NewSession => {
             info!("opening the new session launcher");
             launch_ui(None);
-            return;
+            return None;
         }
         Action::Save(id) => {
             launch_ui_action(id, "save");
-            return;
+            return None;
         }
         Action::Fork(id) => {
             launch_ui_action(id, "fork");
-            return;
+            return None;
         }
-        Action::OpenUi | Action::StartService | Action::Quit => return,
+        Action::OpenUi | Action::StartService | Action::Quit => return None,
     };
 
-    if let Err(e) = result {
-        error!(error = %e, "action {action:?} failed");
-    }
+    Some(result)
 }
 
 fn launch_ui(vm_id: Option<&str>) {

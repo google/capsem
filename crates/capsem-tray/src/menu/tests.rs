@@ -50,6 +50,24 @@ fn incompatible_session_shows_only_advertised_delete_and_its_error() {
     assert!(items.iter().any(|entry| matches!(entry, MenuEntry::Item { label, enabled: false, .. } if label.contains("runtime is incompatible"))));
 }
 
+#[test]
+fn action_feedback_preserves_session_update_and_disconnected_truth() {
+    let mut status = make_status(vec![named_vm("box", "display", "running")]);
+    status.action_error = Some("Resume failed: checkpoint incompatible".into());
+    status.update_error = Some("updates unavailable".into());
+    let spec = menu_spec(&status);
+    assert!(collect_ids(&spec).contains(&"connect:box".into()));
+    assert!(collect_ids(&spec).contains(&"updates".into()));
+    assert!(spec.iter().any(|entry| matches!(entry, MenuEntry::Item { id, label, enabled: false } if id == "action-error" && label.contains("checkpoint incompatible"))));
+    status.service = "unavailable".into();
+    let disconnected = menu_spec(&status);
+    assert!(!collect_ids(&disconnected).contains(&"connect:box".into()));
+    assert!(matches!(&disconnected[0], MenuEntry::Item { label, .. } if label == "Disconnected"));
+    assert!(collect_ids(&disconnected).contains(&"action-error".into()));
+    status.action_error = None;
+    assert!(!collect_ids(&menu_spec(&status)).contains(&"action-error".into()));
+}
+
 fn make_status(vms: Vec<VmSummary>) -> StatusResponse {
     let vm_count = vms.len() as u32;
     StatusResponse {
@@ -59,6 +77,7 @@ fn make_status(vms: Vec<VmSummary>) -> StatusResponse {
         latency_ms: Some(5),
         updates: None,
         update_error: None,
+        action_error: None,
     }
 }
 
@@ -71,6 +90,7 @@ fn make_service_status(service: &str, vms: Vec<VmSummary>) -> StatusResponse {
         latency_ms: Some(5),
         updates: None,
         update_error: None,
+        action_error: None,
     }
 }
 

@@ -193,12 +193,13 @@ async fn spawn_http_probe(
     match_method: &'static str,
     match_path: &'static str,
     status: u16,
-    body: &'static str,
+    body: &str,
 ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let captures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let captures_clone = Arc::clone(&captures);
+    let body = body.to_owned();
 
     let handle = tokio::spawn(async move {
         // Serve a single connection.
@@ -213,7 +214,7 @@ async fn spawn_http_probe(
             let first_line = req.lines().next().unwrap_or("");
             let matches = first_line.starts_with(&format!("{match_method} {match_path} "));
             let (code, reason, resp_body) = if matches {
-                (status, if status == 200 { "OK" } else { "NO" }, body)
+                (status, if status == 200 { "OK" } else { "NO" }, body.as_str())
             } else {
                 (500, "ERR", "mismatch")
             };
@@ -422,6 +423,28 @@ async fn start_vm_uses_advertised_start_endpoint_and_gateway_auth() {
     handle.await.unwrap();
     assert!(captures.lock().unwrap()[0].starts_with("POST /vms/opaque-id/start "));
     assert_eq!(captured_auth(&captures).as_deref(), Some("Bearer fixture-token"));
+}
+
+#[tokio::test]
+async fn refused_action_keeps_readable_error_but_redacts_gateway_credentials() {
+    let body = r#"{"error":"Checkpoint incompatible; token fixture-secret must not appear"}"#;
+    let (base, _, handle) = spawn_http_probe("POST", "/vms/box/resume", 409, body).await;
+    let client = GatewayClient::new_with_base_url(base, "fixture-secret".into());
+    let error = client.resume_vm("box").await.unwrap_err().to_string();
+    handle.await.unwrap();
+    assert!(error.contains("409") && error.contains("Checkpoint incompatible"));
+    assert!(!error.contains("fixture-secret"));
+}
+
+#[tokio::test]
+async fn oversized_error_body_is_not_rendered_as_action_feedback() {
+    let body = serde_json::json!({"error": "x".repeat(8192)}).to_string();
+    let (base, _, handle) = spawn_http_probe("POST", "/vms/box/stop", 500, &body).await;
+    let client = GatewayClient::new_with_base_url(base, "fixture-secret".into());
+    let error = client.stop_vm("box").await.unwrap_err().to_string();
+    handle.await.unwrap();
+    assert!(error.contains("500"));
+    assert!(error.len() < 100);
 }
 
 #[test]

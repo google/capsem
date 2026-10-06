@@ -36,7 +36,7 @@ pub(crate) enum MenuEntry {
 /// Compute the menu structure for a gateway status response.
 pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
     if !service_available(status) {
-        return unavailable_spec();
+        return unavailable_spec_with_error(status.action_error.as_deref());
     }
 
     let mut entries = Vec::new();
@@ -50,6 +50,7 @@ pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
     if let Some(entry) = update_menu_entry(status) {
         entries.push(entry);
     }
+    add_feedback(&mut entries, status.action_error.as_deref());
     entries.push(MenuEntry::Separator);
 
     if !status.vms.is_empty() {
@@ -267,6 +268,27 @@ pub(crate) fn unavailable_spec() -> Vec<MenuEntry> {
     ]
 }
 
+fn add_feedback(entries: &mut Vec<MenuEntry>, message: Option<&str>) {
+    if let Some(message) = message {
+        let label = message
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(160)
+            .collect();
+        entries.push(MenuEntry::Item {
+            id: "action-error".into(),
+            label,
+            enabled: false,
+        });
+    }
+}
+
+pub(crate) fn unavailable_spec_with_error(message: Option<&str>) -> Vec<MenuEntry> {
+    let mut entries = unavailable_spec();
+    add_feedback(&mut entries, message);
+    entries
+}
+
 pub(crate) fn service_available(status: &StatusResponse) -> bool {
     status.service.eq_ignore_ascii_case("running")
 }
@@ -308,6 +330,10 @@ pub fn build_menu(status: &StatusResponse) -> Menu {
 /// Build a minimal menu for when the gateway is unreachable.
 pub fn build_unavailable_menu() -> Menu {
     render_menu(&unavailable_spec())
+}
+
+pub fn build_unavailable_menu_with_error(message: Option<&str>) -> Menu {
+    render_menu(&unavailable_spec_with_error(message))
 }
 
 /// Parse a MenuId string into an Action.

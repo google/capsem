@@ -3,6 +3,13 @@ use reqwest::header::{HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
 use tracing::debug;
 
+const ERROR_BODY_LIMIT: usize = 4096;
+
+#[derive(Deserialize)]
+struct GatewayError {
+    error: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[allow(dead_code)]
 pub struct StatusResponse {
@@ -18,6 +25,9 @@ pub struct StatusResponse {
     pub updates: Option<UpdateStatusResponse>,
     #[serde(skip)]
     pub update_error: Option<String>,
+    /// Client-owned action feedback, never service or ledger state.
+    #[serde(skip)]
+    pub action_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -163,10 +173,7 @@ impl GatewayClient {
             .await
             .context("gateway request failed")?;
 
-        if !resp.status().is_success() {
-            bail!("gateway returned {}", resp.status());
-        }
-        Ok(resp)
+        self.checked(resp).await
     }
 
     async fn post(&self, path: &str) -> Result<reqwest::Response> {
@@ -178,10 +185,7 @@ impl GatewayClient {
             .await
             .context("gateway request failed")?;
 
-        if !resp.status().is_success() {
-            bail!("gateway returned {}", resp.status());
-        }
-        Ok(resp)
+        self.checked(resp).await
     }
 
     async fn delete_req(&self, path: &str) -> Result<reqwest::Response> {
@@ -193,10 +197,47 @@ impl GatewayClient {
             .await
             .context("gateway request failed")?;
 
-        if !resp.status().is_success() {
-            bail!("gateway returned {}", resp.status());
+        self.checked(resp).await
+    }
+
+    async fn checked(&self, mut response: reqwest::Response) -> Result<reqwest::Response> {
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
         }
-        Ok(resp)
+        if response
+            .content_length()
+            .is_some_and(|size| size > ERROR_BODY_LIMIT as u64)
+        {
+            bail!("gateway returned {status}");
+        }
+        let decoded = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let mut body = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                if chunk.len() > ERROR_BODY_LIMIT.saturating_sub(body.len()) {
+                    return Ok(None);
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok::<_, reqwest::Error>(serde_json::from_slice::<GatewayError>(&body).ok())
+        })
+        .await;
+        if let Ok(Ok(Some(error))) = decoded {
+            let message = if self.token.is_empty() {
+                error.error
+            } else {
+                error.error.replace(&self.token, "[redacted]")
+            };
+            let message = message
+                .chars()
+                .filter(|character| !character.is_control())
+                .take(512)
+                .collect::<String>();
+            if !message.is_empty() {
+                bail!("gateway returned {status}: {message}");
+            }
+        }
+        bail!("gateway returned {status}")
     }
 
     pub async fn status(&self) -> Result<StatusResponse> {
