@@ -373,6 +373,7 @@ fn agy_google_tool_call_survives_into_ledger_counters() {
 
 #[test]
 fn openai_non_streaming_tool_call_carries_request_trace() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
     let _trace_guard = EnvGuard::trace_only("feedfacecafebeef");
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.domain = "127.0.0.1".into();
