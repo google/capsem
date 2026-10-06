@@ -125,6 +125,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   6.9 are replaced with the symbols that exist. The kernel build now fails,
   naming the option, whenever the kernel did not honor a pinned option.
 
+- All four sites resolve `smol-toml` 1.9.0 instead of 1.7.1
+  (GHSA-r4xh-jqrq-34v2: quadratic-time parse on long documents).
+
+- The build system and Python SDK resolve `multidict` 6.9.1 instead of
+  6.8.0 (GHSA-54p9-h82j-f925: reference leak in items-view set
+  operations).
+
+- The documentation site forces `katex` 0.18 under mermaid, whose newest
+  release still asks for 0.16 (GHSA-238p-pmpm-9mq7: prototype pollution
+  bypasses KaTeX trust restrictions). The built site bundles neither.
+
+- The dashboard and documentation sites resolve `postcss-selector-parser`
+  7.1.6 instead of 6.1.4 (GHSA-rj75-hqrm-r3gf: quadratic flat-selector
+  parsing lets hostile CSS exhaust the CPU).
+
+- The npm MCP server resolves `proxy-addr` 2.0.8 instead of 2.0.7
+  (GHSA-jqcg-44mw-7w3h: an IPv4-mapped IPv6 trust subnet trusted spoofed
+  `X-Forwarded-For` hops).
+
+- The SDK, MCP server, dashboard, documentation, marketing and
+  release-channel sites resolve `source-map-js` 1.2.2 instead of 1.2.1
+  (GHSA-68fv-2mgg-jv7q: an indexed source map could block the event loop).
+
 - A guest could make the host walk arbitrary host directories on every
   `/vms/<id>/info` for a stopped persistent VM. The session disk-usage walk
   checked each entry without following links but then read directories by
