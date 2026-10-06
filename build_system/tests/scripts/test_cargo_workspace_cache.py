@@ -13,9 +13,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from capsem_builder.gate.config import load
-from capsem_builder.gate.lifecycle import held
-from capsem_builder.gate.locks import ExclusiveLock
+from capsem_builder.gate import boundedlease
 from helpers.bounded import bounded
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -174,7 +172,7 @@ def test_a_workspace_unit_is_served_from_sccache_on_a_second_build(tmp_path: Pat
         pytest.skip("needs sccache and rustc")
     compiler = Path(rustc.stdout.strip()) / "bin/rustc"
     short = Path(tempfile.mkdtemp(prefix="sccache-", dir="/tmp"))  # a socket path is short
-    with held(ExclusiveLock.for_gate(load(ROOT), purpose="native workspace sccache probe", announce=print)):
+    with boundedlease.leased(["cargo", "build"], ROOT, os.environ):
         _check_native_cache_hit(tmp_path, short, sccache, compiler)
 
 
