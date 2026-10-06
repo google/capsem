@@ -13,7 +13,7 @@ pub type EffectFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 /// exit, setup retirement, session cleanup and generation-scoped grant
 /// revocation. Reconcile must retire interrupted setup before reporting absence.
 pub trait Effects: Send + Sync {
-    fn create(&self, ticket: Ticket, cancel: CancellationToken) -> EffectFuture<VmBinding>;
+    fn create(&self, ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding>;
     fn cleanup(&self, ticket: Ticket, binding: VmBinding) -> EffectFuture<()>;
     fn reconcile(&self, ticket: Ticket) -> EffectFuture<Option<VmBinding>>;
 }
@@ -75,6 +75,43 @@ struct Work {
     created: watch::Sender<Option<ControlResult<Snapshot>>>,
     deadline: watch::Sender<tokio::time::Instant>,
     cleanup: Mutex<Option<watch::Sender<Option<ControlResult<Snapshot>>>>>,
+}
+
+impl Work {
+    fn remember_binding(&self, binding: VmBinding) -> ControlResult<()> {
+        let mut known = self.binding.lock().map_err(|_| Failure::RecoveryPending)?;
+        if known.as_ref().is_some_and(|original| original != &binding) {
+            return Err(Failure::CreationFailed);
+        }
+        *known = Some(binding);
+        drop(known);
+        Ok(())
+    }
+}
+
+/// A trusted service effect reports the actual VM after registration and
+/// before workload readiness. This handle contains no ownership capability.
+#[derive(Clone)]
+pub struct BindingReporter {
+    owner: Controller,
+    work: std::sync::Weak<Work>,
+    ticket: Ticket,
+}
+
+impl BindingReporter {
+    pub async fn registered(&self, binding: VmBinding) -> ControlResult<Snapshot> {
+        let work = self.work.upgrade().ok_or(Failure::RecoveryPending)?;
+        work.remember_binding(binding.clone())?;
+        let ticket = self.ticket.clone();
+        let snapshot = self
+            .owner
+            .io(move |registry| registry.bind_pending(&ticket, binding, LeaseClock::now()?))
+            .await?;
+        if snapshot.state == State::Closing {
+            work.cancel.cancel();
+        }
+        Ok(snapshot)
+    }
 }
 
 impl Controller {
@@ -230,17 +267,24 @@ impl Controller {
         let effects = Arc::clone(&work.effects);
         let effect_ticket = ticket.clone();
         let cancel = work.cancel.clone();
+        let reporter = BindingReporter {
+            owner: self.clone(),
+            work: Arc::downgrade(&work),
+            ticket: ticket.clone(),
+        };
         let created = bounded(self.0.bounds.create, async move {
-            effects.create(effect_ticket, cancel).await
+            effects.create(effect_ticket, cancel, reporter).await
         })
         .await;
         let result = match created {
-            Ok(binding) => {
-                *work.binding.lock().expect("worker binding lock poisoned") = Some(binding.clone());
-                let bind_ticket = ticket.clone();
-                self.io(move |registry| registry.bind_created(&bind_ticket, binding, LeaseClock::now()?))
-                    .await
-            }
+            Ok(binding) => match work.remember_binding(binding.clone()) {
+                Ok(()) => {
+                    let bind_ticket = ticket.clone();
+                    self.io(move |registry| registry.bind_created(&bind_ticket, binding, LeaseClock::now()?))
+                        .await
+                }
+                Err(error) => Err(error),
+            },
             Err(()) => {
                 let failed_ticket = ticket.clone();
                 let _result = self.io(move |registry| registry.creation_failed(&failed_ticket)).await;

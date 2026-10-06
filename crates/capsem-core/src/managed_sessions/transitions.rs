@@ -53,6 +53,16 @@ impl Registry {
 
     /// A late create result after close is bound for cleanup, never activated.
     pub fn bind_created(&self, ticket: &Ticket, binding: VmBinding, clock: LeaseClock) -> Result<Snapshot> {
+        self.bind_vm(ticket, binding, clock, true)
+    }
+
+    /// Registered VM ownership can become discoverable before its workload
+    /// is ready. Pending reports preserve Creating or an existing close intent.
+    pub(super) fn bind_pending(&self, ticket: &Ticket, binding: VmBinding, clock: LeaseClock) -> Result<Snapshot> {
+        self.bind_vm(ticket, binding, clock, false)
+    }
+
+    fn bind_vm(&self, ticket: &Ticket, binding: VmBinding, clock: LeaseClock, ready: bool) -> Result<Snapshot> {
         let _lease = self.lease()?;
         let mut record = self.ticket_record(ticket)?;
         ensure!(
@@ -67,7 +77,7 @@ impl Registry {
             self.expire_if_due(&mut record, clock, &mut deadlines)?;
         }
         record.vm = Some(binding);
-        if record.state == State::Creating {
+        if ready && record.state == State::Creating {
             record.state = State::Active;
         }
         self.write(&record)?;

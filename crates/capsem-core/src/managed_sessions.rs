@@ -250,9 +250,9 @@ impl Registry {
         }
         ensure!(
             match record.state {
-                State::Reserved | State::Creating | State::Closed => record.vm.is_none(),
+                State::Reserved | State::Closed => record.vm.is_none(),
                 State::Active => record.vm.is_some(),
-                State::Closing | State::Unknown => true,
+                State::Creating | State::Closing | State::Unknown => true,
             },
             "managed ownership state and VM binding disagree"
         );

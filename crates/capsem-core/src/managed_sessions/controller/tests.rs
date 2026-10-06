@@ -7,6 +7,8 @@ struct Fixture {
     cleanups: AtomicUsize,
     reconciles: AtomicUsize,
     fail_cleanup: AtomicBool,
+    report_pending: AtomicBool,
+    reporter: std::sync::Mutex<Option<BindingReporter>>,
     create_entered: Semaphore,
     create_release: Semaphore,
     cancelled: Semaphore,
@@ -22,6 +24,8 @@ impl Fixture {
             cleanups: AtomicUsize::new(0),
             reconciles: AtomicUsize::new(0),
             fail_cleanup: AtomicBool::new(false),
+            report_pending: AtomicBool::new(false),
+            reporter: std::sync::Mutex::new(None),
             create_entered: Semaphore::new(0),
             create_release: Semaphore::new(0),
             cancelled: Semaphore::new(0),
@@ -33,10 +37,17 @@ impl Fixture {
 }
 
 impl Effects for Arc<Fixture> {
-    fn create(&self, _ticket: Ticket, cancel: CancellationToken) -> EffectFuture<VmBinding> {
+    fn create(&self, _ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding> {
         let fixture = Arc::clone(self);
         Box::pin(async move {
             fixture.creates.fetch_add(1, Ordering::SeqCst);
+            if fixture.report_pending.load(Ordering::SeqCst) {
+                assert_eq!(
+                    reporter.registered(fixture.binding.clone()).await?.state(),
+                    State::Creating
+                );
+                *fixture.reporter.lock().unwrap() = Some(reporter);
+            }
             fixture.create_entered.add_permits(1);
             tokio::select! {
                 permit = fixture.create_release.acquire() => permit.unwrap().forget(),
@@ -65,6 +76,64 @@ impl Effects for Arc<Fixture> {
         self.reconciles.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok(None) })
     }
+}
+
+#[tokio::test]
+async fn pending_vm_is_discoverable_immutable_and_closed_only_after_setup_retires() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = controller(&root.path().join("ownership"));
+    let fixture = Fixture::new();
+    fixture.report_pending.store(true, Ordering::SeqCst);
+    let request = Uuid::new_v4();
+    let cap = Capability::from_bytes([29; 32]);
+    let create = {
+        let owner = owner.clone();
+        let cap = cap.clone();
+        let effects = effects(&fixture);
+        tokio::spawn(async move {
+            owner
+                .create(
+                    request,
+                    cap,
+                    LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+                    effects,
+                )
+                .await
+        })
+    };
+    fixture.create_entered.acquire().await.unwrap().forget();
+    let pending = owner.claim(request, cap.clone()).await.unwrap();
+    assert_eq!(pending.state(), State::Creating);
+    assert_eq!(pending.vm(), Some(&fixture.binding));
+    let reporter = fixture.reporter.lock().unwrap().clone().unwrap();
+    let different = VmBinding::new(fixture.binding.id().into(), Uuid::new_v4()).unwrap();
+    assert!(reporter.registered(different).await.is_err());
+    assert_eq!(
+        owner.inspect(request, cap.clone()).await.unwrap().unwrap().vm(),
+        Some(&fixture.binding)
+    );
+    let close = {
+        let owner = owner.clone();
+        let cap = cap.clone();
+        tokio::spawn(async move { owner.close(request, cap).await })
+    };
+    fixture.cancelled.acquire().await.unwrap().forget();
+    assert_eq!(
+        reporter.registered(fixture.binding.clone()).await.unwrap().state(),
+        State::Closing
+    );
+    assert!(!close.is_finished());
+    fixture.create_release.add_permits(1);
+    fixture.cleanup_entered.acquire().await.unwrap().forget();
+    assert!(!close.is_finished());
+    fixture.cleanup_release.add_permits(1);
+    let closed = close.await.unwrap().unwrap();
+    let created = create.await.unwrap().unwrap();
+    assert_eq!(created.state(), State::Closing);
+    assert_eq!(closed.state(), State::Closed);
+    assert_eq!(closed.generation(), pending.generation());
+    assert!(reporter.registered(fixture.binding.clone()).await.is_err());
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
