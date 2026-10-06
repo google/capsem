@@ -30,6 +30,7 @@ from capsem_builder.gate import preflight
 from capsem_builder.gate.cachetooling import CompilerCache
 from capsem_builder.gate.plan import Plan
 from capsem_builder.gate.reaper import StaleProcesses
+from capsem_builder.gate.tools.ci.reap_stale_processes import reap
 from helpers.gate import RecordingRunner
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -186,3 +187,26 @@ def test_asking_what_a_plan_would_do_reaps_nothing() -> None:
     assert runner.observing
     StaleProcesses(CONFIG, runner).acquire()
     assert not runner.commands
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux exposes an unreaped foreign child as a zombie")
+def test_a_terminated_foreign_child_is_not_a_surviving_server(tmp_path: Path) -> None:
+    # Unlike our own subprocess, a daemon's parent can still be alive without
+    # waiting on it. psutil.wait_procs then reports its zombie as alive.
+    parent = subprocess.Popen(
+        [sys.executable, "-u", "-c",
+         "import subprocess,time; child=subprocess.Popen(['sleep','60']); "
+         "print(child.pid,flush=True); time.sleep(60); child.wait()"],
+        stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        assert parent.stdout is not None
+        child = psutil.Process(int(parent.stdout.readline()))
+        survivors = reap([(child, tmp_path / "sccache.sock")], grace_seconds=0.1)
+        assert child.status() == psutil.STATUS_ZOMBIE, "the foreign parent must retain the exited child"
+        assert survivors == [], "a dead zombie cannot execute or serve the compiler cache"
+    finally:
+        parent.terminate()
+        parent.wait(timeout=5)
+        if parent.stdout is not None:
+            parent.stdout.close()

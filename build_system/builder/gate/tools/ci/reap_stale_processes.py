@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import psutil
+from capsem_builder.gate.processstop import is_live
 
 
 def _socket_of(proc: psutil.Process, program: str, variable: str) -> Path | None:
@@ -55,11 +56,12 @@ def reap(servers: list[tuple[psutil.Process, Path]], grace_seconds: float) -> li
             print(f"reaping stale {proc.name()} pid {proc.pid}, up {now - proc.create_time():.0f}s, for {socket}")
             proc.terminate()
     _, alive = psutil.wait_procs([proc for proc, _ in servers], timeout=grace_seconds)
+    alive = [proc for proc in alive if is_live(proc)]
     for proc in alive:
         with contextlib.suppress(psutil.Error):
             proc.kill()
     _, alive = psutil.wait_procs(alive, timeout=grace_seconds)
-    return alive
+    return [proc for proc in alive if is_live(proc)]
 
 
 def main(argv: list[str] | None = None) -> int:
