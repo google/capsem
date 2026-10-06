@@ -820,8 +820,14 @@ def test_profile_release_deploys_generated_preview_only_when_activation_ready() 
     assert "path: cache/target/release/distribution/" in publish
     assert "if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}" in publish
 
+    # A bare condition gets GitHub's implicit success(), which needs every job
+    # upstream to have succeeded -- and one of build-assets/reuse-assets is
+    # always skipped. Every profile release published its assets and then
+    # skipped this activation, so a profile only went live with the next
+    # binary release. The condition names its own status instead.
     assert (
-        "if: ${{ inputs.dry_run == false && "
+        "if: ${{ !cancelled() && inputs.dry_run == false && "
+        "needs.publish-profile-release.result == 'success' && "
         "needs.publish-profile-release.outputs.release_needed == 'true' && "
         "needs.publish-profile-release.outputs.activation_ready == 'true' }}" in deploy_channel
     )

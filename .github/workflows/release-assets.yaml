@@ -817,7 +817,10 @@ jobs:
 
   deploy-channel:
     needs: publish-profile-release
-    if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.release_needed == 'true' && needs.publish-profile-release.outputs.activation_ready == 'true' }}
+    # Without a status function GitHub adds success(), which needs every
+    # upstream job to succeed; one of build-assets/reuse-assets is always
+    # skipped, so this activation never ran.
+    if: ${{ !cancelled() && inputs.dry_run == false && needs.publish-profile-release.result == 'success' && needs.publish-profile-release.outputs.release_needed == 'true' && needs.publish-profile-release.outputs.activation_ready == 'true' }}
     permissions:
       actions: read
       contents: read

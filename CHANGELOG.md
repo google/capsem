@@ -252,6 +252,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A profile release now goes live on its own. Its activation job had no
+  status guard, so GitHub's implicit success() skipped it whenever an
+  upstream job was skipped, which is every run: profiles were published but
+  only activated by the next binary release. Co-work advances to 0.6.5,
+  since 0.6.4 was published that way and releases are immutable.
+
 - The post-publication live-install proof fetches the channel manifest
   itself. It was handed `/tmp/verify/manifest.json`, which no step wrote
   any more, so it failed on every release before reaching the install.
