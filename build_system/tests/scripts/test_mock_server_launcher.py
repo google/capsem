@@ -12,12 +12,16 @@ from pathlib import Path
 from typing import cast
 from urllib.request import Request, urlopen
 
+from build_system.tests.helpers import mock_server as mock_server_launcher
+from helpers.constants import host_bin_root
 from helpers.mock_server import (
     start_mock_server,
     stop_process,
 )
 
-from build_system.tests.helpers import mock_server as mock_server_launcher
+
+def test_mock_server_binary_uses_the_shared_or_selected_package_owner() -> None:
+    assert host_bin_root() / "capsem-mock-server" == mock_server_launcher.MOCK_SERVER_BINARY
 
 
 def test_mock_server_freshness_tracks_the_shared_parent_guard() -> None:
