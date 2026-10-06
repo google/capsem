@@ -320,9 +320,21 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         digest: requested.identity.digest().map(ToString::to_string),
     };
     let uds_path = running_uds_path(state, id).map_err(|error| error.1)?;
-    wait_for_vm_ready(&uds_path, 30, Some(state), Some(id))
-        .await
-        .map_err(|error| format!("container owner did not become ready: {error}"))?;
+    // Admission and staging are host work. The launched owner has its
+    // security context and ledger; guest readiness is needed only to exec.
+    use crate::vm_files::launch::{wait_for_launch, LaunchWait};
+    match wait_for_launch(
+        &uds_path.with_extension("ready"),
+        &uds_path.with_extension("launched"),
+        || state.instances.lock().unwrap().contains_key(id),
+        std::time::Duration::from_secs(30),
+    )
+    .await
+    {
+        LaunchWait::Ready | LaunchWait::Launched => {}
+        LaunchWait::Crashed => return Err("container owner exited before launch".into()),
+        LaunchWait::TimedOut => return Err("container owner did not launch within 30s".into()),
+    }
     match send_ipc_command(&uds_path, admission, Some(5)).await? {
         ProcessToService::ContainerPullAdmission { error: None, .. } => {}
         ProcessToService::ContainerPullAdmission {
@@ -391,6 +403,9 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         stage_file(state, id, file).await?;
     }
 
+    wait_for_vm_ready(&uds_path, 30, Some(state), Some(id))
+        .await
+        .map_err(|error| format!("container guest did not become ready: {error}"))?;
     if attach {
         // A `container` stream starts it; the launch record is written then.
         state
@@ -568,7 +583,10 @@ pub(crate) async fn wait_for_create(
     wait_observed(
         state,
         id,
-        capsem_foundation::poll::PollOpts::new("container-create-ready", CREATE_READY_TIMEOUT),
+        capsem_foundation::poll::PollOpts {
+            label: "container-create-ready",
+            ..vm_ready_poll_opts(CREATE_READY_TIMEOUT.as_secs())
+        },
     )
     .await
 }
@@ -733,7 +751,8 @@ async fn stage_file(state: &Arc<ServiceState>, id: &str, file: stage::StagedFile
     let (parent, name) = resolve_workspace_target(state, id, &path, true).map_err(|e| e.1)?;
     let preview = file_security_preview_bytes(&file.bytes);
     let size = file.bytes.len() as u64;
-    if log_file_boundary(state, id, FileBoundaryAction::Import, path, preview, size, None)
+    let uds_path = running_uds_path(state, id).map_err(|e| e.1)?;
+    if log_file_boundary_on_owner(state, &uds_path, FileBoundaryAction::Import, path, preview, size, None)
         .await
         .map_err(|e| e.1)?
         .is_some()

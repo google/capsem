@@ -28,7 +28,7 @@ use capsem_foundation::poll::{poll_until, PollOpts};
 pub(super) const LAUNCH_CEILING: Duration = Duration::from_millis(500);
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum LaunchWait {
+pub(crate) enum LaunchWait {
     /// The guest handshake already completed.
     Ready,
     /// The VM is running and the process answers IPC.
@@ -43,7 +43,7 @@ pub(super) enum LaunchWait {
 /// `still_alive` reports whether the instance is still registered; it is
 /// consulted only when neither sentinel exists so a crash after launch
 /// (which exec surfaces) does not turn a successful create into an error.
-pub(super) async fn wait_for_launch(
+pub(crate) async fn wait_for_launch(
     ready_path: &Path,
     launched_path: &Path,
     still_alive: impl Fn() -> bool,

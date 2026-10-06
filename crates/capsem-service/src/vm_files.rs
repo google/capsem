@@ -4,10 +4,12 @@ pub(super) use crate::sandbox_info::handle_list;
 pub(crate) use provision::{handle_provision, provision_failure};
 
 mod diagnostics;
-mod launch;
+pub(crate) mod launch;
 mod storage;
 pub(crate) use storage::storage_diagnostics;
 mod exec;
+mod file_boundary;
+pub(super) use file_boundary::{log_file_boundary, log_file_boundary_on_owner};
 mod fork;
 mod ipc_command;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
@@ -444,51 +446,6 @@ pub(super) fn active_instance_uds_path(state: &Arc<ServiceState>, id: &str) -> R
             "file import/export requires a running sandbox security ledger".into(),
         )
     })
-}
-
-pub(super) async fn log_file_boundary(
-    state: &Arc<ServiceState>,
-    sandbox_id: &str,
-    action: FileBoundaryAction,
-    path: String,
-    data_preview: Vec<u8>,
-    size: u64,
-    mime_type: Option<String>,
-) -> Result<Option<Vec<u8>>, AppError> {
-    let uds_path = active_instance_uds_path(state, sandbox_id)?;
-    wait_for_vm_ready(&uds_path, 30, Some(state), Some(sandbox_id))
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let id = state.next_job_id();
-    let res = send_ipc_command(
-        &uds_path,
-        ServiceToProcess::LogFileBoundary {
-            id,
-            action,
-            path,
-            data: data_preview,
-            size,
-            mime_type,
-        },
-        Some(5),
-    )
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    match res {
-        ProcessToService::LogFileBoundaryResult {
-            success: true, data, ..
-        } => Ok(data),
-        ProcessToService::LogFileBoundaryResult { error, .. } => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error.unwrap_or_else(|| "failed to log file boundary".into()),
-        )),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response for file boundary log".into(),
-        )),
-    }
 }
 
 pub(super) async fn handle_download_file(

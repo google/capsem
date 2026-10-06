@@ -116,7 +116,7 @@ fn fixture(images: FixtureImages) -> Fixture {
 }
 
 #[tokio::test]
-async fn pull_admission_waits_for_the_vm_owner_readiness_barrier() {
+async fn pull_admission_waits_for_the_vm_owner_launch_barrier() {
     let access = Arc::new(Mutex::new(None));
     let fx = fixture(FixtureImages {
         access: Arc::clone(&access),
@@ -142,18 +142,19 @@ async fn pull_admission_waits_for_the_vm_owner_readiness_barrier() {
     tokio::time::sleep(std::time::Duration::from_millis(75)).await;
     assert!(
         !owner.is_finished(),
-        "admission reached the owner before its ready sentinel"
+        "admission reached the owner before its launch sentinel"
     );
     assert!(
         access.lock().unwrap().is_none(),
         "the registry was contacted before owner readiness"
     );
 
-    std::fs::write(&ready_path, b"1\n").unwrap();
+    std::fs::write(fx.uds_path.with_extension("launched"), b"1\n").unwrap();
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Failed).await;
     owner.await.unwrap();
     assert!(status.error.as_deref().unwrap().contains("blocked after readiness"));
     assert!(access.lock().unwrap().is_none());
+    assert!(!ready_path.exists(), "host admission does not require a running guest");
 }
 
 fn images() -> FixtureImages {
@@ -164,6 +165,99 @@ fn images() -> FixtureImages {
         labels: None,
         catalog_reads: Default::default(),
     }
+}
+
+#[tokio::test]
+async fn admitted_pull_progresses_while_the_guest_is_still_booting() {
+    let access = Arc::new(Mutex::new(None));
+    let gate = Arc::new(Notify::new());
+    let fx = fixture(FixtureImages {
+        access: Arc::clone(&access),
+        gate: Some(gate),
+        ..images()
+    });
+    let owner = spawn_fake_process(&fx.uds_path, 1, |message| {
+        let ServiceToProcess::AdmitContainerPull { id, .. } = message else {
+            panic!("unexpected request before guest readiness: {message:?}");
+        };
+        let id = *id;
+        Box::pin(async move {
+            Some(ProcessToService::ContainerPullAdmission {
+                id,
+                error: None,
+                policy_refused: false,
+            })
+        })
+    });
+    std::fs::remove_file(fx.uds_path.with_extension("ready")).unwrap();
+    std::fs::write(fx.uds_path.with_extension("launched"), b"1\n").unwrap();
+    start(&fx.state, "box".into(), spec(None));
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while access.lock().unwrap().is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("host-admitted image pull must overlap guest boot");
+    assert!(!fx.uds_path.with_extension("ready").exists());
+    owner.await.unwrap();
+    fx.state.containers.cancel("box");
+}
+
+#[tokio::test]
+async fn staged_workload_waits_for_guest_readiness_before_launching() {
+    let fx = fixture(images());
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let ready = fx.uds_path.with_extension("ready");
+    std::fs::remove_file(&ready).unwrap();
+    std::fs::write(fx.uds_path.with_extension("launched"), b"1\n").unwrap();
+    start(&fx.state, "box".into(), spec(None));
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !fx.workspace.join(".capsem-image/launch.py").exists() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("control files must be staged during guest boot");
+    tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+    assert!(!owner.is_finished(), "guest exec ran before its ready sentinel");
+    assert_eq!(
+        fx.state.containers.status("box").unwrap().state,
+        ContainerState::Staging
+    );
+    std::fs::write(ready, b"1\n").unwrap();
+    owner.await.unwrap();
+    wait_for(&fx.state, "box", |status| status.state == ContainerState::Starting).await;
+}
+
+#[tokio::test]
+async fn an_import_refused_during_boot_writes_no_staged_control_bytes() {
+    let fx = fixture(images());
+    let owner = spawn_fake_process(&fx.uds_path, 2, |message| {
+        let reply = match message {
+            ServiceToProcess::AdmitContainerPull { id, .. } => ProcessToService::ContainerPullAdmission {
+                id: *id,
+                error: None,
+                policy_refused: false,
+            },
+            ServiceToProcess::LogFileBoundary { id, .. } => ProcessToService::LogFileBoundaryResult {
+                id: *id,
+                success: false,
+                data: None,
+                error: Some("stage import refused".into()),
+            },
+            other => panic!("unexpected request during refused staging: {other:?}"),
+        };
+        Box::pin(async move { Some(reply) })
+    });
+    std::fs::remove_file(fx.uds_path.with_extension("ready")).unwrap();
+    std::fs::write(fx.uds_path.with_extension("launched"), b"1\n").unwrap();
+    start(&fx.state, "box".into(), spec(None));
+    let status = wait_for(&fx.state, "box", |status| status.state == ContainerState::Failed).await;
+    owner.await.unwrap();
+    assert!(status.error.as_deref().unwrap().contains("stage import refused"));
+    assert!(!fx.workspace.join(".capsem-image/options.json").exists());
+    assert!(!fx.workspace.join(".capsem-image/launch.py").exists());
 }
 
 #[tokio::test]
@@ -191,6 +285,27 @@ async fn create_wait_uses_shared_exponential_polling_until_running() {
     .unwrap();
     update.await.unwrap();
     assert_eq!(status.state, ContainerState::Running);
+}
+
+#[tokio::test(start_paused = true)]
+async fn create_observes_readiness_without_a_half_second_backoff() {
+    let fx = fixture(images());
+    let generation = fx.state.containers.begin("box", "registry.example/app:1");
+    let state = Arc::clone(&fx.state);
+    let ready_at = tokio::time::Instant::now() + std::time::Duration::from_millis(800);
+    let update = tokio::spawn(async move {
+        tokio::time::sleep_until(ready_at).await;
+        state
+            .containers
+            .advance("box", generation, |status| status.state = ContainerState::Running);
+    });
+    let status = wait_for_create(&fx.state, "box").await.unwrap();
+    update.await.unwrap();
+    assert_eq!(status.state, ContainerState::Running);
+    assert!(
+        tokio::time::Instant::now() - ready_at <= std::time::Duration::from_millis(50),
+        "local workload readiness must be observed within the VM readiness poll budget"
+    );
 }
 
 #[tokio::test]

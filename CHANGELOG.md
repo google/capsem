@@ -365,6 +365,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Container startup overlaps admitted image pulls and staging with guest boot,
+  while keeping security checks before registry access and file writes and
+  guest readiness before workload launch. Create observes a ready workload
+  with the existing VM polling budget instead of a half-second backoff.
+
 - Linux x86 VM kernels initialize page metadata across the available CPUs,
   reducing cold boot time for the default 12 GiB VM. Initialization completes
   before guest userspace starts; VM resource defaults and isolation stay the same.
