@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The npm MCP server resolves `@modelcontextprotocol/sdk` 1.31.0 instead of
+  1.30.0 (GHSA-6qxp-vccf-f47h: its OAuth client could send credentials to
+  an authorization server chosen by the MCP server).
+
 - All four sites resolve `sharp` 0.35.5 instead of 0.35.4
   (GHSA-wq5f-xc86-pv6w: vulnerable bundled librsvg, CVE-2026-96889).
 
@@ -247,6 +251,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the VM owner or session ledger.
 
 ### Fixed
+
+- The post-publication live-install proof fetches the channel manifest
+  itself. It was handed `/tmp/verify/manifest.json`, which no step wrote
+  any more, so it failed on every release before reaching the install.
 
 - Profile releases can be stacked before the binary release that activates
   them, as RELEASE.md allows. A second profile release used to be refused
