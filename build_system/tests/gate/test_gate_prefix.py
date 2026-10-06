@@ -17,6 +17,7 @@ from.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -810,6 +811,29 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
         "cache/target/packages",
         "cache/target/tests/evidence",
     } <= exports
+
+
+@pytest.mark.parametrize("report", ["installed-evidence.json", "channel-transition-evidence/fresh-stable-winterfell.json"])
+def test_installed_proof_reports_survive_private_prefix_cleanup(tmp_path: Path, report: str) -> None:
+    from capsem_builder.gate import buildcache
+    from capsem_builder.gate import config as gate_config
+
+    checkout, private = tmp_path / "checkout", tmp_path / "private"
+    for root in (checkout, private):
+        (root / "config").mkdir(parents=True)
+        for name in ("cache.toml", "gate.toml"):
+            (root / "config" / name).write_bytes((PROJECT_ROOT / "config" / name).read_bytes())
+    config = gate_config.load(private)
+    relative = Path(config.install.layout.glowup_evidence) / report
+    original = private / relative
+    original.parent.mkdir(parents=True)
+    payload = b'{"proof":"opaque installed result"}\n'
+    original.write_bytes(payload)
+
+    buildcache.export(private, checkout, config)
+    shutil.rmtree(private)
+
+    assert (checkout / relative).read_bytes() == payload, "installed proof must outlive its private checkout"
 
 
 def test_the_built_binaries_are_every_host_binary() -> None:

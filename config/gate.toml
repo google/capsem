@@ -383,7 +383,7 @@ assets = "cache/target/tests/install/assets"
 channel = "cache/target/release/distribution/install-proof"
 packages = "cache/target/tests/install/packages"
 glowup = "cache/target/release/staging/local-glowup"
-glowup_evidence = "cache/target/release/staging/local-glowup-evidence"
+glowup_evidence = "cache/target/tests/evidence/installed"
 
 # Written by the container as its own user, and handed back on the way out.
 extra_owned_paths = ["build_system/release_site/node_modules", "build_system/release_site/dist"]
