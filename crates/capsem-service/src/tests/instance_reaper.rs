@@ -281,3 +281,41 @@ async fn an_already_replaced_child_cannot_claim_the_new_instance() {
     assert!(std::os::unix::net::UnixStream::connect(&uds_path).is_ok());
     drop(listener);
 }
+
+#[tokio::test]
+async fn stale_reaper_cannot_remove_replacement_with_the_same_pid() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = "same-pid-replacement";
+    let session_dir = state.run_dir.join("sessions").join(id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let uds_path = state.instance_socket_path(id).unwrap();
+    std::fs::create_dir_all(uds_path.parent().unwrap()).unwrap();
+    let child = tokio::process::Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    insert_fake_instance_with_session_dir(&state, id, pid, session_dir.clone());
+    let original = state.instances.lock().unwrap().get(id).unwrap().generation;
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.into(),
+        id.into(),
+        Arc::clone(&state),
+        uds_path.clone(),
+        session_dir.clone(),
+    );
+    // The current-thread runtime has not polled the reaper yet. Reusing the
+    // PID models the ABA that a PID comparison alone cannot distinguish.
+    insert_fake_instance_with_session_dir(&state, id, pid, session_dir);
+    let replacement = state.instances.lock().unwrap().get(id).unwrap().generation;
+    assert_ne!(original, replacement);
+    let listener = std::os::unix::net::UnixListener::bind(&uds_path).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.instances.lock().unwrap().get(id).unwrap().generation, replacement);
+    assert!(std::os::unix::net::UnixStream::connect(&uds_path).is_ok());
+    drop(listener);
+}

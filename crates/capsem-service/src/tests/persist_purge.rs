@@ -366,9 +366,15 @@ fn evicting_an_instance_hands_its_record_to_exactly_one_caller() {
     let state = make_test_state();
     insert_fake_instance(&state, "evicted-vm", 4242);
 
-    let evicted = state.evict_instance("evicted-vm").expect("instance was running");
+    let generation = state.instances.lock().unwrap().get("evicted-vm").unwrap().generation;
+    let evicted = state
+        .evict_instance("evicted-vm", generation)
+        .expect("instance was running");
     assert_eq!(evicted.id, "evicted-vm");
-    assert!(state.evict_instance("evicted-vm").is_none(), "eviction is idempotent");
+    assert!(
+        state.evict_instance("evicted-vm", generation).is_none(),
+        "eviction is idempotent"
+    );
 }
 
 #[test]

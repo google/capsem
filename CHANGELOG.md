@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Service shutdown and delayed child reapers bind cleanup to the original VM
+  spawn generation, preserving replacement instances even when IDs or PIDs
+  are reused.
+
 - Boot audit setup confirms kernel registration and fails if execve rules
   cannot be installed or locked, preventing false audit-readiness reports.
 

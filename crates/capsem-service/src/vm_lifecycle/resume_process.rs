@@ -222,6 +222,7 @@ impl ServiceState {
         instances.insert(
             vm_id.clone(),
             InstanceInfo {
+                generation: uuid::Uuid::new_v4(),
                 id: vm_id.clone(),
                 name: entry.name.clone(),
                 asset_pins: entry.asset_pins.clone(),

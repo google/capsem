@@ -247,8 +247,6 @@ pub(super) async fn shutdown_vm_process(
     id: &str,
     mode: ShutdownMode,
 ) -> Result<Option<(PathBuf, bool, u32)>, AppError> {
-    // A container setup must not keep pulling or staging into a VM going away.
-    state.containers.cancel(id);
     // Teardown must not overlap save/restore, but independent cold starts may.
     let _vz_guard = state.lifecycle.vz.read().await;
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
@@ -258,12 +256,18 @@ pub(super) async fn shutdown_vm_process(
     // See web/docs/src/content/docs/gotchas/serialized-vm-shutdown.md.
     let _shutdown_guard = state.shutdown_lock.lock().await;
 
-    let (uds_path, session_dir, pid, persistent) = {
+    let (uds_path, session_dir, pid, persistent, generation) = {
         let instances = state.instances.lock().unwrap();
         let Some(i) = instances.get(id) else {
             return Ok(None);
         };
-        let result = (i.uds_path.clone(), i.session_dir.clone(), i.pid, i.persistent);
+        let result = (
+            i.uds_path.clone(),
+            i.session_dir.clone(),
+            i.pid,
+            i.persistent,
+            i.generation,
+        );
         drop(instances);
         result
     };
@@ -271,10 +275,16 @@ pub(super) async fn shutdown_vm_process(
     // Claim before signalling. The watcher may already have claimed a process
     // which exited independently; otherwise this intentional shutdown owns
     // the record and the watcher must not preserve it as a crash.
-    let shutdown_claimed = claim_shutdown_instance(state, id);
+    let shutdown_claimed = claim_shutdown_instance(state, id, generation);
+    if !shutdown_claimed {
+        // A watcher or replacement owns this ID now. A stale observation has
+        // no authority over its workload, ledger, process or socket paths.
+        return Ok(None);
+    }
+    state.containers.cancel(id);
     state.unregister_session_db_handle(id);
 
-    if mode.retains_state() && shutdown_claimed {
+    if mode.retains_state() {
         // Send shutdown command via IPC (or SIGTERM as fallback).
         let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
         if let Ok(stream) = stream_res {
@@ -294,7 +304,7 @@ pub(super) async fn shutdown_vm_process(
         } else if pid > 0 {
             process_control::send_or_log(pid, process_control::Signal::Terminate, "vm-ipc-shutdown-fallback");
         }
-    } else if shutdown_claimed && pid > 0 {
+    } else if pid > 0 {
         // Destructive delete has no state to flush. SIGKILL also prevents the
         // ordinary signal handler from doing a full workspace reconciliation
         // whose output would be deleted immediately afterward.
@@ -319,10 +329,6 @@ pub(super) async fn shutdown_vm_process(
     }
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
-    if !shutdown_claimed {
-        tracing::debug!(id, "child watcher retained shutdown ownership");
-        return Ok(None);
-    }
     state
         .record_host_session_stopped(id, "stopped", mode.retains_state())
         .await

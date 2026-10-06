@@ -318,6 +318,7 @@ impl ServiceState {
         instances.insert(
             id.to_string(),
             InstanceInfo {
+                generation: uuid::Uuid::new_v4(),
                 id: id.to_string(),
                 name: name.to_string(),
                 asset_pins,

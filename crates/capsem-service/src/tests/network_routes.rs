@@ -218,7 +218,8 @@ async fn stopping_a_vm_keeps_its_membership_and_a_fork_has_none() {
     assert_ne!(fork.0.id, "fork-src");
 
     // Stopping evicts the instance; the membership is the VM's, not the run's.
-    assert!(state.evict_instance("fork-src").is_some());
+    let generation = state.instances.lock().unwrap().get("fork-src").unwrap().generation;
+    assert!(state.evict_instance("fork-src", generation).is_some());
     let (_, inspected) = route_request(app(&state), Method::GET, &format!("/networks/{id}"), None).await;
     assert_eq!(inspected["members"][0]["vm_id"], "fork-src", "{inspected}");
 }

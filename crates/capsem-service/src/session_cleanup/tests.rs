@@ -10,10 +10,10 @@ async fn failed_run_preservation_noops_when_watcher_wins_after_shutdown_snapshot
     std::fs::write(session_dir.join("process.log"), b"child exited with code 1").unwrap();
     insert_fake_instance_with_session_dir(&state, "code-1", 42, session_dir.clone());
 
-    let shutdown_snapshot = {
+    let (shutdown_snapshot, generation) = {
         let instances = state.instances.lock().unwrap();
         let info = instances.get("code-1").unwrap();
-        let snapshot = (info.session_dir.clone(), info.persistent, info.pid);
+        let snapshot = ((info.session_dir.clone(), info.persistent, info.pid), info.generation);
         drop(instances);
         snapshot
     };
@@ -32,7 +32,7 @@ async fn failed_run_preservation_noops_when_watcher_wins_after_shutdown_snapshot
     .await
     .unwrap();
 
-    let shutdown_claimed = claim_shutdown_instance(&state, "code-1");
+    let shutdown_claimed = claim_shutdown_instance(&state, "code-1", generation);
     assert!(!shutdown_claimed, "a stale snapshot is not shutdown ownership");
     let result = preserve_failed_run_shutdown_result(
         Arc::clone(&state),

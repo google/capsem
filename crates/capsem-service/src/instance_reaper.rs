@@ -23,6 +23,15 @@ pub(super) fn spawn_exit_reaper(
     session_dir: PathBuf,
 ) -> tokio::task::JoinHandle<()> {
     let pid = child.id();
+    // Registration precedes this call. Retain the spawn identity before the
+    // task can be delayed across an exit/replacement or PID reuse.
+    let generation = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(&id)
+        .filter(|instance| Some(instance.pid) == pid)
+        .map(|instance| instance.generation);
     tokio::spawn(async move {
         let exit_status = child.wait().await.ok();
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
@@ -34,7 +43,10 @@ pub(super) fn spawn_exit_reaper(
         // the guest or service initiated it; anything else is a crash.
         let removed = {
             let mut instances = state.instances.lock().unwrap();
-            if instances.get(&id).is_some_and(|instance| Some(instance.pid) != pid) {
+            if instances
+                .get(&id)
+                .is_some_and(|instance| Some(instance.pid) != pid || Some(instance.generation) != generation)
+            {
                 // A cold fallback can replace a failed restore while holding
                 // the exclusive guard. Its registry, DB and sockets are not
                 // owned by this delayed reaper.

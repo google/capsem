@@ -12,8 +12,8 @@ pub(super) fn process_exit_poll_options(timeout: std::time::Duration) -> PollOpt
 
 /// Atomically claim teardown ownership for an instance. The child watcher
 /// uses the same map removal as its ownership token, so only one side wins.
-pub(super) fn claim_shutdown_instance(state: &ServiceState, id: &str) -> bool {
-    state.evict_instance(id).is_some()
+pub(super) fn claim_shutdown_instance(state: &ServiceState, id: &str, generation: uuid::Uuid) -> bool {
+    state.evict_instance(id, generation).is_some()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

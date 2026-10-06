@@ -4,6 +4,8 @@ use super::*;
 
 pub(crate) struct InstanceInfo {
     pub(crate) id: String,
+    /// One actual spawn, never reused when an ID is resumed or replaced.
+    pub(crate) generation: uuid::Uuid,
     pub(crate) name: String,
     pub(crate) asset_pins: BootAssetPins,
     pub(crate) pid: u32,
@@ -27,12 +29,19 @@ pub(crate) struct InstanceInfo {
     pub(crate) owner_secret: String,
 }
 
+#[cfg(test)]
+mod tests;
+
 impl ServiceState {
     /// Remove a running instance record. The removal is the ownership token
     /// for teardown: of two callers racing to evict one VM, only one gets
     /// the record back.
-    pub(crate) fn evict_instance(&self, id: &str) -> Option<InstanceInfo> {
-        self.instances.lock().unwrap().remove(id)
+    pub(crate) fn evict_instance(&self, id: &str, generation: uuid::Uuid) -> Option<InstanceInfo> {
+        let mut instances = self.instances.lock().unwrap();
+        if instances.get(id)?.generation != generation {
+            return None;
+        }
+        instances.remove(id)
     }
 
     /// Unregister a persistent VM. An absent entry is already forgotten, so
