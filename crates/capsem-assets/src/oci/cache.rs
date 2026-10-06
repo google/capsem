@@ -48,6 +48,13 @@ pub(super) struct BlobCache {
     policy: Policy,
     namespace: String,
     tracking: Arc<Mutex<super::readiness::Tracking>>,
+    reads: ReadPurpose,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadPurpose {
+    Retain,
+    Observe,
 }
 
 /// Release the image lease before the cache-wide admission barrier.
@@ -57,6 +64,18 @@ pub(super) struct MaterializationLease {
 }
 
 impl BlobCache {
+    pub(super) fn for_observation(&self) -> Self {
+        let mut cache = self.clone();
+        cache.reads = ReadPurpose::Observe;
+        cache
+    }
+
+    async fn lookup_lease(&self) -> Result<FileLock> {
+        match self.reads {
+            ReadPurpose::Retain => self.mutation_lease().await,
+            ReadPurpose::Observe => read_lock(self.mutation_lock()).await,
+        }
+    }
     #[cfg(test)]
     pub(super) fn set_test_capacity(&mut self, warm: u64, maximum: u64) {
         self.policy.warm_size_bytes = warm;
@@ -80,6 +99,7 @@ impl BlobCache {
             policy,
             namespace: String::new(),
             tracking: Arc::default(),
+            reads: ReadPurpose::Retain,
         })
     }
 
@@ -109,6 +129,7 @@ impl BlobCache {
             policy: Self::policy()?.1,
             namespace: String::new(),
             tracking: Arc::default(),
+            reads: ReadPurpose::Retain,
         })
     }
 
@@ -175,14 +196,16 @@ impl BlobCache {
     }
 
     pub(super) async fn copy_hit(&self, digest: &str, size: u64, destination: &Path) -> Result<bool> {
-        let lease = self.mutation_lease().await?;
+        let lease = self.lookup_lease().await?;
         let cache = self.clone();
         let hex = self.entry_name(digest)?;
         let opened = tokio::task::spawn_blocking(move || -> Result<Option<File>> {
             let root = ContainedDir::open_root(&cache.root)?.walk(&cache.policy.entry_root)?;
             match root.open_file(hex.as_ref(), ContainedOpenOptions::read_only()) {
                 Ok(file) => {
-                    file.set_times(FileTimes::new().set_modified(SystemTime::now()))?;
+                    if cache.reads == ReadPurpose::Retain {
+                        file.set_times(FileTimes::new().set_modified(SystemTime::now()))?;
+                    }
                     Ok(Some(file))
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -208,7 +231,7 @@ impl BlobCache {
             self.policy.protect_hardlinks,
             "published roots require cache link protection"
         );
-        let lease = self.mutation_lease().await?;
+        let lease = self.lookup_lease().await?;
         let cache = self.clone();
         let name = format!("immutable-{}", self.entry_name(digest)?);
         let (digest, destination) = (digest.to_owned(), destination.to_owned());
@@ -221,6 +244,18 @@ impl BlobCache {
                 Err(error) => return Err(error.into()),
             };
             let metadata = file.metadata()?;
+            if cache.reads == ReadPurpose::Observe {
+                if metadata.mode() & 0o777 != 0o444 || !verified_copy(file, &destination, &digest, size)? {
+                    return Ok(false);
+                }
+                let target = ContainedDir::open_root(destination.parent().context("root destination parent")?)?;
+                let file = target.open_file(
+                    destination.file_name().context("root destination name")?,
+                    ContainedOpenOptions::read_only(),
+                )?;
+                capsem_foundation::unix::fs::set_mode(file.as_fd(), 0o444)?;
+                return Ok(true);
+            }
             let valid = metadata.mode() & 0o777 == 0o444 && verified_bytes(file, &digest, size, |_| Ok(()))?;
             if !valid {
                 ensure!(
@@ -301,7 +336,7 @@ impl BlobCache {
 
     /// Metadata is bounded and rehashed before it can drive offline blob reads.
     pub(super) async fn read_metadata(&self, digest: &str, maximum: usize) -> Result<Option<Vec<u8>>> {
-        let lease = self.mutation_lease().await?;
+        let lease = self.lookup_lease().await?;
         let cache = self.clone();
         let name = self.entry_name(digest)?;
         let digest = digest.to_owned();
@@ -315,7 +350,9 @@ impl BlobCache {
             };
             let size = file.metadata()?.len();
             ensure!(size <= maximum as u64, "cached metadata exceeds limit");
-            file.set_times(FileTimes::new().set_modified(SystemTime::now()))?;
+            if cache.reads == ReadPurpose::Retain {
+                file.set_times(FileTimes::new().set_modified(SystemTime::now()))?;
+            }
             let mut bytes = Vec::with_capacity(usize::try_from(size)?);
             let valid = verified_bytes(file, &digest, size, |chunk| {
                 bytes.extend_from_slice(chunk);

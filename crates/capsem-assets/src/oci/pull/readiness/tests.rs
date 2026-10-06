@@ -2,6 +2,91 @@ use super::super::tests::{digest, Registry};
 use super::super::*;
 
 #[tokio::test]
+async fn reconciling_another_image_preserves_readiness_and_retained_inode_facts() {
+    use std::os::unix::fs::MetadataExt;
+    let first = Registry::start(|_, _| {}).await;
+    let second = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = super::super::super::tests::private_dir();
+    let mut puller = first.puller();
+    puller.cache = Some(BlobCache::at(root.path()).unwrap());
+    let image = puller.pull(&first.reference(), parent.path()).await.unwrap();
+    let first_key = image.cache_identity().key();
+    let filesystem = puller
+        .fetch_rootfs(
+            &first.published_filesystem(&image.source_digest, None),
+            &ContentDigest::parse(&image.source_digest).unwrap(),
+            parent.path(),
+        )
+        .await
+        .unwrap();
+    puller.retain_cached_root(&first_key, &filesystem).await.unwrap();
+    drop(filesystem);
+    drop(image);
+    let mut other = second.puller();
+    other.cache = puller.cache.clone();
+    let image = other.pull(&second.reference(), parent.path()).await.unwrap();
+    let second_key = image.cache_identity().key();
+    drop(image);
+    first.task.abort();
+    second.task.abort();
+    let facts = || {
+        let mut facts = std::fs::read_dir(root.path().join("blobs"))
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let metadata = entry.metadata().unwrap();
+                (
+                    entry.file_name(),
+                    metadata.ino(),
+                    metadata.mtime(),
+                    metadata.mtime_nsec(),
+                    metadata.mode(),
+                    metadata.nlink(),
+                )
+            })
+            .collect::<Vec<_>>();
+        facts.sort();
+        facts
+    };
+    let before = facts();
+    let ready = puller.reconcile_cache(&first_key, parent.path()).await.unwrap();
+    assert_eq!(ready.state, super::super::super::CacheState::Ready);
+    assert_eq!(
+        facts(),
+        before,
+        "observation must not refresh, link or replace retained payloads"
+    );
+    assert_eq!(
+        other.reconcile_cache(&second_key, parent.path()).await.unwrap().state,
+        super::super::super::CacheState::Ready
+    );
+    assert_eq!(
+        puller.cache_snapshot(&first_key).unwrap(),
+        ready,
+        "another key's proof must preserve this observation and epoch"
+    );
+    assert_eq!(facts(), before);
+    assert_eq!(std::fs::read_dir(parent.path()).unwrap().count(), 0);
+    let immutable = std::fs::read_dir(root.path().join("blobs"))
+        .unwrap()
+        .map(Result::unwrap)
+        .find(|entry| entry.file_name().to_string_lossy().starts_with("immutable-"))
+        .unwrap()
+        .path();
+    std::fs::set_permissions(&immutable, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(&immutable, b"corrupt immutable filesystem").unwrap();
+    std::fs::set_permissions(&immutable, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let corrupt = facts();
+    assert!(puller.reconcile_cache(&first_key, parent.path()).await.is_err());
+    assert_eq!(
+        facts(),
+        corrupt,
+        "observation must preserve corrupt evidence without unlinking it"
+    );
+}
+
+#[tokio::test]
 async fn readiness_starts_pending_and_external_changes_invalidate_verified_bytes() {
     let registry = Registry::start(|_, _| {}).await;
     let parent = tempfile::tempdir().unwrap();

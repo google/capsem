@@ -15,7 +15,7 @@ impl Puller {
 
     pub async fn reconcile_cache(&self, key: &CacheKey, parent: &Path) -> Result<CacheSnapshot> {
         let cache = self.cache.as_ref().context("readiness requires an image cache")?;
-        let mut verification = cache.verification()?;
+        let mut verification = cache.verification(key)?;
         let result = tokio::time::timeout(PULL_TIMEOUT, async {
             match self.reconcile_cached_receipt(key, parent).await {
                 Ok(Some(receipt)) => match cache.verify_snapshot(receipt).await {

@@ -24,6 +24,7 @@ pub struct CacheSnapshot {
 }
 
 struct Observation {
+    epoch: u64,
     state: CacheState,
     verified_at: Option<u64>,
     watch: Option<ChangeWatch>,
@@ -46,6 +47,12 @@ impl Tracking {
         Ok(())
     }
 
+    pub(super) fn invalidate_key(&mut self, key: &CacheKey) -> Result<()> {
+        self.entries.remove(key);
+        self.epoch = self.epoch.checked_add(1).context("OCI mutation epoch exhausted")?;
+        Ok(())
+    }
+
     pub(super) fn snapshot(&mut self, key: &CacheKey) -> Result<CacheSnapshot> {
         if let Some(watch) = self.entries.get_mut(key).and_then(|entry| entry.watch.as_mut()) {
             match watch.changed() {
@@ -61,7 +68,7 @@ impl Tracking {
         Ok(CacheSnapshot {
             state,
             verification_pending: state == CacheState::Unknown,
-            epoch: self.epoch,
+            epoch: observation.map_or(self.epoch, |entry| entry.epoch),
             verified_at_unix_ns: observation.and_then(|entry| entry.verified_at),
         })
     }
@@ -76,6 +83,7 @@ impl Tracking {
         self.entries.insert(
             key,
             Observation {
+                epoch: self.epoch,
                 state,
                 verified_at,
                 watch,

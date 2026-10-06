@@ -21,7 +21,9 @@ impl Puller {
     }
 
     async fn reconcile_inner(&self, key: &super::super::CacheKey, parent: &Path) -> Result<Option<CacheReceipt>> {
-        let Some(receipt) = self.cached_receipt(key).await? else {
+        let mut reader = Self::configured(&self.architecture, RegistryAuth::Anonymous, ClientProtocol::Https, None)?;
+        reader.cache = self.cache.as_ref().map(BlobCache::for_observation);
+        let Some(receipt) = reader.cached_receipt(key).await? else {
             return Ok(None);
         };
         ensure!(
@@ -29,13 +31,13 @@ impl Puller {
                 && receipt.identity().runtime_contract() == RUNTIME_CONTRACT,
             "cached receipt requires a different native runtime"
         );
-        let image = self.pull_inner(receipt.origin(), parent, true).await?;
+        let image = reader.pull_inner(receipt.origin(), parent, true).await?;
         ensure!(
             receipt.matches_image(&image.materialization),
             "cache receipt does not match the complete image graph"
         );
         if let Some(expected) = receipt.root() {
-            let filesystem = self
+            let filesystem = reader
                 .fetch_rootfs_inner(&expected.origin, receipt.native_digest(), parent, true)
                 .await?;
             ensure!(
@@ -43,7 +45,7 @@ impl Puller {
                 "cache receipt does not match the bound filesystem graph"
             );
         }
-        let current = self
+        let current = reader
             .cached_receipt(key)
             .await?
             .context("receipt disappeared during verification")?;

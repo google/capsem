@@ -12,6 +12,7 @@ use super::*;
 
 pub(in super::super) struct Verification {
     tracking: Arc<Mutex<super::super::readiness::Tracking>>,
+    key: CacheKey,
     finished: bool,
 }
 
@@ -27,26 +28,31 @@ impl Drop for Verification {
             if let Ok(mut tracking) = self.tracking.lock() {
                 // Cancellation obsoletes a proof still running on the blocking
                 // pool. Poisoning/epoch exhaustion also cannot retain entries.
-                let _ = tracking.invalidate();
+                let _ = tracking.invalidate_key(&self.key);
             }
         }
     }
 }
 
 impl BlobCache {
-    pub(in super::super) fn verification(&self) -> Result<Verification> {
+    pub(in super::super) fn verification(&self, key: &CacheKey) -> Result<Verification> {
         self.tracking
             .lock()
             .map_err(|_| anyhow::anyhow!("OCI tracking lock poisoned"))?
-            .invalidate()?;
+            .invalidate_key(key)?;
         Ok(Verification {
             tracking: self.tracking.clone(),
+            key: key.clone(),
             finished: false,
         })
     }
 
     /// Invalidate before any owned filesystem mutation can become visible.
     pub(in super::super) async fn mutation_lease(&self) -> Result<FileLock> {
+        ensure!(
+            self.reads == ReadPurpose::Retain,
+            "observation cannot mutate cache retention"
+        );
         let lease = lock(self.mutation_lock()).await?;
         self.tracking
             .lock()
