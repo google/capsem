@@ -12,6 +12,8 @@ use capsem_foundation::unix::{
     fs::ensure_private_dir,
     lock::{try_acquire, FileLock, LockAttempt, LockMode},
 };
+pub use leases::{LeaseClock, LeasePolicy};
+use leases::{LeaseFacts, RuntimeLease};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -59,6 +61,8 @@ struct Record {
     state: State,
     #[serde(default)]
     vm: Option<VmBinding>,
+    #[serde(default)]
+    lease: Option<LeaseFacts>,
 }
 
 /// A service-proven VM identity. Generation must identify the actual spawn,
@@ -93,6 +97,7 @@ pub struct Snapshot {
     generation: Uuid,
     state: State,
     vm: Option<VmBinding>,
+    expires_wall_ms: Option<u64>,
 }
 
 impl Snapshot {
@@ -108,6 +113,9 @@ impl Snapshot {
     pub fn vm(&self) -> Option<&VmBinding> {
         self.vm.as_ref()
     }
+    pub fn expires_wall_ms(&self) -> Option<u64> {
+        self.expires_wall_ms
+    }
 }
 
 impl From<&Record> for Snapshot {
@@ -117,6 +125,7 @@ impl From<&Record> for Snapshot {
             generation: record.generation,
             state: record.state,
             vm: record.vm.clone(),
+            expires_wall_ms: record.lease.as_ref().map(|lease| lease.expires_wall_ms),
         }
     }
 }
@@ -146,6 +155,7 @@ pub enum Reservation {
 /// execution boundary. Contention is immediate refusal, never a machine lock.
 pub struct Registry {
     root: ContainedDir,
+    deadlines: std::sync::Mutex<std::collections::HashMap<Uuid, RuntimeLease>>,
 }
 
 impl Registry {
@@ -153,7 +163,10 @@ impl Registry {
         ensure_private_dir(root)?;
         let root = ContainedDir::open_root(root)?;
         root.validate_private()?;
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            deadlines: std::sync::Mutex::new(std::collections::HashMap::new()),
+        })
     }
 
     pub fn reserve(&self, request: Uuid, capability: &Capability) -> Result<Reservation> {
@@ -174,6 +187,7 @@ impl Registry {
             capability_hash: *capability.hash(request).as_bytes(),
             state: State::Reserved,
             vm: None,
+            lease: None,
         };
         self.write(&record)?;
         Ok(Reservation::New(Ticket {
@@ -187,6 +201,12 @@ impl Registry {
             LockAttempt::Acquired(lease) => Ok(lease),
             LockAttempt::Contended => anyhow::bail!("managed ownership store is busy"),
         }
+    }
+
+    fn runtime_deadlines(&self) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<Uuid, RuntimeLease>>> {
+        self.deadlines
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed runtime lease state poisoned"))
     }
 
     fn ticket_record(&self, ticket: &Ticket) -> Result<Record> {
@@ -225,6 +245,9 @@ impl Registry {
         if let Some(vm) = &record.vm {
             VmBinding::new(vm.id.clone(), vm.generation)?;
         }
+        if let Some(lease) = &record.lease {
+            lease.validate()?;
+        }
         ensure!(
             match record.state {
                 State::Reserved | State::Creating | State::Closed => record.vm.is_none(),
@@ -262,6 +285,7 @@ impl Registry {
     }
 }
 
+mod leases;
 mod recovery;
 mod transitions;
 

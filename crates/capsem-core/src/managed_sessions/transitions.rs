@@ -3,10 +3,15 @@ use super::*;
 impl Registry {
     /// The only permission to perform a create side effect. Persist before
     /// spawning; a repeat or a close racing this operation never admits again.
-    pub fn begin_create(&self, ticket: &Ticket) -> Result<bool> {
+    pub fn begin_create(&self, ticket: &Ticket, clock: LeaseClock) -> Result<bool> {
         let _lease = self.lease()?;
         let mut record = self.ticket_record(ticket)?;
         if record.state != State::Reserved {
+            return Ok(false);
+        }
+        ensure!(record.lease.is_some(), "managed lease was not initialized");
+        let mut deadlines = self.runtime_deadlines()?;
+        if self.expire_if_due(&mut record, clock, &mut deadlines)? {
             return Ok(false);
         }
         record.state = State::Creating;
@@ -34,6 +39,7 @@ impl Registry {
                 capability_hash: *capability.hash(request).as_bytes(),
                 state: State::Closed,
                 vm: None,
+                lease: None,
             },
         };
         record.state = match record.state {
@@ -41,11 +47,12 @@ impl Registry {
             State::Creating | State::Active | State::Closing | State::Unknown => State::Closing,
         };
         self.write(&record)?;
+        self.runtime_deadlines()?.remove(&request);
         Ok(Snapshot::from(&record))
     }
 
     /// A late create result after close is bound for cleanup, never activated.
-    pub fn bind_created(&self, ticket: &Ticket, binding: VmBinding) -> Result<Snapshot> {
+    pub fn bind_created(&self, ticket: &Ticket, binding: VmBinding, clock: LeaseClock) -> Result<Snapshot> {
         let _lease = self.lease()?;
         let mut record = self.ticket_record(ticket)?;
         ensure!(
@@ -54,6 +61,10 @@ impl Registry {
         );
         if let Some(existing) = &record.vm {
             ensure!(existing == &binding, "managed VM generation cannot be rebound");
+        }
+        if matches!(record.state, State::Creating | State::Active) {
+            let mut deadlines = self.runtime_deadlines()?;
+            self.expire_if_due(&mut record, clock, &mut deadlines)?;
         }
         record.vm = Some(binding);
         if record.state == State::Creating {
@@ -77,6 +88,7 @@ impl Registry {
         record.state = State::Closed;
         record.vm = None;
         self.write(&record)?;
+        self.runtime_deadlines()?.remove(&record.request);
         Ok(Snapshot::from(&record))
     }
 }

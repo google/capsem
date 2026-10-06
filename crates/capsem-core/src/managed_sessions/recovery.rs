@@ -29,6 +29,7 @@ impl Registry {
             record.state = State::Unknown;
             self.write(&record)?;
         }
+        self.runtime_deadlines()?.remove(&request);
         Ok(Some((
             Ticket {
                 request,
@@ -53,6 +54,7 @@ impl Registry {
         record.vm = Some(binding);
         record.state = State::Closing;
         self.write(&record)?;
+        self.runtime_deadlines()?.remove(&record.request);
         Ok(Snapshot::from(&record))
     }
 
@@ -72,6 +74,7 @@ impl Registry {
         );
         record.state = State::Closed;
         self.write(&record)?;
+        self.runtime_deadlines()?.remove(&record.request);
         Ok(Snapshot::from(&record))
     }
 }
