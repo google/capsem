@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Host file import/export audits run through the VM owner's IPC handler before
   the guest control connection is ready, so container staging overlaps boot
   while preserving policy enforcement and the session ledger.
+- Workload network setup batches interface and route commands per namespace,
+  reducing startup process overhead while preserving interception rules.
 
 ### Security
 

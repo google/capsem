@@ -582,26 +582,24 @@ def network_ready(pid, run=command, sysctl_root=Path("/proc/sys")):
     dummy address. Members of the VM's networks are reached over the VM's
     cables, every protocol, never through a proxy (`open_cables`).
     """
+    if type(pid) is not int or pid <= 0:
+        raise ValueError(f"refusing network namespace pid {pid!r}")
     namespace = ["nsenter", "-t", str(pid), "-n"]
-    run("ip", "link", "add", HOST_LINK, "type", "veth", "peer", "name", "capsem1")
-    run("ip", "link", "set", "capsem1", "netns", str(pid))
-    run("ip", "addr", "add", f"{GATEWAY}/30", "dev", HOST_LINK)
-    run("ip", "link", "set", HOST_LINK, "up")
+    run("ip", "-batch", "-", text=True, input=(
+        f"link add {HOST_LINK} type veth peer name capsem1\n"
+        f"link set capsem1 netns {pid}\n"
+        f"addr add {GATEWAY}/30 dev {HOST_LINK}\n"
+        f"link set {HOST_LINK} up\n"
+    ))
     # DNAT to 127.0.0.1 from another interface is only routable with this.
     (sysctl_root / "net/ipv4/conf" / HOST_LINK / "route_localnet").write_text("1\n")
-    run(*namespace, "ip", "link", "set", "lo", "up")
-    run(*namespace, "ip", "link", "set", "capsem1", "name", CONTAINER_LINK)
-    run(
-        *namespace,
-        "ip",
-        "addr",
-        "add",
-        f"{CONTAINER_ADDRESS}/30",
-        "dev",
-        CONTAINER_LINK,
-    )
-    run(*namespace, "ip", "link", "set", CONTAINER_LINK, "up")
-    run(*namespace, "ip", "route", "add", "default", "via", GATEWAY)
+    run(*namespace, "ip", "-batch", "-", text=True, input=(
+        "link set lo up\n"
+        f"link set capsem1 name {CONTAINER_LINK}\n"
+        f"addr add {CONTAINER_ADDRESS}/30 dev {CONTAINER_LINK}\n"
+        f"link set {CONTAINER_LINK} up\n"
+        f"route add default via {GATEWAY}\n"
+    ))
 
     rules = run(
         IPTABLES, "-t", "nat", "-S", "OUTPUT", capture_output=True, text=True

@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -204,11 +205,16 @@ class FakeRun:
     def __init__(self, rules, jump_exists=False):
         self.calls = []
         self.batches = []
+        self.ip_batches = []
         self.rules = rules
         self.jump_exists = jump_exists
 
     def __call__(self, *argv, check=True, **kwargs):
         self.calls.append(list(argv))
+        if argv[-3:] == ("ip", "-batch", "-"):
+            self.ip_batches.append((list(argv), kwargs))
+            for line in kwargs["input"].splitlines():
+                self.calls.append([*argv[:-3], "ip", *shlex.split(line)])
         if argv[0] == "iptables-nft-restore":
             self.batches.append((list(argv), kwargs))
             table = None
@@ -233,6 +239,52 @@ class FakeRun:
 def hook_environment(tmp_path):
     (tmp_path / "net/ipv4/conf/capsem0").mkdir(parents=True)
     return tmp_path
+
+
+def test_network_ready_batches_interfaces_once_per_namespace(launcher, tmp_path):
+    run = FakeRun(VM_OUTPUT_RULES)
+    launcher.network_ready(4242, run=run, sysctl_root=hook_environment(tmp_path))
+    assert len(run.ip_batches) == 2
+    host, guest = run.ip_batches
+    assert host[0] == ["ip", "-batch", "-"]
+    assert guest[0] == ["nsenter", "-t", "4242", "-n", "ip", "-batch", "-"]
+    assert host[1] == {"text": True, "input": (
+        "link add capsem0 type veth peer name capsem1\n"
+        "link set capsem1 netns 4242\n"
+        "addr add 10.0.1.1/30 dev capsem0\n"
+        "link set capsem0 up\n"
+    )}
+    assert guest[1] == {"text": True, "input": (
+        "link set lo up\n"
+        "link set capsem1 name eth0\n"
+        "addr add 10.0.1.2/30 dev eth0\n"
+        "link set eth0 up\n"
+        "route add default via 10.0.1.1\n"
+    )}
+
+
+@pytest.mark.parametrize("pid", [None, False, True, 0, -1, "4242\nlink del capsem0", 42.0])
+def test_network_ready_refuses_invalid_namespace_pid_before_commands(launcher, tmp_path, pid):
+    run = FakeRun(VM_OUTPUT_RULES)
+    with pytest.raises(ValueError, match="pid"):
+        launcher.network_ready(pid, run=run, sysctl_root=hook_environment(tmp_path))
+    assert run.calls == []
+
+
+@pytest.mark.parametrize("failed_batch", [0, 1])
+def test_network_ready_stops_on_ip_batch_failure_before_firewall_changes(launcher, tmp_path, failed_batch):
+    recorded = FakeRun(VM_OUTPUT_RULES)
+
+    def run(*argv, **kwargs):
+        if argv[-3:] == ("ip", "-batch", "-") and len(recorded.ip_batches) == failed_batch:
+            assert kwargs.get("check", True) and "-force" not in argv
+            raise subprocess.CalledProcessError(2, argv)
+        return recorded(*argv, **kwargs)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        launcher.network_ready(4242, run=run, sysctl_root=hook_environment(tmp_path))
+    assert not recorded.batches
+    assert not any(call[0].startswith("iptables") for call in recorded.calls)
 
 
 def test_network_ready_hook_pins_the_container_to_the_vm_proxies(launcher, tmp_path):
