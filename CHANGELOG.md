@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OCI image pulls retain verified manifest and index metadata alongside cached
+  blobs, enabling pinned local-only materialization that rechecks every byte
+  without registry authentication or network fallback.
 - Catalog images with a compatible published EROFS filesystem now fetch and
   verify that artifact for creation and prefetch. Workloads mount its payload
   from the read-only image share; a promised artifact that cannot be verified

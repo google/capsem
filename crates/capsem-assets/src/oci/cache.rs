@@ -247,6 +247,48 @@ impl BlobCache {
         .await?
     }
 
+    /// Metadata is bounded and rehashed before it can drive offline blob reads.
+    pub(super) async fn read_metadata(&self, digest: &str, maximum: usize) -> Result<Option<Vec<u8>>> {
+        let lease = lock(self.mutation_lock()).await?;
+        let cache = self.clone();
+        let name = self.entry_name(digest)?;
+        let digest = digest.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>> {
+            let _lease = lease;
+            let directory = ContainedDir::open_root(&cache.root)?.walk(&cache.policy.entry_root)?;
+            let file = match directory.open_file(name.as_ref(), ContainedOpenOptions::read_only()) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
+            let size = file.metadata()?.len();
+            ensure!(size <= maximum as u64, "cached metadata exceeds limit");
+            file.set_times(FileTimes::new().set_modified(SystemTime::now()))?;
+            let mut bytes = Vec::with_capacity(usize::try_from(size)?);
+            let valid = verified_bytes(file, &digest, size, |chunk| {
+                bytes.extend_from_slice(chunk);
+                Ok(())
+            })?;
+            Ok(valid.then_some(bytes))
+        })
+        .await?
+    }
+
+    pub(super) async fn publish_metadata(&self, digest: &str, bytes: &[u8]) -> Result<()> {
+        ensure!(
+            format!("sha256:{:x}", Sha256::digest(bytes)) == digest,
+            "metadata digest mismatch"
+        );
+        let (root, bytes) = (self.root.clone(), bytes.to_owned());
+        let source = tokio::task::spawn_blocking(move || -> Result<tempfile::NamedTempFile> {
+            let mut source = tempfile::NamedTempFile::new_in(root)?;
+            source.write_all(&bytes)?;
+            Ok(source)
+        })
+        .await??;
+        self.publish(digest, source.path()).await
+    }
+
     fn prune(&self, directory: &ContainedDir) -> Result<()> {
         let mut entries = directory.entries()?;
         entries.sort_by_key(|entry| (entry.mtime_secs, entry.name.clone()));

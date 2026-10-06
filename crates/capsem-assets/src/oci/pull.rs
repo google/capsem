@@ -35,6 +35,7 @@ const CATALOG_LIMIT: u64 = 1024 * 1024;
 enum BlobUse {
     Private,
     PublishedRoot,
+    CacheOnly,
 }
 /// The CI-produced filesystem artifact and its sole layer use the same type.
 pub const ROOTFS_MEDIA_TYPE: &str = "application/vnd.capsem.rootfs.erofs.v1";
@@ -158,9 +159,39 @@ impl Puller {
     }
 
     pub async fn pull(&self, reference: &str, parent: &Path) -> Result<ImageLayout> {
-        tokio::time::timeout(PULL_TIMEOUT, self.pull_inner(reference, parent))
+        tokio::time::timeout(PULL_TIMEOUT, self.pull_inner(reference, parent, false))
             .await
             .context("OCI pull exceeded five minutes")?
+    }
+
+    /// Reconstruct a pinned native layout using only verified local bytes.
+    /// The caller must independently admit this source under current policy;
+    /// cached content never grants execution authority.
+    pub async fn pull_cached(&self, reference: &str, parent: &Path) -> Result<ImageLayout> {
+        ensure!(
+            image_reference(reference)?.digest().is_some(),
+            "cache-only images must be pinned by digest"
+        );
+        ensure!(
+            self.cache.is_some(),
+            "cache-only materialization requires an image cache"
+        );
+        tokio::time::timeout(PULL_TIMEOUT, self.pull_inner(reference, parent, true))
+            .await
+            .context("cached OCI materialization exceeded five minutes")?
+    }
+
+    async fn cached_manifest(&self, reference: &Reference) -> Result<Vec<u8>> {
+        self.cache
+            .as_ref()
+            .context("cache-only materialization requires an image cache")?
+            .for_repository(reference)
+            .read_metadata(
+                reference.digest().context("cache-only manifest must be pinned")?,
+                METADATA_LIMIT,
+            )
+            .await?
+            .context("required OCI manifest is missing or corrupt in the local cache")
     }
 
     /// Fetch and validate the image catalog at `reference`, usually
@@ -281,19 +312,26 @@ impl Puller {
         Ok((identity, Catalog::parse(&document)?))
     }
 
-    async fn pull_inner(&self, reference: &str, parent: &Path) -> Result<ImageLayout> {
+    async fn pull_inner(&self, reference: &str, parent: &Path, cache_only: bool) -> Result<ImageLayout> {
         let reference = image_reference(reference)?;
         if let Some(cache) = &self.cache {
             cache.prepare().await?;
         }
-        let token = self
-            .registry
-            .auth(&reference, &self.authentication, RegistryOperation::Pull)
-            .await?;
-        let first = self.manifest(&reference, token.as_deref()).await?;
+        let token = if cache_only {
+            None
+        } else {
+            self.registry
+                .auth(&reference, &self.authentication, RegistryOperation::Pull)
+                .await?
+        };
+        let first = if cache_only {
+            self.cached_manifest(&reference).await?
+        } else {
+            self.manifest(&reference, token.as_deref()).await?
+        };
         let image_digest = sha256(&first);
         let bytes = match serde_json::from_slice::<OciManifest>(&first)? {
-            OciManifest::Image(_) => first,
+            OciManifest::Image(_) => first.clone(),
             OciManifest::ImageIndex(index) => {
                 ensure!(index.schema_version == 2, "unsupported OCI index schema");
                 let selected = index
@@ -321,7 +359,11 @@ impl Puller {
                     reference.repository().into(),
                     selected.digest.clone(),
                 );
-                let bytes = self.manifest(&pinned, token.as_deref()).await?;
+                let bytes = if cache_only {
+                    self.cached_manifest(&pinned).await?
+                } else {
+                    self.manifest(&pinned, token.as_deref()).await?
+                };
                 ensure!(bytes.len() == selected.size as usize, "manifest size mismatch");
                 bytes
             }
@@ -333,8 +375,12 @@ impl Puller {
         let directory = staging(parent).await?;
         let blob_dir = directory.path().join("blobs/sha256");
         tokio::fs::create_dir_all(&blob_dir).await?;
-        self.blob(&reference, &manifest.config, &blob_dir, BlobUse::Private)
-            .await?;
+        let usage = if cache_only {
+            BlobUse::CacheOnly
+        } else {
+            BlobUse::Private
+        };
+        self.blob(&reference, &manifest.config, &blob_dir, usage).await?;
         let config = tokio::fs::read(blob_dir.join(digest_hex(&manifest.config.digest)?)).await?;
         verify_platform(&config, &self.architecture)?;
         // Deduplicate shared layer descriptors before concurrent, create-new writes.
@@ -345,7 +391,7 @@ impl Puller {
             .collect();
         let downloads: Vec<_> = layers
             .values()
-            .map(|layer| self.blob(&reference, layer, &blob_dir, BlobUse::Private))
+            .map(|layer| self.blob(&reference, layer, &blob_dir, usage))
             .collect();
         stream::iter(downloads)
             .buffer_unordered(4)
@@ -367,6 +413,15 @@ impl Puller {
             .chain(std::iter::once(&normalized_digest))
         {
             files.push(PathBuf::from("blobs/sha256").join(digest_hex(digest)?));
+        }
+        if !cache_only {
+            if let Some(cache) = &self.cache {
+                let cache = cache.for_repository(&reference);
+                cache.publish_metadata(&source_digest, &bytes).await?;
+                if image_digest != source_digest {
+                    cache.publish_metadata(&image_digest, &first).await?;
+                }
+            }
         }
         Ok(ImageLayout {
             directory,
@@ -446,7 +501,7 @@ impl Puller {
             Some(cache) => {
                 let lease = cache.lease(&descriptor.digest).await?;
                 let hit = match usage {
-                    BlobUse::Private => {
+                    BlobUse::Private | BlobUse::CacheOnly => {
                         cache
                             .copy_hit(&descriptor.digest, descriptor.size as u64, &destination)
                             .await?
@@ -465,6 +520,10 @@ impl Puller {
             }
             None => None,
         };
+        ensure!(
+            !matches!(usage, BlobUse::CacheOnly),
+            "required OCI blob is missing or corrupt in the local cache"
+        );
         let mut chunks = self.registry.pull_blob_stream(reference, descriptor).await?;
         ensure!(
             chunks.content_length.is_none_or(|size| size == descriptor.size as u64),
@@ -513,6 +572,7 @@ impl Puller {
             match usage {
                 BlobUse::Private => cache.publish(&descriptor.digest, &destination).await?,
                 BlobUse::PublishedRoot => cache.publish_root(&descriptor.digest, &destination).await?,
+                BlobUse::CacheOnly => anyhow::bail!("cache-only materialization cannot publish a download"),
             }
         }
         Ok(())
