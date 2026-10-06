@@ -4,6 +4,7 @@ mod clone;
 mod image_share;
 mod maintenance;
 mod overlay;
+mod spawn_identity;
 mod workspace;
 
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub use overlay::{
     adopt_system_overlay, open_system_overlay, system_overlay_image_path, system_overlay_metadata, SYSTEM_OVERLAY_DIR,
     SYSTEM_OVERLAY_IMAGE,
 };
+pub use spawn_identity::{read_spawn_identity, write_spawn_identity};
 pub use workspace::{open_workspace, WORKSPACE_DIR};
 
 /// Distil a captured `process.log`/`serial.log` tail down to the one line
