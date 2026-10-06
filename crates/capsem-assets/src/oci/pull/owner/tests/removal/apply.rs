@@ -1,6 +1,109 @@
 use super::*;
 
 #[tokio::test]
+async fn completed_journal_compacts_ownership_evidence_and_preserves_exact_replay() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = crate::oci::tests::private_dir();
+    let owner = ImageCache::at(root.path()).unwrap();
+    let puller = registry.puller().with_cache(&owner);
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    drop(image);
+    registry.task.abort();
+    let preview = owner.preview_removal(&key).await.unwrap();
+    interrupt(root.path(), &key, preview.token());
+    let path = root.path().join(format!("removal-{}.json", preview.token()));
+    let pending_size = std::fs::metadata(&path).unwrap().len();
+    let result = owner
+        .apply_removal(&key, preview.token(), "interrupted cleanup")
+        .await
+        .unwrap();
+    let applied: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(
+        applied.get("witness").is_none() && applied.get("receipt_json").is_none(),
+        "completed history needs request/result replay, not payload ownership evidence"
+    );
+    assert!(std::fs::metadata(&path).unwrap().len() < pending_size);
+    assert_eq!(
+        ImageCache::at(root.path())
+            .unwrap()
+            .apply_removal(&key, preview.token(), "interrupted cleanup")
+            .await
+            .unwrap(),
+        result
+    );
+    let mut corrupted = applied;
+    corrupted["result"]["removed_allocated_bytes"] = serde_json::json!(result.removed_allocated_bytes + 1);
+    std::fs::write(&path, serde_json::to_vec(&corrupted).unwrap()).unwrap();
+    assert!(
+        owner
+            .apply_removal(&key, preview.token(), "interrupted cleanup")
+            .await
+            .is_err(),
+        "compact replay must reject corrupted result fields"
+    );
+}
+
+#[tokio::test]
+async fn bounded_control_reservation_keeps_success_within_the_existing_capacity() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = crate::oci::tests::private_dir();
+    let mut owner = ImageCache::at(root.path()).unwrap();
+    let puller = registry.puller().with_cache(&owner);
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    drop(image);
+    registry.task.abort();
+    let used = owner.usage().await.unwrap().allocated_bytes;
+    let maximum = used + 96 * 1024;
+    owner.inner.set_test_capacity(used, maximum);
+    let preview = owner.preview_removal(&key).await.unwrap();
+    let oversized = "\0".repeat(crate::oci::METADATA_LIMIT / 2);
+    assert!(
+        owner.apply_removal(&key, preview.token(), &oversized).await.is_err(),
+        "escaped intent must fit the metadata bound before any payload change"
+    );
+    assert!(puller.cached_receipt(&key).await.unwrap().is_some());
+    assert!(!root.path().join(format!("removal-{}.json", preview.token())).exists());
+    let result = owner
+        .apply_removal(&key, preview.token(), &"r".repeat(8192))
+        .await
+        .unwrap();
+    assert!(result.complete);
+    assert!(owner.usage().await.unwrap().allocated_bytes <= maximum);
+    assert!(!std::fs::read_dir(root.path()).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".partial-removal-")));
+}
+
+#[tokio::test]
+async fn full_control_budget_refuses_intent_before_payload_mutation() {
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = crate::oci::tests::private_dir();
+    let mut owner = ImageCache::at(root.path()).unwrap();
+    let puller = registry.puller().with_cache(&owner);
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    drop(image);
+    registry.task.abort();
+    let before = owner.usage().await.unwrap().allocated_bytes;
+    owner.inner.set_test_capacity(before / 2, before);
+    let preview = owner.preview_removal(&key).await.unwrap();
+    assert!(owner
+        .apply_removal(&key, preview.token(), "no control headroom")
+        .await
+        .is_err());
+    assert!(puller.cached_receipt(&key).await.unwrap().is_some());
+    assert_eq!(owner.usage().await.unwrap().allocated_bytes, before);
+    assert!(!root.path().join(format!("removal-{}.json", preview.token())).exists());
+}
+
+#[tokio::test]
 async fn matching_checksum_cannot_authorize_an_unowned_journal_target() {
     let registry = Registry::start(|_, _| {}).await;
     let parent = tempfile::tempdir().unwrap();

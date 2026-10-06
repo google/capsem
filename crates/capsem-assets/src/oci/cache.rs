@@ -57,6 +57,12 @@ pub(super) struct MaterializationLease {
 }
 
 impl BlobCache {
+    #[cfg(test)]
+    pub(super) fn set_test_capacity(&mut self, warm: u64, maximum: u64) {
+        self.policy.warm_size_bytes = warm;
+        self.policy.max_size_bytes = maximum;
+    }
+
     pub(super) async fn usage(&self) -> Result<super::CacheUsage> {
         let lease = read_lock(self.mutation_lock()).await?;
         let cache = self.clone();

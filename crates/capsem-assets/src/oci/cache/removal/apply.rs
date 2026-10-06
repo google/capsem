@@ -34,12 +34,20 @@ fn apply(
     token: &str,
     reason: &str,
 ) -> Result<RemovalResult> {
-    let mut journal = if let Some(journal) = journal::load(root, token)? {
-        journal.validate(cache, key, token, reason)?;
-        if journal.result.complete {
-            return Ok(journal.result);
+    let mut journal = if let Some(saved) = journal::load(root, token)? {
+        match saved {
+            journal::Saved::Applied(applied) => {
+                applied.validate(key, token, reason)?;
+                return Ok(applied.result);
+            }
+            journal::Saved::Pending(journal) => {
+                journal.validate(cache, key, token, reason)?;
+                if journal.result.complete {
+                    return Ok(journal.result);
+                }
+                journal
+            }
         }
-        journal
     } else {
         let plan = preview(cache, root, directory, key)?;
         ensure!(
@@ -76,6 +84,7 @@ fn apply(
     }
     let retained = other_names(cache, directory, key)?;
     preflight(directory, &journal, &retained)?;
+    journal.reserve(cache, root)?;
     cache
         .tracking
         .lock()
