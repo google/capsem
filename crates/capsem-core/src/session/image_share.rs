@@ -13,9 +13,11 @@
 //! It holds nothing but one image's blobs, each a regular file named by its
 //! SHA-256 hex digest, linked from the service's verified pull or from the
 //! clone source's share. Both are host-only and never guest-writable, which is
-//! what makes a hard link (one inode, two names) safe here. The global blob
-//! cache is never linked: its entries are pruned and rewritten by their own
-//! owner, and a session keeps its image whatever the cache later drops.
+//! what makes a hard link (one inode, two names) safe here. Ordinary writable
+//! cache entries are copied into the private pull first. Published filesystem
+//! payloads use the assets owner's separate immutable generations: verified
+//! read-only links retain one inode, and active links protect it from pruning.
+//! Neither cache publication nor replacement can modify a held generation.
 
 use std::ffi::{OsStr, OsString};
 use std::io;
