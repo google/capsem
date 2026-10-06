@@ -82,7 +82,7 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
     state.containers.advance(id, generation, |live| *live = status);
     state.containers.pin_manifest(id, generation, manifest);
     if needs_relaunch(state, id) {
-        relaunch_in_background(state, id);
+        relaunch_in_background(state, id, generation);
     }
     grant_surface_in_background(state, id, generation);
 }
@@ -97,13 +97,17 @@ pub(crate) fn needs_relaunch(state: &ServiceState, id: &str) -> bool {
 }
 
 /// Start VM `id`'s staged workload the way a create does, detached.
-fn relaunch_in_background(state: &Arc<ServiceState>, id: &str) {
+fn relaunch_in_background(state: &Arc<ServiceState>, id: &str, generation: u64) {
+    let Some(lease) = state.containers.work_lease(id, generation) else {
+        return;
+    };
     let Ok(uds_path) = running_uds_path(state, id) else {
         return;
     };
     let (state, id) = (Arc::clone(state), id.to_owned());
     tokio::spawn(async move {
-        let reply = send_ipc_command(
+        let reply = tokio::select! {
+            reply = send_ipc_command(
             &uds_path,
             ServiceToProcess::Exec {
                 id: state.next_job_id(),
@@ -111,8 +115,9 @@ fn relaunch_in_background(state: &Arc<ServiceState>, id: &str) {
                 target: capsem_proto::ipc::ExecTarget::Vm,
             },
             Some(30),
-        )
-        .await;
+        ) => reply,
+            () = lease.cancelled() => return,
+        };
         match reply {
             Ok(ProcessToService::ExecResult { exit_code: 0, .. }) => {
                 info!(

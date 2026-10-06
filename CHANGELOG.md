@@ -414,6 +414,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Wait for cancelled container setup and blocking stage writes before session
+  cleanup, preserving retirement order for shutdown and crash evidence.
+
 - OCI retention counts allocated disk blocks once per inode, including cache
   receipts, partials and controls. Sparse files no longer consume their logical
   length; receipt publication reserves actual allocation before committing,

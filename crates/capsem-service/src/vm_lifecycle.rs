@@ -288,7 +288,7 @@ pub(super) async fn shutdown_vm_process(
         // no authority over its workload, ledger, process or socket paths.
         return Ok(None);
     }
-    state.containers.cancel(id);
+    state.containers.cancel_and_wait(id).await;
     state.unregister_session_db_handle(id);
 
     if mode.retains_state() {

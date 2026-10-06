@@ -7,6 +7,96 @@ mod published;
 mod registry;
 mod surface;
 
+#[tokio::test]
+async fn replaced_aborted_setup_cannot_escape_its_blocking_retirement_barrier() {
+    let owner = Arc::new(ContainerSetups::default());
+    let old = owner.begin("same-id", "old-image");
+    let async_lease = owner.work_lease("same-id", old).unwrap();
+    let writer_lease = owner.work_lease("same-id", old).unwrap();
+    let entered = Arc::new(tokio::sync::Semaphore::new(0));
+    let (release, wait) = std::sync::mpsc::channel();
+    let root = tempfile::tempdir().unwrap();
+    let output = root.path().join("last-write");
+    let waiter = {
+        let entered = Arc::clone(&entered);
+        let output = output.clone();
+        tokio::spawn(async move {
+            let _lease = async_lease;
+            tokio::task::spawn_blocking(move || {
+                let _lease = writer_lease;
+                entered.add_permits(1);
+                wait.recv().unwrap();
+                std::fs::write(output, b"old worker finished").unwrap();
+            })
+            .await
+            .unwrap();
+        })
+    };
+    owner.attach_task("same-id", old, waiter.abort_handle());
+    entered.acquire().await.unwrap().forget();
+    let replacement = owner.begin("same-id", "new-image");
+    assert_ne!(old, replacement);
+    assert!(owner.work_lease("same-id", old).is_none());
+    assert_eq!(owner.status("same-id").unwrap().image, "new-image");
+    assert!(waiter.await.unwrap_err().is_cancelled());
+    let drain = {
+        let owner = Arc::clone(&owner);
+        tokio::spawn(async move {
+            owner.cancel_and_wait("same-id").await;
+        })
+    };
+    tokio::task::yield_now().await;
+    assert!(!drain.is_finished());
+    release.send(()).unwrap();
+    drain.await.unwrap();
+    assert_eq!(std::fs::read(output).unwrap(), b"old worker finished");
+    assert!(
+        owner.retiring.lock().unwrap().is_empty(),
+        "idle generations must release retirement tracking"
+    );
+}
+
+#[tokio::test]
+async fn cancelled_workload_drains_its_blocking_writer_before_retirement() {
+    let owner = Arc::new(ContainerSetups::default());
+    let generation = owner.begin("original", "image");
+    let lease = owner.work_lease("original", generation).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let output = root.path().join("writer-finished");
+    let (release, wait) = std::sync::mpsc::channel();
+    let entered = Arc::new(tokio::sync::Semaphore::new(0));
+    let worker = {
+        let entered = Arc::clone(&entered);
+        let output = output.clone();
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            entered.add_permits(1);
+            wait.recv().unwrap();
+            std::fs::write(output, b"finished before retirement").unwrap();
+        })
+    };
+    entered.acquire().await.unwrap().forget();
+    let drain = {
+        let owner = Arc::clone(&owner);
+        tokio::spawn(async move {
+            owner.cancel_and_wait("original").await;
+        })
+    };
+    tokio::task::yield_now().await;
+    assert!(owner.status("original").is_none());
+    assert!(owner.work_lease("original", generation).is_none());
+    assert!(!drain.is_finished());
+    let unrelated = owner.begin("unrelated", "image");
+    assert!(owner.work_lease("unrelated", unrelated).is_some());
+    owner.cancel_and_wait("other").await;
+    assert!(!drain.is_finished());
+    release.send(()).unwrap();
+    worker.await.unwrap();
+    drain.await.unwrap();
+    assert_eq!(std::fs::read(output).unwrap(), b"finished before retirement");
+    owner.cancel_and_wait("unrelated").await;
+}
+
 /// An image source serving a fixed two-file layout, optionally held at the
 /// pull until released, and recording the registry access it was given.
 struct FixtureImages {

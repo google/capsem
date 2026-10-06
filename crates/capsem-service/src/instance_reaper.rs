@@ -61,7 +61,7 @@ pub(super) fn spawn_exit_reaper(
         };
         if removed.is_some() {
             // The VM is gone: a container setup for it has nothing left to do.
-            state.containers.cancel(&id);
+            state.containers.cancel_and_wait(&id).await;
         }
         // Publish the exit before waiting: restore holds the write guard
         // while readiness polls this registry to detect a crashed child.

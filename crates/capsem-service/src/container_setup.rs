@@ -15,6 +15,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 
+mod activity;
 pub(crate) mod images;
 mod relaunch;
 pub(crate) use relaunch::{carry_launch_record, drop_carried_image, forget_previous_run, restore};
@@ -185,6 +186,7 @@ struct ContainerRecord {
     /// published: what the launch record pins for a relaunch.
     manifest: Option<String>,
     task: Option<tokio::task::AbortHandle>,
+    activity: activity::Activity,
 }
 
 /// Every VM's container workload, keyed by VM id.
@@ -194,6 +196,7 @@ pub(crate) struct ContainerSetups {
     source: Box<dyn ImageSource>,
     /// The last good image catalog, shared by every image request.
     catalog: images::CatalogCache,
+    retiring: activity::Retiring,
 }
 
 impl Default for ContainerSetups {
@@ -209,6 +212,7 @@ impl ContainerSetups {
             generation: AtomicU64::new(0),
             source,
             catalog: Default::default(),
+            retiring: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -219,14 +223,36 @@ impl ContainerSetups {
     /// Stop an in-flight setup and forget the VM's workload. A setup that
     /// finishes afterwards finds its generation gone and changes nothing.
     pub(crate) fn cancel(&self, id: &str) {
-        if let Some(task) = self.records.lock().unwrap().remove(id).and_then(|record| record.task) {
-            task.abort();
+        let mut records = self.records.lock().unwrap();
+        if let Some(record) = records.remove(id) {
+            record.activity.retire();
+            drop(records);
+            if let Some(task) = record.task {
+                task.abort();
+            }
         }
+    }
+
+    pub(crate) async fn cancel_and_wait(&self, id: &str) {
+        self.cancel(id);
+        let retiring = self.retiring.lock().unwrap().get(id).cloned().unwrap_or_default();
+        for activity in retiring {
+            activity.wait().await;
+        }
+    }
+
+    fn work_lease(&self, id: &str, generation: u64) -> Option<activity::Lease> {
+        let records = self.records.lock().unwrap();
+        records
+            .get(id)
+            .filter(|record| record.generation == generation)
+            .map(|record| record.activity.enter())
     }
 
     fn begin(&self, id: &str, image: &str) -> u64 {
         let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
-        let replaced = self.records.lock().unwrap().insert(
+        let mut records = self.records.lock().unwrap();
+        let replaced = records.insert(
             id.to_owned(),
             ContainerRecord {
                 generation,
@@ -241,10 +267,17 @@ impl ContainerSetups {
                 },
                 manifest: None,
                 task: None,
+                activity: activity::Activity::new(id, generation, &self.retiring),
             },
         );
-        if let Some(task) = replaced.and_then(|record| record.task) {
-            task.abort();
+        if let Some(record) = replaced {
+            record.activity.retire();
+            drop(records);
+            if let Some(task) = record.task {
+                task.abort();
+            }
+        } else {
+            drop(records);
         }
         generation
     }
@@ -363,10 +396,14 @@ fn admit(
 /// Pull, stage and start `spec` in VM `id` in the background.
 pub(crate) fn start(state: &Arc<ServiceState>, id: String, spec: ContainerSpec) {
     let generation = state.containers.begin(&id, &spec.image);
+    let Some(lease) = state.containers.work_lease(&id, generation) else {
+        return;
+    };
     let task = tokio::spawn({
         let state = Arc::clone(state);
         let id = id.clone();
         async move {
+            let _lease = lease;
             if let Err(error) = run(&state, &id, generation, spec).await {
                 warn!(vm_id = id.as_str(), error = %error, "container setup failed");
                 state.containers.advance(&id, generation, |status| {
@@ -469,7 +506,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         .map(|vm| (vm.ram_mb, vm.cpus))
         .ok_or_else(|| format!("VM {id} stopped before its container was staged"))?;
     let resources = capsem_core::container::workload_resources(ram_mb, cpus).map_err(|e| format!("{e:#}"))?;
-    let (manifest, rootfs) = share_image(state, id, &image, rootfs).await?;
+    let (manifest, rootfs) = share_image(state, id, generation, &image, rootfs).await?;
     if !state.containers.pin_manifest(id, generation, Some(manifest.clone())) {
         return Ok(());
     }
@@ -485,7 +522,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         if !state.containers.advance(id, generation, |_| {}) {
             return Ok(());
         }
-        stage_file(state, id, file).await?;
+        stage_file(state, id, generation, file).await?;
     }
 
     wait_for_vm_ready(&uds_path, 30, Some(state), Some(id))
@@ -546,6 +583,9 @@ fn api_surface(declared: stage::DeclaredSurface) -> Option<ContainerSurface> {
 /// authenticated preview origin is the only way in. A refusal leaves the
 /// workload running without a surface.
 pub(crate) async fn grant_surface(state: &Arc<ServiceState>, id: &str, generation: u64) {
+    let Some(lease) = state.containers.work_lease(id, generation) else {
+        return;
+    };
     let Some(surface) = state.containers.status(id).and_then(|status| status.surface) else {
         return;
     };
@@ -553,7 +593,11 @@ pub(crate) async fn grant_surface(state: &Arc<ServiceState>, id: &str, generatio
         return;
     }
     let options = capsem_foundation::poll::PollOpts::new("container-surface-running", SURFACE_READY_TIMEOUT);
-    match wait_observed(state, id, options).await {
+    let observed = tokio::select! {
+        observed = wait_observed(state, id, options) => observed,
+        () = lease.cancelled() => return,
+    };
+    match observed {
         Ok(status) if status.state == ContainerState::Running => {}
         Ok(status) => {
             info!(vm_id = id, state = ?status.state, "container ended before its surface was granted");
@@ -817,12 +861,18 @@ fn staged_marker(state: &ServiceState, id: &str, marker: &str) -> bool {
 async fn share_image(
     state: &ServiceState,
     id: &str,
+    generation: u64,
     image: &PulledImage,
     rootfs: Option<capsem_assets::oci::RootfsLayout>,
 ) -> Result<(String, Option<(String, u64)>), String> {
+    let lease = state
+        .containers
+        .work_lease(id, generation)
+        .ok_or("container share cancelled")?;
     let session_dir = resolve_session_dir(state, id).map_err(|e| e.1)?;
     let (root, files) = (image.root.clone(), image.files.clone());
     tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let _lease = lease;
         let mut image = stage::image_blobs(&root, &files)?;
         let blobs = capsem_foundation::unix::contained::ContainedDir::open_root(&root)?
             .walk(std::path::Path::new("blobs/sha256"))?;
@@ -858,9 +908,27 @@ async fn share_image(
 
 /// Write one staged control file into the VM's workspace through the same
 /// contained, no-follow writer and import ledger a file upload uses.
-async fn stage_file(state: &Arc<ServiceState>, id: &str, file: stage::StagedFile) -> Result<(), String> {
+async fn stage_file(
+    state: &Arc<ServiceState>,
+    id: &str,
+    generation: u64,
+    file: stage::StagedFile,
+) -> Result<(), String> {
+    let lease = state
+        .containers
+        .work_lease(id, generation)
+        .ok_or("container stage cancelled")?;
     let path = format!("{}/{}", capsem_core::container::STAGE, file.name);
-    let (parent, name) = resolve_workspace_target(state, id, &path, true).map_err(|e| e.1)?;
+    let target_id = id.to_owned();
+    let target_path = path.clone();
+    let (parent, name, lease) = state
+        .off_worker(move |state| {
+            let (parent, name) = resolve_workspace_target(&state, &target_id, &target_path, true)?;
+            Ok::<_, AppError>((parent, name, lease))
+        })
+        .await
+        .map_err(|e| e.1)?
+        .map_err(|e| e.1)?;
     let preview = file_security_preview_bytes(&file.bytes);
     let size = file.bytes.len() as u64;
     let uds_path = running_uds_path(state, id).map_err(|e| e.1)?;
@@ -872,6 +940,7 @@ async fn stage_file(state: &Arc<ServiceState>, id: &str, file: stage::StagedFile
         return Err(format!("file import policy rewrote staged image file {}", file.name));
     }
     tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let _lease = lease;
         use std::io::Write;
         parent
             .open_file(&name, ContainedOpenOptions::write_create_truncate(0o644))
