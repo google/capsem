@@ -159,6 +159,7 @@ impl ServiceState {
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
         crate::instance::persist_spawn_identity(&session_dir, id, generation)?;
+        let retirement = self.retirements.register(id, generation)?;
         info!(id, version, asset_version = %resolved.asset_version, "spawning capsem-process");
 
         let mut child_cmd = tokio::process::Command::new(&self.process_binary);
@@ -353,6 +354,7 @@ impl ServiceState {
             Arc::clone(self),
             uds_path,
             session_dir,
+            retirement,
         );
 
         Ok(())

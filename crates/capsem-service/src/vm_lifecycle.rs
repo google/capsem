@@ -257,26 +257,41 @@ pub(super) async fn shutdown_vm_process(
     // See web/docs/src/content/docs/gotchas/serialized-vm-shutdown.md.
     let _shutdown_guard = state.shutdown_lock.lock().await;
 
-    let (uds_path, session_dir, pid, persistent, generation) = {
+    let snapshot = {
         let instances = state.instances.lock().unwrap();
-        let Some(i) = instances.get(id) else {
-            return Ok(None);
-        };
-        if expected_generation.is_some_and(|expected| expected != i.generation) {
+        if instances
+            .get(id)
+            .is_some_and(|i| expected_generation.is_some_and(|expected| expected != i.generation))
+        {
             return Err(AppError(
                 StatusCode::CONFLICT,
                 "VM spawn generation changed; cleanup ownership refused".into(),
             ));
         }
-        let result = (
-            i.uds_path.clone(),
-            i.session_dir.clone(),
-            i.pid,
-            i.persistent,
-            i.generation,
-        );
+        let result = instances.get(id).map(|i| {
+            (
+                i.uds_path.clone(),
+                i.session_dir.clone(),
+                i.pid,
+                i.persistent,
+                i.generation,
+            )
+        });
         drop(instances);
         result
+    };
+    let Some((uds_path, session_dir, pid, persistent, generation)) = snapshot else {
+        drop(_shutdown_guard);
+        drop(_vz_host_guard);
+        drop(_vz_guard);
+        if let Some(generation) = expected_generation {
+            state
+                .retirements
+                .wait(id, generation)
+                .await
+                .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        }
+        return Ok(None);
     };
 
     // Claim before signalling. The watcher may already have claimed a process
@@ -286,6 +301,14 @@ pub(super) async fn shutdown_vm_process(
     if !shutdown_claimed {
         // A watcher or replacement owns this ID now. A stale observation has
         // no authority over its workload, ledger, process or socket paths.
+        drop(_shutdown_guard);
+        drop(_vz_host_guard);
+        drop(_vz_guard);
+        state
+            .retirements
+            .wait(id, generation)
+            .await
+            .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
         return Ok(None);
     }
     state.containers.cancel_and_wait(id).await;
@@ -347,6 +370,19 @@ pub(super) async fn shutdown_vm_process(
         })?;
 
     drop(_shutdown_guard);
+    drop(_vz_host_guard);
+    drop(_vz_guard);
+    let retired = state
+        .retirements
+        .wait(id, generation)
+        .await
+        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    if expected_generation.is_some() && !retired {
+        return Err(AppError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "original child retirement is unknown".into(),
+        ));
+    }
     Ok(Some((session_dir, persistent, pid)))
 }
 

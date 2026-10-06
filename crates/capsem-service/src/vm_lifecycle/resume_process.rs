@@ -139,6 +139,7 @@ impl ServiceState {
 
         let generation = uuid::Uuid::new_v4();
         crate::instance::persist_spawn_identity(&entry.session_dir, &vm_id, generation)?;
+        let retirement = self.retirements.register(&vm_id, generation)?;
         let process_spawn_span = tracing::debug_span!(
             target: "capsem.launch",
             capsem_foundation::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
@@ -242,8 +243,15 @@ impl ServiceState {
             },
         );
         drop(instances);
-        let _reaper =
-            instance_reaper::spawn_exit_reaper(child, vm_id.clone(), name, Arc::clone(self), uds_path, session_dir);
+        let _reaper = instance_reaper::spawn_exit_reaper(
+            child,
+            vm_id.clone(),
+            name,
+            Arc::clone(self),
+            uds_path,
+            session_dir,
+            retirement,
+        );
         // A resumed member's networks get their links back.
         switches::plug_memberships(Arc::clone(self), vm_id.clone());
         Ok(vm_id)

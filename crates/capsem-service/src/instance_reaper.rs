@@ -1,6 +1,8 @@
 //! Child-process reapers that own instance and persistent-registry cleanup.
 
 use super::*;
+mod retirement;
+pub(crate) use retirement::{Registration, Retirements};
 
 pub(super) fn kill_and_reap(mut child: tokio::process::Child) {
     let _ = child.start_kill();
@@ -21,19 +23,16 @@ pub(super) fn spawn_exit_reaper(
     state: Arc<ServiceState>,
     uds_path: PathBuf,
     session_dir: PathBuf,
+    retirement: Registration,
 ) -> tokio::task::JoinHandle<()> {
     let pid = child.id();
     // Registration precedes this call. Retain the spawn identity before the
     // task can be delayed across an exit/replacement or PID reuse.
-    let generation = state
-        .instances
-        .lock()
-        .unwrap()
-        .get(&id)
-        .filter(|instance| Some(instance.pid) == pid)
-        .map(|instance| instance.generation);
+    let generation = retirement.generation();
     tokio::spawn(async move {
-        let exit_status = child.wait().await.ok();
+        let Ok(exit_status) = child.wait().await else {
+            return;
+        };
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
 
         // An ephemeral VM's removal from the instances map below is the
@@ -45,7 +44,7 @@ pub(super) fn spawn_exit_reaper(
             let mut instances = state.instances.lock().unwrap();
             if instances
                 .get(&id)
-                .is_some_and(|instance| Some(instance.pid) != pid || Some(instance.generation) != generation)
+                .is_some_and(|instance| Some(instance.pid) != pid || instance.generation != generation)
             {
                 // A cold fallback can replace a failed restore while holding
                 // the exclusive guard. Its registry, DB and sockets are not
@@ -55,6 +54,7 @@ pub(super) fn spawn_exit_reaper(
                     ?pid,
                     "replacement process owns session; skipping stale exit cleanup"
                 );
+                retirement.complete();
                 return;
             }
             instances.remove(&id)
@@ -72,6 +72,7 @@ pub(super) fn spawn_exit_reaper(
                 id,
                 "session replaced while exit cleanup waited; leaving replacement intact"
             );
+            retirement.complete();
             return;
         }
         state.unregister_session_db_handle(&id);
@@ -88,7 +89,7 @@ pub(super) fn spawn_exit_reaper(
             .await
             .unwrap_or(session_dir)
         };
-        let clean_exit = exit_status.as_ref().is_some_and(|status| status.success());
+        let clean_exit = exit_status.success();
         let unexpected_exit = removed.is_some() && !clean_exit;
         if removed.is_some() {
             let status = if clean_exit { "stopped" } else { "crashed" };
@@ -154,5 +155,6 @@ pub(super) fn spawn_exit_reaper(
         }
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+        retirement.complete();
     })
 }

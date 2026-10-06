@@ -1,5 +1,81 @@
 use super::*;
 
+#[tokio::test]
+async fn generation_retirement_waits_for_reaper_after_instance_map_removal() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = "retirement-owner";
+    let session = state.run_dir.join("sessions").join(id);
+    std::fs::create_dir_all(&session).unwrap();
+    let uds = state.instance_socket_path(id).unwrap();
+    std::fs::create_dir_all(uds.parent().unwrap()).unwrap();
+    std::fs::write(uds.with_extension("ready"), b"original").unwrap();
+    let child = tokio::process::Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .unwrap();
+    insert_fake_instance_with_session_dir(&state, id, child.id().unwrap(), session.clone());
+    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
+    let retirement = state.retirements.register(id, generation).unwrap();
+    let resume = state.lifecycle.vz.write().await;
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.into(),
+        id.into(),
+        Arc::clone(&state),
+        uds.clone(),
+        session,
+        retirement,
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while state.instances.lock().unwrap().contains_key(id) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let completion = {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move { state.retirements.wait(id, generation).await })
+    };
+    tokio::task::yield_now().await;
+    assert!(!completion.is_finished(), "map removal is not completed retirement");
+    assert!(uds.with_extension("ready").exists());
+    drop(resume);
+    reaper.await.unwrap();
+    assert!(completion.await.unwrap().unwrap());
+    assert!(
+        state.retirements.wait(id, generation).await.unwrap(),
+        "a later reconciliation sees the same completed generation"
+    );
+    assert!(!uds.with_extension("ready").exists());
+}
+
+#[tokio::test]
+async fn aborted_reaper_never_reports_generation_retired() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = "aborted-retirement";
+    let child = tokio::process::Command::new("sh")
+        .args(["-c", "exec sleep 30"])
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    insert_fake_instance_with_session_dir(&state, id, child.id().unwrap(), state.run_dir.join("sessions").join(id));
+    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
+    let retirement = state.retirements.register(id, generation).unwrap();
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.into(),
+        id.into(),
+        Arc::clone(&state),
+        state.instance_socket_path(id).unwrap(),
+        state.run_dir.join("sessions").join(id),
+        retirement,
+    );
+    reaper.abort();
+    assert!(reaper.await.unwrap_err().is_cancelled());
+    assert!(state.retirements.wait(id, generation).await.is_err());
+}
+
 #[test]
 fn provision_persistent_validates_name() {
     let state = make_test_state();
@@ -115,6 +191,16 @@ async fn the_reaper_marks_a_crashed_persistent_vm_defunct() {
         .spawn()
         .expect("spawn a child that crashes");
     insert_fake_instance_with_session_dir(&state, &id, child.id().unwrap(), session_dir.clone());
+    let retirement_id: &str = id.as_ref();
+    let generation = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(retirement_id)
+        .filter(|instance| Some(instance.pid) == child.id())
+        .map(|instance| instance.generation)
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    let retirement = state.retirements.register(retirement_id, generation).unwrap();
     let reaper = crate::instance_reaper::spawn_exit_reaper(
         child,
         id.clone(),
@@ -122,6 +208,7 @@ async fn the_reaper_marks_a_crashed_persistent_vm_defunct() {
         Arc::clone(&state),
         uds_path,
         session_dir,
+        retirement,
     );
 
     tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
@@ -168,6 +255,16 @@ async fn exit_cleanup_waits_for_resume_and_preserves_the_replacement() {
         .unwrap();
     let pid = child.id().unwrap();
     insert_fake_instance_with_session_dir(&state, &id, pid, session_dir.clone());
+    let retirement_id: &str = id.as_ref();
+    let generation = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(retirement_id)
+        .filter(|instance| Some(instance.pid) == child.id())
+        .map(|instance| instance.generation)
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    let retirement = state.retirements.register(retirement_id, generation).unwrap();
     let reaper = crate::instance_reaper::spawn_exit_reaper(
         child,
         id.clone(),
@@ -175,6 +272,7 @@ async fn exit_cleanup_waits_for_resume_and_preserves_the_replacement() {
         Arc::clone(&state),
         uds_path.clone(),
         session_dir.clone(),
+        retirement,
     );
     assert!(wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await);
     let blocked_during_resume = !reaper.is_finished();
@@ -233,6 +331,16 @@ async fn a_crashed_restore_reports_exit_before_the_resume_lock_is_released() {
         .unwrap();
     let pid = child.id().unwrap();
     insert_fake_instance_with_session_dir(&state, id, pid, session_dir.clone());
+    let retirement_id: &str = id.as_ref();
+    let generation = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(retirement_id)
+        .filter(|instance| Some(instance.pid) == child.id())
+        .map(|instance| instance.generation)
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    let retirement = state.retirements.register(retirement_id, generation).unwrap();
     let reaper = crate::instance_reaper::spawn_exit_reaper(
         child,
         id.into(),
@@ -240,6 +348,7 @@ async fn a_crashed_restore_reports_exit_before_the_resume_lock_is_released() {
         Arc::clone(&state),
         uds_path.clone(),
         session_dir,
+        retirement,
     );
     assert!(wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await);
     let result = wait_for_vm_ready(&uds_path, 1, Some(&state), Some(id)).await;
@@ -265,6 +374,16 @@ async fn an_already_replaced_child_cannot_claim_the_new_instance() {
         .unwrap();
     insert_fake_instance_with_session_dir(&state, id, std::process::id(), session_dir.clone());
     let listener = std::os::unix::net::UnixListener::bind(&uds_path).unwrap();
+    let retirement_id: &str = id.as_ref();
+    let generation = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(retirement_id)
+        .filter(|instance| Some(instance.pid) == child.id())
+        .map(|instance| instance.generation)
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    let retirement = state.retirements.register(retirement_id, generation).unwrap();
     let reaper = crate::instance_reaper::spawn_exit_reaper(
         child,
         id.into(),
@@ -272,6 +391,7 @@ async fn an_already_replaced_child_cannot_claim_the_new_instance() {
         Arc::clone(&state),
         uds_path.clone(),
         session_dir,
+        retirement,
     );
     tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
         .await
@@ -297,6 +417,16 @@ async fn stale_reaper_cannot_remove_replacement_with_the_same_pid() {
     let pid = child.id().unwrap();
     insert_fake_instance_with_session_dir(&state, id, pid, session_dir.clone());
     let original = state.instances.lock().unwrap().get(id).unwrap().generation;
+    let retirement_id: &str = id.as_ref();
+    let generation = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(retirement_id)
+        .filter(|instance| Some(instance.pid) == child.id())
+        .map(|instance| instance.generation)
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    let retirement = state.retirements.register(retirement_id, generation).unwrap();
     let reaper = crate::instance_reaper::spawn_exit_reaper(
         child,
         id.into(),
@@ -304,6 +434,7 @@ async fn stale_reaper_cannot_remove_replacement_with_the_same_pid() {
         Arc::clone(&state),
         uds_path.clone(),
         session_dir.clone(),
+        retirement,
     );
     // The current-thread runtime has not polled the reaper yet. Reusing the
     // PID models the ABA that a PID comparison alone cannot distinguish.

@@ -46,6 +46,7 @@ fn test_state(run_dir: PathBuf, assets_dir: PathBuf, test_tempdir: Option<tempfi
     let manifest = capsem_assets::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
     ServiceState {
         instances: Mutex::new(HashMap::new()),
+        retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(
             PersistentRegistry::load(run_dir.join("persistent_registry.json")).expect("registry loads"),

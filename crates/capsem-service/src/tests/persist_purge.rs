@@ -188,6 +188,16 @@ async fn reap_persisted_live_session(state: &Arc<ServiceState>, id: &str, name: 
         .spawn()
         .expect("spawn child");
     state.instances.lock().unwrap().get_mut(id).unwrap().pid = child.id().unwrap();
+    let retirement_id: &str = id.as_ref();
+    let generation = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(retirement_id)
+        .filter(|instance| Some(instance.pid) == child.id())
+        .map(|instance| instance.generation)
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    let retirement = state.retirements.register(retirement_id, generation).unwrap();
     let reaper = crate::instance_reaper::spawn_exit_reaper(
         child,
         id.to_string(),
@@ -195,6 +205,7 @@ async fn reap_persisted_live_session(state: &Arc<ServiceState>, id: &str, name: 
         Arc::clone(state),
         state.run_dir.join("instances").join(format!("{id}.sock")),
         live_dir.clone(),
+        retirement,
     );
     tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
         .await

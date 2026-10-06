@@ -414,6 +414,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Await the original child generation's reaper after shutdown, releasing
+  lifecycle guards first so cleanup can complete without a VZ lock cycle.
+
 - Revoke GUI preview exposures admitted after their workload generation was
   replaced, preventing an unrecorded surface from remaining published.
 

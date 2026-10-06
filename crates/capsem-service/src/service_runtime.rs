@@ -239,6 +239,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let host_ledger = host_ledger::open_host_ledger(&capsem_foundation::paths::capsem_sessions_dir())?;
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
+        retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(persistent_registry),
         networks: tokio::sync::Mutex::new(networks),
