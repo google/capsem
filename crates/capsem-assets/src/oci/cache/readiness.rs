@@ -6,7 +6,7 @@ use capsem_foundation::unix::change_watch::ChangeWatch;
 
 use super::super::{
     receipts::{BlobKind, BlobRef, CacheReceipt},
-    CacheKey, CacheSnapshot, CacheState,
+    CacheKey, CacheReason, CacheSnapshot, CacheState, RUNTIME_CONTRACT,
 };
 use super::*;
 
@@ -71,7 +71,7 @@ impl BlobCache {
     /// Reobserve negative facts after installing inode/name watches. A prior
     /// error alone cannot publish a fresh observation: external repair may
     /// already have happened while the failed materialization was unwinding.
-    pub(in super::super) async fn incomplete(&self, key: &CacheKey) -> Result<CacheSnapshot> {
+    pub(in super::super) async fn incomplete(&self, key: &CacheKey, architecture: &str) -> Result<CacheSnapshot> {
         let lease = read_lock(self.mutation_lock()).await?;
         let epoch = self
             .tracking
@@ -79,19 +79,30 @@ impl BlobCache {
             .map_err(|_| anyhow::anyhow!("OCI tracking lock poisoned"))?
             .epoch();
         let (cache, key) = (self.clone(), key.clone());
+        let architecture = architecture.to_owned();
         tokio::task::spawn_blocking(move || -> Result<CacheSnapshot> {
             let _lease = lease;
             let mut watch = ChangeWatch::new()?;
             let directory = watched_directory(&cache, &mut watch)?;
             let name = format!("receipt-{}", key.as_str());
             attach_existing(&directory, &mut watch, &name)?;
-            let state = match receipts::read(&directory, &key) {
-                Ok(None) => CacheState::Missing,
-                Err(_) => CacheState::Partial,
+            let (state, reason) = match receipts::read(&directory, &key) {
+                Ok(None) => (CacheState::Missing, CacheReason::ReceiptMissing),
+                Err(_) => (CacheState::Partial, CacheReason::IntegrityInvalid),
+                Ok(Some(receipt)) if receipt.identity().architecture() != architecture => {
+                    (CacheState::Unknown, CacheReason::UnsupportedPlatform)
+                }
+                Ok(Some(receipt)) if receipt.identity().runtime_contract() != RUNTIME_CONTRACT => {
+                    (CacheState::Unknown, CacheReason::IncompatibleRuntime)
+                }
                 Ok(Some(receipt)) => {
                     attach(&cache, &directory, &mut watch, receipt.origin(), receipt.blobs(), false)?;
                     if let Some(root) = receipt.root() {
                         attach(&cache, &directory, &mut watch, &root.origin, &root.blobs, false)?;
+                    }
+                    let mut missing = false;
+                    for name in super::removal::names(&cache, &receipt)?.into_keys() {
+                        missing |= directory.entry_kind(name.as_ref())?.is_none();
                     }
                     let valid =
                         receipts::verify(&cache, &directory, receipt.origin(), receipt.blobs()).and_then(|()| {
@@ -100,10 +111,12 @@ impl BlobCache {
                             }
                             Ok(())
                         });
-                    if valid.is_err() {
-                        CacheState::Partial
+                    if missing {
+                        (CacheState::Partial, CacheReason::BlobMissing)
+                    } else if valid.is_err() {
+                        (CacheState::Partial, CacheReason::IntegrityInvalid)
                     } else {
-                        CacheState::Unknown
+                        (CacheState::Unknown, CacheReason::VerificationPending)
                     }
                 }
             };
@@ -116,7 +129,7 @@ impl BlobCache {
                 tracking.epoch() == epoch && epoch != u64::MAX,
                 "incomplete observation was invalidated"
             );
-            tracking.observed(key.clone(), state, None, Some(watch));
+            tracking.observed(key.clone(), state, Some(reason), None, Some(watch));
             tracking.snapshot(&key)
         })
         .await?
@@ -172,7 +185,7 @@ impl BlobCache {
                 tracking.epoch() == epoch && epoch != u64::MAX,
                 "readiness proof was cancelled or invalidated"
             );
-            tracking.observed(key.clone(), CacheState::Ready, Some(verified_at), Some(watch));
+            tracking.observed(key.clone(), CacheState::Ready, None, Some(verified_at), Some(watch));
             tracking.snapshot(&key)
         })
         .await?

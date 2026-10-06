@@ -191,6 +191,10 @@ async fn readiness_starts_pending_and_external_changes_invalidate_verified_bytes
         puller.cache_snapshot(&key).unwrap().state,
         super::super::super::CacheState::Partial
     );
+    assert_eq!(
+        puller.cache_snapshot(&key).unwrap().reason,
+        Some(crate::oci::CacheReason::IntegrityInvalid)
+    );
     std::fs::write(&layer, &registry.layer).unwrap();
     assert!(
         puller.cache_snapshot(&key).unwrap().verification_pending,
@@ -238,6 +242,7 @@ async fn missing_receipt_watch_invalidates_external_creation_and_directory_repla
     std::fs::remove_file(&receipt).unwrap();
     let missing = puller.reconcile_cache(&key, parent.path()).await.unwrap();
     assert_eq!(missing.state, super::super::super::CacheState::Missing);
+    assert_eq!(missing.reason, Some(crate::oci::CacheReason::ReceiptMissing));
     assert_eq!(puller.cache_snapshot(&key).unwrap(), missing);
     std::fs::write(&receipt, &bytes).unwrap();
     let invalid = puller.cache_snapshot(&key).unwrap();

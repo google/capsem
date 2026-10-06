@@ -16,8 +16,19 @@ pub enum CacheState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheReason {
+    UnsupportedPlatform,
+    IncompatibleRuntime,
+    ReceiptMissing,
+    BlobMissing,
+    IntegrityInvalid,
+    VerificationPending,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CacheSnapshot {
     pub state: CacheState,
+    pub reason: Option<CacheReason>,
     pub verification_pending: bool,
     pub epoch: u64,
     pub verified_at_unix_ns: Option<u64>,
@@ -26,6 +37,7 @@ pub struct CacheSnapshot {
 struct Observation {
     epoch: u64,
     state: CacheState,
+    reason: Option<CacheReason>,
     verified_at: Option<u64>,
     watch: Option<ChangeWatch>,
 }
@@ -65,9 +77,11 @@ impl Tracking {
         }
         let observation = self.entries.get(key);
         let state = observation.map_or(CacheState::Unknown, |entry| entry.state);
+        let reason = observation.map_or(Some(CacheReason::VerificationPending), |entry| entry.reason);
         Ok(CacheSnapshot {
             state,
-            verification_pending: state == CacheState::Unknown,
+            reason,
+            verification_pending: reason == Some(CacheReason::VerificationPending),
             epoch: observation.map_or(self.epoch, |entry| entry.epoch),
             verified_at_unix_ns: observation.and_then(|entry| entry.verified_at),
         })
@@ -77,6 +91,7 @@ impl Tracking {
         &mut self,
         key: CacheKey,
         state: CacheState,
+        reason: Option<CacheReason>,
         verified_at: Option<u64>,
         watch: Option<ChangeWatch>,
     ) {
@@ -85,6 +100,7 @@ impl Tracking {
             Observation {
                 epoch: self.epoch,
                 state,
+                reason,
                 verified_at,
                 watch,
             },

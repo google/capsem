@@ -18,7 +18,7 @@ pub use identity::{CacheIdentity, CacheKey};
 pub use inventory::{CacheInventory, CacheUsage, ImageInventory};
 mod readiness;
 mod receipts;
-pub use readiness::{CacheSnapshot, CacheState};
+pub use readiness::{CacheReason, CacheSnapshot, CacheState};
 pub use receipts::CacheReceipt;
 
 const METADATA_LIMIT: usize = 4 * 1024 * 1024;

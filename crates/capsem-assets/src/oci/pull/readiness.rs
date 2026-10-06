@@ -21,13 +21,13 @@ impl Puller {
                 Ok(Some(receipt)) => match cache.verify_snapshot(receipt).await {
                     Ok(snapshot) => Ok(snapshot),
                     Err(error) => {
-                        cache.incomplete(key).await?;
+                        cache.incomplete(key, &self.architecture).await?;
                         Err(error)
                     }
                 },
-                Ok(None) => cache.incomplete(key).await,
+                Ok(None) => cache.incomplete(key, &self.architecture).await,
                 Err(error) => {
-                    cache.incomplete(key).await?;
+                    cache.incomplete(key, &self.architecture).await?;
                     Err(error)
                 }
             }
