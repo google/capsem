@@ -351,7 +351,10 @@ pub(crate) async fn handle_list_images(
     Query(query): Query<ImageListQuery>,
 ) -> Result<Json<ImageListResponse>, AppError> {
     let mut decision = Decision::new(&state).await?;
-    let Some(loaded) = decision.load(query.refresh).await else {
+    let Some(loaded) = decision.load(query.refresh).await.cloned() else {
+        if let Err(error) = decision.setups.source.observe_cache(&[], &decision.parent) {
+            warn!(%error, "cache verification cancellation remains pending");
+        }
         return Ok(Json(ImageListResponse {
             catalog: None,
             images: Vec::new(),
@@ -359,7 +362,7 @@ pub(crate) async fn handle_list_images(
     };
     let architecture =
         stage::catalog_architecture().map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
-    let images = loaded
+    let images: Vec<ImageInfo> = loaded
         .catalog
         .entries()
         .iter()
@@ -382,6 +385,18 @@ pub(crate) async fn handle_list_images(
             cached: ImageCacheState::Unknown,
         })
         .collect();
+    let keys = images
+        .iter()
+        .filter_map(|image| image.image.as_deref())
+        .map(|image| {
+            capsem_assets::oci::CacheIdentity::new(image, architecture.as_str(), RUNTIME_CONTRACT)
+                .map(|identity| identity.key())
+        })
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map_err(|error| ImageError::Failed(format!("cache identity: {error:#}")))?;
+    if let Err(error) = decision.setups.source.observe_cache(&keys, &decision.parent) {
+        warn!(%error, "catalog cache verification remains pending");
+    }
     Ok(Json(ImageListResponse {
         catalog: Some(CatalogInfo {
             reference: loaded.source.reference.clone(),

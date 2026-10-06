@@ -16,6 +16,8 @@ use std::pin::Pin;
 use std::sync::atomic::Ordering;
 
 mod activity;
+mod registry;
+use registry::RegistryImages;
 pub(crate) mod images;
 mod relaunch;
 pub(crate) use relaunch::{carry_launch_record, drop_carried_image, forget_previous_run, restore};
@@ -45,6 +47,11 @@ pub(crate) enum ImageFetch {
 /// Where images come from, and which may be fetched and run. Production
 /// pulls from registries under the installation's policy; tests substitute.
 pub(crate) trait ImageSource: Send + Sync {
+    /// Schedule local owner proof; polling never waits for hashes or registry.
+    fn observe_cache(&self, _keys: &[capsem_assets::oci::CacheKey], _parent: &StdPath) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf, mode: ImageFetch) -> PullFuture;
 
     /// Read the catalog `source` names, anonymously: catalogs are public.
@@ -77,107 +84,6 @@ pub(crate) trait ImageSource: Send + Sync {
 
 pub(crate) type PolicyFuture =
     Pin<Box<dyn Future<Output = anyhow::Result<capsem_core::container::admission::ImagePolicy>> + Send>>;
-
-#[derive(Clone, Default)]
-pub(crate) struct RegistryImages {
-    cache: Arc<std::sync::OnceLock<capsem_assets::oci::ImageCache>>,
-}
-
-impl RegistryImages {
-    fn cache(&self) -> anyhow::Result<capsem_assets::oci::ImageCache> {
-        if self.cache.get().is_none() {
-            // Concurrent initializers all use the same installed contract;
-            // the winner owns the service lifetime, and losers borrow it.
-            let _ = self.cache.set(capsem_assets::oci::ImageCache::installed()?);
-        }
-        self.cache
-            .get()
-            .cloned()
-            .context("image cache owner initialization failed")
-    }
-
-    fn registry_puller(&self, access: RegistryAccess) -> anyhow::Result<capsem_assets::oci::Puller> {
-        let authentication = match (access.username, access.password) {
-            (Some(username), Some(password)) => capsem_assets::oci::RegistryAuth::Basic(username, password),
-            (None, None) => capsem_assets::oci::RegistryAuth::Anonymous,
-            _ => anyhow::bail!("registry access needs both username and password"),
-        };
-        Ok(capsem_assets::oci::Puller::new_with_root_certificate(
-            stage::oci_architecture()?,
-            authentication,
-            access.ca_pem.as_deref().map(str::as_bytes),
-        )?
-        .with_cache(&self.cache()?))
-    }
-}
-
-impl ImageSource for RegistryImages {
-    fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf, mode: ImageFetch) -> PullFuture {
-        let source = self.clone();
-        Box::pin(async move {
-            capsem_assets::oci::image_reference(&image)
-                .context("container image expects docker://IMAGE or registry/repository:tag")?;
-            let puller = source.registry_puller(access)?;
-            let layout = match mode {
-                ImageFetch::Fresh => puller.pull(&image, &parent).await?,
-                ImageFetch::PreferCached => puller.pull_prefer_cached(&image, &parent).await?,
-            };
-            Ok(PulledImage {
-                root: layout.path().to_path_buf(),
-                files: layout.files().to_vec(),
-                digest: layout.source_digest.clone(),
-                image_digest: layout.image_digest.clone(),
-                cache_key: Some(layout.cache_identity().key()),
-                _hold: Box::new(layout),
-            })
-        })
-    }
-
-    fn fetch_catalog(&self, source: CatalogSource, parent: PathBuf) -> images::CatalogFuture {
-        let images = self.clone();
-        Box::pin(async move {
-            let ca = match &source.ca {
-                Some(path) => Some(
-                    tokio::fs::read(path)
-                        .await
-                        .with_context(|| format!("read [images] catalog_ca {}", path.display()))?,
-                ),
-                None => None,
-            };
-            let puller = capsem_assets::oci::Puller::new_with_root_certificate(
-                stage::oci_architecture()?,
-                capsem_assets::oci::RegistryAuth::Anonymous,
-                ca.as_deref(),
-            )?
-            .with_cache(&images.cache()?);
-            puller.fetch_catalog(&source.reference, &parent).await
-        })
-    }
-
-    fn fetch_rootfs(
-        &self,
-        reference: String,
-        subject: String,
-        access: RegistryAccess,
-        parent: PathBuf,
-        mode: ImageFetch,
-        cache_key: Option<capsem_assets::oci::CacheKey>,
-    ) -> RootfsFuture {
-        let source = self.clone();
-        Box::pin(async move {
-            let subject = capsem_assets::oci::Digest::parse(&subject)?;
-            let puller = source.registry_puller(access)?;
-            let root = match mode {
-                ImageFetch::Fresh => puller.fetch_rootfs(&reference, &subject, &parent).await?,
-                ImageFetch::PreferCached => puller.fetch_rootfs_prefer_cached(&reference, &subject, &parent).await?,
-            };
-            if let Some(key) = cache_key {
-                puller.retain_cached_root(&key, &root).await?;
-            }
-            Ok(root)
-        })
-    }
-}
 
 struct ContainerRecord {
     generation: u64,

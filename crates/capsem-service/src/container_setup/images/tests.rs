@@ -54,6 +54,7 @@ fn catalog_document() -> Value {
 type RootCall = (String, String, RegistryAccess, Option<capsem_assets::oci::CacheKey>);
 
 struct CatalogImages {
+    observations: Arc<Mutex<Vec<Vec<capsem_assets::oci::CacheKey>>>>,
     fetches: Arc<Mutex<Vec<ImageFetch>>>,
     settings: SettingsFile,
     catalog: Arc<Mutex<Option<Value>>>,
@@ -63,6 +64,10 @@ struct CatalogImages {
 }
 
 impl ImageSource for CatalogImages {
+    fn observe_cache(&self, keys: &[capsem_assets::oci::CacheKey], _parent: &StdPath) -> anyhow::Result<()> {
+        self.observations.lock().unwrap().push(keys.to_vec());
+        Ok(())
+    }
     fn fetch_rootfs(
         &self,
         reference: String,
@@ -122,6 +127,7 @@ impl ImageSource for CatalogImages {
 }
 
 struct Fixture {
+    observations: Arc<Mutex<Vec<Vec<capsem_assets::oci::CacheKey>>>>,
     fetches: Arc<Mutex<Vec<ImageFetch>>>,
     state: Arc<ServiceState>,
     catalog: Arc<Mutex<Option<Value>>>,
@@ -132,6 +138,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(images: ImagePolicyConfig) -> Self {
+        let observations = Arc::new(Mutex::new(Vec::new()));
         let fetches = Arc::new(Mutex::new(Vec::new()));
         let catalog = Arc::new(Mutex::new(Some(catalog_document())));
         let catalog_reads = Arc::new(Mutex::new(Vec::new()));
@@ -139,6 +146,7 @@ impl Fixture {
         let roots = Arc::new(Mutex::new(Vec::new()));
         let mut state = crate::tests::make_test_state_owned();
         state.containers = ContainerSetups::with_source(Box::new(CatalogImages {
+            observations: Arc::clone(&observations),
             fetches: Arc::clone(&fetches),
             settings: SettingsFile {
                 images: Some(images),
@@ -150,6 +158,7 @@ impl Fixture {
             roots: Arc::clone(&roots),
         }));
         Self {
+            observations,
             fetches,
             state: Arc::new(state),
             catalog,
@@ -183,6 +192,31 @@ impl Fixture {
 
     fn pulls(&self) -> Vec<String> {
         self.pulls.lock().unwrap().clone()
+    }
+}
+
+#[tokio::test]
+async fn catalog_listing_schedules_native_compatible_cache_keys_without_waiting_for_proof() {
+    let fixture = Fixture::default_policy();
+    let (status, response) = fixture.list().await;
+    assert_eq!(status, StatusCode::OK);
+    let expected = ['b', 'd']
+        .into_iter()
+        .map(|pin| {
+            let name = if pin == 'b' { "codex-cli" } else { "redis" };
+            capsem_assets::oci::CacheIdentity::new(
+                &format!("ghcr.io/google/capsem/{name}@{}", digest(pin)),
+                host(),
+                RUNTIME_CONTRACT,
+            )
+            .unwrap()
+            .key()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(*fixture.observations.lock().unwrap(), vec![expected]);
+    assert!(fixture.pulls().is_empty());
+    for image in response["images"].as_array().unwrap() {
+        assert_eq!(image["cached"], "unknown");
     }
 }
 

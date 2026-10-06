@@ -1,6 +1,42 @@
 use super::*;
 
 #[tokio::test]
+async fn catalog_observation_schedules_one_owned_worker_and_refuses_rebinding() {
+    use capsem_foundation::poll::{poll_until, PollOpts};
+    let _env_lock = crate::tests::SETTINGS_ENV_LOCK.lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _paths = capsem_foundation::paths::CapsemPathsGuard::redirect(root.path());
+    let parent = root.path().join("layouts");
+    std::fs::create_dir(&parent).unwrap();
+    let source = RegistryImages::default();
+    let key = capsem_assets::oci::CacheIdentity::new(
+        &format!("localhost/team/image@sha256:{}", "d".repeat(64)),
+        stage::oci_architecture().unwrap(),
+        capsem_assets::oci::RUNTIME_CONTRACT,
+    )
+    .unwrap()
+    .key();
+    source.observe_cache(std::slice::from_ref(&key), &parent).unwrap();
+    let cache = source.cache().unwrap();
+    poll_until(
+        PollOpts::new("service-cache-observed", std::time::Duration::from_secs(2)),
+        || async { (cache.snapshot(&key).unwrap().state == capsem_assets::oci::CacheState::Missing).then_some(()) },
+    )
+    .await
+    .unwrap();
+    let observed = cache.snapshot(&key).unwrap();
+    let clone = source.clone();
+    clone.observe_cache(std::slice::from_ref(&key), &parent).unwrap();
+    assert_eq!(clone.cache().unwrap().snapshot(&key).unwrap(), observed);
+    assert!(clone
+        .observe_cache(std::slice::from_ref(&key), &root.path().join("different"))
+        .is_err());
+    assert!(clone.observe_cache(&vec![key.clone(); 1025], &parent).is_err());
+    assert_eq!(cache.snapshot(&key).unwrap(), observed);
+    assert_eq!(std::fs::read_dir(parent).unwrap().count(), 0);
+}
+
+#[tokio::test]
 async fn request_pullers_retain_the_service_owned_cache_observation() {
     let _env_lock = crate::tests::SETTINGS_ENV_LOCK.lock().await;
     let root = tempfile::tempdir().unwrap();
