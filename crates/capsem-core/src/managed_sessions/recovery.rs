@@ -1,6 +1,41 @@
 use super::*;
 
 impl Registry {
+    /// Private startup inventory, never a capability or create authority.
+    /// Every candidate must be valid before callers receive an inventory.
+    pub fn recovery_inventory(&self) -> Result<Vec<Snapshot>> {
+        use capsem_foundation::unix::contained::EntryKind;
+        let _lease = self.lease()?;
+        let mut inventory = Vec::new();
+        for entry in self.root.entries()? {
+            ensure!(
+                entry.kind == EntryKind::File,
+                "managed inventory contains a non-file entry"
+            );
+            let name = entry.name.to_str().context("managed inventory name is not UTF-8")?;
+            if name == "registry.lock" {
+                continue;
+            }
+            if let Some(pending) = name.strip_prefix(".pending-managed-") {
+                let parsed = Uuid::parse_str(pending).context("invalid managed temporary name")?;
+                ensure!(parsed.to_string() == pending, "noncanonical managed temporary name");
+                continue;
+            }
+            let request = name.strip_suffix(".json").context("unknown managed ownership entry")?;
+            let request_id = Uuid::parse_str(request).context("invalid managed ownership filename")?;
+            ensure!(
+                !request_id.is_nil() && request_id.to_string() == request,
+                "noncanonical managed ownership filename"
+            );
+            let record = self
+                .read(request_id)?
+                .context("managed ownership disappeared during inventory")?;
+            inventory.push(Snapshot::from(&record));
+        }
+        inventory.sort_by_key(Snapshot::request);
+        Ok(inventory)
+    }
+
     pub(super) fn creation_failed(&self, ticket: &Ticket) -> Result<()> {
         let _lease = self.lease()?;
         let mut record = self.ticket_record(ticket)?;

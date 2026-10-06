@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn recovery_inventory_is_canonical_and_refuses_unknown_or_linked_records() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ownership");
+    let store = Registry::open(&path).unwrap();
+    let request = Uuid::new_v4();
+    let cap = Capability::from_bytes([51; 32]);
+    let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
+        panic!()
+    };
+    let inventory = store.recovery_inventory().unwrap();
+    assert_eq!(inventory.len(), 1);
+    assert_eq!(inventory[0].request(), request);
+    assert_eq!(inventory[0].generation(), ticket.generation());
+    assert!(!format!("{inventory:?}").contains("capability_hash"));
+    std::fs::write(path.join("unknown.json"), b"{} ").unwrap();
+    assert!(store.recovery_inventory().is_err());
+    std::fs::remove_file(path.join("unknown.json")).unwrap();
+    let record = path.join(format!("{request}.json"));
+    let outside = root.path().join("outside");
+    std::fs::rename(&record, &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &record).unwrap();
+    assert!(store.recovery_inventory().is_err());
+    std::fs::remove_file(&record).unwrap();
+    std::fs::write(&record, b"broken").unwrap();
+    assert!(store.recovery_inventory().is_err());
+}
+
+#[test]
 fn prepared_spawn_identity_survives_restart_without_claiming_a_live_vm() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("ownership");

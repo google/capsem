@@ -2,6 +2,83 @@ use super::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::Semaphore;
 
+struct RecoveryEffects(Arc<Fixture>);
+impl Effects for RecoveryEffects {
+    fn create(
+        &self,
+        _ticket: Ticket,
+        _cancel: CancellationToken,
+        _reporter: BindingReporter,
+    ) -> EffectFuture<VmBinding> {
+        panic!("recovery must never invoke creation")
+    }
+    fn cleanup(&self, ticket: Ticket, binding: VmBinding) -> EffectFuture<()> {
+        self.0.cleanup(ticket, binding)
+    }
+    fn reconcile(&self, _ticket: Ticket, intent: Option<VmBinding>) -> EffectFuture<Option<VmBinding>> {
+        assert_eq!(intent.as_ref(), Some(&self.0.binding));
+        self.0.reconciles.fetch_add(1, Ordering::SeqCst);
+        let binding = self.0.binding.clone();
+        Box::pin(async move { Ok(Some(binding)) })
+    }
+}
+
+#[tokio::test]
+async fn reopened_controller_recovers_original_intent_only_for_cleanup_and_can_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ownership");
+    let store = Registry::open(&path).unwrap();
+    let fixture = Fixture::new();
+    let request = Uuid::new_v4();
+    let cap = Capability::from_bytes([52; 32]);
+    let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
+        panic!()
+    };
+    store
+        .start_lease(
+            &ticket,
+            LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+            LeaseClock::now().unwrap(),
+        )
+        .unwrap();
+    store.begin_create(&ticket, LeaseClock::now().unwrap()).unwrap();
+    store
+        .prepare_spawn(&ticket, fixture.binding.clone(), LeaseClock::now().unwrap())
+        .unwrap();
+    drop(store);
+    let owner = controller(&path);
+    fixture.fail_cleanup.store(true, Ordering::SeqCst);
+    let effects: Arc<dyn Effects> = Arc::new(RecoveryEffects(Arc::clone(&fixture)));
+    assert!(owner.recover(request, Arc::clone(&effects)).await.is_err());
+    let failed = owner.inspect(request, cap.clone()).await.unwrap().unwrap();
+    assert_eq!(failed.generation(), ticket.generation());
+    assert_eq!(failed.state(), State::Closing);
+    assert_eq!(owner.claim(request, cap.clone()).await.unwrap().state(), State::Closing);
+    let recovering = {
+        let owner = owner.clone();
+        tokio::spawn(async move { owner.recover(request, effects).await })
+    };
+    tokio::time::timeout(Duration::from_secs(1), fixture.cleanup_entered.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    recovering.abort();
+    let _cancelled = recovering.await;
+    let closing = {
+        let owner = owner.clone();
+        tokio::spawn(async move { owner.close(request, cap).await })
+    };
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 2);
+    fixture.cleanup_release.add_permits(1);
+    let recovered = closing.await.unwrap().unwrap();
+    assert_eq!(recovered.state(), State::Closed);
+    assert_eq!(recovered.generation(), ticket.generation());
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 2);
+    assert!(!owner.0.works.lock().await.contains_key(&request));
+}
+
 struct Fixture {
     creates: AtomicUsize,
     cleanups: AtomicUsize,

@@ -68,6 +68,7 @@ struct Inner {
 }
 
 struct Work {
+    recovering: bool,
     ticket: std::sync::Mutex<Option<Ticket>>,
     binding: std::sync::Mutex<Option<VmBinding>>,
     effects: Arc<dyn Effects>,
@@ -143,6 +144,7 @@ impl Controller {
         effects: Arc<dyn Effects>,
     ) -> ControlResult<Snapshot> {
         let work = Arc::new(Work {
+            recovering: false,
             ticket: std::sync::Mutex::new(None),
             binding: std::sync::Mutex::new(None),
             effects,
@@ -169,6 +171,79 @@ impl Controller {
 
     pub async fn inspect(&self, request: Uuid, capability: Capability) -> ControlResult<Option<Snapshot>> {
         self.io(move |registry| registry.inspect(request, &capability)).await
+    }
+
+    pub async fn recovery_inventory(&self) -> ControlResult<Vec<Snapshot>> {
+        self.io(Registry::recovery_inventory).await
+    }
+
+    /// Trusted startup recovery after prior continuations have retired. This
+    /// owns cleanup only; it never polls create or renews the old lease.
+    pub async fn recover(&self, request: Uuid, effects: Arc<dyn Effects>) -> ControlResult<Snapshot> {
+        let mut works = self.0.works.lock().await;
+        if let Some(work) = works.get(&request).cloned() {
+            drop(works);
+            if !work.recovering {
+                return Err(Failure::RecoveryPending);
+            }
+            let snapshot = wait_created(&work).await?;
+            let ticket = Ticket {
+                request,
+                generation: snapshot.generation,
+            };
+            return self.cleanup_work(ticket, work, true).await;
+        }
+        let work = Arc::new(Work {
+            recovering: true,
+            ticket: std::sync::Mutex::new(None),
+            binding: std::sync::Mutex::new(None),
+            effects,
+            cancel: CancellationToken::new(),
+            created: watch::channel(None).0,
+            deadline: watch::channel(tokio::time::Instant::now()).0,
+            cleanup: Mutex::new(None),
+        });
+        works.insert(request, Arc::clone(&work));
+        drop(works);
+        let (done, mut result) = watch::channel(None);
+        let owner = self.clone();
+        tokio::spawn(async move {
+            done.send_replace(Some(owner.recovery_worker(request, work).await));
+        });
+        loop {
+            let outcome = result.borrow_and_update().clone();
+            if let Some(outcome) = outcome {
+                return outcome;
+            }
+            result.changed().await.map_err(|_| Failure::RecoveryPending)?;
+        }
+    }
+
+    async fn recovery_worker(&self, request: Uuid, work: Arc<Work>) -> ControlResult<Snapshot> {
+        let recovered = self
+            .io(move |registry| {
+                registry
+                    .recover_interrupted(request)?
+                    .context("managed recovery request missing")
+            })
+            .await;
+        let (ticket, snapshot) = match recovered {
+            Ok(recovered) => recovered,
+            Err(error) => {
+                work.created.send_replace(Some(Err(error)));
+                self.remove_work(request, &work).await;
+                return Err(error);
+            }
+        };
+        *work.ticket.lock().map_err(|_| Failure::RecoveryPending)? = Some(ticket.clone());
+        *work.binding.lock().map_err(|_| Failure::RecoveryPending)? = snapshot.vm.clone();
+        work.cancel.cancel();
+        work.created.send_replace(Some(Ok(snapshot.clone())));
+        if snapshot.state == State::Closed {
+            self.remove_work(request, &work).await;
+            return Ok(snapshot);
+        }
+        self.cleanup_work(ticket, work, true).await
     }
 
     /// A close also outlives its HTTP waiter. Authentication precedes any
