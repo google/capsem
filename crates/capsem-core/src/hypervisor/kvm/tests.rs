@@ -125,8 +125,10 @@ fn kvm_save_state_writes_checkpoint_file() {
     handle.save_state(&path).unwrap();
 
     assert_eq!(handle.state(), VmState::Paused);
-    let meta = std::fs::metadata(path).unwrap();
-    assert_eq!(meta.len(), 44 + 4 + 6952 + 1720 + 4096);
+    let restored_memory = memory::GuestMemory::new(4096).unwrap();
+    let restored = checkpoint::read_checkpoint(&path, &restored_memory, 1, 0).unwrap();
+    assert_eq!(restored.vcpus.len(), 1);
+    assert_eq!(restored.vcpus[0].id, 0);
     handle.resume().unwrap();
     handle.stop().unwrap();
     waiter.join().unwrap();

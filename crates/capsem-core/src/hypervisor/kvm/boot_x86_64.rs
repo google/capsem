@@ -25,6 +25,9 @@ const SETUP_HEADER_OFFSET: usize = 0x1F1;
 /// Minimum boot protocol version we support (2.06+).
 const MIN_BOOT_PROTOCOL: u16 = 0x0206;
 
+pub(super) const IA32_MISC_ENABLE: u32 = 0x1a0;
+const FAST_STRING_ENABLE: u64 = 1;
+
 /// Kernel load info returned after loading.
 #[derive(Debug)]
 pub(super) struct KernelLoadInfo {
@@ -374,6 +377,7 @@ pub(super) fn write_page_tables(mem: &GuestMemory, ram_size: u64) -> Result<()> 
 
 /// Configure vCPU registers for the Linux bzImage 64-bit boot protocol.
 pub(super) fn setup_boot_regs(vcpu: &sys::VcpuFd, entry_addr: u64, boot_params_addr: u64) -> Result<()> {
+    enable_fast_strings(vcpu)?;
     // Linux x86 boot protocol uses __BOOT_CS=0x10 and __BOOT_DS=0x18.
     let code_seg = sys::KvmSegment {
         base: 0,
@@ -447,9 +451,20 @@ pub(super) fn setup_boot_regs(vcpu: &sys::VcpuFd, entry_addr: u64, boot_params_a
 
 /// Park an application processor until the guest sends INIT/SIPI via LAPIC.
 pub(super) fn setup_application_processor(vcpu: &sys::VcpuFd) -> Result<()> {
+    enable_fast_strings(vcpu)?;
     vcpu.set_mp_state(sys::KvmMpState {
         mp_state: sys::KVM_MP_STATE_UNINITIALIZED,
     })
+}
+
+/// Firmware normally enables fast strings. KVM's reset state leaves this
+/// bit clear, making Intel Linux discard REP_GOOD/ERMS during CPU discovery.
+/// Only cold boot changes it; restored vCPUs retain their checkpointed MSRs.
+fn enable_fast_strings(vcpu: &sys::VcpuFd) -> Result<()> {
+    let mut entries = vcpu.get_msrs(&[IA32_MISC_ENABLE])?;
+    let entry = entries.first_mut().context("KVM did not return IA32_MISC_ENABLE")?;
+    entry.data |= FAST_STRING_ENABLE;
+    vcpu.set_msrs(&entries)
 }
 
 /// Set up CPUID for a vCPU.

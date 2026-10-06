@@ -21,7 +21,9 @@ use super::sys::{
 use super::virtio_mmio::{QueueSnapshot, VirtioMmioSnapshot};
 
 const MAGIC: &[u8; 16] = b"CAPSEM-KVM-CKPT\0";
-const VERSION: u32 = 9;
+const VERSION: u32 = 10;
+#[cfg(target_arch = "x86_64")]
+const PREVIOUS_VERSION: u32 = 9;
 const HEADER_LEN: u64 = 16 + 4 + 4 + 8 + 4 + 4 + 4;
 const COPY_CHUNK_SIZE: usize = 1024 * 1024;
 const CHECKPOINT_PROGRESS_INTERVAL: u64 = 1024 * 1024 * 1024;
@@ -37,6 +39,7 @@ const SELECTED_MSR_INDEXES: &[u32] = &[
     0x0000_0174, // IA32_SYSENTER_CS
     0x0000_0175, // IA32_SYSENTER_ESP
     0x0000_0176, // IA32_SYSENTER_EIP
+    super::boot_x86_64::IA32_MISC_ENABLE,
     0x0000_0277, // IA32_PAT
     0x0000_06e0, // IA32_TSC_DEADLINE
     0xc000_0081, // IA32_STAR
@@ -66,6 +69,8 @@ const X86_VCPU_STATE_LEN: u32 = (std::mem::size_of::<KvmRegs>()
     + std::mem::size_of::<KvmFpu>()
     + std::mem::size_of::<KvmXcrs>()
     + std::mem::size_of::<KvmXsave>()) as u32;
+#[cfg(target_arch = "x86_64")]
+const PREVIOUS_X86_VCPU_STATE_LEN: u32 = X86_VCPU_STATE_LEN - std::mem::size_of::<KvmMsrEntry>() as u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CheckpointHeader {
@@ -304,8 +309,13 @@ pub(super) fn read_checkpoint(
     validate_header(&header, memory.size(), expected_vcpu_count, expected_mmio_device_count)?;
 
     let mut vcpus = Vec::with_capacity(header.vcpu_count as usize);
+    let msr_slots = if header.version == PREVIOUS_VERSION {
+        SELECTED_MSR_INDEXES.len() - 1
+    } else {
+        SELECTED_MSR_INDEXES.len()
+    };
     for id in 0..header.vcpu_count {
-        vcpus.push(read_vcpu_snapshot(&mut reader, id)?);
+        vcpus.push(read_vcpu_snapshot(&mut reader, id, msr_slots)?);
     }
 
     let vm = read_vm_snapshot(&mut reader)?;
@@ -427,7 +437,7 @@ fn write_checkpoint_inner(
 
 #[cfg(target_arch = "x86_64")]
 fn validate_header(header: &CheckpointHeader, ram_bytes: u64, vcpu_count: u32, mmio_device_count: u32) -> Result<()> {
-    if header.version != VERSION {
+    if header.version != VERSION && header.version != PREVIOUS_VERSION {
         bail!(
             "unsupported KVM checkpoint version: got {}, expected {}",
             header.version,
@@ -458,11 +468,16 @@ fn validate_header(header: &CheckpointHeader, ram_bytes: u64, vcpu_count: u32, m
             mmio_device_count
         );
     }
-    if header.vcpu_state_len != X86_VCPU_STATE_LEN {
+    let expected_state_len = if header.version == PREVIOUS_VERSION {
+        PREVIOUS_X86_VCPU_STATE_LEN
+    } else {
+        X86_VCPU_STATE_LEN
+    };
+    if header.vcpu_state_len != expected_state_len {
         bail!(
             "checkpoint vCPU state size mismatch: checkpoint={}, expected={}",
             header.vcpu_state_len,
-            X86_VCPU_STATE_LEN
+            expected_state_len
         );
     }
     Ok(())
@@ -502,7 +517,7 @@ fn write_vcpu_snapshot(writer: &mut impl Write, snapshot: &VcpuSnapshot) -> Resu
 }
 
 #[cfg(target_arch = "x86_64")]
-fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32) -> Result<VcpuSnapshot> {
+fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32, msr_slots: usize) -> Result<VcpuSnapshot> {
     let mut id_bytes = [0u8; 4];
     reader.read_exact(&mut id_bytes).context("read checkpoint vCPU id")?;
     let id = u32::from_le_bytes(id_bytes);
@@ -520,15 +535,15 @@ fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32) -> Result<VcpuSn
                 .read_exact(&mut count_bytes)
                 .context("read checkpoint vCPU MSR count")?;
             let count = u32::from_le_bytes(count_bytes) as usize;
-            if count > SELECTED_MSR_INDEXES.len() {
+            if count > msr_slots {
                 bail!(
                     "checkpoint vCPU MSR count exceeds selected set: {} > {}",
                     count,
-                    SELECTED_MSR_INDEXES.len()
+                    msr_slots
                 );
             }
             let mut entries = Vec::with_capacity(count);
-            for i in 0..SELECTED_MSR_INDEXES.len() {
+            for i in 0..msr_slots {
                 let entry: KvmMsrEntry = read_pod(reader).context("read checkpoint vCPU MSR entry")?;
                 if i < count {
                     entries.push(entry);

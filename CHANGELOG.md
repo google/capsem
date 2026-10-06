@@ -338,6 +338,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux x86 VM boot enables fast string operations on every vCPU instead of
+  leaving the firmware enable bit clear. Checkpoints preserve this CPU setting
+  and continue to read the previous checkpoint format.
+
 - VM startup no longer wipes guest heap memory on allocation or free. This
   removes the eager boot-time pass over all VM RAM, including the default
   12 GiB. Fresh anonymous host memory still starts zeroed; existing checkpoint
