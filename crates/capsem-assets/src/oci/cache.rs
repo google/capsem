@@ -26,6 +26,7 @@ use sha2::{Digest, Sha256};
 use super::digest_hex;
 mod readiness;
 mod receipts;
+mod removal;
 
 #[derive(Clone, Deserialize)]
 struct Policy {
@@ -47,6 +48,12 @@ pub(super) struct BlobCache {
     policy: Policy,
     namespace: String,
     tracking: Arc<Mutex<super::readiness::Tracking>>,
+}
+
+/// Release the image lease before the cache-wide admission barrier.
+pub(super) struct MaterializationLease {
+    _image: FileLock,
+    _barrier: FileLock,
 }
 
 impl BlobCache {
@@ -136,15 +143,25 @@ impl BlobCache {
 
     /// Shared for the complete image/layout lifetime, separate from blob
     /// stripes so a nested blob lookup can never reacquire its parent's lock.
-    pub(super) async fn materialization_lease(&self, key: &super::CacheKey) -> Result<FileLock> {
-        lock_with(
+    pub(super) async fn materialization_lease(&self, key: &super::CacheKey) -> Result<MaterializationLease> {
+        let barrier = lock_with(
+            self.root.join("locks/materialization.lock"),
+            LockAccess::Prepare,
+            LockMode::Shared,
+        )
+        .await?;
+        let image = lock_with(
             self.root
                 .join("locks")
                 .join(format!("materialize-{}.lock", key.as_str())),
             LockAccess::Prepare,
             LockMode::Shared,
         )
-        .await
+        .await?;
+        Ok(MaterializationLease {
+            _image: image,
+            _barrier: barrier,
+        })
     }
 
     fn mutation_lock(&self) -> PathBuf {
@@ -392,6 +409,7 @@ impl BlobCache {
 enum LockAccess {
     Prepare,
     Read,
+    Existing,
 }
 
 async fn lock(path: PathBuf) -> Result<FileLock> {
@@ -407,9 +425,10 @@ async fn lock_with(path: PathBuf, access: LockAccess, mode: LockMode) -> Result<
         let path = path.clone();
         async move {
             match tokio::task::spawn_blocking(move || {
-                if matches!(access, LockAccess::Read) {
+                if !matches!(access, LockAccess::Prepare) {
                     match try_acquire_existing(&path, mode) {
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::NotFound && matches!(access, LockAccess::Read) => {}
                         result => return result,
                     }
                 }

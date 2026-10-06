@@ -80,7 +80,7 @@ pub struct ImageLayout {
     cache_identity: CacheIdentity,
     materialization: CacheReceipt,
     /// Protect cache dependencies while the caller stages this layout.
-    _permit: Option<capsem_foundation::unix::lock::FileLock>,
+    _permit: Option<super::cache::MaterializationLease>,
 }
 
 impl ImageLayout {

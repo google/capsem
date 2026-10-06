@@ -1,6 +1,7 @@
 use super::super::super::{CacheState, ImageCache};
 use super::super::tests::Registry;
 use super::super::*;
+mod removal;
 
 #[tokio::test]
 async fn layouts_hold_shared_image_leases_until_the_last_materialization_drops() {
