@@ -14,6 +14,239 @@ use oci_client::{client::ClientProtocol, secrets::RegistryAuth};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+const ROOTFS_MEDIA: &str = "application/vnd.capsem.rootfs.erofs.v1";
+const ROOTFS_BYTES: &[u8] = b"opaque published EROFS bytes: never unpack these on the host";
+
+fn rootfs_subject() -> ContentDigest {
+    ContentDigest::parse(&format!("sha256:{}", "e".repeat(64))).unwrap()
+}
+
+async fn rootfs_registry(change: impl FnOnce(&mut Value, &mut BTreeMap<String, Vec<u8>>)) -> Registry {
+    Registry::start(move |manifest, blobs| {
+        let empty = b"{}";
+        let rootfs = ROOTFS_BYTES;
+        blobs.insert(format!("/v2/team/image/blobs/{}", digest(empty)), empty.to_vec());
+        blobs.insert(format!("/v2/team/image/blobs/{}", digest(rootfs)), rootfs.to_vec());
+        *manifest = json!({
+            "schemaVersion": 2, "mediaType": OCI_IMAGE_MEDIA_TYPE,
+            "artifactType": ROOTFS_MEDIA,
+            "config": descriptor("application/vnd.oci.empty.v1+json", empty),
+            "subject": {"mediaType": OCI_IMAGE_MEDIA_TYPE, "digest": rootfs_subject().as_str(), "size": 100},
+            "layers": [descriptor(ROOTFS_MEDIA, rootfs)],
+        });
+        change(manifest, blobs);
+    })
+    .await
+}
+
+fn rootfs_reference(registry: &Registry) -> String {
+    format!("{}/team/image@{}", registry.address, registry.source_digest)
+}
+
+#[tokio::test]
+async fn published_rootfs_is_verified_opaque_and_lifetime_owned() {
+    let registry = rootfs_registry(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let layout = registry
+        .puller()
+        .fetch_rootfs(&rootfs_reference(&registry), &rootfs_subject(), parent.path())
+        .await
+        .unwrap();
+    let path = layout.path();
+    assert_eq!(std::fs::read(&path).unwrap(), ROOTFS_BYTES);
+    assert!(path.starts_with(parent.path()));
+    drop(layout);
+    assert!(!path.exists(), "the returned layout owns the disposable payload");
+}
+
+#[tokio::test]
+async fn published_rootfs_requires_immutable_reference_and_exact_platform_subject() {
+    let registry = rootfs_registry(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let puller = registry.puller();
+    assert!(puller
+        .fetch_rootfs(&registry.reference(), &rootfs_subject(), parent.path())
+        .await
+        .is_err());
+    assert!(
+        registry.requests.lock().unwrap().is_empty(),
+        "a mutable rootfs reference must fail before registry access"
+    );
+    let wrong = ContentDigest::parse(&format!("sha256:{}", "a".repeat(64))).unwrap();
+    let error = puller
+        .fetch_rootfs(&rootfs_reference(&registry), &wrong, parent.path())
+        .await
+        .err()
+        .unwrap();
+    assert!(format!("{error:#}").contains("subject"));
+    assert_eq!(
+        registry.blob_requests(),
+        0,
+        "a different platform's rootfs must fail before blob access"
+    );
+}
+
+#[tokio::test]
+async fn malformed_published_rootfs_metadata_is_refused_before_blob_access() {
+    for case in 0..16 {
+        let registry = rootfs_registry(move |manifest, _| match case {
+            0 => manifest["artifactType"] = json!("application/other"),
+            1 => manifest["layers"][0]["mediaType"] = json!(IMAGE_LAYER_GZIP_MEDIA_TYPE),
+            2 => manifest["layers"][0]["size"] = json!(-1),
+            3 => manifest["layers"][0]["size"] = json!(IMAGE_LIMIT + 1),
+            4 => manifest["layers"][0]["urls"] = json!(["https://untrusted.example/rootfs"]),
+            5 => manifest["layers"] = json!([]),
+            6 => manifest["subject"] = Value::Null,
+            7 => manifest["schemaVersion"] = json!(1),
+            8 => manifest["config"]["size"] = json!(METADATA_LIMIT + 1),
+            9 => manifest["config"]["mediaType"] = json!(IMAGE_CONFIG_MEDIA_TYPE),
+            10 => manifest["config"]["urls"] = json!(["https://untrusted.example/config"]),
+            11 => manifest["subject"]["urls"] = json!(["https://untrusted.example/image"]),
+            12 => manifest["layers"][0]["digest"] = json!("sha256:../../foreign"),
+            13 => manifest["subject"]["size"] = json!(0),
+            14 => manifest["config"]["digest"] = json!(rootfs_subject().as_str()),
+            15 => {
+                let layer = manifest["layers"][0].clone();
+                manifest["layers"].as_array_mut().unwrap().push(layer);
+            }
+            _ => unreachable!(),
+        })
+        .await;
+        let parent = tempfile::tempdir().unwrap();
+        assert!(
+            registry
+                .puller()
+                .fetch_rootfs(&rootfs_reference(&registry), &rootfs_subject(), parent.path())
+                .await
+                .is_err(),
+            "accepted metadata case {case}"
+        );
+        assert_eq!(registry.blob_requests(), 0, "metadata case {case} reached blob access");
+    }
+}
+
+#[tokio::test]
+async fn corrupt_published_rootfs_bytes_are_refused_and_not_cached() {
+    let registry = rootfs_registry(|manifest, blobs| {
+        let name = manifest["layers"][0]["digest"].as_str().unwrap();
+        let path = format!("/v2/team/image/blobs/{name}");
+        let bytes = blobs.get_mut(&path).unwrap();
+        bytes[0] ^= 1;
+    })
+    .await;
+    let parent = tempfile::tempdir().unwrap();
+    let cache_root = super::super::tests::private_dir();
+    let mut puller = registry.puller();
+    let cache = super::super::cache::BlobCache::at(cache_root.path()).unwrap();
+    puller.cache = Some(cache.clone());
+    let error = puller
+        .fetch_rootfs(&rootfs_reference(&registry), &rootfs_subject(), parent.path())
+        .await
+        .err()
+        .unwrap();
+    let mut corrupt = ROOTFS_BYTES.to_vec();
+    corrupt[0] ^= 1;
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("Invalid digest")
+            && message.contains(&digest(ROOTFS_BYTES))
+            && message.contains(&digest(&corrupt)),
+        "{message}"
+    );
+    assert_eq!(
+        std::fs::read_dir(parent.path()).unwrap().count(),
+        0,
+        "failed staging must be reclaimed"
+    );
+    let namespace = cache.for_repository(&image_reference(&rootfs_reference(&registry)).unwrap());
+    let _lease = namespace.lease(&digest(ROOTFS_BYTES)).await.unwrap();
+    assert!(!namespace
+        .copy_hit(
+            &digest(ROOTFS_BYTES),
+            ROOTFS_BYTES.len() as u64,
+            &parent.path().join("rejected")
+        )
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
+async fn truncated_published_rootfs_is_refused_and_staging_reclaimed() {
+    let registry = rootfs_registry(|manifest, blobs| {
+        let name = manifest["layers"][0]["digest"].as_str().unwrap();
+        blobs.get_mut(&format!("/v2/team/image/blobs/{name}")).unwrap().pop();
+    })
+    .await;
+    let parent = tempfile::tempdir().unwrap();
+    let error = registry
+        .puller()
+        .fetch_rootfs(&rootfs_reference(&registry), &rootfs_subject(), parent.path())
+        .await
+        .err()
+        .unwrap();
+    assert!(format!("{error:#}").contains("size mismatch"), "{error:#}");
+    assert_eq!(std::fs::read_dir(parent.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn published_rootfs_cache_hit_survives_eviction_from_registry_but_stays_repository_scoped() {
+    let registry = rootfs_registry(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let cache_root = super::super::tests::private_dir();
+    let cache = super::super::cache::BlobCache::at(cache_root.path()).unwrap();
+    let mut puller = registry.puller();
+    puller.cache = Some(cache.clone());
+    let first = puller
+        .fetch_rootfs(&rootfs_reference(&registry), &rootfs_subject(), parent.path())
+        .await
+        .unwrap();
+    assert_eq!(first.digest().as_str(), digest(ROOTFS_BYTES));
+    registry
+        .blobs
+        .lock()
+        .unwrap()
+        .remove(&format!("/v2/team/image/blobs/{}", digest(ROOTFS_BYTES)));
+    let count = registry.blob_requests();
+    let second = puller
+        .fetch_rootfs(&rootfs_reference(&registry), &rootfs_subject(), parent.path())
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(second.path()).unwrap(), ROOTFS_BYTES);
+    assert_eq!(
+        registry.blob_requests(),
+        count,
+        "a verified warm hit does not fetch the payload again"
+    );
+
+    let foreign = rootfs_registry(|_, blobs| blobs.clear()).await;
+    let mut untrusted = foreign.puller();
+    untrusted.cache = Some(cache);
+    assert!(
+        untrusted
+            .fetch_rootfs(&rootfs_reference(&foreign), &rootfs_subject(), parent.path())
+            .await
+            .is_err(),
+        "a different registry cannot retrieve private cached bytes by digest"
+    );
+    let reference = format!("{}/attacker/image@{}", registry.address, registry.source_digest);
+    {
+        let mut blobs = registry.blobs.lock().unwrap();
+        let manifest = blobs[&format!("/v2/team/image/manifests/{}", registry.source_digest)].clone();
+        blobs.insert(
+            format!("/v2/attacker/image/manifests/{}", registry.source_digest),
+            manifest,
+        );
+        drop(blobs);
+    }
+    assert!(
+        puller
+            .fetch_rootfs(&reference, &rootfs_subject(), parent.path())
+            .await
+            .is_err(),
+        "cache hits remain scoped within a registry's repositories"
+    );
+}
+
 #[test]
 fn invalid_additional_registry_certificate_is_refused() {
     assert!(Puller::new_with_root_certificate("arm64", RegistryAuth::Anonymous, Some(b"not a certificate")).is_err());

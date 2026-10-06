@@ -30,6 +30,27 @@ const LAYER_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 const CATALOG_LIMIT: u64 = 1024 * 1024;
+/// The CI-produced filesystem artifact and its sole layer use the same type.
+pub const ROOTFS_MEDIA_TYPE: &str = "application/vnd.capsem.rootfs.erofs.v1";
+
+/// Verified, opaque filesystem bytes. Dropping the layout reclaims its staging.
+pub struct RootfsLayout {
+    directory: tempfile::TempDir,
+    digest: ContentDigest,
+}
+
+impl RootfsLayout {
+    /// The payload remains private to this layout; the host never unpacks it.
+    pub fn path(&self) -> PathBuf {
+        self.directory
+            .path()
+            .join(self.digest.as_str().trim_start_matches("sha256:"))
+    }
+
+    pub fn digest(&self) -> &ContentDigest {
+        &self.digest
+    }
+}
 
 /// A disposable OCI layout. Keeping this value alive keeps its files alive.
 pub struct ImageLayout {
@@ -144,6 +165,72 @@ impl Puller {
         tokio::time::timeout(PULL_TIMEOUT, self.fetch_catalog_inner(reference, parent))
             .await
             .context("catalog fetch exceeded five minutes")?
+    }
+
+    /// Fetch a catalog-pinned filesystem attached to the selected platform
+    /// image. The caller supplies that image's verified original manifest
+    /// digest, rather than its multi-platform index or normalized layout.
+    pub async fn fetch_rootfs(&self, reference: &str, subject: &ContentDigest, parent: &Path) -> Result<RootfsLayout> {
+        tokio::time::timeout(PULL_TIMEOUT, self.fetch_rootfs_inner(reference, subject, parent))
+            .await
+            .context("rootfs fetch exceeded five minutes")?
+    }
+
+    async fn fetch_rootfs_inner(
+        &self,
+        reference: &str,
+        expected_subject: &ContentDigest,
+        parent: &Path,
+    ) -> Result<RootfsLayout> {
+        let reference = image_reference(reference)?;
+        ensure!(reference.digest().is_some(), "rootfs artifact must be pinned by digest");
+        if let Some(cache) = &self.cache {
+            cache.prepare().await?;
+        }
+        let token = self
+            .registry
+            .auth(&reference, &self.authentication, RegistryOperation::Pull)
+            .await?;
+        let bytes = self.manifest(&reference, token.as_deref()).await?;
+        let manifest: OciImageManifest = serde_json::from_slice(&bytes).context("expected rootfs artifact manifest")?;
+        ensure!(
+            manifest.schema_version == 2
+                && manifest.media_type.as_deref() == Some(OCI_IMAGE_MEDIA_TYPE)
+                && manifest.artifact_type.as_deref() == Some(ROOTFS_MEDIA_TYPE),
+            "unsupported rootfs artifact schema or media type"
+        );
+        let subject = manifest.subject.context("rootfs artifact has no image subject")?;
+        ensure!(
+            matches!(
+                subject.media_type.as_str(),
+                OCI_IMAGE_MEDIA_TYPE | IMAGE_MANIFEST_MEDIA_TYPE
+            ) && subject.size > 0
+                && subject.size <= METADATA_LIMIT as i64
+                && subject.urls.as_ref().is_none_or(Vec::is_empty)
+                && subject.digest == expected_subject.as_str(),
+            "rootfs artifact subject does not match the selected platform image"
+        );
+        ensure!(
+            manifest.config.media_type == "application/vnd.oci.empty.v1+json"
+                && manifest.config.size == 2
+                && manifest.config.digest == sha256(b"{}")
+                && manifest.config.urls.as_ref().is_none_or(Vec::is_empty),
+            "rootfs artifact must have the empty OCI config"
+        );
+        let [layer] = manifest.layers.as_slice() else {
+            anyhow::bail!("rootfs artifact must contain exactly one layer");
+        };
+        ensure!(
+            layer.media_type == ROOTFS_MEDIA_TYPE
+                && layer.size > 0
+                && layer.size as u64 <= IMAGE_LIMIT
+                && layer.urls.as_ref().is_none_or(Vec::is_empty),
+            "unsupported rootfs layer media type, size or external URLs"
+        );
+        let digest = ContentDigest::parse(&layer.digest)?;
+        let directory = staging(parent).await?;
+        self.blob(&reference, layer, directory.path()).await?;
+        Ok(RootfsLayout { directory, digest })
     }
 
     async fn fetch_catalog_inner(&self, reference: &str, parent: &Path) -> Result<(ContentDigest, Catalog)> {

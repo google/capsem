@@ -13,7 +13,7 @@ pub use catalog::{
 };
 mod selector;
 pub use oci_client::secrets::RegistryAuth;
-pub use pull::{ImageLayout, Puller};
+pub use pull::{ImageLayout, Puller, RootfsLayout, ROOTFS_MEDIA_TYPE};
 pub use selector::{admits, allows_source, Digest, ImageReference, ImageSelector, Repository, ResolvedImage};
 
 /// Require a qualified registry reference or explicit `docker://` prefix so
