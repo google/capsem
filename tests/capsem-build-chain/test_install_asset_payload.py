@@ -3136,6 +3136,8 @@ def test_installed_doctor_failure_is_printed_and_preserved() -> None:
 
 
 def test_ci_install_job_uploads_glowup_evidence_on_failure() -> None:
+    from capsem_builder.gate import config as gate_config
+
     workflow = yaml.safe_load(
         (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     )
@@ -3152,7 +3154,7 @@ def test_ci_install_job_uploads_glowup_evidence_on_failure() -> None:
     )
     assert set(upload["with"]["path"].splitlines()) == {
         "cache/target/gate-runs/",
-        "cache/target/release/staging/local-glowup-evidence/",
+        f"{gate_config.load(PROJECT_ROOT).install.layout.glowup_evidence}/",
     }
     assert upload["with"]["if-no-files-found"] == (
         "${{ steps.install_e2e.outcome == 'failure' && 'error' || 'warn' }}"
