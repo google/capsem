@@ -943,6 +943,7 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
             from capsem_builder import gatelaunch
 
             environment = kwargs["env"]
+            assert environment.get("VIRTUAL_ENV") == "", "the private project must select its own environment"
             assert environment[config.environment.repository_root] == str(reused)
             assert environment[config.environment.source_checkout] == str(config.root)
             # The re-exec recomputes Cargo's destination from cache authority.
@@ -962,6 +963,7 @@ def test_a_successful_reused_prefix_stays_available_for_the_next_continuation(
         "prefix": config.prefix.model_copy(update={"cargo_target": _config().prefix.cargo_target})
     })
     monkeypatch.delenv("CAPSEM_CACHE_AUTHORITY", raising=False)
+    monkeypatch.setenv("VIRTUAL_ENV", str(config.root / "build_system" / ".venv"))
     if shared_authority:
         monkeypatch.setenv("CAPSEM_CACHE_AUTHORITY", str(tmp_path / "shared-authority"))
     monkeypatch.setattr(prefix.snapshot, "refresh", lambda *args: None)

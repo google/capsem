@@ -322,6 +322,7 @@ CONVENTIONS = frozenset(
         "XDG_RUNTIME_DIR",
         "PKG_CONFIG_PATH",
         "UV_PROJECT_ENVIRONMENT",
+        "VIRTUAL_ENV",
         "RUST_LOG",
         "RUSTFLAGS",
         "CARGO_TARGET_DIR",

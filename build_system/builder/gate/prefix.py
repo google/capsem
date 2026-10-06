@@ -232,6 +232,7 @@ def _run_locked(runner, config, arguments, *, path, reuse, commit, clean) -> int
             runner.note(f"lent build output to {path.name}: {', '.join(lent)}")
     cargotarget.link_prefix_trees(config, path)
     child_env = {
+        "VIRTUAL_ENV": "",  # The private checkout selects its own locked project environment.
         config.environment.source_checkout: str(config.root),
         config.environment.repository_root: str(path),
         cachelayout.cache_paths(config).policy.authority_environment: str(
