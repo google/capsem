@@ -6,6 +6,8 @@ use serde::Deserialize;
 
 mod cache;
 mod catalog;
+mod identity;
+pub use identity::{CacheIdentity, CacheKey};
 mod pull;
 pub use catalog::{
     is_catalog_name, Catalog, CatalogEntry, CatalogVersion, Channel, CATALOG_MEDIA_TYPE, DEFAULT_CATALOG,

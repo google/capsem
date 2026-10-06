@@ -22,7 +22,7 @@ use super::{
     catalog::{Catalog, CATALOG_MEDIA_TYPE},
     digest_hex, image_reference,
     selector::Digest as ContentDigest,
-    verify_platform,
+    verify_platform, CacheIdentity, ImageReference, RUNTIME_CONTRACT,
 };
 
 const METADATA_LIMIT: usize = 4 * 1024 * 1024;
@@ -73,6 +73,7 @@ pub struct ImageLayout {
     /// references name), otherwise the platform manifest itself.
     pub image_digest: String,
     files: Vec<PathBuf>,
+    cache_identity: CacheIdentity,
 }
 
 impl ImageLayout {
@@ -82,6 +83,11 @@ impl ImageLayout {
     /// Relative paths; all blob names have been validated as SHA-256 digests.
     pub fn files(&self) -> &[PathBuf] {
         &self.files
+    }
+
+    /// The actual immutable image identity, even when a moving tag was requested.
+    pub fn cache_identity(&self) -> &CacheIdentity {
+        &self.cache_identity
     }
 }
 
@@ -417,6 +423,11 @@ impl Puller {
             }
         }
         Ok(ImageLayout {
+            cache_identity: CacheIdentity::from_resolved(
+                ImageReference::try_from(&reference)?.resolve(ContentDigest::parse(&image_digest)?)?,
+                &self.architecture,
+                RUNTIME_CONTRACT,
+            )?,
             directory,
             source_digest,
             image_digest,

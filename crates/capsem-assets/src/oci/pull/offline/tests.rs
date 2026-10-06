@@ -139,6 +139,10 @@ async fn cached_pinned_image_materializes_without_a_registry_and_rehashes_every_
         .unwrap();
     assert!(format!("{error:#}").contains("linux/amd64"));
     assert_eq!(image.image_digest, original.image_digest);
+    assert_eq!(image.cache_identity(), original.cache_identity());
+    assert_eq!(image.cache_identity().image().digest().as_str(), image.image_digest);
+    assert_eq!(image.cache_identity().architecture(), "arm64");
+    assert_eq!(image.cache_identity().runtime_contract(), RUNTIME_CONTRACT);
     assert_eq!(image.source_digest, original.source_digest);
     assert_eq!(image.files(), original.files());
     for file in image.files() {
