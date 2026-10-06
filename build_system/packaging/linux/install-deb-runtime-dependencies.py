@@ -44,6 +44,7 @@ def install_runtime_dependencies(
             "satisfy",
             "--yes",
             "--no-install-recommends",
+            "--allow-downgrades",
             dependencies,
         ),
         check=True,

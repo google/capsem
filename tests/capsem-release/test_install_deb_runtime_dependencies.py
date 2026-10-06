@@ -84,6 +84,7 @@ def test_installs_dependencies_declared_by_exact_package(tmp_path: Path) -> None
             "satisfy",
             "--yes",
             "--no-install-recommends",
+            "--allow-downgrades",
             dependencies,
         ),
     ]

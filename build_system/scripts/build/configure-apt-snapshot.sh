@@ -33,3 +33,17 @@ Components: main restricted universe multiverse
 Architectures: $native_arch
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
+
+# The snapshot is the authority even over what the image already carries. A
+# hosted runner image moves past the snapshot between rebuilds (mesa 04.4
+# preinstalled against the snapshot's 04.2), and apt then refuses any install
+# that needs the snapshot's version of a newer installed library. Above 1000
+# lets the transaction downgrade those to the snapshot cohort.
+snapshot_host="${snapshot_base#https://}"
+snapshot_host="${snapshot_host%%/*}"
+rm -f /etc/apt/preferences /etc/apt/preferences.d/*
+cat > /etc/apt/preferences.d/capsem-snapshot.pref <<EOF
+Package: *
+Pin: origin "$snapshot_host"
+Pin-Priority: 1001
+EOF
