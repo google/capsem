@@ -53,7 +53,7 @@ def _clippy(tree: Path, target: Path) -> subprocess.CompletedProcess[str]:
     }
     return subprocess.run(
         bounded(argv, 120, env={"CARGO_TARGET_DIR": str(target),
-                              **dict.fromkeys(unwrapped, ""), **keyed}),
+                              "RUSTC_WRAPPER": "", **keyed}),
         cwd=tree, env=environment, capture_output=True, text=True,
     )
 

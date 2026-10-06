@@ -87,7 +87,7 @@ def test_shared_target_isolates_workspace_source_and_keeps_dependencies_warm(
         build = subprocess.run(
             bounded(["cargo", "build", "--offline", "--message-format=json"], 30,
                     env={"CARGO_TARGET_DIR": str(target),
-                         **{key: env.get(key, "") for key in unwrapped}}),
+                         "RUSTC_WRAPPER": env.get("RUSTC_WRAPPER", "")}),
             cwd=root, env=env, capture_output=True, text=True,
         )
         assert build.returncode == 0, build.stderr
