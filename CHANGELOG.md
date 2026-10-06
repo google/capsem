@@ -338,6 +338,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux x86 VM kernels initialize page metadata across the available CPUs,
+  reducing cold boot time for the default 12 GiB VM. Initialization completes
+  before guest userspace starts; VM resource defaults and isolation stay the same.
+
 - Linux x86 VM boot enables fast string operations on every vCPU instead of
   leaving the firmware enable bit clear. Checkpoints preserve this CPU setting
   and continue to read the previous checkpoint format.

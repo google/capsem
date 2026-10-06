@@ -23,6 +23,11 @@ CONFIG_HYPERVISOR_GUEST=y
 CONFIG_PARAVIRT=y
 CONFIG_KVM_GUEST=y
 
+# Initialize large guests' page metadata across their CPUs instead of on
+# the boot CPU alone. Sparse memmaps also avoid metadata for the PCI hole.
+CONFIG_SPARSEMEM=y
+CONFIG_DEFERRED_STRUCT_PAGE_INIT=y
+
 # ==========================================
 # 2. BOOT ESSENTIALS
 # ==========================================
