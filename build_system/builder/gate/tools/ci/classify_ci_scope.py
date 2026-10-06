@@ -178,7 +178,7 @@ def _validated_parts(path: str) -> tuple[str, str]:
 
 def _path_scopes(path: str) -> frozenset[str]:
     root, remainder = _validated_parts(path)
-    if path in SHARED_CONTROL_FILES:
+    if path in SHARED_CONTROL_FILES or path.startswith("build_system/patches/"):
         return frozenset({"shared"})
     if scopes := MULTI_OWNER_FILES.get(path):
         return scopes

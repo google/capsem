@@ -201,6 +201,7 @@ def test_shared_hidden_and_root_inputs_fan_out() -> None:
         "build_system/scripts/ci/classify-ci-scope.py",
         "build_system/scripts/ci/require-ci-jobs.sh",
         "build_system/builder/gate/tools/ci/classify_ci_scope.py",
+        "build_system/patches/http-cache-semantics@4.3.0.patch",
     ):
         assert module.ci_scopes((path,)) == {"shared"}
         assert module.ci_owners((path,)) == module.ALL_JOBS
