@@ -6,17 +6,19 @@ pub(crate) struct OwnerHandoff {
     id: String,
     generation: uuid::Uuid,
     endpoint: PathBuf,
-    pub(crate) uds_path: PathBuf,
+    pub(crate) owner: crate::owner_connection::OwnerConnection,
 }
 
 impl OwnerHandoff {
     pub(crate) async fn acquire(state: &Arc<ServiceState>, id: &str) -> Result<Self, AppError> {
-        let (id, generation, uds_path) = {
+        let (id, generation, owner) = {
             let instances = state.instances.lock().unwrap();
             let instance = instances
                 .get(id)
                 .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not running: {id}")))?;
-            let captured = (instance.id.clone(), instance.generation, instance.uds_path.clone());
+            let owner = crate::owner_connection::OwnerConnection::capture(instance)
+                .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
+            let captured = (instance.id.clone(), instance.generation, owner);
             drop(instances);
             captured
         };
@@ -35,11 +37,11 @@ impl OwnerHandoff {
             id,
             generation,
             endpoint,
-            uds_path,
+            owner,
         })
     }
 
-    pub(crate) fn validate(self, state: &ServiceState, reported: &str) -> Result<PathBuf, AppError> {
+    pub(crate) fn validate(&self, state: &ServiceState, reported: &str) -> Result<PathBuf, AppError> {
         // Path equality normalizes '.' components. Authorize exactly the
         // spelling we derived, without resolving any worker-controlled path.
         if self.endpoint.as_os_str() != std::ffi::OsStr::new(reported) {
@@ -60,7 +62,7 @@ impl OwnerHandoff {
                 "VM owner changed during handoff admission".into(),
             ));
         }
-        Ok(self.endpoint)
+        Ok(self.endpoint.clone())
     }
 }
 

@@ -137,7 +137,7 @@ fn fixture(images: FixtureImages) -> Fixture {
     let session_dir = dir.path().join("session");
     let workspace = session_dir.join("guest/workspace");
     std::fs::create_dir_all(&workspace).unwrap();
-    insert_fake_instance_with_session_dir(&state, "box", 1, session_dir);
+    insert_fake_instance_with_session_dir(&state, "box", std::process::id(), session_dir);
     let uds_path = state.instances.lock().unwrap()["box"].uds_path.clone();
     std::fs::write(uds_path.with_extension("ready"), b"1\n").unwrap();
     Fixture {

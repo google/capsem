@@ -182,7 +182,7 @@ pub(super) async fn handle_mcp_server_refresh(
     let mut refreshed = 0;
     for (vm_id, uds_path) in &targets {
         let id = state.next_job_id();
-        match send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await {
+        match send_ipc_command(&state, uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await {
             Ok(_) => refreshed += 1,
             Err(error) => warn!(vm_id = %vm_id, server_id = %server_id, %error, "MCP tool refresh failed"),
         }
@@ -270,7 +270,7 @@ pub(super) async fn handle_mcp_tool_call(
         namespaced_name,
         arguments_json,
     };
-    match send_ipc_command(&uds_path, msg, Some(60))
+    match send_ipc_command(&state, &uds_path, msg, Some(60))
         .await
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?
     {

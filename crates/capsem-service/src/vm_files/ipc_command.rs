@@ -3,25 +3,22 @@ use super::*;
 
 #[tracing::instrument(skip_all, fields(cmd = ?std::mem::discriminant(&cmd), timeout_secs = ?timeout_secs))]
 pub(crate) async fn send_ipc_command(
+    state: &ServiceState,
     uds_path: &std::path::Path,
     cmd: ServiceToProcess,
     timeout_secs: Option<u64>,
 ) -> Result<ProcessToService, String> {
-    let stream = tokio::net::UnixStream::connect(uds_path)
-        .await
-        .map_err(|e| format!("failed to connect to sandbox: {e}"))?;
-    let std_stream = stream
-        .into_std()
-        .map_err(|e| format!("failed to convert stream: {e}"))?;
-    let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-        std_stream,
-        "capsem-service",
-        capsem_foundation::telemetry::current_parent_traceparent(),
-    )
-    .await
-    .map_err(|e| format!("IPC handshake failed: {e}"))?;
-    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) =
-        channel_from_std(std_stream).map_err(|e| format!("failed to create IPC channel: {e}"))?;
+    let owner = owner_connection::OwnerConnection::acquire(state, uds_path)?;
+    send_owner_command(state, &owner, cmd, timeout_secs).await
+}
+
+pub(crate) async fn send_owner_command(
+    state: &ServiceState,
+    owner: &owner_connection::OwnerConnection,
+    cmd: ServiceToProcess,
+    timeout_secs: Option<u64>,
+) -> Result<ProcessToService, String> {
+    let (tx, rx) = owner.open(state, "capsem-service", false).await?;
 
     tx.send(cmd.clone())
         .await
@@ -58,6 +55,7 @@ pub(crate) async fn send_ipc_command(
             None => matches!(msg, ProcessToService::Pong) && matches!(cmd, ServiceToProcess::Ping),
         };
         if answers {
+            owner.validate(state, false)?;
             return Ok(msg);
         }
     }

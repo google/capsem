@@ -149,7 +149,7 @@ async fn clone_guest_state(
         id,
         destination: destination.to_string_lossy().into_owned(),
     };
-    let result = match send_ipc_command(uds_path, request, Some(CLONE_STATE_REPLY_SECS)).await {
+    let result = match send_ipc_command(state, uds_path, request, Some(CLONE_STATE_REPLY_SECS)).await {
         Ok(ProcessToService::CloneStateResult {
             size_bytes: Some(size),
             error: None,

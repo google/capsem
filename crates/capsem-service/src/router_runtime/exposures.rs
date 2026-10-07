@@ -46,7 +46,7 @@ fn api_publication(publication: capsem_proto::ipc::PublicationInfo) -> ExposureI
 
 async fn ask_owner(state: &ServiceState, id: &str, request: ServiceToProcess) -> Result<ProcessToService, AppError> {
     let uds_path = running_uds_path(state, id)?;
-    send_ipc_command(&uds_path, request, Some(OWNER_TIMEOUT_SECS))
+    send_ipc_command(state, &uds_path, request, Some(OWNER_TIMEOUT_SECS))
         .await
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, format!("VM owner unavailable: {e}")))
 }
@@ -317,8 +317,9 @@ pub(crate) async fn handle_admit_preview_connection(
         capsem_api::PreviewAdmissionKind::Request => capsem_proto::PreviewAdmissionKind::Request,
         capsem_api::PreviewAdmissionKind::WebsocketUpgrade => capsem_proto::PreviewAdmissionKind::WebsocketUpgrade,
     };
-    match send_ipc_command(
-        &handoff.uds_path,
+    match send_owner_command(
+        &state,
+        &handoff.owner,
         ServiceToProcess::AdmitPreviewConnection {
             id: state.next_job_id(),
             exposure_id,

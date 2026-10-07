@@ -7,7 +7,7 @@ fn fixture() -> (Arc<ServiceState>, PathBuf, tempfile::TempDir) {
     let session_dir = dir.path().join("session");
     std::fs::create_dir_all(session_dir.join("guest/workspace")).unwrap();
     std::fs::write(state.run_dir.join("preview.port"), "19444").unwrap();
-    insert_fake_instance_with_session_dir(&state, "box", 1, session_dir);
+    insert_fake_instance_with_session_dir(&state, "box", std::process::id(), session_dir);
     let uds_path = state.instances.lock().unwrap()["box"].uds_path.clone();
     (state, uds_path, dir)
 }
@@ -405,7 +405,7 @@ async fn preview_admission_rejects_a_reply_from_a_replaced_owner_generation() {
     owner.await.unwrap();
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
     assert!(
-        body.to_string().contains("VM owner changed during handoff admission"),
+        body.to_string().contains("VM owner changed during IPC admission"),
         "{body}"
     );
 }
