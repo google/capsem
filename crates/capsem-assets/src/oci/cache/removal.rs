@@ -126,6 +126,10 @@ pub(super) fn names(cache: &BlobCache, receipt: &CacheReceipt) -> Result<BTreeMa
 }
 
 pub(super) fn materializing_with(root: &ContainedDir, probe_barrier: bool) -> Result<bool> {
+    materializing_bounded(root, probe_barrier, usize::MAX)
+}
+
+pub(super) fn materializing_bounded(root: &ContainedDir, probe_barrier: bool, maximum_entries: usize) -> Result<bool> {
     let directory = root.descend("locks".as_ref())?;
     if probe_barrier {
         match try_acquire_existing(&directory.path().join("materialization.lock"), LockMode::Exclusive) {
@@ -135,17 +139,26 @@ pub(super) fn materializing_with(root: &ContainedDir, probe_barrier: bool) -> Re
             Err(error) => return Err(error.into()),
         }
     }
-    for entry in directory.entries()? {
+    let mut remaining = maximum_entries;
+    let mut busy = false;
+    directory.visit_entries(|entry| {
+        remaining = remaining
+            .checked_sub(1)
+            .ok_or_else(|| std::io::Error::other("inventory entry budget exhausted"))?;
         let name = entry.name.to_string_lossy();
         let Some(key) = name.strip_prefix("materialize-") else {
-            continue;
+            return Ok(true);
         };
-        CacheKey::parse(key.strip_suffix(".lock").context("invalid materialization lock name")?)?;
+        let key = key
+            .strip_suffix(".lock")
+            .ok_or_else(|| std::io::Error::other("invalid materialization lock name"))?;
+        CacheKey::parse(key).map_err(std::io::Error::other)?;
         // Existing-only acquisition neither creates nor chmods controls.
         match try_acquire_existing(&directory.path().join(&entry.name), LockMode::Exclusive)? {
-            LockAttempt::Contended => return Ok(true),
+            LockAttempt::Contended => busy = true,
             LockAttempt::Acquired(_lease) => {}
         }
-    }
-    Ok(false)
+        Ok(!busy)
+    })?;
+    Ok(busy)
 }

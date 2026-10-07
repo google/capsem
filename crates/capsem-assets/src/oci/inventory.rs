@@ -31,6 +31,8 @@ pub struct ImageInventory {
     pub shared_allocated_bytes: u64,
     pub reclaimable_allocated_bytes: u64,
     pub missing_blobs: u64,
+    /// Lock state at collection time. Kernel lease changes need not emit a
+    /// filesystem event; removal always rechecks live ownership and locks.
     pub busy: bool,
 }
 
@@ -46,6 +48,13 @@ pub struct CacheUsage {
 }
 
 pub(super) fn measure(root: &ContainedDir) -> Result<CacheUsage> {
+    measure_bounded(root, usize::MAX)
+}
+
+pub(super) fn measure_bounded(root: &ContainedDir, maximum_entries: usize) -> Result<CacheUsage> {
+    let mut remaining = maximum_entries
+        .checked_sub(1)
+        .context("inventory entry budget exhausted")?;
     let mut usage = CacheUsage::default();
     let mut seen = HashSet::new();
     let mut directories = vec![root.try_clone()?];
@@ -55,7 +64,10 @@ pub(super) fn measure(root: &ContainedDir) -> Result<CacheUsage> {
         if !record(&mut usage, &mut seen, (metadata.dev(), metadata.ino()), allocated)? {
             continue;
         }
-        for entry in directory.entries()? {
+        directory.visit_entries(|entry| {
+            remaining = remaining
+                .checked_sub(1)
+                .ok_or_else(|| std::io::Error::other("inventory entry budget exhausted"))?;
             if entry.kind == EntryKind::Directory {
                 directories.push(directory.descend(&entry.name)?);
             } else {
@@ -64,9 +76,11 @@ pub(super) fn measure(root: &ContainedDir) -> Result<CacheUsage> {
                     &mut seen,
                     (entry.identity.dev, entry.identity.ino),
                     entry.allocated,
-                )?;
+                )
+                .map_err(std::io::Error::other)?;
             }
-        }
+            Ok(true)
+        })?;
     }
     Ok(usage)
 }

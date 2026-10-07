@@ -24,12 +24,14 @@ struct Work {
     generation: u64,
     active: bool,
     keys: Vec<CacheKey>,
+    inventory_budget: Option<usize>,
 }
 
 #[derive(Clone)]
 struct Job {
     generation: u64,
     keys: Vec<CacheKey>,
+    inventory_budget: Option<usize>,
 }
 
 impl ImageCache {
@@ -76,19 +78,43 @@ impl CacheReconciler {
         let mut keys = keys.to_vec();
         keys.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
         keys.dedup();
-        let mut work = self
-            .0
+        let mut work = self.work()?;
+        let inventory_budget = work.inventory_budget;
+        let result = self.schedule(&mut work, keys, inventory_budget);
+        drop(work);
+        result
+    }
+
+    /// Inventory uses the same one-worker/latest-batch rail as readiness.
+    /// The caller supplies an explicit traversal/watch budget; no polling
+    /// call synchronously visits cache paths or invents retention policy.
+    pub fn request_inventory(&self, maximum_entries: usize) -> Result<bool> {
+        ensure!(maximum_entries > 0, "inventory entry budget must be positive");
+        let mut work = self.work()?;
+        let keys = work.keys.clone();
+        let result = self.schedule(&mut work, keys, Some(maximum_entries));
+        drop(work);
+        result
+    }
+
+    fn work(&self) -> Result<std::sync::MutexGuard<'_, Work>> {
+        ensure!(!self.0.jobs.is_closed(), "cache reconciliation worker stopped");
+        self.0
             .state
             .lock()
-            .map_err(|_| anyhow::anyhow!("cache worker state poisoned"))?;
-        if work.active && work.keys == keys {
+            .map_err(|_| anyhow::anyhow!("cache worker state poisoned"))
+    }
+
+    fn schedule(&self, work: &mut Work, keys: Vec<CacheKey>, inventory_budget: Option<usize>) -> Result<bool> {
+        if work.active && work.keys == keys && work.inventory_budget == inventory_budget {
             return Ok(false);
         }
-        let mut needed = work.active;
+        let mut needed = work.active || work.inventory_budget != inventory_budget;
         if !needed {
             for key in &keys {
                 needed |= self.0.cache.snapshot(key)?.verification_pending;
             }
+            needed |= inventory_budget.is_some() && self.0.cache.inventory_snapshot()?.is_none();
         }
         if !needed {
             work.keys = keys;
@@ -100,11 +126,12 @@ impl CacheReconciler {
             .context("cache worker generation exhausted")?;
         work.active = true;
         work.keys = keys.clone();
+        work.inventory_budget = inventory_budget;
         self.0.jobs.send_replace(Some(Job {
             generation: work.generation,
             keys,
+            inventory_budget,
         }));
-        drop(work);
         Ok(true)
     }
 }
@@ -150,6 +177,20 @@ async fn run(
                 result = puller.reconcile_cache(key, &parent) => {
                     if let Err(error) = result {
                         tracing::warn!(cache_key = %key.as_str(), %error, "local cache verification remains incomplete");
+                    }
+                },
+            }
+        }
+        if let Some(budget) = job.inventory_budget {
+            tokio::select! {
+                biased;
+                changed = jobs.changed() => {
+                    if changed.is_err() { return; }
+                    continue 'jobs;
+                },
+                result = cache.refresh_inventory(budget) => {
+                    if let Err(error) = result {
+                        tracing::warn!(%error, "local cache inventory remains unavailable");
                     }
                 },
             }

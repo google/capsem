@@ -1,6 +1,7 @@
 //! Retained image accounting uses the cache owner's descriptor namespace.
 use super::*;
 use crate::oci::{CacheInventory, CacheKey, ImageInventory};
+use capsem_foundation::unix::change_watch::ChangeWatch;
 use std::collections::{HashMap, HashSet};
 
 type Inode = (u64, u64);
@@ -19,7 +20,73 @@ struct Fact {
     category: Category,
 }
 
+struct InventoryProof {
+    tracking: Arc<Mutex<crate::oci::readiness::Tracking>>,
+    epoch: u64,
+    finished: bool,
+}
+
+impl Drop for InventoryProof {
+    fn drop(&mut self) {
+        if !self.finished {
+            if let Ok(mut tracking) = self.tracking.lock() {
+                if tracking.epoch() == self.epoch {
+                    let _ = tracking.invalidate_inventory();
+                }
+            }
+        }
+    }
+}
+
 impl BlobCache {
+    pub(in super::super) fn inventory_snapshot(&self) -> Result<Option<Arc<CacheInventory>>> {
+        self.tracking
+            .lock()
+            .map_err(|_| anyhow::anyhow!("OCI tracking lock poisoned"))?
+            .inventory_snapshot()
+    }
+
+    pub(in super::super) async fn refresh_inventory(&self, maximum_entries: usize) -> Result<()> {
+        let epoch = {
+            let mut tracking = self
+                .tracking
+                .lock()
+                .map_err(|_| anyhow::anyhow!("OCI tracking lock poisoned"))?;
+            tracking.invalidate_inventory()?;
+            tracking.epoch()
+        };
+        let mut proof = InventoryProof {
+            tracking: Arc::clone(&self.tracking),
+            epoch,
+            finished: false,
+        };
+        let lease = read_lock(self.mutation_lock()).await?;
+        let cache = self.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let _lease = lease;
+            let mut watch = ChangeWatch::new()?;
+            let root = watch.open_directory(&cache.root)?;
+            root.validate_private()?;
+            watch_tree(&root, &mut watch, maximum_entries)?;
+            let inventory = observe(&cache, &root, maximum_entries)?;
+            ensure!(!watch.changed()?, "cache changed during inventory observation");
+            let mut tracking = cache
+                .tracking
+                .lock()
+                .map_err(|_| anyhow::anyhow!("OCI tracking lock poisoned"))?;
+            ensure!(
+                tracking.epoch() == epoch && epoch != u64::MAX,
+                "inventory observation was cancelled or invalidated"
+            );
+            tracking.observed_inventory(inventory, watch);
+            drop(tracking);
+            Ok(())
+        })
+        .await??;
+        proof.finished = true;
+        Ok(())
+    }
+
     pub(in super::super) async fn inventory(&self) -> Result<CacheInventory> {
         let lease = read_lock(self.mutation_lock()).await?;
         let cache = self.clone();
@@ -27,20 +94,53 @@ impl BlobCache {
             let _lease = lease;
             let root = ContainedDir::open_root(&cache.root)?;
             root.validate_private()?;
-            observe(&cache, &root)
+            observe(&cache, &root, usize::MAX)
         })
         .await?
     }
 }
 
-fn observe(cache: &BlobCache, root: &ContainedDir) -> Result<CacheInventory> {
+fn watch_tree(root: &ContainedDir, watch: &mut ChangeWatch, maximum_entries: usize) -> Result<()> {
+    let mut remaining = maximum_entries
+        .checked_sub(1)
+        .context("inventory entry budget exhausted")?;
+    let mut directories = vec![root.try_clone()?];
+    while let Some(directory) = directories.pop() {
+        directory.visit_entries(|entry| {
+            remaining = remaining
+                .checked_sub(1)
+                .ok_or_else(|| std::io::Error::other("inventory entry budget exhausted"))?;
+            match entry.kind {
+                EntryKind::Directory => {
+                    let child = directory.descend(&entry.name)?;
+                    watch.add(child.as_fd())?;
+                    directories.push(child);
+                }
+                EntryKind::File => {
+                    let file = directory.open_file(&entry.name, ContainedOpenOptions::read_only())?;
+                    let current = file.metadata()?;
+                    if (current.dev(), current.ino()) != (entry.identity.dev, entry.identity.ino) {
+                        return Err(std::io::Error::other("inventory file changed before watch"));
+                    }
+                    watch.add(file.as_fd())?;
+                }
+                _ => {}
+            }
+            Ok(true)
+        })?;
+    }
+    Ok(())
+}
+
+fn observe(cache: &BlobCache, root: &ContainedDir, maximum_entries: usize) -> Result<CacheInventory> {
     let directory = root.walk(&cache.policy.entry_root)?;
     let mut receipts = Vec::new();
     let mut invalid_receipts = 0u64;
-    for entry in directory.entries()? {
+    let mut remaining = maximum_entries;
+    visit_bounded(&directory, &mut remaining, |entry| {
         let name = entry.name.to_string_lossy();
         let Some(key) = name.strip_prefix("receipt-") else {
-            continue;
+            return Ok(());
         };
         let receipt = CacheKey::parse(key)
             .and_then(|key| super::receipts::read(&directory, &key)?.context("inventory receipt disappeared"));
@@ -52,10 +152,11 @@ fn observe(cache: &BlobCache, root: &ContainedDir) -> Result<CacheInventory> {
                     .context("invalid receipt count overflow")?
             }
         }
-    }
+        Ok(())
+    })?;
     receipts.sort_unstable_by_key(|receipt| receipt.key().as_str().to_owned());
-    let (facts, files) = scan(cache, root)?;
-    let busy = super::removal::materializing_with(root, true)?;
+    let (facts, files) = scan(cache, root, maximum_entries)?;
+    let busy = super::removal::materializing_bounded(root, true, maximum_entries)?;
     let mut references: HashMap<Inode, usize> = HashMap::new();
     let mut rows = Vec::new();
     for receipt in receipts {
@@ -79,7 +180,7 @@ fn observe(cache: &BlobCache, root: &ContainedDir) -> Result<CacheInventory> {
         }
         rows.push((receipt, selected, missing));
     }
-    let usage = crate::oci::inventory::measure(root)?;
+    let usage = crate::oci::inventory::measure_bounded(root, maximum_entries)?;
     let mut inventory = CacheInventory {
         usage,
         logical_bytes: 0,
@@ -144,7 +245,10 @@ fn observe(cache: &BlobCache, root: &ContainedDir) -> Result<CacheInventory> {
 
 type Scan = (HashMap<Inode, Fact>, HashMap<PathBuf, Inode>);
 
-fn scan(cache: &BlobCache, root: &ContainedDir) -> Result<Scan> {
+fn scan(cache: &BlobCache, root: &ContainedDir, maximum_entries: usize) -> Result<Scan> {
+    let mut remaining = maximum_entries
+        .checked_sub(1)
+        .context("inventory entry budget exhausted")?;
     let mut facts: HashMap<Inode, Fact> = HashMap::new();
     let mut files = HashMap::new();
     let mut directories = vec![(root.try_clone()?, PathBuf::new())];
@@ -173,11 +277,11 @@ fn scan(cache: &BlobCache, root: &ContainedDir) -> Result<Scan> {
                 },
             },
         );
-        for entry in directory.entries()? {
+        visit_bounded(&directory, &mut remaining, |entry| {
             let path = relative.join(&entry.name);
             if entry.kind == EntryKind::Directory {
                 directories.push((directory.descend(&entry.name)?, path));
-                continue;
+                return Ok(());
             }
             let inode = (entry.identity.dev, entry.identity.ino);
             let links = if entry.kind == EntryKind::File {
@@ -200,9 +304,25 @@ fn scan(cache: &BlobCache, root: &ContainedDir) -> Result<Scan> {
                 category,
             });
             fact.category = fact.category.min(category);
-        }
+            Ok(())
+        })?;
     }
     Ok((facts, files))
+}
+
+fn visit_bounded(
+    directory: &ContainedDir,
+    remaining: &mut usize,
+    mut visit: impl FnMut(capsem_foundation::unix::contained::ContainedEntry) -> Result<()>,
+) -> Result<()> {
+    directory.visit_entries(|entry| {
+        *remaining = remaining
+            .checked_sub(1)
+            .ok_or_else(|| std::io::Error::other("inventory entry budget exhausted"))?;
+        visit(entry).map_err(std::io::Error::other)?;
+        Ok(true)
+    })?;
+    Ok(())
 }
 
 fn category(cache: &BlobCache, path: &Path, kind: EntryKind) -> Category {

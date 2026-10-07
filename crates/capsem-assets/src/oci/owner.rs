@@ -1,6 +1,7 @@
 //! Long-lived installed cache ownership carries no registry credentials.
 
 use anyhow::Result;
+use std::sync::Arc;
 
 use super::{cache::BlobCache, CacheInventory, CacheKey, CacheSnapshot, CacheUsage};
 
@@ -31,6 +32,20 @@ impl ImageCache {
     pub async fn inventory(&self) -> Result<CacheInventory> {
         self.inner.prepare().await?;
         self.inner.inventory().await
+    }
+
+    /// A cheap memory/kernel-notification read; absence means unobserved or
+    /// invalidated. It never traverses disk or grants deletion authority.
+    pub fn inventory_snapshot(&self) -> Result<Option<Arc<CacheInventory>>> {
+        self.inner.inventory_snapshot()
+    }
+
+    /// Explicit bounded collection. Directory bindings and regular-file
+    /// inodes are watched before observing; changes refuse publication.
+    pub async fn refresh_inventory(&self, maximum_entries: usize) -> Result<()> {
+        anyhow::ensure!(maximum_entries > 0, "inventory entry budget must be positive");
+        self.inner.prepare().await?;
+        self.inner.refresh_inventory(maximum_entries).await
     }
 
     #[cfg(test)]

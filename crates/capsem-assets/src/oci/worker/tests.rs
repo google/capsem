@@ -6,6 +6,173 @@ use capsem_foundation::poll::{poll_until, PollOpts};
 use std::time::Duration;
 
 #[tokio::test]
+async fn inventory_worker_publishes_only_quiet_bounded_observations_and_tracks_nested_changes() {
+    let root = super::super::tests::private_dir();
+    let parent = tempfile::tempdir().unwrap();
+    let cache = ImageCache::at(root.path()).unwrap();
+    cache.inner.prepare().await.unwrap();
+    let nested = root.path().join("unmanaged");
+    std::fs::create_dir(&nested).unwrap();
+    let file = nested.join("payload");
+    std::fs::write(&file, vec![0u8; 8192]).unwrap();
+    let worker = cache.reconciler("arm64", parent.path().to_owned(), 1).unwrap();
+    assert!(cache.inventory_snapshot().unwrap().is_none());
+    assert!(worker.request_inventory(0).is_err());
+    assert!(worker.request_inventory(64).unwrap());
+    assert!(!worker.request_inventory(64).unwrap());
+    let inventory = poll_until(PollOpts::new("inventory-observed", Duration::from_secs(2)), || async {
+        cache.inventory_snapshot().unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(inventory.usage.allocated_bytes >= 8192);
+    assert!(inventory.images.is_empty());
+    assert!(std::sync::Arc::ptr_eq(
+        &inventory,
+        &cache.inventory_snapshot().unwrap().unwrap()
+    ));
+    assert!(!worker.request_inventory(64).unwrap());
+    // Modification through an unrelated hardlink changes allocation without
+    // replacing the cache's directory entry.
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::hard_link(&file, elsewhere.path().join("alias")).unwrap();
+    assert!(cache.inventory_snapshot().unwrap().is_none());
+    assert!(worker.request_inventory(64).unwrap());
+    poll_until(PollOpts::new("linked-inventory", Duration::from_secs(2)), || async {
+        cache.inventory_snapshot().unwrap()
+    })
+    .await
+    .unwrap();
+    std::fs::write(elsewhere.path().join("alias"), vec![0u8; 32768]).unwrap();
+    assert!(cache.inventory_snapshot().unwrap().is_none());
+    assert!(worker.request_inventory(64).unwrap());
+    let updated = poll_until(PollOpts::new("changed-inventory", Duration::from_secs(2)), || async {
+        cache.inventory_snapshot().unwrap()
+    })
+    .await
+    .unwrap();
+    assert!(updated.usage.allocated_bytes > inventory.usage.allocated_bytes);
+    assert!(cache.refresh_inventory(1).await.is_err());
+    assert!(cache.inventory_snapshot().unwrap().is_none());
+    assert_eq!(std::fs::read(&file).unwrap().len(), 32768);
+}
+
+#[tokio::test]
+async fn inventory_observations_follow_root_bindings_and_cancel_when_the_worker_owner_drops() {
+    let outer = super::super::tests::private_dir();
+    let root = outer.path().join("holder/cache");
+    let parent = tempfile::tempdir().unwrap();
+    let cache = ImageCache::at(&root).unwrap();
+    let worker = cache.reconciler("arm64", parent.path().to_owned(), 1).unwrap();
+    assert!(worker.request_inventory(32).unwrap());
+    poll_until(PollOpts::new("root-inventory", Duration::from_secs(2)), || async {
+        cache.inventory_snapshot().unwrap()
+    })
+    .await
+    .unwrap();
+    std::fs::rename(&root, outer.path().join("retired")).unwrap();
+    assert!(cache.inventory_snapshot().unwrap().is_none());
+    poll_until(
+        PollOpts::new("replacement-inventory-request", Duration::from_secs(1)),
+        || async { worker.request_inventory(32).unwrap().then_some(()) },
+    )
+    .await
+    .unwrap();
+    let rebound = poll_until(
+        PollOpts::new("replacement-inventory", Duration::from_secs(2)),
+        || async { cache.inventory_snapshot().unwrap() },
+    )
+    .await
+    .unwrap();
+    assert!(root.is_dir());
+    assert!(rebound.images.is_empty());
+    std::fs::rename(outer.path().join("holder"), outer.path().join("old-holder")).unwrap();
+    assert!(cache.inventory_snapshot().unwrap().is_none());
+    cache.refresh_inventory(32).await.unwrap();
+    assert!(cache.inventory_snapshot().unwrap().is_some());
+    let held = cache.inner.mutation_lease().await.unwrap();
+    let key = CacheIdentity::new(
+        &format!("localhost/team/image@sha256:{}", "d".repeat(64)),
+        "arm64",
+        RUNTIME_CONTRACT,
+    )
+    .unwrap()
+    .key();
+    let before = cache.snapshot(&key).unwrap().epoch;
+    poll_until(
+        PollOpts::new("blocked-inventory-request", Duration::from_secs(1)),
+        || async { worker.request_inventory(32).unwrap().then_some(()) },
+    )
+    .await
+    .unwrap();
+    let active = poll_until(
+        PollOpts::new("blocked-inventory-started", Duration::from_secs(1)),
+        || async {
+            let epoch = cache.snapshot(&key).unwrap().epoch;
+            (epoch > before).then_some(epoch)
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!worker.request_inventory(32).unwrap());
+    drop(worker);
+    poll_until(
+        PollOpts::new("inventory-worker-cancelled", Duration::from_secs(1)),
+        || async { (cache.snapshot(&key).unwrap().epoch > active).then_some(()) },
+    )
+    .await
+    .unwrap();
+    drop(held);
+    assert!(cache.inventory_snapshot().unwrap().is_none());
+    cache.refresh_inventory(32).await.unwrap();
+    assert!(cache.inventory_snapshot().unwrap().is_some());
+}
+
+#[tokio::test]
+async fn cancelled_inventory_refresh_cannot_invalidate_a_newer_owner_epoch() {
+    let root = super::super::tests::private_dir();
+    let cache = ImageCache::at(root.path()).unwrap();
+    cache.inner.prepare().await.unwrap();
+    let held = cache.inner.mutation_lease().await.unwrap();
+    let key = CacheIdentity::new(
+        &format!("localhost/team/image@sha256:{}", "d".repeat(64)),
+        "arm64",
+        RUNTIME_CONTRACT,
+    )
+    .unwrap()
+    .key();
+    let before = cache.snapshot(&key).unwrap().epoch;
+    let first_cache = cache.clone();
+    let first = tokio::spawn(async move { first_cache.refresh_inventory(32).await });
+    let active = poll_until(
+        PollOpts::new("first-inventory-epoch", Duration::from_secs(1)),
+        || async {
+            let epoch = cache.snapshot(&key).unwrap().epoch;
+            (epoch > before).then_some(epoch)
+        },
+    )
+    .await
+    .unwrap();
+    let second_cache = cache.clone();
+    let second = tokio::spawn(async move { second_cache.refresh_inventory(32).await });
+    let newer = poll_until(
+        PollOpts::new("second-inventory-epoch", Duration::from_secs(1)),
+        || async {
+            let epoch = cache.snapshot(&key).unwrap().epoch;
+            (epoch > active).then_some(epoch)
+        },
+    )
+    .await
+    .unwrap();
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    assert_eq!(cache.snapshot(&key).unwrap().epoch, newer);
+    drop(held);
+    second.await.unwrap().unwrap();
+    assert!(cache.inventory_snapshot().unwrap().is_some());
+}
+
+#[tokio::test]
 async fn incompatible_receipts_are_observed_once_until_their_metadata_changes() {
     let registry = Registry::start(|_, _| {}).await;
     let root = super::super::tests::private_dir();
@@ -156,6 +323,7 @@ async fn worker_reconciles_multiple_offline_images_and_only_retries_changed_obse
     let worker = cache.reconciler("arm64", parent.path().to_owned(), 2).unwrap();
     let keys = [key_one.clone(), key_two.clone()];
     assert!(worker.request(&keys).unwrap());
+    assert!(worker.request_inventory(64).unwrap());
     poll_until(PollOpts::new("worker-ready", Duration::from_secs(2)), || async {
         keys.iter()
             .all(|key| cache.snapshot(key).unwrap().state == CacheState::Ready)
@@ -163,6 +331,17 @@ async fn worker_reconciles_multiple_offline_images_and_only_retries_changed_obse
     })
     .await
     .unwrap();
+    let inventory = poll_until(
+        PollOpts::new("ready-image-inventory", Duration::from_secs(2)),
+        || async { cache.inventory_snapshot().unwrap() },
+    )
+    .await
+    .unwrap();
+    assert_eq!(inventory.images.len(), 2);
+    assert!(inventory
+        .images
+        .iter()
+        .all(|image| image.snapshot.state == CacheState::Ready));
     // The worker may still be finishing its last publication; a repeated
     // request must neither restart that work nor schedule quiet observations.
     assert!(!worker.request(&keys).unwrap());
