@@ -3,9 +3,7 @@ use super::{
     agent_mcp::{proof_token, ECHO},
     now_unix,
 };
-use bytes::Bytes;
 use serde_json::{json, Value};
-use std::fmt::Write as _;
 
 const CALL_ID: &str = "call_capsem_mcp_echo";
 
@@ -81,6 +79,15 @@ fn proof_reply(payload: &Value, token: &str) -> Result<Value, String> {
 }
 
 fn successful_echo(output: &Value, token: &str, code_mode: bool) -> bool {
+    if let Some(blocks) = output.as_array() {
+        return code_mode
+            && blocks.len() == 2
+            && blocks.iter().all(|block| block["type"] == "input_text")
+            && blocks[0]["text"]
+                .as_str()
+                .is_some_and(|header| header.starts_with("Script completed\n") && header.ends_with("\nOutput:\n"))
+            && blocks[1]["text"] == token;
+    }
     let mut text = output.as_str().unwrap_or("");
     if code_mode && text.starts_with("Script completed\n") {
         text = text.split_once("\nOutput:\n").map_or("", |(_, output)| output.trim());
@@ -92,81 +99,4 @@ fn successful_echo(output: &Value, token: &str, code_mode: bool) -> bool {
     let value = parsed.as_ref().unwrap_or(output);
     (value["isError"].is_null() || value["isError"] == false)
         && value["content"] == json!([{"type": "text", "text": token}])
-}
-
-pub(super) fn stream(response: Value) -> Bytes {
-    let events = events(response);
-    let mut body = String::new();
-    for event in events {
-        write!(body, "event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap())
-            .expect("writing to a String cannot fail");
-    }
-    Bytes::from(body)
-}
-
-pub(super) fn events(response: Value) -> Vec<Value> {
-    let mut events = Vec::new();
-    let mut emit = |name: &str, mut data: Value| {
-        data["type"] = json!(name);
-        data["sequence_number"] = json!(events.len());
-        events.push(data);
-    };
-    let mut initial = response.clone();
-    initial["output"] = json!([]);
-    initial["status"] = json!("in_progress");
-    initial["usage"] = Value::Null;
-    emit("response.created", json!({"response": initial}));
-    let item = response["output"][0].clone();
-    let mut opened = item.clone();
-    opened["status"] = json!("in_progress");
-    if item["type"] == "message" {
-        opened["content"] = json!([]);
-    } else if item["type"] == "function_call" {
-        opened["arguments"] = json!("");
-    } else {
-        opened["input"] = json!("");
-    }
-    emit("response.output_item.added", json!({"output_index": 0, "item": opened}));
-    if item["type"] == "message" {
-        let part = item["content"][0].clone();
-        let mut start = part.clone();
-        start["text"] = json!("");
-        emit(
-            "response.content_part.added",
-            json!({"output_index": 0, "content_index": 0, "item_id": item["id"], "part": start}),
-        );
-        emit(
-            "response.output_text.delta",
-            json!({"output_index": 0, "content_index": 0, "item_id": item["id"], "delta": part["text"], "logprobs": []}),
-        );
-        emit(
-            "response.output_text.done",
-            json!({"output_index": 0, "content_index": 0, "item_id": item["id"], "text": part["text"], "logprobs": []}),
-        );
-        emit(
-            "response.content_part.done",
-            json!({"output_index": 0, "content_index": 0, "item_id": item["id"], "part": part}),
-        );
-    } else if item["type"] == "function_call" {
-        emit(
-            "response.function_call_arguments.delta",
-            json!({"output_index": 0, "item_id": item["id"], "delta": item["arguments"]}),
-        );
-        emit(
-            "response.function_call_arguments.done",
-            json!({"output_index": 0, "item_id": item["id"], "arguments": item["arguments"]}),
-        );
-    } else {
-        emit(
-            "response.custom_tool_call_input.delta",
-            json!({"output_index": 0, "item_id": item["id"], "delta": item["input"]}),
-        );
-        emit(
-            "response.custom_tool_call_input.done",
-            json!({"output_index": 0, "item_id": item["id"], "input": item["input"]}),
-        );
-    }
-    emit("response.output_item.done", json!({"output_index": 0, "item": item}));
-    emit("response.completed", json!({"response": response}));
-    events
 }

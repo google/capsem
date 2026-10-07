@@ -116,3 +116,75 @@ async fn responses_mcp_proof_uses_the_declared_code_executor_to_discover_and_cal
     assert!(code.contains("text(block.text)"), "{code}");
     assert!(!code.contains(&format!("text(\"{TOKEN}\")")), "{code}");
 }
+
+#[tokio::test]
+async fn ordinary_responses_turns_keep_complete_item_events_and_exact_text() {
+    for stream in [false, true] {
+        let payload = json!({"model": "ordinary-fixture", "stream": stream,
+            "input": [{"role": "user", "content": format!("Write {TOKEN} to /workspace/result.txt.")}]});
+        let (status, _, body) = routed(Method::POST, "/v1/responses", None, HeaderMap::new(), payload.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        let first = completed(body, stream);
+        assert_eq!(first["output"][0]["name"], "exec_command");
+        let args: Value = serde_json::from_str(first["output"][0]["arguments"].as_str().unwrap()).unwrap();
+        assert!(
+            args["cmd"].as_str().unwrap().contains("/workspace/result.txt")
+                && args["cmd"].as_str().unwrap().contains(TOKEN)
+        );
+        let mut final_turn = payload;
+        final_turn["input"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type": "function_call_output", "output": TOKEN}));
+        let (status, _, body) = routed(Method::POST, "/v1/responses", None, HeaderMap::new(), final_turn).await;
+        assert_eq!(status, StatusCode::OK);
+        let response = completed(body, stream);
+        assert_eq!(response["output"][0]["type"], "message");
+        assert_eq!(response["output"][0]["content"][0]["text"], TOKEN);
+        assert_eq!(response["output"][1]["summary"][0]["text"], "ledger reasoning");
+    }
+}
+
+#[tokio::test]
+async fn ordinary_responses_text_with_newlines_is_valid_json_in_every_sse_event() {
+    let (status, _, body) = routed(
+        Method::POST,
+        "/v1/responses",
+        None,
+        HeaderMap::new(),
+        json!({"stream": true, "input": [{"type": "function_call_output", "output": "done"}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let response = completed(body, true);
+    assert_eq!(response["output"][0]["content"][0]["text"], EXPECTED_POEM);
+}
+
+#[tokio::test]
+async fn responses_mcp_proof_consumes_the_actual_code_output_blocks_and_refuses_failure() {
+    for (header, expected_status) in [
+        ("Script completed\nWall time 0.0 seconds\nOutput:\n", StatusCode::OK),
+        (
+            "Script failed\nWall time 0.0 seconds\nOutput:\n",
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let mut payload = proof(false);
+        payload.as_object_mut().unwrap().remove("tools");
+        payload["input"].as_array_mut().unwrap().insert(
+            0,
+            json!({"role": "developer", "type": "additional_tools",
+            "tools": [{"type": "namespace", "name": "functions", "tools": [{"type": "custom", "name": "exec"}]}]}),
+        );
+        payload["input"].as_array_mut().unwrap().push(
+            json!({"type": "custom_tool_call_output", "call_id": "call_capsem_mcp_echo",
+            "output": [{"type": "input_text", "text": header}, {"type": "input_text", "text": TOKEN}]}),
+        );
+        let (status, _, body) = routed(Method::POST, "/v1/responses", None, HeaderMap::new(), payload).await;
+        assert_eq!(status, expected_status);
+        if status == StatusCode::OK {
+            let response = completed(body, false);
+            assert_eq!(response["output"][0]["content"][0]["text"], TOKEN);
+        }
+    }
+}
