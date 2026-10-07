@@ -14,22 +14,27 @@ pub(super) struct EnvVarGuard {
     previous: Option<std::ffi::OsString>,
 }
 
-pub(super) struct TestBuiltinMcpBinaryGuard {
-    path: PathBuf,
-    remove_on_drop: bool,
-}
-
-pub(super) fn ensure_test_builtin_mcp_binary() -> TestBuiltinMcpBinaryGuard {
+/// Make the builtin MCP binary the profile routes look for exist beside the
+/// test executable. The route checks for it on every request.
+///
+/// Never removed: that directory is cargo's shared `deps` output, so every
+/// test process -- nextest's per-test processes, other worktrees' runs --
+/// sees the same file. A guard that deleted the placeholder it had created
+/// pulled it out from under another process mid-request, and the builtin
+/// `local` server vanished from its listing (#226). Created by rename so two
+/// processes racing to create it both succeed.
+pub(super) fn ensure_test_builtin_mcp_binary() {
     let path = std::env::current_exe()
         .expect("test binary path")
         .parent()
         .expect("test binary parent")
         .join("capsem-mcp-builtin");
-    let remove_on_drop = !path.exists();
-    if remove_on_drop {
-        std::fs::write(&path, "#!/bin/sh\n").expect("write test builtin MCP binary placeholder");
+    if path.exists() {
+        return;
     }
-    TestBuiltinMcpBinaryGuard { path, remove_on_drop }
+    let staged = path.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&staged, "#!/bin/sh\n").expect("write test builtin MCP binary placeholder");
+    std::fs::rename(&staged, &path).expect("publish test builtin MCP binary placeholder");
 }
 
 impl EnvVarGuard {
@@ -46,14 +51,6 @@ impl Drop for EnvVarGuard {
             std::env::set_var(self.key, previous);
         } else {
             std::env::remove_var(self.key);
-        }
-    }
-}
-
-impl Drop for TestBuiltinMcpBinaryGuard {
-    fn drop(&mut self) {
-        if self.remove_on_drop {
-            let _ = std::fs::remove_file(&self.path);
         }
     }
 }

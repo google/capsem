@@ -253,7 +253,14 @@ def inventory(
         available=True,
         generated_ns=generated,
         native_bytes=sum(row.logical_bytes for row in storage),
-        owned_bytes=sum(row.logical_bytes for row in resources),
+        # A running container is live work the gate holds, not retained cache;
+        # overlay2 also sizes it by apparent bytes, so a sparse file inside it
+        # reads as its full length. It counts once it stops and is prunable.
+        owned_bytes=sum(
+            row.logical_bytes
+            for row in resources
+            if not (row.kind == ResourceKind.CONTAINER and row.active)
+        ),
         categories=storage,
         resources=resources,
     )

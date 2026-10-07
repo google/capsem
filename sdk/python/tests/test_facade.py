@@ -7,15 +7,12 @@ import json
 from typing import Any
 
 import pytest
-from capsem import (
-    VM,
-    ExecResult,
-    HttpError,
-    Hypervisor,
-    Registry,
-    models,
+from capsem import VM, ExecResult, HttpError, Hypervisor, Registry, models
+from capsem.execution import (
+    CREATE_READY_SECS,
+    GATEWAY_REQUEST_BUDGET_SECS,
+    command_deadline,
 )
-from capsem.execution import command_deadline
 
 from .facade_gateway import gateway
 
@@ -52,12 +49,19 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             with pytest.raises(RuntimeError, match="closed"):
                 async with vm:
                     pass
+            ref, by_name = hv.vm(id="abc"), hv.vm(name="named")
+            assert ref.id == "abc" and ref._transport is hv._transport
+            assert (await ref.exec("true")).exit_code == 0 and state.requests[-1][1] == "/vms/abc/exec"
+            assert (await by_name.exec("true")).exit_code == 0 and by_name.id == "vm-0"
+            assert [r[1] for r in state.requests[-2:]] == ["/vms/list", "/vms/vm-0/exec"]
+            for bad in ({}, {"id": "abc", "name": "x"}):
+                with pytest.raises(ValueError, match="exactly one"):
+                    hv.vm(**bad)
             request_count = len(state.requests)
             temporary = await hv.create()
             assert [path for _, path, _ in state.requests[request_count:]] == ["/vms/create"]
             body = json.loads(state.requests[-1][2])
-            assert body["persistent"] is False and body["name"] is None
-            assert body["cpus"] is None and body["ram_mb"] is None
+            assert (body["persistent"], body["name"], body["cpus"], body["ram_mb"]) == (False, None, None, None)
             assert isinstance(await hv.log(models.HostLogSource.SERVICE, grep="boot", tail=3, max_bytes=1024), models.HostLogsResponse)
             assert isinstance(await hv.run("printf ok", timeout_secs=4), ExecResult)
             assert isinstance(await hv.debug.panics(since="5m", limit=3), models.PanicsResponse)
@@ -211,6 +215,26 @@ def test_exec_outlives_the_default_deadline_without_replaying_it() -> None:
             assert json.loads(state.requests[-1][2]) == {
                 "command": "slow build", "timeout_secs": None, "cpus": None, "ram_mb": None, "env": None,
             }
+    asyncio.run(run())
+
+
+def test_create_outlives_the_default_deadline_like_exec(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), Hypervisor(url, "token", timeout=0.05) as hv:
+            state.delays["/vms/create"] = 0.3
+            seen: list[float | None] = []
+            request = hv._transport.request
+
+            async def spy(*args: Any, **kwargs: Any) -> bytes:
+                seen.append(kwargs.get("timeout"))
+                return await request(*args, **kwargs)
+
+            monkeypatch.setattr(hv._transport, "request", spy)
+            assert (await hv.create(image="docker://busybox:latest")).id == "created-id"
+            # 0.7 creates directly against its one runtime: there is no
+            # preliminary profile lookup before the create request.
+            assert seen == [CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS]
+            assert [request[1] for request in state.requests] == ["/vms/create"]
     asyncio.run(run())
 
 

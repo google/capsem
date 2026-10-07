@@ -701,9 +701,14 @@ def test_runtime_release_deploys_generated_preview_only_when_activation_ready() 
     assert "path: cache/target/release/distribution/" in publish
     assert "if: ${{ needs.author-runtime-release.outputs.activation_ready == 'true' }}" in publish
 
+    # A bare condition gets GitHub's implicit success(), which needs every job
+    # upstream to have succeeded -- and one of build-assets/reuse-assets is
+    # always skipped. Every profile release published its assets and then
+    # skipped this activation, so a profile only went live with the next
+    # binary release. The condition names its own status instead.
     assert (
-        "if: ${{ inputs.dry_run == false && "
-        "needs.publish-runtime-release.outputs.activation_ready == 'true' }}" in deploy_channel
+        "if: ${{ !cancelled() && inputs.dry_run == false && "
+        "needs.publish-runtime-release.result == 'success' && needs.publish-runtime-release.outputs.release_needed == 'true' && needs.publish-runtime-release.outputs.activation_ready == 'true' }}" in deploy_channel
     )
     assert "uses: ./.github/workflows/release-channel.yaml" in deploy_channel
     assert "dist_artifact: asset-channel-preview" in deploy_channel
@@ -739,7 +744,7 @@ def test_runtime_release_publishes_deferred_assets_but_withholds_channel_deploy(
         "- name: Publish immutable GitHub runtime release", maxsplit=1
     )[1].split("- uses: actions/upload-artifact@", maxsplit=1)[0]
     assert "outputs.activation_ready" not in immutable_release
-    assert "needs.publish-runtime-release.outputs.activation_ready == 'true'" in deploy_channel
+    assert "needs.publish-runtime-release.result == 'success' && needs.publish-runtime-release.outputs.release_needed == 'true' && needs.publish-runtime-release.outputs.activation_ready == 'true'" in deploy_channel
 
 
 def test_release_index_check_rejects_runtime_index_drift(tmp_path: Path) -> None:

@@ -3,8 +3,9 @@
 Profiles individual operations: provision, exec-ready wait, exec, delete,
 fork, boot-from-image. Reports per-operation timings as a Rich table + JSON.
 
-Fork and lifecycle gates compare against the latest checked-in evidence using
-the config-owned regression factor. Boot-from-image also verifies data.
+Fork and lifecycle gates compare against the latest checked-in evidence for
+this profile and host class, using that host class's config-owned regression
+factor. Boot-from-image also verifies data.
 """
 
 import contextlib
@@ -20,8 +21,10 @@ from helpers.benchmark_output import benchmark_output_dir
 from helpers.benchmark_ratchet import (
     BenchmarkCategory,
     BenchmarkMetric,
+    HostClass,
     assert_within_evidence,
     latest_checked_in_benchmark,
+    measuring_host,
     metric_value,
     vm_lifecycle_factor,
 )
@@ -46,10 +49,18 @@ def _project_version():
 
 
 def _save_benchmark(category, data):
-    """Save benchmark JSON to the configured gate or archive directory."""
+    """Save benchmark JSON to the configured gate or archive directory.
+
+    Stamp the host class so hosted recordings cannot replace or become the
+    local machine's baseline. Capsem 0.7 measures one runtime, without a
+    profile selection axis.
+    """
     version = _project_version()
+    host = measuring_host(PROJECT_ROOT)
+    data = {**data, "host_class": host.value}
     out_dir = benchmark_output_dir(PROJECT_ROOT, category)
-    out_path = out_dir / f"data_{version}.json"
+    suffix = "" if host == HostClass.LOCAL else f"_{host.value}"
+    out_path = out_dir / f"data_{version}{suffix}.json"
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)
     print(f"Benchmark saved to {out_path}")
@@ -247,8 +258,11 @@ def test_lifecycle_benchmark():
         r["provision_ms"] + r["exec_ready_ms"] + r["exec_ms"] + r["delete_ms"] for r in runs
     ]
     summary["operations"]["total_ms"] = _summary([round(v, 1) for v in total_values])
-    baseline = latest_checked_in_benchmark(PROJECT_ROOT, BenchmarkCategory.LIFECYCLE)
-    factor = vm_lifecycle_factor(PROJECT_ROOT)
+    host = measuring_host(PROJECT_ROOT)
+    baseline = latest_checked_in_benchmark(
+        PROJECT_ROOT, BenchmarkCategory.LIFECYCLE, host=host
+    )
+    factor = vm_lifecycle_factor(PROJECT_ROOT, host)
 
     # Rich table
     print()
@@ -271,6 +285,9 @@ def test_lifecycle_benchmark():
     # JSON output
     _save_benchmark("lifecycle", summary)
 
+    if baseline is None:
+        _seeding("lifecycle", host)
+        return
     for metric in (
         BenchmarkMetric.LIFECYCLE_PROVISION,
         BenchmarkMetric.LIFECYCLE_READY,
@@ -329,8 +346,11 @@ def test_fork_benchmark():
             "max": mx(op),
             "values": [r[op] for r in runs],
         }
-    baseline = latest_checked_in_benchmark(PROJECT_ROOT, BenchmarkCategory.FORK)
-    factor = vm_lifecycle_factor(PROJECT_ROOT)
+    host = measuring_host(PROJECT_ROOT)
+    baseline = latest_checked_in_benchmark(
+        PROJECT_ROOT, BenchmarkCategory.FORK, host=host
+    )
+    factor = vm_lifecycle_factor(PROJECT_ROOT, host)
 
     # Rich table
     print()
@@ -349,12 +369,22 @@ def test_fork_benchmark():
     # JSON output
     _save_benchmark("fork", summary)
 
-    _ratchet_fork(summary, baseline, factor)
+    if baseline is None:
+        _seeding("fork", host)
+    else:
+        _ratchet_fork(summary, baseline, factor)
 
     # Gate: data survival is a correctness claim, not a performance one.
     for i, r in enumerate(runs):
         assert r["pkg_survived"], f"run {i + 1}: packages did not survive fork"
         assert r["ws_survived"], f"run {i + 1}: workspace files did not survive fork"
+
+
+def _seeding(category, host):
+    print(
+        f"no checked-in {category} evidence on {host.value} hosts; this run "
+        "records it rather than ratcheting against another lane's numbers"
+    )
 
 
 def _ratchet_fork(summary, baseline, factor):

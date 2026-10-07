@@ -1,14 +1,12 @@
 """Core no-state service endpoints: /version, /stats, /service-logs, policy reload."""
 
-import tomllib
-from pathlib import Path
+import subprocess
 
 import pytest
+from helpers.service import SERVICE_BINARY
 from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestVersion:
@@ -18,17 +16,22 @@ class TestVersion:
         assert resp is not None
         version = resp.get("version")
         assert isinstance(version, str) and version, f"empty version: {resp}"
-        # Compared against Cargo.toml rather than a prefix literal. The old
-        # assertion was `startswith("1.")` for a "1.0.<timestamp>" convention
-        # that no longer exists, so it failed the release rather than the
-        # service. The real property is that the daemon reports the version it
-        # was built from.
-        workspace = tomllib.loads(
-            (PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8")
-        )
-        declared = workspace["workspace"]["package"]["version"]
-        assert version == declared, (
-            f"service reports {version!r} but the workspace declares {declared!r}"
+        # The real property is that the daemon reports the version it was
+        # built from, so the authority is the binary the fixture launched, not
+        # Cargo.toml: a profile release qualifies against the published
+        # package while the source has already moved on, and comparing with
+        # the workspace failed the 0.6.6 code-profile release on a correct
+        # 0.6.5 service. Whether that binary is fresh is the artifact gate's
+        # question, not this route's.
+        built = subprocess.run(
+            [str(SERVICE_BINARY), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        ).stdout.split()[-1]
+        assert version == built, (
+            f"service reports {version!r} but {SERVICE_BINARY} --version is {built!r}"
         )
 
 

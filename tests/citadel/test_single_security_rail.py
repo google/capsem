@@ -1,12 +1,14 @@
-"""Ironbank guardrails for the single security rail contract."""
+"""Citadel guardrails for the single security rail contract.
+
+Pure source scans, so they run in the fast phase. They used to be marked
+`integration` and ran inside the VM functional suites, about 30 minutes into
+`just test`: a missing allowlist entry for one new logger module cost a whole
+proof run to discover (#298).
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
-
-pytestmark = pytest.mark.integration
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 

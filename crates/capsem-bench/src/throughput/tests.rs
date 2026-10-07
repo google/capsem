@@ -137,3 +137,42 @@ async fn bounds_are_enforced_before_any_connection() {
     args.chunk_bytes = 1;
     assert!(run(args).await.is_err());
 }
+
+async fn write_then_read_peer(mut stream: TcpStream) -> std::io::Result<()> {
+    stream.read_u8().await?;
+    let burst = vec![0u8; 8 << 20];
+    let mut sink = vec![0u8; 64 * 1024];
+    loop {
+        stream.write_all(&burst).await?;
+        stream.read_exact(&mut sink).await?;
+    }
+}
+
+/// A peer that only reads the client after its own write completes, as a
+/// relay does when its queue toward the client is full: it writes 8 MiB, then
+/// reads 64 KiB, forever. google/capsem#282: at the stop the client stopped
+/// reading while a send was still in flight, so the peer could never finish
+/// its write, never read, and the client's write never finished either. The
+/// stream then sat until the benchmark deadline.
+#[tokio::test]
+async fn bidirectional_keeps_reading_until_its_last_write_lands() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::spawn(write_then_read_peer(stream));
+        }
+    });
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(8),
+        run(client(address, Direction::Bidirectional, 4)),
+    )
+    .await
+    .expect("the client must not wait out its deadline on its own unread socket")
+    .unwrap();
+
+    assert!(sample(&result, "bytes_sent") > 0.0);
+    assert!(sample(&result, "bytes_received") > 0.0);
+}

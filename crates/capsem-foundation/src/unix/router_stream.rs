@@ -2,6 +2,7 @@
 pub use capsem_proto::router::{CloseReason, CloseReport};
 use std::future::Future;
 use std::io;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering::Relaxed};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -76,9 +77,35 @@ impl Framings {
 
 const FRAME_HEADER: usize = 4;
 
+/// One end of a copy. When it is a socket, a stall report says what the
+/// kernel holds on it: the only way to tell a peer that stopped reading from
+/// a copy that stopped being woken.
+pub trait Endpoint {
+    fn socket(&self) -> Option<BorrowedFd<'_>>;
+}
+
+impl Endpoint for tokio::net::UnixStream {
+    fn socket(&self) -> Option<BorrowedFd<'_>> {
+        Some(self.as_fd())
+    }
+}
+
+impl Endpoint for tokio::net::TcpStream {
+    fn socket(&self) -> Option<BorrowedFd<'_>> {
+        Some(self.as_fd())
+    }
+}
+
+/// An in-process pipe has no kernel queue to report.
+impl Endpoint for tokio::io::DuplexStream {
+    fn socket(&self) -> Option<BorrowedFd<'_>> {
+        None
+    }
+}
+
 pub async fn copy(
-    source: &mut (impl AsyncRead + AsyncWrite + Unpin),
-    destination: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    source: &mut (impl AsyncRead + AsyncWrite + Endpoint + Unpin),
+    destination: &mut (impl AsyncRead + AsyncWrite + Endpoint + Unpin),
     framings: Framings,
     limits: Limits,
 ) -> Outcome {
@@ -87,12 +114,15 @@ pub async fn copy(
 
 /// Cooperative termination retains delivered counts, including during FIN drain.
 pub async fn copy_until(
-    source: &mut (impl AsyncRead + AsyncWrite + Unpin),
-    destination: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    source: &mut (impl AsyncRead + AsyncWrite + Endpoint + Unpin),
+    destination: &mut (impl AsyncRead + AsyncWrite + Endpoint + Unpin),
     framings: Framings,
     limits: Limits,
     stop: impl Future<Output = ()>,
 ) -> Outcome {
+    // Both endpoints stay exclusively borrowed until this function returns,
+    // so their descriptors outlive the watch that reads their queues.
+    let sockets = [source.socket(), destination.socket()].map(|fd| fd.map(|fd| fd.as_raw_fd()));
     let (source_read, source_write) = tokio::io::split(source);
     let (destination_read, destination_write) = tokio::io::split(destination);
     let progress = Progress::default();
@@ -122,7 +152,7 @@ pub async fn copy_until(
             biased;
             _ = stop => None,
             result = forwarding => Some(result),
-            never = watch(&progress, limits.stall_report) => match never {},
+            never = watch(&progress, limits.stall_report, sockets) => match never {},
         }
     };
     let (reason, error) = match result {
@@ -156,6 +186,28 @@ struct Progress {
 struct Side {
     phase: AtomicU8,
     copied: AtomicU64,
+    /// Completed reads, so a read that returned a lone frame header still
+    /// counts as the direction being woken.
+    reads: AtomicU64,
+}
+
+/// Which endpoint each direction reads from; it writes to the other one.
+const SOURCE: usize = 0;
+const DESTINATION: usize = 1;
+const fn reader(side: usize) -> usize {
+    if side == FORWARD {
+        SOURCE
+    } else {
+        DESTINATION
+    }
+}
+
+fn queues(socket: Option<RawFd>) -> super::fd::StreamQueues {
+    socket.map_or_else(Default::default, |raw| {
+        // SAFETY: `copy_until` holds both endpoints exclusively borrowed for
+        // as long as its watch runs, so the descriptor cannot be closed.
+        super::fd::stream_queues(unsafe { BorrowedFd::borrow_raw(raw) })
+    })
 }
 
 impl Side {
@@ -168,39 +220,82 @@ impl Side {
     }
 }
 
+const WRITE_STALL: &str = "stream write made no progress";
+const MISSED_READ: &str = "stream read left queued bytes unread";
+
 /// Report, once per episode, a direction that sat in one write across a
-/// whole interval. A peer that never drains ends at the stall limit either
-/// way; before that, only this says which leg stopped and what the other
-/// was doing, both of which the close report loses.
-async fn watch(progress: &Progress, every: Duration) -> std::convert::Infallible {
+/// whole interval, or in one read across a whole interval that began with
+/// bytes already queued for it. A peer that never drains ends at the stall
+/// limit either way; before that, only this says which leg stopped, what the
+/// other was doing and what the kernel holds on each socket, all of which
+/// the close report loses. The kernel's queues tell a full peer (bytes
+/// waiting to be sent) from a copy that was not woken (bytes waiting to be
+/// read).
+async fn watch(progress: &Progress, every: Duration, sockets: [Option<RawFd>; 2]) -> std::convert::Infallible {
     let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut last = [(DONE, 0); 2];
+    let mut last = [(DONE, 0, 0); 2];
+    let mut queued = [false; 2];
     let mut reported = [false; 2];
     loop {
         interval.tick().await;
         for side in [FORWARD, REVERSE] {
+            let state = &progress.sides[side];
             let now = (
-                progress.sides[side].phase.load(Relaxed),
-                progress.sides[side].copied.load(Relaxed),
+                state.phase.load(Relaxed),
+                state.copied.load(Relaxed),
+                state.reads.load(Relaxed),
             );
-            let stalled = now.0 == WRITING && now == last[side];
-            if stalled && !reported[side] {
-                let [forward, reverse] = &progress.sides;
-                tracing::warn!(
-                    stalled = if side == FORWARD { "forward" } else { "reverse" },
-                    stalled_for_ms = every.as_millis() as u64,
-                    forward_phase = forward.phase(),
-                    forward_bytes = forward.copied.load(Relaxed),
-                    reverse_phase = reverse.phase(),
-                    reverse_bytes = reverse.copied.load(Relaxed),
-                    "stream write made no progress"
-                );
+            let idle = now == last[side];
+            let waiting_with_bytes =
+                now.0 == READING && queues(sockets[reader(side)]).unread.is_some_and(|bytes| bytes > 0);
+            let stall = if idle && now.0 == WRITING {
+                Some(WRITE_STALL)
+            } else if idle && waiting_with_bytes && queued[side] {
+                Some(MISSED_READ)
+            } else {
+                None
+            };
+            if let Some(message) = stall.filter(|_| !reported[side]) {
+                report(progress, side, message, every, sockets);
             }
-            reported[side] = stalled;
+            reported[side] = stall.is_some();
+            queued[side] = waiting_with_bytes;
             last[side] = now;
         }
     }
+}
+
+fn report(progress: &Progress, side: usize, message: &str, every: Duration, sockets: [Option<RawFd>; 2]) {
+    let [forward, reverse] = &progress.sides;
+    let [source, destination] = sockets.map(queues);
+    // A stalled write is stuck on the endpoint it writes; a missed read on
+    // the one it reads.
+    let endpoint = if (side == FORWARD) == (message == WRITE_STALL) {
+        "destination"
+    } else {
+        "source"
+    };
+    tracing::warn!(
+        stalled = if side == FORWARD { "forward" } else { "reverse" },
+        stalled_endpoint = endpoint,
+        stalled_for_ms = every.as_millis() as u64,
+        forward_phase = forward.phase(),
+        forward_bytes = forward.copied.load(Relaxed),
+        reverse_phase = reverse.phase(),
+        reverse_bytes = reverse.copied.load(Relaxed),
+        source_unread = source.unread,
+        source_unsent = source.unsent,
+        source_untransmitted = source.untransmitted,
+        source_probes = source.probes,
+        source_backoff = source.backoff,
+        destination_unread = destination.unread,
+        destination_unsent = destination.unsent,
+        destination_untransmitted = destination.untransmitted,
+        destination_probes = destination.probes,
+        destination_backoff = destination.backoff,
+        "{message}"
+    );
 }
 
 async fn finish(
@@ -250,6 +345,7 @@ async fn copy_direction(
     loop {
         side.phase.store(READING, Relaxed);
         let count = reader.read(&mut buffer[header..]).await.map_err(io_failure)?;
+        side.reads.fetch_add(1, Relaxed);
         side.phase.store(WRITING, Relaxed);
         if count == 0 {
             if read_framing == Framing::Framed {

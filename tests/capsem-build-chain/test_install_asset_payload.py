@@ -848,9 +848,7 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     fixture_transport = (
         PROJECT_ROOT / "build_system/builder/release/tools/release_fixture_server.py"
     ).read_text()
-    assert "run_docker_binary_transition_smoke" in transition_gate
     assert "update --yes --channel nightly" in transition_gate
-    assert "update --yes --channel stable" in transition_gate
     assert "serve_release_root" in script
     assert "SimpleHTTPRequestHandler" in fixture_transport
     assert '"Cache-Control", "no-store"' in fixture_transport

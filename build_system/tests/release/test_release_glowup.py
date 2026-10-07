@@ -1054,6 +1054,8 @@ def test_only_cross_channel_pairing_requires_an_explicit_product_switch() -> Non
     assert module.explicit_channel_switch_args(module.TransitionKind.BINARY_ONLY, "stable") == ()
 
 
+
+
 def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
     tmp_path: Path,
 ) -> None:

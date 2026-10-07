@@ -209,6 +209,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PAGE_TABLE_ISOLATION` and `RETPOLINE` symbols renamed `MITIGATION_*` in
   6.9 are replaced with the symbols that exist. The kernel build now fails,
   naming the option, whenever the kernel did not honor a pinned option.
+- The npm MCP server resolves `@modelcontextprotocol/sdk` 1.31.0 instead of
+  1.30.0 (GHSA-6qxp-vccf-f47h: its OAuth client could send credentials to
+  an authorization server chosen by the MCP server).
+
+- All four sites resolve `sharp` 0.35.5 instead of 0.35.4
+  (GHSA-wq5f-xc86-pv6w: vulnerable bundled librsvg, CVE-2026-96889).
 
 - All four sites resolve `smol-toml` 1.9.0 instead of 1.7.1
   (GHSA-r4xh-jqrq-34v2: quadratic-time parse on long documents).
@@ -582,6 +588,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on FUSE filesystems whose server does not support them, so these tools
   fall back to chmod, and host workspace files no longer collect inert
   `system.posix_acl_*` xattrs.
+- `capsem-bench-rs throughput` no longer stalls a bidirectional stream until
+  its deadline (#282). At the stop it quit reading while a write was still
+  in flight; through a published port the relay only accepts the client's
+  bytes as it drains its own queue toward the client, so the two waited on
+  each other. The client now reads until its last write lands, and does not
+  count what it drains after the stop.
+
+- A profile release now goes live on its own. Its activation job had no
+  status guard, so GitHub's implicit success() skipped it whenever an
+  upstream job was skipped, which is every run: profiles were published but
+  only activated by the next binary release. Co-work advances to 0.6.5,
+  since 0.6.4 was published that way and releases are immutable.
+
+- The post-publication live-install proof fetches the channel manifest
+  itself. It was handed `/tmp/verify/manifest.json`, which no step wrote
+  any more, so it failed on every release before reaching the install.
+
+- Profile releases can be stacked before the binary release that activates
+  them, as RELEASE.md allows. A second profile release used to be refused
+  because the first, staged and still inert, made the delta two profiles;
+  the selected profile now only has to be part of that delta.
+
+- The service no longer logs a `hash mismatch` warning for every VM image on
+  its first start after an update, and its asset hash cache now warms. The
+  startup prewarm checked the images it resolved for the installed release
+  against the hashes of the manifest's current release, so any update that
+  changed images paired each file with another release's hash (#297).
+
+- An update that installs a newer Capsem now lets that binary check the
+  profiles shipping with it. The installed binary used to parse them with its
+  own strict schema before installing the new one, so a profile field added
+  in a release failed every automatic update to it -- 0.6.3 refused 0.6.4's
+  `default_for`. The updater now verifies the staged profiles' digests,
+  installs the package, runs the new `capsem` on exactly that staged tree,
+  and activates only if it accepts them; a refusal, a missing binary, a
+  timeout or a tree changed after verification leaves the previous profiles
+  in place. Updates without a binary change, and channel switches to an older
+  binary, still parse in-process. New profile fields can ship once every
+  updating binary in the field carries this change (#288).
+
+- Running `capsem-pty-agent` inside a VM no longer freezes it. A second
+  copy connected to the host's control socket and took it over from the
+  running agent, so the terminal and exec stopped answering. The agent now
+  holds a single-instance lock, a second copy exits with a message, and
+  `--help` and `--version` answer without touching the socket (#198).
+
 - Installs and updates ride out a transient server error from the release
   host. A release download retried 5xx and 429 answers for only 1.75 seconds
   in all, and a 25-second burst of GitHub 500s failed a package install; it
@@ -1048,6 +1100,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capsem.internal.reserved` network event instead of being handed to the
   host's resolver. The official `claude-code`, `codex-cli` and `agy` images
   configure their agent's `capsem` MCP server at that URL.
+- A published-port stream that stops moving now says which socket stopped it
+  (google/capsem#282). The stall warning names the stuck endpoint and each
+  socket's kernel queues -- unread, unsent and, for TCP, bytes the peer's
+  shut window kept out and the zero-window probe backoff -- and a read left
+  waiting on bytes the kernel already holds is reported as a missed wakeup.
+
 - OpenTelemetry metric export. Set the corp config's `open_telemetry` to an
   OTLP/HTTP base endpoint (metrics go to `/v1/metrics`), or the standard
   `OTEL_EXPORTER_OTLP_*` environment for the service. The service exports its
@@ -1393,6 +1451,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sessions' live counters, which it used to report as zero until they
   stopped. The old `~/.capsem/sessions/main.db` is never opened again and
   its session index is gone.
+- The co-work profile advances to 0.6.4 and the code profile to 0.6.6, so
+  the published images carry the guest agent that refuses a second
+  `capsem-pty-agent` instead of freezing the VM (#198). Stable co-work 0.6.3
+  and code 0.6.5 are published immutably from before that fix.
 
 - The code profile advances to 0.6.5. Code 0.6.4 named itself the default
   profile with a `default_for` field that Capsem 0.6.3 does not know, and

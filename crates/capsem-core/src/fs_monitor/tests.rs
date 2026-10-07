@@ -8,10 +8,17 @@ struct EnvGuard {
     _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     old_home: Option<String>,
     old_store: Option<String>,
+    // Last field: released only after Drop has restored the environment.
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
-    fn install(capsem_home: &std::path::Path, home: &std::path::Path, test_store: &std::path::Path) -> Self {
+    fn install(
+        lock: tokio::sync::MutexGuard<'static, ()>,
+        capsem_home: &std::path::Path,
+        home: &std::path::Path,
+        test_store: &std::path::Path,
+    ) -> Self {
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(crate::credential_broker::STORE_PATH_ENV).ok();
         std::env::set_var("HOME", home);
@@ -20,6 +27,7 @@ impl EnvGuard {
             _capsem_paths: capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home),
             old_home,
             old_store,
+            _lock: lock,
         }
     }
 }
@@ -328,13 +336,17 @@ match = 'file.create.path == "late.txt"'
 
 #[tokio::test]
 async fn emit_brokers_env_credentials_and_persists_reference() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let env_path = dir.path().join(".env");
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(
+        crate::credential_broker::TEST_ENV_LOCK.lock().await,
+        &capsem_home,
+        dir.path(),
+        &test_store,
+    );
     std::fs::write(&env_path, "OPENAI_API_KEY=sk-env-secret\n").unwrap();
 
     let db = DbWriter::open(&db_path, 64).unwrap();
@@ -580,12 +592,16 @@ match = 'file.write.path == "blocked.txt"'
 /// not the host file's contents anywhere near the ledger.
 #[tokio::test]
 async fn env_symlink_to_a_host_secret_is_never_read_or_brokered() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(
+        crate::credential_broker::TEST_ENV_LOCK.lock().await,
+        &capsem_home,
+        dir.path(),
+        &test_store,
+    );
 
     let host_secret = dir.path().join("host-credentials");
     std::fs::write(&host_secret, "AWS_SECRET_ACCESS_KEY=sk-host-only-secret\n").unwrap();
@@ -625,12 +641,16 @@ async fn env_symlink_to_a_host_secret_is_never_read_or_brokered() {
 /// scan's answer and the open are two independent refusals of the same trick.
 #[tokio::test]
 async fn env_symlink_is_refused_by_the_open_even_if_it_claims_to_be_a_file() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(
+        crate::credential_broker::TEST_ENV_LOCK.lock().await,
+        &capsem_home,
+        dir.path(),
+        &test_store,
+    );
 
     let host_secret = dir.path().join("host-credentials");
     std::fs::write(&host_secret, "AWS_SECRET_ACCESS_KEY=sk-host-only-secret\n").unwrap();
@@ -895,7 +915,12 @@ async fn a_workspace_swapped_for_a_host_link_is_never_walked_or_read() {
 
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(
+        crate::credential_broker::TEST_ENV_LOCK.lock().await,
+        &capsem_home,
+        dir.path(),
+        &test_store,
+    );
     let db = DbWriter::open(&dir.path().join("session.db"), 64).unwrap();
     let brokered = FsMonitor::broker_env_file_credentials(
         &EmitContext {

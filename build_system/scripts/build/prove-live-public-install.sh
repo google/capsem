@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if (($# != 3)); then
-  echo "usage: $0 <manifest-path> <manifest-url> <channel>" >&2
+if (($# != 2)); then
+  echo "usage: $0 <manifest-url> <channel>" >&2
   exit 2
 fi
 
-manifest_path=$1
-manifest_url=$2
-channel=$3
+manifest_url=$1
+channel=$2
+# Fetched here rather than handed in: the workflow once passed a path that no
+# earlier step wrote any more, and the post-publication proof failed on every
+# release without ever reaching the install.
+manifest_path=$(mktemp)
+trap 'rm -f "$manifest_path"' EXIT
+curl -fsSL "$manifest_url" -o "$manifest_path"
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/../../.." && pwd)
 capsem_home=${CAPSEM_HOME:-"$HOME/.capsem"}

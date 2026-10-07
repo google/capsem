@@ -16,8 +16,11 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate import kingslanding, pytestsuite
+from capsem_builder.gate import hostclass, kingslanding, pytestsuite
+from capsem_builder.gate.context import Context
+from helpers.gate import RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -234,6 +237,64 @@ def test_the_timing_suite_leaves_the_recorded_baseline_to_its_own_step() -> None
 
     assert CONFIG.suites.pytest.benchmark_deselect in timing
     assert CONFIG.suites.pytest.benchmark_baseline in baseline
+
+
+def _host_class_reaching_pytest(suite) -> str:
+    """Run the step's action against a recording runner and read the env the
+    pytest child is actually handed."""
+    runner = RecordingRunner(PROJECT_ROOT)
+    for action in suite.as_step(CONFIG).actions:
+        action.perform(Context(runner, CONFIG))
+    (command,) = runner.commands
+    return command.env[CONFIG.benchmark_regression.host_class_variable]
+
+
+def test_a_hosted_runner_tells_the_timing_suites_they_are_hosted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ratchet's evidence is scoped by host class, and pytest cannot learn
+    its host from ambient release variables: tests/conftest.py strips those, and
+    `CAPSEM_RELEASE_BIN_DIR` set by a workflow was never seen inside a test. The
+    gate decides, from the config-owned runner signal, and says so explicitly."""
+    for name, value in CONFIG.benchmark_regression.hosted_environment.items():
+        monkeypatch.setenv(name, value)
+
+    for suite in (
+        pytestsuite.timing(CONFIG),
+        pytestsuite.benchmark(CONFIG),
+        kingslanding.benchmark_suite(CONFIG),
+    ):
+        assert _host_class_reaching_pytest(suite) == hostclass.HostClass.HOSTED
+
+
+def test_the_build_box_tells_the_timing_suites_they_are_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in CONFIG.benchmark_regression.hosted_environment:
+        monkeypatch.delenv(name, raising=False)
+
+    assert _host_class_reaching_pytest(pytestsuite.timing(CONFIG)) == (
+        hostclass.HostClass.LOCAL
+    )
+
+
+def test_a_near_miss_runner_signal_is_not_hosted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A self-hosted runner is our own hardware; only the exact signal counts."""
+    for name in CONFIG.benchmark_regression.hosted_environment:
+        monkeypatch.setenv(name, "self-hosted")
+
+    assert hostclass.of(CONFIG) is hostclass.HostClass.LOCAL
+
+
+def test_an_explicit_host_class_beats_the_ambient_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The child is told; an inherited value from an outer shell cannot leak in."""
+    for name in CONFIG.benchmark_regression.hosted_environment:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(CONFIG.benchmark_regression.host_class_variable, "hosted")
+
+    assert _host_class_reaching_pytest(pytestsuite.timing(CONFIG)) == (
+        hostclass.HostClass.LOCAL
+    )
 
 
 def test_a_timing_suite_does_not_stop_at_the_first_failure() -> None:

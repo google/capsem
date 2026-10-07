@@ -215,3 +215,75 @@ fn interrupted_descriptor_operation_is_retried_without_hiding_other_errno() {
 
     assert_eq!(retry_eintr::<()>(|| Err(Errno::EBADF)).unwrap_err(), Errno::EBADF);
 }
+
+#[test]
+fn stream_queues_count_what_each_end_of_a_unix_stream_holds() {
+    let (mut writer, reader) = UnixStream::pair().unwrap();
+    assert_eq!(super::stream_queues(reader.as_fd()).unread, Some(0));
+    writer.write_all(&[7; 100]).unwrap();
+    let held = super::stream_queues(reader.as_fd());
+    assert_eq!(held.unread, Some(100));
+    #[cfg(target_os = "linux")]
+    assert!(
+        super::stream_queues(writer.as_fd()).unsent.unwrap() >= 100,
+        "a Unix stream's unread bytes are charged to its writer"
+    );
+    assert_eq!(
+        (held.untransmitted, held.probes, held.backoff),
+        (None, None, None),
+        "window state belongs to TCP alone"
+    );
+}
+
+/// The case a stalled published port has to be told apart by: a TCP peer
+/// that stopped reading shuts its window, so what the writer queued is never
+/// even transmitted.
+#[cfg(target_os = "linux")]
+#[test]
+fn stream_queues_show_bytes_held_back_by_a_shut_tcp_window() {
+    use nix::sys::socket::{setsockopt, sockopt};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    setsockopt(&listener, sockopt::RcvBuf, &(16 * 1024)).unwrap();
+    let mut writer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (reader, _) = listener.accept().unwrap();
+    writer.set_nonblocking(true).unwrap();
+    let chunk = vec![7; 64 * 1024];
+    let mut accepted = 0;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        match writer.write(&chunk) {
+            Ok(count) => accepted += count,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if super::stream_queues(writer.as_fd()).untransmitted.unwrap() > 0 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => panic!("{error}"),
+        }
+    }
+    let writer_queues = super::stream_queues(writer.as_fd());
+    let untransmitted = writer_queues.untransmitted.unwrap();
+    assert!(untransmitted > 0, "{writer_queues:?}");
+    assert!(writer_queues.unsent.unwrap() >= untransmitted, "{writer_queues:?}");
+    assert!(writer_queues.probes.is_some() && writer_queues.backoff.is_some());
+    let reader_queues = super::stream_queues(reader.as_fd());
+    assert!(reader_queues.unread.unwrap() > 0, "{reader_queues:?}");
+    // Delivered-but-unacknowledged bytes count on both sides, so each queue,
+    // not their sum, is bounded by what the writer handed the kernel.
+    assert!(reader_queues.unread.unwrap() as usize <= accepted, "{reader_queues:?}");
+    assert!(writer_queues.unsent.unwrap() as usize <= accepted, "{writer_queues:?}");
+}
+
+/// The watch reads queues off whatever descriptor it was handed, at any
+/// moment of the copy's life: a listener or a stream whose peer is gone must
+/// answer with counts or nothing, never an error or a panic.
+#[test]
+fn stream_queues_of_a_listener_or_an_orphaned_stream_are_harmless() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let queues = super::stream_queues(listener.as_fd());
+    assert_eq!((queues.unsent, queues.untransmitted), (None, None), "{queues:?}");
+    let (stream, peer) = UnixStream::pair().unwrap();
+    drop(peer);
+    assert_eq!(super::stream_queues(stream.as_fd()).unread, Some(0));
+}

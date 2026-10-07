@@ -397,6 +397,37 @@ jobs:
           "$PWD"
           "$ACTIVATION_READY"
 
+      # Hosted timing evidence. A hosted lane seeds its VM timing ratchet until
+      # a hosted recording is checked in as reviewed evidence; this is
+      # where that recording comes from, pass or fail.
+      - name: Upload hosted benchmark recordings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hosted-benchmarks-runtime-${{ github.run_attempt }}
+          path: cache/target/tests/benchmarks/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # Same reason as the binary pairing gate: a hosted-only failure has to
+      # be diagnosable from outside the runner. google/capsem#282's second
+      # sighting failed here with its process.log preserved on the runner and
+      # nowhere else. qualify-assets keeps its prefix worktree on failure, and
+      # the evidence is preserved inside it.
+      - name: Upload pairing evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: runtime-pairing-evidence-${{ github.run_attempt }}
+          path: |
+            cache/target/tests/evidence/
+            cache/target/gate-runs/
+            cache/worktrees/*/cache/target/tests/evidence/
+            cache/worktrees/*/cache/target/gate-runs/
+          retention-days: 7
+          include-hidden-files: true
+          if-no-files-found: warn
+
       - name: Record deferred runtime staging boundary
         if: ${{ needs.author-runtime-release.outputs.activation_ready != 'true' }}
         env:
@@ -563,6 +594,7 @@ jobs:
       id-token: write
     outputs:
       activation_ready: ${{ needs.author-runtime-release.outputs.activation_ready }}
+      release_needed: ${{ needs.resolve-current-binary.outputs.release_needed }}
     env:
       CHANNEL: ${{ inputs.channel }}
     steps:
@@ -681,7 +713,10 @@ jobs:
 
   deploy-channel:
     needs: publish-runtime-release
-    if: ${{ inputs.dry_run == false && needs.publish-runtime-release.outputs.activation_ready == 'true' }}
+    # Without a status function GitHub adds success(), which needs every
+    # upstream job to succeed; one of build-assets/reuse-assets is always
+    # skipped, so this activation never ran.
+    if: ${{ !cancelled() && inputs.dry_run == false && needs.publish-runtime-release.result == 'success' && needs.publish-runtime-release.outputs.release_needed == 'true' && needs.publish-runtime-release.outputs.activation_ready == 'true' }}
     permissions:
       actions: read
       contents: read

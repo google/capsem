@@ -128,7 +128,12 @@ def socket_descriptors(pid):
     """How many sockets `pid` holds, and the listing that says so."""
     if sys.platform == "linux":
         root = f"/proc/{pid}/fd"
-        links = {fd: os.readlink(f"{root}/{fd}") for fd in os.listdir(root)}
+        links = {}
+        for fd in os.listdir(root):
+            # The switch opens and closes sockets while this polls; a
+            # descriptor that closed after the listing is simply not held.
+            with contextlib.suppress(FileNotFoundError):
+                links[fd] = os.readlink(f"{root}/{fd}")
         sockets = {fd: link for fd, link in links.items() if link.startswith("socket:")}
         return len(sockets), json.dumps(links, indent=2)
     listing = subprocess.run(

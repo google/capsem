@@ -157,6 +157,15 @@ this, a dead run aged like a retained generation below a 200 GiB maximum:
 one ~7 GB run per release precheck and 1,900 lock files filled the disk while
 `prune` offered 21 MB.
 
+That liveness does not depend on the authority, so such a stage is swept
+whole (`cache/namespaces.py`, issue #272): every other `sha256(authority)[:8]`
+namespace's runs and leases are entries keyed `<namespace>/<run>` under the
+same lease guard, and an emptied namespace is removed with `rmdir`, never
+recursively. Only a real directory with a namespace name is entered; a
+symlink, a pre-namespace `capsem-test-*` directory, or a file that is not a
+run or a lease is never touched. Prune once saw only its own namespace, and
+about 350 retired ones held 2.4 GB.
+
 The source-keyed Python stages (`python-pycache`, `python-pytest`) gain a
 generation for every Python-source state any checkout launches a gate or
 bounded command from, and nothing but a complete gate's package and install
@@ -221,6 +230,15 @@ absolute source paths, so random prefixes turn an unchanged repeat into a
 rebuild. The gate owns sccache as a scoped `CompilerCache` resource, exports
 `SCCACHE_BASEDIRS` (plural), uses client-side mode, and stops the server during
 resource teardown. Do not manage its daemon in shell.
+
+Cargo runs a workspace unit as `sccache <workspace wrapper> /abs/rustc ...`.
+sccache 0.17 drops that compiler argument only when it is spelled `rustc`, so
+it parsed the absolute path as a second input ("multiple input files") and ran
+every workspace unit uncached (issue #277). The rustc workspace wrapper
+therefore hands a `rustc` unit to `$RUSTC_WRAPPER` itself when that is
+sccache; `test_cargo_workspace_cache.py` proves the second compile is a hit.
+Watch `sccache --show-stats` for hits on workspace crates, not just a low
+non-cacheable count: the outer call still counts as non-cacheable.
 
 Gate commands and bounded builds compile with `CARGO_INCREMENTAL=0`
 (`[toolchain] cargo_incremental` in `config/gate.toml`, exported by

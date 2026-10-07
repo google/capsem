@@ -491,7 +491,6 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
 
     assert "--docker-channel-switch" in source
     assert "--docker-upgrade" in source
-    assert "--docker-transition-from-manifest" in source
     assert "update --assets --channel nightly" in source
     assert "update --assets --channel stable" in source
     assert "CAPSEM_RELEASE_CHANNELS_URL=" in source
@@ -508,58 +507,10 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
     assert "name: binary-channel-before" in workflow
     assert "cache/target/binary-channel/*/manifest.before.json" in workflow
-    assert (
-        '--docker-transition-from-manifest "/tmp/binary-channel-before/$RELEASE_CHANNEL/manifest.before.json"'
-        in workflow
-    )
-
-
-def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    gate = _load_release_gate()
-    calls: list[list[str]] = []
-    monkeypatch.setattr(gate.shutil, "which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr(
-        gate.subprocess,
-        "run",
-        lambda args, **_kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0),
-    )
-
-    def package(version: str) -> dict[str, object]:
-        return {
-            "name": f"Capsem_{version}_amd64.deb",
-            "version": version,
-            "kind": "debian_package",
-            "platform": "linux",
-            "architecture": "amd64",
-            "status": "current",
-            "url": f"https://example.test/v{version}/Capsem_{version}_amd64.deb",
-            "bytes": 100,
-            "digest": {"sha256": "1" * 64, "blake3": "2" * 64},
-        }
-
-    older = {"version": "1.0.1", "packages": [package("1.5.100")]}
-    newer = {"version": "1.0.2", "packages": [package("1.5.101")]}
-
-    gate.run_docker_binary_transition_smoke(
-        older_manifest=older,
-        newer_manifest=newer,
-        install_script_url="https://capsem.org/install.sh",
-        docker_image="ubuntu:24.04",
-        work_dir=tmp_path,
-    )
-
-    script = calls[0][-1]
-    assert "CAPSEM_CHANNEL=stable" in script
-    assert "update --yes --channel nightly" in script
-    assert "check_installed_version 1.5.101" in script
-    assert "update --yes --channel stable" in script
-    assert script.count("check_installed_version 1.5.100") == 2
-    assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$expected\"" in script
-    assert 'check_binary_versions "$expected"' in script
-    assert script.count("build_system/scripts/release/verify-installed-release.py") == 3
+    # The hosted plain-Docker transition was removed: with no systemd it could
+    # never see an installed service. The candidate gate's transition phase
+    # proves the public-before -> candidate update in a systemd container.
+    assert "--docker-transition-from-manifest" not in workflow
 
 
 def test_public_binary_release_gate_requires_fail_closed_installer_integrity() -> None:
@@ -728,3 +679,22 @@ def _write_minimal_deb(
 def _ar_member(name: str, data: bytes) -> bytes:
     header = (f"{name + '/':<16}{0:<12}{0:<6}{0:<6}{100644:<8}{len(data):<10}`\n").encode("ascii")
     return header + data + (b"\n" if len(data) % 2 else b"")
+
+
+@pytest.mark.parametrize(
+    "workflow", [".github/workflows/release.yaml", ".github/workflows/release-publication-recovery.yaml"]
+)
+def test_live_install_proof_fetches_its_own_manifest(workflow: str) -> None:
+    """b44f57547 moved the manifest download into a script, and the live proof
+    kept reading `/tmp/verify/manifest.json`, which nothing wrote any more. The
+    next post-publication proof failed on that path without reaching the
+    install. The proof now takes the URL and fetches the manifest itself."""
+    text = (PROJECT_ROOT / workflow).read_text(encoding="utf-8")
+    call = text.split("build_system/scripts/build/prove-live-public-install.sh", maxsplit=1)[1]
+    arguments = call.split("\n\n", maxsplit=1)[0].split()
+    assert arguments == ['"$ASSET_MANIFEST_URL"', '"$RELEASE_CHANNEL"']
+    live_proof = (PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "(($# != 2))" in live_proof
+    assert 'curl -fsSL "$manifest_url" -o "$manifest_path"' in live_proof

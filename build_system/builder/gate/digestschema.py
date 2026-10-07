@@ -123,4 +123,10 @@ class BenchmarkRegressionConfig(Strict):
     # Full VM lifecycle and fork timings: whole boots, whose run-to-run spread
     # (~14% for exec-ready on one idle host) exceeds the 10% product envelope.
     vm_lifecycle_factor: PositiveFloat
+    # The same timings on a GitHub-hosted runner, against hosted evidence only.
+    hosted_vm_lifecycle_factor: PositiveFloat
+    # What every pytest step is told about the host it measures on.
+    host_class_variable: str
+    # Variables whose exact values mark a GitHub-hosted runner.
+    hosted_environment: dict[str, str]
     minimum_time_resolution_ms: PositiveFloat

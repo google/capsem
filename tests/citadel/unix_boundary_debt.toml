@@ -66,6 +66,11 @@ nix_gap = "nix SockaddrLike has no AF_UNSPEC address, so the disconnect form can
 fingerprint = "4f0e800ee9702991a5957745641540d9e536b04204819c614420f4a12467fb43"
 reason = "macOS TCP abort via disconnectx; nix has no wrapper"
 
+[foundation.raw_calls."crates/capsem-foundation/src/unix/fd.rs::getsockopt"]
+fingerprint = "6b68f0010d3c6d0f98c9df7e0aec1d650f97e87e1f50e17ac47ae41c39b8c2a1"
+reason = "Linux TCP_INFO probe and backoff counters for the relay stall report (google/capsem#282)"
+nix_gap = "nix::sys::socket::sockopt defines no TCP_INFO GetSockOpt type, so the struct cannot be read through nix"
+
 [foundation.raw_calls."crates/capsem-foundation/src/unix/fd.rs::setsockopt"]
 fingerprint = "003d8fd29845c26d97ce2f3c5f7d4a3ee00a3e84c0fe122c71385f8b0d650fde"
 reason = "Linux AF_VSOCK buffer bounds (SO_VM_SOCKETS_BUFFER_* 0/1/2) set before credit can grow"

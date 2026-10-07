@@ -207,6 +207,102 @@ pub fn set_stream_buffers(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
     Ok(())
 }
 
+/// What the kernel holds for one connected stream socket, for saying which
+/// end of a stalled copy stopped moving. Each count is read on its own and is
+/// `None` where the platform or socket family cannot answer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StreamQueues {
+    /// Received and not yet read by this process.
+    pub unread: Option<u32>,
+    /// Written and not yet acknowledged by the peer (TCP), or not yet read
+    /// by it (Unix stream).
+    pub unsent: Option<u32>,
+    /// TCP only: written but never transmitted, because the peer's receive
+    /// window is shut. Equal to `unsent` means the peer stopped reading.
+    pub untransmitted: Option<u32>,
+    /// TCP only: zero-window probes sent without an answer opening the
+    /// window, and the probe timer's backoff exponent.
+    pub probes: Option<u8>,
+    pub backoff: Option<u8>,
+}
+
+/// The queue-length ioctls; the macro makes every wrapper public.
+mod queue_ioctls {
+    nix::ioctl_read_bad!(input, libc::FIONREAD, libc::c_int);
+    #[cfg(target_os = "linux")]
+    nix::ioctl_read_bad!(output, libc::TIOCOUTQ, libc::c_int);
+    #[cfg(target_os = "linux")]
+    nix::ioctl_read_bad!(untransmitted, libc::SIOCOUTQNSD, libc::c_int);
+}
+
+/// Read a stream socket's kernel queues. Never fails: a count the kernel
+/// will not give is left out, since this only ever explains a stall.
+pub fn stream_queues(fd: BorrowedFd<'_>) -> StreamQueues {
+    let count = |query: unsafe fn(libc::c_int, *mut libc::c_int) -> nix::Result<libc::c_int>| {
+        let mut value: libc::c_int = 0;
+        // SAFETY: each query is a read-only ioctl writing one c_int into
+        // `value`, which outlives this synchronous call.
+        retry_eintr(|| unsafe { query(fd.as_raw_fd(), &mut value) })
+            .ok()
+            .and_then(|_| u32::try_from(value).ok())
+    };
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+    let mut queues = StreamQueues {
+        unread: count(queue_ioctls::input),
+        ..StreamQueues::default()
+    };
+    #[cfg(target_os = "linux")]
+    {
+        queues.unsent = count(queue_ioctls::output);
+        if tcp_stream(fd) {
+            queues.untransmitted = count(queue_ioctls::untransmitted);
+            if let Some(info) = tcp_info(fd) {
+                queues.probes = Some(info.tcpi_probes);
+                queues.backoff = Some(info.tcpi_backoff);
+            }
+        }
+    }
+    queues
+}
+
+#[cfg(target_os = "linux")]
+fn tcp_stream(fd: BorrowedFd<'_>) -> bool {
+    use socket::SockaddrLike;
+    socket::getsockname::<socket::SockaddrStorage>(fd.as_raw_fd()).is_ok_and(|address| {
+        matches!(
+            address.family(),
+            Some(socket::AddressFamily::Inet | socket::AddressFamily::Inet6)
+        )
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn tcp_info(fd: BorrowedFd<'_>) -> Option<libc::tcp_info> {
+    // SAFETY: tcp_info is plain integers, for which all-zero is valid.
+    let mut info: libc::tcp_info = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of_val(&info) as libc::socklen_t;
+    retry_eintr(|| {
+        // SAFETY: the kernel writes at most `length` bytes into `info`, both
+        // of which outlive this synchronous call.
+        let result = unsafe {
+            libc::getsockopt(
+                fd.as_raw_fd(),
+                libc::IPPROTO_TCP,
+                libc::TCP_INFO,
+                (&mut info as *mut libc::tcp_info).cast(),
+                &mut length,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(Errno::last())
+        }
+    })
+    .ok()
+    .map(|()| info)
+}
+
 /// Reject files, listeners and datagram sockets before adopting a relay stream.
 pub fn validate_connected_stream(fd: BorrowedFd<'_>) -> io::Result<()> {
     if socket::getsockopt(&fd, socket::sockopt::SockType).map_err(errno::io)? != socket::SockType::Stream {

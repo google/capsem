@@ -13,6 +13,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from . import namespaces
 from .leases import exclusive_path, mutation_locks, release_path
 from .measure import measure
 from .models import AdmissionEvent, ApplyResult, PruneAction, PrunePlan
@@ -73,33 +74,43 @@ def apply_prune(paths: CachePaths, plan: PrunePlan, *, reason: str) -> ApplyResu
     """Apply one reviewed plan and append its exact outcome to the journal."""
     if not reason.strip():
         raise ValueError("cache mutation reason must be non-empty")
-    targets = tuple(paths.contained_entry(action.stage_id, action.path) for action in plan.actions)
+    targets = tuple(
+        namespaces.contained(paths, action.stage_id, action.key, action.path)
+        for action in plan.actions
+    )
     generations: dict[tuple[str, str], list[Path]] = {}
     for action, target in zip(plan.actions, targets, strict=True):
         generations.setdefault((action.stage_id, action.key), []).append(target)
     removed: list[Path] = []
     missing: list[Path] = []
     busy: list[Path] = []
+    emptied: set[Path] = set()
     with mutation_locks(paths, (action.stage_id for action in plan.actions)) as locks:
         for (stage_id, key), selected in generations.items():
             policy = paths.policy.stages[stage_id]
             if policy.protect_hardlinks and any(_linked_file(path) for path in selected):
                 busy.extend(selected)
                 continue
-            template = policy.lease_template
-            root = paths.stage(stage_id)
-            lease = None if template is None or not root.is_dir() else root / template.format(key=key)
+            lease = namespaces.lease_path(paths, stage_id, key)
+            namespace = namespaces.namespace_of(paths, stage_id, key)
             with ExitStack() as stack:
                 if lease is not None and not stack.enter_context(exclusive_path(lease)):
                     busy.extend(selected)
                     continue
                 for target in (*selected, *(() if lease is None else (lease,))):
+                    if target == namespace:
+                        (removed if namespaces.remove_if_empty(target) else busy).append(target)
+                        continue
                     for unlocked in _unlocked_targets(target, locks):
                         if unlocked.exists() or unlocked.is_symlink():
                             _remove(unlocked)
                             removed.append(unlocked)
                         elif unlocked != lease:
                             missing.append(unlocked)
+                if namespace is not None:
+                    emptied.add(namespace)
+        # A foreign namespace this prune emptied goes with its last run.
+        removed.extend(path for path in sorted(emptied - set(removed)) if namespaces.remove_if_empty(path))
     journal = paths.root / JOURNAL_PATH
     journal.parent.mkdir(parents=True, exist_ok=True)
     event = {

@@ -10,10 +10,10 @@ const RAW: &str = "sk-ant-header-observed-secret";
 
 #[tokio::test]
 async fn an_observed_credential_is_redacted_from_every_stored_header_and_body() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");
     let _guard = EnvGuard::install(
+        crate::credential_broker::TEST_ENV_LOCK.lock().await,
         &dir.path().join("capsem-home"),
         dir.path(),
         &dir.path().join("credential-store.json"),

@@ -10,10 +10,17 @@ struct EnvGuard {
     _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     old_home: Option<String>,
     old_store: Option<String>,
+    // Last field: released only after Drop has restored the environment.
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
-    fn install(capsem_home: &std::path::Path, home: &std::path::Path, test_store: &std::path::Path) -> Self {
+    fn install(
+        lock: tokio::sync::MutexGuard<'static, ()>,
+        capsem_home: &std::path::Path,
+        home: &std::path::Path,
+        test_store: &std::path::Path,
+    ) -> Self {
         CredentialStore::global().clear_for_test();
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(STORE_PATH_ENV).ok();
@@ -23,6 +30,7 @@ impl EnvGuard {
             _capsem_paths: capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home),
             old_home,
             old_store,
+            _lock: lock,
         }
     }
 }
@@ -329,11 +337,10 @@ fn substitution_is_domain_separated_by_provider() {
 
 #[test]
 fn brokered_reference_does_not_leak_secret_to_unbound_domain() {
-    let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
 
     // Seed a real Anthropic secret and get its opaque broker reference.
     let obs = CredentialObservation {
@@ -373,11 +380,10 @@ fn brokered_reference_does_not_leak_secret_to_unbound_domain() {
 
 #[test]
 fn brokered_reference_substitutes_for_matching_provider_domain() {
-    let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
 
     let obs = CredentialObservation {
         provider: CredentialProvider::Anthropic,
@@ -401,11 +407,10 @@ fn brokered_reference_substitutes_for_matching_provider_domain() {
 
 #[test]
 fn broker_stores_secret_without_writing_user_settings() {
-    let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
 
     let obs = CredentialObservation {
         provider: CredentialProvider::Github,
@@ -439,11 +444,10 @@ fn broker_stores_secret_without_writing_user_settings() {
 
 #[test]
 fn duplicate_capture_is_memory_fast_and_does_not_rewrite_durable_store() {
-    let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
 
     let obs = CredentialObservation {
         provider: CredentialProvider::OpenAi,
@@ -472,11 +476,10 @@ fn duplicate_capture_is_memory_fast_and_does_not_rewrite_durable_store() {
 
 #[test]
 fn replay_status_is_memory_only_and_hydration_is_explicit() {
-    let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
 
     let empty_status = credential_store_status();
     assert_eq!(empty_status.backend, "disk_override");
@@ -523,11 +526,10 @@ fn replay_status_is_memory_only_and_hydration_is_explicit() {
 
 #[test]
 fn substitution_resolution_rehydrates_runtime_cache_on_real_use() {
-    let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
 
     let obs = CredentialObservation {
         provider: CredentialProvider::OpenAi,
@@ -554,11 +556,10 @@ fn substitution_resolution_rehydrates_runtime_cache_on_real_use() {
 
 #[test]
 fn broker_test_store_preserves_concurrent_captures() {
-    let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
 
     let observations: Vec<_> = (0..64)
         .map(|index| CredentialObservation {
@@ -597,11 +598,10 @@ fn broker_test_store_preserves_concurrent_captures() {
 
 #[test]
 fn replay_availability_requires_resolvable_broker_secret() {
-    let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
     let test_store = dir.path().join("credential-store.json");
-    let _guard = EnvGuard::install(&capsem_home, dir.path(), &test_store);
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
 
     let missing = credential_reference("google", "not-stored");
     assert!(!broker_reference_replay_available(Some("google"), &missing));

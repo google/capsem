@@ -62,38 +62,29 @@ fn any_conn() -> ConnMeta {
 
 struct EnvGuard {
     // Redirects CAPSEM_HOME/RUN_DIR/ASSETS_DIR together; restores on drop.
-    // None for trace-only guards, which redirect no paths.
-    _capsem_paths: Option<capsem_foundation::paths::CapsemPathsGuard>,
+    _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     old_home: Option<String>,
     old_store: Option<String>,
-    old_trace: Option<String>,
+    // Last field: released only after Drop has restored the environment.
+    _lock: tokio::sync::MutexGuard<'static, ()>,
 }
 
 impl EnvGuard {
-    fn install(capsem_home: &std::path::Path, home: &std::path::Path, test_store: &std::path::Path) -> Self {
+    fn install(
+        lock: tokio::sync::MutexGuard<'static, ()>,
+        capsem_home: &std::path::Path,
+        home: &std::path::Path,
+        test_store: &std::path::Path,
+    ) -> Self {
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(crate::credential_broker::STORE_PATH_ENV).ok();
-        let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
         std::env::set_var("HOME", home);
         std::env::set_var(crate::credential_broker::STORE_PATH_ENV, test_store);
         Self {
-            _capsem_paths: Some(capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home)),
+            _capsem_paths: capsem_foundation::paths::CapsemPathsGuard::redirect(capsem_home),
             old_home,
             old_store,
-            old_trace,
-        }
-    }
-
-    fn trace_only(trace_id: &str) -> Self {
-        let old_home = std::env::var("HOME").ok();
-        let old_store = std::env::var(crate::credential_broker::STORE_PATH_ENV).ok();
-        let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
-        std::env::set_var("CAPSEM_TRACE_ID", trace_id);
-        Self {
-            _capsem_paths: None,
-            old_home,
-            old_store,
-            old_trace,
+            _lock: lock,
         }
     }
 }
@@ -108,6 +99,25 @@ impl Drop for EnvGuard {
             Some(v) => std::env::set_var(crate::credential_broker::STORE_PATH_ENV, v),
             None => std::env::remove_var(crate::credential_broker::STORE_PATH_ENV),
         }
+    }
+}
+
+struct TraceEnvGuard {
+    old_trace: Option<String>,
+    // Last field: released only after Drop has restored the environment.
+    _lock: tokio::sync::MutexGuard<'static, ()>,
+}
+
+impl TraceEnvGuard {
+    fn install(lock: tokio::sync::MutexGuard<'static, ()>, trace_id: &str) -> Self {
+        let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
+        std::env::set_var("CAPSEM_TRACE_ID", trace_id);
+        Self { old_trace, _lock: lock }
+    }
+}
+
+impl Drop for TraceEnvGuard {
+    fn drop(&mut self) {
         match &self.old_trace {
             Some(v) => std::env::set_var("CAPSEM_TRACE_ID", v),
             None => std::env::remove_var("CAPSEM_TRACE_ID"),
@@ -373,8 +383,10 @@ fn agy_google_tool_call_survives_into_ledger_counters() {
 
 #[test]
 fn openai_non_streaming_tool_call_carries_request_trace() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
-    let _trace_guard = EnvGuard::trace_only("feedfacecafebeef");
+    let _trace_guard = TraceEnvGuard::install(
+        crate::credential_broker::TEST_ENV_LOCK.blocking_lock(),
+        "feedfacecafebeef",
+    );
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.domain = "127.0.0.1".into();
     req_ctx.ai_provider = Some(ProviderKind::OpenAi);

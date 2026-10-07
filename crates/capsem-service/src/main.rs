@@ -422,7 +422,7 @@ fn prewarm_vm_asset_hash_cache(
             return;
         }
     };
-    let Some(expected) = manifest.expected_hashes_current(arch) else {
+    let Some(expected) = manifest.expected_hashes(&resolved.asset_version, arch) else {
         warn!(
             arch,
             "failed to resolve expected VM asset hashes for hash cache prewarm"

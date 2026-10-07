@@ -987,6 +987,18 @@ jobs:
       - name: Qualify the candidate binaries
         run: just qualify-binaries "$PWD"
 
+      # Hosted timing evidence. A hosted lane seeds its VM timing ratchet until
+      # a hosted recording is checked in as reviewed evidence; this is
+      # where that recording comes from, pass or fail.
+      - name: Upload hosted benchmark recordings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hosted-benchmarks-binary-${{ github.run_attempt }}
+          path: cache/target/tests/benchmarks/
+          retention-days: 30
+          if-no-files-found: ignore
+
       # This gate blocks publication, so a failure here has to be diagnosable
       # from outside the runner. Without the session logs a Linux-only failure
       # is invisible to a macOS developer, which is exactly how
@@ -1227,10 +1239,6 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: binary-channel-before
-          path: /tmp/binary-channel-before
 
       - name: Wait for release assets to be queryable
         env:
@@ -1257,12 +1265,11 @@ jobs:
             --nightly-manifest-url https://release.capsem.org/assets/nightly/manifest.json \
             --install-script-url https://capsem.org/install.sh \
             --site-url https://capsem.org/ \
-            --docker-transition-from-manifest "/tmp/binary-channel-before/$RELEASE_CHANNEL/manifest.before.json" \
             --work-dir /tmp/public-binary-release
 
       - name: Install live public Linux release and prove guest shell execution
         run: >
-          build_system/scripts/build/prove-live-public-install.sh /tmp/verify/manifest.json
+          build_system/scripts/build/prove-live-public-install.sh
           "$ASSET_MANIFEST_URL" "$RELEASE_CHANNEL"
 
   cleanup-unpublished-version-claim:

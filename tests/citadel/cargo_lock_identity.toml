@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "15d5d4bce0f9f629182cfe690a6cedfcc229d843e46e4ac5f906692f51f86846"
-reason = "the workspace moves to 0.7.0 (chore(release): prepare version 0.7.0); only the workspace crates' own versions change, no dependency moves"
+sha256 = "1919699e355515777d606f1adb17369486a32c5ca83b6132aa1c23555de85525"
+reason = "Merge latest main into 0.7: capsem-agent gains the existing first-party capsem-guard dependency for bounded CLI lifecycle; workspace versions stay 0.7.0 and registry dependencies remain unchanged"

@@ -7,7 +7,7 @@
 //! direction(s) until the client's deadline closes it. The host smoltcp
 //! endpoint in `capsem-network` speaks the same byte so the tun0 lane and
 //! the FD-pair lane differ only in transport.
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -206,21 +206,40 @@ async fn measure(args: &Args, address: SocketAddr) -> Result<serde_json::Value> 
                 }
                 Ok::<_, anyhow::Error>(sent)
             };
-            let receive = async {
-                let mut received = 0u64;
-                if direction.receives() {
-                    let mut sink = vec![0u8; chunk.len()];
-                    while Instant::now() < stop {
-                        let n = reader.read(&mut sink).await?;
+            tokio::pin!(send);
+            // Reading stops at the stop only once the last write has landed.
+            // A relay accepts the client's bytes only as it drains its own
+            // queue toward the client, so a client that stops reading with a
+            // write in flight deadlocks the stream until the benchmark's
+            // deadline (google/capsem#282). Bytes drained after the stop are
+            // not counted.
+            let mut sent = None;
+            let mut received = 0u64;
+            let mut sink = vec![0u8; chunk.len()];
+            loop {
+                let reading = direction.receives() && (sent.is_none() || Instant::now() < stop);
+                if sent.is_some() && !reading {
+                    break;
+                }
+                tokio::select! {
+                    result = &mut send, if sent.is_none() => sent = Some(result?),
+                    read = reader.read(&mut sink), if reading => {
+                        let n = read?;
+                        let measuring = Instant::now() < stop;
                         if n == 0 {
-                            bail!("server closed the download early");
+                            ensure!(!measuring, "server closed the download early");
+                            break;
                         }
-                        received += n as u64;
+                        if measuring {
+                            received += n as u64;
+                        }
                     }
                 }
-                Ok::<_, anyhow::Error>(received)
+            }
+            let sent = match sent {
+                Some(sent) => sent,
+                None => send.await?,
             };
-            let (sent, received) = tokio::try_join!(send, receive)?;
             Ok::<_, anyhow::Error>(Moved {
                 sent,
                 received,

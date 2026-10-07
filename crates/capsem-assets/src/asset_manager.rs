@@ -419,11 +419,11 @@ impl ManifestV2 {
     }
 
     /// Expected hashes for the canonical boot triple (kernel/initrd/rootfs)
-    /// from the current asset release on the given arch. Returns `None` if
-    /// the current release or arch entry is missing, or if any of the three
-    /// canonical filenames is absent from that arch's asset map.
-    pub fn expected_hashes_current(&self, arch: &str) -> Option<ExpectedAssetHashes> {
-        let release = self.assets.releases.get(&self.assets.current)?;
+    /// from `asset_version` on the given arch -- the release `resolve` chose,
+    /// not `assets.current`. Returns `None` if that release or arch entry is
+    /// missing, or if any canonical filename is absent from its asset map.
+    pub fn expected_hashes(&self, asset_version: &str, arch: &str) -> Option<ExpectedAssetHashes> {
+        let release = self.assets.releases.get(asset_version)?;
         let assets = release.arches.get(arch)?;
         Some(ExpectedAssetHashes {
             kernel: assets.get("vmlinuz")?.hash.clone(),

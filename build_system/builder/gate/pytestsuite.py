@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from . import hostclass
 from .actions import Run
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
@@ -110,6 +111,7 @@ class Suite:
         if self.assets_dir:
             env.update(config.environment.content(assets=self.assets_dir))
         env.update(self.variables)
+        env[config.benchmark_regression.host_class_variable] = hostclass.of(config).value
         return env
 
     def as_step(self, config: GateConfig) -> Step:

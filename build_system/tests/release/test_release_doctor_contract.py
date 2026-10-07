@@ -858,7 +858,7 @@ def test_runtime_release_builds_one_runtime_against_resolved_binary() -> None:
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
     assert "dist_artifact: asset-channel-preview" in workflow
     assert (
-        "if: ${{ inputs.dry_run == false && needs.publish-runtime-release.outputs.activation_ready == 'true' }}"
+        "if: ${{ !cancelled() && inputs.dry_run == false && needs.publish-runtime-release.result == 'success' && needs.publish-runtime-release.outputs.release_needed == 'true' && needs.publish-runtime-release.outputs.activation_ready == 'true' }}"
         in workflow
     )
 

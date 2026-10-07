@@ -2412,7 +2412,7 @@ rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent 
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
-rust_coverage_platform_crate_floors = { Linux = { capsem = 52.43, capsem-agent = 53.91, capsem-api = 95.84, capsem-assets = 91.05, capsem-bench = 49.89, capsem-config = 90.19, capsem-core = 79.67, capsem-foundation = 80.63, capsem-gateway = 80.24, capsem-logger = 92.39, capsem-mcp-aggregator = 64.06, capsem-mcp-builtin = 57.06, capsem-mock-server = 59.1, capsem-network = 98.0, capsem-process = 48.78, capsem-proto = 90.98, capsem-router = 80.52, capsem-sdk = 97.39, capsem-service = 75.33, capsem-tray = 55.01 }, Darwin = { capsem = 51.27, capsem-agent = 53.13, capsem-api = 95.34, capsem-assets = 90.3, capsem-bench = 50.56, capsem-config = 89.69, capsem-core = 81.0, capsem-foundation = 83.8, capsem-logger = 91.88, capsem-mcp-builtin = 56.56, capsem-mock-server = 58.6, capsem-network = 97.5, capsem-process = 48.12, capsem-proto = 91.54, capsem-router = 79.8, capsem-service = 74.73 } }
+rust_coverage_platform_crate_floors = { Linux = { capsem = 60.51, capsem-agent = 53.91, capsem-api = 95.84, capsem-assets = 91.05, capsem-bench = 49.89, capsem-config = 90.19, capsem-core = 79.67, capsem-foundation = 80.63, capsem-gateway = 80.24, capsem-logger = 92.39, capsem-mcp-aggregator = 64.06, capsem-mcp-builtin = 57.06, capsem-mock-server = 59.1, capsem-network = 98.0, capsem-process = 48.78, capsem-proto = 90.98, capsem-router = 80.52, capsem-sdk = 97.39, capsem-service = 75.33, capsem-tray = 55.01 }, Darwin = { capsem = 51.27, capsem-agent = 53.13, capsem-api = 95.34, capsem-assets = 90.3, capsem-bench = 50.56, capsem-config = 89.69, capsem-core = 81.0, capsem-foundation = 83.8, capsem-logger = 91.88, capsem-mcp-builtin = 56.56, capsem-mock-server = 58.6, capsem-network = 97.5, capsem-process = 48.12, capsem-proto = 91.54, capsem-router = 79.8, capsem-service = 74.73 } }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"
@@ -3314,6 +3314,29 @@ maximum_factor = 1.1
 # exec-ready ranged 969-1108 ms run to run, wider than the 10% envelope, so a
 # baseline recorded at one end failed at the other. They keep a 20% margin.
 vm_lifecycle_factor = 1.2
+# Evidence is scoped by host class as well as profile. Everything checked in
+# before the field was recorded on the build box and reads as `local`. A
+# GitHub-hosted runner is other hardware: run 37432830392 measured fork
+# 212-251 ms, boot-provision 196-202 ms and boot-ready 509-604 ms, where the
+# build box's evidence says fork 173.9 and boot-provision 842.5. Ratcheting one
+# against the other failed `fork_ms.min` at 1.22x for a commit whose previous
+# hosted attempt had passed, so a hosted lane only ever compares with hosted
+# evidence, and seeds (records, does not ratchet) until it has some.
+#
+# One hosted runner's own spread is already 1.18x (fork) and 1.19x
+# (boot-ready), the whole of the local envelope. The ratchet compares floors,
+# and another runner's floor can sit that spread beyond the first's; 1.5 keeps
+# the build box's 20% on top of it (1.19 x 1.2 = 1.43) and still catches a
+# regression that doubles a boot.
+hosted_vm_lifecycle_factor = 1.5
+# Told to every pytest step by the gate, which reads `hosted_environment` in
+# its own process. pytest cannot ask the runner itself: tests/conftest.py strips
+# the release variables, and nothing else the workflow sets is guaranteed to
+# reach a functional test.
+host_class_variable = "CAPSEM_BENCHMARK_HOST_CLASS"
+# The same signal `config/cache.toml [budget] ephemeral_environment` uses. A
+# self-hosted runner is our own hardware and stays `local`.
+hosted_environment = { RUNNER_ENVIRONMENT = "github-hosted" }
 # A percentage attached to nanoseconds is not product performance. Time
 # changes remain visible below this resolution but have no release authority.
 minimum_time_resolution_ms = 1.0
