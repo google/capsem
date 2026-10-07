@@ -37,6 +37,11 @@ impl Client {
         }
     }
 
+    /// The service allows 110 seconds for workload readiness, including pull.
+    pub fn create_options(&self) -> CallOptions {
+        self.command_options(Some(110))
+    }
+
     pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
         if timeout.is_zero() {
             return Err(Error::InvalidInput("request timeout must be positive"));

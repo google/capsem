@@ -41,6 +41,7 @@ async fn slow_gateway(delay: Duration) -> (String, tokio::sync::mpsc::UnboundedR
                 tokio::time::sleep(delay).await;
                 let operation = match path.as_str() {
                     "/vms/vm-1/info" => "getVmInfo",
+                    "/vms/create" => "createVm",
                     _ => "execVm",
                 };
                 let payload = serde_json::to_vec(&reply(operation)).unwrap();
@@ -54,6 +55,34 @@ async fn slow_gateway(delay: Duration) -> (String, tokio::sync::mpsc::UnboundedR
         }
     });
     (url, requests)
+}
+
+#[tokio::test]
+async fn create_outlives_the_transport_deadline_without_replaying() {
+    let (url, mut requests) = slow_gateway(Duration::from_millis(300)).await;
+    let hv = Hypervisor::new(&url, "private-token")
+        .unwrap()
+        .with_timeout(Duration::from_millis(50))
+        .unwrap();
+    let vm = hv
+        .create(CreateOptions {
+            image: Some("docker://busybox:latest".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("creation covers the service readiness window");
+    assert_eq!(vm.id(), Some("vm-1"));
+    assert_eq!(requests.recv().await.as_deref(), Some("/vms/create"));
+    assert!(requests.try_recv().is_err());
+}
+
+#[test]
+fn create_options_preserve_readiness_and_a_larger_client_deadline() {
+    for (configured, expected) in [(30, 230), (500, 500)] {
+        let mut client = crate::client::Client::new("http://127.0.0.1:1", "token").unwrap();
+        client.set_timeout(Duration::from_secs(configured)).unwrap();
+        assert_eq!(client.create_options().timeout, Some(Duration::from_secs(expected)));
+    }
 }
 
 #[tokio::test]

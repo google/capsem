@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rust SDK creation covers the service's workload readiness window instead
+  of expiring at the ordinary 30-second deadline, preserving larger defaults
+  and request cancellation without replay.
+
 - Python SDK VM handles reject supplied empty or non-string selectors instead
   of silently ignoring them when another valid name or ID is present.
 

@@ -77,6 +77,10 @@ returns `Error::Json`. HTTP requests default to 30 seconds and never follow
 redirects or retry automatically. `with_timeout` sets this handle's HTTP
 deadline; `exec`'s optional `timeout_secs` sets the guest command deadline.
 Choose an HTTP deadline long enough for the command.
+Creation uses at least 230 seconds to cover the service's workload readiness
+window and gateway budget, matching Python and TypeScript. A larger configured
+deadline is retained. Dropping its future cancels the HTTP request without
+replaying creation or undoing an already accepted mutation.
 The guest exec channel preserves separate `stdout` and `stderr` lanes. Each is
 a typed `ExecOutput`; `decode()` returns the exact bytes.
 

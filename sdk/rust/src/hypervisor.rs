@@ -111,7 +111,7 @@ impl Hypervisor {
         let result = api::create_vm(
             &self.client.transport,
             &api::CreateVmParams { body },
-            self.client.options,
+            self.client.create_options(),
         )
         .await?;
         VM::created(self.client.clone(), result.id, result.name, Some(has_container))
