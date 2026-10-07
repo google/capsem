@@ -23,6 +23,23 @@ service's local disk observation: `missing`, `partial`, `ready`, or `unknown`
 when verification is pending or invalidated. `ready` describes verified local
 bytes; image admission and registry freshness remain separate decisions.
 
+The complete SDK test suite installs the built wheel and sdist into separate
+clean environments and runs authenticated HTTP checks with only runtime
+dependencies. The gate builds both archives before running the suite. Direct
+package verification from the repository root uses the same artifacts:
+
+```sh
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 60 -- \
+  uv run --project sdk/python --frozen python -m build --no-isolation \
+  --outdir cache/target/sdk/python sdk/python
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 90 -- \
+  uv run --project sdk/python --frozen python -m pytest \
+  sdk/python/tests/test_package_install.py --no-cov -q
+```
+
+Focused source tests do not need this package build. Clean-install checks use
+the prewarmed offline dependency cache and remove their runtime environments.
+
 An async client for the Capsem HTTP gateway. It takes an explicit gateway URL
 and bearer token; it does not discover services, open local service sockets,
 or run host commands.
