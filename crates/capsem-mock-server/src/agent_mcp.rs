@@ -5,39 +5,51 @@ use serde_json::{json, Value};
 const MARKER: &str = "CAPSEM_MCP_PROOF=";
 const CALL_ID: &str = "toolu_capsem_mcp_echo";
 const DISCOVERY_ID: &str = "toolu_capsem_mcp_discover";
-const ECHO: &str = "mcp__capsem__local__echo";
+pub(super) const ECHO: &str = "mcp__capsem__local__echo";
 
 pub(super) fn reply(payload: &Value) -> Option<Result<Value, String>> {
     payload.get("tools")?;
     let messages = payload.get("messages")?.as_array()?;
-    let prompt = messages
-        .iter()
-        .filter(|message| message["role"] == "user")
-        .find_map(|message| {
-            let content = &message["content"];
-            content
-                .as_str()
-                .filter(|text| text.trim_start().starts_with(MARKER))
-                .or_else(|| {
+    let token = proof_token(payload, "messages")?;
+    Some(token.and_then(|token| proof_reply(payload, messages, token)))
+}
+
+pub(super) fn proof_token<'a>(payload: &'a Value, field: &str) -> Option<Result<&'a str, String>> {
+    let input = payload.get(field)?;
+    let prompt = input
+        .as_str()
+        .filter(|text| text.trim_start().starts_with(MARKER))
+        .or_else(|| {
+            input
+                .as_array()?
+                .iter()
+                .filter(|message| message["role"] == "user")
+                .find_map(|message| {
+                    let content = &message["content"];
                     content
-                        .as_array()?
-                        .iter()
-                        .filter(|block| block["type"] == "text")
-                        .find_map(|block| {
-                            block["text"]
-                                .as_str()
-                                .filter(|text| text.trim_start().starts_with(MARKER))
+                        .as_str()
+                        .filter(|text| text.trim_start().starts_with(MARKER))
+                        .or_else(|| {
+                            content
+                                .as_array()?
+                                .iter()
+                                .filter(|block| matches!(block["type"].as_str(), Some("text" | "input_text")))
+                                .find_map(|block| {
+                                    block["text"]
+                                        .as_str()
+                                        .filter(|text| text.trim_start().starts_with(MARKER))
+                                })
                         })
                 })
         })?;
-    Some(proof_reply(payload, messages, prompt))
-}
-
-fn proof_reply(payload: &Value, messages: &[Value], prompt: &str) -> Result<Value, String> {
     let token = prompt.split_once(MARKER).unwrap().1.split('.').next().unwrap();
     if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("MCP proof needs a UUID hex token".into());
+        return Some(Err("MCP proof needs a UUID hex token".into()));
     }
+    Some(Ok(token))
+}
+
+fn proof_reply(payload: &Value, messages: &[Value], token: &str) -> Result<Value, String> {
     let tools = payload["tools"].as_array().ok_or("MCP proof needs declared tools")?;
     let results: Vec<_> = messages
         .iter()

@@ -1,6 +1,7 @@
 use super::*;
 
 mod limits;
+mod responses;
 
 #[test]
 fn claude_startup_host_resolves_in_both_fixture_modes() {
