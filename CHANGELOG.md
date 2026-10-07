@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The Python SDK exposes typed image catalog and prefetch APIs through
+  `Hypervisor.images`, with per-call registry access and shared client lifetime.
+
 - Desktop session customization offers compatible catalog OCI images with
   immutable pins and cache status, preserving choices after readable refusals.
 

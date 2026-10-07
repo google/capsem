@@ -8,6 +8,7 @@ from . import _operations as api
 from . import models
 from ._client import Client
 from ._debug import Debug
+from ._images import Images
 from ._mcp import Mcp
 from ._networks import Networks
 from .execution import ExecResult, command_deadline
@@ -29,6 +30,7 @@ class Hypervisor(Client):
         self.networks = Networks(self._transport)
         self.mcp = Mcp(self._transport)
         self.debug = Debug(self._transport)
+        self.images = Images(self._transport)
 
     async def info(self) -> models.HypervisorInfo:
         return await api.get_hypervisor_info(self._transport)

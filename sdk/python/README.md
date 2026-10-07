@@ -1,5 +1,23 @@
 # Capsem Python SDK
 
+Image catalog and prefetch use the service's admission policy:
+
+```python
+from capsem import Hypervisor
+
+async with Hypervisor(url, token) as hv:
+    catalog = await hv.images.list(refresh=False)
+    for image in catalog.images:
+        print(image.name, image.image, image.cached)
+    pulled = await hv.images.pull("code", request_timeout=120)
+    print(pulled.resolved)
+```
+
+An absent `image.image` means no compatible host version. Cache `unknown`
+does not establish readiness. Pass `registry=Registry(...)` to one `pull`
+when private access is needed; it is not retained for later calls. Images
+share the Hypervisor's connection lifetime. Prefetch does not create a VM.
+
 An async client for the Capsem HTTP gateway. It takes an explicit gateway URL
 and bearer token; it does not discover services, open local service sockets,
 or run host commands.
