@@ -30,8 +30,9 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-logger`**: session DB schema, queries, storage, and async writer.
 - **`capsem-guard`**: parent-watch and singleton-flock lifecycle primitives.
 - **`capsem-service`**: daemon HTTP/UDS API and VM-process orchestration.
-- **`capsem-process`**: low-privilege per-VM boot, vsock, IPC, and job runtime.
-- **`capsem`**: CLI client; HTTP/UDS to the service and direct process UDS for shell.
+- **`capsem-process`**: per-VM boot, vsock, IPC, and job runtime; still holds
+  ambient host-user authority pending #206 confinement.
+- **`capsem`**: CLI client; HTTP/UDS to the service, including shell streams.
 - **`capsem-tui`**: terminal control UI over the gateway API.
 - **`capsem-admin`**: runtime image build plus asset, release, and config validation.
 - **`@capsem/mcp`** (`mcp/typescript`): separately installed host MCP server;
@@ -49,7 +50,13 @@ Sharing alone is not a reason to put code in `capsem-core`.
 
 ## Process privilege model
 
-capsem-process is a **low-privilege** per-VM process. Security invariants:
+The VM owner is a separate process, but it does not yet install an OS sandbox.
+It retains the launching user's filesystem, socket and network authority.
+The following controls constrain normal operation and other-user/guest access;
+they do not isolate compromised sibling host workers running as the same UID.
+Issue #206 owns that confinement and the proxy/ledger process extraction.
+
+Current controls:
 
 1. **Minimal environment**: service uses `env_clear()` before spawn, then passes only `HOME`, `PATH`, `USER`, `TMPDIR`, `RUST_LOG`. API keys and tokens from the user's shell never reach the process.
 2. **Socket permissions 0600**: Per-VM owner sockets (`{id}.sock` IPC, `{id}-handoff.sock`) are chmod 0600 after bind; no client dials them -- terminals and attach go through the service `/vms/{id}/stream` route. Only the owning user can connect.
@@ -58,20 +65,30 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.
 6. **Rootfs read-only**: runtime rootfs asset mounted read-only. Guest binaries deployed chmod 555.
 7. **Guest binary security**: all injected binaries are read-only. Guest cannot modify its own agent.
-8. **VirtioFS boundary**: only `session_dir/guest/` is shared via VirtioFS (contains `system/` and `workspace/`). Host-only files (`session.db`, `serial.log`, `checkpoint.vzsave`) are outside the share. Compat symlinks at `session_dir/{system,workspace}` point into `guest/` so existing code paths work unchanged.
+8. **VirtioFS boundary**: only `session_dir/guest/` is shared via VirtioFS, including the guest workspace. The writable system overlay is in host-only `session_dir/system/`, outside the share. Ledger files and serial logs are also outside the share. The session's workspace compatibility link points into `guest/workspace/`.
 
-### What capsem-process CAN access
+### Required authority after confinement (#206)
+
 - Its own session_dir (read-write)
-- Assets dir (read-only: kernel, initrd, rootfs)
-- Its own UDS sockets
-- Apple VZ framework (requires `com.apple.security.virtualization` entitlement)
+- Its exact verified boot assets (read-only: kernel, initrd, rootfs)
+- Explicitly granted IPC and data descriptors for its session/generation
+- Apple VZ framework (requires `com.apple.security.virtualization` entitlement),
+  or the Linux KVM resources needed for its VM
 
-### What capsem-process CANNOT access
-- Other VMs' session dirs (0700, different path)
-- Other VMs' UDS sockets (0600)
-- The service's UDS socket (filesystem permission only)
-- The persistent registry or other service state
-- The user's environment variables (cleared at spawn)
+### Limits of the current boundary
+
+0700 session directories and 0600 sockets prevent other users from opening
+them. They do not prevent a same-UID worker from accessing another session,
+the service's control socket, credentials, or persistent registry. Clearing
+the spawn environment prevents inherited shell secrets, but does not deny
+filesystem reads or arbitrary upstream dialing.
+
+The existing router/switch sandbox is an effective descriptor-only OS boundary;
+it cannot be copied unchanged onto the VM owner, gateway or future ledger.
+Each needs its own capability policy and adversarial macOS/Linux proof. A
+coordinator endpoint check prevents a worker from naming an unrelated handoff
+path, but does not prevent same-UID replacement of a socket or its ancestors.
+OS confinement and trusted descriptor grants must close that remaining gap.
 
 ### MITM CA key transparency
 The MITM proxy CA private key (`crates/capsem-core/resources/ca/capsem-ca.key`) is committed to the repo and embedded at compile time. This is intentional -- capsem's network interception exists for user visibility into what AI agents do, not for secrecy. The CA is only trusted inside capsem's own air-gapped VMs and has zero trust outside them. A public key lets anyone verify there is no hidden interception. Per-installation key generation would reduce transparency.
