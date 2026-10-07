@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Responses WebSocket messages cross the model security boundary before
+  forwarding requests or returning output, including changes to rules on an
+  open connection. Completed turns retain model, usage and caller telemetry.
+
 ### Fixed
 
 - WebSocket upgrade handshakes retain network telemetry without inflating
