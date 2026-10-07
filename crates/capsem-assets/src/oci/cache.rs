@@ -58,10 +58,23 @@ enum ReadPurpose {
     Observe,
 }
 
-/// Release the image lease before the cache-wide admission barrier.
+/// Release the image lease, then the cache-wide admission barrier, then
+/// invalidate inventory. Invalidation before unlock could publish stale busy
+/// state while the destructor is still releasing the kernel leases.
 pub(super) struct MaterializationLease {
-    _image: FileLock,
+    _image: Option<FileLock>,
     _barrier: FileLock,
+    _inventory: InventoryInvalidation,
+}
+
+struct InventoryInvalidation(Arc<Mutex<super::readiness::Tracking>>);
+
+impl Drop for InventoryInvalidation {
+    fn drop(&mut self) {
+        if let Ok(mut tracking) = self.0.lock() {
+            let _ = tracking.invalidate_inventory();
+        }
+    }
 }
 
 impl BlobCache {
@@ -172,24 +185,31 @@ impl BlobCache {
     /// Shared for the complete image/layout lifetime, separate from blob
     /// stripes so a nested blob lookup can never reacquire its parent's lock.
     pub(super) async fn materialization_lease(&self, key: &super::CacheKey) -> Result<MaterializationLease> {
-        let barrier = lock_with(
-            self.root.join("locks/materialization.lock"),
-            LockAccess::Prepare,
-            LockMode::Shared,
-        )
-        .await?;
-        let image = lock_with(
-            self.root
-                .join("locks")
-                .join(format!("materialize-{}.lock", key.as_str())),
-            LockAccess::Prepare,
-            LockMode::Shared,
-        )
-        .await?;
-        Ok(MaterializationLease {
-            _image: image,
-            _barrier: barrier,
-        })
+        let mut lease = MaterializationLease {
+            _image: None,
+            _barrier: lock_with(
+                self.root.join("locks/materialization.lock"),
+                LockAccess::Prepare,
+                LockMode::Shared,
+            )
+            .await?,
+            _inventory: InventoryInvalidation(Arc::clone(&self.tracking)),
+        };
+        self.tracking
+            .lock()
+            .map_err(|_| anyhow::anyhow!("OCI tracking lock poisoned"))?
+            .invalidate_inventory()?;
+        lease._image = Some(
+            lock_with(
+                self.root
+                    .join("locks")
+                    .join(format!("materialize-{}.lock", key.as_str())),
+                LockAccess::Prepare,
+                LockMode::Shared,
+            )
+            .await?,
+        );
+        Ok(lease)
     }
 
     fn mutation_lock(&self) -> PathBuf {

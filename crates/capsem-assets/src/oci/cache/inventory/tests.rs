@@ -122,6 +122,97 @@ async fn inventory_reports_missing_dependencies_and_busy_materialization_without
 }
 
 #[tokio::test]
+async fn reused_materialization_controls_invalidate_inventory_on_acquire_and_after_release() {
+    let (_root, owner, first, _) = fixture().await;
+    // Reuse existing controls: flock transitions themselves emit no file
+    // notification, so creating a fresh lock name would hide the mistake.
+    drop(owner.inner.materialization_lease(&first).await.unwrap());
+    owner.refresh_inventory(64).await.unwrap();
+    let quiet = owner.inventory_snapshot().unwrap().unwrap();
+    assert!(quiet
+        .images
+        .iter()
+        .all(|image| !image.busy && image.reclaimable_allocated_bytes > 0));
+    let held = owner.inner.materialization_lease(&first).await.unwrap();
+    assert!(
+        owner.inventory_snapshot().unwrap().is_none(),
+        "an owned live lease must obsolete the reclaim estimate"
+    );
+    owner.refresh_inventory(64).await.unwrap();
+    let busy = owner.inventory_snapshot().unwrap().unwrap();
+    assert!(busy
+        .images
+        .iter()
+        .all(|image| image.busy && image.reclaimable_allocated_bytes == 0));
+    drop(held);
+    assert!(
+        owner.inventory_snapshot().unwrap().is_none(),
+        "lease release must obsolete the busy observation"
+    );
+    owner.refresh_inventory(64).await.unwrap();
+    let released = owner.inventory_snapshot().unwrap().unwrap();
+    assert!(released
+        .images
+        .iter()
+        .all(|image| !image.busy && image.reclaimable_allocated_bytes > 0));
+}
+
+#[tokio::test]
+async fn cancelled_partial_materialization_releases_its_barrier_before_invalidating_inventory() {
+    use capsem_foundation::{
+        poll::{poll_until, PollOpts},
+        unix::lock::{try_acquire_existing, LockAttempt, LockMode},
+    };
+    let (root, owner, first, _) = fixture().await;
+    drop(owner.inner.materialization_lease(&first).await.unwrap());
+    let control = root
+        .path()
+        .join("locks")
+        .join(format!("materialize-{}.lock", first.as_str()));
+    let LockAttempt::Acquired(other) = try_acquire_existing(&control, LockMode::Exclusive).unwrap() else {
+        panic!("fixture image control unexpectedly held");
+    };
+    owner.refresh_inventory(64).await.unwrap();
+    let before = owner.snapshot(&first).unwrap().epoch;
+    let source = owner.clone();
+    let target = first.clone();
+    let pending = tokio::spawn(async move { source.inner.materialization_lease(&target).await });
+    poll_until(
+        PollOpts::new("partial-materialization", std::time::Duration::from_secs(1)),
+        || async { (owner.snapshot(&first).unwrap().epoch > before).then_some(()) },
+    )
+    .await
+    .unwrap();
+    assert!(owner.inventory_snapshot().unwrap().is_none());
+    owner.refresh_inventory(64).await.unwrap();
+    assert!(owner
+        .inventory_snapshot()
+        .unwrap()
+        .unwrap()
+        .images
+        .iter()
+        .all(|row| row.busy));
+    pending.abort();
+    assert!(matches!(pending.await, Err(error) if error.is_cancelled()));
+    assert!(owner.inventory_snapshot().unwrap().is_none());
+    let LockAttempt::Acquired(barrier) =
+        try_acquire_existing(&root.path().join("locks/materialization.lock"), LockMode::Exclusive).unwrap()
+    else {
+        panic!("cancelled partial acquisition retained the barrier");
+    };
+    drop(barrier);
+    drop(other);
+    owner.refresh_inventory(64).await.unwrap();
+    assert!(owner
+        .inventory_snapshot()
+        .unwrap()
+        .unwrap()
+        .images
+        .iter()
+        .all(|row| !row.busy));
+}
+
+#[tokio::test]
 async fn an_owned_unassociated_alias_is_classified_independently_of_enumeration_order() {
     let root = crate::oci::tests::private_dir();
     let owner = ImageCache::at(root.path()).unwrap();

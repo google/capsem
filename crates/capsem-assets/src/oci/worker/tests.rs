@@ -342,6 +342,24 @@ async fn worker_reconciles_multiple_offline_images_and_only_retries_changed_obse
         .images
         .iter()
         .all(|image| image.snapshot.state == CacheState::Ready));
+    let independent = cache.snapshot(&key_two).unwrap();
+    let materialization = cache.inner.materialization_lease(&key_one).await.unwrap();
+    assert!(cache.inventory_snapshot().unwrap().is_none());
+    assert_eq!(cache.snapshot(&key_two).unwrap(), independent);
+    drop(materialization);
+    assert!(cache.inventory_snapshot().unwrap().is_none());
+    assert_eq!(cache.snapshot(&key_two).unwrap(), independent);
+    poll_until(
+        PollOpts::new("released-inventory-request", Duration::from_secs(1)),
+        || async { worker.request_inventory(64).unwrap().then_some(()) },
+    )
+    .await
+    .unwrap();
+    poll_until(PollOpts::new("released-inventory", Duration::from_secs(2)), || async {
+        cache.inventory_snapshot().unwrap()
+    })
+    .await
+    .unwrap();
     // The worker may still be finishing its last publication; a repeated
     // request must neither restart that work nor schedule quiet observations.
     assert!(!worker.request(&keys).unwrap());
