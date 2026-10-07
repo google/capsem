@@ -3,6 +3,14 @@
 Typed async clients for the HTTP gateway. Supply its URL and bearer token
 explicitly; the SDK does not discover local services or run host commands.
 
+`hv.images().list(false).await?` lists registry catalog entries with compatible
+pins and service-owned disk observations (`unknown`, `missing`, `partial`,
+`ready`). Pass `true` to refresh the registry catalog. Disk readiness remains
+separate from image admission. `hv.images().pull("code", None).await?`
+prefetches without creating a VM; an optional redacted `Registry` applies only
+to that call. The borrowed resource uses the hypervisor's HTTP deadline and
+connection pool. Dropping a request future cancels it; mutations are not retried.
+
 ```rust,no_run
 use capsem_sdk::{CreateOptions, Hypervisor, LogOptions, PortOptions, Result, TriageOptions, VmSelector};
 use capsem_sdk::models::HostLogSource;

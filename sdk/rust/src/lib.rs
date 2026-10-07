@@ -4,6 +4,7 @@ pub use capsem_api as models;
 mod client;
 mod error;
 mod hypervisor;
+mod images;
 pub mod operations;
 mod options;
 pub mod resources;
@@ -11,6 +12,7 @@ pub mod transport;
 mod vm;
 pub use error::{Error, Result};
 pub use hypervisor::Hypervisor;
+pub use images::Images;
 pub use options::{
     CreateOptions, DiagnosticOptions, HistoryOptions, LogOptions, NetworkLogOptions, Registry, RunOptions,
     TimelineOptions, TriageOptions, VmSelector,

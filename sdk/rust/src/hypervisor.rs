@@ -4,7 +4,7 @@ use crate::client::Client;
 use crate::{
     models, operations as api,
     resources::{Debug, Mcp, Networks},
-    CreateOptions, Error, LogOptions, Result, RunOptions, VmSelector, VM,
+    CreateOptions, Error, Images, LogOptions, Result, RunOptions, VmSelector, VM,
 };
 
 /// A gateway connection. Clones and VM handles share the HTTP connection pool.
@@ -57,6 +57,10 @@ impl Hypervisor {
 
     pub fn networks(&self) -> Networks<'_> {
         Networks(&self.client)
+    }
+
+    pub fn images(&self) -> Images<'_> {
+        Images(&self.client)
     }
 
     /// The MCP servers every VM runs, from settings and corp config.

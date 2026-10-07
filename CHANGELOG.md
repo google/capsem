@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Rust SDK exposes the registry image catalog and prefetch through
+  `Hypervisor.images()`, with typed disk states and per-call registry access.
+
 - Registry image catalogs report verified local disk status through the
   existing image list API and SDKs, while startup or invalidated cache
   observations remain unknown. Listing schedules local verification without
