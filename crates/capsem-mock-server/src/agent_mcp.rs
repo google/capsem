@@ -41,7 +41,10 @@ fn proof_reply(payload: &Value, messages: &[Value], prompt: &str) -> Result<Valu
         .collect();
     let latest = results.last().copied();
     let discovery = latest.filter(|result| result["tool_use_id"] == DISCOVERY_ID);
-    let declared = tools.iter().any(|tool| tool["name"] == ECHO) || discovery.is_some_and(discovered_echo);
+    let schema_loaded = tools
+        .iter()
+        .any(|tool| tool["name"] == ECHO && tool["input_schema"]["properties"]["text"]["type"] == "string");
+    let declared = schema_loaded || discovery.is_some_and(|result| discovered_echo(result, schema_loaded));
     if !declared {
         let available = messages
             .iter()
@@ -56,7 +59,7 @@ fn proof_reply(payload: &Value, messages: &[Value], prompt: &str) -> Result<Valu
         }
         return Err("MCP proof needs the declared Capsem echo tool".into());
     }
-    if discovery.is_some_and(|result| !discovered_echo(result)) {
+    if discovery.is_some_and(|result| !discovered_echo(result, schema_loaded)) {
         return Err("MCP proof needs a successful echo schema discovery".into());
     }
     let (content, stop) = if results.is_empty() || discovery.is_some() {
@@ -76,13 +79,20 @@ fn proof_reply(payload: &Value, messages: &[Value], prompt: &str) -> Result<Valu
     Ok(message(payload, content, stop))
 }
 
-fn discovered_echo(result: &Value) -> bool {
+fn discovered_echo(result: &Value, schema_loaded: bool) -> bool {
     if result["is_error"] == true {
         return false;
     }
     let Some(blocks) = result["content"].as_array() else {
         return false;
     };
+    if schema_loaded
+        && blocks
+            .iter()
+            .any(|block| block["type"] == "tool_reference" && block["tool_name"] == ECHO)
+    {
+        return true;
+    }
     blocks.iter().filter_map(|block| block["text"].as_str()).any(|text| {
         text.split("<function>")
             .skip(1)

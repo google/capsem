@@ -169,6 +169,20 @@ async fn anthropic_mcp_proof_refuses_missing_and_failed_deferred_discovery() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn anthropic_mcp_proof_accepts_a_tool_reference_only_with_its_loaded_schema() {
+    let mut payload = mcp_proof_payload(false);
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_capsem_mcp_discover",
+        "content": [{"type": "tool_reference", "tool_name": "mcp__capsem__local__echo"}]}]
+    }));
+    let body = routed_json(Method::POST, "/v1/messages", payload.clone()).await;
+    assert_eq!(body["content"][0]["name"], "mcp__capsem__local__echo");
+    payload["tools"] = json!([{"name": "ToolSearch"}]);
+    let (status, _, _) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 async fn routed(
     method: Method,
     path: &str,
