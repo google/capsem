@@ -10,7 +10,6 @@ import json
 import sys
 import tarfile
 import threading
-import tomllib
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,6 +17,7 @@ from pathlib import Path
 import aiohttp
 import capsem
 import pydantic
+import tomllib
 import yarl
 from capsem import Hypervisor, Registry, models
 
