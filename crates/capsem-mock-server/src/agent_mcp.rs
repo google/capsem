@@ -15,13 +15,20 @@ pub(super) fn reply(payload: &Value) -> Option<Result<Value, String>> {
         .filter(|message| message["role"] == "user")
         .find_map(|message| {
             let content = &message["content"];
-            content.as_str().filter(|text| text.contains(MARKER)).or_else(|| {
-                content
-                    .as_array()?
-                    .iter()
-                    .filter(|block| block["type"] == "text")
-                    .find_map(|block| block["text"].as_str().filter(|text| text.contains(MARKER)))
-            })
+            content
+                .as_str()
+                .filter(|text| text.trim_start().starts_with(MARKER))
+                .or_else(|| {
+                    content
+                        .as_array()?
+                        .iter()
+                        .filter(|block| block["type"] == "text")
+                        .find_map(|block| {
+                            block["text"]
+                                .as_str()
+                                .filter(|text| text.trim_start().starts_with(MARKER))
+                        })
+                })
         })?;
     Some(proof_reply(payload, messages, prompt))
 }

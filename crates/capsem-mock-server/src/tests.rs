@@ -150,6 +150,14 @@ async fn anthropic_mcp_proof_does_not_confuse_a_background_title_with_a_tool_tur
     payload.as_object_mut().unwrap().remove("tools");
     let body = routed_json(Method::POST, "/v1/messages", payload).await;
     assert_ne!(body["content"][0]["name"], "mcp__capsem__local__echo");
+    let mut payload = mcp_proof_payload(false);
+    payload["tools"] = json!([]);
+    payload["messages"][0]["content"] = json!(format!(
+        "<session>\n{}\n</session>\nWrite a title.",
+        payload["messages"][0]["content"].as_str().unwrap()
+    ));
+    let body = routed_json(Method::POST, "/v1/messages", payload).await;
+    assert_ne!(body["content"][0]["name"], "mcp__capsem__local__echo");
 }
 
 #[tokio::test]
