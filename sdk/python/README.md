@@ -104,6 +104,9 @@ HTTP `status` and response `body`; invalid typed responses raise Pydantic
 `ValidationError`. HTTP `timeout` is the client deadline, while `exec`'s
 `timeout_secs` is the command deadline sent to the gateway. Choose an HTTP
 deadline long enough for the command. Mutations are never automatically retried.
+Create, `start`, and `resume` use at least 230 seconds for workload readiness
+and the gateway budget, retaining a larger configured client deadline.
+Cancelling their coroutine cancels the request without replaying the mutation.
 Printing an execution result prints its decoded stdout. `stdout_bytes` and
 `stderr_bytes` preserve exact bytes regardless of whether the wire value uses
 UTF-8 or base64; the exit code and typed wire fields remain available.

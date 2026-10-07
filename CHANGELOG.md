@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python SDK start and resume cover the service's workload readiness window,
+  retaining larger client deadlines and cancellation without replay.
+
 - Starting or resuming an OCI session waits for its workload to be ready before
   succeeding, so an immediate execution enters the restored workload. Clones
   carrying an image use the same readiness and launch-failure checks.

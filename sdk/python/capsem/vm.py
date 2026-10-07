@@ -14,7 +14,7 @@ from ._networks import VmNetworks
 from ._ports import Ports
 from ._resources import Files, Stats
 from ._transport import HttpError, Transport
-from .execution import ExecResult, command_deadline
+from .execution import CREATE_READY_SECS, ExecResult, command_deadline
 
 
 class VM(Client):
@@ -93,7 +93,10 @@ class VM(Client):
         return ExecResult.from_wire(response)
 
     async def start(self) -> models.ProvisionResponse:
-        return await api.start_vm(self._transport, id=await self._resolve())
+        return await api.start_vm(
+            self._transport, id=await self._resolve(),
+            request_timeout=command_deadline(self._transport.timeout, CREATE_READY_SECS),
+        )
 
     async def persist(self, name: str) -> models.PersistResponse:
         return await api.persist_vm(
@@ -107,7 +110,10 @@ class VM(Client):
         return await api.pause_vm(self._transport, id=await self._resolve())
 
     async def resume(self) -> models.ProvisionResponse:
-        return await api.resume_vm(self._transport, id=await self._resolve())
+        return await api.resume_vm(
+            self._transport, id=await self._resolve(),
+            request_timeout=command_deadline(self._transport.timeout, CREATE_READY_SECS),
+        )
 
     async def delete(self) -> models.VmActionResponse:
         return await api.delete_vm(self._transport, id=await self._resolve())
