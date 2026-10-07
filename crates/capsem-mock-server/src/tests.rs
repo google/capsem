@@ -2,6 +2,107 @@ use super::*;
 
 mod limits;
 
+#[tokio::test]
+async fn anthropic_cli_connectivity_probe_succeeds_without_broad_get_fallback() {
+    for method in [Method::HEAD, Method::GET] {
+        let (status, _, body) = routed(method.clone(), "/api/hello", None, HeaderMap::new(), json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        if method == Method::HEAD {
+            assert!(body.is_empty());
+        } else {
+            assert_eq!(body, "capsem-mock-server:anthropic-ready\n");
+        }
+    }
+    let (status, _, _) = routed(Method::GET, "/api/unknown", None, HeaderMap::new(), json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+fn mcp_proof_payload(stream: bool) -> Value {
+    json!({
+        "model": "claude-fixture", "stream": stream,
+        "messages": [{"role": "user", "content": "CAPSEM_MCP_PROOF=0123456789abcdef0123456789abcdef. Call the Capsem echo tool."}],
+        "tools": [{"name": "mcp__capsem__local__echo", "input_schema": {
+            "type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]
+        }}]
+    })
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_asks_for_the_declared_tool_in_both_protocol_forms() {
+    for stream in [false, true] {
+        let (status, _, body) = routed(
+            Method::POST,
+            "/v1/messages",
+            None,
+            HeaderMap::new(),
+            mcp_proof_payload(stream),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("mcp__capsem__local__echo"), "{text}");
+        assert!(text.contains("0123456789abcdef0123456789abcdef"), "{text}");
+        assert!(!text.contains("Bash") && !text.contains("exec_command"), "{text}");
+    }
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_refuses_an_undeclared_tool_instead_of_faking_echo() {
+    let mut payload = mcp_proof_payload(false);
+    payload["tools"] = json!([]);
+    let (status, _, body) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&body));
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_requires_the_matching_successful_echo_result() {
+    for (id, text, is_error) in [
+        ("toolu_capsem_mcp_echo", "wrong echo", false),
+        ("other_call", "0123456789abcdef0123456789abcdef", false),
+        ("toolu_capsem_mcp_echo", "0123456789abcdef0123456789abcdef", true),
+    ] {
+        let mut payload = mcp_proof_payload(false);
+        payload["messages"].as_array_mut().unwrap().push(json!({
+            "role": "user", "content": [{"type": "tool_result", "tool_use_id": id,
+            "content": [{"type": "text", "text": text}], "is_error": is_error}]
+        }));
+        let (status, _, body) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&body));
+    }
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_finishes_only_after_the_exact_echo_result() {
+    for stream in [false, true] {
+        let mut payload = mcp_proof_payload(stream);
+        payload["messages"].as_array_mut().unwrap().push(json!({
+            "role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_capsem_mcp_echo",
+            "content": [{"type": "text", "text": "0123456789abcdef0123456789abcdef"}]}]
+        }));
+        let (status, _, body) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+        assert_eq!(status, StatusCode::OK);
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body.contains("end_turn") && body.contains("0123456789abcdef0123456789abcdef"),
+            "{body}"
+        );
+        assert!(!body.contains("tool_use\""), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_accepts_user_text_blocks_without_reading_tool_metadata() {
+    let mut payload = mcp_proof_payload(false);
+    let prompt = payload["messages"][0]["content"].take();
+    payload["messages"][0]["content"] = json!([{"type": "text", "text": prompt}]);
+    let body = routed_json(Method::POST, "/v1/messages", payload).await;
+    assert_eq!(body["content"][0]["name"], "mcp__capsem__local__echo");
+    assert_eq!(
+        body["content"][0]["input"],
+        json!({"text": "0123456789abcdef0123456789abcdef"})
+    );
+}
+
 async fn routed(
     method: Method,
     path: &str,
