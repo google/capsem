@@ -39,7 +39,7 @@ async fn get(app: &Router, uri: &str) -> serde_json::Value {
 #[tokio::test]
 async fn mcp_reads_list_the_configured_and_builtin_servers() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let _builtin_guard = ensure_test_builtin_mcp_binary();
+    ensure_test_builtin_mcp_binary();
     let dir = tempfile::tempdir().unwrap();
     let (_state, app, _env, _home) = mcp_app(&dir, "");
 

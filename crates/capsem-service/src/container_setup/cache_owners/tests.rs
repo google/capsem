@@ -42,7 +42,7 @@ fn cache_associations_refuse_stale_workload_and_replacement_vm_generations() {
     assert!(state.containers.active_cache_owners(&state).is_empty());
     assert!(state
         .containers
-        .pin_image("box", next, Some("manifest".into()), Some(image.clone())));
+        .pin_image("box", next, Some("manifest".into()), Some(image)));
     state.instances.lock().unwrap().get_mut("box").unwrap().generation = uuid::Uuid::new_v4();
     assert!(state.containers.active_cache_owners(&state).is_empty());
     state.containers.cancel("box");

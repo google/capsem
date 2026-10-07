@@ -188,7 +188,7 @@ async fn reap_persisted_live_session(state: &Arc<ServiceState>, id: &str, name: 
         .spawn()
         .expect("spawn child");
     state.instances.lock().unwrap().get_mut(id).unwrap().pid = child.id().unwrap();
-    let retirement_id: &str = id.as_ref();
+    let retirement_id: &str = id;
     let generation = state
         .instances
         .lock()

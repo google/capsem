@@ -331,7 +331,7 @@ async fn a_crashed_restore_reports_exit_before_the_resume_lock_is_released() {
         .unwrap();
     let pid = child.id().unwrap();
     insert_fake_instance_with_session_dir(&state, id, pid, session_dir.clone());
-    let retirement_id: &str = id.as_ref();
+    let retirement_id: &str = id;
     let generation = state
         .instances
         .lock()
@@ -374,7 +374,7 @@ async fn an_already_replaced_child_cannot_claim_the_new_instance() {
         .unwrap();
     insert_fake_instance_with_session_dir(&state, id, std::process::id(), session_dir.clone());
     let listener = std::os::unix::net::UnixListener::bind(&uds_path).unwrap();
-    let retirement_id: &str = id.as_ref();
+    let retirement_id: &str = id;
     let generation = state
         .instances
         .lock()
@@ -417,7 +417,7 @@ async fn stale_reaper_cannot_remove_replacement_with_the_same_pid() {
     let pid = child.id().unwrap();
     insert_fake_instance_with_session_dir(&state, id, pid, session_dir.clone());
     let original = state.instances.lock().unwrap().get(id).unwrap().generation;
-    let retirement_id: &str = id.as_ref();
+    let retirement_id: &str = id;
     let generation = state
         .instances
         .lock()
