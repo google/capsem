@@ -11,9 +11,23 @@ canonical import; the implementations are split into small owning modules.
 The transformations accept text and have no host discovery, credential,
 filesystem, build-engine or session-lifecycle authority.
 
+Compose parsing preserves the proposed single-service fields, interpolation,
+project dotenv semantics, build arguments/targets, mounts, ports, healthcheck,
+init, memory and network intent. `ComposeInputs` is an immutable snapshot of
+environment, file text and directory facts supplied by the evaluator. File
+parsing reads only that snapshot; absent text is refused. These values confer
+no permission to read host paths or access credentials. The controller must
+obtain grants and validate regular files and transfer limits before creating
+the snapshot.
+
+The evaluator must supply `ComposeLimits` for bytes, nodes and depth. Limits
+cover YAML construction, merge expansion, alias traversal, variable expansion
+and intermediate fragments. Interpolation/YAML diagnostics avoid echoing
+variable values or malformed dotenv lines.
+
 Classic-frontend heredoc lowering is an optional transform. It does not select
 a build engine or replace full Dockerfile execution. Native frontend execution,
-Compose, build context transfer, evaluator-controlled host inputs, VM/workload
+build context transfer, evaluator-controlled host inputs, VM/workload
 ownership, full Inspect registration and package acceptance remain in progress
 under [#310](https://github.com/google/capsem/issues/310) and
 [#311](https://github.com/google/capsem/issues/311). Preserve the original
