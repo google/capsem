@@ -961,7 +961,7 @@ describe('api', () => {
         .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
 
-      mockFetch.mockReturnValueOnce(jsonResponse({ images: [{ name: 'code' }] }));
+      mockFetch.mockReturnValueOnce(jsonResponse({ images: [{ name: 'code', description: 'Tools', architectures: ['amd64'], cached: 'unknown', image: null }] }));
       const result = await api.getImages();
       expect(result.images).toHaveLength(1);
     });

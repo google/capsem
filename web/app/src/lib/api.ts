@@ -3,7 +3,7 @@
 import * as gateway from '@capsem/sdk/operations';
 import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
-import type { ContainerStatusResponse } from '@capsem/sdk';
+import type { ContainerStatusResponse, ImageListResponse } from '@capsem/sdk';
 import { surfaceLauncherUrl } from './models/surface';
 import type { AssetStatus, UpdateApplyRequest } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
@@ -604,9 +604,8 @@ export async function fetchEventBodies(id: string, eventId: string): Promise<Eve
 
 // -- Images --
 
-export async function getImages(): Promise<{ images: { name: string }[] }> {
-  const resp = await _get('/images');
-  return await resp.json();
+export async function getImages(signal?: AbortSignal): Promise<ImageListResponse> {
+  return _sdk.call(transport => gateway.listImages(transport, {}, { signal }));
 }
 
 // -- Stats --

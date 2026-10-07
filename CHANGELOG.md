@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Desktop session customization offers compatible catalog OCI images with
+  immutable pins and cache status, preserving choices after readable refusals.
+
 - TUI session creation offers catalog OCI images alongside Plain VM, shows
   compatibility and unknown cache state, and preserves failed creation drafts.
   Image catalogs load on demand without delaying status polling.
