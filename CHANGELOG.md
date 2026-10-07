@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TypeScript SDK start and resume cover workload readiness, retaining larger
+  defaults, explicit per-call deadlines and cancellation without replay.
+
 - Python SDK start and resume cover the service's workload readiness window,
   retaining larger client deadlines and cancellation without replay.
 

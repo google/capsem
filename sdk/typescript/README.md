@@ -93,9 +93,10 @@ preserves the gateway status and response text. `NetworkError` identifies fetch
 or response-body connection failures and retains the original `cause`. Response
 validation errors remain distinct; cancellation and timeout reasons are preserved.
 Mutations are never retried.
-Creation waits for the service's workload readiness window with a default
-deadline of at least 230 seconds, matching Python. A longer transport deadline
-is retained; per-call `timeoutMs` and cancellation remain explicit overrides.
+Creation, `start`, and `resume` wait for the service's workload readiness window
+with a default deadline of at least 230 seconds, matching Python and Rust.
+A longer transport deadline is retained; per-call `timeoutMs` and cancellation
+remain explicit overrides.
 The guest exec channel preserves separate `stdout` and `stderr` lanes. Each is
 a typed `ExecOutput`; `decodeExecOutput()` returns its exact
 bytes regardless of whether the wire value uses UTF-8 or base64.

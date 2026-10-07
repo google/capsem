@@ -1,5 +1,5 @@
 import {Client} from './client.js';
-import {commandDeadlineMs} from './execution.js';
+import {commandDeadlineMs, createDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {HistoryOptions, LogOptions, TimelineOptions, VmSelector} from './options.js';
@@ -86,7 +86,8 @@ export class VM extends Client {
   }
   async start(options: CallOptions = {}): Promise<models.ProvisionResponse> {
     const {transport, id} = await this.context(options);
-    return api.startVm(transport, {id}, options);
+    return api.startVm(transport, {id}, {...options,
+      timeoutMs: options.timeoutMs ?? createDeadlineMs(transport.timeoutMs)});
   }
   async persist(name: string, options: CallOptions = {}): Promise<models.PersistResponse> {
     const {transport, id} = await this.context(options);
@@ -102,7 +103,8 @@ export class VM extends Client {
   }
   async resume(options: CallOptions = {}): Promise<models.ProvisionResponse> {
     const {transport, id} = await this.context(options);
-    return api.resumeVm(transport, {id}, options);
+    return api.resumeVm(transport, {id}, {...options,
+      timeoutMs: options.timeoutMs ?? createDeadlineMs(transport.timeoutMs)});
   }
   async delete(options: CallOptions = {}): Promise<models.VmActionResponse> {
     const {transport, id} = await this.context(options);

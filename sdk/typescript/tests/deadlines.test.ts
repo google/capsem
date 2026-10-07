@@ -78,3 +78,32 @@ it('honours explicit creation deadlines and cancellation without replay', async 
     } finally {hv.close();}
   });
 });
+
+it.each(['start', 'resume'] as const)('lets %s cover workload readiness without replay', async operation => {
+  const state = new FacadeGateway();
+  const path = `/vms/vm-0/${operation}`;
+  await gateway(delayed(state, [path]), async (url, received) => {
+    const vm = new VM(url, 'secret', {id: 'vm-0'}, {timeoutMs: 50});
+    try {
+      await vm[operation]();
+      expect(received.map(request => [request.method, request.url, request.body.toString()]))
+        .toEqual([['POST', path, '']]);
+      expect(received[0]?.headers.authorization).toBe('Bearer secret');
+    } finally {vm.close();}
+  });
+});
+
+it.each(['start', 'resume'] as const)('keeps explicit deadlines and cancellation for %s', async operation => {
+  const state = new FacadeGateway();
+  const path = `/vms/vm-0/${operation}`;
+  await gateway(delayed(state, [path]), async (url, received) => {
+    const vm = new VM(url, 'secret', {id: 'vm-0'});
+    try {
+      await expect(vm[operation]({timeoutMs: 50})).rejects.toMatchObject({name: 'TimeoutError'});
+      await expect(vm[operation]({signal: AbortSignal.abort()})).rejects.toMatchObject({name: 'AbortError'});
+      await vm.info();
+      expect(received.map(request => [request.method, request.url]))
+        .toEqual([['POST', path], ['GET', '/vms/vm-0/info']]);
+    } finally {vm.close();}
+  });
+});
