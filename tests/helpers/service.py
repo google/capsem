@@ -312,7 +312,10 @@ def preserve_tmp_dir_on_failure(
     errors = []
 
     try:
-        dest.mkdir(parents=True, exist_ok=True)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Each preserve is a new snapshot, including two in the same second.
+        # Never overwrite read-only blobs or links retained by an earlier one.
+        dest = Path(tempfile.mkdtemp(prefix=f"{dest.name}-", dir=dest.parent))
 
         # topdown=True so we can prune by emptying dirnames in-place if
         # needed; onerror catches listdir failures so a single unreadable
