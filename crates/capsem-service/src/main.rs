@@ -38,6 +38,7 @@ mod instance_reaper;
 pub mod managed_sessions;
 use instance::InstanceInfo;
 mod network_routes;
+mod owner_handoff;
 mod policy_mutation;
 use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
 mod mcp_routes;

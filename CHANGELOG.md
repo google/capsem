@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Bind private-network and preview handoff endpoints to the coordinator's
+  session identity and VM-owner spawn generation. Refuse worker replies that
+  name another endpoint or arrive after that owner has been replaced.
+
 ### Fixed
 
 - Rust SDK start and resume cover workload readiness with the same deadline

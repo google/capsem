@@ -312,21 +312,23 @@ pub(crate) async fn handle_admit_preview_connection(
     Path((vm_id, exposure_id)): Path<(String, String)>,
     Json(request): Json<PreviewConnectionAdmissionRequest>,
 ) -> Result<Json<PreviewConnectionAdmissionResponse>, AppError> {
+    let handoff = crate::owner_handoff::OwnerHandoff::acquire(&state, &vm_id).await?;
     let kind = match request.kind {
         capsem_api::PreviewAdmissionKind::Request => capsem_proto::PreviewAdmissionKind::Request,
         capsem_api::PreviewAdmissionKind::WebsocketUpgrade => capsem_proto::PreviewAdmissionKind::WebsocketUpgrade,
     };
-    match ask_owner(
-        &state,
-        &vm_id,
+    match send_ipc_command(
+        &handoff.uds_path,
         ServiceToProcess::AdmitPreviewConnection {
             id: state.next_job_id(),
             exposure_id,
             session_token: request.session_token,
             kind,
         },
+        Some(OWNER_TIMEOUT_SECS),
     )
-    .await?
+    .await
+    .map_err(|error| AppError(StatusCode::BAD_GATEWAY, format!("VM owner unavailable: {error}")))?
     {
         ProcessToService::PreviewConnectionAdmitted {
             handoff_socket,
@@ -335,7 +337,10 @@ pub(crate) async fn handle_admit_preview_connection(
             error: None,
             ..
         } => Ok(Json(PreviewConnectionAdmissionResponse {
-            handoff_socket,
+            handoff_socket: handoff
+                .validate(&state, &handoff_socket)?
+                .to_string_lossy()
+                .into_owned(),
             handoff_token,
             owner_generation: owner_generation.to_string(),
         })),

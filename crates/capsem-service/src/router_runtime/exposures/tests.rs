@@ -289,6 +289,127 @@ async fn exposures_on_a_vm_that_is_not_running_do_not_reach_any_owner() {
     assert!(status.is_client_error(), "{status}");
 }
 
+#[tokio::test]
+async fn preview_admission_rejects_owner_supplied_foreign_handoff_paths() {
+    let (state, uds_path, _dir) = fixture();
+    let expected = capsem_foundation::uds::private_handoff_socket_path(&state.run_dir, "box").unwrap();
+    let parent = expected.parent().unwrap();
+    let forged = [
+        capsem_foundation::uds::private_handoff_socket_path(&state.run_dir, "other-box").unwrap(),
+        state.service_socket.clone(),
+        parent
+            .join("..")
+            .join(parent.file_name().unwrap())
+            .join(expected.file_name().unwrap()),
+        parent.join(".").join(expected.file_name().unwrap()),
+        PathBuf::new(),
+    ];
+    for handoff in forged {
+        let handoff = handoff.to_string_lossy().into_owned();
+        let owner = spawn_fake_process(&uds_path, 1, move |message| {
+            let ServiceToProcess::AdmitPreviewConnection { id, .. } = message else {
+                panic!("unexpected {message:?}")
+            };
+            let reply = ProcessToService::PreviewConnectionAdmitted {
+                id: *id,
+                handoff_socket: handoff.clone(),
+                handoff_token: 123,
+                owner_generation: 42,
+                error: None,
+                policy_refused: false,
+            };
+            Box::pin(async move { Some(reply) })
+        });
+        let (status, body) = call(
+            &state,
+            axum::http::Method::POST,
+            "/internal/vms/box/exposures/preview-1/preview-admission",
+            Some(json!({"session_token": "preview-session", "kind": "request"})),
+        )
+        .await;
+        owner.await.unwrap();
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+        assert!(
+            body.to_string()
+                .contains("handoff endpoint does not belong to this VM owner"),
+            "{body}"
+        );
+        assert!(
+            body.get("handoff_socket").is_none(),
+            "never forward a forged endpoint: {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn preview_admission_preserves_the_coordinator_derived_handoff_endpoint() {
+    let (state, uds_path, _dir) = fixture();
+    let expected = capsem_foundation::uds::private_handoff_socket_path(&state.run_dir, "box").unwrap();
+    let handoff = expected.to_string_lossy().into_owned();
+    let owner = spawn_fake_process(&uds_path, 1, move |message| {
+        let ServiceToProcess::AdmitPreviewConnection { id, .. } = message else {
+            panic!("unexpected {message:?}")
+        };
+        let reply = ProcessToService::PreviewConnectionAdmitted {
+            id: *id,
+            handoff_socket: handoff.clone(),
+            handoff_token: 123,
+            owner_generation: 42,
+            error: None,
+            policy_refused: false,
+        };
+        Box::pin(async move { Some(reply) })
+    });
+    let (status, body) = call(
+        &state,
+        axum::http::Method::POST,
+        "/internal/vms/box/exposures/preview-1/preview-admission",
+        Some(json!({"session_token": "preview-session", "kind": "request"})),
+    )
+    .await;
+    owner.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({"handoff_socket": expected, "handoff_token": 123, "owner_generation": "42"})
+    );
+}
+
+#[tokio::test]
+async fn preview_admission_rejects_a_reply_from_a_replaced_owner_generation() {
+    let (state, uds_path, _dir) = fixture();
+    let expected = capsem_foundation::uds::private_handoff_socket_path(&state.run_dir, "box").unwrap();
+    let owner_state = Arc::clone(&state);
+    let owner = spawn_fake_process(&uds_path, 1, move |message| {
+        let ServiceToProcess::AdmitPreviewConnection { id, .. } = message else {
+            panic!("unexpected {message:?}")
+        };
+        owner_state.instances.lock().unwrap().get_mut("box").unwrap().generation = uuid::Uuid::new_v4();
+        let reply = ProcessToService::PreviewConnectionAdmitted {
+            id: *id,
+            handoff_socket: expected.to_string_lossy().into_owned(),
+            handoff_token: 123,
+            owner_generation: 42,
+            error: None,
+            policy_refused: false,
+        };
+        Box::pin(async move { Some(reply) })
+    });
+    let (status, body) = call(
+        &state,
+        axum::http::Method::POST,
+        "/internal/vms/box/exposures/preview-1/preview-admission",
+        Some(json!({"session_token": "preview-session", "kind": "request"})),
+    )
+    .await;
+    owner.await.unwrap();
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(
+        body.to_string().contains("VM owner changed during handoff admission"),
+        "{body}"
+    );
+}
+
 /// Finding 11 (google/capsem#222): a leaked preview session could only be cut
 /// by deleting the whole exposure. Revoking its sessions keeps the exposure
 /// and ends every flow they admitted.
