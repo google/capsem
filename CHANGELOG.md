@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Model tool records label observed WebSocket exchanges with their actual
+  transport while preserving HTTP and SSE labels.
+
 - Codex code-mode calls retain their tool namespace, input and linked results
   in model telemetry. Text-array outputs preserve request metadata, and
   Responses tool turns report tool-use completion.
