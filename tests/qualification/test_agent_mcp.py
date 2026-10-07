@@ -187,7 +187,7 @@ def assert_agent_ledger(db_path, expect, token):
         models = [
             dict(row)
             for row in db.execute(
-                "SELECT event_id, provider, path, method, model, process_name, tools_count, status_code, text_content, stop_reason FROM model_calls"
+                "SELECT event_id, provider, path, method, model, process_name, tools_count, status_code, text_content, stop_reason FROM model_calls WHERE method = 'POST'"
             )
         ]
         with SessionArchive(db_path) as archive:
@@ -202,6 +202,24 @@ def assert_agent_ledger(db_path, expect, token):
                 assert body is not None, model
                 if contains_proof_prompt(json.loads(body), token):
                     turns.append(model)
+            for model in turns:
+                if expect["provider"] == "openai" and model["text_content"] == token:
+                    body = archive.read(model["event_id"], "model_calls", "response")
+                    assert body is not None, model
+                    events = [
+                        json.loads(line.removeprefix("data: "))
+                        for line in body.decode().splitlines()
+                        if line.startswith("data: ")
+                    ]
+                    assert events[-1]["type"] == "response.completed", events
+                    final_response = events[-1]["response"]
+                    assert (
+                        final_response["status"] == "completed"
+                        and final_response["error"] is None
+                    ), final_response
+                    assert final_response["output"][0]["content"][0]["text"] == token, (
+                        final_response
+                    )
         assert turns, models
         assert all(
             model["provider"] == expect["provider"]
