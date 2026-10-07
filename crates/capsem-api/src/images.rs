@@ -45,14 +45,19 @@ pub struct ImageInfo {
     pub cached: ImageCacheState,
 }
 
-/// Whether the host's image cache already holds an image.
+/// The service cache owner's current observation of the selected image's
+/// local bytes. This does not grant execution or describe registry freshness.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageCacheState {
-    /// Not answered: the cache keeps verified layer blobs by digest, and the
-    /// catalog names the image's index. Which layers that index needs is in
-    /// its manifests, which are not cached, so only a registry could say.
+    /// The owner has no current proof, including startup or invalidation.
     Unknown,
+    /// No complete retained image receipt is present.
+    Missing,
+    /// Retained image metadata or bytes are incomplete or known invalid.
+    Partial,
+    /// The owner verified all required local bytes for the retained image.
+    Ready,
 }
 
 /// `GET /images` query.

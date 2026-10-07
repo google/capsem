@@ -4327,9 +4327,12 @@
       },
       "ImageCacheState": {
         "type": "string",
-        "description": "Whether the host's image cache already holds an image.",
+        "description": "The service cache owner's current observation of the selected image's\nlocal bytes. This does not grant execution or describe registry freshness.",
         "enum": [
-          "unknown"
+          "unknown",
+          "missing",
+          "partial",
+          "ready"
         ]
       },
       "ImageInfo": {

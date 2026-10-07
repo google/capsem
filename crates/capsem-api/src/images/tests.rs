@@ -2,6 +2,15 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn image_disk_states_round_trip_and_unrecognized_states_are_refused() {
+    for state in ["unknown", "missing", "partial", "ready"] {
+        let parsed: ImageCacheState = serde_json::from_value(json!(state)).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap(), json!(state));
+    }
+    assert!(serde_json::from_value::<ImageCacheState>(json!("available")).is_err());
+}
+
+#[test]
 fn an_image_list_without_a_catalog_is_empty_and_says_so() {
     let empty: ImageListResponse = serde_json::from_value(json!({"images": []})).unwrap();
     assert_eq!(
