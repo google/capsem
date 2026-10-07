@@ -491,7 +491,7 @@ fn expired_reservation_cannot_admit_a_create_side_effect() {
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
     };
-    let earlier = Instant::now() - Duration::from_secs(2);
+    let earlier = Instant::now().checked_sub(Duration::from_secs(2)).expect("earlier test instant");
     store
         .start_lease(
             &ticket,
