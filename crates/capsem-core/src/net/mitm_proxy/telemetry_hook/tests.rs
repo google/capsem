@@ -160,6 +160,71 @@ fn empty_resp_stats() -> TelemetryResponseStats {
     TelemetryResponseStats::default()
 }
 
+#[tokio::test]
+async fn websocket_upgrade_is_network_admission_and_not_model_inference() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&path, 8).unwrap());
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+    let hook = TelemetryHook::new(Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::clone(&pricing),
+        trace_state: Arc::clone(&trace),
+        security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
+    }));
+    let mut request = anthropic_req_ctx();
+    request.domain = "api.openai.com".into();
+    request.path = "/v1/responses".into();
+    request.method = "GET".into();
+    request.status_code = Some(101);
+    request.ai_provider = Some(ProviderKind::OpenAi);
+    request.ai_protocol = Some(ModelProtocol::OpenAi);
+    request.model_traffic = false;
+    request.request_body_stats = req_stats(b"");
+    assert!(
+        maybe_build_model_call(&request, &empty_resp_stats(), &[], &pricing, &trace).is_none(),
+        "An HTTP upgrade contains no inference request or result"
+    );
+    let conn = ConnMeta {
+        domain: request.domain.clone(),
+        ai_provider: request.ai_provider,
+        ai_protocol: request.ai_protocol,
+        ..Default::default()
+    };
+    let mut state = HookState::default();
+    state.set::<Option<TelemetryRequestContext>>(Some(request));
+    complete_response(&hook, &mut state, &conn).await;
+    db.flush().await;
+    let ledger = rusqlite::Connection::open(&path).unwrap();
+    let net: (String, String, i64) = ledger
+        .query_row("SELECT domain, method, status_code FROM net_events", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .unwrap();
+    assert_eq!(net, ("api.openai.com".into(), "GET".into(), 101));
+    assert_eq!(
+        ledger
+            .query_row("SELECT COUNT(*) FROM model_calls", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    db.shutdown_blocking();
+}
+
+#[test]
+fn websocket_upgrade_filter_preserves_observed_model_messages_and_http_inference() {
+    let mut request = anthropic_req_ctx();
+    let pricing = PricingTable::load();
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+    for (status, observed) in [(200, false), (101, true)] {
+        request.status_code = Some(status);
+        request.model_traffic = observed;
+        assert!(maybe_build_model_call(&request, &empty_resp_stats(), &[], &pricing, &trace).is_some());
+    }
+}
+
 /// `build_net_event` populates the basic fields straight from the
 /// context.
 #[test]

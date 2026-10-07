@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- WebSocket upgrade handshakes retain network telemetry without inflating
+  model call counts with an empty inference record.
+
 - Rust SDK start and resume cover workload readiness with the same deadline
   budget as creation, retaining larger client defaults and cancellation.
 

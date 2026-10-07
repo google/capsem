@@ -496,7 +496,10 @@ pub fn maybe_build_model_call(
 ) -> Option<ModelCall> {
     let provider = req_ctx.ai_provider?;
     let protocol = req_ctx.ai_protocol?;
-    if req_ctx.method == "HEAD" || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path)) {
+    if req_ctx.method == "HEAD"
+        || (req_ctx.status_code == Some(101) && !req_ctx.model_traffic)
+        || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path))
+    {
         return None;
     }
     let duration_ms = req_ctx.start_time.elapsed().as_millis() as u64;
