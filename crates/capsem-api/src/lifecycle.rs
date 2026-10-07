@@ -15,6 +15,27 @@ pub struct StopResponse {
     pub persistent: bool,
 }
 
+/// Validate a VM name or identifier (`1..=64` ASCII `[A-Za-z0-9_-]` characters,
+/// starting with an ASCII letter or digit) so service paths and gateway routes
+/// enforce one rule.
+pub fn validate_name(kind: &str, value: &str) -> Result<(), String> {
+    let Some(first) = value.chars().next() else {
+        return Err(format!("{kind} cannot be empty"));
+    };
+    if value.len() > 64 {
+        return Err(format!("{kind} too long (max 64 characters)"));
+    }
+    if !first.is_ascii_alphanumeric() {
+        return Err(format!("{kind} must start with a letter or digit"));
+    }
+    if !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!(
+            "{kind} must contain only letters, digits, hyphens, and underscores"
+        ));
+    }
+    Ok(())
+}
+
 /// Unknown fields are refused rather than ignored.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, ToSchema)]
 #[serde(deny_unknown_fields)]

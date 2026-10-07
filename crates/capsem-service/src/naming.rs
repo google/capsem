@@ -1,6 +1,6 @@
 //! VM-name helpers: generated session names and persistent-name validation.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use rand::Rng;
 
 /// The first free `vm-N` among `existing` names.
@@ -31,21 +31,7 @@ where
 /// - starts with an ASCII letter or digit (no leading hyphen/underscore)
 /// - consists only of ASCII alphanumerics, `-`, or `_`
 pub fn validate_vm_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        return Err(anyhow!("VM name cannot be empty"));
-    }
-    if name.len() > 64 {
-        return Err(anyhow!("VM name too long (max 64 characters)"));
-    }
-    if !name.chars().next().unwrap().is_ascii_alphanumeric() {
-        return Err(anyhow!("VM name must start with a letter or digit"));
-    }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(anyhow!(
-            "VM name must contain only letters, digits, hyphens, and underscores"
-        ));
-    }
-    Ok(())
+    capsem_api::validate_name("VM name", name).map_err(anyhow::Error::msg)
 }
 
 #[cfg(test)]
