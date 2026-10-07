@@ -2,6 +2,20 @@ use super::*;
 
 mod limits;
 
+#[test]
+fn claude_startup_host_resolves_in_both_fixture_modes() {
+    for (mode, address) in [
+        (DnsAnswers::Loopback, [127, 0, 0, 1]),
+        (DnsAnswers::Routable, [198, 51, 100, 10]),
+    ] {
+        let answer = dns_response_for(&test_dns_query("platform.claude.com", 123), mode).unwrap();
+        assert_eq!(answer[3] & 0x0F, 0);
+        assert_eq!(&answer[answer.len() - 4..], &address);
+        let unknown = dns_response_for(&test_dns_query("unknown.claude.com", 123), mode).unwrap();
+        assert_eq!(unknown[3] & 0x0F, 3);
+    }
+}
+
 #[tokio::test]
 async fn anthropic_cli_connectivity_probe_succeeds_without_broad_get_fallback() {
     for method in [Method::HEAD, Method::GET] {
