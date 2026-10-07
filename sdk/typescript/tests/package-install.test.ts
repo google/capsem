@@ -13,6 +13,31 @@ const source = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(source, '../..');
 const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
 
+it('prewarms offline without forwarding unsupported pnpm settings to npm', () => {
+  const prewarm = spawnSync(process.execPath, [join(source, 'tools/prewarm-package.mjs')], {
+    cwd: source, encoding: 'utf8', stdio: 'pipe', timeout: 60_000,
+    env: {...process.env, NPM_CONFIG_OFFLINE: 'true',
+      npm_config_store_dir: '/unused/pnpm-store', npm_config_verify_deps_before_run: 'false',
+      npm_config_overrides: '{}'},
+  });
+  expect(prewarm.status, prewarm.stdout + prewarm.stderr).toBe(0);
+  expect(prewarm.stderr).not.toContain('npm warn');
+  const emptyCache = mkdtempSync(join(tmpdir(), 'capsem-sdk-empty-npm-'));
+  try {
+    const cold = spawnSync(process.execPath, [join(source, 'tools/prewarm-package.mjs')], {
+      cwd: source, encoding: 'utf8', stdio: 'pipe', timeout: 60_000,
+      env: {...process.env, NPM_CONFIG_OFFLINE: 'true', NPM_CONFIG_CACHE: emptyCache,
+        npm_config_store_dir: '/unused/pnpm-store'},
+    });
+    expect(cold.status).not.toBe(0);
+    expect(cold.stderr).toContain('ENOTCACHED');
+    expect(cold.stderr).not.toContain('npm warn');
+  } finally {
+    rmSync(emptyCache, {recursive: true, force: true});
+  }
+  expect(existsSync(emptyCache)).toBe(false);
+}, 65_000);
+
 function inventory(directory: string, base = directory): Record<string, string> {
   const files: Record<string, string> = {};
   for (const name of readdirSync(directory)) {
