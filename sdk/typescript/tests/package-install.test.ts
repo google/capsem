@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {expect, it} from 'vitest';
 
 interface Manifest {name: string; version: string; dependencies: Record<string, string>; devDependencies: Record<string, string>}
-interface Report {ok: boolean; sha256: string; version: string; httpPaths: string[]}
+interface Report {ok: boolean; sha256: string; version: string; httpPaths: string[]; lifecyclePaths: string[]}
 
 const source = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(source, '../..');
@@ -100,6 +100,11 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
     expect(report.sha256).toBe(digest);
     expect(report.version).toBe(manifest.version);
     expect(report.httpPaths).toEqual(['/images?refresh=true', '/images/pull', '/images/pull']);
+    expect(report.lifecyclePaths).toEqual([
+      '/vms/restore-vm/start', '/vms/restore-vm/resume',
+      '/vms/restore-vm/start', '/vms/restore-vm/info',
+      '/vms/restore-vm/resume', '/vms/restore-vm/info', '/vms/slow/info',
+    ]);
     expect(sha(archive)).toBe(digest);
 
     const entrypoint = join(modules, manifest.name, 'dist/index.js');
