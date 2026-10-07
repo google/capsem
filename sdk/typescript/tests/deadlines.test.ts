@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {commandDeadlineMs} from '../src/execution.js';
+import {commandDeadlineMs, createDeadlineMs} from '../src/execution.js';
 import {Hypervisor, VM} from '../src/index.js';
 import {FacadeGateway} from './facade-gateway.js';
 import {gateway} from './gateway.js';
@@ -13,6 +13,10 @@ it.each([
   [5_000_000, 10, 5_000_000],
 ])('deadline for default %i ms and timeout_secs %s is %i ms', (fallback, timeoutSecs, expected) => {
   expect(commandDeadlineMs(fallback, timeoutSecs)).toBe(expected);
+});
+
+it.each([[30_000, 230_000], [500_000, 500_000]])('create deadline preserves readiness and a larger default: %i', (fallback, expected) => {
+  expect(createDeadlineMs(fallback)).toBe(expected);
 });
 
 function delayed(state: FacadeGateway, paths: string[]): Parameters<typeof gateway>[0] {
@@ -44,5 +48,33 @@ it('keeps the default deadline for ordinary calls and honours an explicit one', 
       await expect(vm.exec('bounded', {timeoutMs: 50})).rejects.toMatchObject({name: 'TimeoutError'});
       expect(received).toHaveLength(2);
     } finally {vm.close();}
+  });
+});
+
+it('lets workload creation finish past the transport default without replay', async () => {
+  const state = new FacadeGateway();
+  await gateway(delayed(state, ['/vms/create']), async (url, received) => {
+    const hv = new Hypervisor(url, 'secret', {timeoutMs: 50});
+    try {
+      const vm = await hv.create({image: 'registry.example/code:latest'});
+      expect(vm.id).toBe('vm-0');
+      expect(received.map(request => [request.method, request.url])).toEqual([['POST', '/vms/create']]);
+      expect(received[0]?.headers.authorization).toBe('Bearer secret');
+      vm.close();
+    } finally {hv.close();}
+  });
+});
+
+it('honours explicit creation deadlines and cancellation without replay', async () => {
+  const state = new FacadeGateway();
+  await gateway(delayed(state, ['/vms/create']), async (url, received) => {
+    const hv = new Hypervisor(url, 'secret');
+    try {
+      await expect(hv.create({image: 'registry.example/code:latest', timeoutMs: 50}))
+        .rejects.toMatchObject({name: 'TimeoutError'});
+      await expect(hv.create({image: 'registry.example/code:latest', signal: AbortSignal.abort()}))
+        .rejects.toMatchObject({name: 'AbortError'});
+      expect(received.map(request => [request.method, request.url])).toEqual([['POST', '/vms/create']]);
+    } finally {hv.close();}
   });
 });

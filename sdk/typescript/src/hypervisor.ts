@@ -2,7 +2,7 @@ import {Client} from './client.js';
 import {Debug} from './debug.js';
 import {Images} from './images.js';
 import {registryAccess} from './registry.js';
-import {commandDeadlineMs} from './execution.js';
+import {commandDeadlineMs, createDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {CreateOptions, HostLogOptions, RunOptions, VmSelector} from './options.js';
@@ -66,7 +66,7 @@ export class Hypervisor extends Client {
       env: container === undefined ? options.env ?? null : null,
       networks: (options.networks ?? []).map(network => network.name),
       ...(container === undefined ? {} : {container}),
-    }}, options);
+    }}, {...options, timeoutMs: options.timeoutMs ?? createDeadlineMs(this.transport.timeoutMs)});
     return VM.bind(this.transport, response.id, response.name, container !== undefined);
   }
   async log(options: HostLogOptions = {}): Promise<models.HostLogsResponse> {

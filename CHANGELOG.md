@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- TypeScript SDK creation waits through the service's workload readiness window
+  instead of timing out at the ordinary 30-second request deadline, while
+  preserving explicit deadlines and cancellation without replaying creation.
+
 ### Added
 
 - Registry image catalogs report verified local disk status through the

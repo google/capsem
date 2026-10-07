@@ -10,6 +10,13 @@ export function decodeExecOutput(output: ExecOutput): Uint8Array {
 const EXEC_TIMEOUT_CEILING_SECS = 60 * 60;
 /** The gateway's budget for readiness, boot and teardown around a command. */
 const GATEWAY_REQUEST_BUDGET_SECS = 120;
+/** The service's workload readiness window, including its image pull. */
+const CREATE_READY_SECS = 110;
+
+/** Creation answers only after workload readiness, so allow its full window. */
+export function createDeadlineMs(fallbackMs: number): number {
+  return Math.max(fallbackMs, (CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS) * 1000);
+}
 
 /**
  * HTTP deadline for exec or run: the service answers only when the command
