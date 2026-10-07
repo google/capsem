@@ -1,5 +1,25 @@
 # Capsem TypeScript SDK
 
+Image catalog and prefetch use the service's admission policy:
+
+```ts
+import {Hypervisor} from '@capsem/sdk';
+
+const hv = new Hypervisor(url, token);
+try {
+  const catalog = await hv.images.list({refresh: false});
+  for (const image of catalog.images) console.log(image.name, image.image, image.cached);
+  const pulled = await hv.images.pull('code', {timeoutMs: 120_000});
+  console.log(pulled.resolved);
+} finally { hv.close(); }
+```
+
+An absent image pin means no compatible host version; cache `unknown` does
+not establish readiness. Pass `registry` to one `pull` when private access is
+needed. It is not retained for later calls. Images share the Hypervisor's
+connection lifetime and accept per-call cancellation/deadline options.
+Prefetch does not create a VM.
+
 Async clients for the authenticated HTTP gateway, usable in browsers and Node.
 Supply the gateway URL and bearer token explicitly.
 

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The TypeScript SDK exposes matching `Hypervisor.images` catalog and prefetch
+  APIs with typed cancellation, per-call registry access and shared lifetime.
+
 - The Python SDK exposes typed image catalog and prefetch APIs through
   `Hypervisor.images`, with per-call registry access and shared client lifetime.
 
@@ -433,6 +436,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the VM owner or session ledger.
 
 ### Fixed
+
+- TypeScript image prefetch and VM creation reject malformed registry access
+  before HTTP instead of converting it to an empty access object.
 
 - Desktop lifecycle controls dispatch advertised Start and Resume operations,
   reject stale permissions, and keep readable failure feedback and session tabs

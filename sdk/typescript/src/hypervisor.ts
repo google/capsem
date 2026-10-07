@@ -1,5 +1,7 @@
 import {Client} from './client.js';
 import {Debug} from './debug.js';
+import {Images} from './images.js';
+import {registryAccess} from './registry.js';
 import {commandDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
@@ -21,12 +23,14 @@ export class Hypervisor extends Client {
   /** The MCP servers every VM runs, from settings and corp config. */
   readonly mcp: Mcp;
   readonly debug: Debug;
+  readonly images: Images;
   constructor(url: string, token: string, options: TransportOptions = {}) {
     const transport = new Transport(url, token, options);
     super(transport);
     this.networks = new Networks(transport);
     this.mcp = new Mcp(transport);
     this.debug = new Debug(transport);
+    this.images = new Images(transport);
   }
   async info(options: CallOptions = {}): Promise<models.HypervisorInfo> {
     return api.getHypervisorInfo(this.transport, options);
@@ -48,11 +52,12 @@ export class Hypervisor extends Client {
       throw new TypeError('Image must be a nonempty string');
     }
     const ram_mb = memoryMb(options.memory);
+    const registry = registryAccess(options.registry);
     const container = options.image === undefined ? undefined : {
       image: options.image,
       args: [...(options.command ?? [])],
       env: options.env ?? {},
-      ...(options.registry === undefined ? {} : {registry: {...options.registry}}),
+      ...(registry === undefined ? {} : {registry}),
       attach: false,
     };
     const response = await api.createVm(this.transport, {body: {
