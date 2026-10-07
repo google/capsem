@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Authenticate VM-owner control connections with the kernel's process and user
+  identity before reading protocol claims. Owners retain a session singleton
+  and exit when their launching coordinator dies.
+
 - Bind private-network and preview handoff endpoints to the coordinator's
   session identity and VM-owner spawn generation. Refuse worker replies that
   name another endpoint or arrive after that owner has been replaced.

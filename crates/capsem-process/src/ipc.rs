@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
+use capsem_foundation::unix::peer::PeerIdentity;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::HostToGuest;
 use std::collections::HashMap;
@@ -56,7 +57,15 @@ const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker
 /// threads, then hand the verified socket to the typed async IPC transport.
 /// A peer mismatch is a refused connection, not a process-fatal error.
-async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<(ProcessIpcChannel, bool)>> {
+async fn open_ipc_channel(
+    stream: tokio::net::UnixStream,
+    controller: PeerIdentity,
+) -> Result<Option<(ProcessIpcChannel, bool)>> {
+    use std::os::fd::AsFd;
+    if let Err(error) = capsem_foundation::unix::peer::require(stream.as_fd(), controller) {
+        warn!(target: "ipc", %error, "unauthorized IPC peer; refusing connection before Hello");
+        return Ok(None);
+    }
     let std_stream = stream.into_std()?;
     let traceparent = capsem_foundation::telemetry::current_parent_traceparent();
     let (std_stream, handshake) = tokio::task::spawn_blocking(move || {
@@ -121,6 +130,7 @@ async fn record_guest_write(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_ipc_connection(
     stream: tokio::net::UnixStream,
+    controller: PeerIdentity,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     ipc_tx: broadcast::Sender<ProcessToService>,
     term_relay: Arc<TerminalRelay>,
@@ -135,7 +145,7 @@ pub(crate) async fn handle_ipc_connection(
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream).await? else {
+    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream, controller).await? else {
         return Ok(());
     };
 

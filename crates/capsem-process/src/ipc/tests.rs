@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use super::*;
 
+mod authorization;
+use authorization::controller_identity;
 mod classification;
 mod publications;
 mod reload;
@@ -62,7 +64,10 @@ async fn negotiated_channel_carries_typed_messages_in_both_directions() {
         channel
     });
 
-    let ((process_tx, process_rx), stream_role) = open_ipc_channel(process_stream).await.unwrap().unwrap();
+    let ((process_tx, process_rx), stream_role) = open_ipc_channel(process_stream, controller_identity())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!stream_role, "a service connection is a command connection");
     let (service_tx, service_rx) = service.await.unwrap();
 
@@ -78,7 +83,10 @@ async fn malformed_handshake_is_refused_before_typed_ipc_starts() {
     let (process_stream, mut peer) = tokio::net::UnixStream::pair().unwrap();
     peer.write_all(&0_u32.to_be_bytes()).await.unwrap();
 
-    assert!(open_ipc_channel(process_stream).await.unwrap().is_none());
+    assert!(open_ipc_channel(process_stream, controller_identity())
+        .await
+        .unwrap()
+        .is_none());
 }
 
 /// The owner's IPC dispatcher as `main.rs` wires it, on a fixture policy
@@ -202,6 +210,7 @@ impl Dispatcher {
     pub(in crate::ipc) fn connection(&self, stream: tokio::net::UnixStream) -> tokio::task::JoinHandle<Result<()>> {
         tokio::spawn(handle_ipc_connection(
             stream,
+            controller_identity(),
             self.ctrl_tx.clone(),
             self.events_tx.clone(),
             Arc::clone(&self.term_relay),

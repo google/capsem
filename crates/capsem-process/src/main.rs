@@ -208,6 +208,10 @@ fn main() -> Result<()> {
         default_filter: "info",
     })?;
     let args = Args::parse();
+    let controller = capsem_foundation::unix::peer::PeerIdentity {
+        pid: capsem_foundation::unix::process::parent_process_id().context("missing coordinator parent")?,
+        uid: capsem_foundation::unix::process::current_uid(),
+    };
 
     // Root span shared across the whole capsem-process run: every
     // subsequent log line inherits `vm_id` and `trace_id` as structured
@@ -216,17 +220,22 @@ fn main() -> Result<()> {
     let root_span = tracing::info_span!("vm", vm_id = %args.id, trace_id = %trace_id);
     let _root_span_guard = root_span.enter();
 
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-
-    info!(id = %args.id, "capsem-sandbox-process starting");
-    // Held until the process exits: dropping it flushes the last measurements.
-    let _metric_export = metric_export::install(&args.id, args.metric_endpoint.as_deref());
-
     std::fs::create_dir_all(&args.session_dir)?;
     let mut session_dir = args.session_dir.clone();
     if let Ok(resolved) = session_dir.canonicalize() {
         session_dir = resolved;
     }
+    // The kernel parent is the coordinator that launched this owner. Keep
+    // that identity for every IPC check and die if it changes, so an orphan
+    // cannot accept a later process that reuses the old parent's PID.
+    let _owner_guards = capsem_guard::install(Some(controller.pid.get()), &session_dir.join("process.lock"))?
+        .context("this session already has a running VM owner")?;
+
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+
+    info!(id = %args.id, "capsem-sandbox-process starting");
+    // Held until the process exits: dropping it flushes the last measurements.
+    let _metric_export = metric_export::install(&args.id, args.metric_endpoint.as_deref());
 
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
     // The image share is attached to every session, read-only at the device:
@@ -314,9 +323,9 @@ fn main() -> Result<()> {
     rt.spawn(async move {
         if let Err(e) = run_async_main_loop(
             args,
+            controller,
             vm_arc,
             vsock_rx,
-            sm,
             trace_id_for_loop,
             session_dir_for_loop,
             shutdown_for_loop,
@@ -384,9 +393,9 @@ fn main() -> Result<()> {
 
 async fn run_async_main_loop(
     args: Args,
+    controller: capsem_foundation::unix::peer::PeerIdentity,
     vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
-    _sm: capsem_core::host_state::HostStateMachine,
     trace_id: String,
     session_dir: std::path::PathBuf,
     shutdown: Arc<Mutex<Shutdown>>,
@@ -739,6 +748,7 @@ async fn run_async_main_loop(
         tokio::spawn(async move {
             if let Err(e) = ipc::handle_ipc_connection(
                 stream,
+                controller,
                 tx_c,
                 ipc_tx_pass,
                 term_c,
