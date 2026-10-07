@@ -10,3 +10,4 @@ turn = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-g
 credential_env = "OPENAI_API_KEY"
 provider = "openai"
 path = "/v1/responses"
+response_transport = "websocket"

@@ -16,6 +16,7 @@ from helpers.image_session import WORKSPACE, session_of, workload_exec
 from helpers.service import vm_session_db_path
 from helpers.session_ledger import open_session_ledger
 
+from tests.qualification.agent_model_ledger import assert_model_ledger
 from tests.qualification.test_agent import model_service
 
 __all__ = ["model_service"]
@@ -184,56 +185,13 @@ def assert_agent_ledger(db_path, expect, token):
         assert event["mcp"]["request"]["id"] == call["request_id"], event
         assert event["mcp"]["request"]["arguments"] == {"text": token}, event
         assert event["mcp"]["response"]["content"] == response["content"], event
-        models = [
-            dict(row)
-            for row in db.execute(
-                "SELECT event_id, provider, path, method, model, process_name, tools_count, status_code, text_content, stop_reason FROM model_calls WHERE method = 'POST'"
-            )
-        ]
         with SessionArchive(db_path) as archive:
             request_body = archive.read(call["event_id"], "tool_calls", "request")
             response_body = archive.read(call["event_id"], "tool_calls", "response")
             assert request_body is not None and response_body is not None, call
             assert json.loads(request_body) == request
             assert json.loads(response_body) == response
-            turns = []
-            for model in models:
-                body = archive.read(model["event_id"], "model_calls", "request")
-                assert body is not None, model
-                if contains_proof_prompt(json.loads(body), token):
-                    turns.append(model)
-            for model in turns:
-                if expect["provider"] == "openai" and model["text_content"] == token:
-                    body = archive.read(model["event_id"], "model_calls", "response")
-                    assert body is not None, model
-                    events = [
-                        json.loads(line.removeprefix("data: "))
-                        for line in body.decode().splitlines()
-                        if line.startswith("data: ")
-                    ]
-                    assert events[-1]["type"] == "response.completed", events
-                    final_response = events[-1]["response"]
-                    assert (
-                        final_response["status"] == "completed"
-                        and final_response["error"] is None
-                    ), final_response
-                    assert final_response["output"][0]["content"][0]["text"] == token, (
-                        final_response
-                    )
-        assert turns, models
-        assert all(
-            model["provider"] == expect["provider"]
-            and model["path"] == expect["path"]
-            and model["method"] == "POST"
-            and model["model"]
-            and model["process_name"] == expect["turn"][0]
-            and model["status_code"] == 200
-            for model in turns
-        ), turns
-        assert any(
-            model["text_content"] == token and model["stop_reason"] == "end_turn"
-            for model in turns
-        ), turns
+            assert_model_ledger(db, archive, expect, token, contains_proof_prompt)
 
 
 def contains_proof_prompt(payload, token):
