@@ -43,9 +43,7 @@ def model_service(tmp_path):
 
 
 @pytest.mark.capability("agent")
-def test_the_agent_completes_a_turn_and_its_tool_call_lands(
-    model_service, candidate, tmp_path
-):
+def test_the_agent_completes_a_turn_and_its_tool_call_lands(model_service, candidate, tmp_path):
     expect = candidate.expect
     assert expect.get("turn"), f"{candidate.name} declares agent but no [expect] turn"
     token, target = uuid.uuid4().hex, f"{WORKSPACE}/agent-turn.txt"
@@ -59,6 +57,7 @@ def test_the_agent_completes_a_turn_and_its_tool_call_lands(
         "agent",
         layout=candidate.layout,
         image_name=candidate.name,
+        env={expect["credential_env"]: "capsem-qualification-test-key"},
     ) as vm_id:
         turn = workload_exec(
             client, vm_id, f"cd {WORKSPACE} && env {credential} {command}", timeout=240
@@ -78,14 +77,12 @@ def test_the_agent_completes_a_turn_and_its_tool_call_lands(
             ]
             if expect.get("response_transport") == "websocket":
                 assert len(calls) == 2, calls
-                assert all(
-                    row["method"] == "GET" and row["status_code"] == 101
-                    for row in calls
-                ), calls
+                assert all(row["method"] == "GET" and row["status_code"] == 101 for row in calls), (
+                    calls
+                )
                 assert calls[0]["stop_reason"] == "tool_use", calls
                 assert (
-                    calls[-1]["text_content"] == token
-                    and calls[-1]["stop_reason"] == "end_turn"
+                    calls[-1]["text_content"] == token and calls[-1]["stop_reason"] == "end_turn"
                 ), calls
                 assert calls[0]["trace_id"] == calls[-1]["trace_id"], calls
                 proposed = [
@@ -95,14 +92,11 @@ def test_the_agent_completes_a_turn_and_its_tool_call_lands(
                         (calls[0]["id"],),
                     )
                 ]
-                assert (
-                    len(proposed) == 1 and proposed[0]["tool_name"] == "exec_command"
-                ), proposed
+                assert len(proposed) == 1 and proposed[0]["tool_name"] == "exec_command", proposed
                 assert proposed[0]["transport"] == "websocket", proposed
-                assert (
-                    token in proposed[0]["arguments"]
-                    and target in proposed[0]["arguments"]
-                ), proposed
+                assert token in proposed[0]["arguments"] and target in proposed[0]["arguments"], (
+                    proposed
+                )
                 result_ids = [
                     row[0]
                     for row in db.execute(
