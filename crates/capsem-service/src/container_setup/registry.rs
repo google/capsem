@@ -39,6 +39,16 @@ impl RegistryImages {
 }
 
 impl ImageSource for RegistryImages {
+    fn cache_state(
+        &self,
+        key: &capsem_assets::oci::CacheKey,
+    ) -> anyhow::Result<Option<capsem_assets::oci::CacheState>> {
+        self.cache
+            .get()
+            .map(|cache| cache.snapshot(key).map(|snapshot| snapshot.state))
+            .transpose()
+    }
+
     fn observe_cache(&self, keys: &[capsem_assets::oci::CacheKey], parent: &StdPath) -> anyhow::Result<()> {
         anyhow::ensure!(
             keys.len() <= CACHE_VERIFICATION_BATCH_KEYS,

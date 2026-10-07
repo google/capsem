@@ -362,7 +362,7 @@ pub(crate) async fn handle_list_images(
     };
     let architecture =
         stage::catalog_architecture().map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
-    let images: Vec<ImageInfo> = loaded
+    let mut images: Vec<ImageInfo> = loaded
         .catalog
         .entries()
         .iter()
@@ -394,6 +394,19 @@ pub(crate) async fn handle_list_images(
         })
         .collect::<anyhow::Result<Vec<_>>>()
         .map_err(|error| ImageError::Failed(format!("cache identity: {error:#}")))?;
+    for (image, key) in images.iter_mut().filter(|image| image.image.is_some()).zip(&keys) {
+        use capsem_assets::oci::CacheState;
+        image.cached = match decision.setups.source.cache_state(key) {
+            Ok(Some(CacheState::Missing)) => ImageCacheState::Missing,
+            Ok(Some(CacheState::Partial)) => ImageCacheState::Partial,
+            Ok(Some(CacheState::Ready)) => ImageCacheState::Ready,
+            Ok(Some(CacheState::Unknown) | None) => ImageCacheState::Unknown,
+            Err(error) => {
+                warn!(image = %image.name, %error, "image disk observation unavailable");
+                ImageCacheState::Unknown
+            }
+        };
+    }
     keys.extend(
         state
             .containers

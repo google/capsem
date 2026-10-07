@@ -54,6 +54,7 @@ fn catalog_document() -> Value {
 type RootCall = (String, String, RegistryAccess, Option<capsem_assets::oci::CacheKey>);
 
 struct CatalogImages {
+    disk_states: Arc<Mutex<std::collections::HashMap<capsem_assets::oci::CacheKey, capsem_assets::oci::CacheState>>>,
     observations: Arc<Mutex<Vec<Vec<capsem_assets::oci::CacheKey>>>>,
     fetches: Arc<Mutex<Vec<ImageFetch>>>,
     settings: SettingsFile,
@@ -64,6 +65,12 @@ struct CatalogImages {
 }
 
 impl ImageSource for CatalogImages {
+    fn cache_state(
+        &self,
+        key: &capsem_assets::oci::CacheKey,
+    ) -> anyhow::Result<Option<capsem_assets::oci::CacheState>> {
+        Ok(self.disk_states.lock().unwrap().get(key).copied())
+    }
     fn observe_cache(&self, keys: &[capsem_assets::oci::CacheKey], _parent: &StdPath) -> anyhow::Result<()> {
         self.observations.lock().unwrap().push(keys.to_vec());
         Ok(())
@@ -127,6 +134,7 @@ impl ImageSource for CatalogImages {
 }
 
 struct Fixture {
+    disk_states: Arc<Mutex<std::collections::HashMap<capsem_assets::oci::CacheKey, capsem_assets::oci::CacheState>>>,
     observations: Arc<Mutex<Vec<Vec<capsem_assets::oci::CacheKey>>>>,
     fetches: Arc<Mutex<Vec<ImageFetch>>>,
     state: Arc<ServiceState>,
@@ -138,6 +146,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(images: ImagePolicyConfig) -> Self {
+        let disk_states = Arc::new(Mutex::new(std::collections::HashMap::new()));
         let observations = Arc::new(Mutex::new(Vec::new()));
         let fetches = Arc::new(Mutex::new(Vec::new()));
         let catalog = Arc::new(Mutex::new(Some(catalog_document())));
@@ -146,6 +155,7 @@ impl Fixture {
         let roots = Arc::new(Mutex::new(Vec::new()));
         let mut state = crate::tests::make_test_state_owned();
         state.containers = ContainerSetups::with_source(Box::new(CatalogImages {
+            disk_states: Arc::clone(&disk_states),
             observations: Arc::clone(&observations),
             fetches: Arc::clone(&fetches),
             settings: SettingsFile {
@@ -158,6 +168,7 @@ impl Fixture {
             roots: Arc::clone(&roots),
         }));
         Self {
+            disk_states,
             observations,
             fetches,
             state: Arc::new(state),
@@ -219,6 +230,50 @@ async fn catalog_listing_schedules_native_compatible_cache_keys_without_waiting_
     for image in response["images"].as_array().unwrap() {
         assert_eq!(image["cached"], "unknown");
     }
+}
+
+#[tokio::test]
+async fn catalog_disk_status_uses_only_the_selected_pins_local_owner_observation() {
+    use capsem_assets::oci::CacheState;
+    let fx = Fixture::default_policy();
+    let key = capsem_assets::oci::CacheIdentity::new(
+        &format!("ghcr.io/google/capsem/codex-cli@{}", digest('b')),
+        host(),
+        RUNTIME_CONTRACT,
+    )
+    .unwrap()
+    .key();
+    for (state, wire) in [
+        (CacheState::Missing, "missing"),
+        (CacheState::Partial, "partial"),
+        (CacheState::Ready, "ready"),
+        (CacheState::Unknown, "unknown"),
+    ] {
+        fx.disk_states.lock().unwrap().insert(key.clone(), state);
+        let (status, response) = fx.list().await;
+        assert_eq!(status, StatusCode::OK);
+        let images = response["images"].as_array().unwrap();
+        assert_eq!(
+            images.len(),
+            3,
+            "disk observations must not replace the registry catalog"
+        );
+        assert_eq!(images[0]["cached"], wire);
+        assert_eq!(
+            images[1]["cached"], "unknown",
+            "foreign-platform entries have no local selected image"
+        );
+        assert_eq!(
+            images[2]["cached"], "unknown",
+            "missing observations must not invent disk state"
+        );
+        assert_eq!(
+            images[0]["image"],
+            format!("ghcr.io/google/capsem/codex-cli@{}", digest('b'))
+        );
+    }
+    assert_eq!(fx.reads(), 1, "cache status must not refresh the registry catalog");
+    assert!(fx.pulls().is_empty(), "listing must not prefetch images");
 }
 
 fn grants(sources: &[&str], admit: &[&str]) -> ImagePolicyConfig {

@@ -48,6 +48,14 @@ pub(crate) enum ImageFetch {
 /// Where images come from, and which may be fetched and run. Production
 /// pulls from registries under the installation's policy; tests substitute.
 pub(crate) trait ImageSource: Send + Sync {
+    /// Read the local owner's cheap snapshot without fetching or verifying.
+    fn cache_state(
+        &self,
+        _key: &capsem_assets::oci::CacheKey,
+    ) -> anyhow::Result<Option<capsem_assets::oci::CacheState>> {
+        Ok(None)
+    }
+
     /// Schedule local owner proof; polling never waits for hashes or registry.
     fn observe_cache(&self, _keys: &[capsem_assets::oci::CacheKey], _parent: &StdPath) -> anyhow::Result<()> {
         Ok(())

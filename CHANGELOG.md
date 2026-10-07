@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Registry image catalogs report verified local disk status through the
+  existing image list API and SDKs, while startup or invalidated cache
+  observations remain unknown. Listing schedules local verification without
+  waiting for image hashes or downloading image layers.
+
 - TypeScript SDK VM execution exposes matching explicit VM/workload targets
   with validation before lookup and preserved cancellation/refusal behavior.
 
