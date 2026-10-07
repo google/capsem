@@ -48,7 +48,7 @@ it('rejects empty images before sending HTTP', async () => {
 });
 
 it('rejects incomplete catalogs and unknown cache states', async () => {
-  for (const response of [{images: [{name: 'code'}]}, {images: [{...catalog.images[0], cached: 'ready'}]}]) {
+  for (const response of [{images: [{name: 'code'}]}, {images: [{...catalog.images[0], cached: 'available'}]}]) {
     await gateway((_request, reply) => reply.end(JSON.stringify(response)), async (url, received) => {
       const hv = new Hypervisor(url, 'token');
       try {
@@ -57,6 +57,18 @@ it('rejects incomplete catalogs and unknown cache states', async () => {
       } finally { hv.close(); }
     });
   }
+});
+
+it.each(['unknown', 'missing', 'partial', 'ready'])('preserves service disk status %s', async state => {
+  await gateway((_request, response) => response.end(JSON.stringify({images: [{...catalog.images[0], cached: state}]})), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      const listed = await hv.images.list();
+      expect(listed.images[0]?.cached).toBe(state);
+      expect(listed.images[0]?.image).toBe(pin);
+      expect(received.map(request => request.method)).toEqual(['GET']);
+    } finally { hv.close(); }
+  });
 });
 
 it('preserves HTTP refusal without replaying prefetch', async () => {

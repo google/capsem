@@ -4,4 +4,7 @@
 
 export enum ImageCacheState {
   UNKNOWN = "unknown",
+  MISSING = "missing",
+  PARTIAL = "partial",
+  READY = "ready",
 }

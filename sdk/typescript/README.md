@@ -20,6 +20,11 @@ needed. It is not retained for later calls. Images share the Hypervisor's
 connection lifetime and accept per-call cancellation/deadline options.
 Prefetch does not create a VM.
 
+`images.list` lists the registry catalog. Its `cached` field reports the
+service's local disk observation: `missing`, `partial`, `ready`, or `unknown`
+when verification is pending or invalidated. `ready` describes verified local
+bytes; image admission and registry freshness remain separate decisions.
+
 Async clients for the authenticated HTTP gateway, usable in browsers and Node.
 Supply the gateway URL and bearer token explicitly.
 
