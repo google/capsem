@@ -11,6 +11,7 @@
     "check": "tsc --noEmit -p tsconfig.test.json",
     "test": "pnpm run build && pnpm run test:mcp",
     "test:mcp": "vitest run --coverage",
+    "prewarm:packed": "node tools/prewarm-package.mjs",
     "prepack": "pnpm run build"
   },
   "dependencies": {

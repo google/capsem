@@ -80,3 +80,11 @@ mutations are never retried automatically.
 `capsem_pause` and `capsem_status` are the canonical names. Host logs use one
 `capsem_host_logs` tool with an allowlisted `source`; the package does not expose
 the legacy `suspend`, `version`, or duplicate service-log tools.
+
+For development, build the SDK and this package, then run `pnpm prewarm:packed`
+before `pnpm exec vitest run tests/packed-package.test.ts`. Prewarming installs
+the actual local tarballs in a temporary runtime-only consumer to cache their
+dependencies. The acceptance test installs offline with scripts disabled,
+checks archive/source/installed payloads and drives the packed executable over
+stdio. Both temporary consumers are removed. Set `NPM_CONFIG_CACHE` to select
+an isolated npm cache. The gate declares prewarming outside its network sandbox.

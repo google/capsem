@@ -58,6 +58,19 @@ def test_every_functional_suite_starts_after_the_sdks_are_prepared() -> None:
         assert not missing, f"{suite} can start before {missing}"
 
 
+def test_mcp_package_acceptance_prewarms_after_both_current_packages_build() -> None:
+    from capsem_builder.gate.execution import Needs
+
+    plan = gate_plan("test-fast")
+    label = "fast.mcp.typescript.package-prewarm"
+    assert label in plan.labels, "offline installed MCP acceptance needs its declared dependency prewarm"
+    warmed = plan.step_named(label)
+    assert Needs.NETWORK in warmed.needs
+    assert "[outside kernel sandbox]" in warmed.actions[0].render()
+    assert {"fast.sdk.typescript.build", "fast.mcp.typescript.build"} <= _ancestors(plan, label)
+    assert label in _ancestors(plan, "fast.mcp.typescript.tests")
+
+
 def test_the_packages_the_suites_drive_are_among_the_installed_workspaces() -> None:
     config = gate_config.load(PROJECT_ROOT)
     for project in (config.sdk_typescript.project, config.mcp_typescript.project):

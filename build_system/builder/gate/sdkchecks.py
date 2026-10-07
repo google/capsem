@@ -103,6 +103,16 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         ),
         after=(built,),
     )
+    mcp_warmed = mcp_phase.add(
+        step(
+            "package-prewarm",
+            Run(["pnpm", "run", "prewarm:packed"], cwd=mcp_root, outside_sandbox=True),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DISK, Needs.NETWORK}),
+            speed=Speed.FAST,
+        ),
+        after=(mcp_built,),
+    )
     mcp_tested = mcp_phase.add(
         step(
             "tests",
@@ -110,9 +120,9 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
             kind=Kind.UNIT_TEST,
             speed=Speed.FAST,
         ),
-        after=(mcp_built,),
+        after=(mcp_warmed,),
     )
-    return (*checks, built, warmed, tested, generated, mcp_built, mcp_tested)
+    return (*checks, built, warmed, tested, generated, mcp_built, mcp_warmed, mcp_tested)
 
 
 def rust_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:

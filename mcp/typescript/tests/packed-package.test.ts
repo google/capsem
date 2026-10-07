@@ -44,9 +44,10 @@ describe('packed-package', () => {
       execFileSync('tar', ['-xzf', archive, '-C', destination], {timeout: 5000});
     }
     writeFileSync(join(fixture, 'package.json'), JSON.stringify({name: 'capsem-mcp-clean-consumer', private: true}));
-    execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', ...archives], {
+    execFileSync('npm', ['install', '--offline', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...archives], {
       cwd: fixture, stdio: 'pipe', timeout: 60_000,
-      env: {PATH: process.env.PATH ?? ''},
+      env: {PATH: process.env.PATH ?? '',
+        ...(process.env.NPM_CONFIG_CACHE ? {NPM_CONFIG_CACHE: process.env.NPM_CONFIG_CACHE} : {})},
     });
     const dependencies = join(fixture, 'node_modules');
     for (const [owner, source] of Object.entries(sources)) {
