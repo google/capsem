@@ -9,84 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Ledger event identifiers reject NUL suffixes, and host audit-chain hashes
-  require binary storage. Stale declarations fail integrity readiness.
-
-- Ledger digest and credential-reference checks reject nonhex characters and
-  NUL suffixes. Readers and writers refuse older checks without rewriting the ledger.
-
-- Session credential grants require the original runtime's acknowledged policy
-  and current policy; applied-policy receipts retire with stopped sessions.
-
-- Credential target preflight uses the existing security rules and plugins,
-  including corporate ask/block and method, query and port constraints.
-
-- Delayed process exit cleanup fences its exact old credential runtime even
-  after a resumed replacement has taken over the session registry.
-
-- Session stop, suspend, exit and terminal cleanup fence credential grants.
-  Ready resume rebinds valid approval, and deletion refuses a resumed replacement.
-
-- Credential runtime fences preserve finite same-session approval on retained
-  stops and retire terminal session approvals, including recovered metadata.
-
-- Invalid corporate policy now refuses security admission instead of being
-  treated as empty constraints; the settings UI remains available for repair.
-
-- Credential grant issuance checks current policy and runtime ownership inside
-  the same admission lock as terminal retirement, preventing stale permission
-  checks from inserting authority after its owner has retired.
-
-- VM boot admission retains an exclusive generation lifetime fence. Service
-  restart cleanup confirms exit in the original kernel boot and PID namespace
-  before retiring grants and session bytes; delayed children cannot replay boot.
-
-- Startup retirement verifies loss of the original service parent and uses
-  stable native identity on Linux and Mac. Hosts without guarded signals await
-  the owner's parent-loss exit and refuse unconfirmed retirement.
-
-- Fresh and resumed VM launches carry the service's original PID and exact
-  spawn generation into process lifetime and boot admission.
-
-- VM processes verify their original service parent and trusted spawn
-  generation before boot, and terminate when that service disappears.
-
-- Linux startup pins original orphan processes and verifies fresh native
-  arguments before signalling. TERM/KILL and exit waits retain those handles;
-  uncertain identity or exit refuses startup before stale socket removal.
-
-- VM teardown signals and awaits its original owned child rather than a
-  cached PID. Shutdown, suspend and failed restore refuse uncertain exit;
-  service shutdown retires the child before deleting ephemeral session bytes.
-
-- Service startup orphan selection preserves native argument boundaries and
-  requires one session path directly under its own run roots. Neighbouring
-  root prefixes, incidental command text, duplicate options and traversal
-  targets cannot select unrelated workloads.
-
-- Managed VM expiry and authenticated close retire the original trusted
-  effects even when ownership storage is missing or corrupt. Failed persistence
-  cannot acknowledge a replacement generation as closed.
-
-- Generated Python requests redact nested credential validation inputs,
-  including raw parent inputs retained when another required field is missing.
-
-- Vhost-vsock validates complete descriptor and ring ranges, queue sizes, and
-  index-cell arithmetic before exposing guest-controlled addresses to the
-  kernel backend.
-
-- Virtio descriptor and ring metadata validate their complete guest RAM span
-  and address arithmetic before host access, including PCI-hole crossings.
-
-- OAuth disconnect joins an in-flight refresh and retires the latest rotated
-  token under denial, including material whose durable publication failed.
-
-- Disconnect admission and reconnect publication share the credential owner's
-  state lock, so concurrent reauthorization cannot clear a pending denial.
-
-- Responses WebSocket messages cross the model security boundary before
-  forwarding requests or returning output, including changes to rules on an
-  open connection. Completed turns retain model, usage and caller telemetry.
+- Bind private-network and preview handoff endpoints to the coordinator's
+  session identity and VM-owner spawn generation. Refuse worker replies that
+  name another endpoint or arrive after that owner has been replaced.
 
 ### Fixed
 
