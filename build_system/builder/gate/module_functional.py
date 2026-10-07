@@ -105,12 +105,15 @@ def functional(
     # sets of edges and closes a cycle -- which is the reordering
     # `_already_issuing` documents as the reason dedup lives at the call site
     # rather than inside `Plan.add`.
-    prepared: tuple[Step, ...] = (
-        (node, *checked)
-        if node is not None
-        else (phase.add(toolchain.node(config, config.functional.node_workspaces), after=checked),)
+    sdk_node = node if node is not None else phase.add(
+        toolchain.node(config, config.functional.node_workspaces), after=checked,
     )
-    prepared = (*prepared, *sdkchecks.braavos(plan, phase, config, after=prepared))
+    # SDK producers need their toolchain, not VM content. In a composed plan
+    # they already belong to the fast phase; adding the later runtime-content
+    # edge to those shared producers would close a dependency cycle.
+    prepared: tuple[Step, ...] = (
+        sdk_node, *checked, *sdkchecks.braavos(plan, phase, config, after=(sdk_node,)),
+    )
     # The generated mock is gitignored, so it is never part of the source a run
     # is given, and the broad suite checks it for staleness. Made here when
     # this module runs alone, and handed over when a composed run has already

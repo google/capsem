@@ -1,12 +1,10 @@
 """The functional suites drive every SDK, so the functional module prepares them.
 
-The Braavos suite builds and runs the Python, TypeScript and Rust SDKs against a
-real gateway. The suites run inside the kernel sandbox with no network, and the
-test itself was installing what it needed: `uv run` built the Python SDK in an
-isolated environment that fetched hatchling from PyPI, `node tools/build.mjs`
-found no `node_modules`, and `cargo run` compiled the SDK inside a 60-second
-budget. All three failed in a focused functional run and passed only on a
-checkout an earlier phase had happened to warm.
+Braavos installs the Python wheel/sdist and TypeScript tarball in clean external
+consumers, then drives those packages and the source-built Rust SDK through a
+real gateway. The sandboxed suites need this source's package archives and
+prewarmed runtime dependencies; an editable checkout or a previous run's
+archives cannot prove the distributed packages work.
 """
 
 from __future__ import annotations
@@ -15,7 +13,10 @@ from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import host
 from helpers.gate import PROJECT_ROOT, gate_plan
 
-PREPARED = ("sdk.python.sync", "functional.sdk.rust.example", "functional.sdk.typescript.bundle")
+PREPARED = (
+    "sdk.python.sync", "functional.sdk.rust.example", "fast.sdk.python.build",
+    "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm",
+)
 
 
 def _ancestors(plan, label: str) -> set[str]:
@@ -56,6 +57,29 @@ def test_every_functional_suite_starts_after_the_sdks_are_prepared() -> None:
     for suite in suites:
         missing = [step for step in PREPARED if step not in _ancestors(plan, suite)]
         assert not missing, f"{suite} can start before {missing}"
+
+
+def test_functional_installed_sdks_use_current_archives_and_declared_network_prewarm() -> None:
+    from capsem_builder.gate.execution import Needs
+
+    plan = gate_plan("test-functional")
+    python = "fast.sdk.python.build"
+    npm = "fast.sdk.typescript.build"
+    warmed = "fast.sdk.typescript.package-prewarm"
+    assert {python, npm, warmed} <= set(plan.labels), "Braavos needs actual installed SDK artifacts"
+    assert "sdk.python.sync" in _ancestors(plan, python)
+    assert npm in _ancestors(plan, warmed)
+    assert Needs.NETWORK in plan.step_named(warmed).needs
+    assert "[outside kernel sandbox]" in plan.step_named(warmed).actions[0].render()
+    assert "--no-isolation" in plan.step_named(python).actions[0].render()
+
+
+def test_composed_sdk_packages_have_one_producer_and_no_dependency_cycle() -> None:
+    plan = gate_plan("candidate")
+    labels = plan.labels
+    for label in ("fast.sdk.python.build", "fast.sdk.typescript.build",
+                  "fast.sdk.typescript.package-prewarm"):
+        assert labels.count(label) == 1
 
 
 def test_mcp_package_acceptance_prewarms_after_both_current_packages_build() -> None:
