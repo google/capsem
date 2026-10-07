@@ -431,6 +431,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Shared destructive colors follow the purple error convention in light and
+  dark themes, including OCI creation refusals.
+
 - Await the original child generation's reaper after shutdown, releasing
   lifecycle guards first so cleanup can complete without a VZ lock cycle.
 
