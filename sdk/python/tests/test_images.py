@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from typing import Any
 
 import pytest
 from aiohttp import web
@@ -12,7 +13,7 @@ from capsem import HttpError, Hypervisor, Registry, models
 from pydantic import ValidationError
 
 PIN = "registry.example/code@sha256:" + "a" * 64
-CATALOG = {
+CATALOG: dict[str, Any] = {
     "catalog": {
         "reference": "registry.example/catalog:nightly",
         "digest": "sha256:" + "c" * 64,
@@ -112,13 +113,16 @@ def test_images_preserve_catalog_and_per_call_registry_access():
 def test_invalid_image_inputs_never_reach_the_gateway():
     async def run():
         async with gateway() as (url, received), Hypervisor(url, "gateway-token") as hv:
-            for image in ["", "  ", 1, None]:
+            invalid_images: list[Any] = ["", "  ", 1, None]
+            for image in invalid_images:
                 with pytest.raises(ValueError, match="nonempty"):
                     await hv.images.pull(image)
             with pytest.raises(TypeError, match="Registry"):
-                await hv.images.pull("code", registry={"password": "private"})
+                invalid_registry: Any = {"password": "private"}
+                await hv.images.pull("code", registry=invalid_registry)
             with pytest.raises(ValidationError):
-                await hv.images.list(refresh=1)
+                invalid_refresh: Any = 1
+                await hv.images.list(refresh=invalid_refresh)
             assert received == []
 
     asyncio.run(run())
@@ -128,7 +132,7 @@ def test_invalid_image_inputs_never_reach_the_gateway():
     "response",
     [
         {"images": [{"name": "code"}]},
-        {"images": [{**CATALOG["images"][0], "cached": "ready"}]},
+        {"images": [{**CATALOG["images"][0], "cached": "available"}]},
     ],
 )
 def test_catalog_does_not_invent_compatibility_or_cache_authority(response):
@@ -140,6 +144,23 @@ def test_catalog_does_not_invent_compatibility_or_cache_authority(response):
             with pytest.raises(ValidationError):
                 await hv.images.list()
             assert len(received) == 1
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("state", ["unknown", "missing", "partial", "ready"])
+def test_catalog_preserves_service_disk_status(state: str):
+    async def run():
+        response = {"images": [{**CATALOG["images"][0], "cached": state}]}
+        async with (
+            gateway(response=response) as (url, received),
+            Hypervisor(url, "gateway-token") as hv,
+        ):
+            listed = await hv.images.list()
+            assert listed.images[0].cached.value == state
+            assert listed.images[0].image == CATALOG["images"][0]["image"]
+            assert len(received) == 1
+            assert received[0][0] == "GET"
 
     asyncio.run(run())
 

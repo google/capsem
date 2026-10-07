@@ -18,6 +18,11 @@ does not establish readiness. Pass `registry=Registry(...)` to one `pull`
 when private access is needed; it is not retained for later calls. Images
 share the Hypervisor's connection lifetime. Prefetch does not create a VM.
 
+`images.list` lists the registry catalog. Its `cached` field reports the
+service's local disk observation: `missing`, `partial`, `ready`, or `unknown`
+when verification is pending or invalidated. `ready` describes verified local
+bytes; image admission and registry freshness remain separate decisions.
+
 An async client for the Capsem HTTP gateway. It takes an explicit gateway URL
 and bearer token; it does not discover services, open local service sockets,
 or run host commands.

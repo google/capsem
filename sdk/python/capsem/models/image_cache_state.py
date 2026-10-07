@@ -7,3 +7,6 @@ from enum import StrEnum
 
 class ImageCacheState(StrEnum):
     UNKNOWN = 'unknown'
+    MISSING = 'missing'
+    PARTIAL = 'partial'
+    READY = 'ready'
