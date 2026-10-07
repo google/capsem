@@ -4,6 +4,17 @@ This integration is being carried from Pierre Tholoniat's original implementatio
 in [#291](https://github.com/google/capsem/pull/291), commit
 `bb61fc82d44bc42c978c4acf5435a1975600c75e`. It is not installed or published yet.
 
+Pierre owns the remaining integration and qualification in
+[#342](https://github.com/google/capsem/issues/342). The handoff records the
+current shared `0.7` base, SDK/service capabilities, complete feature parity,
+cleanup and build authority requirements, and focused local verification.
+Reconcile the existing VM integration
+[#338](https://github.com/google/capsem/pull/338), OCI/Compose integration
+[#339](https://github.com/google/capsem/pull/339), and host-build candidate
+[#340](https://github.com/google/capsem/pull/340) in that order against `0.7`.
+The completed components below remain available for reuse; Inspect work has
+been removed from the current agent's active sprint.
+
 The current source provides the original pure Dockerfile instruction scanner,
 heredoc transformations, multistage CA patcher and final-stage USER/WORKDIR
 metadata extraction. `inspect_capsem.containers.dockerfile` remains their
