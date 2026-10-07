@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python SDK VM handles reject supplied empty or non-string selectors instead
+  of silently ignoring them when another valid name or ID is present.
+
 - TypeScript SDK creation waits through the service's workload readiness window
   instead of timing out at the ordinary 30-second request deadline, while
   preserving explicit deadlines and cancellation without replaying creation.

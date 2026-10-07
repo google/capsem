@@ -24,10 +24,12 @@ class VM(Client):
         self._select(name=name, id=id)
 
     def _select(self, *, name: str | None, id: str | None) -> None:
-        if bool(name) == bool(id):
+        if (name is None) == (id is None):
             raise ValueError("select a VM by exactly one nonempty name or id")
-        self._name = TypeAdapter(StrictStr).validate_python(name) if name else None
-        self._id = TypeAdapter(StrictStr).validate_python(id) if id else None
+        self._name = TypeAdapter(StrictStr).validate_python(name) if name is not None else None
+        self._id = TypeAdapter(StrictStr).validate_python(id) if id is not None else None
+        if self._name == "" or self._id == "":
+            raise ValueError("select a VM by exactly one nonempty name or id")
         self.files = Files(self)
         self.networks = VmNetworks(self)
         self.stats = Stats(self)
