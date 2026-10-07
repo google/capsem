@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Codex code-mode calls retain their tool namespace, input and linked results
+  in model telemetry. Text-array outputs preserve request metadata, and
+  Responses tool turns report tool-use completion.
+
 - WebSocket upgrade handshakes retain network telemetry without inflating
   model call counts with an empty inference record.
 

@@ -28,7 +28,7 @@ impl Provider for OpenAiProvider {
     }
 }
 
-// ── Wire format serde types (Chat Completions only for now) ─────────
+// ── Targeted wire types for Chat Completions and Responses ─────────
 
 #[allow(dead_code)] // Wire types: fields exist for serde deserialization
 mod wire {
@@ -121,6 +121,7 @@ mod wire {
         pub item_type: Option<String>,
         pub call_id: Option<String>,
         pub name: Option<String>,
+        pub namespace: Option<String>,
     }
 
     #[derive(Deserialize)]
@@ -156,14 +157,14 @@ mod wire {
     }
 }
 
-/// OpenAI Chat Completions SSE stream parser.
+/// OpenAI Chat Completions and Responses event parser.
 ///
-/// Note: this parser never emits `ToolCallEnd` -- OpenAI's wire format has no
-/// explicit end-of-tool-call signal. Tool call builders are flushed by
-/// `collect_summary()` after the stream completes.
+/// Responses emits explicit tool completion; Chat Completions builders are
+/// flushed by `collect_summary()` after the stream completes.
 pub struct OpenAiStreamParser {
     /// Whether we've emitted MessageStart yet.
     started: bool,
+    saw_tools: bool,
 }
 
 impl Default for OpenAiStreamParser {
@@ -174,7 +175,10 @@ impl Default for OpenAiStreamParser {
 
 impl OpenAiStreamParser {
     pub fn new() -> Self {
-        Self { started: false }
+        Self {
+            started: false,
+            saw_tools: false,
+        }
     }
 
     fn parse_stop_reason(s: &str) -> StopReason {
@@ -195,6 +199,7 @@ impl OpenAiStreamParser {
                     return vec![];
                 };
                 self.started = true;
+                self.saw_tools = false;
                 let resp = rc.response.as_ref();
                 vec![LlmEvent::MessageStart {
                     message_id: resp.and_then(|r| r.id.clone()),
@@ -207,11 +212,17 @@ impl OpenAiStreamParser {
                 };
                 let index = item.output_index.unwrap_or(0);
                 if let Some(oi) = &item.item {
-                    if oi.item_type.as_deref() == Some("function_call") {
+                    if matches!(oi.item_type.as_deref(), Some("function_call" | "custom_tool_call")) {
+                        self.saw_tools = true;
+                        let name = oi.name.clone().unwrap_or_default();
+                        let name = match oi.namespace.as_deref() {
+                            Some(namespace) if !namespace.is_empty() => format!("{namespace}.{name}"),
+                            _ => name,
+                        };
                         return vec![LlmEvent::ToolCallStart {
                             index,
                             call_id: oi.call_id.clone().unwrap_or_default(),
-                            name: oi.name.clone().unwrap_or_default(),
+                            name,
                         }];
                     }
                 }
@@ -245,7 +256,7 @@ impl OpenAiStreamParser {
                 }
                 vec![]
             }
-            "response.function_call_arguments.delta" => {
+            "response.function_call_arguments.delta" | "response.custom_tool_call_input.delta" => {
                 let Ok(fd) = serde_json::from_str::<wire::FunctionCallArgumentsDelta>(data) else {
                     return vec![];
                 };
@@ -263,8 +274,10 @@ impl OpenAiStreamParser {
                 let Ok(done) = serde_json::from_str::<wire::OutputItemDone>(data) else {
                     return vec![];
                 };
-                // Only emit ToolCallEnd for function_call items, not text or other types
-                if done.item.as_ref().and_then(|i| i.item_type.as_deref()) == Some("function_call") {
+                if matches!(
+                    done.item.as_ref().and_then(|i| i.item_type.as_deref()),
+                    Some("function_call" | "custom_tool_call")
+                ) {
                     vec![LlmEvent::ToolCallEnd {
                         index: done.output_index.unwrap_or(0),
                     }]
@@ -298,7 +311,11 @@ impl OpenAiStreamParser {
                     }
                 }
                 events.push(LlmEvent::MessageEnd {
-                    stop_reason: Some(StopReason::EndTurn),
+                    stop_reason: Some(if self.saw_tools {
+                        StopReason::ToolUse
+                    } else {
+                        StopReason::EndTurn
+                    }),
                 });
                 events
             }
