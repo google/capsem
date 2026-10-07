@@ -40,6 +40,9 @@ pub(super) fn create_lines(draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
                     "cache",
                     match image.cached {
                         capsem_sdk::models::ImageCacheState::Unknown => "unknown",
+                        capsem_sdk::models::ImageCacheState::Missing => "missing",
+                        capsem_sdk::models::ImageCacheState::Partial => "partial",
+                        capsem_sdk::models::ImageCacheState::Ready => "ready",
                     },
                 ));
                 if let Some(pin) = &image.image {
