@@ -132,7 +132,7 @@ action = "allow"
 priority = -100
 detection_level = "informational"
 reason = "Allow the shipped Claude connectivity probes through declared hermetic upstreams."
-match = 'tcp.port == "443" && http.host in ["api.anthropic.com", "platform.claude.com"] && http.path == "/api/hello"'
+match = 'tcp.port == "443" && ((http.host == "api.anthropic.com" && http.path == "/api/hello") || (http.host == "platform.claude.com" && http.path == "/v1/oauth/hello"))'
 '''.strip()
         + "\n"
     )
