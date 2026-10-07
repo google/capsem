@@ -13,10 +13,10 @@ import re
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.tools.audit import cli_surface
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MCP_SRC = REPO_ROOT / "mcp" / "typescript" / "src"
-CLI_SRC = REPO_ROOT / "crates" / "capsem" / "src" / "main.rs"
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +36,8 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     "capsem_persist": "persist",
     "capsem_purge": "purge",
     "capsem_fork": "fork",
+    "capsem_image_list": "images",
+    "capsem_image_pull": "images pull",
     "capsem_vm_logs": "logs",
     "capsem_status": "status",
     "capsem_history": "history",
@@ -84,34 +86,13 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     "capsem_port_close": (None, "typed workload port control has no CLI command yet"),
     "capsem_mcp_info": (None, "typed MCP readiness for AI callers"),
     "capsem_mcp_default": (None, "MCP policy inspection for AI callers"),
-    "capsem_network_create": (
-        None,
-        "typed private-network control has no CLI command yet",
-    ),
-    "capsem_network_list": (
-        None,
-        "typed private-network control has no CLI command yet",
-    ),
-    "capsem_network_inspect": (
-        None,
-        "typed private-network control has no CLI command yet",
-    ),
-    "capsem_network_delete": (
-        None,
-        "typed private-network control has no CLI command yet",
-    ),
-    "capsem_network_attach": (
-        None,
-        "typed private-network control has no CLI command yet",
-    ),
-    "capsem_network_detach": (
-        None,
-        "typed private-network control has no CLI command yet",
-    ),
-    "capsem_network_logs": (
-        None,
-        "typed network audit inspection has no CLI command yet",
-    ),
+    "capsem_network_create": "network create",
+    "capsem_network_list": "network list",
+    "capsem_network_inspect": "network inspect",
+    "capsem_network_delete": "network delete",
+    "capsem_network_attach": "network connect",
+    "capsem_network_detach": "network disconnect",
+    "capsem_network_logs": "network logs",
     # Known drift -- possible cleanup candidate
     "capsem_stop": (
         None,
@@ -135,6 +116,8 @@ CLI_ONLY: dict[str, str] = {
     "support-bundle": "host-side bug-report bundler; no service round-trip, not an AI concept",
     "cp": "host/session file copy convenience; MCP uses capsem_read_file/capsem_write_file",
     "version": "human CLI build metadata; MCP status reports typed gateway state",
+    "assets status": "runtime asset diagnostics; MCP status includes aggregate asset health",
+    "assets ensure": "local runtime asset repair; host MCP owns no asset download authority",
     # MCP sub-namespace: not every entry has a tool
 }
 
@@ -155,49 +138,20 @@ def parse_mcp_tools() -> set[str]:
     }
 
 
-def _parse_subcommand_variants(src: str, enum_name: str) -> list[str]:
-    """Pull variant names (kebab-cased) from a `enum <Name> { ... }` block."""
-    m = re.search(
-        rf"enum {enum_name} \{{(?P<body>.*?)^\}}", src, re.DOTALL | re.MULTILINE
-    )
-    assert m, f"could not find `enum {enum_name}` in capsem/src/main.rs"
-    body = m.group("body")
-    # Strip attributes and doc comments; find CamelCase variant identifiers at
-    # top level of the enum block (ignoring inner struct fields).
-    # Variants appear as `Name {`, `Name,`, `Name` or the tuple form
-    # `Name(path::Args),` at line start (after ws).
-    variants = []
-    for line in body.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith(("//", "#[", "/*", "*")):
-            continue
-        vm = re.match(r"([A-Z][A-Za-z0-9]*)\s*(?:\{|,|\([^)]*\),?)?\s*$", stripped)
-        if vm:
-            variants.append(_camel_to_kebab(vm.group(1)))
-    return variants
-
-
-def _camel_to_kebab(name: str) -> str:
-    return re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
-
-
 def parse_cli_subcommands() -> set[str]:
-    """Return the full set of CLI subcommand paths, space-separated.
-
-    SessionCommands and MiscCommands are `#[command(flatten)]` -- their
-    variants become top-level subcommands. McpCommands is nested under
-    `capsem mcp <variant>`.
-    """
-    src = CLI_SRC.read_text()
-    top = set(_parse_subcommand_variants(src, "SessionCommands"))
-    top.update(_parse_subcommand_variants(src, "MiscCommands"))
-    nested = {f"mcp {v}" for v in _parse_subcommand_variants(src, "McpCommands")}
-    return top | nested
+    """Use the fail-closed public-surface owner, including external Args enums."""
+    return set(cli_surface.capsem_cli_surface())
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_cli_inventory_includes_external_and_nested_command_owners():
+    assert {"images", "images pull", "network list", "assets status"} <= parse_cli_subcommands(), (
+        "CLI parity must see typed-argument namespaces and nested owners, not only flattened enums."
+    )
 
 
 def test_every_mcp_tool_is_declared():

@@ -44,6 +44,13 @@ listing and byte-preserving transfers, logs, history, timeline, statistics,
 panics, and triage. VM tools take the immutable `vm_id` returned by
 `capsem_list` or `capsem_create`. File content can be passed as UTF-8 or base64.
 
+`capsem_image_list` reads the service-admitted catalog with compatible pins and
+reported cache state; `unknown` does not prove readiness. Optional `refresh`
+requests a fresh catalog read. `capsem_image_pull` prefetches a catalog name or
+registry-qualified reference and returns its resolved pin without creating a
+VM. These tools accept no registry credentials. Image admission and private
+access stay with the service's configured policy.
+
 Network tools create, list, inspect and retire private networks, attach or detach
 VMs by immutable ID, and read cursor-based audit events with VM, connection,
 event, decision, and time filters.

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Host MCP exposes typed OCI image catalog and prefetch tools through the
+  gateway, retaining service admission and credential authority.
+
 - The TypeScript SDK exposes matching `Hypervisor.images` catalog and prefetch
   APIs with typed cancellation, per-call registry access and shared lifetime.
 
