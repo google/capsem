@@ -21,7 +21,9 @@ def _stage_inventory(
     paths: CachePaths,
     policy: CachePolicy,
     allocated_seen: set[tuple[int, int]],
-    *, retention: bool = False, checkout: Path | None = None,
+    *,
+    retention: bool = False,
+    checkout: Path | None = None,
 ) -> StageInventory:
     stage_policy = policy.stages[stage_id]
     stage_root = paths.stage(stage_id)
@@ -31,8 +33,11 @@ def _stage_inventory(
         return cargo_inventory(stage_id, stage_root, stage_policy, allocated_seen, working_set)
     if stage_policy.object_store:
         return _object_inventory(stage_id, stage_root, stage_policy, allocated_seen)
-    entry_root = (stage_policy.retention_root if retention and stage_policy.retention_root
-                  else stage_policy.entry_root)
+    entry_root = (
+        stage_policy.retention_root
+        if retention and stage_policy.retention_root
+        else stage_policy.entry_root
+    )
     stage_path = stage_root / entry_root
     if stage_path.is_symlink() or not stage_path.resolve().is_relative_to(stage_root.resolve()):
         raise ValueError(f"cache entry root escapes its stage: {stage_path}")
@@ -45,7 +50,11 @@ def _stage_inventory(
     sweep = sweeps(stage_policy)
     if stage_path.is_dir():
         entries = directory_entries(
-            stage_path, stage_policy, allocated_seen, busy=busy, referenced=referenced,
+            stage_path,
+            stage_policy,
+            allocated_seen,
+            busy=busy,
+            referenced=referenced,
             relative=Path(stage_path.name) if sweep else Path("."),
         )
     if sweep:
@@ -130,7 +139,10 @@ def _unclassified_inventory(
                 visit(child, relative / child.name)
             return
         logical, allocated = entry_size(path, allocated_seen)
-        stat = path.lstat()
+        try:
+            stat = path.lstat()
+        except FileNotFoundError:
+            return  # Live producers may remove unclassified siblings too.
         entries.append(
             CacheEntry(
                 key=relative.as_posix(),
@@ -149,7 +161,10 @@ def _unclassified_inventory(
 
 
 def scan_inventory(
-    paths: CachePaths, policy: CachePolicy, *, now_ns: int | None = None,
+    paths: CachePaths,
+    policy: CachePolicy,
+    *,
+    now_ns: int | None = None,
     retention: bool = False,
     stage_ids: frozenset[str] | None = None,
     checkout: Path | None = None,
@@ -170,7 +185,9 @@ def scan_inventory(
         )
         for stage_id in scan_order
     }
-    unclassified = _unclassified_inventory(paths, policy, allocated_seen) if stage_ids is None else ()
+    unclassified = (
+        _unclassified_inventory(paths, policy, allocated_seen) if stage_ids is None else ()
+    )
     stages = tuple(by_id[stage_id] for stage_id in sorted(by_id))
     return CacheInventory(
         root=paths.root,
