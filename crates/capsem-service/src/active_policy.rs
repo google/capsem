@@ -96,7 +96,7 @@ pub(crate) async fn push_policy_to_running_instances(
         let request = ServiceToProcess::ReloadConfig {
             id: state.next_job_id(),
         };
-        match send_ipc_command(uds_path, request, Some(5)).await {
+        match send_ipc_command(state, uds_path, request, Some(5)).await {
             Ok(ProcessToService::ConfigReloadResult {
                 active_policy_digest: Some(applied),
                 error: None,

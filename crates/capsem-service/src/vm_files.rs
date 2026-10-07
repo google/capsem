@@ -17,7 +17,7 @@ pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handl
 pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
 pub(super) use exec::{handle_exec, proto_exec_target};
 pub(crate) use fork::{clone_session_state, handle_fork};
-pub(super) use ipc_command::send_ipc_command;
+pub(super) use ipc_command::{send_ipc_command, send_owner_command};
 
 pub(super) fn gib(bytes: u64) -> u64 {
     bytes / 1024 / 1024 / 1024

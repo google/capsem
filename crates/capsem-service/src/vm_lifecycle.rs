@@ -275,12 +275,13 @@ pub(super) async fn shutdown_vm_process(
                 i.pid,
                 i.persistent,
                 i.generation,
+                owner_connection::OwnerConnection::capture(i),
             )
         });
         drop(instances);
         result
     };
-    let Some((uds_path, session_dir, pid, persistent, generation)) = snapshot else {
+    let Some((uds_path, session_dir, pid, persistent, generation, owner)) = snapshot else {
         drop(_shutdown_guard);
         drop(_vz_host_guard);
         drop(_vz_guard);
@@ -316,21 +317,12 @@ pub(super) async fn shutdown_vm_process(
 
     if mode.retains_state() {
         // Send shutdown command via IPC (or SIGTERM as fallback).
-        let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
-        if let Ok(stream) = stream_res {
-            if let Ok(std_stream) = stream.into_std() {
-                if let Ok((std_stream, _)) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-                    std_stream,
-                    "capsem-service",
-                    capsem_foundation::telemetry::current_parent_traceparent(),
-                )
-                .await
-                {
-                    if let Ok((tx, _)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
-                        capsem_core::try_send!("ipc_graceful_shutdown", tx.send(ServiceToProcess::Shutdown).await);
-                    }
-                }
-            }
+        let channel = match owner {
+            Ok(owner) => owner.open(state, "capsem-service", true).await,
+            Err(error) => Err(error),
+        };
+        if let Ok((tx, _)) = channel {
+            capsem_core::try_send!("ipc_graceful_shutdown", tx.send(ServiceToProcess::Shutdown).await);
         } else if pid > 0 {
             process_control::send_or_log(pid, process_control::Signal::Terminate, "vm-ipc-shutdown-fallback");
         }
@@ -397,7 +389,7 @@ pub(super) async fn handle_suspend(
     // The host-wide flock also serializes pytest-xdist service processes.
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
-    let (uds_path, pid) = {
+    let owner = {
         let mut instances = state.instances.lock().unwrap();
         let i = instances
             .get_mut(&id)
@@ -408,36 +400,17 @@ pub(super) async fn handle_suspend(
                 "ephemeral VMs cannot be suspended (persist first)".into(),
             ));
         }
-        let result = (i.uds_path.clone(), i.pid);
+        let result = owner_connection::OwnerConnection::capture(i);
         drop(instances);
         result
-    };
-
-    let stream = tokio::net::UnixStream::connect(&uds_path).await.map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to connect to VM IPC: {e}"),
-        )
-    })?;
-    let std_stream = stream.into_std().map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to convert stream: {e}"),
-        )
-    })?;
-    let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-        std_stream,
-        "capsem-service",
-        capsem_foundation::telemetry::current_parent_traceparent(),
-    )
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("IPC handshake failed: {e}")))?;
-    let (tx, rx) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to create IPC channel: {e}"),
-        )
-    })?;
+    }
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let uds_path = owner.uds_path.clone();
+    let pid = owner.pid();
+    let (tx, rx) = owner
+        .open(&state, "capsem-service", false)
+        .await
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let checkpoint_path = RESUME_CHECKPOINT_NAME.to_string();
     tx.send(ServiceToProcess::Suspend { checkpoint_path })
@@ -476,6 +449,11 @@ pub(super) async fn handle_suspend(
         Ok(confirmation) => confirmation,
         Err(_) => SuspendConfirmation::TimedOut,
     };
+    // A normal owner exit may already have removed its registry entry; a
+    // replacement must never inherit the old suspend's cleanup or result.
+    owner
+        .validate(&state, true)
+        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
 
     if let Some((outcome, error)) = suspend_failure(confirmation) {
         // The guest never acknowledged suspend. Leaving the process alive
@@ -497,6 +475,9 @@ pub(super) async fn handle_suspend(
     // replacement. The helper bounds natural exit, then SIGKILLs and waits for
     // reaping instead of guessing that a fixed post-kill sleep was sufficient.
     wait_for_process_exit(pid, std::time::Duration::from_millis(500)).await;
+    owner
+        .validate(&state, true)
+        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
 
     tracing::warn!(id, "handle_suspend (success) removing instance");
     state.instances.lock().unwrap().remove(&id);
@@ -898,6 +879,7 @@ pub(super) async fn handle_run(
     // 2. Execute command.
     let job_id = state.next_job_id();
     let exec_result = send_ipc_command(
+        &state,
         &uds_path,
         ServiceToProcess::Exec {
             id: job_id,

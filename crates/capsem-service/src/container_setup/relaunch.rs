@@ -144,6 +144,7 @@ fn relaunch_in_background(state: &Arc<ServiceState>, id: &str, generation: u64) 
     tokio::spawn(async move {
         let reply = tokio::select! {
             reply = send_ipc_command(
+            &state,
             &uds_path,
             ServiceToProcess::Exec {
                 id: state.next_job_id(),

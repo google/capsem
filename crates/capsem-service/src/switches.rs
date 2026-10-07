@@ -386,7 +386,7 @@ async fn handshake(
         prefix: summary.subnet.prefix_len(),
         generation,
     };
-    let handoff_socket = match send_ipc_command(&handoff.uds_path, ask, Some(ATTACH_TIMEOUT_SECS)).await {
+    let handoff_socket = match send_owner_command(state, &handoff.owner, ask, Some(ATTACH_TIMEOUT_SECS)).await {
         Ok(ProcessToService::LinkAttachResult {
             error: None,
             handoff_socket,
@@ -399,8 +399,11 @@ async fn handshake(
     let handoff_socket = handoff
         .validate(state, &handoff_socket)
         .map_err(|error| anyhow!(error.1))?;
-    let socket = std::os::unix::net::UnixStream::connect(&handoff_socket)
+    let socket = tokio::net::UnixStream::connect(&handoff_socket)
+        .await
+        .and_then(|socket| socket.into_std())
         .with_context(|| format!("connect the owner's seat at {}", handoff_socket.display()))?;
+    handoff.owner.authenticate(state, &socket).map_err(|e| anyhow!(e))?;
     let sender = Sender::new(socket.try_clone()?)?;
     let receiver = Receiver::new(socket.try_clone()?)?;
     let token = u64::from_str_radix(&token, 16)?;
@@ -418,6 +421,7 @@ async fn handshake(
         answer.fds.len()
     );
     let stream = answer.fds.into_iter().next().unwrap();
+    handoff.owner.validate(state, false).map_err(|e| anyhow!(e))?;
     let host = host(state, network).await?;
     let port = host.plug(generation, address, stream.as_fd()).await?;
     Ok((host, port, socket))
@@ -604,16 +608,17 @@ fn take_cable_down(state: &Arc<ServiceState>, network: Uuid, vm_id: &str, genera
         .lock()
         .unwrap()
         .get(vm_id)
-        .map(|instance| instance.uds_path.clone());
-    let Some(uds_path) = running else { return };
+        .map(owner_connection::OwnerConnection::capture);
+    let Some(Ok(owner)) = running else { return };
     let vm_id = vm_id.to_string();
+    let state = Arc::clone(state);
     tokio::spawn(async move {
         let ask = ServiceToProcess::LinkDetach {
             id: Uuid::new_v4().as_u128() as u64,
             network: network.to_string(),
             generation,
         };
-        match send_ipc_command(&uds_path, ask, Some(ATTACH_TIMEOUT_SECS)).await {
+        match send_owner_command(&state, &owner, ask, Some(ATTACH_TIMEOUT_SECS)).await {
             Ok(ProcessToService::LinkDetachResult { error: None, .. }) => {}
             Ok(ProcessToService::LinkDetachResult { error: Some(error), .. }) => {
                 warn!(%network, vm_id, %error, "owner did not take the cable down")

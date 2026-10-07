@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Authenticate coordinator connections against each registered VM owner's kernel
+  process and user identity before sending protocol bytes. Refuse stale owner
+  generations for commands, streams and private-network descriptor handoffs;
+  cancel streaming commands when their authority is revoked.
+
 - Authenticate VM-owner control connections with the kernel's process and user
   identity before reading protocol claims. Owners retain a session singleton
   and exit when their launching coordinator dies.

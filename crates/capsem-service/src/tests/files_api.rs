@@ -87,7 +87,7 @@ pub(super) fn setup_vm_with_workspace_and_uds(
             id: vm_id.into(),
             name: vm_id.into(),
             asset_pins: test_asset_pins(),
-            pid: 1,
+            pid: std::process::id(),
             uds_path,
             session_dir,
             ram_mb: 2048,
