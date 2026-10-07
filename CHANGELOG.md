@@ -252,6 +252,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem-bench-rs throughput` no longer stalls a bidirectional stream until
+  its deadline (#282). At the stop it quit reading while a write was still
+  in flight; through a published port the relay only accepts the client's
+  bytes as it drains its own queue toward the client, so the two waited on
+  each other. The client now reads until its last write lands, and does not
+  count what it drains after the stop.
+
 - A profile release now goes live on its own. Its activation job had no
   status guard, so GitHub's implicit success() skipped it whenever an
   upstream job was skipped, which is every run: profiles were published but
