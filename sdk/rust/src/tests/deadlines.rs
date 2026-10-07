@@ -42,6 +42,8 @@ async fn slow_gateway(delay: Duration) -> (String, tokio::sync::mpsc::UnboundedR
                 let operation = match path.as_str() {
                     "/vms/vm-1/info" => "getVmInfo",
                     "/vms/create" => "createVm",
+                    "/vms/vm-1/start" => "startVm",
+                    "/vms/vm-1/resume" => "resumeVm",
                     _ => "execVm",
                 };
                 let payload = serde_json::to_vec(&reply(operation)).unwrap();
@@ -74,6 +76,24 @@ async fn create_outlives_the_transport_deadline_without_replaying() {
     assert_eq!(vm.id(), Some("vm-1"));
     assert_eq!(requests.recv().await.as_deref(), Some("/vms/create"));
     assert!(requests.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn restore_outlives_the_transport_deadline_without_replaying() {
+    let (url, mut requests) = slow_gateway(Duration::from_millis(300)).await;
+    let vm = VM::new(&url, "private-token", VmSelector::Id("vm-1".into()))
+        .unwrap()
+        .with_timeout(Duration::from_millis(50))
+        .unwrap();
+    let started = vm.start().await;
+    let resumed = vm.resume().await;
+    assert!(
+        started.is_ok() && resumed.is_ok(),
+        "readiness results: {started:?} / {resumed:?}"
+    );
+    assert_eq!(requests.recv().await.as_deref(), Some("/vms/vm-1/start"));
+    assert_eq!(requests.recv().await.as_deref(), Some("/vms/vm-1/resume"));
+    assert!(requests.try_recv().is_err(), "neither mutation is replayed");
 }
 
 #[test]

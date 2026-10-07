@@ -172,7 +172,7 @@ impl VM {
             &api::StartVmParams {
                 id: self.resolve().await?,
             },
-            self.client.options,
+            self.client.create_options(),
         )
         .await
     }
@@ -205,7 +205,7 @@ impl VM {
             &api::ResumeVmParams {
                 id: self.resolve().await?,
             },
-            self.client.options,
+            self.client.create_options(),
         )
         .await
     }

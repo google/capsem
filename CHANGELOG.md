@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rust SDK start and resume cover workload readiness with the same deadline
+  budget as creation, retaining larger client defaults and cancellation.
+
 - TypeScript SDK start and resume cover workload readiness, retaining larger
   defaults, explicit per-call deadlines and cancellation without replay.
 

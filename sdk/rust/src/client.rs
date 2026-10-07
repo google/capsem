@@ -37,7 +37,7 @@ impl Client {
         }
     }
 
-    /// The service allows 110 seconds for workload readiness, including pull.
+    /// Create/start/resume allow 110 seconds for workload readiness.
     pub fn create_options(&self) -> CallOptions {
         self.command_options(Some(110))
     }
