@@ -59,6 +59,12 @@ try { const files = await vm.files.list(); }
 finally { vm.close(); }
 ```
 
+`vm.exec(command, {target: ExecTarget.VM})` explicitly selects VM diagnostics;
+`target: ExecTarget.WORKLOAD` selects the OCI workload. Import `ExecTarget`
+from `@capsem/sdk`. Omitted or `null` target keeps the service default: workload
+when present, otherwise VM. A refused workload target is returned as an error;
+the SDK does not switch targets or replay the command.
+
 Models use runtime enums, exact optional properties, and distinct nullable
 values. Runtime validators reject wrong primitive types, unknown enum values,
 and integers that JavaScript cannot represent safely. Generated source is

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TypeScript SDK VM execution exposes matching explicit VM/workload targets
+  with validation before lookup and preserved cancellation/refusal behavior.
+
 - Python SDK VM execution can explicitly select the existing VM or workload
   target without changing default execution or falling back after refusal.
 

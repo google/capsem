@@ -5,6 +5,7 @@ import * as models from './models/index.js';
 import type {HistoryOptions, LogOptions, TimelineOptions, VmSelector} from './options.js';
 import {Container, Files, Ports, Stats, VmNetworks, type VmContext} from './resources.js';
 import {HttpError, Transport, type CallOptions, type TransportOptions} from './transport.js';
+import {ExecRequestSchema} from './validation/ExecRequest.js';
 
 export class VM extends Client {
   #id: string | undefined;
@@ -75,9 +76,11 @@ export class VM extends Client {
     const {transport, id} = await this.context(options);
     return api.getVmInfo(transport, {id}, options);
   }
-  async exec(command: string, options: CallOptions & {timeout_secs?: number} = {}): Promise<models.ExecResponse> {
+  async exec(command: string, options: CallOptions & {timeout_secs?: number; target?: models.ExecTarget | null} = {}): Promise<models.ExecResponse> {
+    const body = ExecRequestSchema.parse({command, timeout_secs: options.timeout_secs ?? null,
+      ...(options.target == null ? {} : {target: options.target})});
     const {transport, id} = await this.context(options);
-    return api.execVm(transport, {id, body: {command, timeout_secs: options.timeout_secs ?? null}}, {
+    return api.execVm(transport, {id, body}, {
       ...options, timeoutMs: options.timeoutMs ?? commandDeadlineMs(transport.timeoutMs, options.timeout_secs),
     });
   }
