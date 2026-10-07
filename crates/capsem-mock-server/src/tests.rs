@@ -120,6 +120,55 @@ async fn anthropic_mcp_proof_accepts_user_text_blocks_without_reading_tool_metad
     );
 }
 
+#[tokio::test]
+async fn anthropic_mcp_proof_loads_a_declared_deferred_echo_before_calling_it() {
+    let mut payload = mcp_proof_payload(false);
+    payload["tools"] = json!([{"name": "ToolSearch"}]);
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "system", "content": "Deferred tools available via ToolSearch: mcp__capsem__local__echo"
+    }));
+    let body = routed_json(Method::POST, "/v1/messages", payload.clone()).await;
+    assert_eq!(body["content"][0]["name"], "ToolSearch");
+    assert_eq!(
+        body["content"][0]["input"],
+        json!({"query": "select:mcp__capsem__local__echo", "max_results": 1})
+    );
+    let schema = json!({"name": "mcp__capsem__local__echo", "parameters": {
+        "type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]
+    }});
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_capsem_mcp_discover",
+            "content": [{"type": "text", "text": format!("<functions><function>{schema}</function></functions>")}]}]
+    }));
+    let body = routed_json(Method::POST, "/v1/messages", payload).await;
+    assert_eq!(body["content"][0]["name"], "mcp__capsem__local__echo");
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_does_not_confuse_a_background_title_with_a_tool_turn() {
+    let mut payload = mcp_proof_payload(false);
+    payload.as_object_mut().unwrap().remove("tools");
+    let body = routed_json(Method::POST, "/v1/messages", payload).await;
+    assert_ne!(body["content"][0]["name"], "mcp__capsem__local__echo");
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_refuses_missing_and_failed_deferred_discovery() {
+    let mut payload = mcp_proof_payload(false);
+    payload["tools"] = json!([{"name": "ToolSearch"}]);
+    let (status, _, _) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "system", "content": "Deferred tools: mcp__capsem__local__echo"
+    }));
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_capsem_mcp_discover",
+            "is_error": true, "content": [{"type": "text", "text": "Tool not found"}]}]
+    }));
+    let (status, _, _) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 async fn routed(
     method: Method,
     path: &str,

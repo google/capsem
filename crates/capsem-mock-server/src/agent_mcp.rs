@@ -4,8 +4,11 @@ use serde_json::{json, Value};
 
 const MARKER: &str = "CAPSEM_MCP_PROOF=";
 const CALL_ID: &str = "toolu_capsem_mcp_echo";
+const DISCOVERY_ID: &str = "toolu_capsem_mcp_discover";
+const ECHO: &str = "mcp__capsem__local__echo";
 
 pub(super) fn reply(payload: &Value) -> Option<Result<Value, String>> {
+    payload.get("tools")?;
     let messages = payload.get("messages")?.as_array()?;
     let prompt = messages
         .iter()
@@ -28,14 +31,7 @@ fn proof_reply(payload: &Value, messages: &[Value], prompt: &str) -> Result<Valu
     if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("MCP proof needs a UUID hex token".into());
     }
-    let name = payload["tools"]
-        .as_array()
-        .and_then(|tools| {
-            tools
-                .iter()
-                .find_map(|tool| tool["name"].as_str().filter(|name| *name == "mcp__capsem__local__echo"))
-        })
-        .ok_or_else(|| "MCP proof needs the declared Capsem echo tool".to_string())?;
+    let tools = payload["tools"].as_array().ok_or("MCP proof needs declared tools")?;
     let results: Vec<_> = messages
         .iter()
         .filter(|message| message["role"] == "user")
@@ -43,9 +39,29 @@ fn proof_reply(payload: &Value, messages: &[Value], prompt: &str) -> Result<Valu
         .flatten()
         .filter(|block| block["type"] == "tool_result")
         .collect();
-    let (content, stop) = if results.is_empty() {
+    let latest = results.last().copied();
+    let discovery = latest.filter(|result| result["tool_use_id"] == DISCOVERY_ID);
+    let declared = tools.iter().any(|tool| tool["name"] == ECHO) || discovery.is_some_and(discovered_echo);
+    if !declared {
+        let available = messages
+            .iter()
+            .any(|message| message["role"] == "system" && message["content"].to_string().contains(ECHO));
+        if results.is_empty() && available && tools.iter().any(|tool| tool["name"] == "ToolSearch") {
+            return Ok(message(
+                payload,
+                json!([{"type": "tool_use", "id": DISCOVERY_ID,
+                "name": "ToolSearch", "input": {"query": format!("select:{ECHO}"), "max_results": 1}}]),
+                "tool_use",
+            ));
+        }
+        return Err("MCP proof needs the declared Capsem echo tool".into());
+    }
+    if discovery.is_some_and(|result| !discovered_echo(result)) {
+        return Err("MCP proof needs a successful echo schema discovery".into());
+    }
+    let (content, stop) = if results.is_empty() || discovery.is_some() {
         (
-            json!([{"type": "tool_use", "id": CALL_ID, "name": name, "input": {"text": token}}]),
+            json!([{"type": "tool_use", "id": CALL_ID, "name": ECHO, "input": {"text": token}}]),
             "tool_use",
         )
     } else {
@@ -57,12 +73,30 @@ fn proof_reply(payload: &Value, messages: &[Value], prompt: &str) -> Result<Valu
         }
         (json!([{"type": "text", "text": token}]), "end_turn")
     };
-    Ok(
-        json!({"id": "msg_capsem_mcp_proof", "type": "message", "role": "assistant",
+    Ok(message(payload, content, stop))
+}
+
+fn discovered_echo(result: &Value) -> bool {
+    if result["is_error"] == true {
+        return false;
+    }
+    let Some(blocks) = result["content"].as_array() else {
+        return false;
+    };
+    blocks.iter().filter_map(|block| block["text"].as_str()).any(|text| {
+        text.split("<function>")
+            .skip(1)
+            .filter_map(|tail| tail.split_once("</function>"))
+            .filter_map(|(schema, _)| serde_json::from_str::<Value>(schema).ok())
+            .any(|schema| schema["name"] == ECHO && schema["parameters"]["properties"]["text"]["type"] == "string")
+    })
+}
+
+fn message(payload: &Value, content: Value, stop: &str) -> Value {
+    json!({"id": "msg_capsem_mcp_proof", "type": "message", "role": "assistant",
         "model": payload["model"].as_str().unwrap_or("claude-sonnet-4-6"),
         "content": content, "stop_reason": stop, "stop_sequence": null,
-        "usage": {"input_tokens": 31, "output_tokens": 17}}),
-    )
+        "usage": {"input_tokens": 31, "output_tokens": 17}})
 }
 
 pub(super) fn stream(mut message: Value) -> Bytes {
