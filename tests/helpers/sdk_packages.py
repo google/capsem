@@ -16,9 +16,11 @@ from pathlib import Path
 from helpers.bounded import bounded
 
 
-def _run(command: list[str], work: Path, environment: Mapping[str, str]) -> str:
+def _run(
+    command: list[str], work: Path, environment: Mapping[str, str], *, timeout_seconds: int = 60,
+) -> str:
     result = subprocess.run(
-        bounded(command, 60), cwd=work, env=dict(environment),
+        bounded(command, timeout_seconds), cwd=work, env=dict(environment),
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -32,7 +34,10 @@ def _archive(output: Path, pattern: str) -> Path:
     return archives[0].resolve()
 
 
-def python_gateway(root: Path, environment: Mapping[str, str]) -> str:
+def python_gateway(
+    root: Path, environment: Mapping[str, str], *, probe: str = "gateway_acceptance.py",
+    success_marker: str = "BRAAVOS_SDK_ACCEPTANCE_OK", timeout_seconds: int = 60,
+) -> str:
     settings = tomllib.loads((root / "config/gate.toml").read_text())["sdk_python"]
     manifest = tomllib.loads((root / settings["manifest"]).read_text())["project"]
     stem = f"{manifest['name'].replace('-', '_')}-{manifest['version']}"
@@ -52,7 +57,7 @@ def python_gateway(root: Path, environment: Mapping[str, str]) -> str:
             payload = work / "payload.py"
             gateway = work / "gateway.py"
             for name, destination in (("image_package_acceptance.py", payload),
-                                      ("gateway_acceptance.py", gateway)):
+                                      (probe, gateway)):
                 shutil.copyfile(root / settings["tests"] / name, destination)
             report = work / "payload.json"
             result = _run([str(python), "-I", str(payload), "--archive", str(archive),
@@ -62,15 +67,19 @@ def python_gateway(root: Path, environment: Mapping[str, str]) -> str:
             assert receipt["ok"] and receipt["isolated"]
             assert receipt["sha256"] == digest and receipt["version"] == manifest["version"]
             assert Path(receipt["prefix"]).resolve() == prefix.resolve()
-            result += _run([str(python), "-I", str(gateway)], work, environment)
-            assert "BRAAVOS_SDK_ACCEPTANCE_OK" in result
+            result += _run([str(python), "-I", str(gateway)], work, environment,
+                           timeout_seconds=timeout_seconds)
+            assert success_marker in result
             results.append(result)
         assert not work.exists()
         assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
     return "".join(results)
 
 
-def typescript_gateway(root: Path, environment: Mapping[str, str]) -> str:
+def typescript_gateway(
+    root: Path, environment: Mapping[str, str], *, probe: str = "gateway-acceptance.mjs",
+    success_marker: str = "BRAAVOS_SDK_ACCEPTANCE_OK", timeout_seconds: int = 60,
+) -> str:
     settings = tomllib.loads((root / "config/gate.toml").read_text())["sdk_typescript"]
     project = root / settings["project"]
     manifest = json.loads((root / settings["manifest"]).read_text())
@@ -102,15 +111,15 @@ def typescript_gateway(root: Path, environment: Mapping[str, str]) -> str:
         payload = work / "payload.mjs"
         gateway = work / "gateway.mjs"
         shutil.copyfile(project / "tools/image-package-acceptance.mjs", payload)
-        shutil.copyfile(project / "tools/gateway-acceptance.mjs", gateway)
+        shutil.copyfile(project / "tools" / probe, gateway)
         report = work / "acceptance.json"
         result = _run(["node", str(payload), str(root), str(archive), str(report), str(receipt)], work, clean)
         assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in result
         verified = json.loads(report.read_text())
         assert verified["ok"] and verified["sha256"] == digest
         assert verified["version"] == manifest["version"]
-        result += _run(["node", str(gateway)], work, clean)
-        assert "BRAAVOS_SDK_ACCEPTANCE_OK" in result
+        result += _run(["node", str(gateway)], work, clean, timeout_seconds=timeout_seconds)
+        assert success_marker in result
     assert not work.exists()
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
     return result
