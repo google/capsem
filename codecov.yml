@@ -62,6 +62,7 @@ flags:
       - build_system/release_site/scripts/**
       - build_system/release_site/src/**
       - build_system/builder/**
+      - integrations/inspect-ai/inspect_capsem/**
     carryforward: true
   integration:
     paths:

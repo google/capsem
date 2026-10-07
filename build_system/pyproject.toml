@@ -121,3 +121,6 @@ dev = [
     "watchdog>=6.0.0",
     "websockets>=16.0",
 ]
+
+[tool.ty.environment]
+extra-paths = ["../integrations/inspect-ai"]

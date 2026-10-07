@@ -135,6 +135,7 @@ SHARED_ROOTS = frozenset(
         ".github",
         "skills",
         "sprints",
+        "integrations",
         "tests",
         "tmp",
     }

@@ -843,12 +843,9 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "integrations/inspect-ai"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "integrations"]
 # Already passes every rule, and must keep doing so.
-strict_roots = ["build_system/builder", "build_system/sdist_command.py", "integrations/inspect-ai"]
-# Resolve the separate carried namespace without treating builder/ as a
-# top-level package root and shadowing its installed capsem_builder identity.
-strict_ty_search_paths = ["integrations/inspect-ai"]
+strict_roots = ["build_system/builder", "build_system/sdist_command.py", "integrations"]
 # Match the import roots exercised by the sole pytest project plus the guest
 # trees and script bootstrap paths that are materialized at runtime. Keeping
 # these explicit lets Ty inspect a conventional capsem-builder install without
@@ -1064,7 +1061,7 @@ direct_concurrency = ["planrunner.py", "metadatasurvey.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript", "mcp/typescript"]
+roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript", "mcp/typescript", "integrations"]
 suffixes = [".py", ".sh", ".ts", ".mjs"]
 max_lines = 300
 
@@ -2023,7 +2020,6 @@ building = ["frontend-build", "docs", "site"]
 # `tests/test_gate_*.py` to appear here, since by construction those need
 # neither.
 source_contract = [
-    "tests/test_benchmark_routes.py",
     "integrations/inspect-ai/tests/containers/test_compose_fields.py",
     "integrations/inspect-ai/tests/containers/test_compose_inputs.py",
     "integrations/inspect-ai/tests/containers/test_compose_interpolation.py",
@@ -2031,7 +2027,6 @@ source_contract = [
     "integrations/inspect-ai/tests/containers/test_dockerfile_ca.py",
     "integrations/inspect-ai/tests/containers/test_dockerfile_heredoc.py",
     "integrations/inspect-ai/tests/containers/test_dockerfile_metadata.py",
-    "tests/qualification/test_candidate.py",
     "build_system/tests/gate/test_gate_observation.py",
     "build_system/tests/gate/test_gate_observation_startup.py",
     "build_system/tests/gate/test_gate_observation_propagation.py",
