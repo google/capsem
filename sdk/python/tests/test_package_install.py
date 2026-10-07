@@ -84,6 +84,8 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
         assert report["ok"] and report["isolated"]
         assert report["sha256"] == digest
         assert report["version"] == manifest["version"]
+        assert report["python_version"] == list(sys.version_info[:3])
+        assert Path(report["executable"]).resolve() == python.resolve()
         assert Path(report["prefix"]).resolve() == prefix.resolve()
         assert report["http_paths"] == [
             "/images?refresh=true",

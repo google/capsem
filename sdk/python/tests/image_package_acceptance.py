@@ -235,6 +235,8 @@ def main() -> None:
         "version": distribution.version,
         "requires": distribution.requires,
         "prefix": str(prefix),
+        "python_version": list(sys.version_info[:3]),
+        "executable": sys.executable,
         "origins": origins,
         "payload_files": len(payload),
         "http_paths": [path for _, path, _ in image_requests],
