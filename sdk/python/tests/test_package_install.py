@@ -20,9 +20,7 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
     manifest = tomllib.loads((root / config["manifest"]).read_text())["project"]
     output = root / config["build_output"]
     stem = f"{manifest['name'].replace('-', '_')}-{manifest['version']}"
-    archives = list(
-        output.glob(f"{stem}-*.whl" if kind == "wheel" else f"{stem}.tar.gz")
-    )
+    archives = list(output.glob(f"{stem}-*.whl" if kind == "wheel" else f"{stem}.tar.gz"))
     assert len(archives) == 1, (
         f"expected one current {kind} in {output}; run the SDK package build before this test"
     )
@@ -91,6 +89,15 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
             "/images?refresh=true",
             "/images/pull",
             "/images/pull",
+        ]
+        assert report["lifecycle_paths"] == [
+            "/vms/restore-vm/start",
+            "/vms/restore-vm/resume",
+            "/vms/restore-vm/start",
+            "/vms/restore-vm/info",
+            "/vms/restore-vm/resume",
+            "/vms/restore-vm/info",
+            "/vms/slow/info",
         ]
     assert not work.exists(), "the installed runtime must be removed after acceptance"
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest

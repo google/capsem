@@ -10,6 +10,8 @@ import json
 import sys
 import tarfile
 import threading
+import time
+import tomllib
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,9 +19,8 @@ from pathlib import Path
 import aiohttp
 import capsem
 import pydantic
-import tomllib
 import yarl
-from capsem import Hypervisor, Registry, models
+from capsem import VM, Hypervisor, Registry, models
 
 
 def archive_payload(archive: Path) -> dict[str, bytes]:
@@ -62,12 +63,8 @@ def main() -> None:
         manifest = tomllib.load(file)["project"]
     assert distribution.version == manifest["version"]
     assert distribution.metadata["Requires-Python"] == manifest["requires-python"]
-    installed = {
-        dist.metadata["Name"].lower() for dist in importlib.metadata.distributions()
-    }
-    assert not installed.intersection(
-        {"pytest", "build", "hatchling", "editables", "ruff", "ty"}
-    )
+    installed = {dist.metadata["Name"].lower() for dist in importlib.metadata.distributions()}
+    assert not installed.intersection({"pytest", "build", "hatchling", "editables", "ruff", "ty"})
     payload = archive_payload(args.archive)
     assert "capsem/py.typed" in payload
     assert "capsem/_images.py" in payload
@@ -86,12 +83,22 @@ def main() -> None:
 
     pin = "registry.example/code@sha256:" + "a" * 64
     received = []
+    restore_entered = threading.Event()
+    provision = {
+        "id": "restore-vm",
+        "name": "restore",
+        "status": "Running",
+        "available_actions": [],
+    }
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:
             pass
 
         def do_GET(self) -> None:
+            if self.path in {"/vms/restore-vm/info", "/vms/slow/info"}:
+                self.reply({**provision, "pid": 1})
+                return
             self.reply(
                 {
                     "images": [
@@ -107,20 +114,30 @@ def main() -> None:
             )
 
         def do_POST(self) -> None:
-            self.reply(
-                {"image": "code", "resolved": pin, "digest": "sha256:" + "b" * 64}
-            )
+            if self.path in {"/vms/restore-vm/start", "/vms/restore-vm/resume"}:
+                self.reply(provision)
+                return
+            self.reply({"image": "code", "resolved": pin, "digest": "sha256:" + "b" * 64})
 
         def reply(self, body: object) -> None:
             assert self.headers.get("Authorization") == "Bearer fixture-token"
             raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             received.append((self.command, self.path, json.loads(raw) if raw else None))
+            if self.path.endswith(("/start", "/resume")):
+                restore_entered.set()
+                time.sleep(0.3)
+            elif self.path == "/vms/slow/info":
+                time.sleep(0.3)
             data = json.dumps(body).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                # Cancellation/default read timeout deliberately closes these sockets.
+                assert self.path.startswith("/vms/")
 
     async def probe(url: str) -> None:
         async with Hypervisor(url, "fixture-token") as hv:
@@ -141,6 +158,41 @@ def main() -> None:
         else:
             raise AssertionError("closed parent left an operational image handle")
 
+        async with VM(url, "fixture-token", id="restore-vm", timeout=0.05) as vm:
+            for operation in (vm.start, vm.resume):
+                result = await operation()
+                assert isinstance(result, models.ProvisionResponse)
+                assert (
+                    result.id == "restore-vm" and result.status == models.VmLifecycleState.RUNNING
+                )
+            for operation in (vm.start, vm.resume):
+                restore_entered.clear()
+                pending = asyncio.create_task(operation())
+                try:
+                    assert await asyncio.to_thread(restore_entered.wait, 2), (
+                        "restore did not reach HTTP fixture"
+                    )
+                    pending.cancel()
+                    try:
+                        await pending
+                    except asyncio.CancelledError:
+                        pass
+                    else:
+                        raise AssertionError("cancelled restore completed successfully")
+                    info = await vm.info()
+                    assert info.id == "restore-vm" and info.pid == 1
+                finally:
+                    if not pending.done():
+                        pending.cancel()
+                        await asyncio.gather(pending, return_exceptions=True)
+        async with VM(url, "fixture-token", id="slow", timeout=0.05) as vm:
+            try:
+                await vm.info()
+            except TimeoutError:
+                pass
+            else:
+                raise AssertionError("ordinary read lost the shorter transport deadline")
+
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -150,10 +202,23 @@ def main() -> None:
         server.shutdown()
         server.server_close()
         thread.join(2)
-    assert [(method, path) for method, path, _ in received] == [
+    assert not thread.is_alive(), "HTTP fixture did not stop"
+    image_requests = [request for request in received if request[1].startswith("/images")]
+    lifecycle_requests = [request for request in received if request[1].startswith("/vms/")]
+    assert len(image_requests) + len(lifecycle_requests) == len(received)
+    assert [(method, path) for method, path, _ in image_requests] == [
         ("GET", "/images?refresh=true"),
         ("POST", "/images/pull"),
         ("POST", "/images/pull"),
+    ]
+    assert lifecycle_requests == [
+        ("POST", "/vms/restore-vm/start", None),
+        ("POST", "/vms/restore-vm/resume", None),
+        ("POST", "/vms/restore-vm/start", None),
+        ("GET", "/vms/restore-vm/info", None),
+        ("POST", "/vms/restore-vm/resume", None),
+        ("GET", "/vms/restore-vm/info", None),
+        ("GET", "/vms/slow/info", None),
     ]
     assert received[1][2] == {
         "image": "code",
@@ -172,7 +237,8 @@ def main() -> None:
         "prefix": str(prefix),
         "origins": origins,
         "payload_files": len(payload),
-        "http_paths": [path for _, path, _ in received],
+        "http_paths": [path for _, path, _ in image_requests],
+        "lifecycle_paths": [path for _, path, _ in lifecycle_requests],
         "isolated": True,
         "ok": True,
     }
