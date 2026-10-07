@@ -107,6 +107,22 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
     grant_surface_in_background(state, id, generation);
 }
 
+/// A restored guest may be ready while its workload is still starting. Keep
+/// launch-record I/O off the async worker and await this boot's workload marker.
+pub(crate) async fn restore_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
+    let restore_id = id.to_owned();
+    let has_workload = state
+        .off_worker(move |state| {
+            restore(&state, &restore_id);
+            state.containers.status(&restore_id).is_some()
+        })
+        .await?;
+    if has_workload {
+        require_ready(state, id).await?;
+    }
+    Ok(())
+}
+
 /// Whether VM `id` holds a staged workload its boot did not start: capsem-init
 /// relaunches only a stage the launcher marked `ready`, which it does once the
 /// image is unpacked. A first launch that died before then left a stage with

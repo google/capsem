@@ -66,7 +66,7 @@ pub(crate) async fn handle_resume(
                             state
                                 .off_worker(move |state| state.clear_resume_checkpoint(&cleared_id))
                                 .await?;
-                            crate::container_setup::restore(&state, &cold_id);
+                            crate::container_setup::restore_ready(&state, &cold_id).await?;
                             return provision_response_for_running(&state, cold_id).map(Json);
                         }
                         Err(cold_e) => {
@@ -90,7 +90,7 @@ pub(crate) async fn handle_resume(
             state
                 .off_worker(move |state| state.clear_resume_checkpoint(&cleared_id))
                 .await?;
-            crate::container_setup::restore(&state, &resumed_id);
+            crate::container_setup::restore_ready(&state, &resumed_id).await?;
             provision_response_for_running(&state, resumed_id).map(Json)
         }
         Err(e) => {

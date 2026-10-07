@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Starting or resuming an OCI session waits for its workload to be ready before
+  succeeding, so an immediate execution enters the restored workload. Clones
+  carrying an image use the same readiness and launch-failure checks.
+
 - Rust SDK creation covers the service's workload readiness window instead
   of expiring at the ordinary 30-second deadline, preserving larger defaults
   and request cancellation without replay.

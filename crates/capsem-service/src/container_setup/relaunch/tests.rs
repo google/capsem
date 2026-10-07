@@ -147,6 +147,62 @@ async fn a_vm_without_a_record_is_not_given_a_workload() {
     assert!(state.containers.status("box").is_none());
 }
 
+#[tokio::test]
+async fn restored_workload_success_waits_for_this_boots_running_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(make_test_state_owned());
+    let session = dir.path().join("session");
+    write_record(&session, &record(None));
+    staged(&session, &[capsem_core::container::STAGE_READY]);
+    insert_fake_instance_with_session_dir(&state, "box", 1, session.clone());
+    let restored = tokio::spawn({
+        let state = Arc::clone(&state);
+        async move { restore_ready(&state, "box").await }
+    });
+    while state.containers.status("box").is_none() {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !restored.is_finished(),
+        "a guest-ready VM still has a starting workload"
+    );
+    std::fs::write(stage_of(&session).join(capsem_core::container::STAGE_RUNNING), "1\n").unwrap();
+    restored.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn restored_workload_failure_is_not_lifecycle_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(make_test_state_owned());
+    let session = dir.path().join("session");
+    write_record(&session, &record(None));
+    staged(
+        &session,
+        &[
+            capsem_core::container::STAGE_READY,
+            capsem_core::container::STAGE_FAILED,
+        ],
+    );
+    insert_fake_instance_with_session_dir(&state, "box", 1, session);
+    let error = restore_ready(&state, "box").await.unwrap_err();
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(error.1.contains("Failed") && error.1.contains("did not start"));
+}
+
+#[tokio::test]
+async fn a_bare_vm_does_not_wait_for_a_workload_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(make_test_state_owned());
+    let session = dir.path().join("session");
+    std::fs::create_dir_all(&session).unwrap();
+    insert_fake_instance_with_session_dir(&state, "box", 1, session);
+    tokio::time::timeout(std::time::Duration::from_secs(1), restore_ready(&state, "box"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(state.containers.status("box").is_none());
+}
+
 /// capsem-init relaunches only a stage it finds `ready`; a first launch that
 /// died before writing it leaves a stage nothing would start again. The new
 /// owner relaunches exactly that case, and never one the boot already took.

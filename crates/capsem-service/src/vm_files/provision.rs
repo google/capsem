@@ -170,44 +170,11 @@ pub(crate) async fn complete_create(
     network_routes::attach_provisioned(state, id, networks).await?;
     if container.is_none() {
         // A `--from` clone boots its source's staged image, if it had one.
-        container_setup::restore(state, id);
+        container_setup::restore_ready(state, id).await?;
     }
     if let Some(spec) = container {
         container_setup::start(state, id.to_owned(), spec);
-        let status = container_setup::wait_for_create(state, id).await.map_err(|timed_out| {
-            warn!(vm_id = id, attempts = timed_out.attempts, "container create readiness timed out");
-            AppError(
-                StatusCode::GATEWAY_TIMEOUT,
-                format!(
-                    "container workload for VM {id} did not become ready before the HTTP deadline; setup continues under service ownership"
-                ),
-            )
-        })?;
-        match status.state {
-            api::ContainerState::Running | api::ContainerState::Staged => {}
-            api::ContainerState::Exited | api::ContainerState::Failed => {
-                error!(
-                    vm_id = id,
-                    state = ?status.state,
-                    exit_code = status.exit_code,
-                    "container create reached a terminal failure"
-                );
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!(
-                        "container workload for VM {id} reached {:?}: {}",
-                        status.state,
-                        status.error.unwrap_or_else(|| status
-                            .exit_code
-                            .map(|code| format!("exit code {code}"))
-                            .unwrap_or_else(|| "no failure detail".into()))
-                    ),
-                ));
-            }
-            api::ContainerState::Pulling | api::ContainerState::Staging | api::ContainerState::Starting => {
-                unreachable!("container readiness returned a pending state")
-            }
-        }
+        container_setup::require_ready(state, id).await?;
     }
     Ok(response)
 }

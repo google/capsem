@@ -21,7 +21,9 @@ mod registry;
 use registry::RegistryImages;
 pub(crate) mod images;
 mod relaunch;
-pub(crate) use relaunch::{carry_launch_record, drop_carried_image, forget_previous_run, restore};
+#[cfg(test)]
+pub(crate) use relaunch::restore;
+pub(crate) use relaunch::{carry_launch_record, drop_carried_image, forget_previous_run, restore_ready};
 
 const CREATE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(110);
 
@@ -643,6 +645,37 @@ pub(crate) async fn wait_for_create(
         },
     )
     .await
+}
+
+/// Create, resume and carried-image clones share the same workload barrier.
+/// A timeout leaves setup with its service owner; terminal failures are errors.
+pub(crate) async fn require_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
+    let status = wait_for_create(state, id).await.map_err(|timed_out| {
+        warn!(vm_id = id, attempts = timed_out.attempts, "container workload readiness timed out");
+        AppError(
+            StatusCode::GATEWAY_TIMEOUT,
+            format!(
+                "container workload for VM {id} did not become ready before the HTTP deadline; setup continues under service ownership"
+            ),
+        )
+    })?;
+    match status.state {
+        ContainerState::Running | ContainerState::Staged => Ok(()),
+        ContainerState::Exited | ContainerState::Failed => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "container workload for VM {id} reached {:?}: {}",
+                status.state,
+                status.error.unwrap_or_else(|| status
+                    .exit_code
+                    .map(|code| format!("exit code {code}"))
+                    .unwrap_or_else(|| "no failure detail".into()))
+            ),
+        )),
+        ContainerState::Pulling | ContainerState::Staging | ContainerState::Starting => {
+            unreachable!("container readiness returned a pending state")
+        }
+    }
 }
 
 async fn wait_observed(
