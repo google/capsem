@@ -525,8 +525,12 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
         "root erased the diagnostics of the failure that triggered teardown."
     )
     assert workspace_evidence.parent == Path(evidence), RATIONALE
-    assert config["suites"]["pytest"]["coverage_flags"] == [
-        "--cov=build_system/builder",
+    # Surface owners choose coverage inputs; this boundary owns every report
+    # destination, including when another source surface joins the unit rail.
+    assert [
+        flag for flag in config["suites"]["pytest"]["coverage_flags"]
+        if flag.startswith("--cov-report=")
+    ] == [
         f"--cov-report=xml:{coverage}/python/codecov.xml",
     ], RATIONALE
     assert nextest["store"]["dir"] == f"{coverage}/nextest", RATIONALE

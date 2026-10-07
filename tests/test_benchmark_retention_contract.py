@@ -6,10 +6,10 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 from helpers.benchmark_ratchet import (
     BenchmarkCategory,
     BenchmarkMetric,
@@ -194,13 +194,13 @@ def test_shared_host_timing_ratchets_use_the_least_contended_sample() -> None:
 
 def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    evidence = tmp_path / "benchmarks" / "baselines" / "fork"
+    evidence = tmp_path / PRUNE.BENCHMARKS.relative_to(PROJECT_ROOT) / "fork"
     evidence.mkdir(parents=True)
     (evidence / "tracked.json").write_text(
         json.dumps({"timestamp": 1, "identity": "tracked"}), encoding="utf-8"
     )
     subprocess.run(
-        ["git", "add", "benchmarks/baselines/fork/tracked.json"],
+        ["git", "add", str((evidence / "tracked.json").relative_to(tmp_path))],
         cwd=tmp_path,
         check=True,
     )
@@ -210,6 +210,7 @@ def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> 
 
     selected = latest_checked_in_benchmark(tmp_path, BenchmarkCategory.FORK)
 
+    assert selected is not None
     assert selected["identity"] == "tracked"
 
 
@@ -236,6 +237,7 @@ def test_release_benchmarks_use_typed_evidence_instead_of_authored_limits() -> N
     }
     for category, metrics in categories.items():
         evidence = latest_checked_in_benchmark(PROJECT_ROOT, category)
+        assert evidence is not None
         for metric in metrics:
             assert f"BenchmarkMetric.{metric.name}" in source
             assert metric_value(evidence, metric) > 0
@@ -252,12 +254,12 @@ def test_release_benchmarks_use_typed_evidence_instead_of_authored_limits() -> N
 def _evidence_repo(tmp_path: Path, files: dict[str, dict]) -> Path:
     """A tracked evidence directory, plus the config the lane names come from."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    evidence = tmp_path / "benchmarks" / "baselines" / "fork"
+    evidence = tmp_path / PRUNE.BENCHMARKS.relative_to(PROJECT_ROOT) / "fork"
     evidence.mkdir(parents=True)
     for name, document in files.items():
         (evidence / name).write_text(json.dumps(document), encoding="utf-8")
         subprocess.run(
-            ["git", "add", f"benchmarks/baselines/fork/{name}"],
+            ["git", "add", str((evidence / name).relative_to(tmp_path))],
             cwd=tmp_path,
             check=True,
         )

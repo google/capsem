@@ -53,6 +53,13 @@ accepted. Mutations are not retried automatically.
 
 ## VM lifecycle and files
 
+The image catalog and prefetch tools work without creating a VM:
+
+| Tool | Main parameters | Purpose |
+| --- | --- | --- |
+| `capsem_image_list` | `refresh?` | Read the admitted catalog, immutable image pins, and reported disk-cache state. Unknown state does not establish readiness. |
+| `capsem_image_pull` | `image` | Prefetch an admitted image and return its resolved pin. Registry credentials stay service-owned. |
+
 All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 `capsem_list`.
 

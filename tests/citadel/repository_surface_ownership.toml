@@ -185,6 +185,18 @@ debt = "none: images/ is a new root"
 reason = "The official OCI images and their publication scripts; only .github/workflows/images.yaml builds and publishes them."
 
 [[surface]]
+id = "external-integrations"
+state = "retained"
+current = ["integrations/"]
+targets = ["integrations/"]
+lint = ["python.ruff", "python.ty.strict", "fast.audit.source-syntax", "fast.citadel"]
+tests = ["integrations/inspect-ai/tests/containers/", "tests/citadel/test_repository_surface_ownership.py"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "docs-build", "site-build", "release-site-build", "pr-gate"]
+coverage = "codecov unit flag; carried pure transforms join the Python coverage rail"
+debt = "none: carried sources pass strict types and source ceilings; full Inspect adapter/package acceptance remains in #342"
+reason = "Already-carried external integration source has one checker/test/CI owner without claiming an installed or published adapter."
+
+[[surface]]
 id = "developer-skills"
 state = "retained"
 current = ["skills/"]

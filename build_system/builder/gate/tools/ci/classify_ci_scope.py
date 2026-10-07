@@ -55,6 +55,7 @@ KNOWN_DIRECTORIES = frozenset(
         "docker",
         "guest",
         "images",
+        "integrations",
         "mcp",
         "scripts",
         "sdk",
@@ -134,6 +135,7 @@ SHARED_ROOTS = frozenset(
         ".github",
         "skills",
         "sprints",
+        "integrations",
         "tests",
         "tmp",
     }
