@@ -34,7 +34,6 @@ mod anthropic;
 mod dns;
 mod limits;
 mod targets;
-use anthropic::{anthropic_response, anthropic_stream};
 #[cfg(test)]
 use dns::{dns_response, dns_response_for};
 use dns::{serve_dns_tcp, serve_dns_udp, DnsAnswers, DNS_FIXTURES};
@@ -65,6 +64,7 @@ const ENDPOINTS: &[&str] = &[
     "/v1/responses",
     "/v1/messages",
     "/api/hello",
+    "/v1/oauth/hello",
     "/v1internal:listExperiments",
     "/v1internal:loadCodeAssist",
     "/v1internal:fetchAvailableModels",
@@ -302,7 +302,7 @@ async fn route(
         }
         (&Method::GET, "/") => response(StatusCode::OK, Bytes::new(), "text/plain; charset=utf-8"),
         (&Method::HEAD, "/api/hello") => response(StatusCode::OK, Bytes::new(), "text/plain"),
-        (&Method::GET, "/api/hello") => response(
+        (&Method::GET, "/api/hello") | (&Method::GET, "/v1/oauth/hello") => response(
             StatusCode::OK,
             Bytes::from_static(b"capsem-mock-server:anthropic-ready\n"),
             "text/plain",
@@ -493,22 +493,7 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             }],
             "usage": {"prompt_tokens": 26, "completion_tokens": 52, "total_tokens": 78}
         })),
-        (&Method::POST, "/v1/messages") => {
-            let payload = parse_json(&request_body);
-            if let Some(proof) = agent_mcp::reply(&payload) {
-                match proof {
-                    Err(error) => response(StatusCode::BAD_REQUEST, Bytes::from(error), "text/plain"),
-                    Ok(message) if payload.get("stream").and_then(Value::as_bool) == Some(true) => {
-                        response(StatusCode::OK, agent_mcp::stream(message), "text/event-stream")
-                    }
-                    Ok(message) => json_response(message),
-                }
-            } else if payload.get("stream").and_then(Value::as_bool) == Some(true) {
-                response(StatusCode::OK, anthropic_stream(payload), "text/event-stream")
-            } else {
-                json_response(anthropic_response(payload))
-            }
-        }
+        (&Method::POST, "/v1/messages") => anthropic::reply(parse_json(&request_body)),
         (&Method::POST, "/api/chat") => {
             let payload = parse_json(&request_body);
             json_response(json!({

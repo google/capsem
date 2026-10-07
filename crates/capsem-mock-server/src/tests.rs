@@ -27,6 +27,9 @@ async fn anthropic_cli_connectivity_probe_succeeds_without_broad_get_fallback() 
             assert_eq!(body, "capsem-mock-server:anthropic-ready\n");
         }
     }
+    let (status, _, body) = routed(Method::GET, "/v1/oauth/hello", None, HeaderMap::new(), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "capsem-mock-server:anthropic-ready\n");
     let (status, _, _) = routed(Method::GET, "/api/unknown", None, HeaderMap::new(), json!({})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
