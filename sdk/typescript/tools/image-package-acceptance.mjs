@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {once} from 'node:events';
 import {createServer} from 'node:http';
-import {readFileSync, lstatSync, readdirSync} from 'node:fs';
+import {existsSync, readFileSync, lstatSync, readdirSync} from 'node:fs';
 import {dirname, join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {buffer} from 'node:stream/consumers';
@@ -21,7 +21,7 @@ const project = resolve(dirname(fileURLToPath(import.meta.url)));
 assert.ok(!project.startsWith(resolve(sourceRoot) + '/'));
 const packageRoot = join(project, 'node_modules/@capsem/sdk');
 assert.ok(!lstatSync(packageRoot).isSymbolicLink());
-/** @typedef {{name:string,version:string,engines:Record<string,string>,dependencies:Record<string,string>,exports:Record<string,{types:string,import:string}>,scripts:Record<string,string>}} Manifest */
+/** @typedef {{name:string,version:string,engines:Record<string,string>,dependencies:Record<string,string>,devDependencies:Record<string,string>,exports:Record<string,{types:string,import:string}>,scripts:Record<string,string>}} Manifest */
 /** @param {string} path @returns {unknown} */
 function readJson(path) { return JSON.parse(readFileSync(path, 'utf8')); }
 const manifest = /** @type {Manifest} */ (readJson(join(packageRoot, 'package.json')));
@@ -30,6 +30,9 @@ const sourceManifest = /** @type {Manifest} */ (readJson(join(source, 'sdk/types
 const packedManifest = {...sourceManifest, scripts: {...sourceManifest.scripts}};
 delete packedManifest.scripts.prepack;
 assert.deepEqual(manifest, packedManifest);
+for (const name of Object.keys(manifest.devDependencies)) {
+  assert.ok(!existsSync(join(project, 'node_modules', name)), `runtime contains development dependency: ${name}`);
+}
 /** @type {Record<string,string>} */
 const origins = {};
 for (const entry of Object.keys(manifest.exports)) {

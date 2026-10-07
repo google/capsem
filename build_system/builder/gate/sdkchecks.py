@@ -78,10 +78,14 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         "build", Run(["pnpm", "pack", "--pack-destination", str(config.path(settings.build_output))], cwd=root),
         kind=Kind.PACKAGE, speed=Speed.FAST,
     ), after=after)
+    warmed = phase.add(step(
+        "package-prewarm", Run(["pnpm", "run", "prewarm:package"], cwd=root, outside_sandbox=True),
+        kind=Kind.COMPILE, needs=frozenset({Needs.DISK, Needs.NETWORK}), speed=Speed.FAST,
+    ), after=after)
     tested = phase.add(step(
         "tests", Run(["pnpm", "run", "test:sdk"], cwd=root),
         kind=Kind.UNIT_TEST, speed=Speed.FAST,
-    ), after=(built,))
+    ), after=(built, warmed))
     generated = phase.add(step(
         "generate", Run(uv_run(config, "python", "-m", "capsem_builder.sdkgen", "--check",
                                "--specification", settings.specification, "--typescript-source", settings.source)),
@@ -108,7 +112,7 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         ),
         after=(mcp_built,),
     )
-    return (*checks, built, tested, generated, mcp_built, mcp_tested)
+    return (*checks, built, warmed, tested, generated, mcp_built, mcp_tested)
 
 
 def rust_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:

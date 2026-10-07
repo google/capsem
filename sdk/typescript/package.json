@@ -17,6 +17,7 @@
     "build": "node tools/build.mjs",
     "prepack": "pnpm run build",
     "pretest": "pnpm run build",
+    "prewarm:package": "node tools/prewarm-package.mjs",
     "test": "vitest run --coverage",
     "test:sdk": "vitest run --coverage"
   },

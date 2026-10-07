@@ -129,6 +129,13 @@ results retain their native JSON shape.
 Run `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm check`,
 `pnpm test`, and `pnpm build` in this directory. The fast gate also builds the
 package tarball and verifies generation against `sdk/specification/openapi.json`.
+Before running package acceptance directly, run `pnpm prewarm:package` once
+to cache runtime dependencies and the compiler used by its contamination test.
+`pnpm exec vitest run tests/package-install.test.ts` packs the current build,
+installs it offline into a temporary consumer outside the checkout, verifies
+payload hashes and export origins, and exercises authenticated image requests.
+It rejects modified payloads, linked installs and development dependencies,
+then removes the consumer. The gate declares prewarming outside its sandbox.
 
 The `@capsem/sdk/operations` and `@capsem/sdk/transport` exports expose generated
 endpoint functions for applications that already own their connection flow.

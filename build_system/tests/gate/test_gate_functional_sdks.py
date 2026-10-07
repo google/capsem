@@ -37,6 +37,18 @@ def test_python_sdk_tests_cannot_start_before_the_archives_they_install_are_buil
     )
 
 
+def test_typescript_package_acceptance_has_network_prewarm_outside_the_sandbox() -> None:
+    from capsem_builder.gate.execution import Needs
+
+    plan = gate_plan("test-fast")
+    label = "fast.sdk.typescript.package-prewarm"
+    assert label in plan.labels, "offline clean-consumer installs need declared dependency prewarming"
+    warmed = plan.step_named(label)
+    assert Needs.NETWORK in warmed.needs
+    assert "[outside kernel sandbox]" in warmed.actions[0].render()
+    assert {label, "fast.sdk.typescript.build"} <= _ancestors(plan, "fast.sdk.typescript.tests")
+
+
 def test_every_functional_suite_starts_after_the_sdks_are_prepared() -> None:
     plan = gate_plan("test-functional")
     suites = [label for label in plan.labels if ".pytest." in label]
