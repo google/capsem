@@ -111,6 +111,14 @@ describe('VM lifecycle', () => {
     expect(call[0]).toContain('/vms/11111111-1111-4111-8111-111111111111/resume');
   });
 
+  it('startVm sends the existing start operation without resuming', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(provision('stopped-session')));
+    await api.startVm('stopped-session');
+    const call = mockFetch.mock.calls.at(-1)!;
+    expect(new URL(call[0]).pathname).toBe('/vms/stopped-session/start');
+    expect(call[1].method).toBe('POST');
+  });
+
   it('forkVm sends POST with body', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ id: 'fork-id', name: 'fork-1', size_bytes: 1024 }));
     const result = await api.forkVm('vm-1', { name: 'fork-1' });

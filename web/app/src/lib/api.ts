@@ -485,6 +485,10 @@ export async function resumeVm(id: string): Promise<ProvisionResponse> {
   return _sdk.call(transport => gateway.resumeVm(transport, { id }));
 }
 
+export async function startVm(id: string): Promise<ProvisionResponse> {
+  return _sdk.call(transport => gateway.startVm(transport, { id }));
+}
+
 export async function forkVm(id: string, opts: ForkRequest): Promise<ForkResponse> {
   return _sdk.call(transport => gateway.forkVm(transport, { id, body: opts }));
 }

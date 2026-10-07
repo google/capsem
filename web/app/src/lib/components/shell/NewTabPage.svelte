@@ -8,6 +8,7 @@
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost } from '../../format';
   import { canOpenSession, hasVmAction, startAction, startLabel } from '../../vm-actions';
+  import { sessionActionError } from '../../models/session-action-error';
   import Modal from './Modal.svelte';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
@@ -114,34 +115,43 @@
     const id = dashModalVm.id;
     const kind = dashModalKind;
     closeDashModal();
-    if (kind === 'stop') {
-      await vmStore.stop(id);
-    } else if (kind === 'delete') {
-      const tab = tabStore.tabs.find(t => t.vmId === id);
-      if (tab) tabStore.close(tab.id);
-      await vmStore.delete(id);
-    }
+    await runAction(async () => {
+      if (kind === 'stop') {
+        await vmStore.stop(id);
+      } else if (kind === 'delete') {
+        const tab = tabStore.tabs.find(t => t.vmId === id);
+        await vmStore.delete(id);
+        if (tab) tabStore.close(tab.id);
+      }
+    });
   }
 
   async function handleStart(e: MouseEvent, vm: VmSummary) {
     e.stopPropagation();
-    if (!hasVmAction(vm, startAction(vm))) {
-      actionError = vm.resume_blocked_reason ?? `${vm.name ?? vm.id} cannot be resumed.`;
-      return;
-    }
-    await vmStore.resume(vm.id);
+    await runAction(() => vmStore.resume(vm.id));
   }
 
   async function handlePause(e: MouseEvent, vm: VmSummary) {
     e.stopPropagation();
-    await vmStore.suspend(vm.id);
+    await runAction(() => vmStore.suspend(vm.id));
   }
 
   async function handleFork(e: MouseEvent, vm: VmSummary) {
     e.stopPropagation();
     const baseName = vm.name ?? vm.id;
     const name = prompt('Fork name:', `${baseName}-fork`);
-    if (name?.trim()) await vmStore.fork(vm.id, { name: name.trim() });
+    if (name?.trim()) {
+      await runAction(() => vmStore.fork(vm.id, { name: name.trim() }));
+    }
+  }
+
+  async function runAction(action: () => Promise<unknown>) {
+    try {
+      await action();
+      actionError = null;
+    } catch (error) {
+      actionError = sessionActionError(error);
+    }
   }
 
   let creatingVm = $state(false);
@@ -421,7 +431,7 @@
     <div class="flex items-start gap-x-3 p-4 mb-4 rounded-lg border border-destructive/30 bg-destructive/10 text-sm">
       <Warning size={18} class="text-destructive mt-0.5 shrink-0" />
       <div class="flex-1 min-w-0">
-        <p class="font-medium text-foreground">Failed to create session</p>
+        <p class="font-medium text-foreground">Session action failed</p>
         <p class="text-muted-foreground-1 mt-0.5 break-words">{actionError}</p>
       </div>
       <button

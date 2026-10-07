@@ -21,6 +21,7 @@
   import AppWindow from 'phosphor-svelte/lib/AppWindow';
   import { formatTokens, formatCost } from '../../format';
   import { hasVmAction, startAction, startLabel } from '../../vm-actions';
+  import { sessionActionError } from '../../models/session-action-error';
   import { getContainerStatus, openSurface } from '../../api';
   import { hasOpenableSurface, surfaceMayAppear } from '../../models/surface';
 
@@ -95,6 +96,9 @@
   type ModalKind = 'stop' | 'delete' | 'fork' | null;
   let modalKind = $state<ModalKind>(null);
   let modalInput = $state('');
+  let actionError = $state<string | null>(null);
+  let modalVmId = $state<string | null>(null);
+  let modalVmTitle = $state('');
 
   function openModal(kind: ModalKind) {
     menuOpen = false;
@@ -102,6 +106,8 @@
       modalInput = `${active?.title ?? 'vm'}-fork`;
     }
     modalKind = kind;
+    modalVmId = active?.vmId ?? null;
+    modalVmTitle = active?.title ?? activeVm?.name ?? modalVmId ?? '';
   }
 
   // Deep-link actions from the tray dispatch a
@@ -123,27 +129,47 @@
   function closeModal() {
     modalKind = null;
     modalInput = '';
+    modalVmId = null;
+    modalVmTitle = '';
   }
 
   async function handleModalConfirm() {
-    if (!active?.vmId) return;
-    const id = active.vmId;
+    if (!modalVmId) return;
+    const id = modalVmId;
     const kind = modalKind;
     const name = modalInput.trim();
     closeModal();
-    switch (kind) {
-      case 'stop':
-        await vmStore.stop(id);
-        break;
-      case 'delete':
-        await vmStore.delete(id);
-        break;
-      case 'fork': {
-        if (!name) break;
-        const result = await vmStore.fork(id, { name });
-        tabStore.openVM(result.id, result.name);
-        break;
+    try {
+      switch (kind) {
+        case 'stop':
+          await vmStore.stop(id);
+          break;
+        case 'delete': {
+          const tab = tabStore.tabs.find(tab => tab.vmId === id);
+          await vmStore.delete(id);
+          if (tab) tabStore.close(tab.id);
+          break;
+        }
+        case 'fork': {
+          if (!name) break;
+          const result = await vmStore.fork(id, { name });
+          tabStore.openVM(result.id, result.name);
+          break;
+        }
       }
+      actionError = null;
+    } catch (error) {
+      actionError = sessionActionError(error);
+    }
+  }
+
+  async function runAction(action: () => Promise<void>) {
+    menuOpen = false;
+    try {
+      await action();
+      actionError = null;
+    } catch (error) {
+      actionError = sessionActionError(error);
     }
   }
 </script>
@@ -180,7 +206,7 @@
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
                 disabled={busy}
-                onclick={async () => { if (active?.vmId) { await vmStore.suspend(active.vmId); } menuOpen = false; }}
+                onclick={() => { const id = active?.vmId; if (id) void runAction(() => vmStore.suspend(id)); }}
               >
                 <Pause size={16} />
                 <span>Pause</span>
@@ -203,7 +229,7 @@
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
                 disabled={busy}
                 title={startLabel(activeVm)}
-                onclick={async () => { if (activeVm) { await vmStore.resume(activeVm.id); } menuOpen = false; }}
+                onclick={() => { const id = activeVm?.id; if (id) void runAction(() => vmStore.resume(id)); }}
               >
                 <Play size={16} />
                 <span>{startLabel(activeVm)}</span>
@@ -328,6 +354,12 @@
 </div>
 
 <!-- Modals -->
+{#if actionError}
+  <div role="alert" class="flex items-center gap-3 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+    <p class="flex-1 break-words">{actionError}</p>
+    <button type="button" aria-label="Dismiss session action error" onclick={() => actionError = null} class="rounded px-2 py-1 hover:bg-destructive/10">Dismiss</button>
+  </div>
+{/if}
 <Modal
   open={modalKind === 'stop'}
   title="Stop session"
@@ -336,7 +368,7 @@
   onconfirm={handleModalConfirm}
   oncancel={closeModal}
 >
-  <p class="text-sm text-foreground">Stop session <strong>{active?.title}</strong>?</p>
+  <p class="text-sm text-foreground">Stop session <strong>{modalVmTitle}</strong>?</p>
 </Modal>
 
 <Modal
@@ -347,7 +379,7 @@
   onconfirm={handleModalConfirm}
   oncancel={closeModal}
 >
-  <p class="text-sm text-foreground">Delete session <strong>{active?.title}</strong>? This cannot be undone.</p>
+  <p class="text-sm text-foreground">Delete session <strong>{modalVmTitle}</strong>? This cannot be undone.</p>
 </Modal>
 
 <Modal

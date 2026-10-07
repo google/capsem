@@ -2,6 +2,8 @@
 // VM list + resource summary. Also provides lifecycle methods (stop, delete, etc.).
 
 import * as api from '../api';
+import { VmAction } from '@capsem/sdk';
+import { hasVmAction } from '../vm-actions';
 import type { VmSummary, VmStatsSummary, ResourceSummary, ProvisionRequest, ForkRequest, ForkResponse } from '../types/gateway';
 
 function assetStatusError(e: unknown): string {
@@ -91,7 +93,17 @@ class VmStore {
 
   // -- Lifecycle actions --
 
+  private requireAction(id: string, action: VmAction): VmSummary {
+    if (this.acting) throw new Error('Another session action is already in progress');
+    const vm = this.vms.find(vm => vm.id === id);
+    if (this.serviceStatus !== 'running' || this.error || !vm || !hasVmAction(vm, action)) {
+      throw new Error(`${action} is no longer available for ${vm?.name ?? id}`);
+    }
+    return vm;
+  }
+
   async stop(id: string): Promise<void> {
+    this.requireAction(id, VmAction.STOP);
     console.log('[vmStore] stop(%s)', id);
     this.acting = true;
     try {
@@ -102,19 +114,8 @@ class VmStore {
     }
   }
 
-  async restart(id: string): Promise<void> {
-    console.log('[vmStore] restart(%s)', id);
-    this.acting = true;
-    try {
-      await api.stopVm(id);
-      await api.resumeVm(id);
-      await this.refresh();
-    } finally {
-      this.acting = false;
-    }
-  }
-
   async suspend(id: string): Promise<void> {
+    this.requireAction(id, VmAction.PAUSE);
     this.acting = true;
     try {
       await api.suspendVm(id);
@@ -125,6 +126,7 @@ class VmStore {
   }
 
   async delete(id: string): Promise<void> {
+    this.requireAction(id, VmAction.DELETE);
     console.log('[vmStore] delete(%s)', id);
     this.acting = true;
     try {
@@ -138,9 +140,13 @@ class VmStore {
   }
 
   async resume(id: string): Promise<void> {
+    const vm = this.vms.find(vm => vm.id === id);
+    const action = vm && hasVmAction(vm, VmAction.START) ? VmAction.START : VmAction.RESUME;
+    this.requireAction(id, action);
     this.acting = true;
     try {
-      await api.resumeVm(id);
+      if (action === VmAction.START) await api.startVm(id);
+      else await api.resumeVm(id);
       await this.refresh();
     } finally {
       this.acting = false;
@@ -176,6 +182,7 @@ class VmStore {
   }
 
   async fork(id: string, opts: ForkRequest): Promise<ForkResponse> {
+    this.requireAction(id, VmAction.FORK);
     this.acting = true;
     try {
       const result = await api.forkVm(id, opts);

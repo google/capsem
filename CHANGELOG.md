@@ -431,6 +431,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Desktop lifecycle controls dispatch advertised Start and Resume operations,
+  reject stale permissions, and keep readable failure feedback and session tabs
+  when mutations are refused.
+
 - Shared destructive colors follow the purple error convention in light and
   dark themes, including OCI creation refusals.
 
