@@ -29,6 +29,14 @@ def _ancestors(plan, label: str) -> set[str]:
     return seen
 
 
+def test_python_sdk_tests_cannot_start_before_the_archives_they_install_are_built() -> None:
+    plan = gate_plan("test-fast")
+    assert "fast.sdk.python.build" in _ancestors(plan, "fast.sdk.python.tests"), (
+        "clean installed-package acceptance must consume this source's wheel and sdist, "
+        "not whichever archive a previous run happened to leave"
+    )
+
+
 def test_every_functional_suite_starts_after_the_sdks_are_prepared() -> None:
     plan = gate_plan("test-functional")
     suites = [label for label in plan.labels if ".pytest." in label]

@@ -56,14 +56,14 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tupl
         "build": [*prefix, "python", "-m", "build", "--no-isolation",
                   "--outdir", settings.build_output, settings.project],
     }
-    checks = tuple(phase.add(step(
+    checks = {label: phase.add(step(
         label, Run(argv), kind=Kind.PACKAGE if label == "build" else Kind.LINT, speed=Speed.FAST,
-    ), after=(synced,)) for label, argv in commands.items())
+    ), after=(synced,)) for label, argv in commands.items()}
     tested = phase.add(step(
         "tests", Run(["uv", "run", "--frozen", "--no-sync", "pytest"], cwd=config.path(settings.project)),
         kind=Kind.UNIT_TEST, speed=Speed.FAST,
-    ), after=(synced,))
-    return (*checks, tested)
+    ), after=(checks["build"],))
+    return (*checks.values(), tested)
 
 
 def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
