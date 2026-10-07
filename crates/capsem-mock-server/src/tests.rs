@@ -2,6 +2,7 @@ use super::*;
 
 mod limits;
 mod responses;
+mod websocket;
 
 #[test]
 fn claude_startup_host_resolves_in_both_fixture_modes() {
@@ -299,7 +300,7 @@ fn dns_answers_are_loopback_unless_routable_is_asked_for() {
 #[test]
 fn websocket_accept_matches_rfc_fixture() {
     assert_eq!(
-        websocket_accept("dGhlIHNhbXBsZSBub25jZQ=="),
+        crate::websocket::accept("dGhlIHNhbXBsZSBub25jZQ=="),
         "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
     );
 }

@@ -1,24 +1,19 @@
 use anyhow::{Context, Result};
-use base64::Engine as _;
 use bytes::Bytes;
 use clap::Parser;
 use flate2::{write::GzEncoder, Compression};
 use futures::future;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::body::Incoming;
-use hyper::header::{
-    CONNECTION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE,
-};
+use hyper::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, UPGRADE};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::upgrade::Upgraded;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use rcgen::generate_simple_self_signed;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::Serialize;
 use serde_json::{json, Value};
-use sha1::{Digest, Sha1};
 use std::convert::Infallible;
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
@@ -36,10 +31,11 @@ mod limits;
 mod responses;
 mod responses_mcp;
 mod targets;
+mod websocket;
 #[cfg(test)]
 use dns::{dns_response, dns_response_for};
 use dns::{serve_dns_tcp, serve_dns_udp, DnsAnswers, DNS_FIXTURES};
-use limits::{generated_size_refusal, parse_generated_size, read_ws_frame, write_ws_frame};
+use limits::{generated_size_refusal, parse_generated_size};
 #[cfg(test)]
 use targets::{find_hex32, find_target_txt_path};
 use targets::{shell_write_command, target_dir, write_target};
@@ -263,8 +259,15 @@ fn tls_acceptor() -> Result<TlsAcceptor> {
 async fn handle_request(mut req: Request<Incoming>, state: State, tls: bool) -> Result<Response<RespBody>, Infallible> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
-    if path.starts_with("/ws/") {
-        let response = handle_ws(req, path).await;
+    if path.starts_with("/ws/")
+        || (method == Method::GET
+            && path == "/v1/responses"
+            && req
+                .headers()
+                .get(UPGRADE)
+                .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket")))
+    {
+        let response = websocket::upgrade(req, path, state).await;
         return Ok(response);
     }
 
@@ -1128,66 +1131,6 @@ fn log_request(
     });
     if let Ok(mut file) = file.lock() {
         let _ = writeln!(file, "{record}");
-    }
-}
-
-async fn handle_ws(mut req: Request<Incoming>, path: String) -> Response<RespBody> {
-    let key = req
-        .headers()
-        .get(SEC_WEBSOCKET_KEY)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    if key.is_empty() {
-        return response(StatusCode::BAD_REQUEST, Bytes::new(), "text/plain");
-    }
-    let accept = websocket_accept(&key);
-    let on_upgrade = hyper::upgrade::on(&mut req);
-    tokio::spawn(async move {
-        if let Ok(upgraded) = on_upgrade.await {
-            let io = TokioIo::new(upgraded);
-            handle_ws_stream(io, path).await;
-        }
-    });
-    Response::builder()
-        .status(StatusCode::SWITCHING_PROTOCOLS)
-        .header(UPGRADE, "websocket")
-        .header(CONNECTION, "Upgrade")
-        .header(SEC_WEBSOCKET_ACCEPT, accept)
-        .body(full(Bytes::new()))
-        .expect("build websocket upgrade")
-}
-
-fn websocket_accept(key: &str) -> String {
-    let mut hasher = Sha1::new();
-    hasher.update(key.as_bytes());
-    hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
-}
-
-async fn handle_ws_stream(mut io: TokioIo<Upgraded>, path: String) {
-    if path == "/ws/close" {
-        let _ = write_ws_frame(&mut io, 0x8, &[]).await;
-        return;
-    }
-    if path == "/ws/ping" {
-        let _ = write_ws_frame(&mut io, 0x9, b"capsem-ping").await;
-        return;
-    }
-    while let Ok(Some((opcode, payload))) = read_ws_frame(&mut io).await {
-        match opcode {
-            0x1 | 0x2 => {
-                let _ = write_ws_frame(&mut io, opcode, &payload).await;
-            }
-            0x8 => {
-                let _ = write_ws_frame(&mut io, 0x8, &[]).await;
-                return;
-            }
-            0x9 => {
-                let _ = write_ws_frame(&mut io, 0xA, &payload).await;
-            }
-            _ => {}
-        }
     }
 }
 

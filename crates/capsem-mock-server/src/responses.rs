@@ -8,16 +8,23 @@ use serde_json::{json, Value};
 
 pub(super) fn reply(payload: Value) -> Response<RespBody> {
     let streaming = payload.get("stream").and_then(Value::as_bool) == Some(true);
-    let message = match responses_mcp::reply(&payload) {
-        Some(Ok(message)) => message,
-        Some(Err(error)) => return response(StatusCode::BAD_REQUEST, Bytes::from(error), "text/plain"),
-        None => ordinary(&payload),
+    let message = match message(&payload) {
+        Ok(message) => message,
+        Err(error) => return response(StatusCode::BAD_REQUEST, Bytes::from(error), "text/plain"),
     };
     if streaming {
         response(StatusCode::OK, stream::stream(message), "text/event-stream")
     } else {
         json_response(message)
     }
+}
+
+pub(super) fn message(payload: &Value) -> Result<Value, String> {
+    responses_mcp::reply(payload).unwrap_or_else(|| Ok(ordinary(payload)))
+}
+
+pub(super) fn events(message: Value) -> Vec<Value> {
+    stream::events(message)
 }
 
 fn ordinary(payload: &Value) -> Value {
