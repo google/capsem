@@ -71,6 +71,12 @@ update. VM lifecycle methods are `start`, `stop`, `pause`, `resume`, `delete`
 and `fork(name)`. A fork returns another `VM` handle. Stats has `summary()` and
 `details()`.
 
+`vm.exec(command, target=models.ExecTarget.VM)` explicitly selects VM diagnostics;
+`target=models.ExecTarget.WORKLOAD` selects the OCI workload. Import `models`
+from `capsem`. Omitted or `None` target keeps the service default: workload
+when present, otherwise VM. A refused workload target is returned as an error;
+the SDK does not switch targets or replay the command.
+
 Objects and enums live in `capsem.models`. `HttpError` exposes the gateway's
 HTTP `status` and response `body`; invalid typed responses raise Pydantic
 `ValidationError`. HTTP `timeout` is the client deadline, while `exec`'s

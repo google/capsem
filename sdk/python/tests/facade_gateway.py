@@ -23,6 +23,7 @@ class GatewayState:
     exec_entered: asyncio.Event = field(default_factory=asyncio.Event)
     exec_release: asyncio.Event = field(default_factory=asyncio.Event)
     wait_for_exec: bool = False
+    exec_status: int | None = None
     container_states: list[str] = field(default_factory=lambda: ["running"])
     preview_session_status: int | None = None
     delays: dict[str, float] = field(default_factory=dict)
@@ -63,6 +64,8 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         if request.path.endswith("/fork"):
             return web.json_response(response_model("ForkResponse", id="forked-id", name=json.loads(body)["name"]))
         if request.path.endswith("/exec"):
+            if state.exec_status is not None:
+                return web.Response(status=state.exec_status, text="exec target unavailable")
             state.exec_entered.set()
             if state.wait_for_exec:
                 await state.exec_release.wait()

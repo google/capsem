@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python SDK VM execution can explicitly select the existing VM or workload
+  target without changing default execution or falling back after refusal.
+
 - Host MCP exposes typed OCI image catalog and prefetch tools through the
   gateway, retaining service admission and credential authority.
 

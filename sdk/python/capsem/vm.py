@@ -77,10 +77,15 @@ class VM(Client):
     async def info(self) -> models.SandboxInfo:
         return await api.get_vm_info(self._transport, id=await self._resolve())
 
-    async def exec(self, command: str, *, timeout_secs: int | None = None) -> ExecResult:
+    async def exec(self, command: str, *, timeout_secs: int | None = None,
+                   target: models.ExecTarget | None = None) -> ExecResult:
+        body = models.ExecRequest.model_validate({
+            "command": command, "timeout_secs": timeout_secs,
+            **({"target": target} if target is not None else {}),
+        })
         response = await api.exec_vm(
             self._transport, id=await self._resolve(),
-            body=models.ExecRequest(command=command, timeout_secs=timeout_secs),
+            body=body,
             request_timeout=command_deadline(self._transport.timeout, timeout_secs),
         )
         return ExecResult.from_wire(response)
