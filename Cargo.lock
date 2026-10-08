@@ -1149,9 +1149,11 @@ name = "capsem-service"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "blake3",
+ "bytes",
  "capsem-api",
  "capsem-assets",
  "capsem-config",
@@ -1165,8 +1167,11 @@ dependencies = [
  "clap",
  "filetime",
  "futures",
+ "http",
  "humantime",
+ "metrics",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry_sdk",
  "rand 0.8.8",
  "reqwest 0.12.28",
