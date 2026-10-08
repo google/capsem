@@ -128,6 +128,71 @@ upstreams = ["127.0.0.1:5353"]
 }
 
 #[test]
+fn one_runtime_snapshot_compiles_every_active_policy_concern() {
+    let active: ActivePolicyFile = toml::from_str(
+        r#"
+[user_rules.profiles.rules.runtime_http]
+name = "runtime_http"
+action = "allow"
+priority = 10
+match = 'http.host == "policy.example"'
+
+[corp_rules]
+
+[plugins.credential_broker]
+mode = "rewrite"
+
+[network]
+log_bodies = true
+http_upstream_ports = [80, 3713]
+
+[network.dns]
+upstreams = ["127.0.0.1:5353", "[::1]:5354"]
+
+[network.upstream_overrides."policy.example:443"]
+dial = "127.0.0.1:3713"
+protocol = "http"
+
+[mcp.server_enabled]
+local = false
+"#,
+    )
+    .unwrap();
+
+    let expected_endpoints = active.model_endpoint_registry().unwrap();
+    let runtime = active.compile_runtime().unwrap();
+
+    assert!(runtime
+        .security_rules
+        .rules()
+        .iter()
+        .any(|rule| rule.rule_id == "profiles.rules.runtime_http"));
+    assert_eq!(runtime.plugins["credential_broker"].mode, SecurityPluginMode::Rewrite);
+    assert!(!runtime.mcp.server_enabled["local"]);
+    assert_eq!(runtime.model_endpoints, expected_endpoints);
+    assert!(runtime.network.log_bodies);
+    assert_eq!(runtime.network.http_upstream_ports, vec![80, 3713]);
+    assert_eq!(
+        runtime.network.upstream_overrides["policy.example:443"].dial,
+        "127.0.0.1:3713"
+    );
+    assert_eq!(
+        runtime.dns_upstreams,
+        vec!["127.0.0.1:5353".parse().unwrap(), "[::1]:5354".parse().unwrap()]
+    );
+}
+
+#[test]
+fn runtime_snapshot_refuses_an_invalid_dns_upstream_without_fallback() {
+    let mut active =
+        ActivePolicyFile::from_settings_and_corp(&SettingsFile::default(), &SettingsFile::default()).unwrap();
+    active.network.dns.upstreams = vec!["resolver.example:domain".into()];
+
+    let error = active.compile_runtime().err().expect("invalid DNS must fail");
+    assert!(error.contains("resolver.example:domain"), "{error}");
+}
+
+#[test]
 fn mcp_servers_merge_settings_under_corp() {
     let settings = parse(
         r#"
