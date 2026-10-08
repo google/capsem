@@ -383,6 +383,18 @@ async fn plugin_edits_through_the_router_change_the_listed_config() {
     assert_eq!(edited["config"]["detection_level"], "critical");
     assert_eq!(edited["overridden"], true);
 
+    let (status, list) = route_request(app.clone(), axum::http::Method::GET, "/plugins/list", None).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let listed = list["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|plugin| plugin["id"] == "dummy_pre_eicar")
+        .expect("edited plugin remains listed");
+    assert_eq!(listed["config"]["mode"], "block");
+    assert_eq!(listed["config"]["detection_level"], "critical");
+    assert_eq!(listed["overridden"], true);
+
     let (status, info) = route_request(
         app.clone(),
         axum::http::Method::GET,

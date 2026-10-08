@@ -74,6 +74,7 @@ pub(crate) fn test_state(
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path: asset_status_path_for_run_dir(&run_dir),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        plugin_policy_cache: Mutex::new(Default::default()),
         host_ledger: test_host_ledger(&run_dir),
         host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
