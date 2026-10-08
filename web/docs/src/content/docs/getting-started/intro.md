@@ -1,6 +1,6 @@
 ---
 title: Introduction
-description: Introduction to Capsem.
+description: What is Capsem?
 sidebar:
   order: 0
 ---

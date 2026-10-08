@@ -101,10 +101,15 @@ Link to marketing for rationale; keep technical truth in one canonical place.
 
 Every doc page must include `title` and `description`. Starlight handles `lastUpdated` from git history automatically. No `layout:` field -- Starlight provides its own.
 
+The `description` is always the reader's question that the page answers,
+phrased as a direct question ending in `?`. Keep it specific to the page's
+scope; do not use a summary, slogan, or imperative. Apply this rule to every
+new page and whenever an existing page is rewritten.
+
 ```markdown
 ---
 title: Page Title
-description: One-line summary for SEO and sidebar tooltips.
+description: How do I install Capsem on my computer?
 sidebar:
   order: 10
 ---

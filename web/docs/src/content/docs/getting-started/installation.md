@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install Capsem on macOS or Linux and check that it is ready.
+description: How do I install Capsem on macOS or Linux?
 sidebar:
   order: 1
 ---
