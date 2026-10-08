@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use super::*;
 use crate::{LoopbackRedirect, OAuthAttempt, OAuthPolicy};
 
-mod fixture;
+pub(super) mod fixture;
 use fixture::{Fixture, Reply};
 
 const TOKEN: &str = r#"{"access_token":"private-access","refresh_token":"private-refresh","id_token":"private-id","expires_in":60,"refresh_token_expires_in":120,"scope":"scope.read","token_type":"Bearer","extra":"ignored"}"#;
@@ -269,6 +269,7 @@ fn authorization_url_uses_explicit_profile_and_debug_hides_state() {
     .unwrap();
     let params = owner.authorization(now).unwrap();
     let state = params.state.to_string();
+    let nonce = params.nonce.to_string();
     let url = client.authorization_url(params).unwrap();
     let parsed = url::Url::parse(url.as_str()).unwrap();
     assert_eq!(parsed.host_str(), Some("accounts.google.com"));
@@ -280,7 +281,9 @@ fn authorization_url_uses_explicit_profile_and_debug_hides_state() {
     assert_eq!(values["scope"], "scope.read scope.write");
     assert_eq!(values["code_challenge_method"], "S256");
     assert_eq!(values["state"], state);
+    assert_eq!(values["nonce"], nonce);
     assert!(!format!("{url:?}").contains(&state));
+    assert!(!format!("{url:?}").contains(&nonce));
 }
 
 #[test]

@@ -72,9 +72,7 @@ impl Fixture {
                         let content_type = request
                             .headers()
                             .get("content-type")
-                            .unwrap()
-                            .to_str()
-                            .unwrap()
+                            .map_or("", |value| value.to_str().unwrap())
                             .to_string();
                         let bytes = request.into_body().collect().await.unwrap().to_bytes();
                         let pairs = url::form_urlencoded::parse(&bytes).into_owned().collect::<Vec<_>>();

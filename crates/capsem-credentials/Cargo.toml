@@ -25,6 +25,9 @@ http-body-util = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true }
+jsonwebtoken = { version = "11.1", default-features = false }
+ring = "0.17"
+signature = "2.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

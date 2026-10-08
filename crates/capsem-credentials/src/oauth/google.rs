@@ -11,6 +11,9 @@ use zeroize::Zeroizing;
 
 use super::{AuthorizationParameters, CallbackExchange, LoopbackRedirect, Secret};
 
+mod identity;
+pub use identity::{GoogleIdentity, OAuthIdentityError};
+
 #[derive(Debug)]
 pub struct GoogleRegistration {
     client_id: String,
@@ -104,6 +107,7 @@ pub struct OAuthTokens {
     access_token: Secret,
     refresh_token: Option<Secret>,
     id_token: Option<Secret>,
+    expected_nonce: Option<Secret>,
     expires_at: Instant,
     refresh_expires_at: Option<Instant>,
     scopes: BTreeSet<String>,
@@ -142,6 +146,7 @@ pub struct GoogleOAuthClient {
     http: reqwest::Client,
     token_endpoint: Url,
     revoke_endpoint: Url,
+    identity_keys_endpoint: Url,
 }
 
 impl GoogleOAuthClient {
@@ -186,6 +191,8 @@ impl GoogleOAuthClient {
             http: build_http(policy, true)?,
             token_endpoint: Url::parse("https://oauth2.googleapis.com/token").expect("fixed Google token URL"),
             revoke_endpoint: Url::parse("https://oauth2.googleapis.com/revoke").expect("fixed Google revocation URL"),
+            identity_keys_endpoint: Url::parse("https://www.googleapis.com/oauth2/v3/certs")
+                .expect("fixed Google JWK URL"),
         })
     }
 
@@ -207,6 +214,7 @@ impl GoogleOAuthClient {
         if params.redirect_uri != bound.uri()
             || params.code_challenge_method != "S256"
             || !base64url_nonce(params.state)
+            || !base64url_nonce(params.nonce)
             || !base64url_nonce(params.code_challenge)
         {
             return Err(OAuthTokenError::InvalidParameters);
@@ -223,6 +231,7 @@ impl GoogleOAuthClient {
             )
             .append_pair("redirect_uri", params.redirect_uri)
             .append_pair("state", params.state)
+            .append_pair("nonce", params.nonce)
             .append_pair("code_challenge", params.code_challenge)
             .append_pair("code_challenge_method", "S256");
         if url.as_str().len() > self.policy.max_request_bytes {
@@ -242,7 +251,9 @@ impl GoogleOAuthClient {
             ("redirect_uri", exchange.redirect_uri()),
         ];
         let body = self.post_form(&self.token_endpoint, &fields, true).await?;
-        self.tokens(&body, started, &self.approved_scopes, true)
+        let mut tokens = self.tokens(&body, started, &self.approved_scopes, true)?;
+        tokens.expected_nonce = Some(exchange.nonce);
+        Ok(tokens)
     }
 
     /// Returns detached replacement material. The connection owner must serialize
@@ -323,7 +334,7 @@ impl GoogleOAuthClient {
             return Err(OAuthTokenError::RequestTooLarge);
         }
         let bytes = bytes::Bytes::from_owner(form);
-        let mut response = self
+        let response = self
             .http
             .post(endpoint.clone())
             .header("content-type", "application/x-www-form-urlencoded")
@@ -331,6 +342,10 @@ impl GoogleOAuthClient {
             .send()
             .await
             .map_err(network_error)?;
+        self.read_response(response).await
+    }
+
+    async fn read_response(&self, mut response: reqwest::Response) -> Result<Zeroizing<Vec<u8>>, OAuthTokenError> {
         if response
             .content_length()
             .is_some_and(|length| length > self.policy.max_response_bytes as u64)
@@ -409,6 +424,7 @@ impl GoogleOAuthClient {
             access_token: response.access_token,
             refresh_token: response.refresh_token,
             id_token: response.id_token,
+            expected_nonce: None,
             expires_at,
             refresh_expires_at,
             scopes,

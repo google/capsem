@@ -14,8 +14,8 @@ use zeroize::Zeroizing;
 mod google;
 mod listener;
 pub use google::{
-    GoogleOAuthClient, GoogleRegistration, OAuthAuthorizationUrl, OAuthHttpPolicy, OAuthProviderError, OAuthTokenError,
-    OAuthTokens,
+    GoogleIdentity, GoogleOAuthClient, GoogleRegistration, OAuthAuthorizationUrl, OAuthHttpPolicy, OAuthIdentityError,
+    OAuthProviderError, OAuthTokenError, OAuthTokens,
 };
 pub use listener::{OAuthListener, OAuthListenerError, OAuthListenerPolicy};
 
@@ -119,6 +119,7 @@ impl fmt::Debug for Secret {
 #[derive(Debug)]
 struct Pending {
     state: Secret,
+    nonce: Secret,
     verifier: Secret,
     challenge: String,
 }
@@ -126,6 +127,7 @@ struct Pending {
 /// Borrowed values for the host's authorization URL builder, never a token grant.
 pub struct AuthorizationParameters<'a> {
     pub state: &'a str,
+    pub nonce: &'a str,
     pub code_challenge: &'a str,
     pub code_challenge_method: &'static str,
     pub redirect_uri: &'a str,
@@ -145,11 +147,15 @@ impl fmt::Debug for AuthorizationParameters<'_> {
 #[derive(Debug)]
 pub struct CallbackExchange {
     code: Secret,
+    nonce: Secret,
     verifier: Secret,
     redirect_uri: String,
 }
 
 impl CallbackExchange {
+    pub fn nonce(&self) -> &str {
+        self.nonce.expose()
+    }
     pub fn code(&self) -> &str {
         self.code.expose()
     }
@@ -186,6 +192,7 @@ impl OAuthAttempt {
             state: OAuthState::Pending,
             pending: Some(Pending {
                 state,
+                nonce: random_secret()?,
                 verifier,
                 challenge,
             }),
@@ -197,6 +204,7 @@ impl OAuthAttempt {
         let pending = self.pending.as_ref().ok_or(OAuthError::Inactive(self.state))?;
         Ok(AuthorizationParameters {
             state: pending.state.expose(),
+            nonce: pending.nonce.expose(),
             code_challenge: &pending.challenge,
             code_challenge_method: "S256",
             redirect_uri: self.redirect.uri(),
@@ -242,6 +250,7 @@ impl OAuthAttempt {
                 self.state = OAuthState::Consumed;
                 Ok(CallbackExchange {
                     code,
+                    nonce: pending.nonce,
                     verifier: pending.verifier,
                     redirect_uri: self.redirect.uri.clone(),
                 })

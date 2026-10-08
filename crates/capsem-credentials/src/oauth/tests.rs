@@ -3,6 +3,35 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
+#[test]
+fn identity_nonce_is_distinct_secret_and_bound_to_the_one_use_exchange() {
+    let now = Instant::now();
+    let mut owner = OAuthAttempt::new(
+        LoopbackRedirect::new("127.0.0.1:4123".parse().unwrap(), "/callback").unwrap(),
+        OAuthPolicy {
+            lifetime: Duration::from_secs(5),
+            max_callback_bytes: 1024,
+        },
+        now,
+    )
+    .unwrap();
+    let params = owner.authorization(now).unwrap();
+    let nonce = params.nonce.to_owned();
+    let state = params.state.to_owned();
+    assert_eq!(nonce.len(), 43);
+    assert_ne!(nonce, state);
+    assert_ne!(nonce, params.code_challenge);
+    assert!(!format!("{params:?}").contains(&nonce));
+    let exchange = owner
+        .accept(&format!("http://127.0.0.1:4123/callback?state={state}&code=code"), now)
+        .unwrap();
+    assert_eq!(exchange.nonce(), nonce);
+    assert!(!format!("{exchange:?}").contains(&nonce));
+    assert!(owner
+        .accept(&format!("http://127.0.0.1:4123/callback?state={state}&code=code"), now)
+        .is_err());
+}
+
 fn redirect() -> LoopbackRedirect {
     LoopbackRedirect::new("127.0.0.1:4123".parse().unwrap(), "/google/callback").unwrap()
 }
