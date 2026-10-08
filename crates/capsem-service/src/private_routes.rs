@@ -3,57 +3,26 @@
 //! with. Traffic never comes here: every protocol rides each member's cable
 //! to the network's switch (`switches`).
 //!
-//! The owner proves itself with the secret minted for its VM at spawn.
+//! The owner proves itself with the kernel identity of its service connection.
 use super::*;
 
-const OWNER_SECRET_FILE: &str = "owner-secret";
-
-/// Mint the secret an owner will show, and leave it in its session directory
-/// for that owner alone.
-pub(super) fn mint_owner_secret(session_dir: &std::path::Path) -> Result<String> {
-    let secret = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
-    let path = session_dir.join(OWNER_SECRET_FILE);
-    let mut file = std::fs::OpenOptions::new();
-    file.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        file.mode(0o600);
-    }
-    std::io::Write::write_all(
-        &mut file.open(&path).with_context(|| format!("create {}", path.display()))?,
-        secret.as_bytes(),
-    )
-    .with_context(|| format!("write {}", path.display()))?;
-    Ok(secret)
-}
-
-fn secrets_match(presented: &str, expected: &str) -> bool {
-    // Same length, then every byte compared: a mismatch costs the same as a
-    // match, so timing says nothing about how much of the secret was right.
-    presented.len() == expected.len()
-        && presented
-            .bytes()
-            .zip(expected.bytes())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0
-}
-
 /// The asker is the running owner of `vm`, or nobody.
-fn owner_of(state: &ServiceState, vm: &str, secret: &str) -> Result<(), AppError> {
-    let expected = state
+fn owner_of(state: &ServiceState, vm: &str, peer: ServicePeer) -> Result<(), AppError> {
+    let owner = state
         .instances
         .lock()
         .unwrap()
         .get(vm)
-        .map(|instance| instance.owner_secret.clone());
-    match expected {
-        Some(minted) if secrets_match(secret, &minted) => Ok(()),
-        _ => Err(AppError(
-            StatusCode::FORBIDDEN,
-            format!("VM {vm} has no running owner presenting this secret"),
-        )),
-    }
+        .map(owner_connection::OwnerConnection::capture)
+        .transpose()
+        .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
+    let identity = peer
+        .0
+        .ok_or_else(|| AppError(StatusCode::FORBIDDEN, "service peer identity unavailable".into()))?;
+    owner
+        .ok_or_else(|| AppError(StatusCode::FORBIDDEN, format!("VM {vm} has no running owner")))?
+        .authenticate_identity(state, identity)
+        .map_err(|error| AppError(StatusCode::FORBIDDEN, error))
 }
 
 /// What a VM is called on the private zone: its display name.
@@ -113,9 +82,10 @@ async fn visible_to(state: &ServiceState, source_vm: &str) -> Vec<Visible> {
 /// member across the asker's networks has that name.
 pub(super) async fn handle_private_resolve(
     State(state): State<Arc<ServiceState>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<ServicePeer>,
     Json(request): Json<PrivateResolveRequest>,
 ) -> Result<Json<PrivateResolveResponse>, AppError> {
-    owner_of(&state, &request.source_vm, &request.owner_secret)?;
+    owner_of(&state, &request.source_vm, peer)?;
     let visible = visible_to(&state, &request.source_vm).await;
     let found = match (&request.name, request.address) {
         (Some(name), None) => {

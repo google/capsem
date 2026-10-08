@@ -28,6 +28,17 @@ impl OwnerConnection {
         self.validate(state, false)
     }
 
+    pub(crate) fn authenticate_identity(
+        &self,
+        state: &ServiceState,
+        identity: peer::PeerIdentity,
+    ) -> Result<(), String> {
+        if identity != self.identity {
+            return Err("Unix peer is not the granted VM owner".into());
+        }
+        self.validate(state, false)
+    }
+
     pub(crate) fn capture(instance: &InstanceInfo) -> Result<Self, String> {
         Ok(Self {
             id: instance.id.clone(),

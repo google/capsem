@@ -274,10 +274,6 @@ async fn network_logs_page_with_a_cursor_and_refuse_a_foreign_one() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-fn owner_secret(state: &ServiceState, vm: &str, secret: &str) {
-    state.instances.lock().unwrap().get_mut(vm).unwrap().owner_secret = secret.into();
-}
-
 /// The TCP admission rows of a logs page; a running member's link rows
 /// (these fake owners have no seat, so theirs say `block`) sit beside them.
 /// A fake owner's link seat: answers LinkAttach with its handoff socket,
@@ -838,7 +834,73 @@ async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
 }
 
 async fn private_resolve(state: &Arc<ServiceState>, request: serde_json::Value) -> (StatusCode, serde_json::Value) {
-    route_request(app(state), Method::POST, "/networks/private/resolve", Some(request)).await
+    private_resolve_from(state, request, std::process::id()).await
+}
+
+async fn private_resolve_from(
+    state: &Arc<ServiceState>,
+    request: serde_json::Value,
+    pid: u32,
+) -> (StatusCode, serde_json::Value) {
+    let peer = ServicePeer(Some(capsem_foundation::unix::peer::PeerIdentity {
+        pid: capsem_foundation::unix::process::ProcessId::try_from(pid).unwrap(),
+        uid: capsem_foundation::unix::process::current_uid(),
+    }));
+    let app = app(state).layer(axum::extract::connect_info::MockConnectInfo(peer));
+    route_request(app, Method::POST, "/networks/private/resolve", Some(request)).await
+}
+
+#[test]
+fn private_name_wrong_process_client() {
+    let Ok(socket) = std::env::var("CAPSEM_TEST_PRIVATE_NAME_SOCKET") else {
+        return;
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (status, _) = runtime
+        .block_on(capsem_core::service_uds::post_json(
+            std::path::Path::new(&socket),
+            "/networks/private/resolve",
+            &json!({"source_vm": "vm-a", "name": "vm-a"}),
+        ))
+        .unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN.as_u16());
+}
+
+#[tokio::test]
+async fn private_names_reject_a_real_same_uid_wrong_process() {
+    let (state, dir) = make_test_state_with_tempdir();
+    insert_fake_instance(&state, "vm-a", std::process::id());
+    let socket = dir.path().join("private-name-peer.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let router = app(&state).into_make_service_with_connect_info::<ServicePeer>();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (owner_status, _) = capsem_core::service_uds::post_json(
+        &socket,
+        "/networks/private/resolve",
+        &json!({"source_vm": "vm-a", "name": "nobody"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        owner_status,
+        StatusCode::NOT_FOUND.as_u16(),
+        "the registered owner passes authentication before name lookup"
+    );
+    let status = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::network_routes::private_name_wrong_process_client",
+            "--nocapture",
+        ])
+        .env("CAPSEM_TEST_PRIVATE_NAME_SOCKET", &socket)
+        .status()
+        .await
+        .unwrap();
+    server.abort();
+    assert!(status.success(), "wrong-process probe failed: {status}");
 }
 
 #[tokio::test]
@@ -855,7 +917,6 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         insert_fake_instance(&state, id, std::process::id());
         state.instances.lock().unwrap().get_mut(id).unwrap().name = name.into();
     }
-    owner_secret(&state, "vm-a", "secret-a");
     // Each VM but vm-a is in one network, so its lease there is its address.
     let mut addresses: HashMap<&str, String> = HashMap::new();
     let (_, team) = create_network(&state, "team").await;
@@ -892,7 +953,7 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         addresses.insert(vm, lease);
     }
     let ask = |name: Option<&str>, address: Option<&str>| {
-        let mut request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a" });
+        let mut request = json!({ "source_vm": "vm-a" });
         if let Some(name) = name {
             request["name"] = json!(name);
         }
@@ -938,9 +999,11 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
     let (status, _) = private_resolve(&state, ask(Some("beta.team"), Some(&addresses["vm-b"]))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    let mut forged = ask(Some("beta.team"), None);
-    forged["owner_secret"] = json!("wrong");
-    assert_eq!(private_resolve(&state, forged).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(
+        private_resolve_from(&state, ask(Some("beta.team"), None), 1).await.0,
+        StatusCode::FORBIDDEN,
+        "a same-UID process outside the registered owner PID is not authority"
+    );
 
     // Leaving takes the name with it at once.
     let (status, _) = route_request(

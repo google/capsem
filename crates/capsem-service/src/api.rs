@@ -7,7 +7,6 @@ use std::net::Ipv4Addr;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct PrivateResolveRequest {
     pub source_vm: String,
-    pub owner_secret: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

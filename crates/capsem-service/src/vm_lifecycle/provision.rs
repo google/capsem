@@ -169,7 +169,6 @@ impl ServiceState {
         }
 
         let process_log_path = session_dir.join("process.log");
-        let owner_secret = private_routes::mint_owner_secret(&session_dir)?;
         let process_log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -343,7 +342,6 @@ impl ServiceState {
                 persistent,
                 env,
                 forked_from: from_name,
-                owner_secret,
             },
         );
         drop(instances);
