@@ -97,7 +97,6 @@ pub(super) fn setup_vm_with_workspace_and_uds(
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 }

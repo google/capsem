@@ -201,7 +201,6 @@ fn resolve_rejects_symlink_escape() {
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 
@@ -235,7 +234,6 @@ fn resolve_valid_path_inside_workspace() {
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 

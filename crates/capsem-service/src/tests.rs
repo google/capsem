@@ -152,7 +152,6 @@ pub(crate) fn test_instance() -> InstanceInfo {
         persistent: false,
         env: None,
         forked_from: None,
-        owner_secret: String::new(),
     }
 }
 
