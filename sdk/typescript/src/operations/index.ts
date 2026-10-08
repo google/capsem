@@ -33,6 +33,7 @@ export {getVmStatsDetail} from "./getVmStatsDetail.js";
 export {getVmStatsSummary} from "./getVmStatsSummary.js";
 export {getVmStatus} from "./getVmStatus.js";
 export {getVmTimeline} from "./getVmTimeline.js";
+export {injectCredential} from "./injectCredential.js";
 export {listImages} from "./listImages.js";
 export {listMcpServers} from "./listMcpServers.js";
 export {listMcpTools} from "./listMcpTools.js";

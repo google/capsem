@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TypeScript SDK exposes credential injection with explicit storage, deadlines
+  and cancellation through the authenticated gateway.
+
 - Python SDK exposes credential injection with file or memory storage and
   redacted request diagnostics.
 
