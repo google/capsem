@@ -527,6 +527,7 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
     assert workspace_evidence.parent == Path(evidence), RATIONALE
     assert config["suites"]["pytest"]["coverage_flags"] == [
         "--cov=build_system/builder",
+        "--cov=integrations/inspect-ai/inspect_capsem",
         f"--cov-report=xml:{coverage}/python/codecov.xml",
     ], RATIONALE
     assert nextest["store"]["dir"] == f"{coverage}/nextest", RATIONALE

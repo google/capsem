@@ -2018,7 +2018,13 @@ building = ["frontend-build", "docs", "site"]
 # `tests/test_gate_*.py` to appear here, since by construction those need
 # neither.
 source_contract = [
-    "integrations/inspect-ai/tests/",
+    "integrations/inspect-ai/tests/containers/test_compose_fields.py",
+    "integrations/inspect-ai/tests/containers/test_compose_inputs.py",
+    "integrations/inspect-ai/tests/containers/test_compose_interpolation.py",
+    "integrations/inspect-ai/tests/containers/test_compose_options.py",
+    "integrations/inspect-ai/tests/containers/test_dockerfile_ca.py",
+    "integrations/inspect-ai/tests/containers/test_dockerfile_heredoc.py",
+    "integrations/inspect-ai/tests/containers/test_dockerfile_metadata.py",
     "tests/qualification/test_candidate.py",
     "build_system/tests/gate/test_gate_observation.py",
     "build_system/tests/gate/test_gate_observation_startup.py",

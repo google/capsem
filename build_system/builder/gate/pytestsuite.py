@@ -153,7 +153,7 @@ def citadel(config: GateConfig) -> Suite:
 
 
 def collection(config: GateConfig) -> Step:
-    """Strictly collect Python roots and declared source-contract directories."""
+    """Strictly collect Python roots and external source-contract files."""
     settings = config.suites.pytest
     return step(
         "pytest.collection",
@@ -162,7 +162,7 @@ def collection(config: GateConfig) -> Step:
                 config,
                 settings.root,
                 settings.build_system_root,
-                *(path for path in config.suites.source_contract if path.endswith("/")),
+                *(path for path in config.suites.source_contract if not path.startswith((settings.root, settings.build_system_root))),
                 *settings.collection_flags,
             )
         ),
