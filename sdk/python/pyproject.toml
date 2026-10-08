@@ -1,6 +1,6 @@
 [project]
 name = "capsem"
-version = "0.6.3"
+version = "0.7.0"
 description = "Typed async client for the Capsem HTTP gateway"
 requires-python = ">=3.11"
 dependencies = ["aiohttp>=3.12,<4", "pydantic>=2.10,<3", "yarl>=1.20,<2"]

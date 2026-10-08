@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of timing out at the ordinary 30-second request deadline, while
   preserving explicit deadlines and cancellation without replaying creation.
 
+### Changed
+
+- Python SDK distributions use the 0.7.0 client version.
+
 ### Added
 
 - Rust SDK exposes the registry image catalog and prefetch through
