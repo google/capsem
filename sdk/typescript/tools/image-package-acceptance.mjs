@@ -28,7 +28,7 @@ assert.ok(!lstatSync(packageRoot).isSymbolicLink());
 function readJson(path) { return JSON.parse(readFileSync(path, 'utf8')); }
 const manifest = /** @type {Manifest} */ (readJson(join(packageRoot, 'package.json')));
 const sourceManifest = /** @type {Manifest} */ (readJson(join(source, 'sdk/typescript/package.json')));
-// This local pack omits the project's prepack build hook from its manifest.
+// pnpm normalizes publication manifests by omitting the prepack build hook.
 const packedManifest = {...sourceManifest, scripts: {...sourceManifest.scripts}};
 delete packedManifest.scripts.prepack;
 assert.deepEqual(manifest, packedManifest);

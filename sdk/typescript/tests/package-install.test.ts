@@ -55,18 +55,21 @@ function inventory(directory: string, base = directory): Record<string, string> 
 it('installs and exercises the actual SDK tarball without checkout or development dependencies', () => {
   const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) as Manifest;
   const consumerNode = process.env.CAPSEM_SDK_PACKAGE_NODE ?? process.execPath;
+  const selectedArchive = process.env.CAPSEM_SDK_PACKAGE_ARCHIVE;
   const fixture = mkdtempSync(join(tmpdir(), 'capsem-sdk-package-'));
   expect(relative(root, fixture).startsWith(`..${sep}`)).toBe(true);
   const archiveDirectory = join(fixture, 'archive');
   mkdirSync(archiveDirectory);
   try {
-    execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', archiveDirectory], {
+    if (selectedArchive) copyFileSync(selectedArchive, join(archiveDirectory, 'selected-sdk.tgz'));
+    else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', archiveDirectory], {
       cwd: source, stdio: 'pipe', timeout: 15_000,
     });
     const archives = readdirSync(archiveDirectory).filter(name => name.endsWith('.tgz'));
     expect(archives).toHaveLength(1);
     const archive = join(archiveDirectory, archives[0]!);
     const digest = sha(archive);
+    if (selectedArchive) expect(digest).toBe(sha(selectedArchive));
     execFileSync('tar', ['-xzf', archive, '-C', archiveDirectory], {timeout: 5000});
     const files = inventory(join(archiveDirectory, 'package'));
     const receipt = join(fixture, 'payload.json');
@@ -110,6 +113,8 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
       '/vms/restore-vm/resume', '/vms/restore-vm/info', '/vms/slow/info',
     ]);
     expect(sha(archive)).toBe(digest);
+    if (selectedArchive) expect(sha(selectedArchive)).toBe(digest);
+    if (process.env.CAPSEM_SDK_PACKAGE_RECEIPT) copyFileSync(output, process.env.CAPSEM_SDK_PACKAGE_RECEIPT);
 
     const entrypoint = join(modules, manifest.name, 'dist/index.js');
     const original = readFileSync(entrypoint);
