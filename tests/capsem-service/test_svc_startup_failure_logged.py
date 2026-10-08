@@ -3,7 +3,7 @@
 The gate and the installer launch capsem-service detached and, when it dies
 before listening, point at its log. A startup error returned from
 `run_service` went only to stderr, which nobody reads: a dev build refusing
-an older installed ledger left a service log that ended at "sqlite mmap
+a malformed installed ledger left a service log that ended at "sqlite mmap
 telemetry recorded" with no cause anywhere.
 """
 
@@ -25,10 +25,11 @@ def test_a_startup_error_is_written_to_the_service_log() -> None:
     home_dir, run_dir = make_service_home_run_dirs()
     sessions = home_dir / "sessions"
     sessions.mkdir()
-    # A host ledger without archive_state: this build refuses to open it.
-    with closing(sqlite3.connect(sessions / "host.db")) as legacy:
-        legacy.execute("CREATE TABLE net_events (id INTEGER PRIMARY KEY)")
-        legacy.commit()
+    # A malformed current ledger must fail loudly. A pre-v4 ledger is kept
+    # aside and replaced, so it cannot exercise the startup failure path.
+    with closing(sqlite3.connect(sessions / "host.db")) as broken:
+        broken.execute("CREATE TABLE archive_state (id INTEGER PRIMARY KEY)")
+        broken.commit()
     sign_binary(PROCESS_BINARY)
     sign_binary(SERVICE_BINARY)
     env = {
@@ -60,6 +61,6 @@ def test_a_startup_error_is_written_to_the_service_log() -> None:
     logs = sorted(run_dir.glob("service*.log"))
     assert logs, f"no service log in {run_dir}"
     text = "".join(path.read_text() for path in logs)
-    assert "refusing implicit v2 migration" in text, (
+    assert "archive_state must contain exactly one row" in text, (
         "the cause of a failed start must reach the service log, not only stderr"
     )
