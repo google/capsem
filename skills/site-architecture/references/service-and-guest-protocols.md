@@ -25,12 +25,14 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 ```
 
 **Entry points for exec:**
-- `capsem exec <id> "cmd"` -> service HTTP `/exec/{id}` -> process IPC -> vsock
+- `capsem exec <id> "cmd"` -> service HTTP `/vms/{id}/exec` -> process IPC -> vsock
 - `capsem run "cmd"` -> service HTTP `/run` -> provision + exec + destroy
 - MCP `capsem_exec` / `capsem_run` -> authenticated gateway HTTP -> same service path
 
 **Entry point for interactive shell:**
-- `capsem shell [id]` -> UDS IPC directly to capsem-process -> `StartTerminalStream` -> vsock:5001
+- `capsem shell [id]` -> capsem-tui -> authenticated gateway HTTP -> service
+  `/vms/{id}/stream` -> owner IPC `StartTerminalStream` -> vsock:5001.
+  The CLI and TUI attach through the service stream; they do not dial a VM owner socket.
 
 ### IPC protocols
 
