@@ -24,6 +24,7 @@ pub fn openapi() -> OpenApi {
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
     doc.get::<ContainerStatusResponse>("/vms/{id}/container", "getVmContainer");
     doc.images();
+    doc.post::<CredentialInjectRequest, CredentialInjectResponse>("/credentials/inject", "injectCredential");
     doc.exposures();
     doc.post::<ExecRequest, ExecResponse>("/vms/{id}/exec", "execVm");
     doc.post::<ForkRequest, ForkResponse>("/vms/{id}/fork", "forkVm");

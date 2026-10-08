@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The shared gateway contract describes credential injection with file or
+  memory storage and responses containing only opaque references.
+
 - Rust SDK exposes the registry image catalog and prefetch through
   `Hypervisor.images()`, with typed disk states and per-call registry access.
 
