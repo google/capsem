@@ -125,6 +125,7 @@ impl fmt::Debug for GoogleConnection {
 pub struct GoogleAccessLease {
     owner: Weak<Core>,
     revision: u64,
+    authorization_generation: u64,
     tokens: Arc<OAuthTokens>,
 }
 impl fmt::Debug for GoogleAccessLease {
@@ -135,6 +136,18 @@ impl fmt::Debug for GoogleAccessLease {
     }
 }
 impl GoogleAccessLease {
+    pub(crate) fn with_authorization<T>(
+        &self,
+        now: Instant,
+        generation: u64,
+        required: &std::collections::BTreeSet<String>,
+        use_token: impl FnOnce(&str) -> T,
+    ) -> Result<T, GoogleConnectionError> {
+        if generation != self.authorization_generation {
+            return Err(GoogleConnectionError::RevisionChanged);
+        }
+        self.with_scopes(now, required, use_token)
+    }
     pub fn with_scopes<T>(
         &self,
         now: Instant,
@@ -278,6 +291,7 @@ impl GoogleConnection {
         Ok(GoogleAccessLease {
             owner: Arc::downgrade(&self.0),
             revision: record.revision,
+            authorization_generation: record.authorization_generation,
             tokens: record.tokens.ok_or(GoogleConnectionError::Unavailable)?,
         })
     }
@@ -478,4 +492,4 @@ impl GoogleConnection {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

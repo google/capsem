@@ -12,6 +12,10 @@ use zeroize::Zeroizing;
 use super::{AuthorizationParameters, CallbackExchange, LoopbackRedirect, Secret};
 
 mod connection;
+#[cfg(test)]
+pub(crate) use connection::tests::setup as test_connection;
+#[cfg(test)]
+pub(crate) use tests::fixture::Reply as TestReply;
 mod identity;
 pub use connection::{
     GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionState,

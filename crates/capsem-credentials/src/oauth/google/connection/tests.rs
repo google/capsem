@@ -16,7 +16,9 @@ const SUBJECT: &str = "private-connection-subject";
 const JWKS: &str = include_str!("../../../../../../tests/fixtures/oauth/identity-jwks-test-only.json");
 const KEY: &[u8] = include_bytes!("../../../../../../tests/fixtures/oauth/identity-signing-test-only.der");
 
-async fn setup(extra: Vec<Reply>) -> (Fixture, Arc<super::super::GoogleOAuthClient>, super::super::OAuthTokens) {
+pub(crate) async fn setup(
+    extra: Vec<Reply>,
+) -> (Fixture, Arc<super::super::GoogleOAuthClient>, super::super::OAuthTokens) {
     setup_subject(SUBJECT, extra).await
 }
 

@@ -12,6 +12,8 @@ use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 mod google;
+#[cfg(test)]
+pub(crate) use google::{test_connection, TestReply};
 mod listener;
 pub use google::{
     GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionState,
