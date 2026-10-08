@@ -53,7 +53,11 @@ fn test_policy(digest: &str, tcp_override: Option<SocketAddr>, dns_upstreams: Ve
             },
         )])
     });
-    BrokerPolicy::new(digest.into(), Arc::new(runtime))
+    BrokerPolicy::new(policy_digest(digest), Arc::new(runtime))
+}
+
+fn policy_digest(label: &str) -> String {
+    format!("blake3:{}", blake3::hash(label.as_bytes()).to_hex())
 }
 
 fn start_broker(
@@ -91,6 +95,7 @@ async fn resolve_override(client: &TestClient, request_id: u64) -> u64 {
         selection_id,
         protocol,
         judged_ip,
+        policy_digest: response_digest,
     } = response
     else {
         panic!("expected a resolved target, got {response:?}");
@@ -98,6 +103,7 @@ async fn resolve_override(client: &TestClient, request_id: u64) -> u64 {
     assert_eq!(response_id, request_id);
     assert_eq!(protocol, UpstreamProtocol::Http);
     assert_eq!(judged_ip, None);
+    assert_eq!(response_digest, policy_digest("policy-a"));
     selection_id
 }
 
@@ -112,12 +118,14 @@ async fn connect_selection(client: &TestClient, request_id: u64, selection_id: u
         request_id: response_id,
         grant_id,
         kind,
+        policy_digest: response_digest,
     } = response
     else {
         panic!("expected a descriptor grant, got {response:?}");
     };
     assert_eq!(response_id, request_id);
     assert_eq!(kind, UpstreamDescriptorKind::Tcp);
+    assert_eq!(response_digest, policy_digest("policy-a"));
     (grant_id, fds.pop().unwrap())
 }
 
@@ -250,10 +258,17 @@ async fn dns_grant_uses_only_the_configured_index() {
             upstream_index: 0,
         })
         .await;
-    let UpstreamGrantResponse::DescriptorGranted { grant_id, kind, .. } = response else {
+    let UpstreamGrantResponse::DescriptorGranted {
+        grant_id,
+        kind,
+        policy_digest: response_digest,
+        ..
+    } = response
+    else {
         panic!("expected a DNS descriptor grant, got {response:?}");
     };
     assert_eq!(kind, UpstreamDescriptorKind::DnsUdp);
+    assert_eq!(response_digest, policy_digest("policy-a"));
     client.send(&UpstreamGrantRequest::Adopted { grant_id }).await;
     let socket = std::net::UdpSocket::from(fds.pop().unwrap());
     socket.set_nonblocking(true).unwrap();
