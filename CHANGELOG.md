@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Settings error text and negative badges remain readable on light and dark
+  surfaces without changing solid-button foregrounds.
+
 - Credential file-lock waits stop after five seconds instead of indefinitely
   delaying startup or an explicit injection behind another writer.
 

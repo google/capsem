@@ -36,7 +36,7 @@
     block: {
       label: 'Block',
       icon: Prohibit,
-      tone: 'text-destructive-foreground border-destructive/30 bg-destructive/10',
+      tone: 'text-destructive-text border-destructive/30 bg-destructive/10',
     },
   };
 
@@ -162,7 +162,7 @@
   </div>
 
   {#if actionError || mcpStore.error}
-    <div class="border border-destructive/40 rounded-lg p-3 text-sm text-destructive-foreground">
+    <div class="border border-destructive/40 rounded-lg p-3 text-sm text-destructive-text">
       {actionError ?? mcpStore.error}
     </div>
   {/if}
