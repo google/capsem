@@ -721,8 +721,8 @@ def test_mock_server_replays_agy_code_assist_stream_envelope() -> None:
         assert function_call["args"]["Cwd"] == "/root"
         assert function_call["args"]["WaitMsBeforeAsync"] == 1000
         assert function_call["args"]["CommandLine"] == (
-            "printf '%s\\n' 0123456789abcdef0123456789abcdef "
-            "> /root/agy-cli-0123456789abcdef0123456789abcdef.txt"
+            "printf '%s\\n' '0123456789abcdef0123456789abcdef' "
+            "> '/root/agy-cli-0123456789abcdef0123456789abcdef.txt'"
         )
         assert first_candidate.get("finishReason") is None
         assert first_response["usageMetadata"]["thoughtsTokenCount"] > 0

@@ -25,8 +25,26 @@ from pathlib import Path
 from typing import TextIO
 
 from capsem_builder.gate.invocation import Command
+from capsem_builder.gate.plan import Plan
 from capsem_builder.gate.proc import Runner
 from capsem_builder.gate.runlogschema import OutputSpan
+
+
+def plan_ancestors(plan: Plan, label: str) -> frozenset[str]:
+    """Declared transitive prerequisites; a label prefix is not a barrier."""
+    if label not in {step.label for step in plan.steps}:
+        raise KeyError(label)
+    parents: dict[str, set[str]] = {}
+    for before, after in plan.edges:
+        parents.setdefault(after, set()).add(before)
+    pending = list(parents.get(label, ()))
+    found: set[str] = set()
+    while pending:
+        before = pending.pop()
+        if before not in found:
+            found.add(before)
+            pending.extend(parents.get(before, ()))
+    return frozenset(found)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 

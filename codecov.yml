@@ -158,6 +158,8 @@ component_management:
         - crates/capsem-core/src/host_state.rs
         - crates/capsem-core/src/container.rs
         - crates/capsem-core/src/container/**
+        - crates/capsem-core/src/managed_sessions.rs
+        - crates/capsem-core/src/managed_sessions/**
 
     - component_id: port-router
       name: Confined Port Router

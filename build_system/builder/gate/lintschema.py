@@ -39,6 +39,9 @@ class LintConfig(Strict):
     markdown: MarkdownLintConfig = MarkdownLintConfig()
     python_roots: tuple[PythonRoot, ...]
     strict_roots: tuple[PythonRoot, ...]
+    strict_ty_search_paths: tuple[Literal["."] | PythonRoot, ...]
+    """Additional strict-tree imports, without shadowing the installed builder."""
+
     ty_search_paths: tuple[Literal["."] | PythonRoot, ...]
     """Runtime import roots Ty cannot infer from the checked file roots."""
 
@@ -59,7 +62,7 @@ class LintConfig(Strict):
     def relaxed_roots(self) -> tuple[str, ...]:
         return tuple(name for name in self.python_roots if name not in self.strict_roots)
 
-    @field_validator("python_roots", "strict_roots", "ty_search_paths")
+    @field_validator("python_roots", "strict_roots", "ty_search_paths", "strict_ty_search_paths")
     @classmethod
     def _no_duplicates(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         """A repeated root checks a tree twice and obscures its ownership."""
@@ -68,7 +71,7 @@ class LintConfig(Strict):
             raise ValueError(f"duplicated: {', '.join(sorted(set(seen)))}")
         return values
 
-    @field_validator("python_roots", "strict_roots", "ty_search_paths")
+    @field_validator("python_roots", "strict_roots", "ty_search_paths", "strict_ty_search_paths")
     @classmethod
     def _stay_inside_the_checkout(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         for value in values:

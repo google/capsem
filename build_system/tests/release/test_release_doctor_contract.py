@@ -1477,7 +1477,7 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     cli_status = _source_text("crates/capsem/src/tests.rs")
     service = _source_text("crates/capsem-service/src/tests/update_routes.rs")
     tray = _source_text("crates/capsem-tray/src/menu/tests.rs")
-    tui = _source_text("crates/capsem-tui/src/tests.rs")
+    tui = _source_text("crates/capsem-tui/src/tests/updates.rs")
     frontend_api = _source_text("web/app/src/lib/__tests__/api.test.ts")
 
     assert "Run `capsem update --assets` separately to refresh VM assets." not in cli
