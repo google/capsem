@@ -31,6 +31,10 @@ The documentation rebuild starts from reader needs and current product
 contracts. The old manual is reference material, not the target information
 architecture or a backlog of stubs to fill.
 
+Capsem 0.7 is the baseline. Architecture and security pages describe the
+agreed final architecture with the security refactoring complete; verify
+against those contracts rather than carrying over older behavior.
+
 1. Wait for the user to specify what to write and which pages to create or edit.
 2. Keep that requested content on the fewest approved pages, using related
    sections and canonical links instead of duplicating explanations.
@@ -90,12 +94,40 @@ manual VM asset releases, and the `release.capsem.org` asset-channel workflow.
 
 ## Writing style
 
-Tight and to the point, like a manual. Organize each approved page around a
-coherent reader task or contract, with related details in sections. No filler,
-marketing pitches, speculative features, or exhaustive tours of internals.
+Write for the person trying to use Capsem. Each section must explain what
+they can do, when it is useful, and how to do it. Lead with the reader's goal,
+then give the steps and the result they should expect. A list of commands is
+not a walkthrough.
+
+- Explain options at their first use: `-n` gives a VM a name so it is kept;
+  `--image` chooses its container and tools. Explain sample names and what
+  placeholders the reader must replace.
+- Complete the path to use: after launching a VM, explain how to access it
+  through the TUI or graphical app, using verified commands and controls.
+  Say where commands run: the reader's computer or inside the VM.
+- Explain features through useful situations. Suspend lets someone pause
+  work and return later; fork lets them duplicate a prepared setup to try a
+  change without altering the original. Explain source and destination names
+  and what they can do with the copy.
+- Use ordinary words such as files, setup, and running programs. Avoid
+  internal terms such as disk state, workload, asset pins, or CPU state in
+  getting-started prose. When a technical term is needed, explain it through
+  its practical consequence rather than assuming the reader knows it.
+- Keep getting started focused on a complete usable path. Put exhaustive
+  options and implementation contracts in reference or architecture, and
+  link there when needed. Minimum content means removing duplication and
+  unnecessary detail, not removing the explanations that make steps usable.
+
+Organize each approved page around a coherent reader task or contract, with
+related details in sections. No filler, marketing pitches, speculative
+features, or exhaustive tours of internals.
 Use tables for comparable settings or interface fields, code examples when
 needed to perform a task, and Mermaid diagrams when they clarify behavior.
 Link to marketing for rationale; keep technical truth in one canonical place.
+
+Before delivering a page, read each section as a new user: can they explain
+why they would use it, follow the steps without guessing, and know what happens
+next? Fix missing explanations before treating a passing build as completion.
 
 ## Frontmatter
 
