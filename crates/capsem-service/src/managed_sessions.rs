@@ -9,6 +9,8 @@ use capsem_core::managed_sessions::{
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+mod grants;
+
 /// Mandatory broker authority supplied by the service, never inferred from
 /// the ownership capability. Failure leaves managed close pending.
 pub trait GrantRetirement: Send + Sync {
@@ -42,20 +44,41 @@ impl Drop for CreationCompletion {
 
 impl ManagedLifecycle {
     pub fn new(state: Arc<ServiceState>, request: ProvisionRequest, grants: Arc<dyn GrantRetirement>) -> Result<Self> {
+        Self::with_grants(state, request, |_, _| grants)
+    }
+
+    pub fn new_with_broker(
+        state: Arc<ServiceState>,
+        request: ProvisionRequest,
+        authority: Arc<capsem_credentials::GrantAuthority>,
+    ) -> Result<Self> {
+        Self::with_grants(state, request, |binding, work| {
+            grants::retirement(authority, binding, work)
+        })
+    }
+
+    fn with_grants(
+        state: Arc<ServiceState>,
+        request: ProvisionRequest,
+        factory: impl FnOnce(&VmBinding, &Arc<Work>) -> Arc<dyn GrantRetirement>,
+    ) -> Result<Self> {
         anyhow::ensure!(
             request.name.is_none() && !request.persistent,
             "managed sessions must be unnamed and ephemeral"
         );
+        let binding = VmBinding::new(new_persistent_vm_id(), uuid::Uuid::new_v4())?;
+        let work = Arc::new(Work {
+            scope: Default::default(),
+            continuation: tokio::sync::Mutex::new(None),
+            cancel: CancellationToken::new(),
+        });
+        let grants = factory(&binding, &work);
         Ok(Self {
             state,
             request: Some(request),
-            binding: VmBinding::new(new_persistent_vm_id(), uuid::Uuid::new_v4())?,
+            binding,
             grants,
-            work: Arc::new(Work {
-                scope: Default::default(),
-                continuation: tokio::sync::Mutex::new(None),
-                cancel: CancellationToken::new(),
-            }),
+            work,
         })
     }
 
@@ -65,6 +88,24 @@ impl ManagedLifecycle {
         state: Arc<ServiceState>,
         snapshot: &Snapshot,
         grants: Arc<dyn GrantRetirement>,
+    ) -> Result<Self> {
+        Self::recover_with_grants(state, snapshot, |_, _| grants)
+    }
+
+    pub fn for_recovery_with_broker(
+        state: Arc<ServiceState>,
+        snapshot: &Snapshot,
+        authority: Arc<capsem_credentials::GrantAuthority>,
+    ) -> Result<Self> {
+        Self::recover_with_grants(state, snapshot, |binding, work| {
+            grants::retirement(authority, binding, work)
+        })
+    }
+
+    fn recover_with_grants(
+        state: Arc<ServiceState>,
+        snapshot: &Snapshot,
+        factory: impl FnOnce(&VmBinding, &Arc<Work>) -> Arc<dyn GrantRetirement>,
     ) -> Result<Self> {
         let binding = snapshot
             .vm()
@@ -76,17 +117,30 @@ impl ManagedLifecycle {
             !id.is_nil() && id.to_string() == binding.id(),
             "managed recovery requires a canonical service VM id"
         );
+        let work = Arc::new(Work {
+            scope: std::sync::OnceLock::from((snapshot.request(), snapshot.generation())),
+            continuation: tokio::sync::Mutex::new(None),
+            cancel: CancellationToken::new(),
+        });
+        let grants = factory(&binding, &work);
         Ok(Self {
             state,
             request: None,
             binding,
             grants,
-            work: Arc::new(Work {
-                scope: std::sync::OnceLock::from((snapshot.request(), snapshot.generation())),
-                continuation: tokio::sync::Mutex::new(None),
-                cancel: CancellationToken::new(),
-            }),
+            work,
         })
+    }
+
+    /// Grant admission requires this continuation's original registry ticket
+    /// and a service-tracked instance with the actual immutable spawn UUID.
+    pub fn credential_binding(&self, ticket: &Ticket) -> Result<capsem_credentials::GrantSession> {
+        let binding = grants::bound_session(ticket, &self.binding, &self.work)?;
+        anyhow::ensure!(
+            self.matching_instance(&self.binding)?,
+            "managed credential owner is unavailable"
+        );
+        Ok(binding)
     }
 
     fn scope(&self, ticket: &Ticket) -> Result<()> {
