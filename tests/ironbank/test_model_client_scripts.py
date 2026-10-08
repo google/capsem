@@ -20,14 +20,21 @@ def test_gemini_replay_uses_release_target_model() -> None:
 
 def test_anthropic_replay_uses_release_target_model() -> None:
     sdk_test = PROJECT_ROOT / "tests" / "ironbank" / "test_model_sdk_ledger.py"
-    mock_server = PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs"
+    mock_sources = [
+        PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / name
+        for name in ("anthropic.rs", "agent_mcp.rs")
+    ]
 
     assert HERMETIC_ANTHROPIC_MODEL == "claude-sonnet-4-6"
     sdk_text = sdk_test.read_text(encoding="utf-8")
-    mock_text = mock_server.read_text(encoding="utf-8")
     assert "HERMETIC_ANTHROPIC_MODEL" in sdk_text
-    assert HERMETIC_ANTHROPIC_MODEL in mock_text
-    for path, text in ((sdk_test, sdk_text), (mock_server, mock_text)):
+    sources = [
+        (sdk_test, sdk_text),
+        *[(path, path.read_text(encoding="utf-8")) for path in mock_sources],
+    ]
+    for path, text in sources:
+        if path in mock_sources:
+            assert HERMETIC_ANTHROPIC_MODEL in text, path
         assert "claude-sonnet-4-20250514" not in text, path
 
 
@@ -37,7 +44,10 @@ def test_agy_noninteractive_script_selects_model_explicitly() -> None:
     assert '"agy",' in script
     assert '"--model",' in script
     assert f'HERMETIC_AGY_MODEL_DISPLAY = "{HERMETIC_AGY_MODEL_DISPLAY}"' in script
-    assert 'emit_result("google", "daily-cloudcode-pa.googleapis.com", "/v1internal:streamGenerateContent"' in script
+    assert (
+        'emit_result("google", "daily-cloudcode-pa.googleapis.com", "/v1internal:streamGenerateContent"'
+        in script
+    )
     assert '"run_command"' in script
     assert '"CommandLine": "printf' in script
     assert '"/api/chat"' not in script
