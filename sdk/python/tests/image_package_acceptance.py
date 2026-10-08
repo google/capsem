@@ -82,6 +82,7 @@ def main() -> None:
     assert "editable" not in (distribution.read_text("direct_url.json") or "").lower()
 
     pin = "registry.example/code@sha256:" + "a" * 64
+    secret, reference = "fixture-injected-secret", "credential:blake3:" + "c" * 64
     received = []
     restore_entered = threading.Event()
     provision = {
@@ -114,6 +115,9 @@ def main() -> None:
             )
 
         def do_POST(self) -> None:
+            if self.path == "/credentials/inject":
+                self.reply({"credential_ref": reference})
+                return
             if self.path in {"/vms/restore-vm/start", "/vms/restore-vm/resume"}:
                 self.reply(provision)
                 return
@@ -122,7 +126,11 @@ def main() -> None:
         def reply(self, body: object) -> None:
             assert self.headers.get("Authorization") == "Bearer fixture-token"
             raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            received.append((self.command, self.path, json.loads(raw) if raw else None))
+            request = json.loads(raw) if raw else None
+            received.append((self.command, self.path, request))
+            if self.path == "/credentials/inject":
+                assert isinstance(body, dict) and isinstance(request, dict)
+                body = {**body, "storage": request["storage"]}
             if self.path.endswith(("/start", "/resume")):
                 restore_entered.set()
                 time.sleep(0.3)
@@ -150,6 +158,20 @@ def main() -> None:
             )
             assert result.resolved == pin
             await hv.images.pull("code")
+            for storage in ("memory", "file"):
+                injected = await hv.credentials.inject("openai", secret, storage=storage)
+                assert injected.credential_ref == reference and injected.storage == storage
+                assert secret not in repr(injected)
+            private = models.CredentialInjectRequest(
+                provider=models.CredentialInjectProvider.OPENAI, value=secret
+            )
+            assert secret not in repr(private)
+            try:
+                models.CredentialInjectRequest.model_validate({"provider": secret, "value": secret})
+            except pydantic.ValidationError as error:
+                assert secret not in str(error) and secret not in repr(error.errors())
+            else:
+                raise AssertionError("invalid installed private input was accepted")
             images = hv.images
         try:
             await images.list()
@@ -205,7 +227,12 @@ def main() -> None:
     assert not thread.is_alive(), "HTTP fixture did not stop"
     image_requests = [request for request in received if request[1].startswith("/images")]
     lifecycle_requests = [request for request in received if request[1].startswith("/vms/")]
-    assert len(image_requests) + len(lifecycle_requests) == len(received)
+    credential_requests = [request for request in received if request[1] == "/credentials/inject"]
+    assert len(image_requests) + len(lifecycle_requests) + len(credential_requests) == len(received)
+    assert credential_requests == [
+        ("POST", "/credentials/inject", {"provider": "openai", "value": secret, "storage": storage})
+        for storage in ("memory", "file")
+    ]
     assert [(method, path) for method, path, _ in image_requests] == [
         ("GET", "/images?refresh=true"),
         ("POST", "/images/pull"),
@@ -241,6 +268,8 @@ def main() -> None:
         "payload_files": len(payload),
         "http_paths": [path for _, path, _ in image_requests],
         "lifecycle_paths": [path for _, path, _ in lifecycle_requests],
+        "credential_paths": [path for _, path, _ in credential_requests],
+        "private_input_redacted": True,
         "isolated": True,
         "ok": True,
     }

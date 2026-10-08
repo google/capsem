@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,7 +20,9 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
     root = Path(__file__).resolve().parents[3]
     config = tomllib.loads((root / "config/gate.toml").read_text())["sdk_python"]
     manifest = tomllib.loads((root / config["manifest"]).read_text())["project"]
-    output = root / config["build_output"]
+    selected = os.environ.get("CAPSEM_SDK_PACKAGE_ARCHIVE_DIR")
+    output = Path(selected) if selected else root / config["build_output"]
+    assert output.is_absolute()
     stem = f"{manifest['name'].replace('-', '_')}-{manifest['version']}"
     archives = list(output.glob(f"{stem}-*.whl" if kind == "wheel" else f"{stem}.tar.gz"))
     assert len(archives) == 1, (
@@ -84,6 +88,8 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
         assert report["ok"] and report["isolated"]
         assert report["sha256"] == digest
         assert report["version"] == manifest["version"]
+        assert report["credential_paths"] == ["/credentials/inject", "/credentials/inject"]
+        assert report["private_input_redacted"] is True
         assert report["python_version"] == list(sys.version_info[:3])
         assert Path(report["executable"]).resolve() == python.resolve()
         assert Path(report["prefix"]).resolve() == prefix.resolve()
@@ -101,5 +107,9 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
             "/vms/restore-vm/info",
             "/vms/slow/info",
         ]
+        if receipt_dir := os.environ.get("CAPSEM_SDK_PACKAGE_RECEIPT_DIR"):
+            destination = Path(receipt_dir)
+            assert destination.is_absolute() and destination.is_dir()
+            shutil.copyfile(report_path, destination / f"python-{kind}-receipt.json")
     assert not work.exists(), "the installed runtime must be removed after acceptance"
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
