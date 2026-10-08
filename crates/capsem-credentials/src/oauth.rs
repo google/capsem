@@ -14,8 +14,9 @@ use zeroize::Zeroizing;
 mod google;
 mod listener;
 pub use google::{
-    GoogleIdentity, GoogleOAuthClient, GoogleRegistration, OAuthAuthorizationUrl, OAuthHttpPolicy, OAuthIdentityError,
-    OAuthProviderError, OAuthTokenError, OAuthTokens,
+    GoogleAccessLease, GoogleConnection, GoogleConnectionError, GoogleConnectionState, GoogleConnectionStatus,
+    GoogleIdentity, GoogleOAuthClient, GoogleRegistration, GoogleRevocationOutcome, OAuthAuthorizationUrl,
+    OAuthConnectionStorage, OAuthHttpPolicy, OAuthIdentityError, OAuthProviderError, OAuthTokenError, OAuthTokens,
 };
 pub use listener::{OAuthListener, OAuthListenerError, OAuthListenerPolicy};
 

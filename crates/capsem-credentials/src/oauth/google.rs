@@ -11,7 +11,12 @@ use zeroize::Zeroizing;
 
 use super::{AuthorizationParameters, CallbackExchange, LoopbackRedirect, Secret};
 
+mod connection;
 mod identity;
+pub use connection::{
+    GoogleAccessLease, GoogleConnection, GoogleConnectionError, GoogleConnectionState, GoogleConnectionStatus,
+    GoogleRevocationOutcome, OAuthConnectionStorage,
+};
 pub use identity::{GoogleIdentity, OAuthIdentityError};
 
 #[derive(Debug)]
