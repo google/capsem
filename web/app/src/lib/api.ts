@@ -3,7 +3,7 @@
 import * as gateway from '@capsem/sdk/operations';
 import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
-import type { ContainerStatusResponse, ImageListResponse } from '@capsem/sdk';
+import type { ContainerStatusResponse, ImageListResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
 import { surfaceLauncherUrl } from './models/surface';
 import type { AssetStatus, UpdateApplyRequest } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
@@ -785,6 +785,11 @@ export async function getVmDetectionStatus(id: string): Promise<SecurityRuleStat
 }
 
 // -- Plugins --
+
+/** Explicit host material; never replay this mutation or fabricate offline success. */
+export function injectCredential(provider: CredentialInjectProvider, value: string, storage: CredentialStorage): Promise<CredentialInjectResponse> {
+  return _sdk.call(transport => gateway.injectCredential(transport, {body: {provider, value, storage}}), false);
+}
 
 export async function listPlugins(): Promise<PluginListResponse> {
   const resp = await _get('/plugins/list');

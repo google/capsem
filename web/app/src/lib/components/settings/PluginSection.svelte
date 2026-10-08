@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CredentialInjectionForm from './CredentialInjectionForm.svelte';
   import { getCredentialBrokerInfo, listPlugins, reloadCredentialBrokerStore, updatePlugin } from '../../api';
   import type {
     CredentialBrokerInfo,
@@ -261,7 +262,7 @@
               <div>
                 <p class="text-sm font-medium text-foreground">{plugin.name}</p>
                 <p class="text-xs text-muted-foreground-1 mt-0.5">
-                  {credentialBrokerInfo?.inventory.length ?? 0} credentials · {credentialBrokerInfo?.grants.enabled ? 'enabled' : 'disabled'}
+                  {credentialBrokerInfo?.inventory.length ?? 0} observed credentials · {credentialBrokerInfo?.grants.enabled ? 'enabled' : 'disabled'}
                 </p>
               </div>
               <button
@@ -343,7 +344,7 @@
                   {/each}
                 </ul>
               {:else}
-                <p class="mt-4 text-xs text-muted-foreground-1">No brokered credentials recorded.</p>
+                <p class="mt-4 text-xs text-muted-foreground-1">No credential activity recorded.</p>
               {/if}
 
               {#if credentialBrokerInfo.corp_constraints.length > 0}
@@ -357,6 +358,7 @@
                 </ul>
               {/if}
             {/if}
+            <CredentialInjectionForm onadded={() => { void loadCredentialBrokerInfo(); }} />
           </div>
         {/if}
       </div>

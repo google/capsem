@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Desktop credential settings accept explicit API keys or tokens with file or
+  memory storage, clear submitted input, and return a copyable reference.
+
 - Rust SDK exposes the matching credential injection resource with file or
   memory storage and opaque reference responses.
 
