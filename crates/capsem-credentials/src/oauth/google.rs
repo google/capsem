@@ -14,8 +14,8 @@ use super::{AuthorizationParameters, CallbackExchange, LoopbackRedirect, Secret}
 mod connection;
 mod identity;
 pub use connection::{
-    GoogleAccessLease, GoogleConnection, GoogleConnectionError, GoogleConnectionState, GoogleConnectionStatus,
-    GoogleRevocationOutcome, OAuthConnectionStorage,
+    GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionState,
+    GoogleConnectionStatus, GoogleRevocationOutcome, OAuthConnectionStorage,
 };
 pub use identity::{GoogleIdentity, OAuthIdentityError};
 

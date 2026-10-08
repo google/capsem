@@ -14,9 +14,10 @@ use zeroize::Zeroizing;
 mod google;
 mod listener;
 pub use google::{
-    GoogleAccessLease, GoogleConnection, GoogleConnectionError, GoogleConnectionState, GoogleConnectionStatus,
-    GoogleIdentity, GoogleOAuthClient, GoogleRegistration, GoogleRevocationOutcome, OAuthAuthorizationUrl,
-    OAuthConnectionStorage, OAuthHttpPolicy, OAuthIdentityError, OAuthProviderError, OAuthTokenError, OAuthTokens,
+    GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionState,
+    GoogleConnectionStatus, GoogleIdentity, GoogleOAuthClient, GoogleRegistration, GoogleRevocationOutcome,
+    OAuthAuthorizationUrl, OAuthConnectionStorage, OAuthHttpPolicy, OAuthIdentityError, OAuthProviderError,
+    OAuthTokenError, OAuthTokens,
 };
 pub use listener::{OAuthListener, OAuthListenerError, OAuthListenerPolicy};
 

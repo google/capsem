@@ -86,6 +86,7 @@ async fn connection_refresh_coalesces_and_disconnect_invalidates_old_leases() {
     let (fixture, client, tokens) = setup(vec![Reply::json(r#"{"access_token":"private-next","refresh_token":"private-rotated","expires_in":60,"token_type":"Bearer"}"#), Reply::json("")]).await;
     let storage = OAuthConnectionStorage::memory(65536).unwrap();
     let connection = client.open_connection(tokens, storage).await.unwrap();
+    let consent = connection.authorization().unwrap();
     let old = connection.access(Instant::now()).await.unwrap();
     assert_eq!(old.with_token(Instant::now(), str::to_owned).unwrap(), "private-access");
     let now = Instant::now() + Duration::from_secs(2);
@@ -105,11 +106,27 @@ async fn connection_refresh_coalesces_and_disconnect_invalidates_old_leases() {
         assert_eq!(result.unwrap(), "private-next");
     }
     assert_eq!(connection.status().revision, 2);
+    assert_eq!(connection.authorization().unwrap().generation, consent.generation);
+    let lease = connection.access(now).await.unwrap();
+    let mut called = false;
+    assert!(lease
+        .with_scopes(now, &BTreeSet::from(["scope.missing".into()]), |_| {
+            called = true;
+        })
+        .is_err());
+    assert!(!called);
+    assert_eq!(
+        lease
+            .with_scopes(now, &BTreeSet::from(["openid".into()]), str::to_owned)
+            .unwrap(),
+        "private-next"
+    );
     assert_eq!(
         connection.disconnect().await.unwrap(),
         GoogleRevocationOutcome::Succeeded
     );
     assert_eq!(connection.status().state, GoogleConnectionState::Disconnected);
+    assert!(connection.authorization().is_err());
     assert!(old.with_token(Instant::now(), str::to_owned).is_err());
     assert!(connection.access(Instant::now()).await.is_err());
     let debug = format!("{connection:?} {old:?}");
@@ -137,6 +154,7 @@ async fn real_file_restart_requires_refresh_and_disconnection_survives_restart()
         .await
         .unwrap();
     let bytes = std::fs::read_to_string(&path).unwrap();
+    let consent = connection.authorization().unwrap();
     assert!(bytes.contains("private-refresh"));
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
@@ -153,6 +171,7 @@ async fn real_file_restart_requires_refresh_and_disconnection_survives_restart()
     )
     .await
     .unwrap();
+    assert_eq!(restored.authorization().unwrap(), consent);
     let lease = restored.access(Instant::now()).await.unwrap();
     assert_eq!(
         lease.with_token(Instant::now(), str::to_owned).unwrap(),
@@ -226,6 +245,7 @@ async fn reauthorization_keeps_the_verified_account_and_invalidates_prior_leases
         .await
         .unwrap();
     let old = connection.access(Instant::now()).await.unwrap();
+    let consent = connection.authorization().unwrap();
     let (_other, _, wrong_tokens) = setup_subject("private-other-subject", vec![]).await;
     assert_eq!(
         connection.reconnect(wrong_tokens).await.unwrap_err(),
@@ -235,6 +255,7 @@ async fn reauthorization_keeps_the_verified_account_and_invalidates_prior_leases
     let (_same, _, right_tokens) = setup(vec![]).await;
     connection.reconnect(right_tokens).await.unwrap();
     assert_eq!(connection.status().revision, 2);
+    assert_ne!(connection.authorization().unwrap().generation, consent.generation);
     assert!(old.with_token(Instant::now(), str::to_owned).is_err());
     assert_eq!(fixture.records.lock().unwrap().len(), 4);
 }

@@ -87,10 +87,11 @@ impl OAuthConnectionStorage {
             })
             .transpose()?;
         let view = RecordView {
-            version: 1,
+            version: 2,
             client_id: &record.client_id,
             subject: record.subject.expose(),
             revision: record.revision,
+            authorization_generation: record.authorization_generation,
             state: record.state,
             saved_at_ms: epoch,
             tokens,
@@ -132,10 +133,12 @@ impl OAuthConnectionStorage {
         let stored: Stored = serde_json::from_slice(&bytes).map_err(|_| GoogleConnectionError::InvalidRecord)?;
         let epoch = unix_ms()?;
         let now = Instant::now();
-        if stored.version != 1
+        if stored.version != 2
             || stored.client_id != client.registration.client_id
             || stored.revision == 0
             || stored.revision > (1_u64 << 53) - 1
+            || stored.authorization_generation == 0
+            || stored.authorization_generation >= (1_u64 << 53)
             || stored.saved_at_ms > epoch
             || !super::super::valid_token(stored.subject.expose())
             || stored.subject.expose().len() > 255
@@ -181,6 +184,7 @@ impl OAuthConnectionStorage {
             client_id: Arc::from(stored.client_id),
             subject: Arc::new(stored.subject),
             revision: stored.revision,
+            authorization_generation: stored.authorization_generation,
             state: stored.state,
             tokens,
         }))
@@ -200,6 +204,7 @@ struct RecordView<'a> {
     client_id: &'a str,
     subject: &'a str,
     revision: u64,
+    authorization_generation: u64,
     state: GoogleConnectionState,
     saved_at_ms: u64,
     tokens: Option<TokenView<'a>>,
@@ -218,6 +223,7 @@ struct Stored {
     client_id: String,
     subject: Secret,
     revision: u64,
+    authorization_generation: u64,
     state: GoogleConnectionState,
     saved_at_ms: u64,
     tokens: Option<StoredTokens>,

@@ -25,6 +25,12 @@ pub struct GoogleConnectionStatus {
     pub revision: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoogleAuthorization {
+    pub generation: u64,
+    pub granted_scopes: std::collections::BTreeSet<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoogleConnectionError {
     InvalidStorage,
@@ -32,6 +38,7 @@ pub enum GoogleConnectionError {
     InvalidRecord,
     AlreadyExists,
     Unavailable,
+    ScopeDenied,
     RevisionChanged,
     RevisionExhausted,
     Identity(OAuthIdentityError),
@@ -45,6 +52,7 @@ impl fmt::Display for GoogleConnectionError {
             Self::InvalidRecord => "invalid OAuth connection record",
             Self::AlreadyExists => "OAuth connection already exists",
             Self::Unavailable => "OAuth connection unavailable",
+            Self::ScopeDenied => "OAuth connection scope denied",
             Self::RevisionChanged => "OAuth connection revision changed",
             Self::RevisionExhausted => "OAuth connection revision exhausted",
             Self::Identity(_) => "OAuth connection identity verification failed",
@@ -66,6 +74,7 @@ struct Record {
     client_id: Arc<str>,
     subject: Arc<Secret>,
     revision: u64,
+    authorization_generation: u64,
     state: GoogleConnectionState,
     tokens: Option<Arc<OAuthTokens>>,
 }
@@ -74,6 +83,16 @@ impl Record {
         let mut next = self.clone();
         next.revision = self
             .revision
+            .checked_add(1)
+            .filter(|value| *value < (1_u64 << 53))
+            .ok_or(GoogleConnectionError::RevisionExhausted)?;
+        Ok(next)
+    }
+
+    fn advance_authority(&self) -> Result<Self, GoogleConnectionError> {
+        let mut next = self.advance()?;
+        next.authorization_generation = self
+            .authorization_generation
             .checked_add(1)
             .filter(|value| *value < (1_u64 << 53))
             .ok_or(GoogleConnectionError::RevisionExhausted)?;
@@ -116,6 +135,19 @@ impl fmt::Debug for GoogleAccessLease {
     }
 }
 impl GoogleAccessLease {
+    pub fn with_scopes<T>(
+        &self,
+        now: Instant,
+        required: &std::collections::BTreeSet<String>,
+        use_token: impl FnOnce(&str) -> T,
+    ) -> Result<T, GoogleConnectionError> {
+        self.with_token(now, |token| {
+            if !required.is_subset(&self.tokens.scopes) {
+                return Err(GoogleConnectionError::ScopeDenied);
+            }
+            Ok(use_token(token))
+        })?
+    }
     pub fn with_token<T>(&self, now: Instant, use_token: impl FnOnce(&str) -> T) -> Result<T, GoogleConnectionError> {
         let owner = self.owner.upgrade().ok_or(GoogleConnectionError::Unavailable)?;
         let record = owner.data.lock().map_err(|_| GoogleConnectionError::Unavailable)?;
@@ -153,6 +185,7 @@ impl GoogleOAuthClient {
             client_id: Arc::from(tokens.client_id.as_str()),
             subject: Arc::new(Secret::new(identity.subject().to_owned())),
             revision: 1,
+            authorization_generation: 1,
             state: GoogleConnectionState::Connected,
             tokens: Some(Arc::new(tokens)),
         };
@@ -224,6 +257,15 @@ impl GoogleConnection {
             .map_err(|_| GoogleConnectionError::Unavailable)
     }
 
+    pub fn authorization(&self) -> Result<GoogleAuthorization, GoogleConnectionError> {
+        let record = self.active_snapshot()?;
+        let tokens = record.tokens.ok_or(GoogleConnectionError::Unavailable)?;
+        Ok(GoogleAuthorization {
+            generation: record.authorization_generation,
+            granted_scopes: tokens.scopes.clone(),
+        })
+    }
+
     fn active_snapshot(&self) -> Result<Record, GoogleConnectionError> {
         let record = self.snapshot()?;
         if self.0.denied.load(Ordering::Acquire) || record.state != GoogleConnectionState::Connected {
@@ -286,7 +328,7 @@ impl GoogleConnection {
                             ..
                         }
                 ) {
-                    let mut next = current.advance()?;
+                    let mut next = current.advance_authority()?;
                     next.state = GoogleConnectionState::ReauthRequired;
                     self.publish(current.revision, next).await?;
                 }
@@ -365,7 +407,7 @@ impl GoogleConnection {
             if current.state == GoogleConnectionState::Disconnected {
                 return Ok(None);
             }
-            let mut next = current.advance()?;
+            let mut next = current.advance_authority()?;
             next.state = GoogleConnectionState::Disconnected;
             next.tokens = None;
             owner.storage.write(&next)?;
@@ -401,7 +443,7 @@ impl GoogleConnection {
             .map_err(GoogleConnectionError::Identity)?;
         tokens.id_token = None;
         tokens.expected_nonce = None;
-        let mut next = current.advance()?;
+        let mut next = current.advance_authority()?;
         next.state = GoogleConnectionState::Connected;
         next.tokens = Some(Arc::new(tokens));
         let owner = Arc::clone(&self.0);
