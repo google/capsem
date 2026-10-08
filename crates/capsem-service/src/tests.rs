@@ -138,7 +138,8 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
 /// The fields every fake instance shares; a test names only what it varies.
 pub(crate) fn test_instance() -> InstanceInfo {
     InstanceInfo {
-        generation: capsem_crypto::uuid_v4(),
+        generation: uuid::Uuid::new_v4(),
+        authority: Default::default(),
         id: String::new(),
         name: String::new(),
         asset_pins: test_asset_pins(),

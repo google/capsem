@@ -83,7 +83,8 @@ pub(super) fn setup_vm_with_workspace_and_uds(
     state.instances.lock().unwrap().insert(
         vm_id.into(),
         InstanceInfo {
-            generation: capsem_crypto::uuid_v4(),
+            generation: uuid::Uuid::new_v4(),
+            authority: Default::default(),
             id: vm_id.into(),
             name: vm_id.into(),
             asset_pins: test_asset_pins(),

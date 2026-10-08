@@ -7,6 +7,7 @@ pub(crate) struct OwnerConnection {
     id: String,
     generation: uuid::Uuid,
     identity: peer::PeerIdentity,
+    authority: instance::WorkerGrant,
     pub(crate) uds_path: PathBuf,
 }
 
@@ -65,6 +66,7 @@ impl OwnerConnection {
                 pid: process::ProcessId::try_from(instance.pid).map_err(|e| e.to_string())?,
                 uid: process::current_uid(),
             },
+            authority: instance.authority.grant(),
             uds_path: instance.uds_path.clone(),
         })
     }
@@ -99,6 +101,10 @@ impl OwnerConnection {
             return Err("VM owner changed during IPC admission".into());
         }
         Ok(())
+    }
+
+    pub(crate) async fn revoked(&self) {
+        self.authority.revoked().await;
     }
 
     pub(crate) async fn open(

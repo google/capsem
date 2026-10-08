@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Route VM-owner metrics through a generation-authenticated service broker
   with a fixed corporate collector destination, bounded protobuf bodies and
-  no redirects, keeping collector addresses and credentials out of workers.
+  no redirects, keeping collector addresses and credentials out of workers;
+  revoking or replacing a worker generation cancels its in-flight exports.
 
 - Authenticate private-network name lookups with the registered VM owner's
   kernel Unix identity, eliminating the reusable bearer secret previously
