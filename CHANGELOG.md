@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Rust SDK exposes the matching credential injection resource with file or
+  memory storage and opaque reference responses.
+
 - TypeScript SDK exposes credential injection with explicit storage, deadlines
   and cancellation through the authenticated gateway.
 

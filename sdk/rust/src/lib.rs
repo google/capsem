@@ -2,9 +2,11 @@
 
 pub use capsem_api as models;
 mod client;
+mod credentials;
 mod error;
 mod hypervisor;
 mod images;
+pub use credentials::Credentials;
 pub mod operations;
 mod options;
 pub mod resources;
