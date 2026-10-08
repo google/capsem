@@ -89,7 +89,7 @@ fingerprint = "c1be64a4c316e2674c3627d8193db0d380ccf0d8cf6c4c7bf701ee9e525b51d8"
 reason = "macOS libproc process-group listing; no nix wrapper"
 
 [foundation.raw_calls."crates/capsem-foundation/src/unix/process.rs::waitid"]
-fingerprint = "28b3eead89af899046069d614987786cfce11ef7131806a89f7b6da5df2d3363"
+fingerprint = "ad944aed3e75f6a36c63b0db8815e8d6bdfd845e5607db8b1f9475ce192d7c91"
 reason = "observe a child's exit without reaping it (WNOWAIT) on macOS and Linux alike"
 
 [foundation.raw_calls."crates/capsem-foundation/src/unix/router_channel.rs::CMSG_DATA"]
