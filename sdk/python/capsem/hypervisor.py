@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from . import _operations as api
 from . import models
 from ._client import Client
+from ._credentials import Credentials
 from ._debug import Debug
 from ._images import Images
 from ._mcp import Mcp
@@ -36,6 +37,7 @@ class Hypervisor(Client):
         self.mcp = Mcp(self._transport)
         self.debug = Debug(self._transport)
         self.images = Images(self._transport)
+        self.credentials = Credentials(self._transport)
 
     async def info(self) -> models.HypervisorInfo:
         return await api.get_hypervisor_info(self._transport)

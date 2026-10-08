@@ -1,5 +1,6 @@
 """Typed async access to the Capsem HTTP gateway."""
 
+from ._credentials import Credentials as Credentials
 from ._images import Images as Images
 from ._mcp import Mcp as Mcp
 from ._mcp import McpServer as McpServer

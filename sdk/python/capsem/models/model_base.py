@@ -5,7 +5,14 @@ from __future__ import annotations
 from math import isfinite
 from typing import Annotated, ClassVar, TypeAlias
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
+    model_validator,
+)
 from pydantic import JsonValue as PydanticJsonValue
 
 
@@ -28,6 +35,22 @@ JsonValue: TypeAlias = Annotated[PydanticJsonValue, AfterValidator(_finite_json)
 class Model(BaseModel):
     model_config = ConfigDict(strict=True, populate_by_name=True)
     nonnullable_optional: ClassVar[frozenset[str]] = frozenset()
+    private_input: ClassVar[bool] = False
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def redact_private_validation(cls, value: object, handler: ValidatorFunctionWrapHandler) -> object:
+        try:
+            return handler(value)
+        except ValidationError:
+            if not cls.private_input:
+                raise
+            # Replace the input and field locations as well as the rendered
+            # message: callers can inspect errors(), not only str(error).
+            raise ValidationError.from_exception_data(cls.__name__, [{
+                "type": "value_error", "loc": (), "input": None,
+                "ctx": {"error": ValueError("invalid private request")},
+            }], hide_input=True) from None
 
     @model_validator(mode="before")
     @classmethod
