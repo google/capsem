@@ -8,6 +8,18 @@ use crate::status::StatusCache;
 mod hostile;
 mod route_forwarding;
 
+#[test]
+fn entry_closes_ambient_descriptors_before_runtime_construction() {
+    let source = include_str!("main.rs");
+    let entry = source.split_once("fn main() -> Result<()> {").unwrap().1;
+    let close = entry
+        .find("close_inherited_descriptors()")
+        .expect("gateway closes ambient descriptors at process entry");
+    let runtime = entry.find("tokio::runtime::Builder").unwrap();
+    let run = entry.find("runtime.block_on(run())").unwrap();
+    assert!(close < runtime && runtime < run);
+}
+
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,

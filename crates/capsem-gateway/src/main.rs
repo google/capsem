@@ -70,8 +70,15 @@ pub struct AppState {
     pub previews: preview::PreviewState,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // SAFETY: process entry precedes argument parsing, telemetry, descriptor
+    // owners and runtime threads. Broker grants will be named here explicitly.
+    unsafe { capsem_foundation::unix::fd::close_inherited_descriptors()? };
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    runtime.block_on(run())
+}
+
+async fn run() -> Result<()> {
     let args = Args::parse();
     let run_dir = gateway_run_dir(&args);
     let _ = std::fs::create_dir_all(&run_dir);
