@@ -24,7 +24,7 @@ use crate::net::upstream_address::{judged_address, UpstreamResolver};
 
 /// The upstream connection one request will use.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum UpstreamTarget {
+pub enum UpstreamTarget {
     /// An administrator's `upstream_overrides` route, dialed as configured.
     Override { dial: String, protocol: Protocol },
     /// The addresses the guest's name resolved to, in the order to try.
@@ -34,6 +34,19 @@ pub(super) enum UpstreamTarget {
 }
 
 impl UpstreamTarget {
+    /// Resolve one fresh target from trusted policy. The returned address set
+    /// is what policy judges and what [`Self::connect`] later dials; the name
+    /// is never resolved a second time.
+    pub async fn resolve(resolver: &UpstreamResolver, policy: &NetworkMechanics, domain: &str, port: u16) -> Self {
+        if let Some(target) = Self::override_target(policy, domain, port) {
+            return target;
+        }
+        match resolver.resolve(domain, port).await {
+            Ok(addresses) => Self::Resolved(addresses),
+            Err(error) => Self::Unresolved(error),
+        }
+    }
+
     /// Fix the target for `domain:port` before the rules run. A keep-alive
     /// request for the same `domain:port` stays on the address its
     /// connection was judged and opened with instead of resolving again.
@@ -44,15 +57,8 @@ impl UpstreamTarget {
         port: u16,
         cache: &UpstreamCache,
     ) -> Self {
-        if let Some(route) = policy.find_upstream_override(domain, port) {
-            let protocol = match route.protocol {
-                UpstreamOverrideProtocol::Http => Protocol::Http,
-                UpstreamOverrideProtocol::Tls => Protocol::Tls,
-            };
-            return Self::Override {
-                dial: route.dial.clone(),
-                protocol,
-            };
+        if let Some(target) = Self::override_target(policy, domain, port) {
+            return target;
         }
         if let Some(pinned) = cache
             .lock()
@@ -68,10 +74,22 @@ impl UpstreamTarget {
         }
     }
 
+    fn override_target(policy: &NetworkMechanics, domain: &str, port: u16) -> Option<Self> {
+        let route = policy.find_upstream_override(domain, port)?;
+        let protocol = match route.protocol {
+            UpstreamOverrideProtocol::Http => Protocol::Http,
+            UpstreamOverrideProtocol::Tls => Protocol::Tls,
+        };
+        Some(Self::Override {
+            dial: route.dial.clone(),
+            protocol,
+        })
+    }
+
     /// The address the rules see as `ip.value`. A resolved name fails
     /// closed: any local or private answer speaks for the whole set. An
     /// override reports only what the guest's literal host said, as before.
-    pub(super) fn judged_ip(&self, domain: &str) -> Option<IpAddr> {
+    pub fn judged_ip(&self, domain: &str) -> Option<IpAddr> {
         match self {
             Self::Resolved(addresses) => judged_address(addresses),
             Self::Override { .. } | Self::Unresolved(_) => domain.parse().ok(),
@@ -79,7 +97,7 @@ impl UpstreamTarget {
     }
 
     /// The protocol spoken to the upstream: the override's, else the guest's.
-    pub(super) fn protocol(&self, guest: Protocol) -> Protocol {
+    pub fn protocol(&self, guest: Protocol) -> Protocol {
         match self {
             Self::Override { protocol, .. } => *protocol,
             Self::Resolved(_) | Self::Unresolved(_) => guest,
@@ -89,7 +107,7 @@ impl UpstreamTarget {
     /// Connect to exactly this target. Returns the stream and the target
     /// pinned to the peer it reached, which is what a reused connection is
     /// keyed by.
-    pub(super) async fn connect(&self) -> std::io::Result<(TcpStream, Self)> {
+    pub async fn connect(&self) -> std::io::Result<(TcpStream, Self)> {
         let stream = match self {
             Self::Override { dial, .. } => TcpStream::connect(dial.as_str()).await?,
             Self::Resolved(addresses) => TcpStream::connect(addresses.as_slice()).await?,
