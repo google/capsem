@@ -764,6 +764,12 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert read_status == 200
         assert read_body.decode() == EICAR_TEXT
 
+        # DbWriter.write().await accepts into the process-owned buffer. Stop
+        # the persistent VM to drain and checkpoint that writer before opening
+        # session.db directly; polling the live file is not a flush barrier.
+        stopped = client.post(f"/vms/{vm_id}/stop", {}, timeout=60)
+        assert stopped == {"success": True, "persistent": True}, stopped
+
         conn = ledgers.enter_context(contextlib.closing(_connect_session_db(service, client, vm_id)))
         security_rows = conn.execute(
             """
