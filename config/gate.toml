@@ -2873,15 +2873,6 @@ The SDK and npm MCP are distinct package roots that share the basename
 basename, so their separate dependency fetch and install actions render alike.
 """
 
-[[boundary.repeated_actions]]
-subject = "(in typescript) pnpm run build"
-reason = """
-Two different builds that render alike: the npm MCP builds `mcp/typescript` in
-the fast lane, and the functional module bundles the SDK in `sdk/typescript`
-for the SDK suites, whose acceptance tools import its `dist`. The renderer
-shortens both working directories to the shared basename.
-"""
-
 # ---------------------------------------------------------------------------
 # The execution log
 # ---------------------------------------------------------------------------
@@ -3031,6 +3022,9 @@ unmeasured = [
     # Restart needs a disposable supervisor; the read-only route collector
     # cannot time accepted restarts. Its functional proof owns that lifecycle.
     "/restart",
+    # Secret-bearing mutation includes durable storage or VM-owner acknowledgement;
+    # the native injection acceptance owns it, not a read-only route benchmark.
+    "/credentials/inject",
     "/corp/edit",
     "/assets/ensure",
     "/plugins/list",

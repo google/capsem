@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "1919699e355515777d606f1adb17369486a32c5ca83b6132aa1c23555de85525"
-reason = "Merge latest main into 0.7: capsem-agent gains the existing first-party capsem-guard dependency for bounded CLI lifecycle; workspace versions stay 0.7.0 and registry dependencies remain unchanged"
+sha256 = "09afd0a74c3ef19db92dad44c18364af878dd52e67686c87a1bef21ab6a0374b"
+reason = "Approved broker OAuth and injection implementation: PKCE/callback/token HTTP dependencies, jsonwebtoken 11.1.0 and signature 2.2.0 for nonce-bound Google signatures, zeroize_derive 1.5.0 for token destruction, and first-party host handoff dependencies. Existing registry versions and workspace 0.7.0 remain unchanged; tested host and sealed guest cohort rebuilt in A246."
