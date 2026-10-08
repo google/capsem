@@ -1,5 +1,5 @@
 import {execFileSync} from 'node:child_process';
-import {lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
+import {lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {createServer as createHttpServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
 import {tmpdir} from 'node:os';
@@ -76,8 +76,11 @@ describe('packed-package', () => {
   }
 
   async function connect(cli: string, gatewayUrl: string, token: string): Promise<PackedClient> {
+    const consumerNode = process.env.CAPSEM_MCP_PACKAGE_NODE ?? process.execPath;
+    const runtimeVersion = execFileSync(consumerNode, ['-p', 'process.version'], {encoding: 'utf8', timeout: 5000}).trim();
+    expect(Number(runtimeVersion.slice(1).split('.')[0])).toBeGreaterThanOrEqual(20);
     const transport = new StdioClientTransport({
-      command: process.execPath,
+      command: consumerNode,
       args: [cli, '--gateway-url', gatewayUrl, '--timeout-ms', '5000'],
       env: {PATH: process.env.PATH ?? '', CAPSEM_GATEWAY_TOKEN: token},
       stderr: 'pipe',
@@ -86,6 +89,10 @@ describe('packed-package', () => {
     transport.stderr?.on('data', chunk => stderr.push(String(chunk)));
     const client = new Client({name: 'packed-package-test', version: '1'});
     await client.connect(transport);
+    expect(transport.pid).toBeGreaterThan(0);
+    if (process.platform === 'linux') {
+      expect(realpathSync(`/proc/${transport.pid}/exe`)).toBe(realpathSync(consumerNode));
+    }
     const packed = {client, transport, stderr};
     clients.push(packed);
     return packed;
