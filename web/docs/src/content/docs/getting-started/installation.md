@@ -3,6 +3,9 @@ title: Installation
 description: How do I install Capsem on macOS or Linux?
 sidebar:
   order: 1
+next:
+  label: How to use Capsem
+  link: /getting-started/how-to-use-capsem/
 ---
 
 ## Requirements
@@ -50,3 +53,12 @@ capsem status
 `capsem version` prints the installed version. In `capsem status`, check that
 the service reports `ok` and the assets report `ready`. Resolve any reported
 errors before creating your first VM.
+
+## Next steps
+
+[How to use Capsem](/getting-started/how-to-use-capsem/) walks you through
+launching and keeping your first VM. You can also go directly to:
+
+- [Guides](/guides/) for task-based how-tos.
+- [Reference](/reference/) for CLI, MCP, and configuration contracts.
+- [SDK](/sdk/) to control Capsem from your application.
