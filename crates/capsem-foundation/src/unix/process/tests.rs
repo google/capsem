@@ -103,6 +103,23 @@ fn exit_observation_keeps_the_child_waitable_and_its_pid_reserved() {
 }
 
 #[test]
+fn blocking_exit_observation_keeps_the_status_waitable() {
+    let mut child = std::process::Command::new("sh")
+        .args(["-c", "sleep 0.05; exit 9"])
+        .spawn()
+        .unwrap();
+    let pid = ProcessId::try_from(child.id()).unwrap();
+
+    wait_for_child_exit(pid).unwrap();
+
+    assert!(
+        child_has_exited(pid).unwrap(),
+        "blocking observation must leave the exited child unreaped"
+    );
+    assert_eq!(child.wait().unwrap().code(), Some(9));
+}
+
+#[test]
 fn an_exited_group_leader_does_not_hide_a_live_member() {
     use std::os::unix::process::{CommandExt, ExitStatusExt};
 
