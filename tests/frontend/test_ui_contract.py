@@ -12,12 +12,14 @@ def read(relative: str) -> str:
 
 def test_frontend_uses_current_route_vocabulary_not_retired_policy_vm_terms() -> None:
     dashboard = read("lib/components/shell/NewTabPage.svelte")
+    session_errors = read("lib/models/session-action-error.ts")
     settings = read("lib/components/shell/SettingsPage.svelte")
     stats = read("lib/components/views/StatsView.svelte")
     toolbar = read("lib/components/shell/Toolbar.svelte")
 
     assert "Sessions" in dashboard
-    assert "Failed to create session" in dashboard
+    assert "sessionActionError(error)" in dashboard
+    assert "Failed to create session" in session_errors
     assert "Session {vmId} ledger" in stats
     assert "Session Logs" in toolbar
 
