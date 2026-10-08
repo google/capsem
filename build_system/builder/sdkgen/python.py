@@ -15,7 +15,14 @@ from __future__ import annotations
 from math import isfinite
 from typing import Annotated, ClassVar, TypeAlias
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
+    model_validator,
+)
 from pydantic import JsonValue as PydanticJsonValue
 
 
@@ -38,6 +45,22 @@ JsonValue: TypeAlias = Annotated[PydanticJsonValue, AfterValidator(_finite_json)
 class Model(BaseModel):
     model_config = ConfigDict(strict=True, populate_by_name=True)
     nonnullable_optional: ClassVar[frozenset[str]] = frozenset()
+    private_input: ClassVar[bool] = False
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def redact_private_validation(cls, value: object, handler: ValidatorFunctionWrapHandler) -> object:
+        try:
+            return handler(value)
+        except ValidationError:
+            if not cls.private_input:
+                raise
+            # Replace the input and field locations as well as the rendered
+            # message: callers can inspect errors(), not only str(error).
+            raise ValidationError.from_exception_data(cls.__name__, [{
+                "type": "value_error", "loc": (), "input": None,
+                "ctx": {"error": ValueError("invalid private request")},
+            }], hide_input=True) from None
 
     @model_validator(mode="before")
     @classmethod
@@ -103,16 +126,19 @@ def _body(name: str, schema: Schema) -> str:
     if schema.type != "object":
         return f"{name}: TypeAlias = {type_name(schema)}\n"
     lines = [f"class {name}(Model):"]
+    if any(field.write_only for field in schema.properties.values()):
+        lines.append("    private_input = True")
     optional = [alias for key, field in schema.properties.items()
                 if key not in schema.required and not nullable(field)
                 for alias in ((key, key + "_") if keyword.iskeyword(key) else (key,))]
     if optional:
         lines.append(f"    nonnullable_optional = frozenset({optional!r})")
     if schema.additional_properties is False:
-        lines.append('    model_config = ConfigDict(strict=True, populate_by_name=True, extra="forbid")')
+        privacy = ", hide_input_in_errors=True" if any(field.write_only for field in schema.properties.values()) else ""
+        lines.append(f'    model_config = ConfigDict(strict=True, populate_by_name=True, extra="forbid"{privacy})')
     for key, field in schema.properties.items():
         attr = key + "_" if keyword.iskeyword(key) else key
-        if not attr.isidentifier() or attr.startswith("_") or attr == "nonnullable_optional":
+        if not attr.isidentifier() or attr.startswith("_") or attr in {"nonnullable_optional", "private_input"}:
             raise ValueError(f"unsupported field identifier: {key}")
         annotation = type_name(field)
         default = ""
@@ -122,6 +148,8 @@ def _body(name: str, schema: Schema) -> str:
             default = " = None"
         if attr != key:
             default = f" = Field({('default=None, ' if default else '')}alias={key!r})"
+        if field.write_only:
+            default = f" = Field({('default=None, ' if key not in schema.required else '')}{('alias=' + repr(key) + ', ' if attr != key else '')}repr=False)"
         lines.append(f"    {attr}: {annotation}{default}")
     return "\n".join(lines + (["    pass"] if len(lines) == 1 else [])) + "\n"
 
