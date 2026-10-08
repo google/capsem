@@ -163,6 +163,76 @@ fn a_vm_process_is_granted_only_the_metric_broker_at_launch() {
 
 type CollectedMetric = (axum::http::HeaderMap, axum::body::Bytes);
 
+/// The qualification child uses the worker's production transport shape: the
+/// OTLP encoder controls only the body, while this client fixes both the local
+/// service socket and the session-specific broker route.
+struct QualificationMetricClient {
+    service_socket: std::path::PathBuf,
+    path: String,
+    runtime: std::sync::Mutex<tokio::runtime::Runtime>,
+}
+
+impl std::fmt::Debug for QualificationMetricClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("QualificationMetricClient")
+            .field("service_socket", &self.service_socket)
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait::async_trait]
+impl opentelemetry_http::HttpClient for QualificationMetricClient {
+    async fn send_bytes(
+        &self,
+        request: http::Request<bytes::Bytes>,
+    ) -> Result<http::Response<bytes::Bytes>, opentelemetry_http::HttpError> {
+        self.runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .block_on(capsem_core::service_uds::post_bytes(
+                &self.service_socket,
+                &self.path,
+                http::HeaderValue::from_static("application/x-protobuf"),
+                request.into_body(),
+            ))
+            .map_err(|error| Box::new(std::io::Error::other(format!("metric broker request: {error:#}"))) as _)
+    }
+}
+
+#[test]
+fn metric_relay_attribution_child() {
+    use std::io::Read as _;
+
+    let (Ok(socket), Ok(id)) = (
+        std::env::var("CAPSEM_TEST_METRIC_ATTRIBUTION_SOCKET"),
+        std::env::var("CAPSEM_TEST_METRIC_ATTRIBUTION_ID"),
+    ) else {
+        return;
+    };
+    let mut release = [0];
+    std::io::stdin().read_exact(&mut release).unwrap();
+    let client = QualificationMetricClient {
+        service_socket: socket.into(),
+        path: format!("/internal/vms/{id}/metrics"),
+        runtime: std::sync::Mutex::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        ),
+    };
+    let exporter = capsem_telemetry::export::install_with_http_client(
+        client,
+        "capsem-process",
+        vec![capsem_telemetry::export::KeyValue::new("session.id", id)],
+    )
+    .unwrap();
+    metrics::counter!(capsem_telemetry::db::DB_WRITE_OPS_TOTAL).increment(1);
+    exporter.flush().unwrap();
+}
+
 async fn metric_collector(
     State(sender): State<tokio::sync::mpsc::UnboundedSender<CollectedMetric>>,
     headers: axum::http::HeaderMap,
@@ -174,6 +244,89 @@ async fn metric_collector(
         [("content-type", "application/x-protobuf")],
         axum::body::Bytes::from_static(b"collector response"),
     )
+}
+
+fn protobuf_contains(body: &[u8], expected: &str) -> bool {
+    body.windows(expected.len()).any(|window| window == expected.as_bytes())
+}
+
+#[tokio::test]
+async fn worker_metrics_keep_exact_attribution_through_the_service_broker() {
+    use tokio::io::AsyncWriteExt as _;
+
+    let _environment = SETTINGS_ENV_LOCK.lock().await;
+    let settings_dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, corp_path) = install_empty_settings_env(&settings_dir);
+    let collector_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let collector_base = format!("http://{}", collector_listener.local_addr().unwrap());
+    let (collected_tx, mut collected_rx) = tokio::sync::mpsc::unbounded_channel();
+    let collector = tokio::spawn(async move {
+        axum::serve(
+            collector_listener,
+            axum::Router::new()
+                .route("/v1/metrics", axum::routing::post(metric_collector))
+                .with_state(collected_tx),
+        )
+        .await
+        .unwrap();
+    });
+    let mut corp = capsem_core::net::policy_config::SettingsFile::default();
+    corp.corp_rule_files.open_telemetry = Some(collector_base);
+    capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
+
+    let (state, directory) = make_test_state_with_tempdir();
+    let socket = directory.path().join("metric-attribution.sock");
+    let service_listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let service_state = Arc::clone(&state);
+    let service = tokio::spawn(async move {
+        axum::serve(
+            service_listener,
+            build_service_router(service_state).into_make_service_with_connect_info::<ServicePeer>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    let id = "attributed-vm";
+    let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::telemetry_export::metric_relay_attribution_child",
+            "--nocapture",
+        ])
+        .env("CAPSEM_TEST_METRIC_ATTRIBUTION_SOCKET", &socket)
+        .env("CAPSEM_TEST_METRIC_ATTRIBUTION_ID", id)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    insert_fake_instance(&state, id, child.id().unwrap());
+    child.stdin.take().unwrap().write_all(b"1").await.unwrap();
+    let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+        .await
+        .expect("metric-export child completes")
+        .unwrap();
+    assert!(status.success(), "metric-export child failed: {status}");
+
+    let (headers, body) = tokio::time::timeout(std::time::Duration::from_secs(2), collected_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        headers.get(axum::http::header::CONTENT_TYPE).unwrap(),
+        "application/x-protobuf"
+    );
+    for expected in [
+        "service.name",
+        "capsem-process",
+        "session.id",
+        id,
+        capsem_telemetry::db::DB_WRITE_OPS_TOTAL,
+    ] {
+        assert!(protobuf_contains(&body, expected), "OTLP body lacks {expected}");
+    }
+
+    service.abort();
+    collector.abort();
 }
 
 #[test]
