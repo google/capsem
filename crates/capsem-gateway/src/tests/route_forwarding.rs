@@ -195,6 +195,7 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/assets/status"),
         ("POST", "/assets/ensure"),
         ("GET", "/plugins/list"),
+        ("POST", "/credentials/inject"),
         ("GET", "/plugins/dummy_pre_eicar/info"),
         ("PATCH", "/plugins/dummy_pre_eicar/edit"),
         ("GET", "/plugins/credential_broker/credentials/info"),
@@ -227,6 +228,87 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
             .unwrap();
         assert_eq!(resp.status(), http::StatusCode::BAD_GATEWAY, "{method} {uri}");
     }
+}
+
+#[tokio::test]
+async fn credential_injection_forwards_exact_authenticated_material_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("credential.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let received = calls.clone();
+    let body = r#"{"provider":"google","value":"fixture-secret","storage":"memory"}"#;
+    let service = axum::Router::new().route(
+        "/credentials/inject",
+        axum::routing::post(move |request: http::Request<Body>| {
+            let received = received.clone();
+            async move {
+                assert!(!request.headers().contains_key("authorization"));
+                assert_eq!(axum::body::to_bytes(request.into_body(), 1024).await.unwrap(), body);
+                received.fetch_add(1, Ordering::SeqCst);
+                (
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    "{\"error\":\"owner unavailable\"}",
+                )
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
+    let (_, state) = health_app(socket.to_str().unwrap());
+    let app = service_proxy_routes()
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
+        .with_state(state);
+    let denied = app
+        .clone()
+        .oneshot(
+            http::Request::builder()
+                .method("POST")
+                .uri("/credentials/inject")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), http::StatusCode::UNAUTHORIZED);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let response = app
+        .clone()
+        .oneshot(
+            http::Request::builder()
+                .method("POST")
+                .uri("/credentials/inject")
+                .header("authorization", "Bearer test")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), 1024).await.unwrap(),
+        "{\"error\":\"owner unavailable\"}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let wrong_method = app
+        .oneshot(
+            http::Request::builder()
+                .method("GET")
+                .uri("/credentials/inject")
+                .header("authorization", "Bearer test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_method.status(), http::StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    server.abort();
+    let _ = server.await;
 }
 
 #[tokio::test]
