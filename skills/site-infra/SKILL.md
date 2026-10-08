@@ -1,9 +1,50 @@
 ---
 name: site-infra
-description: The documentation site, docs.capsem.org. Use when writing or editing docs, adding pages, or working with Astro Starlight.
+description: The documentation site, docs.capsem.org. Use when rebuilding, writing, or editing the minimal manual and its operational contracts under user direction, or working with Astro Starlight.
 ---
 
 # Documentation Site
+
+## Purpose and content budget
+
+- `capsem.org` answers: “Why Capsem, what can I do, and how quickly can I get value?” Marketing owns benefits, use cases, and the short path to value; see `/site-marketing`.
+- `docs.capsem.org` answers: “Exactly how does this work, how do I operate/integrate/administer it, and what is the contract?” Docs owns precise procedures, behavior, configuration, interfaces, limits, and guarantees.
+
+Write the minimum content on the minimum number of pages needed to answer
+those documentation questions completely. Prefer a section in an approved
+page and links to the canonical explanation over another page or duplicated
+prose. A feature, subsystem, troubleshooting case, or release does not
+automatically earn a page. Keep necessary prerequisites, defaults, failure
+behavior, and security limits; brevity must not make the contract ambiguous.
+
+**New pages require explicit user approval before creation.** A general request
+to improve or rebuild docs is not approval for an agent-chosen page list.
+The user will tell us what to write. Do not proactively propose pages, page
+lists, outlines, or documentation topics. Follow the user's supplied scope and
+record page approval in the owning Sprinty item. New categories and page splits
+follow the same rule. Edit approved pages within their agreed scope without
+asking again.
+
+## Rebuild from scratch
+
+The documentation rebuild starts from reader needs and current product
+contracts. The old manual is reference material, not the target information
+architecture or a backlog of stubs to fill.
+
+1. Wait for the user to specify what to write and which pages to create or edit.
+2. Keep that requested content on the fewest approved pages, using related
+   sections and canonical links instead of duplicating explanations.
+3. Write the requested content afresh from current code, schemas, CLI/API contracts,
+   and verified behavior. Reuse old text only after checking it against those
+   sources; do not carry forward historical commands or claims by default.
+4. Review for completeness, duplication, and removable prose. Verify commands,
+   links, and examples with the relevant project skills and bounded rails.
+
+Approval of content or page structure does not itself authorize publication.
+Preserve the holding/tombstone safeguards below until the replacement manual
+and its publication are approved.
+
+## Source and current publication state
 
 The detailed documentation source for docs.capsem.org is authored for
 [Astro Starlight](https://starlight.astro.build/) and lives in
@@ -16,8 +57,8 @@ route while every source file remains checked in.
 ## Dev workflow
 
 ```bash
-cd web/docs && pnpm run dev     # Holding surface at localhost:4321
-cd web/docs && pnpm run build   # Build and verify the exact production artifact graph
+uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds 120 -- pnpm --dir web/docs run dev
+uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- pnpm --dir web/docs run build
 ```
 
 ## CI and deploy rail
@@ -49,7 +90,12 @@ manual VM asset releases, and the `release.capsem.org` asset-channel workflow.
 
 ## Writing style
 
-Tight and to the point, like a manual. One topic per page. No filler, no marketing language. Tables over prose when listing configs or test cases. Code examples only when they clarify usage. Diagrams in mermaid.
+Tight and to the point, like a manual. Organize each approved page around a
+coherent reader task or contract, with related details in sections. No filler,
+marketing pitches, speculative features, or exhaustive tours of internals.
+Use tables for comparable settings or interface fields, code examples when
+needed to perform a task, and Mermaid diagrams when they clarify behavior.
+Link to marketing for rationale; keep technical truth in one canonical place.
 
 ## Frontmatter
 
@@ -64,60 +110,17 @@ sidebar:
 ---
 ```
 
-## Site structure
+## Approved pages and navigation
 
-```
-web/docs/src/content/docs/
-  getting-started.md
-  architecture/
-    hypervisor.md         Hypervisor abstraction, Apple VZ + KVM backends (5 mermaid diagrams)
-    settings.md           Settings grammar, value resolution, presets, IPC, boot injection
-    build-system.md       capsem-builder architecture, TOML configs, Jinja, multi-arch
-    custom-images.md      Corporate image customization guide
-    settings-schema.md    Two-node schema, JSON Schema, Pydantic, cross-language conformance
-  security/
-    overview.md           Security model overview
-    network-isolation.md  Air-gapped networking, domain policy
-    virtualization.md     VM isolation guarantees
-    build-verification.md Build reproducibility, checksums
-    kernel-hardening.md   Custom kernel, allnoconfig, minimal attack surface
-  benchmarks/
-    results.md            Current performance results (boot, disk, CLI, HTTP)
-  debugging/
-    capsem-doctor.md      In-VM diagnostic suite
-    troubleshooting.md    Common issues and solutions
-  development/
-    benchmarking.md       How to run and extend capsem-bench
-    getting-started.md    Dev environment setup (stub)
-    skills.md             AI agent skills system
-  releases/
-    0-8.md through 0-14.md   One page per minor version
-```
+After approval, create the agreed Markdown/MDX path under
+`web/docs/src/content/docs/` with the frontmatter above. When Starlight is
+restored, configure its sidebar in `web/docs/astro.config.mjs` to match the
+approved page list; `sidebar.order` controls order within a section. Do not
+turn every source directory into a navigation category.
 
-## Sidebar
-
-Configured in `web/docs/astro.config.mjs` under `starlight({ sidebar: [...] })`. Uses `autogenerate: { directory: '<category>' }` for each section. Page ordering within a section uses `sidebar: { order: N }` in frontmatter.
-
-## Adding a new doc page
-
-1. Create `web/docs/src/content/docs/<category>/<topic>.md` with frontmatter
-2. It auto-appears in the sidebar via `autogenerate`
-3. Set `sidebar: { order: N }` to control position (lower = higher in list)
-
-## Adding a new category
-
-1. Create the directory under `web/docs/src/content/docs/`
-2. Add a sidebar entry in `web/docs/astro.config.mjs`:
-   ```js
-   { label: 'Category Name', autogenerate: { directory: 'category-slug' } }
-   ```
-
-## Release pages
-
-- Path: `web/docs/src/content/docs/releases/<major>-<minor>.md` (hyphens, not dots)
-- Each page consolidates all patch releases for that minor version
-- Higher `sidebar.order` = newer = listed first (reverse-chrono)
-- When bumping to a new minor, create a new page
+A minor release does not authorize a new release page. Use `CHANGELOG.md`
+for release history and update the approved manual where behavior changed.
+Create a separate release page only when the user requests and approves it.
 
 ## Mermaid diagrams
 
@@ -168,16 +171,9 @@ sips -z 192 192 web/graphics/icon/1024w/capsem-logo-color.png --out web/docs/pub
 sips -z 512 512 web/graphics/icon/1024w/capsem-logo-color.png --out web/docs/public/android-chrome-512x512.png
 ```
 
-## Custom images
-
-The maintained custom-image documentation lives at
-`web/docs/src/content/docs/architecture/custom-images.md`.
-
-## Page scope boundaries
-
-- **`development/getting-started.md`** is strictly about environment setup: prerequisites, clone, bootstrap, build-assets, codesign, first run. Troubleshooting in this page must be limited to setup failures (doctor, codesign, build-assets OOM/clock, missing assets). Runtime issues (disk full, boot hangs, cross-compile errors, network problems) belong in `debugging/troubleshooting.md` -- link there instead of duplicating.
-- **`debugging/troubleshooting.md`** is the catch-all for runtime issues. New troubleshooting entries go here unless they are specifically about first-time env setup.
-
 ## Keep docs in sync
 
-When features change (settings, CLI flags, MCP tools, security invariants, benchmarks), update the corresponding doc page. When cutting a new minor release, create a new release page. Most pages are still stubs -- fill them in as features stabilize.
+For requested documentation updates, edit the corresponding approved page and verify it
+against the owning source contract. Consolidate overlapping explanations and
+remove obsolete claims within the requested scope. Do not create pages or stubs
+automatically; the user directs what to write and approves any new page.

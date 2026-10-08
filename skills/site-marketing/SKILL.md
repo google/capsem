@@ -7,6 +7,27 @@ description: The marketing website, capsem.org. Use when editing copy, adding se
 
 The marketing site (capsem.org) is a single-page landing built with Astro 7 + Svelte 5 + Tailwind v4. Source lives in `web/marketing/`.
 
+## Purpose and content budget
+
+`capsem.org` answers: “Why Capsem, what can I do, and how quickly can I get value?”
+Lead with the benefit, concrete use cases, and a short, accurate path to the
+first useful result.
+
+`docs.capsem.org` answers: “Exactly how does this work, how do I
+operate/integrate/administer it, and what is the contract?” Link to the
+approved manual for detailed procedures, configuration, interfaces, and
+guarantees; `/site-infra` owns those instructions.
+
+Use the minimum copy and pages needed to answer the marketing questions.
+Keep technical detail only when it helps a visitor assess value or take the
+next step, and verify claims against current product behavior. Avoid repeating
+the manual on the landing page.
+
+New pages require explicit user approval before creation. Prefer updating an
+existing section within the requested scope. The user will tell us what to
+write; do not proactively propose pages, outlines, or topics. A general
+website-improvement request does not approve new pages.
+
 ## Dev workflow
 
 ```bash
