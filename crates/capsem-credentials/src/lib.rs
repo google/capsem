@@ -1,10 +1,14 @@
 //! Broker-owned credential storage without telemetry or policy dependencies.
 
 mod durable;
+mod oauth;
 mod provider;
 mod store;
 
 pub use durable::STORE_PATH_ENV;
+pub use oauth::{
+    AuthorizationParameters, CallbackExchange, LoopbackRedirect, OAuthAttempt, OAuthError, OAuthPolicy, OAuthState,
+};
 pub use provider::CredentialProvider;
 pub use store::{
     broker_reference_replay_available, credential_store_account, credential_store_status,

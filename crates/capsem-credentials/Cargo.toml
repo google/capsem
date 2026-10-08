@@ -12,6 +12,12 @@ authors.workspace = true
 [dependencies]
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
+base64 = { workspace = true }
+getrandom = "0.3"
+sha2 = "0.10"
+subtle = "2"
+url = "2"
+zeroize = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
