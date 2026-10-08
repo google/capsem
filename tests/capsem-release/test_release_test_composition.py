@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -371,14 +372,18 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
         # the nested build-system project explicit after the root facade is gone.
         "ruff check --config build_system/pyproject.toml .",
         (
-            "ty check --project build_system --error-on-warning --python-platform all "
-            "build_system/builder"
+            "ty check --project build_system --error-on-warning --python-platform all"
         ),
         "clippy-workspace-wrapper.sh\"' --workspace --all-targets",
         "check-web-surface.sh frontend",
         "check-web-surface.sh release-site",
     ):
         assert required in planned, f"the fast plan does not run {required}"
+
+    strict = shlex.split(" ".join(_plan("test-fast").step_named("python.ty.strict").render()))
+    assert "--ignore" not in strict
+    for root in CONFIG.lint.strict_roots:
+        assert strict.count(root) == 1 + CONFIG.lint.strict_ty_search_paths.count(root)
 
     assert "just _test-release-contracts" in fast
 
