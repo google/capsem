@@ -165,6 +165,53 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
     haystack.windows(needle.len()).any(|window| window == needle.as_bytes())
 }
 
+#[derive(Clone, Debug, Default)]
+struct CapturingHttpClient(Arc<Mutex<Vec<http::Request<bytes::Bytes>>>>);
+
+#[async_trait::async_trait]
+impl opentelemetry_http::HttpClient for CapturingHttpClient {
+    async fn send_bytes(
+        &self,
+        request: http::Request<bytes::Bytes>,
+    ) -> Result<http::Response<bytes::Bytes>, opentelemetry_http::HttpError> {
+        self.0.lock().unwrap().push(request);
+        Ok(http::Response::builder()
+            .status(http::StatusCode::OK)
+            .body(bytes::Bytes::new())?)
+    }
+}
+
+#[test]
+fn caller_supplied_http_client_receives_otlp_request() {
+    let client = CapturingHttpClient::default();
+    let received = Arc::clone(&client.0);
+    let provider = provider_with_http_client(
+        client,
+        "capsem-broker-test",
+        vec![KeyValue::new("session.id", "session-7")],
+    )
+    .unwrap();
+    let recorder = OtelRecorder::new(provider.meter("capsem"));
+    metrics::with_local_recorder(&recorder, || {
+        metrics::counter!(crate::db::DB_WRITE_OPS_TOTAL).increment(1);
+    });
+    provider.force_flush().unwrap();
+
+    let request = received
+        .lock()
+        .unwrap()
+        .pop()
+        .expect("the injected client received one export");
+    assert_eq!(request.uri(), "http://capsem-metric-broker.invalid/v1/metrics");
+    assert_eq!(
+        request.headers().get(http::header::CONTENT_TYPE).unwrap(),
+        "application/x-protobuf"
+    );
+    for expected in ["capsem-broker-test", "session-7", crate::db::DB_WRITE_OPS_TOTAL] {
+        assert!(contains(request.body(), expected), "the OTLP body lacks {expected}");
+    }
+}
+
 /// The whole export path: the real provider and HTTP client deliver an OTLP
 /// request to the corp endpoint's `/v1/metrics`, carrying the reporting
 /// service and what was recorded. Only the pure helpers were tested before,
