@@ -23,8 +23,8 @@ capsem create -n my-work --image claude-code
 
 - `-n my-work` names the VM and makes it **persistent**: you can stop and
   resume it without losing your files or setup. You can also
-  [pause and resume running work](#pause-your-work-and-return-later) or
-  [fork your VM](#fork-your-vm). Use `my-work` to
+  pause and continue running work with [`capsem suspend` and `capsem resume`](#pause-your-work-and-return-later),
+  or duplicate your VM with [`capsem fork`](#fork-your-vm). Use `my-work` to
   select this VM in commands.
 - `--image claude-code` chooses the image that provides the VM's software.
   You can use one of Capsem's prebuilt images, such as this one with Claude Code,
@@ -63,7 +63,7 @@ lets you inspect files, logs, and activity.
 
 ## Pause your work and return later
 
-When you are ready to pause your work, suspend the VM to free up its CPU
+When you are ready to pause your work, use `capsem suspend` to free up its CPU
 and memory while keeping your running programs ready to continue. Run this
 in another terminal on your computer:
 
@@ -72,7 +72,7 @@ capsem suspend my-work
 ```
 
 Once suspension finishes, your programs are paused. When you are ready to
-work again, resume the VM, then reopen its terminal:
+work again, use `capsem resume`, then reopen its terminal with `capsem shell`:
 
 ```sh
 capsem resume my-work
@@ -84,7 +84,7 @@ After resuming, you can also return through the [Capsem UI](#from-the-capsem-ui)
 ## Fork your VM
 
 After setting up your tools and files in `my-work`, you can reuse that VM's
-setup instead of doing it again. **Fork** duplicates your VM's files and setup
+setup instead of doing it again. `capsem fork` duplicates your VM's files and setup
 in a new VM so you can try a change while keeping the original VM.
 
 For example, duplicate `my-work` into a VM named `experiment`, start the
@@ -99,7 +99,7 @@ capsem shell experiment
 `my-work` is the original VM; `experiment` names the new persistent VM.
 Once the new VM is running, you can change files and try tools there without
 changing `my-work`. Programs start afresh in the new VM; to continue programs
-already running in the original, use [suspend and resume](#pause-your-work-and-return-later).
+already running in the original, use [`capsem suspend` and `capsem resume`](#pause-your-work-and-return-later).
 
 ## Choose an image for your VM
 
@@ -156,8 +156,8 @@ capsem create --image claude-code
 capsem list
 ```
 
-After creation, `list` shows your VMs and their IDs. Replace `<VM-ID>` with
-the ID printed by `create`, then open the VM:
+After creation, `capsem list` shows your VMs and their IDs. Replace `<VM-ID>` with
+the ID printed by `capsem create`, then open the VM:
 
 ```sh
 capsem shell <VM-ID>
@@ -173,7 +173,7 @@ capsem delete <VM-ID>
 An unnamed VM cannot be suspended. Closing its terminal leaves it running;
 deleting it removes its files.
 
-For a quick check that should clean up after itself, `run` creates a VM,
+For a quick check that should clean up after itself, `capsem run` creates a VM,
 executes a command, and deletes the VM when that command finishes. This
 example prints the Linux system information in a VM using the `dev` image:
 

@@ -176,8 +176,8 @@ comparable facts and Mermaid diagrams when they clarify relationships.
 In tutorials and how-tos, explain necessary options when first used, identify
 sample names and replaceable values, and say whether commands run on the
 reader's computer or inside the VM. Complete the requested task: launching a
-VM must lead to accessing it when the goal is to work in it. Explain suspend
-as pausing and returning to work, and fork as duplicating a prepared setup for
+VM must lead to accessing it when the goal is to work in it. Explain `capsem suspend`
+as pausing work, `capsem resume` as returning to it, and `capsem fork` as duplicating a prepared setup for
 another use. Keep explanations proportional to the chosen type, with detailed
 mechanics and rationale in their reference and explanation destinations.
 
@@ -186,8 +186,11 @@ mechanics and rationale in their reference and explanation destinations.
 Use the names exposed by the public command line for its concepts, commands,
 and options. One thing has one name throughout prose, headings, links, and
 examples; do not invent synonyms for variety. Write `image` as in `--image`
-and `images`, and use `fork`, `suspend`, and `resume` for those actions, then
-explain what each lets the user do in simple language.
+and `capsem images`, then explain what it lets the user do in simple language.
+When referring to a command, include the executable and format the full name
+as inline code so it stands out: `capsem fork`, `capsem suspend`,
+`capsem resume`, `capsem create`, and `capsem shell`. Do not shorten command
+references to bare subcommands such as `fork` or `create`.
 
 **VM** is the environment the user creates, accesses, suspends, resumes, or
 forks. Do not rename it a project, workspace, container, session, or setup.
