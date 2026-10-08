@@ -221,12 +221,18 @@ impl VM {
         .await
     }
 
-    pub async fn fork(&self, name: &str, description: Option<String>) -> Result<Self> {
+    pub async fn fork(
+        &self,
+        name: &str,
+        description: Option<String>,
+        labels: Option<std::collections::HashMap<String, String>>,
+    ) -> Result<Self> {
         let params = api::ForkVmParams {
             id: self.resolve().await?,
             body: models::ForkRequest {
                 name: name.into(),
                 description,
+                labels,
             },
         };
         let result = api::fork_vm(&self.client.transport, &params, self.client.options).await?;

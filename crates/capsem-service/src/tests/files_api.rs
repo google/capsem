@@ -96,6 +96,7 @@ pub(super) fn setup_vm_with_workspace_and_uds(
             base_version: "0.0.0".into(),
             persistent: false,
             env: None,
+            labels: None,
             forked_from: None,
             owner_secret: String::new(),
         },
@@ -756,4 +757,208 @@ async fn exec_timeout_above_the_ceiling_is_refused_before_touching_the_vm() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn handle_provision_attaches_labels_and_list_fingerprint_tracks_label_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("fake-capsem-process");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then : > \"${2%.sock}.launched\"; shift 2; else shift; fi\ndone\nexec sleep 30\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut owned = make_test_state_owned();
+    owned.assets_dir = dir.path().join("assets");
+    owned.process_binary = script;
+    let state = Arc::new(owned);
+    install_test_runtime_assets(&state);
+
+    let labels = HashMap::from([
+        ("suite".to_string(), "eval".to_string()),
+        ("inspect-capsem-prefix".to_string(), "pass-1".to_string()),
+    ]);
+    let Json(created) = handle_provision(
+        State(Arc::clone(&state)),
+        Json(ProvisionRequest {
+            name: Some("labeled-vm".into()),
+            persistent: true,
+            ram_mb: None,
+            cpus: None,
+            env: None,
+            labels: Some(labels.clone()),
+            from: None,
+            networks: Vec::new(),
+            container: None,
+        }),
+    )
+    .await
+    .expect("handle_provision with valid labels should succeed");
+
+    let list: ListResponse = decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
+    let listed = list.sandboxes.iter().find(|s| s.id == created.id).unwrap();
+    assert_eq!(listed.labels.as_ref(), Some(&labels));
+
+    let Json(info) = handle_info(State(Arc::clone(&state)), Path(created.id.clone()))
+        .await
+        .unwrap();
+    assert_eq!(info.labels.as_ref(), Some(&labels));
+    assert_eq!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("labeled-vm")
+            .and_then(|e| e.labels.clone()),
+        Some(labels.clone())
+    );
+
+    let fp_before = list_response_fingerprint(&state);
+    state.instances.lock().unwrap().get_mut(&created.id).unwrap().labels =
+        Some(HashMap::from([("suite".to_string(), "other".to_string())]));
+    let fp_after = list_response_fingerprint(&state);
+    assert_ne!(
+        fp_before, fp_after,
+        "changing labels must change list_response_fingerprint"
+    );
+
+    let _ = shutdown_vm_process(&state, &created.id, ShutdownMode::Discard, None).await;
+    if let Some(entry) = state.persistent_registry.lock().unwrap().get_mut("labeled-vm") {
+        entry.defunct = false;
+        entry.last_error = None;
+    }
+
+    let stopped_list: ListResponse = decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
+    let stopped_listed = stopped_list.sandboxes.iter().find(|s| s.id == created.id).unwrap();
+    assert_eq!(
+        stopped_listed.labels.as_ref(),
+        Some(&labels),
+        "stopped persistent VM in /vms/list must preserve labels"
+    );
+    let Json(stopped_info) = handle_info(State(Arc::clone(&state)), Path(created.id.clone()))
+        .await
+        .unwrap();
+    assert_eq!(
+        stopped_info.labels.as_ref(),
+        Some(&labels),
+        "stopped persistent VM in /vms/{{id}}/info must preserve labels"
+    );
+
+    let fp_stopped_before = list_response_fingerprint(&state);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get_mut("labeled-vm")
+        .unwrap()
+        .labels = Some(HashMap::from([("suite".to_string(), "stopped-other".to_string())]));
+    let fp_stopped_after = list_response_fingerprint(&state);
+    assert_ne!(
+        fp_stopped_before, fp_stopped_after,
+        "changing stopped persistent entry labels must change list_response_fingerprint"
+    );
+
+    if let Some(entry) = state.persistent_registry.lock().unwrap().get_mut("labeled-vm") {
+        let rootfs = capsem_core::session::system_overlay_image_path(&entry.session_dir);
+        std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
+        std::fs::File::create(rootfs)
+            .unwrap()
+            .set_len(64 * 1024 * 1024 * 1024)
+            .unwrap();
+        entry.labels = Some(labels.clone());
+        entry.defunct = false;
+        entry.last_error = None;
+    }
+    assert_eq!(state.resume_sandbox(&created.id, None, None).unwrap(), created.id);
+    assert_eq!(
+        state
+            .instances
+            .lock()
+            .unwrap()
+            .get(&created.id)
+            .and_then(|i| i.labels.clone()),
+        Some(labels),
+        "resumed InstanceInfo must preserve persistent entry labels"
+    );
+    let _ = shutdown_vm_process(&state, &created.id, ShutdownMode::Discard, None).await;
+
+    let Json(empty_created) = handle_provision(
+        State(Arc::clone(&state)),
+        Json(ProvisionRequest {
+            name: Some("empty-labels-vm".into()),
+            persistent: true,
+            ram_mb: None,
+            cpus: None,
+            env: None,
+            labels: Some(HashMap::new()),
+            from: None,
+            networks: Vec::new(),
+            container: None,
+        }),
+    )
+    .await
+    .expect("handle_provision with empty labels should succeed");
+    let Json(empty_info) = handle_info(State(Arc::clone(&state)), Path(empty_created.id.clone()))
+        .await
+        .unwrap();
+    assert_eq!(empty_info.labels, None, "empty labels map must normalize to None");
+    assert_eq!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("empty-labels-vm")
+            .and_then(|e| e.labels.clone()),
+        None
+    );
+    let _ = shutdown_vm_process(&state, &empty_created.id, ShutdownMode::Discard, None).await;
+}
+
+#[tokio::test]
+async fn handle_provision_rejects_invalid_labels_with_bad_request() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let mut too_many = HashMap::new();
+    for i in 0..65 {
+        too_many.insert(format!("k{i}"), "v".to_string());
+    }
+    let invalid_cases = [
+        too_many,
+        HashMap::from([(String::new(), "v".to_string())]),
+        HashMap::from([("k".repeat(65), "v".to_string())]),
+        HashMap::from([("-leading".to_string(), "v".to_string())]),
+        HashMap::from([("dot.key".to_string(), "v".to_string())]),
+        HashMap::from([("bad key".to_string(), "v".to_string())]),
+        HashMap::from([("k".to_string(), "v".repeat(256))]),
+        HashMap::from([("k".to_string(), "bad\nval".to_string())]),
+    ];
+    for bad_labels in invalid_cases {
+        let err = handle_provision(
+            State(Arc::clone(&state)),
+            Json(ProvisionRequest {
+                name: None,
+                persistent: false,
+                ram_mb: None,
+                cpus: None,
+                env: None,
+                labels: Some(bad_labels.clone()),
+                from: None,
+                networks: Vec::new(),
+                container: None,
+            }),
+        )
+        .await
+        .expect_err("invalid labels must be rejected");
+        assert_eq!(
+            err.0,
+            StatusCode::BAD_REQUEST,
+            "expected 400 for {bad_labels:?}: {}",
+            err.1
+        );
+    }
 }

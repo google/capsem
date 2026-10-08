@@ -29,6 +29,7 @@ class SandboxInfo(Model):
     files: VmFilesInfo | None = None
     forked_from: StrictStr | None = None
     id: StrictStr
+    labels: dict[str, StrictStr] | None = None
     last_error: StrictStr | None = None
     model_call_count: Annotated[StrictInt, Field(ge=0)] | None = None
     name: StrictStr | None = None

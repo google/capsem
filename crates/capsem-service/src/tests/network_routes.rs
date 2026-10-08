@@ -199,6 +199,7 @@ async fn stopping_a_vm_keeps_its_membership_and_a_fork_has_none() {
         Json(ForkRequest {
             name: "my-fork".into(),
             description: None,
+            labels: None,
         }),
     )
     .await

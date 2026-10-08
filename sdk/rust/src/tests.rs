@@ -42,6 +42,7 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
             cpus: Some(4),
             memory: Some(8),
             env: Some([("EDITOR".into(), "vim".into())].into()),
+            labels: Some([("suite".into(), "eval".into())].into()),
             networks: vec![network.clone()],
             ..Default::default()
         })
@@ -56,6 +57,7 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
             "cpus": 4,
             "persistent": true,
             "env": {"EDITOR": "vim"},
+            "labels": {"suite": "eval"},
             "networks": [network.name],
         })
     );
@@ -200,10 +202,17 @@ async fn controls_and_resources_use_the_canonical_vm_routes() {
     request(&mut server, "/vms/vm-1/stop").await;
     vm.delete().await.unwrap();
     request(&mut server, "/vms/vm-1/delete").await;
-    let fork = vm.fork("branch", Some("notes".into())).await.unwrap();
+    let fork = vm
+        .fork(
+            "branch",
+            Some("notes".into()),
+            Some([("suite".into(), "eval".into())].into()),
+        )
+        .await
+        .unwrap();
     assert_eq!(
         request(&mut server, "/vms/vm-1/fork").await,
-        json!({"name":"branch","description":"notes"})
+        json!({"name":"branch","description":"notes","labels":{"suite":"eval"}})
     );
     drop(vm);
     fork.info().await.unwrap();

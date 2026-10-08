@@ -1126,6 +1126,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `POST /vms/create` (`ProvisionRequest`) and `POST /vms/{id}/fork` (`ForkRequest`)
+  accept optional advisory `labels` (`<= 64` entries, ASCII keys `1..=64`
+  matching the VM-name rule `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`, values `<= 255`
+  UTF-8 bytes without control characters; `{}` is treated as no labels),
+  returned on `SandboxInfo.labels` across `/vms/list` and `/vms/{id}/info`.
+  Labels are set at creation, immutable afterward, preserved across `persist`
+  and `resume`, and inherited on `fork` unless overridden (with `{}` clearing).
+  `Hypervisor.create` and `VM.fork` across the Python, Rust, and TypeScript
+  SDKs (as well as `capsem create -l KEY=VALUE` and `capsem fork -l KEY=VALUE`)
+  attach or override `labels`.
 - Images can be named from the catalog. The service reads
   `ghcr.io/google/capsem/catalog:stable` (or the mirror `[images] catalog`
   names, trusting `[images] catalog_ca` for it; `catalog = false` turns it

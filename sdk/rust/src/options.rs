@@ -49,6 +49,7 @@ pub struct CreateOptions {
     /// Guest memory in GiB.
     pub memory: Option<u64>,
     pub env: Option<HashMap<String, String>>,
+    pub labels: Option<HashMap<String, String>>,
     pub networks: Vec<NetworkInfo>,
     pub image: Option<String>,
     pub command: Vec<String>,

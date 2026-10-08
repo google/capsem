@@ -17,6 +17,7 @@ class ProvisionRequest(Model):
     cpus: Annotated[StrictInt, Field(ge=0)] | None = None
     env: dict[str, StrictStr] | None = None
     from_: StrictStr | None = Field(default=None, alias='from')
+    labels: dict[str, StrictStr] | None = None
     name: StrictStr | None = None
     networks: list[StrictStr] | None = None
     persistent: StrictBool | None = None

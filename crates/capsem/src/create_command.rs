@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 
-use crate::client::{self, ProvisionRequest, ProvisionResponse, UdsClient};
+use crate::client::{self, ApiResponse, ForkRequest, ForkResponse, ProvisionRequest, ProvisionResponse, UdsClient};
 use crate::container_image::{self, ImageArgs, Workload};
 use crate::container_run::ram_mb;
 use capsem_api::ContainerState;
@@ -22,6 +22,9 @@ pub(super) struct CreateArgs {
     /// Set environment variables (repeatable: -e KEY=VALUE; the container's, with --image)
     #[arg(short = 'e', long = "env")]
     pub env: Vec<String>,
+    /// Attach advisory metadata labels at creation (repeatable: -l KEY=VALUE)
+    #[arg(short = 'l', long = "label")]
+    pub label: Vec<String>,
     /// Clone state from an existing persistent session: its workspace and,
     /// with --image, its image volumes under the new image; without, its image
     #[arg(long)]
@@ -36,6 +39,7 @@ pub(super) struct CreateArgs {
 pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> {
     let persistent = args.name.is_some() || args.from.is_some();
     let workload = Workload::of(&args.image, &args.env)?;
+    let labels = client::parse_env_vars(&args.label)?;
     let request = ProvisionRequest {
         name: args.name.clone(),
         ram_mb: ram_mb(args.ram),
@@ -46,6 +50,7 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
             None => client::parse_env_vars(&args.env)?,
             Some(_) => None,
         },
+        labels,
         from: args.from.clone(),
         networks: args.network.clone(),
         container: match &workload {
@@ -62,6 +67,27 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
     } else {
         println!("{}", vm.id);
     }
+    Ok(())
+}
+
+pub(super) async fn fork(
+    client: &UdsClient,
+    session: &str,
+    name: &str,
+    description: Option<&str>,
+    label: &[String],
+) -> Result<()> {
+    client::validate_id(session)?;
+    let session_id = crate::route_ids::resolve_session_route_id(client, session).await?;
+    let req = ForkRequest {
+        name: name.to_owned(),
+        description: description.map(ToOwned::to_owned),
+        labels: client::parse_env_vars(label)?,
+    };
+    let resp: ApiResponse<ForkResponse> = client.post(&format!("/vms/{session_id}/fork"), &req).await?;
+    let info = resp.into_result()?;
+    let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
+    println!("Forked session '{}' from '{session}' ({size_mb:.1} MB)", info.name);
     Ok(())
 }
 

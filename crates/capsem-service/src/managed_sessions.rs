@@ -240,6 +240,7 @@ impl ManagedLifecycle {
                         version_override: None,
                         persistent: false,
                         env: capsem_core::container::session_env(request.env, request.container.is_some()),
+                        labels: crate::non_empty_labels(request.labels),
                         from: request.from.map(|source| CloneFrom {
                             source,
                             replace_image: request.container.is_some(),

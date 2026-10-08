@@ -33,6 +33,7 @@ async fn provision_leaves_resources_to_the_service_when_unset() {
         cpus: None,
         persistent: false,
         env: None,
+        labels: None,
         from: None,
         networks: vec![],
         container: None,

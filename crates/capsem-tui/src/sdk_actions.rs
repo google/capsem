@@ -23,6 +23,7 @@ pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &Con
                     ram_mb: None,
                     cpus: None,
                     env: None,
+                    labels: None,
                     from: None,
                     networks: Vec::new(),
                     container: image.as_ref().map(|image| capsem_sdk::models::ContainerSpec {
@@ -43,7 +44,7 @@ pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &Con
             })
         }
         ControlAction::Fork { id, name } => {
-            let vm = vm(id)?.fork(name, None).await?;
+            let vm = vm(id)?.fork(name, None, None).await?;
             Ok(ActionOutcome {
                 message: format!("forked {}", vm.name().unwrap_or(name)),
                 focus_session: vm.id().map(str::to_owned),

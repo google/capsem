@@ -173,16 +173,8 @@ fn persistent_resume_allows_deprecated_pins_but_blocks_explicit_revocation() {
 fn provision_rejects_nonexistent_source_sandbox() {
     let (state, _dir) = make_test_state_with_tempdir();
     let result = state.provision_sandbox(ProvisionOptions {
-        id: "vm1",
-        name: "vm1",
-        ram_mb: 2048,
-        cpus: 2,
-        scratch_disk_size_gb: 16,
-        version_override: None,
-        persistent: false,
-        env: None,
         from: Some(crate::CloneFrom::keeping_image("ghost-sandbox")),
-        description: None,
+        ..test_provision_options("vm1", "vm1")
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -195,16 +187,8 @@ fn provision_refuses_to_clone_a_profile_era_vm() {
     install_test_runtime_assets(&state);
     register_entry(&state, profile_era_entry(&state, "profile-era-source"));
     let result = state.provision_sandbox(ProvisionOptions {
-        id: "vm1",
-        name: "vm1",
-        ram_mb: 2048,
-        cpus: 2,
-        scratch_disk_size_gb: 16,
-        version_override: None,
-        persistent: false,
-        env: None,
         from: Some(crate::CloneFrom::keeping_image("profile-era-source")),
-        description: None,
+        ..test_provision_options("vm1", "vm1")
     });
     let err = result.unwrap_err().to_string();
     assert!(
@@ -292,21 +276,9 @@ async fn handle_info_shows_suspended_status() {
             "info-susp".into(),
             PersistentVmEntry {
                 id: vm_id.clone(),
-                name: "info-susp".into(),
-                legacy_profile_id: None,
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir,
-                forked_from: None,
-                description: None,
                 suspended: true,
-                defunct: false,
-                last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
-                env: None,
+                ..test_persistent_entry("info-susp", session_dir)
             },
         );
     }
@@ -576,21 +548,9 @@ fn existing_resume_checkpoint_requires_completion_marker() {
             "resume-vm".into(),
             PersistentVmEntry {
                 id: vm_id.clone(),
-                name: "resume-vm".into(),
-                legacy_profile_id: None,
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir,
-                forked_from: None,
-                description: None,
                 suspended: true,
-                defunct: false,
-                last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
-                env: None,
+                ..test_persistent_entry("resume-vm", session_dir)
             },
         );
     }
@@ -623,21 +583,9 @@ fn clear_resume_checkpoint_removes_completion_marker() {
             "resume-vm".into(),
             PersistentVmEntry {
                 id: vm_id.clone(),
-                name: "resume-vm".into(),
-                legacy_profile_id: None,
-                asset_pins: test_asset_pins(),
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir,
-                forked_from: None,
-                description: None,
                 suspended: true,
-                defunct: false,
-                last_error: None,
                 checkpoint_path: Some("checkpoint.vzsave".into()),
-                env: None,
+                ..test_persistent_entry("resume-vm", session_dir)
             },
         );
     }

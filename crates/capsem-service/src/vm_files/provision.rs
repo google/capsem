@@ -8,6 +8,8 @@ pub(crate) async fn handle_provision(
         .lifecycle
         .admit()
         .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
+    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    let labels = non_empty_labels(payload.labels.clone());
     if let Some(reason) = state.off_worker(|state| vm_asset_block_reason(&state)).await? {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
@@ -54,6 +56,7 @@ pub(crate) async fn handle_provision(
         let id = id_for_loop.clone();
         let name = name.clone();
         let payload_env = capsem_core::container::session_env(payload.env.clone(), payload.container.is_some());
+        let payload_labels = labels.clone();
         let payload_from = payload.from.clone().map(|source| crate::CloneFrom {
             source,
             replace_image: payload.container.is_some(),
@@ -88,6 +91,7 @@ pub(crate) async fn handle_provision(
                 scratch_disk_size_gb,
                 payload_persistent,
                 payload_env,
+                payload_labels,
                 payload_from,
             )
             .await;

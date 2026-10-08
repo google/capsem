@@ -76,6 +76,7 @@ fn nil_selected_generation_refuses_provision_before_any_session_side_effect() {
             version_override: None,
             persistent: false,
             env: None,
+            labels: None,
             from: None,
             description: None,
         },

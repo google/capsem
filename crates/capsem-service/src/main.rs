@@ -139,7 +139,7 @@ impl Drop for ServicePidfile {
 
 use capsem_service::api;
 use capsem_service::api::*;
-use capsem_service::naming::{generate_session_name, validate_vm_name};
+use capsem_service::naming::{generate_session_name, non_empty_labels, validate_vm_labels, validate_vm_name};
 use capsem_service::registry::{
     new_persistent_vm_id, BootAssetPin, BootAssetPins, PersistentRegistry, PersistentVmEntry, SharedRegistry,
 };
@@ -335,6 +335,7 @@ pub struct ProvisionOptions<'a> {
     pub version_override: Option<String>,
     pub persistent: bool,
     pub env: Option<std::collections::HashMap<String, String>>,
+    pub labels: Option<std::collections::HashMap<String, String>>,
     pub from: Option<CloneFrom>,
     pub description: Option<String>,
 }
