@@ -22,7 +22,7 @@ use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
@@ -76,13 +76,15 @@ pub trait DnsUpstreamGrants: Send + Sync {
     fn open(&self, upstream_index: u16) -> DnsGrantFuture<'_>;
 }
 
-struct DirectDnsUpstreams(Vec<SocketAddr>);
+struct DirectDnsUpstreams(Arc<RwLock<Vec<SocketAddr>>>);
 
 impl DnsUpstreamGrants for DirectDnsUpstreams {
     fn open(&self, upstream_index: u16) -> DnsGrantFuture<'_> {
         Box::pin(async move {
             let upstream = self
                 .0
+                .read()
+                .unwrap()
                 .get(usize::from(upstream_index))
                 .copied()
                 .ok_or_else(|| anyhow!("DNS upstream index {upstream_index} is not configured"))?;
@@ -102,7 +104,7 @@ impl DnsUpstreamGrants for DirectDnsUpstreams {
 /// successful response wins.
 #[derive(Clone)]
 pub struct DnsResolver {
-    upstreams: Vec<SocketAddr>,
+    upstreams: Arc<RwLock<Vec<SocketAddr>>>,
     grants: Arc<dyn DnsUpstreamGrants>,
     per_attempt_timeout: Duration,
 }
@@ -111,7 +113,7 @@ impl fmt::Debug for DnsResolver {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("DnsResolver")
-            .field("upstreams", &self.upstreams)
+            .field("upstreams", &*self.upstreams.read().unwrap())
             .field("per_attempt_timeout", &self.per_attempt_timeout)
             .finish_non_exhaustive()
     }
@@ -128,15 +130,19 @@ impl DnsResolver {
     /// Build a resolver targeting an explicit list of upstreams.
     /// Used by tests + future operator config (capsem.toml).
     pub fn with_upstreams(upstreams: Vec<SocketAddr>) -> Self {
-        let grants = Arc::new(DirectDnsUpstreams(upstreams.clone()));
-        Self::with_grants(upstreams, grants)
+        let upstreams = Arc::new(RwLock::new(upstreams));
+        Self {
+            grants: Arc::new(DirectDnsUpstreams(Arc::clone(&upstreams))),
+            upstreams,
+            per_attempt_timeout: DEFAULT_TIMEOUT,
+        }
     }
 
     /// Build a resolver whose connected sockets come from a trusted grant
     /// provider. The addresses are labels for ordering and telemetry only.
     pub fn with_grants(upstreams: Vec<SocketAddr>, grants: Arc<dyn DnsUpstreamGrants>) -> Self {
         Self {
-            upstreams,
+            upstreams: Arc::new(RwLock::new(upstreams)),
             grants,
             per_attempt_timeout: DEFAULT_TIMEOUT,
         }
@@ -150,9 +156,15 @@ impl DnsResolver {
         self
     }
 
-    /// Borrow the configured upstream list (debugging / metrics only).
-    pub fn upstreams(&self) -> &[SocketAddr] {
-        &self.upstreams
+    /// Snapshot the configured upstream list (debugging / metrics only).
+    pub fn upstreams(&self) -> Vec<SocketAddr> {
+        self.upstreams.read().unwrap().clone()
+    }
+
+    /// Replace the configured order after the owning policy reload succeeds.
+    /// An in-flight query keeps the one snapshot it began with.
+    pub fn replace_upstreams(&self, upstreams: Vec<SocketAddr>) {
+        *self.upstreams.write().unwrap() = upstreams;
     }
 
     /// Forward `query_bytes` upstream. Returns the raw response bytes
@@ -163,11 +175,12 @@ impl DnsResolver {
     /// On total failure (every upstream timed out or errored) returns
     /// the cumulative error so the caller can synthesize a SERVFAIL.
     pub async fn resolve(&self, query_bytes: &[u8]) -> Result<(Vec<u8>, Duration)> {
-        if self.upstreams.is_empty() {
+        let upstreams = self.upstreams();
+        if upstreams.is_empty() {
             return Err(anyhow!("no upstream nameservers configured"));
         }
         let mut last_err: Option<anyhow::Error> = None;
-        for (index, upstream) in self.upstreams.iter().enumerate() {
+        for (index, upstream) in upstreams.iter().enumerate() {
             let t0 = Instant::now();
             let upstream_index = u16::try_from(index).map_err(|_| anyhow!("too many DNS upstreams configured"))?;
             match self.try_one(upstream_index, *upstream, query_bytes).await {

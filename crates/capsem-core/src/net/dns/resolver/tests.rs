@@ -263,3 +263,30 @@ async fn refused_grant_never_falls_back_to_direct_udp() {
     assert!(error.to_string().contains("grant refused"), "{error:#}");
     assert_eq!(*requested.lock().unwrap(), vec![0]);
 }
+
+#[tokio::test]
+async fn a_policy_reload_replaces_the_configured_grant_order() {
+    let upstream = fake_upstream(|query| {
+        let id = u16::from_be_bytes([query[0], query[1]]);
+        vec![answer_for(query, id, "reloaded.example.")]
+    })
+    .await;
+    let requested = Arc::new(Mutex::new(Vec::new()));
+    let grants = IndexedGrants {
+        upstreams: Arc::new(vec![upstream]),
+        requested: Arc::clone(&requested),
+        refuse: false,
+    };
+    let resolver = DnsResolver::with_grants(Vec::new(), Arc::new(grants));
+    resolver
+        .resolve(&query_bytes(10, "reloaded.example."))
+        .await
+        .expect_err("empty policy has no implicit direct fallback");
+
+    resolver.replace_upstreams(vec![upstream]);
+    resolver
+        .resolve(&query_bytes(11, "reloaded.example."))
+        .await
+        .expect("the reloaded upstream order is used");
+    assert_eq!(*requested.lock().unwrap(), vec![0]);
+}
