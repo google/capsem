@@ -1073,7 +1073,9 @@ name = "capsem-process"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
+ "bytes",
  "capsem-assets",
  "capsem-core",
  "capsem-foundation",
@@ -1084,6 +1086,8 @@ dependencies = [
  "clap",
  "core-foundation-sys",
  "futures",
+ "http",
+ "opentelemetry-http",
  "serde",
  "serde_json",
  "tempfile",

@@ -120,15 +120,18 @@ struct Args {
     #[arg(long)]
     run_dir: Option<PathBuf>,
     /// The service's own socket, where this owner asks on a guest's behalf
-    /// (private names). Given by the service: it is not always
+    /// (private names and brokered metrics). Given by the service: it is not always
     /// `{run_dir}/service.sock`.
     #[arg(long)]
     service_socket: Option<PathBuf>,
+    /// Export metrics through the service's generation-authenticated local
+    /// broker. The service grants this without exposing a collector address.
+    #[arg(long, conflicts_with = "metric_endpoint")]
+    metric_broker: bool,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
-    /// The corp OTLP endpoint this process exports its metrics to, resolved
-    /// by the service from the corp config. Absent means export is off; the
-    /// process never reads settings or corp files for it.
+    /// Transitional direct-export grant, removed after the service switches
+    /// every launch to `--metric-broker`.
     #[arg(long)]
     metric_endpoint: Option<String>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
@@ -238,7 +241,12 @@ fn main() -> Result<()> {
 
     info!(id = %args.id, "capsem-sandbox-process starting");
     // Held until the process exits: dropping it flushes the last measurements.
-    let _metric_export = metric_export::install(&args.id, args.metric_endpoint.as_deref());
+    let _metric_export = metric_export::install(
+        &args.id,
+        args.service_socket.as_deref(),
+        args.metric_broker,
+        args.metric_endpoint.as_deref(),
+    );
 
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
     // The image share is attached to every session, read-only at the device:

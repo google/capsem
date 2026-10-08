@@ -61,7 +61,7 @@ fn args_parses_all_required() {
 /// export is off. The process has no other way to learn it: it may not read
 /// settings or corp files (`test_process_policy_runtime_contract.py`).
 #[test]
-fn args_metric_endpoint_is_granted_at_launch_and_off_without_it() {
+fn args_accept_one_optional_metric_transport_grant() {
     let required = [
         "capsem-process",
         "--id",
@@ -84,8 +84,28 @@ fn args_metric_endpoint_is_granted_at_launch_and_off_without_it() {
         "/tmp/vm.sock",
     ];
     let off = Args::try_parse_from(required).unwrap();
+    assert!(!off.metric_broker);
     assert_eq!(off.metric_endpoint, None);
-    assert!(metric_export::install(&off.id, off.metric_endpoint.as_deref()).is_none());
+    assert!(metric_export::install(&off.id, None, off.metric_broker, off.metric_endpoint.as_deref()).is_none());
+
+    let broker =
+        Args::try_parse_from(
+            required
+                .into_iter()
+                .chain(["--service-socket", "/tmp/service.sock", "--metric-broker"]),
+        )
+        .unwrap();
+    assert!(broker.metric_broker);
+    assert_eq!(
+        broker.service_socket.as_deref(),
+        Some(std::path::Path::new("/tmp/service.sock"))
+    );
+    assert!(Args::try_parse_from(required.into_iter().chain([
+        "--metric-broker",
+        "--metric-endpoint",
+        "https://otel.example"
+    ]),)
+    .is_err());
 
     let granted = Args::try_parse_from(
         required
