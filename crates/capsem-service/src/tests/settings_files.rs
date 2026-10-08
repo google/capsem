@@ -9,7 +9,7 @@ pub(super) struct SettingsEnvGuard {
     previous_corp: Option<std::ffi::OsString>,
 }
 
-pub(super) struct EnvVarGuard {
+pub(crate) struct EnvVarGuard {
     key: &'static str,
     previous: Option<std::ffi::OsString>,
 }
@@ -38,7 +38,7 @@ pub(super) fn ensure_test_builtin_mcp_binary() {
 }
 
 impl EnvVarGuard {
-    pub(super) fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+    pub(crate) fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let previous = std::env::var_os(key);
         std::env::set_var(key, value);
         Self { key, previous }

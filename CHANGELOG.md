@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Credential injection accepts explicitly selected host startup variables,
+  private file inputs, or an authenticated API. File and memory storage return
+  opaque references; memory material reaches VM owners only through host IPC.
+
 - The shared gateway contract describes credential injection with file or
   memory storage and responses containing only opaque references.
 

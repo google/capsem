@@ -40,6 +40,7 @@ use instance::InstanceInfo;
 mod network_routes;
 mod policy_mutation;
 use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
+mod credential_routes;
 mod mcp_routes;
 mod plugin_routes;
 mod private_routes;

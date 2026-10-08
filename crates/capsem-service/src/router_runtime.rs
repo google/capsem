@@ -103,6 +103,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/assets/status", get(asset_routes::handle_asset_status))
         .route("/assets/ensure", post(asset_routes::handle_asset_ensure))
         .route("/plugins/list", get(plugin_routes::handle_plugins))
+        .route("/credentials/inject", post(credential_routes::inject))
         .route(
             "/plugins/credential_broker/credentials/info",
             get(plugin_routes::handle_credential_broker_credentials_info),

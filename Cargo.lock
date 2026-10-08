@@ -1168,6 +1168,7 @@ dependencies = [
  "capsem-assets",
  "capsem-config",
  "capsem-core",
+ "capsem-credentials",
  "capsem-foundation",
  "capsem-guard",
  "capsem-logger",
@@ -1195,6 +1196,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

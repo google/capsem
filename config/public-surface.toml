@@ -83,7 +83,7 @@ approved = [
 ]
 
 [http]
-count = 94
+count = 95
 approved = [
   "DELETE /networks/{id}",
   "DELETE /networks/{id}/members/{vm_id}",
@@ -171,6 +171,8 @@ approved = [
   "PATCH /plugins/{plugin_id}/edit",
   "GET /plugins/credential_broker/credentials/info",
   "POST /plugins/credential_broker/credentials/reload",
+  # Explicit injection and file/memory storage requested by the user for 0.7.
+  "POST /credentials/inject",
   "GET /mcp/info",
   "GET /mcp/servers/list",
   "GET /mcp/default/info",
