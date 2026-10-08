@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use capsem_core::net::policy::NetworkMechanics;
-use capsem_core::net::policy_config::{
-    ActivePolicyFile, MergedPolicies, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
-};
+use capsem_core::net::policy_config::{ActivePolicyFile, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet};
 use capsem_proto::mcp_contracts::McpServerDef;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
@@ -55,45 +53,20 @@ impl RuntimePolicyConfig {
         active_policy_digest: String,
     ) -> Result<Self> {
         let path = active_policy_path.display().to_string();
-        active
-            .validate()
+        let compiled = active
+            .compile_runtime()
             .map_err(anyhow::Error::msg)
-            .with_context(|| format!("validate {path}"))?;
-        let (user_settings, corp_settings) = active.merged_policy_inputs();
-        let merged = MergedPolicies::from_files(&user_settings, &corp_settings)
-            .map_err(anyhow::Error::msg)
-            .with_context(|| format!("merge active policy {path}"))?;
-        let mut network = merged.network;
-        capsem_core::net::policy_config::apply_network_config(&active.network, &mut network);
-        let security_rules = active
-            .compile_security_rule_set()
-            .map_err(anyhow::Error::msg)
-            .with_context(|| format!("compile active policy rules from {path}"))?;
-        let model_endpoints = active
-            .model_endpoint_registry()
-            .map_err(anyhow::Error::msg)
-            .with_context(|| format!("compile active policy model endpoints from {path}"))?;
-        let dns_upstreams = active
-            .network
-            .dns
-            .upstreams
-            .iter()
-            .map(|upstream| {
-                upstream
-                    .parse::<SocketAddr>()
-                    .with_context(|| format!("parse DNS upstream {upstream:?} from {path}"))
-            })
-            .collect::<Result<Vec<_>>>()?;
+            .with_context(|| format!("compile active policy {path}"))?;
 
         Ok(Self {
             active_policy_path,
             active_policy_digest,
-            network,
-            dns_upstreams,
-            security_rules,
-            plugins: active.plugins.clone(),
-            model_endpoints,
-            mcp: active.mcp.clone().unwrap_or_default(),
+            network: compiled.network,
+            dns_upstreams: compiled.dns_upstreams,
+            security_rules: compiled.security_rules,
+            plugins: compiled.plugins,
+            model_endpoints: compiled.model_endpoints,
+            mcp: compiled.mcp,
         })
     }
 
