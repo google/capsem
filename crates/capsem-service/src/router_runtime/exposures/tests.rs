@@ -371,7 +371,13 @@ async fn preview_admission_preserves_the_coordinator_derived_handoff_endpoint() 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
-        json!({"handoff_socket": expected, "handoff_token": 123, "owner_generation": "42"})
+        json!({
+            "handoff_socket": expected,
+            "handoff_token": 123,
+            "owner_generation": "42",
+            "owner_pid": std::process::id(),
+            "owner_uid": capsem_foundation::unix::process::current_uid(),
+        })
     );
 }
 

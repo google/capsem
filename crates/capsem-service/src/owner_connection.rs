@@ -15,6 +15,10 @@ impl OwnerConnection {
         self.identity.pid.get()
     }
 
+    pub(crate) fn uid(&self) -> u32 {
+        self.identity.uid
+    }
+
     pub(crate) fn authenticate(
         &self,
         state: &ServiceState,
