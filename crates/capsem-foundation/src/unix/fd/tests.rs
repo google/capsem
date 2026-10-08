@@ -4,7 +4,7 @@ use std::os::unix::net::UnixStream;
 
 use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 
-use super::{duplicate, retry_eintr, set_nonblocking, shutdown, wait_readable, SocketShutdown};
+use super::{duplicate, retry_eintr, set_close_on_exec, set_nonblocking, shutdown, wait_readable, SocketShutdown};
 use nix::errno::Errno;
 
 #[test]
@@ -202,6 +202,16 @@ fn duplicate_owns_an_independent_cloexec_descriptor() {
     let mut bytes = [0; 5];
     duplicated.read_exact(&mut bytes).unwrap();
     assert_eq!(&bytes, b"owned");
+}
+
+#[test]
+fn close_on_exec_change_reports_previous_state_and_preserves_descriptor_flags() {
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    fcntl(stream.as_raw_fd(), FcntlArg::F_SETFD(FdFlag::empty())).unwrap();
+    assert!(!set_close_on_exec(stream.as_fd()).unwrap());
+    assert!(set_close_on_exec(stream.as_fd()).unwrap());
+    let flags = FdFlag::from_bits_truncate(fcntl(stream.as_raw_fd(), FcntlArg::F_GETFD).unwrap());
+    assert!(flags.contains(FdFlag::FD_CLOEXEC));
 }
 
 #[test]

@@ -5,7 +5,7 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::time::Duration;
 
 use nix::errno::Errno;
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 use nix::sys::socket::{self, Shutdown};
 
 use super::errno;
@@ -85,57 +85,16 @@ pub fn duplicate(fd: BorrowedFd<'_>) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
-/// Read at a checked file offset without changing the descriptor's cursor.
-/// Interrupted operations are retried; EOF and short reads remain visible.
-pub fn read_at(fd: BorrowedFd<'_>, bytes: &mut [u8], offset: u64) -> io::Result<usize> {
-    let offset = i64::try_from(offset).map_err(|_| io::Error::from_raw_os_error(Errno::EINVAL as i32))?;
-    retry_eintr(|| nix::sys::uio::pread(fd, bytes, offset)).map_err(errno::io)
-}
-
-/// Write at a checked file offset without changing the descriptor's cursor.
-/// Callers own any short-write loop so their protocol can account for progress.
-pub fn write_at(fd: BorrowedFd<'_>, bytes: &[u8], offset: u64) -> io::Result<usize> {
-    let offset = i64::try_from(offset).map_err(|_| io::Error::from_raw_os_error(Errno::EINVAL as i32))?;
-    retry_eintr(|| nix::sys::uio::pwrite(fd, bytes, offset)).map_err(errno::io)
-}
-
-/// Exact logical size of an already-open regular file, retaining descriptor identity.
-pub fn regular_file_size(fd: BorrowedFd<'_>) -> io::Result<u64> {
-    regular_file_metadata(fd).map(|metadata| metadata.len)
-}
-
-/// Descriptor-owned logical and allocated sizes for a regular file.
-#[derive(Debug, Clone, Copy)]
-pub struct RegularFileMetadata {
-    pub len: u64,
-    pub allocated_bytes: u64,
-}
-
-pub fn regular_file_metadata(fd: BorrowedFd<'_>) -> io::Result<RegularFileMetadata> {
-    use nix::sys::stat::{fstat, SFlag};
-    let stat = retry_eintr(|| fstat(fd.as_raw_fd())).map_err(errno::io)?;
-    if SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT != SFlag::S_IFREG {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "descriptor is not a regular file",
-        ));
+/// Prevent an existing descriptor from crossing a later exec boundary.
+/// Returns whether `FD_CLOEXEC` was already set and preserves other flags.
+pub fn set_close_on_exec(fd: BorrowedFd<'_>) -> io::Result<bool> {
+    let raw_flags = retry_eintr(|| fcntl(fd.as_raw_fd(), FcntlArg::F_GETFD)).map_err(errno::io)?;
+    let flags = FdFlag::from_bits_truncate(raw_flags);
+    let was_enabled = flags.contains(FdFlag::FD_CLOEXEC);
+    if !was_enabled {
+        retry_eintr(|| fcntl(fd.as_raw_fd(), FcntlArg::F_SETFD(flags | FdFlag::FD_CLOEXEC))).map_err(errno::io)?;
     }
-    let len = u64::try_from(stat.st_size)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "file length is negative"))?;
-    let allocated_bytes = u64::try_from(stat.st_blocks)
-        .ok()
-        .and_then(|blocks| blocks.checked_mul(512))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "file allocation is invalid"))?;
-    Ok(RegularFileMetadata { len, allocated_bytes })
-}
-
-/// Signal one eventfd completion without borrowing raw Unix mechanics at callers.
-pub fn signal_counter(fd: BorrowedFd<'_>) -> io::Result<()> {
-    let count = retry_eintr(|| nix::unistd::write(fd, &1u64.to_ne_bytes())).map_err(errno::io)?;
-    if count != std::mem::size_of::<u64>() {
-        return Err(io::Error::new(io::ErrorKind::WriteZero, "short eventfd counter write"));
-    }
-    Ok(())
+    Ok(was_enabled)
 }
 
 /// Set or clear `O_NONBLOCK`, returning its previous state.
