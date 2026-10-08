@@ -11,6 +11,24 @@ pub(crate) struct OwnerConnection {
 }
 
 impl OwnerConnection {
+    pub(crate) fn current(
+        state: &ServiceState,
+        id: &str,
+        identity: Option<peer::PeerIdentity>,
+    ) -> Result<Self, String> {
+        let owner = state
+            .instances
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(Self::capture)
+            .transpose()?
+            .ok_or_else(|| format!("VM {id} has no running owner"))?;
+        let identity = identity.ok_or_else(|| "service peer identity unavailable".to_string())?;
+        owner.authenticate_identity(state, identity)?;
+        Ok(owner)
+    }
+
     pub(crate) fn pid(&self) -> u32 {
         self.identity.pid.get()
     }

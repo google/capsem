@@ -30,6 +30,12 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             post(private_routes::handle_private_resolve),
         )
         .route(
+            "/internal/vms/{id}/metrics",
+            post(service_runtime::telemetry_export::handle_metric_relay).layer(axum::extract::DefaultBodyLimit::max(
+                capsem_core::service_uds::MAX_BODY_BYTES,
+            )),
+        )
+        .route(
             "/networks/{id}/members/{vm_id}",
             put(network_routes::handle_network_attach).delete(network_routes::handle_network_detach),
         )
