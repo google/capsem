@@ -21,6 +21,16 @@ fn private_name_broker_carries_no_session_bearer() {
     }
 }
 
+#[test]
+fn metric_export_has_no_collector_destination_surface() {
+    for source in [include_str!("main.rs"), include_str!("metric_export.rs")] {
+        assert!(!source.contains("metric_endpoint"));
+        assert!(!source.contains("--metric-endpoint"));
+        assert!(!source.contains("Destination::Corp"));
+        assert!(!source.contains("OTEL_EXPORTER"));
+    }
+}
+
 // -----------------------------------------------------------------------
 // Args parsing
 // -----------------------------------------------------------------------
@@ -57,11 +67,11 @@ fn args_parses_all_required() {
     assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
 }
 
-/// The metric endpoint is granted by the service at launch; without the flag
-/// export is off. The process has no other way to learn it: it may not read
-/// settings or corp files (`test_process_policy_runtime_contract.py`).
+/// The metric broker is granted by the service at launch; without the flag
+/// export is off. The process has no collector configuration surface and may
+/// not read settings or corp files (`test_process_policy_runtime_contract.py`).
 #[test]
-fn args_accept_one_optional_metric_transport_grant() {
+fn args_accept_an_optional_metric_broker_grant() {
     let required = [
         "capsem-process",
         "--id",
@@ -85,8 +95,7 @@ fn args_accept_one_optional_metric_transport_grant() {
     ];
     let off = Args::try_parse_from(required).unwrap();
     assert!(!off.metric_broker);
-    assert_eq!(off.metric_endpoint, None);
-    assert!(metric_export::install(&off.id, None, off.metric_broker, off.metric_endpoint.as_deref()).is_none());
+    assert!(metric_export::install(&off.id, None, off.metric_broker).is_none());
 
     let broker =
         Args::try_parse_from(
@@ -100,20 +109,6 @@ fn args_accept_one_optional_metric_transport_grant() {
         broker.service_socket.as_deref(),
         Some(std::path::Path::new("/tmp/service.sock"))
     );
-    assert!(Args::try_parse_from(required.into_iter().chain([
-        "--metric-broker",
-        "--metric-endpoint",
-        "https://otel.example"
-    ]),)
-    .is_err());
-
-    let granted = Args::try_parse_from(
-        required
-            .into_iter()
-            .chain(["--metric-endpoint", "https://otel.example"]),
-    )
-    .unwrap();
-    assert_eq!(granted.metric_endpoint.as_deref(), Some("https://otel.example"));
 }
 
 #[test]

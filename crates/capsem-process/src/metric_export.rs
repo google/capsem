@@ -3,10 +3,9 @@
 //! The process exports its own measurements -- ledger writer, MITM, DNS,
 //! security engine, virtio-blk -- tagged with the session it serves. Broker
 //! mode carries encoded OTLP bytes over the service socket without learning
-//! a collector address or credential. The direct endpoint mode remains only
-//! while the service launch grant moves to the broker in the next commit.
+//! a collector address or credential. Without a broker grant, export is off.
 
-use capsem_telemetry::export::{Destination, Exporter, KeyValue};
+use capsem_telemetry::export::{Exporter, KeyValue};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{info, warn};
@@ -62,49 +61,35 @@ impl opentelemetry_http::HttpClient for ServiceMetricClient {
     }
 }
 
-/// Install export when the service granted broker or transitional direct
-/// transport. Failure is logged and leaves export off; metrics never prevent
-/// a VM from booting.
-pub(crate) fn install(
-    vm_id: &str,
-    service_socket: Option<&Path>,
-    broker: bool,
-    endpoint: Option<&str>,
-) -> Option<Exporter> {
+/// Install export when the service granted its broker. Failure is logged and
+/// leaves export off; metrics never prevent a VM from booting.
+pub(crate) fn install(vm_id: &str, service_socket: Option<&Path>, broker: bool) -> Option<Exporter> {
+    if !broker {
+        return None;
+    }
     let attributes = vec![KeyValue::new("session.id", vm_id.to_string())];
-    let (installation, transport) = if broker {
-        let socket = match service_socket {
-            Some(socket) => socket,
-            None => {
-                warn!("metric broker granted without a service socket");
-                return None;
-            }
-        };
-        let client = match ServiceMetricClient::new(socket.to_path_buf(), vm_id) {
-            Ok(client) => client,
-            Err(error) => {
-                warn!(%error, "metric export not installed");
-                return None;
-            }
-        };
-        (
-            capsem_telemetry::export::install_with_http_client(client, "capsem-process", attributes),
-            "service-broker",
-        )
-    } else {
-        let destination = Destination::corp(endpoint)?;
-        (
-            capsem_telemetry::export::install(&destination, "capsem-process", attributes),
-            "direct-transition",
-        )
+    let socket = match service_socket {
+        Some(socket) => socket,
+        None => {
+            warn!("metric broker granted without a service socket");
+            return None;
+        }
     };
+    let client = match ServiceMetricClient::new(socket.to_path_buf(), vm_id) {
+        Ok(client) => client,
+        Err(error) => {
+            warn!(%error, "metric export not installed");
+            return None;
+        }
+    };
+    let installation = capsem_telemetry::export::install_with_http_client(client, "capsem-process", attributes);
     match installation {
         Ok(exporter) => {
-            info!(transport, "metric export installed");
+            info!(transport = "service-broker", "metric export installed");
             Some(exporter)
         }
         Err(error) => {
-            warn!(%error, transport, "metric export not installed");
+            warn!(%error, transport = "service-broker", "metric export not installed");
             None
         }
     }
