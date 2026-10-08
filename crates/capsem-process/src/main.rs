@@ -607,6 +607,7 @@ async fn run_async_main_loop(
         pipeline: mitm_pipeline,
         mcp_endpoint: Some(mcp_endpoint),
         upstream_resolver: capsem_core::net::upstream_address::UpstreamResolver::system(),
+        upstream_grants: Some(Arc::clone(&upstream_grants) as Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants>),
     });
 
     // DNS handler shares the same security rule/plugin handles as MITM
