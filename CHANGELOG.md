@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- TypeScript SDK packages use the 0.7.0 client version.
+
 - Python SDK distributions use the 0.7.0 client version.
 
 ### Added
