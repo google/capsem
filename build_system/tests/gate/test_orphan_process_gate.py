@@ -388,6 +388,20 @@ def test_a_process_from_this_checkout_is_ours() -> None:
     assert ORPHANS._from_this_tree(ours, ROOT)
 
 
+def test_a_process_from_a_worktrees_shared_cargo_root_is_ours(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    shared = tmp_path / "shared-cargo"
+    (checkout / "cache" / "target").mkdir(parents=True)
+    (shared / "debug").mkdir(parents=True)
+    (checkout / "cache" / "target" / "cargo").symlink_to(shared, target_is_directory=True)
+    ours = _facts(14, 100.0, exe=str(shared / "debug" / "capsem-service"))
+
+    assert ORPHANS._from_this_tree(ours, checkout), (
+        "isolated gate worktrees link the whole shared Cargo root, so their "
+        "process accounting must follow that ownership edge"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Functional: the check finds and reaps a real survivor
 # ---------------------------------------------------------------------------
