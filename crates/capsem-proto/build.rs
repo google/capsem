@@ -21,7 +21,14 @@ impl VisitMut for StripDocs {
 }
 
 fn main() {
-    let files = ["lib.rs", "ipc.rs", "handshake.rs", "router.rs", "exec_stream.rs"];
+    let files = [
+        "lib.rs",
+        "ipc.rs",
+        "handshake.rs",
+        "router.rs",
+        "exec_stream.rs",
+        "credential_injection.rs",
+    ];
     let mut hash = 0xcbf29ce484222325_u64;
 
     for f in files {

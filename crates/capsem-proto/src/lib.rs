@@ -10,6 +10,7 @@
 //! `HostToGuest`. This is enforced at the type level by having separate
 //! encode/decode function pairs.
 
+pub mod credential_injection;
 pub mod credential_reference;
 mod exec_stream;
 pub mod forensic;
@@ -76,7 +77,8 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// Version 11 removes the workspace snapshot status query and the unused
 /// service-to-owner freeze messages, and adds the owner-run `CloneState` for
 /// forks.
-pub const PROTOCOL_VERSION: u16 = 11;
+/// Version 12 adds host-only memory credential injection and acknowledgement.
+pub const PROTOCOL_VERSION: u16 = 12;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;

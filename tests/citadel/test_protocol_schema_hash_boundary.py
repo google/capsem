@@ -1,6 +1,7 @@
 """Citadel guard: every host/guest wire declaration changes the schema hash."""
 
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +18,7 @@ REQUIRED_INPUTS = {
     "handshake.rs",
     "router.rs",
     "exec_stream.rs",
+    "credential_injection.rs",
 }
 
 
@@ -43,15 +45,26 @@ def test_every_host_guest_wire_protocol_changes_the_schema_hash() -> None:
     # Rust's list literal is also a valid Python list once the `let` prefix and
     # trailing semicolon are removed. Parse the value instead of accepting a
     # comment or an unused string containing the required filename.
-    declaration = next(
-        (line.strip() for line in source.splitlines() if line.strip().startswith("let files = ")),
-        "",
-    )
-    python_declaration = declaration.removeprefix("let ").removesuffix(";")
-    actual = _declared_hash_inputs(python_declaration)
+    actual = _rust_hash_inputs(source)
     assert actual >= REQUIRED_INPUTS, (
         f"missing schema-hash inputs: {sorted(REQUIRED_INPUTS - actual)}\n{SCHEMA_HASH_RATIONALE}"
     )
+
+
+def _rust_hash_inputs(source: str) -> set[str]:
+    # rustfmt wraps the list once it grows; the entire declaration is still
+    # one literal, and must remain subject to the same AST checks.
+    declaration = re.search(r"(?m)^\s*let files = (\[[^\]]*\]);", source)
+    if declaration is None:
+        return set()
+    return _declared_hash_inputs("files = " + declaration.group(1))
+
+
+def test_schema_hash_guard_accepts_rustfmt_lists_and_refuses_comments() -> None:
+    assert _rust_hash_inputs('let files = ["lib.rs", "ipc.rs"];') == {"lib.rs", "ipc.rs"}
+    assert _rust_hash_inputs('let files = [\n    "lib.rs",\n    "ipc.rs",\n];') == {"lib.rs", "ipc.rs"}
+    assert _rust_hash_inputs('// let files = ["lib.rs", "ipc.rs"];') == set()
+    assert _rust_hash_inputs('let files = ["lib.rs", dynamic];') == set()
 
 
 def test_schema_hash_guard_rejects_indirect_or_nonliteral_inputs() -> None:
