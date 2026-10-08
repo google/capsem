@@ -5,7 +5,7 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::time::Duration;
 
 use nix::errno::Errno;
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 use nix::sys::socket::{self, Shutdown};
 
 use super::errno;
@@ -83,6 +83,18 @@ pub fn duplicate(fd: BorrowedFd<'_>) -> io::Result<OwnedFd> {
     let raw = retry_eintr(|| fcntl(fd.as_raw_fd(), FcntlArg::F_DUPFD_CLOEXEC(0))).map_err(errno::io)?;
     // SAFETY: F_DUPFD_CLOEXEC returned a new descriptor owned by this call.
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+/// Prevent an existing descriptor from crossing a later exec boundary.
+/// Returns whether `FD_CLOEXEC` was already set and preserves other flags.
+pub fn set_close_on_exec(fd: BorrowedFd<'_>) -> io::Result<bool> {
+    let raw_flags = retry_eintr(|| fcntl(fd.as_raw_fd(), FcntlArg::F_GETFD)).map_err(errno::io)?;
+    let flags = FdFlag::from_bits_truncate(raw_flags);
+    let was_enabled = flags.contains(FdFlag::FD_CLOEXEC);
+    if !was_enabled {
+        retry_eintr(|| fcntl(fd.as_raw_fd(), FcntlArg::F_SETFD(flags | FdFlag::FD_CLOEXEC))).map_err(errno::io)?;
+    }
+    Ok(was_enabled)
 }
 
 /// Set or clear `O_NONBLOCK`, returning its previous state.
