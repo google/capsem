@@ -344,6 +344,8 @@ pub(crate) async fn handle_admit_preview_connection(
                 .into_owned(),
             handoff_token,
             owner_generation: owner_generation.to_string(),
+            owner_pid: handoff.owner.pid(),
+            owner_uid: handoff.owner.uid(),
         })),
         ProcessToService::PreviewConnectionAdmitted { error: Some(error), .. } => {
             Err(AppError(StatusCode::UNAUTHORIZED, error))
