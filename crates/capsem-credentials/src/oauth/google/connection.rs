@@ -382,27 +382,35 @@ impl GoogleConnection {
                 .writer
                 .lock()
                 .map_err(|_| GoogleConnectionError::StorageUnavailable)?;
-            if owner.denied.load(Ordering::Acquire)
-                || owner
-                    .data
-                    .lock()
-                    .map_err(|_| GoogleConnectionError::Unavailable)?
-                    .revision
-                    != expected
-            {
+            let mut data = owner.data.lock().map_err(|_| GoogleConnectionError::Unavailable)?;
+            if data.revision != expected {
                 return Err(GoogleConnectionError::RevisionChanged);
             }
+            if owner.denied.load(Ordering::Acquire) {
+                Self::retain_for_retirement(&mut data, next);
+                return Err(GoogleConnectionError::RevisionChanged);
+            }
+            drop(data);
             if let Err(error) = owner.storage.write(&next) {
                 let mut data = owner.data.lock().map_err(|_| GoogleConnectionError::Unavailable)?;
-                if data.revision == expected && !owner.denied.load(Ordering::Acquire) {
-                    data.state = GoogleConnectionState::Degraded;
-                    owner.denied.store(true, Ordering::Release);
+                if data.revision == expected {
+                    if owner.denied.load(Ordering::Acquire) {
+                        Self::retain_for_retirement(&mut data, next);
+                    } else {
+                        *data = next;
+                        data.state = GoogleConnectionState::Degraded;
+                        owner.denied.store(true, Ordering::Release);
+                    }
                 }
                 drop(data);
                 return Err(error);
             }
             let mut data = owner.data.lock().map_err(|_| GoogleConnectionError::Unavailable)?;
-            if owner.denied.load(Ordering::Acquire) || data.revision != expected {
+            if data.revision != expected {
+                return Err(GoogleConnectionError::RevisionChanged);
+            }
+            if owner.denied.load(Ordering::Acquire) {
+                Self::retain_for_retirement(&mut data, next);
                 return Err(GoogleConnectionError::RevisionChanged);
             }
             *data = next;
@@ -411,6 +419,15 @@ impl GoogleConnection {
         })
         .await
         .map_err(|_| GoogleConnectionError::StorageUnavailable)?
+    }
+
+    // A refresh may rotate material after denial began. Keep it solely for
+    // disconnect's joined retirement, never as an admitted access lease.
+    fn retain_for_retirement(data: &mut Record, mut next: Record) {
+        if next.state == GoogleConnectionState::Connected {
+            next.state = GoogleConnectionState::Disconnecting;
+            *data = next;
+        }
     }
 
     /// Deny new access immediately; completed local disconnection is durable.
@@ -425,6 +442,7 @@ impl GoogleConnection {
         self.0.denied.store(true, Ordering::Release);
         drop(admission);
         let _lifecycle = self.0.lifecycle.lock().await;
+        let _refresh = self.0.refresh.lock().await;
         let owner = Arc::clone(&self.0);
         let retirement = tokio::task::spawn_blocking(move || {
             let _writer = owner

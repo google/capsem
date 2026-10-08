@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- OAuth disconnect joins an in-flight refresh and retires the latest rotated
+  token under denial, including material whose durable publication failed.
+
 - Disconnect admission and reconnect publication share the credential owner's
   state lock, so concurrent reauthorization cannot clear a pending denial.
 

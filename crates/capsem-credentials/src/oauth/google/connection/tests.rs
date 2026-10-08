@@ -217,7 +217,9 @@ async fn real_file_restart_requires_refresh_and_disconnection_survives_restart()
 
 #[tokio::test]
 async fn a_late_refresh_cannot_restore_a_disconnected_connection() {
-    let mut refresh = Reply::json(r#"{"access_token":"private-late","expires_in":60,"token_type":"Bearer"}"#);
+    let mut refresh = Reply::json(
+        r#"{"access_token":"private-late","refresh_token":"private-late-refresh","expires_in":60,"token_type":"Bearer"}"#,
+    );
     refresh.delay = Duration::from_millis(100);
     let (fixture, client, tokens) = setup(vec![refresh, Reply::json("")]).await;
     let connection = client
@@ -237,6 +239,10 @@ async fn a_late_refresh_cannot_restore_a_disconnected_connection() {
     assert_eq!(connection.status().state, GoogleConnectionState::Disconnected);
     assert!(connection.access(Instant::now()).await.is_err());
     assert_eq!(fixture.records.lock().unwrap().len(), 4);
+    assert_eq!(
+        fixture.records.lock().unwrap()[3].fields["token"],
+        "private-late-refresh"
+    );
 }
 
 #[tokio::test]
@@ -264,7 +270,7 @@ async fn reauthorization_keeps_the_verified_account_and_invalidates_prior_leases
 
 #[tokio::test]
 async fn failed_rotation_commit_denies_material_instead_of_publishing_unstored_tokens() {
-    let (fixture, client, tokens) = setup(vec![Reply::json(r#"{"access_token":"private-uncommitted","refresh_token":"private-uncommitted-refresh","expires_in":60,"token_type":"Bearer"}"#)]).await;
+    let (fixture, client, tokens) = setup(vec![Reply::json(r#"{"access_token":"private-uncommitted","refresh_token":"private-uncommitted-refresh","expires_in":60,"token_type":"Bearer"}"#), Reply::json("")]).await;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("private").join("connection.json");
     let connection = client
@@ -282,6 +288,18 @@ async fn failed_rotation_commit_denies_material_instead_of_publishing_unstored_t
     assert!(lease.with_token(Instant::now(), str::to_owned).is_err());
     assert!(connection.access(Instant::now()).await.is_err());
     assert_eq!(fixture.records.lock().unwrap().len(), 3);
+    std::fs::remove_dir(&path).unwrap();
+    assert_eq!(
+        connection.disconnect().await.unwrap(),
+        GoogleRevocationOutcome::Succeeded
+    );
+    assert_eq!(
+        fixture.records.lock().unwrap()[3].fields["token"],
+        "private-uncommitted-refresh"
+    );
+    let bytes = std::fs::read_to_string(path).unwrap();
+    assert!(!bytes.contains("private-uncommitted"));
+    assert!(!bytes.contains("private-uncommitted-refresh"));
 }
 
 #[tokio::test]
