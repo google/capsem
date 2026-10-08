@@ -841,14 +841,15 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "integrations/inspect-ai"]
 # Already passes every rule, and must keep doing so.
-strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
+strict_roots = ["build_system/builder", "build_system/sdist_command.py", "integrations/inspect-ai"]
 # Match the import roots exercised by the sole pytest project plus the guest
 # trees and script bootstrap paths that are materialized at runtime. Keeping
 # these explicit lets Ty inspect a conventional capsem-builder install without
 # depending on uv's editable finder.
 ty_search_paths = [
+    "integrations/inspect-ai",
     "build_system/tests/gate",
     "build_system/builder",
     "tests",
@@ -2017,6 +2018,8 @@ building = ["frontend-build", "docs", "site"]
 # `tests/test_gate_*.py` to appear here, since by construction those need
 # neither.
 source_contract = [
+    "integrations/inspect-ai/tests/",
+    "tests/qualification/test_candidate.py",
     "build_system/tests/gate/test_gate_observation.py",
     "build_system/tests/gate/test_gate_observation_startup.py",
     "build_system/tests/gate/test_gate_observation_propagation.py",
@@ -2202,13 +2205,13 @@ stop_at_first = "--maxfail=5"
 # than half without adding a second concurrency policy.
 parallel_workers = 4
 parallel_distribution = "loadfile"
-coverage_flags = ["--cov=build_system/builder", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
+coverage_flags = ["--cov=build_system/builder", "--cov=integrations/inspect-ai/inspect_capsem", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
 # A composed qualification executes source contracts before it builds anything,
 # then appends the VM-owned cohort without executing those files again.  The
 # partial sessions cannot judge the complete floor; the finishing session does.
-coverage_seed_flags = ["--cov=build_system/builder", "--cov-report=", "--cov-fail-under=0"]
-coverage_append_flags = ["--cov=build_system/builder", "--cov-append", "--cov-report=", "--cov-fail-under=0"]
-coverage_finish_flags = ["--cov=build_system/builder", "--cov-append", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
+coverage_seed_flags = ["--cov=build_system/builder", "--cov=integrations/inspect-ai/inspect_capsem", "--cov-report=", "--cov-fail-under=0"]
+coverage_append_flags = ["--cov=build_system/builder", "--cov=integrations/inspect-ai/inspect_capsem", "--cov-append", "--cov-report=", "--cov-fail-under=0"]
+coverage_finish_flags = ["--cov=build_system/builder", "--cov=integrations/inspect-ai/inspect_capsem", "--cov-append", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
 
 # Directories the broad suite never collects, each for its own reason.
 #

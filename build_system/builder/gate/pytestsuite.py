@@ -153,7 +153,7 @@ def citadel(config: GateConfig) -> Suite:
 
 
 def collection(config: GateConfig) -> Step:
-    """Strictly collect both Python test roots in one interpreter."""
+    """Strictly collect Python roots and declared source-contract directories."""
     settings = config.suites.pytest
     return step(
         "pytest.collection",
@@ -162,6 +162,7 @@ def collection(config: GateConfig) -> Step:
                 config,
                 settings.root,
                 settings.build_system_root,
+                *(path for path in config.suites.source_contract if path.endswith("/")),
                 *settings.collection_flags,
             )
         ),

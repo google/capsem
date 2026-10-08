@@ -47,6 +47,25 @@ def test_half_a_candidate_is_refused(monkeypatch):
         candidate.resolve()
 
 
+def test_capability_selection_does_not_require_built_image_bytes(tmp_path, monkeypatch):
+    image = tmp_path / "images" / "agent"
+    image.mkdir(parents=True)
+    (image / "qualify.toml").write_text('capabilities = ["agent", "ollama"]\n')
+    monkeypatch.setattr(candidate, "ROOT", tmp_path)
+    monkeypatch.setenv(candidate.NAME_ENV, "agent")
+    monkeypatch.setenv(candidate.LAYOUT_ENV, str(tmp_path / "missing-layout"))
+    assert candidate.selected_capabilities() == frozenset({"agent", "ollama"})
+    with pytest.raises(FileNotFoundError):
+        candidate.resolve()
+
+
+def test_half_a_candidate_is_also_refused_during_capability_selection(monkeypatch):
+    monkeypatch.setenv(candidate.NAME_ENV, "dev")
+    monkeypatch.delenv(candidate.LAYOUT_ENV, raising=False)
+    with pytest.raises(RuntimeError, match="both"):
+        candidate.selected_capabilities()
+
+
 def test_a_manifest_may_only_declare_capabilities_and_expectations(tmp_path, monkeypatch):
     image = tmp_path / "images" / "agent"
     image.mkdir(parents=True)

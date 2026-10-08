@@ -16,4 +16,5 @@ lint_mapping_sha256 = "ac42e4aac5f97bab38e19bf3691343d0f79934dabef4137ac501baa6f
 coverage_mapping_count = 4
 coverage_mapping_sha256 = "6e6d023b00ea5f0dcdb1f2373c3217907ef1b14075697ad50c4a3ebf5884aee0"
 legacy_reference_count = 324
-legacy_reference_sha256 = "8ec0b7d9b1b55275b5ddbccb025fc01026f36ba9846a8d767709a2c32cba22ef"
+# Same 324 references; the reviewed Python root record now also names integrations.
+legacy_reference_sha256 = "4017ecf37754dc6b54de93af214d39a65e208297a8a905edafa2b3c585188f45"
