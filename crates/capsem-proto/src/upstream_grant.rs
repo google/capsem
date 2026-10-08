@@ -11,7 +11,7 @@ use std::net::IpAddr;
 use anyhow::{bail, Result};
 
 /// Exact record size carried by the bounded SCM_RIGHTS channel.
-pub const UPSTREAM_GRANT_FRAME_SIZE: usize = 288;
+pub const UPSTREAM_GRANT_FRAME_SIZE: usize = 360;
 /// A response grants at most one connected TCP or UDP descriptor.
 pub const UPSTREAM_GRANT_MAX_FDS: usize = 1;
 /// DNS names are at most 253 wire-text bytes without a root dot.
@@ -28,7 +28,9 @@ const PORT_RANGE: std::ops::Range<usize> = 20..22;
 const DETAIL_RANGE: std::ops::Range<usize> = 22..24;
 const NAME_LENGTH_OFFSET: usize = 24;
 const NAME_RANGE: std::ops::Range<usize> = 25..25 + MAX_UPSTREAM_HOST_BYTES;
-const RESERVED_RANGE: std::ops::Range<usize> = NAME_RANGE.end..UPSTREAM_GRANT_FRAME_SIZE;
+const POLICY_DIGEST_BYTES: usize = 71;
+const POLICY_DIGEST_RANGE: std::ops::Range<usize> = NAME_RANGE.end..NAME_RANGE.end + POLICY_DIGEST_BYTES;
+const RESERVED_RANGE: std::ops::Range<usize> = POLICY_DIGEST_RANGE.end..UPSTREAM_GRANT_FRAME_SIZE;
 
 const RESOLVE_TCP: u8 = 1;
 const CONNECT_TCP: u8 = 2;
@@ -160,11 +162,13 @@ pub enum UpstreamGrantResponse {
         selection_id: u64,
         protocol: UpstreamProtocol,
         judged_ip: Option<IpAddr>,
+        policy_digest: String,
     },
     DescriptorGranted {
         request_id: u64,
         grant_id: u64,
         kind: UpstreamDescriptorKind,
+        policy_digest: String,
     },
     Denied {
         request_id: u64,
@@ -246,6 +250,7 @@ pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[
 /// Decode and fully validate one worker request.
 pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<UpstreamGrantRequest> {
     validate_envelope(frame)?;
+    require_empty_policy_digest(frame)?;
     let request_id = get_u64(frame, REQUEST_ID_RANGE);
     let resource_id = get_u64(frame, RESOURCE_ID_RANGE);
     let port = get_u16(frame, PORT_RANGE);
@@ -314,6 +319,7 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
             selection_id,
             protocol,
             judged_ip,
+            policy_digest,
         } => {
             require_nonzero("request id", *request_id)?;
             require_nonzero("selection id", *selection_id)?;
@@ -324,11 +330,13 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
             if let Some(address) = judged_ip {
                 put_name(&mut frame, &address.to_string())?;
             }
+            put_policy_digest(&mut frame, policy_digest)?;
         }
         UpstreamGrantResponse::DescriptorGranted {
             request_id,
             grant_id,
             kind,
+            policy_digest,
         } => {
             require_nonzero("request id", *request_id)?;
             require_nonzero("grant id", *grant_id)?;
@@ -336,6 +344,7 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
             put_u64(&mut frame, RESOURCE_ID_RANGE, *grant_id);
             put_u16(&mut frame, DETAIL_RANGE, kind.code());
+            put_policy_digest(&mut frame, policy_digest)?;
         }
         UpstreamGrantResponse::Denied { request_id, reason } => {
             require_nonzero("request id", *request_id)?;
@@ -355,6 +364,7 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
     let port = get_u16(frame, PORT_RANGE);
     let detail = get_u16(frame, DETAIL_RANGE);
     let name = get_name(frame)?;
+    let policy_digest = get_policy_digest(frame)?;
     require_nonzero("request id", request_id)?;
     if port != 0 {
         bail!("upstream response cannot carry a port");
@@ -377,6 +387,7 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
                 selection_id: resource_id,
                 protocol,
                 judged_ip,
+                policy_digest: require_policy_digest(policy_digest)?,
             })
         }
         DESCRIPTOR_GRANTED => {
@@ -388,11 +399,15 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
                 request_id,
                 grant_id: resource_id,
                 kind: UpstreamDescriptorKind::decode(detail)?,
+                policy_digest: require_policy_digest(policy_digest)?,
             })
         }
         DENIED => {
             if resource_id != 0 || !name.is_empty() {
                 bail!("denial cannot carry a resource");
+            }
+            if policy_digest.is_some() {
+                bail!("denial cannot carry a policy digest");
             }
             Ok(UpstreamGrantResponse::Denied {
                 request_id,
@@ -473,6 +488,47 @@ fn get_name(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<String> {
         bail!("upstream name padding is nonzero");
     }
     String::from_utf8(used.to_vec()).map_err(|_| anyhow::anyhow!("upstream name is not UTF-8"))
+}
+
+fn put_policy_digest(frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE], digest: &str) -> Result<()> {
+    validate_policy_digest(digest)?;
+    frame[POLICY_DIGEST_RANGE].copy_from_slice(digest.as_bytes());
+    Ok(())
+}
+
+fn get_policy_digest(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<Option<String>> {
+    let bytes = &frame[POLICY_DIGEST_RANGE];
+    if bytes.iter().all(|byte| *byte == 0) {
+        return Ok(None);
+    }
+    let digest = std::str::from_utf8(bytes).map_err(|_| anyhow::anyhow!("policy digest is not UTF-8"))?;
+    validate_policy_digest(digest)?;
+    Ok(Some(digest.to_owned()))
+}
+
+fn require_policy_digest(digest: Option<String>) -> Result<String> {
+    digest.ok_or_else(|| anyhow::anyhow!("successful upstream response lacks a policy digest"))
+}
+
+fn require_empty_policy_digest(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<()> {
+    if frame[POLICY_DIGEST_RANGE].iter().any(|byte| *byte != 0) {
+        bail!("upstream request cannot carry a policy digest");
+    }
+    Ok(())
+}
+
+fn validate_policy_digest(digest: &str) -> Result<()> {
+    let Some(hash) = digest.strip_prefix("blake3:") else {
+        bail!("policy digest must use blake3");
+    };
+    if hash.len() != 64
+        || !hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        bail!("policy digest must contain 64 lowercase hexadecimal bytes");
+    }
+    Ok(())
 }
 
 fn require_nonzero(label: &str, value: u64) -> Result<()> {
