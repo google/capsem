@@ -318,3 +318,29 @@ async fn invalid_grant_requires_reauthorization_and_corrupt_records_fail_closed(
     assert!(!format!("{error:?} {error}").contains("private-corrupt-record"));
     assert_eq!(fixture.records.lock().unwrap().len(), 3);
 }
+
+#[tokio::test]
+async fn disconnect_during_account_verification_prevents_reconnect_publication() {
+    let mut keys = Reply::json(JWKS);
+    keys.delay = Duration::from_millis(100);
+    let (fixture, client, tokens) = setup(vec![keys, Reply::json("")]).await;
+    let connection = client
+        .open_connection(tokens, OAuthConnectionStorage::memory(65536).unwrap())
+        .await
+        .unwrap();
+    let lease = connection.access(Instant::now()).await.unwrap();
+    let (_fresh, _, fresh_tokens) = setup(vec![]).await;
+    fixture.received.notified().await;
+    let reauth_connection = connection.clone();
+    let reauth = tokio::spawn(async move { reauth_connection.reconnect(fresh_tokens).await });
+    fixture.received.notified().await;
+    connection.disconnect().await.unwrap();
+    assert_eq!(
+        reauth.await.unwrap().unwrap_err(),
+        GoogleConnectionError::RevisionChanged
+    );
+    assert_eq!(connection.status().state, GoogleConnectionState::Disconnected);
+    assert!(lease.with_token(Instant::now(), str::to_owned).is_err());
+    assert!(connection.access(Instant::now()).await.is_err());
+    assert_eq!(fixture.records.lock().unwrap().len(), 4);
+}

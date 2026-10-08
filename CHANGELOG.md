@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Disconnect admission and reconnect publication share the credential owner's
+  state lock, so concurrent reauthorization cannot clear a pending denial.
+
 - Responses WebSocket messages cross the model security boundary before
   forwarding requests or returning output, including changes to rules on an
   open connection. Completed turns retain model, usage and caller telemetry.

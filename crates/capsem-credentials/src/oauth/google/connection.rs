@@ -344,8 +344,12 @@ impl GoogleConnection {
     /// Deny new access immediately; completed local disconnection is durable.
     /// Provider acknowledgement is reported separately and is not a VM fence.
     pub async fn disconnect(&self) -> Result<GoogleRevocationOutcome, GoogleConnectionError> {
+        // Share the admission lock with reconnect's final generation check and
+        // flag publication; otherwise reconnect can overwrite a new denial.
+        let admission = self.0.data.lock().map_err(|_| GoogleConnectionError::Unavailable)?;
         self.0.denial_generation.fetch_add(1, Ordering::AcqRel);
         self.0.denied.store(true, Ordering::Release);
+        drop(admission);
         let _lifecycle = self.0.lifecycle.lock().await;
         let owner = Arc::clone(&self.0);
         let tokens = tokio::task::spawn_blocking(move || {
