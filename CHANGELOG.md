@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Close ambient inherited file descriptors before each VM owner initializes,
+  preventing service resources from leaking across the worker exec boundary.
+
 - Keep an exited VM owner's process identity under coordinator custody until
   its registered generation has been revoked, preventing PID reuse from
   inheriting worker and broker authority.
