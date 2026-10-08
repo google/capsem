@@ -7,6 +7,7 @@ import shlex
 import stat
 from contextlib import closing
 
+import psutil
 import pytest
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.image_session import image_session, workload_exec
@@ -14,6 +15,7 @@ from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_name, vm_session_dir
 from log_streams import read_log_stream
 
+from tests.ironbank.test_credential_store_lifecycle import _credential_reference
 from tests.ironbank.test_http_protocol_ledger import (
     EXPECTED_NET_COLUMNS,
     EXPECTED_SECURITY_COLUMNS,
@@ -34,12 +36,15 @@ def test_credential_broker_capture_injects_and_reports_full_ledger_blackbox() ->
     _broker_rewrite_proof()
 
 
-def test_explicit_file_and_memory_injection_reaches_a_running_owner(monkeypatch) -> None:
+@pytest.mark.parametrize("source", ("api", "startup"))
+def test_explicit_file_and_memory_injection_reaches_a_running_owner(monkeypatch, source: str) -> None:
     """Host secrets reach upstream; guest, persisted memory and audit stay clean."""
     service = ServiceInstance()
     gateway = GatewayInstance(uds_path=service.uds_path)
     upstream = None
     secrets = {"memory": "capsem_test_host_memory_only", "file": "capsem_test_host_file"}
+    unselected = "capsem_test_host_not_selected"
+    markers = (*secrets.values(), unselected)
     try:
         upstream, ready = start_mock_server(request_log=service.tmp_dir / "upstream.jsonl")
         corp = service.tmp_dir / "corp.toml"
@@ -72,6 +77,17 @@ reason = "Hermetic host credential injection fixture."
 match = 'http.host == "egress.capsem.test" && tcp.port == "443" && http.path == "/echo"'
 ''')
         monkeypatch.setenv("CAPSEM_CORP_CONFIG", str(corp))
+        if source == "startup":
+            inputs = service.home_dir / "host-input.json"
+            inputs.write_text(json.dumps({"credentials": [{
+                "provider": "google", "value": secrets["file"], "storage": "file",
+            }]}))
+            inputs.chmod(0o600)
+            monkeypatch.setenv("CAPSEM_CREDENTIAL_INJECTION_FILE", str(inputs))
+            monkeypatch.setenv("CAPSEM_CREDENTIAL_INJECTION_ENV", "GOOGLE_API_KEY")
+            monkeypatch.setenv("CAPSEM_CREDENTIAL_INJECTION_STORAGE", "memory")
+            monkeypatch.setenv("GOOGLE_API_KEY", secrets["memory"])
+            monkeypatch.setenv("OPENAI_API_KEY", unselected)
         service.start()
         gateway.start()
         client = TcpHttpClient(gateway.base_url, gateway.token)
@@ -81,16 +97,30 @@ match = 'http.host == "egress.capsem.test" && tcp.port == "443" && http.path == 
             "provider": "google", "value": "capsem_test_unauthenticated", "storage": "memory",
         }, use_auth=False)
         assert status == 401 and "credential_ref" not in denied
+        if source == "startup":
+            before = client.get("/plugins/credential_broker/credentials/info")
+            assert before["store"]["cached_count"] == 2, before
+            assert all(value not in json.dumps(before) for value in markers)
         # This is a product workload using only the shipped Python stdlib.
         with image_session(service, service.tmp_dir / "registry", vm_name("host-injection"), client=client) as vm_id:
+            assert service.proc is not None
+            owners = [child for child in psutil.Process(service.proc.pid).children()
+                      if child.name() == "capsem-process"]
+            assert len(owners) == 1
+            environment = repr(owners[0].environ())
+            assert all(value not in environment for value in markers)
             for storage, secret in secrets.items():
-                status, response = client.call_json("POST", "/credentials/inject", {
-                    "provider": "google", "value": secret, "storage": storage,
-                }, timeout=30)
-                assert status == 200, response
-                assert set(response) == {"credential_ref", "storage"}
-                assert response["storage"] == storage
-                reference = response["credential_ref"]
+                if source == "api":
+                    status, response = client.call_json("POST", "/credentials/inject", {
+                        "provider": "google", "value": secret, "storage": storage,
+                    }, timeout=30)
+                    assert status == 200, response
+                    assert set(response) == {"credential_ref", "storage"}
+                    assert response["storage"] == storage
+                    reference = response["credential_ref"]
+                else:
+                    reference = _credential_reference("google", secret)
+                    assert reference in read_log_stream(service.tmp_dir / "service.log")
                 assert reference.startswith("credential:blake3:") and len(reference) == 82
                 references[storage] = reference
                 script = f'''import json, os, urllib.request
@@ -100,17 +130,18 @@ with urllib.request.urlopen(request, timeout=30) as response:
     print(json.dumps({{"status": response.status, "echo": json.load(response),
         "environment": dict(os.environ)}}))
 '''
-                assert all(value not in script for value in secrets.values())
+                assert all(value not in script for value in markers)
                 result = workload_exec(client, vm_id, "python3 -c " + shlex.quote(script))
                 assert result["exit_code"] == 0, result
                 output = result["stdout_text"]
-                assert all(value not in output for value in secrets.values())
+                assert all(value not in output for value in markers)
                 observed = json.loads(output)
                 assert observed["status"] == 200
                 assert observed["echo"]["has_authorization"] is True
                 assert observed["echo"]["authorization_is_broker_ref"] is False
                 persisted = store.read_text() if store.exists() else ""
                 assert secrets["memory"] not in persisted
+                assert unselected not in persisted
                 if storage == "file":
                     assert secret in persisted
                     assert stat.S_IMODE(store.stat().st_mode) == 0o600
@@ -138,7 +169,7 @@ with urllib.request.urlopen(request, timeout=30) as response:
                     assert row["method"] == "POST" and row["status_code"] == 200
                     assert row["conn_type"] == "https-mitm"
                     assert row["event_id"] and row["trace_id"]
-                    assert all(value not in row["request_headers"] for value in secrets.values())
+                    assert all(value not in row["request_headers"] for value in markers)
                 injections = ledger.execute(
                     "SELECT provider, substitution_ref, source FROM substitution_events WHERE outcome='injected' ORDER BY id"
                 ).fetchall()
@@ -147,9 +178,9 @@ with urllib.request.urlopen(request, timeout=30) as response:
                 ]
                 for table in ("net_events", "security_rule_events", "substitution_events"):
                     serialized = repr([tuple(row) for row in ledger.execute(f"SELECT * FROM {table}")])
-                    assert all(value not in serialized for value in secrets.values())
+                    assert all(value not in serialized for value in markers)
             info = client.get("/plugins/credential_broker/credentials/info")
-            assert all(value not in json.dumps(info) for value in secrets.values())
+            assert all(value not in json.dumps(info) for value in markers)
             assert {row["credential_ref"] for row in info["inventory"]} >= set(references.values())
             session = vm_session_dir(service.tmp_dir, client, vm_id)
             status, stopped = client.call_json("POST", f"/vms/{vm_id}/stop", {})
@@ -158,12 +189,12 @@ with urllib.request.urlopen(request, timeout=30) as response:
             for name in ("process.log", "serial.log"):
                 text = read_log_stream(session / name)
                 assert text, name
-                assert all(value not in text for value in secrets.values())
+                assert all(value not in text for value in markers)
         gateway_log = gateway.stop_and_read_log()
         service_log = service.stop_and_read_log()
-        assert all(value not in gateway_log + service_log for value in secrets.values())
+        assert all(value not in gateway_log + service_log for value in markers)
         for log in service.tmp_dir.rglob("*.log"):
-            assert all(value not in read_log_stream(log) for value in secrets.values())
+            assert all(value not in read_log_stream(log) for value in markers)
     finally:
         gateway.stop()
         service.stop()
