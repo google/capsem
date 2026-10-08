@@ -1,5 +1,7 @@
 use super::*;
 
+const POLICY_DIGEST: &str = "blake3:0000000000000000000000000000000000000000000000000000000000000001";
+
 fn request_roundtrip(request: UpstreamGrantRequest) {
     let encoded = encode_upstream_grant_request(&request).unwrap();
     assert_eq!(decode_upstream_grant_request(&encoded).unwrap(), request);
@@ -48,28 +50,33 @@ fn every_response_round_trips_exactly() {
             selection_id: 11,
             protocol: UpstreamProtocol::Tls,
             judged_ip: Some("127.0.0.1".parse().unwrap()),
+            policy_digest: POLICY_DIGEST.into(),
         },
         UpstreamGrantResponse::TcpResolved {
             request_id: 2,
             selection_id: 12,
             protocol: UpstreamProtocol::Http,
             judged_ip: Some("2001:db8::1".parse().unwrap()),
+            policy_digest: POLICY_DIGEST.into(),
         },
         UpstreamGrantResponse::TcpResolved {
             request_id: 3,
             selection_id: 13,
             protocol: UpstreamProtocol::Http,
             judged_ip: None,
+            policy_digest: POLICY_DIGEST.into(),
         },
         UpstreamGrantResponse::DescriptorGranted {
             request_id: 4,
             grant_id: 14,
             kind: UpstreamDescriptorKind::Tcp,
+            policy_digest: POLICY_DIGEST.into(),
         },
         UpstreamGrantResponse::DescriptorGranted {
             request_id: 5,
             grant_id: 15,
             kind: UpstreamDescriptorKind::DnsUdp,
+            policy_digest: POLICY_DIGEST.into(),
         },
         UpstreamGrantResponse::Denied {
             request_id: 6,
@@ -92,6 +99,7 @@ fn descriptor_expectations_are_explicit() {
             request_id: 1,
             grant_id: 2,
             kind: UpstreamDescriptorKind::DnsUdp,
+            policy_digest: POLICY_DIGEST.into(),
         }
         .expected_descriptor_count(),
         1
@@ -249,6 +257,7 @@ fn response_requires_canonical_ip_and_resource_shape() {
         selection_id: 2,
         protocol: UpstreamProtocol::Tls,
         judged_ip: Some("::1".parse().unwrap()),
+        policy_digest: POLICY_DIGEST.into(),
     })
     .unwrap();
     put_name(&mut resolved, "0:0:0:0:0:0:0:1").unwrap();
@@ -258,8 +267,47 @@ fn response_requires_canonical_ip_and_resource_shape() {
         request_id: 1,
         grant_id: 3,
         kind: UpstreamDescriptorKind::Tcp,
+        policy_digest: POLICY_DIGEST.into(),
     })
     .unwrap();
     put_name(&mut granted, "unexpected").unwrap();
     assert!(decode_upstream_grant_response(&granted).is_err());
+}
+
+#[test]
+fn successful_responses_require_an_exact_policy_digest() {
+    for policy_digest in [
+        "policy-a",
+        "blake3:000000000000000000000000000000000000000000000000000000000000000A",
+        "blake3:000000000000000000000000000000000000000000000000000000000000001",
+    ] {
+        assert!(
+            encode_upstream_grant_response(&UpstreamGrantResponse::DescriptorGranted {
+                request_id: 1,
+                grant_id: 2,
+                kind: UpstreamDescriptorKind::DnsUdp,
+                policy_digest: policy_digest.into(),
+            })
+            .is_err()
+        );
+    }
+
+    let valid = encode_upstream_grant_response(&UpstreamGrantResponse::DescriptorGranted {
+        request_id: 1,
+        grant_id: 2,
+        kind: UpstreamDescriptorKind::DnsUdp,
+        policy_digest: POLICY_DIGEST.into(),
+    })
+    .unwrap();
+    let mut missing = valid;
+    missing[POLICY_DIGEST_RANGE].fill(0);
+    assert!(decode_upstream_grant_response(&missing).is_err());
+
+    let mut denied = encode_upstream_grant_response(&UpstreamGrantResponse::Denied {
+        request_id: 1,
+        reason: UpstreamGrantDenial::Revoked,
+    })
+    .unwrap();
+    denied[POLICY_DIGEST_RANGE].copy_from_slice(&valid[POLICY_DIGEST_RANGE]);
+    assert!(decode_upstream_grant_response(&denied).is_err());
 }
