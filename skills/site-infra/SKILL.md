@@ -181,14 +181,53 @@ as pausing and returning to work, and fork as duplicating a prepared setup for
 another use. Keep explanations proportional to the chosen type, with detailed
 mechanics and rationale in their reference and explanation destinations.
 
+### Simplicity, links, and sequence
+
+Keep first-use explanations short and specific to what the reader can do.
+For example, explain that a name keeps a VM for stop/resume and reuse, then
+link to the sections on pausing work and duplicating a setup. Explain that
+`--image` selects a prebuilt or administrator-authorized custom container,
+then link to container selection. Preserve these useful capabilities instead
+of replacing them with vague wording such as “come back later.”
+
+Link at the point where the reader may need more detail: to the relevant
+section for the next action, to reference for exact options, or to explanation
+for deeper understanding. Use descriptive link text, verify the destination,
+and avoid repeating the destination's full content. Do not create a page to
+supply a link without approval.
+
+For tutorials and how-tos, make the temporal relationship between sections
+explicit. State the prerequisite or trigger before an action: “Once your VM
+is created…”, “When you are ready to pause…”, or “After preparing a setup…”.
+Order dependent actions by when they become possible; identify choices and
+optional branches as such. Distinguish work on the current VM from decisions
+made before creating another VM. A heading alone does not communicate this.
+Do not impose chronological steps on reference or explanation.
+
+### Improve the skill with every documentation change
+
+Whenever documentation changes, propose a concise, reusable improvement to
+this skill based on what the change or user correction taught us. State the
+proposed rule to the user alongside the work; a generic promise to improve
+is not a proposal. Apply improvements the user requests or accepts and record
+them in the owning Sprinty item. Keep proposals about writing rules separate
+from page/topic proposals, which remain user-directed.
+
+Generalize the lesson rather than accumulating instructions for one sentence.
+If an existing rule already captures it, propose a clearer rule or a specific
+review check rather than adding a duplicate. After incorporating a correction,
+review the whole affected page for the same pattern, not only the cited line.
+
 Review before delivery:
 
 - **Every page:** does it answer its description question for its intended
   reader, use accurate and consistent terms, and stay within one type?
 - **Tutorial:** can a newcomer follow the chosen path without guessing and see
-  the promised result at each meaningful step?
+  the promised result at each meaningful step? Are prerequisites, transitions,
+  and links for further detail clear throughout?
 - **How-to:** can the intended user solve the stated problem, including any
-  necessary decisions, without being taken through an unrelated lesson?
+  necessary decisions, without being taken through an unrelated lesson? Is it
+  clear when each action or branch applies and where to find deeper detail?
 - **Reference:** can someone quickly find exact, complete facts for the stated
   interface or contract without searching through a narrative?
 - **Explanation:** does the reader understand the topic, its relationships and
