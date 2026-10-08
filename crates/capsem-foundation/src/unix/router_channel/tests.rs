@@ -8,6 +8,73 @@ fn async_stream(stream: UnixStream) -> tokio::net::UnixStream {
 }
 
 #[tokio::test]
+async fn larger_single_descriptor_records_reuse_the_hardened_channel() {
+    type GrantSender = DescriptorSender<272, 1>;
+    type GrantReceiver = DescriptorReceiver<272, 1>;
+
+    let (parent, child) = UnixStream::pair().unwrap();
+    let sender = GrantSender::new(parent).unwrap();
+    let receiver = GrantReceiver::new(child).unwrap();
+    let (data, peer) = UnixStream::pair().unwrap();
+    let mut peer = async_stream(peer);
+    let mut record = [0; 272];
+    record[0] = 7;
+    record[271] = 9;
+    sender.send(&record, &[data.as_raw_fd()]).await.unwrap();
+    let mut frame = receiver.recv().await.unwrap();
+    assert_eq!(frame.bytes, record);
+    assert_eq!(frame.fds.len(), 1);
+    let flags = fcntl(frame.fds[0].as_raw_fd(), FcntlArg::F_GETFD).unwrap();
+    assert!(FdFlag::from_bits_truncate(flags).contains(FdFlag::FD_CLOEXEC));
+    let mut adopted = async_stream(UnixStream::from(frame.fds.pop().unwrap()));
+    adopted.write_all(b"grant").await.unwrap();
+    let mut bytes = [0; 5];
+    peer.read_exact(&mut bytes).await.unwrap();
+    assert_eq!(&bytes, b"grant");
+}
+
+#[tokio::test]
+async fn generic_limits_reject_wrong_shapes_without_consuming_descriptors() {
+    type GrantSender = DescriptorSender<272, 1>;
+
+    let (parent, _child) = UnixStream::pair().unwrap();
+    let sender = GrantSender::new(parent).unwrap();
+    let (data, _peer) = UnixStream::pair().unwrap();
+    assert_eq!(
+        sender.send(&[0; 271], &[data.as_raw_fd()]).await.unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        sender
+            .send(&[0; 272], &[data.as_raw_fd(), data.as_raw_fd()])
+            .await
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidInput
+    );
+    assert!(data.peer_addr().is_ok());
+}
+
+#[tokio::test]
+async fn generic_receiver_closes_descriptors_above_its_limit() {
+    type GrantReceiver = DescriptorReceiver<272, 1>;
+
+    let (parent, child) = UnixStream::pair().unwrap();
+    let receiver = GrantReceiver::new(child).unwrap();
+    let (data, peer) = UnixStream::pair().unwrap();
+    send_record(parent.as_raw_fd(), &[0; 272], &[data.as_raw_fd(); 2]).unwrap();
+    drop(data);
+    assert_eq!(receiver.recv().await.err().unwrap().kind(), ErrorKind::InvalidData);
+    assert_eq!(
+        timeout(Duration::from_secs(1), async_stream(peer).read(&mut [0]))
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn acknowledged_socket_remains_usable_after_sender_drops_original() {
     let (parent, child) = UnixStream::pair().unwrap();
     let sender = Sender::new(parent).unwrap();

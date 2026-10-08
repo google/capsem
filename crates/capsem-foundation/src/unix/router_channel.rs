@@ -1,4 +1,4 @@
-//! Fixed records and owned SCM_RIGHTS descriptors for the confined router.
+//! Fixed records and owned SCM_RIGHTS descriptors for confined workers.
 //! Cancellation poisons the socket rather than resuming a partial record.
 //! Senders retain socket owners until the receiver acknowledges adoption;
 //! Darwin may flush sockets referenced only by queued SCM_RIGHTS messages.
@@ -13,10 +13,13 @@ use tokio::sync::Mutex;
 
 pub const FRAME_SIZE: usize = 10;
 pub const MAX_FDS: usize = 2;
-pub struct Frame {
-    pub bytes: [u8; FRAME_SIZE],
+pub struct DescriptorFrame<const RECORD_SIZE: usize> {
+    pub bytes: [u8; RECORD_SIZE],
     pub fds: Vec<OwnedFd>,
 }
+
+/// The existing router wire format.
+pub type Frame = DescriptorFrame<FRAME_SIZE>;
 
 struct Channel {
     io: AsyncFd<UnixStream>,
@@ -44,17 +47,23 @@ impl Drop for Operation<'_> {
         }
     }
 }
-pub struct Sender(Channel);
-pub struct Receiver(Channel);
-impl Sender {
+pub struct DescriptorSender<const RECORD_SIZE: usize, const FD_LIMIT: usize>(Channel);
+pub struct DescriptorReceiver<const RECORD_SIZE: usize, const FD_LIMIT: usize>(Channel);
+
+/// Sender for the existing router wire format.
+pub type Sender = DescriptorSender<FRAME_SIZE, MAX_FDS>;
+/// Receiver for the existing router wire format.
+pub type Receiver = DescriptorReceiver<FRAME_SIZE, MAX_FDS>;
+
+impl<const RECORD_SIZE: usize, const FD_LIMIT: usize> DescriptorSender<RECORD_SIZE, FD_LIMIT> {
     pub fn new(stream: UnixStream) -> io::Result<Self> {
         Channel::new(stream).map(Self)
     }
     pub async fn send(&self, bytes: &[u8], fds: &[RawFd]) -> io::Result<usize> {
-        if bytes.len() != FRAME_SIZE || fds.len() > MAX_FDS {
+        if RECORD_SIZE == 0 || bytes.len() != RECORD_SIZE || fds.len() > FD_LIMIT {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                "invalid router record size or descriptor count",
+                "invalid descriptor record size or count",
             ));
         }
         let _lock = self.0.operation.lock().await;
@@ -83,25 +92,32 @@ impl Sender {
         Ok(offset)
     }
 }
-impl Receiver {
+impl<const RECORD_SIZE: usize, const FD_LIMIT: usize> DescriptorReceiver<RECORD_SIZE, FD_LIMIT> {
     pub fn new(stream: UnixStream) -> io::Result<Self> {
         Channel::new(stream).map(Self)
     }
-    pub async fn recv(&self) -> io::Result<Frame> {
+    pub async fn recv(&self) -> io::Result<DescriptorFrame<RECORD_SIZE>> {
+        if RECORD_SIZE == 0 {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "descriptor record cannot be empty",
+            ));
+        }
         let _lock = self.0.operation.lock().await;
         let mut operation = Operation {
             stream: self.0.io.get_ref(),
             complete: false,
         };
-        let mut frame = Frame {
-            bytes: [0; FRAME_SIZE],
-            fds: Vec::with_capacity(MAX_FDS),
+        let mut frame = DescriptorFrame {
+            bytes: [0; RECORD_SIZE],
+            fds: Vec::with_capacity(FD_LIMIT),
         };
         let mut offset = 0;
-        while offset < FRAME_SIZE {
+        while offset < RECORD_SIZE {
             let mut ready = self.0.io.readable().await?;
-            match ready.try_io(|socket| receive_record(socket.as_raw_fd(), &mut frame.bytes[offset..], &mut frame.fds))
-            {
+            match ready.try_io(|socket| {
+                receive_record(socket.as_raw_fd(), &mut frame.bytes[offset..], &mut frame.fds, FD_LIMIT)
+            }) {
                 Ok(Ok(0)) => return Err(ErrorKind::UnexpectedEof.into()),
                 Ok(Ok(count)) => offset += count,
                 Ok(Err(error)) if error.kind() == ErrorKind::Interrupted => continue,
@@ -145,7 +161,7 @@ fn send_record(socket: RawFd, bytes: &[u8], fds: &[RawFd]) -> io::Result<usize> 
         }
     }
 }
-fn receive_record(socket: RawFd, bytes: &mut [u8], fds: &mut Vec<OwnedFd>) -> io::Result<usize> {
+fn receive_record(socket: RawFd, bytes: &mut [u8], fds: &mut Vec<OwnedFd>, fd_limit: usize) -> io::Result<usize> {
     // SAFETY: the kernel initializes bounded aligned ancillary storage. Adopt
     // all delivered descriptors before rejecting truncation to avoid leaks.
     unsafe {
@@ -198,7 +214,7 @@ fn receive_record(socket: RawFd, bytes: &mut [u8], fds: &mut Vec<OwnedFd>) -> io
             }
             header = libc::CMSG_NXTHDR(&message, header);
         }
-        if invalid || fds.len() > MAX_FDS {
+        if invalid || fds.len() > fd_limit {
             return Err(io::Error::new(
                 ErrorKind::InvalidData,
                 "invalid router ancillary descriptors",
