@@ -8,20 +8,8 @@ use super::*;
 
 /// The asker is the running owner of `vm`, or nobody.
 fn owner_of(state: &ServiceState, vm: &str, peer: ServicePeer) -> Result<(), AppError> {
-    let owner = state
-        .instances
-        .lock()
-        .unwrap()
-        .get(vm)
-        .map(owner_connection::OwnerConnection::capture)
-        .transpose()
-        .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
-    let identity = peer
-        .0
-        .ok_or_else(|| AppError(StatusCode::FORBIDDEN, "service peer identity unavailable".into()))?;
-    owner
-        .ok_or_else(|| AppError(StatusCode::FORBIDDEN, format!("VM {vm} has no running owner")))?
-        .authenticate_identity(state, identity)
+    owner_connection::OwnerConnection::current(state, vm, peer.0)
+        .map(|_| ())
         .map_err(|error| AppError(StatusCode::FORBIDDEN, error))
 }
 

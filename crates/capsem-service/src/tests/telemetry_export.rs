@@ -4,7 +4,7 @@ use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 
 use super::*;
-use crate::service_runtime::telemetry_export::{collect, grant_metric_endpoint, register, SessionTable};
+use crate::service_runtime::telemetry_export::{collect, grant_metric_broker, register, SessionTable};
 
 fn net(decision: capsem_logger::Decision, bytes_sent: u64) -> capsem_logger::WriteOp {
     capsem_logger::WriteOp::NetEvent(
@@ -145,7 +145,7 @@ fn granted(open_telemetry: Option<&str>) -> Vec<String> {
     let mut corp = capsem_core::net::policy_config::SettingsFile::default();
     corp.corp_rule_files.open_telemetry = open_telemetry.map(str::to_string);
     let mut command = tokio::process::Command::new("capsem-process");
-    grant_metric_endpoint(&mut command, &corp);
+    grant_metric_broker(&mut command, &corp);
     command
         .as_std()
         .get_args()
@@ -153,13 +153,239 @@ fn granted(open_telemetry: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-/// A VM process learns its export endpoint only from its launch arguments.
+/// A VM process learns only whether the service granted brokered export.
 #[test]
-fn a_vm_process_is_granted_the_corp_metric_endpoint_at_launch() {
-    assert_eq!(
-        granted(Some("https://otel.example/")),
-        ["--metric-endpoint", "https://otel.example"]
-    );
+fn a_vm_process_is_granted_only_the_metric_broker_at_launch() {
+    assert_eq!(granted(Some("https://otel.example/")), ["--metric-broker"]);
     assert!(granted(None).is_empty(), "no corp endpoint, no export");
     assert!(granted(Some("  ")).is_empty(), "a blank endpoint is no endpoint");
+}
+
+type CollectedMetric = (axum::http::HeaderMap, axum::body::Bytes);
+
+async fn metric_collector(
+    State(sender): State<tokio::sync::mpsc::UnboundedSender<CollectedMetric>>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> (StatusCode, [(&'static str, &'static str); 1], axum::body::Bytes) {
+    sender.send((headers, body)).unwrap();
+    (
+        StatusCode::CREATED,
+        [("content-type", "application/x-protobuf")],
+        axum::body::Bytes::from_static(b"collector response"),
+    )
+}
+
+#[test]
+fn metric_relay_wrong_process_client() {
+    let Ok(socket) = std::env::var("CAPSEM_TEST_METRIC_RELAY_SOCKET") else {
+        return;
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let response = runtime
+        .block_on(capsem_core::service_uds::post_bytes(
+            std::path::Path::new(&socket),
+            "/internal/vms/vm-a/metrics",
+            axum::http::HeaderValue::from_static("application/x-protobuf"),
+            axum::body::Bytes::from_static(b"wrong peer"),
+        ))
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn metric_relay_uses_only_current_owner_and_configured_collector() {
+    let _environment = SETTINGS_ENV_LOCK.lock().await;
+    let settings_dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, corp_path) = install_empty_settings_env(&settings_dir);
+    let collector_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let collector_base = format!("http://{}", collector_listener.local_addr().unwrap());
+    let (collected_tx, mut collected_rx) = tokio::sync::mpsc::unbounded_channel();
+    let collector = tokio::spawn(async move {
+        axum::serve(
+            collector_listener,
+            axum::Router::new()
+                .route("/v1/metrics", axum::routing::post(metric_collector))
+                .with_state(collected_tx),
+        )
+        .await
+        .unwrap();
+    });
+    let mut corp = capsem_core::net::policy_config::SettingsFile::default();
+    corp.corp_rule_files.open_telemetry = Some(collector_base);
+    capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
+
+    let (state, directory) = make_test_state_with_tempdir();
+    insert_fake_instance(&state, "vm-a", std::process::id());
+    let peer = ServicePeer(Some(capsem_foundation::unix::peer::PeerIdentity {
+        pid: capsem_foundation::unix::process::ProcessId::try_from(std::process::id()).unwrap(),
+        uid: capsem_foundation::unix::process::current_uid(),
+    }));
+    let socket = directory.path().join("metric-relay.sock");
+    let service_listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let service_state = Arc::clone(&state);
+    let service = tokio::spawn(async move {
+        axum::serve(
+            service_listener,
+            build_service_router(service_state).into_make_service_with_connect_info::<ServicePeer>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    let response = capsem_core::service_uds::post_bytes(
+        &socket,
+        "/internal/vms/vm-a/metrics",
+        axum::http::HeaderValue::from_static("application/x-protobuf"),
+        axum::body::Bytes::from_static(b"encoded metrics"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.body(), b"collector response".as_slice());
+    let (headers, body) = tokio::time::timeout(std::time::Duration::from_secs(2), collected_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        headers.get(axum::http::header::CONTENT_TYPE).unwrap(),
+        "application/x-protobuf"
+    );
+    assert_eq!(body, b"encoded metrics".as_slice());
+
+    use tower::ServiceExt as _;
+    let mock_app = build_service_router(Arc::clone(&state)).layer(axum::extract::connect_info::MockConnectInfo(peer));
+    let response = mock_app
+        .clone()
+        .oneshot(
+            axum::http::Request::post("/internal/vms/vm-a/metrics")
+                .header(axum::http::header::CONTENT_TYPE, "application/x-protobuf")
+                .header(axum::http::header::AUTHORIZATION, "Bearer must-not-cross")
+                .header("x-otlp-endpoint", "http://attacker.invalid")
+                .body(axum::body::Body::from("fixed destination"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let (headers, body) = tokio::time::timeout(std::time::Duration::from_secs(2), collected_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!headers.contains_key(axum::http::header::AUTHORIZATION));
+    assert!(!headers.contains_key("x-otlp-endpoint"));
+    assert_eq!(body, b"fixed destination".as_slice());
+
+    let response = mock_app
+        .oneshot(
+            axum::http::Request::post("/internal/vms/vm-a/metrics")
+                .header(axum::http::header::CONTENT_TYPE, "application/x-protobuf")
+                .body(axum::body::Body::from(vec![
+                    0;
+                    capsem_core::service_uds::MAX_BODY_BYTES + 1
+                ]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        collected_rx.try_recv().is_err(),
+        "an oversized body reached the collector"
+    );
+
+    let status = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::telemetry_export::metric_relay_wrong_process_client",
+            "--nocapture",
+        ])
+        .env("CAPSEM_TEST_METRIC_RELAY_SOCKET", &socket)
+        .status()
+        .await
+        .unwrap();
+    assert!(status.success(), "wrong-process probe failed: {status}");
+    assert!(
+        collected_rx.try_recv().is_err(),
+        "a denied sibling reached the collector"
+    );
+
+    state.instances.lock().unwrap().get_mut("vm-a").unwrap().pid = 1;
+    let response = capsem_core::service_uds::post_bytes(
+        &socket,
+        "/internal/vms/vm-a/metrics",
+        axum::http::HeaderValue::from_static("application/x-protobuf"),
+        axum::body::Bytes::from_static(b"stale generation"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(
+        collected_rx.try_recv().is_err(),
+        "a replaced owner reached the collector"
+    );
+    state.instances.lock().unwrap().get_mut("vm-a").unwrap().pid = std::process::id();
+
+    let attacker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let redirect_target = format!("http://{}/stolen", attacker_listener.local_addr().unwrap());
+    let redirect_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let redirect_base = format!("http://{}", redirect_listener.local_addr().unwrap());
+    let redirect = tokio::spawn(async move {
+        axum::serve(
+            redirect_listener,
+            axum::Router::new()
+                .route(
+                    "/v1/metrics",
+                    axum::routing::post(|State(target): State<String>| async move {
+                        (StatusCode::TEMPORARY_REDIRECT, [(axum::http::header::LOCATION, target)])
+                    }),
+                )
+                .with_state(redirect_target),
+        )
+        .await
+        .unwrap();
+    });
+    corp.corp_rule_files.open_telemetry = Some(redirect_base);
+    capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
+    let response = capsem_core::service_uds::post_bytes(
+        &socket,
+        "/internal/vms/vm-a/metrics",
+        axum::http::HeaderValue::from_static("application/x-protobuf"),
+        axum::body::Bytes::from_static(b"do not redirect"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), attacker_listener.accept())
+            .await
+            .is_err(),
+        "the collector redirect opened an ungranted destination"
+    );
+
+    capsem_core::net::policy_config::write_settings_file(
+        &corp_path,
+        &capsem_core::net::policy_config::SettingsFile::default(),
+    )
+    .unwrap();
+    let response = capsem_core::service_uds::post_bytes(
+        &socket,
+        "/internal/vms/vm-a/metrics",
+        axum::http::HeaderValue::from_static("application/x-protobuf"),
+        axum::body::Bytes::from_static(b"disabled"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(
+        collected_rx.try_recv().is_err(),
+        "disabled export reached the old collector"
+    );
+
+    service.abort();
+    collector.abort();
+    redirect.abort();
 }
