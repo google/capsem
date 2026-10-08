@@ -85,6 +85,7 @@ pub(super) fn setup_vm_with_workspace_and_uds(
         InstanceInfo {
             generation: uuid::Uuid::new_v4(),
             authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: vm_id.into(),
             name: vm_id.into(),
             asset_pins: test_asset_pins(),
