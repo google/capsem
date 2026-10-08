@@ -255,6 +255,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        plugin_policy_cache: Mutex::new(Default::default()),
         host_ledger,
         host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),

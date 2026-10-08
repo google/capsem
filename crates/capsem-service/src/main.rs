@@ -227,6 +227,10 @@ pub struct ServiceState {
     /// by explicit MCP discovery routes. Hot MCP list routes must not read the
     /// tool cache JSON from disk.
     mcp_tool_cache: Mutex<Vec<ToolCacheEntry>>,
+    /// Effective plugin settings loaded on the first plugin route read and
+    /// invalidated by every service-owned policy edit or explicit reload.
+    /// Hot plugin list polls must not parse settings and corp TOML per request.
+    plugin_policy_cache: Mutex<plugin_routes::PluginPolicyCache>,
     /// Logger-owned DB handle for the host ledger (`sessions/host.db`): host
     /// events and policy mutations. Routes call `write`; they must never open
     /// SQLite directly or hold a side `DbWriter`.

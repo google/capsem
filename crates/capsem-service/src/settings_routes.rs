@@ -8,6 +8,7 @@ pub(super) async fn handle_reload_config(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let mutation = state.policy_mutation.begin().await;
     let reloaded = push_policy_to_running_instances(&state, &mutation).await?;
+    state.invalidate_plugin_policy_cache();
     drop(mutation);
     Ok(Json(serde_json::json!({ "success": true, "reloaded": reloaded })))
 }
@@ -26,6 +27,7 @@ pub(super) async fn handle_save_settings(
     let _mutation = state.policy_mutation.begin().await;
     capsem_core::net::policy_config::batch_update_settings_json(&raw)
         .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    state.invalidate_plugin_policy_cache();
     let resp = capsem_core::net::policy_config::load_settings_response();
     Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
@@ -55,6 +57,8 @@ pub(super) async fn handle_corp_config(
             "provide either 'source' (URL) or 'toml' (inline content)".into(),
         ));
     }
+
+    state.invalidate_plugin_policy_cache();
 
     Ok(Json(json!({ "success": true })))
 }

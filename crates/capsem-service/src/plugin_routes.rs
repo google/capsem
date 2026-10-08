@@ -190,7 +190,13 @@ pub(super) fn plugin_catalog() -> &'static BTreeMap<String, PluginCatalogEntry> 
 
 /// Each catalogued plugin's effective configuration, and the plugins settings
 /// or corp set.
-type EffectivePluginPolicy = (BTreeMap<String, SecurityPluginConfig>, BTreeSet<String>);
+pub(super) type EffectivePluginPolicy = (BTreeMap<String, SecurityPluginConfig>, BTreeSet<String>);
+
+#[derive(Default)]
+pub(super) struct PluginPolicyCache {
+    generation: u64,
+    policy: Option<Arc<EffectivePluginPolicy>>,
+}
 
 /// The effective plugin policy from the current files.
 fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
@@ -205,12 +211,56 @@ fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
     Ok((policy, overridden))
 }
 
+impl ServiceState {
+    pub(crate) fn invalidate_plugin_policy_cache(&self) {
+        let mut cache = self.plugin_policy_cache.lock().unwrap();
+        cache.generation = cache.generation.wrapping_add(1);
+        cache.policy = None;
+    }
+
+    fn cached_plugin_policy(&self) -> (u64, Option<Arc<EffectivePluginPolicy>>) {
+        let cache = self.plugin_policy_cache.lock().unwrap();
+        (cache.generation, cache.policy.clone())
+    }
+
+    fn publish_plugin_policy(
+        &self,
+        generation: u64,
+        policy: EffectivePluginPolicy,
+    ) -> Option<Arc<EffectivePluginPolicy>> {
+        let mut cache = self.plugin_policy_cache.lock().unwrap();
+        if cache.generation != generation {
+            return None;
+        }
+        if let Some(policy) = &cache.policy {
+            return Some(Arc::clone(policy));
+        }
+        let policy = Arc::new(policy);
+        cache.policy = Some(Arc::clone(&policy));
+        drop(cache);
+        Some(policy)
+    }
+}
+
+async fn effective_plugin_policy_for(state: &Arc<ServiceState>) -> Result<Arc<EffectivePluginPolicy>, AppError> {
+    loop {
+        let (generation, cached) = state.cached_plugin_policy();
+        if let Some(policy) = cached {
+            return Ok(policy);
+        }
+        let policy = state.off_worker(|_| effective_plugin_policy()).await??;
+        if let Some(policy) = state.publish_plugin_policy(generation, policy) {
+            return Ok(policy);
+        }
+    }
+}
+
 async fn plugin_info_for(
     state: &Arc<ServiceState>,
     plugin_id: &str,
     include_runtime: bool,
 ) -> Result<PluginInfo, AppError> {
-    let policy = state.off_worker(|_| effective_plugin_policy()).await??;
+    let policy = effective_plugin_policy_for(state).await?;
     plugin_info_from(state, &policy, plugin_id, include_runtime).await
 }
 
@@ -428,7 +478,7 @@ fn hydrate_credential_broker_runtime(
 pub(super) async fn handle_plugins(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<PluginListResponse>, AppError> {
-    let policy = state.off_worker(|_| effective_plugin_policy()).await??;
+    let policy = effective_plugin_policy_for(&state).await?;
     let mut plugins = Vec::new();
     for plugin_id in plugin_catalog().keys() {
         plugins.push(plugin_info_from(&state, &policy, plugin_id, false).await?);
