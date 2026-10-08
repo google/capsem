@@ -18,6 +18,12 @@ sha2 = "0.10"
 subtle = "2"
 url = "2"
 zeroize = "1"
+tokio = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

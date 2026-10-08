@@ -11,6 +11,9 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
+mod listener;
+pub use listener::{OAuthListener, OAuthListenerError, OAuthListenerPolicy};
+
 #[derive(Debug, Clone)]
 pub struct LoopbackRedirect {
     uri: String,
