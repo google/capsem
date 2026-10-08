@@ -16,6 +16,7 @@ use crate::runtime_config::RuntimePolicySource;
 use crate::terminal::TerminalRelay;
 
 mod container_pull;
+mod credentials;
 mod exec;
 pub(crate) mod file_boundary;
 mod private;
@@ -195,6 +196,13 @@ pub(crate) async fn handle_ipc_connection(
             }
         };
         match msg {
+            ServiceToProcess::InjectCredentials {
+                id,
+                credentials: material,
+            } => {
+                let reply = credentials::apply(capsem_core::credential_broker::CredentialStore::global(), id, material);
+                capsem_core::try_send!("ipc_credentials_injected", ipc_tx_out.send(reply).await);
+            }
             ServiceToProcess::StartTerminalStream => {
                 info!("Starting terminal stream for connection");
                 // Track the stream task so StopTerminalStream / connection
