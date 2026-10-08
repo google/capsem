@@ -109,7 +109,12 @@ async fn memory_handoff_uses_correlated_real_host_ipc_and_acknowledgement() {
             .await
             .unwrap();
     });
-    sync_memory(&make_test_state(), &socket).await.unwrap();
+    // Readiness must include host credential admission, not just the guest's
+    // sentinel. Exercise the real bootstrap wait against the live IPC peer.
+    std::fs::write(socket.with_extension("ready"), b"").unwrap();
+    vm_files::wait_for_vm_ready(&socket, 1, Some(&make_test_state()), None)
+        .await
+        .unwrap();
     owner.await.unwrap();
     assert!(sync_memory(&make_test_state(), &dir.path().join("absent.sock"))
         .await
