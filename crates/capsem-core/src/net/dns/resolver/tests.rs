@@ -10,6 +10,7 @@ use super::*;
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
 use hickory_proto::rr::{Name, RecordType};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 fn query_bytes(id: u16, name: &str) -> Vec<u8> {
     let mut message = Message::new(id, MessageType::Query, OpCode::Query);
@@ -189,4 +190,76 @@ async fn a_hundred_concurrent_resolves_complete_against_one_upstream() {
     for task in tasks {
         task.await.unwrap();
     }
+}
+
+#[derive(Clone)]
+struct IndexedGrants {
+    upstreams: Arc<Vec<SocketAddr>>,
+    requested: Arc<Mutex<Vec<u16>>>,
+    refuse: bool,
+}
+
+impl DnsUpstreamGrants for IndexedGrants {
+    fn open(&self, upstream_index: u16) -> DnsGrantFuture<'_> {
+        Box::pin(async move {
+            self.requested.lock().unwrap().push(upstream_index);
+            if self.refuse {
+                return Err(anyhow!("grant refused"));
+            }
+            let upstream = self.upstreams[usize::from(upstream_index)];
+            let socket = UdpSocket::bind("127.0.0.1:0").await?;
+            socket.connect(upstream).await?;
+            Ok(DnsDatagram::new(socket, || {}))
+        })
+    }
+}
+
+#[tokio::test]
+async fn injected_grants_preserve_configured_failover_order() {
+    let sink = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let primary = sink.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut bytes = [0_u8; 512];
+        while sink.recv_from(&mut bytes).await.is_ok() {}
+    });
+    let failover = fake_upstream(|query| {
+        let id = u16::from_be_bytes([query[0], query[1]]);
+        vec![answer_for(query, id, "ordered.example.")]
+    })
+    .await;
+    let requested = Arc::new(Mutex::new(Vec::new()));
+    let grants = IndexedGrants {
+        upstreams: Arc::new(vec![primary, failover]),
+        requested: Arc::clone(&requested),
+        refuse: false,
+    };
+    let resolver =
+        DnsResolver::with_grants(vec![primary, failover], Arc::new(grants)).with_timeout(Duration::from_millis(50));
+
+    resolver
+        .resolve(&query_bytes(7, "ordered.example."))
+        .await
+        .expect("the second configured grant answers");
+    assert_eq!(*requested.lock().unwrap(), vec![0, 1]);
+}
+
+#[tokio::test]
+async fn refused_grant_never_falls_back_to_direct_udp() {
+    let upstream = fake_upstream(|query| {
+        let id = u16::from_be_bytes([query[0], query[1]]);
+        vec![answer_for(query, id, "closed.example.")]
+    })
+    .await;
+    let requested = Arc::new(Mutex::new(Vec::new()));
+    let grants = IndexedGrants {
+        upstreams: Arc::new(vec![upstream]),
+        requested: Arc::clone(&requested),
+        refuse: true,
+    };
+    let error = DnsResolver::with_grants(vec![upstream], Arc::new(grants))
+        .resolve(&query_bytes(9, "closed.example."))
+        .await
+        .expect_err("a missing descriptor grant fails closed");
+    assert!(error.to_string().contains("grant refused"), "{error:#}");
+    assert_eq!(*requested.lock().unwrap(), vec![0]);
 }

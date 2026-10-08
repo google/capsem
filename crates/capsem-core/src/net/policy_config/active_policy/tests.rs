@@ -193,6 +193,25 @@ fn runtime_snapshot_refuses_an_invalid_dns_upstream_without_fallback() {
 }
 
 #[test]
+fn default_dns_upstreams_are_explicit_in_the_active_policy_snapshot() {
+    let active = ActivePolicyFile::from_settings_and_corp(&SettingsFile::default(), &SettingsFile::default()).unwrap();
+    assert_eq!(
+        active.network.dns.upstreams,
+        crate::net::dns::DEFAULT_UPSTREAMS
+            .iter()
+            .map(|upstream| (*upstream).to_string())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        active.compile_runtime().unwrap().dns_upstreams,
+        crate::net::dns::DEFAULT_UPSTREAMS
+            .iter()
+            .map(|upstream| upstream.parse().unwrap())
+            .collect::<Vec<std::net::SocketAddr>>()
+    );
+}
+
+#[test]
 fn mcp_servers_merge_settings_under_corp() {
     let settings = parse(
         r#"
