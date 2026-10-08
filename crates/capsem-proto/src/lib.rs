@@ -25,6 +25,7 @@ pub mod privatelink;
 pub mod repeated;
 pub mod router;
 mod sparse;
+pub mod upstream_grant;
 mod wire_bytes;
 
 /// Where the guest mounts the host-visible workspace share: every VM sees its
