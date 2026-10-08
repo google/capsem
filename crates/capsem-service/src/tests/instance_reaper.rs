@@ -213,6 +213,7 @@ fn provision_persistent_validates_name() {
         version_override: None,
         persistent: true,
         env: None,
+        labels: None,
         from: None,
         description: None,
     });
@@ -244,6 +245,7 @@ fn accepted_restart_refuses_both_launch_paths_before_any_session_mutation() {
         version_override: None,
         persistent: true,
         env: None,
+        labels: None,
         from: None,
         description: None,
     });

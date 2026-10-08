@@ -507,6 +507,10 @@ fn managed_adapter_refuses_named_or_persistent_requests_before_any_effect() {
             persistent: true,
             ..Default::default()
         },
+        ProvisionRequest {
+            labels: Some([("invalid key!".into(), "v".into())].into()),
+            ..Default::default()
+        },
     ] {
         assert!(ManagedLifecycle::new(Arc::clone(&state), request, Arc::new(RefuseGrants)).is_err());
     }

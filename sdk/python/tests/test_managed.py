@@ -107,7 +107,7 @@ def test_managed_scope_renews_service_policy_and_awaits_only_its_owned_close() -
     async def run() -> None:
         service = Service()
         async with gateway(service) as url, Hypervisor(url, "gateway-bearer") as hv:
-            scope = hv.managed(image="docker://busybox", env={"MODE": "owned"})
+            scope = hv.managed(image="docker://busybox", env={"MODE": "owned"}, labels={"suite": "eval"})
             async with scope as vm:
                 assert vm.id == VM_ID
                 await asyncio.wait_for(service.claim_seen.wait(), 2)
@@ -125,6 +125,7 @@ def test_managed_scope_renews_service_policy_and_awaits_only_its_owned_close() -
                        for path, _, headers in service.requests)
             create = service.requests[0][1]
             assert create["name"] is None and create["persistent"] is False
+            assert create["labels"] == {"suite": "eval"}
             assert create["container"]["env"] == {"MODE": "owned"}
             assert "MODE" not in (create.get("env") or {})
             with pytest.raises(RuntimeError):

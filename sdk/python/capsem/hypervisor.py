@@ -34,6 +34,7 @@ def _memory_mb(memory: int | None) -> int | None:
 
 def _provision_request(*, name: str = "", cpus: int | None = None,
                        memory: int | None = None, env: dict[str, str] | None = None,
+                       labels: dict[str, str] | None = None,
                        networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                        command: Sequence[str] = (), registry: Registry | None = None) -> models.ProvisionRequest:
     if cpus is not None and (isinstance(cpus, bool) or not isinstance(cpus, int) or cpus < 1):
@@ -58,7 +59,7 @@ def _provision_request(*, name: str = "", cpus: int | None = None,
         )
     request = models.ProvisionRequest(
         name=name or None, persistent=bool(name), cpus=cpus, ram_mb=_memory_mb(memory),
-        env=env if image is None else None, networks=network_names,
+        env=env if image is None else None, labels=labels, networks=network_names,
     )
     if wire is not None:
         request.container = wire
@@ -90,10 +91,24 @@ class Hypervisor(Client):
 
     async def create(self, *, name: str = "", cpus: int | None = None,
                      memory: int | None = None, env: dict[str, str] | None = None,
+                     labels: dict[str, str] | None = None,
                      networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                      command: Sequence[str] = (), registry: Registry | None = None) -> VM:
-        request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, networks=networks,
-                                     image=image, command=command, registry=registry)
+        """Provision a VM or container workload.
+
+        Args:
+            name: Persistent VM name; omit or pass empty string for an ephemeral VM.
+            cpus: Optional vCPU count override.
+            memory: Optional RAM size in GiB.
+            env: Optional environment variables for the VM or container workload.
+            labels: Optional string labels attached at creation.
+            networks: Private networks to attach to the VM at creation.
+            image: Optional OCI image reference to run as a container workload.
+            command: Optional command argv override for the container workload.
+            registry: Optional custom OCI registry configuration for pulling ``image``.
+        """
+        request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, labels=labels,
+                                     networks=networks, image=image, command=command, registry=registry)
         # The service answers only once a container workload is ready, so
         # wait at least as long as it does before giving up on the create.
         response = await api.create_vm(
@@ -103,11 +118,12 @@ class Hypervisor(Client):
         return VM._bind(self._transport, id=response.id, name=response.name, container=image is not None)
 
     def managed(self, *, cpus: int | None = None, memory: int | None = None,
-                env: dict[str, str] | None = None, networks: Sequence[models.NetworkInfo] = (),
+                env: dict[str, str] | None = None, labels: dict[str, str] | None = None,
+                networks: Sequence[models.NetworkInfo] = (),
                 image: str | None = None, command: Sequence[str] = (), registry: Registry | None = None) -> ManagedSession:
         """An ephemeral ownership scope: renew while entered, await cleanup on exit."""
         return ManagedSession(self._transport, _provision_request(
-            cpus=cpus, memory=memory, env=env, networks=networks, image=image, command=command, registry=registry))
+            cpus=cpus, memory=memory, env=env, labels=labels, networks=networks, image=image, command=command, registry=registry))
 
     async def log(self, source: models.HostLogSource = models.HostLogSource.SERVICE, *,
                   grep: str | None = None, tail: int | None = None,

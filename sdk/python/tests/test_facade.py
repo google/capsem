@@ -36,7 +36,7 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             assert vm.id == "created-id" and vm.name == "new"
             body = json.loads(state.requests[-1][2])
             assert body == {"name": "new", "persistent": True,
-                            "cpus": 4, "ram_mb": 8192, "env": {"LANG": "C"}, "networks": ["team"]}
+                            "cpus": 4, "ram_mb": 8192, "env": {"LANG": "C"}, "labels": None, "networks": ["team"]}
             async with vm:
                 assert isinstance(await vm.info(), models.SandboxInfo)
             with pytest.raises(RuntimeError, match="closed"):

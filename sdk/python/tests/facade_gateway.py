@@ -27,6 +27,8 @@ class GatewayState:
     container_states: list[str] = field(default_factory=lambda: ["running"])
     preview_session_status: int | None = None
     delays: dict[str, float] = field(default_factory=dict)
+    created_vms: dict[str, tuple[str, bool]] = field(default_factory=dict)
+    sandbox_labels: dict[str, dict[str, str] | None] = field(default_factory=dict)
 
 
 def response_model(schema_name: str, **fields: Any) -> dict[str, Any]:
@@ -46,11 +48,45 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         if request.path in state.delays:
             await asyncio.sleep(state.delays[request.path])
         if request.path == "/vms/list":
-            return web.json_response({"sandboxes": [response_model("SandboxInfo", id=f"vm-{index}", name=name)
-                                                    for index, name in enumerate(state.names)]})
+            return web.json_response(
+                {
+                    "sandboxes": [
+                        response_model(
+                            "SandboxInfo",
+                            id=f"vm-{index}",
+                            name=name,
+                            labels=state.sandbox_labels.get(f"vm-{index}"),
+                        )
+                        for index, name in enumerate(state.names)
+                    ]
+                }
+            )
         if request.path == "/vms/create":
             payload = json.loads(body)
-            return web.json_response(response_model("ProvisionResponse", id="created-id", name=payload["name"] or "temporary"))
+            vm_name = payload["name"] or "temporary"
+            persistent = bool(payload.get("persistent", bool(payload.get("name") or payload.get("from"))))
+            state.created_vms["created-id"] = (vm_name, persistent)
+            state.sandbox_labels["created-id"] = payload.get("labels") or None
+            return web.json_response(
+                response_model(
+                    "ProvisionResponse",
+                    id="created-id",
+                    name=vm_name,
+                    persistent=persistent,
+                )
+            )
+        if request.path.endswith("/info") and request.path.split("/")[2] in state.created_vms:
+            vm_id = request.path.split("/")[2]
+            vm_name, persistent = state.created_vms[vm_id]
+            return web.json_response(
+                response_model(
+                    "SandboxInfo",
+                    id=vm_id,
+                    name=vm_name,
+                    persistent=persistent,
+                    labels=state.sandbox_labels.get(vm_id),
+                )
+            )
         if request.path == "/networks" and request.method == "POST":
             return web.json_response(response_model("NetworkInfo", name=json.loads(body)["name"]))
         if request.path == "/networks":
@@ -62,7 +98,15 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         if request.path == "/mcp/servers/list":
             return web.json_response([response_model("McpServerInfoResponse", name="filesystem")])
         if request.path.endswith("/fork"):
-            return web.json_response(response_model("ForkResponse", id="forked-id", name=json.loads(body)["name"]))
+            payload = json.loads(body)
+            source_id = request.path.split("/")[2]
+            fork_id = f"forked-{payload['name']}"
+            state.created_vms[fork_id] = (payload["name"], True)
+            if "labels" in payload and payload["labels"] is not None:
+                state.sandbox_labels[fork_id] = payload["labels"] or None
+            else:
+                state.sandbox_labels[fork_id] = state.sandbox_labels.get(source_id)
+            return web.json_response(response_model("ForkResponse", id="forked-id", name=payload["name"]))
         if request.path.endswith("/exec"):
             if state.exec_status is not None:
                 return web.Response(status=state.exec_status, text="exec target unavailable")

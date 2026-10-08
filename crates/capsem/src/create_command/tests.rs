@@ -77,9 +77,12 @@ mod against_the_service {
         let service = FakeService::start();
         service.route("POST", "/vms/create", 200, created("vm-1"));
 
-        create(&service.client, &args(&["-e", "A=1", "--network", "team"]))
-            .await
-            .unwrap();
+        create(
+            &service.client,
+            &args(&["-e", "A=1", "-l", "suite=eval", "--network", "team"]),
+        )
+        .await
+        .unwrap();
         create(&service.client, &args(&["-n", "keep", "--ram", "2", "--cpu", "3"]))
             .await
             .unwrap();
@@ -92,7 +95,7 @@ mod against_the_service {
             .collect();
         assert_eq!(
             bodies[0],
-            json!({"name": null, "persistent": false, "env": {"A": "1"}, "networks": ["team"]})
+            json!({"name": null, "persistent": false, "env": {"A": "1"}, "labels": {"suite": "eval"}, "networks": ["team"]})
         );
         assert_eq!(
             bodies[1],
@@ -186,14 +189,72 @@ mod against_the_service {
         );
         assert!(service.find("DELETE", "/vms/vm-3/delete").is_empty());
     }
+
+    #[tokio::test]
+    async fn create_and_fork_reject_malformed_labels_and_dispatch_fork_labels() {
+        let service = FakeService::start();
+        service
+            .route(
+                "GET",
+                "/vms/list",
+                200,
+                json!({"sandboxes": [{"id": "vm-1", "name": "vm-1", "pid": 1, "status": "Running", "persistent": true}]}),
+            )
+            .route(
+                "POST",
+                "/vms/vm-1/fork",
+                200,
+                json!({"id": "vm-2", "name": "img-1", "size_bytes": 1048576}),
+            );
+
+        let err = create(&service.client, &args(&["-l", "malformed"])).await.unwrap_err();
+        assert!(format!("{err:#}").contains("KEY=VALUE"), "{err:#}");
+        assert!(service.find("POST", "/vms/create").is_empty());
+
+        let err = fork(&service.client, "vm-1", "img-1", None, &["malformed".into()])
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("KEY=VALUE"), "{err:#}");
+        assert!(service.find("POST", "/vms/vm-1/fork").is_empty());
+
+        fork(
+            &service.client,
+            "vm-1",
+            "img-1",
+            Some("eval snapshot"),
+            &["suite=eval".into(), "tier=fast".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            service.find("POST", "/vms/vm-1/fork")[0].json(),
+            json!({
+                "name": "img-1",
+                "description": "eval snapshot",
+                "labels": {"suite": "eval", "tier": "fast"}
+            })
+        );
+    }
 }
 
 #[test]
 fn a_clone_source_takes_a_new_image() {
-    let cli = Cli::parse_from(["capsem", "create", "--from", "base", "--image", "docker://redis"]);
+    let cli = Cli::parse_from([
+        "capsem",
+        "create",
+        "--from",
+        "base",
+        "-l",
+        "k=v",
+        "--label",
+        "suite=eval",
+        "--image",
+        "docker://redis",
+    ]);
     let Commands::Session(SessionCommands::Create(args)) = cli.command.unwrap() else {
         panic!("expected Create")
     };
     assert_eq!(args.from.as_deref(), Some("base"));
+    assert_eq!(args.label, ["k=v", "suite=eval"]);
     assert_eq!(args.image.image, ["docker://redis"]);
 }

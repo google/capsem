@@ -1137,10 +1137,10 @@ fn parse_fork() {
             session,
             name,
             description,
+            label,
         }) => {
-            assert_eq!(session, "my-vm");
-            assert_eq!(name, "my-image");
-            assert_eq!(description, None);
+            assert_eq!((session.as_str(), name.as_str()), ("my-vm", "my-image"));
+            assert!(description.is_none() && label.is_empty());
         }
         _ => panic!("expected Fork"),
     }
@@ -1148,16 +1148,16 @@ fn parse_fork() {
 
 #[test]
 fn parse_fork_with_description() {
-    let cli = Cli::parse_from(["capsem", "fork", "vm1", "img1", "-d", "My description"]);
+    let cli = Cli::parse_from("capsem fork vm1 img1 -d desc -l suite=eval".split_whitespace());
     match cli.command.unwrap() {
         Commands::Session(SessionCommands::Fork {
             session,
             name,
             description,
+            label,
         }) => {
-            assert_eq!(session, "vm1");
-            assert_eq!(name, "img1");
-            assert_eq!(description, Some("My description".into()));
+            assert_eq!((session.as_str(), name.as_str()), ("vm1", "img1"));
+            assert!(description.as_deref() == Some("desc") && label == ["suite=eval"]);
         }
         _ => panic!("expected Fork"),
     }

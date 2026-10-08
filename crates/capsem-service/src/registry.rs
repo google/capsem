@@ -60,6 +60,9 @@ pub struct PersistentVmEntry {
     /// guest sees the same environment after stop+resume cycles.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub env: Option<HashMap<String, String>>,
+    /// Key-value metadata labels attached at creation.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub labels: Option<HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

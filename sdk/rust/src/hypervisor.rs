@@ -111,6 +111,7 @@ impl Hypervisor {
             cpus: options.cpus,
             ram_mb,
             env,
+            labels: options.labels,
             networks: options.networks.into_iter().map(|network| network.name).collect(),
             container,
             ..Default::default()

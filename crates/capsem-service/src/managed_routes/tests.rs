@@ -118,6 +118,10 @@ async fn managed_http_invalid_secrets_and_non_ephemeral_requests_fail_before_eff
             "/vms/create".into(),
             json!({"persistent": true, "managed": {"request_id": REQUEST, "ownership_token": "af".repeat(32)}}),
         ),
+        (
+            "/vms/create".into(),
+            json!({"labels": {"invalid key!": "v"}, "managed": {"request_id": REQUEST, "ownership_token": "af".repeat(32)}}),
+        ),
     ] {
         let (status, response) = post(&app, &path, body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -125,6 +129,72 @@ async fn managed_http_invalid_secrets_and_non_ephemeral_requests_fail_before_eff
         assert!(!response.to_string().contains("private-token"));
         assert!(!response.to_string().contains(&"af".repeat(32)));
     }
+    assert!(state.instances.lock().unwrap().is_empty());
+    assert!(!state
+        .run_dir
+        .join("managed-ownership")
+        .join(format!("{REQUEST}.json"))
+        .exists());
+}
+
+#[tokio::test]
+async fn managed_http_create_attaches_labels_to_instance_and_info_and_closes_cleanly() {
+    let _env_lock = crate::tests::SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let settings_dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, _) = crate::tests::install_empty_settings_env(&settings_dir);
+    let script = dir.path().join("fake-capsem-process");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then : > \"${2%.sock}.launched\"; : > \"${2%.sock}.ready\"; shift 2; else shift; fi\ndone\nexec sleep 30\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut owned = crate::tests::test_state(dir.path().join("run"), dir.path().join("assets"), None);
+    owned.process_binary = script;
+    let state = Arc::new(owned);
+    crate::tests::install_test_runtime_assets(&state);
+    let app = build_service_router(Arc::clone(&state));
+    let token = "af".repeat(32);
+
+    let (status, created) = post(
+        &app,
+        "/vms/create",
+        json!({
+            "labels": {"suite": "eval", "inspect-capsem-prefix": "pass-1"},
+            "managed": {"request_id": REQUEST, "ownership_token": token},
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let vm_id = created["id"].as_str().unwrap().to_string();
+    let expected = std::collections::HashMap::from([
+        ("suite".to_string(), "eval".to_string()),
+        ("inspect-capsem-prefix".to_string(), "pass-1".to_string()),
+    ]);
+    assert_eq!(
+        state
+            .instances
+            .lock()
+            .unwrap()
+            .get(&vm_id)
+            .and_then(|instance| instance.labels.clone()),
+        Some(expected.clone())
+    );
+    let Json(info) = crate::handle_info(State(Arc::clone(&state)), Path(vm_id))
+        .await
+        .unwrap();
+    assert_eq!(info.labels, Some(expected));
+
+    let close = format!("/vms/managed/{REQUEST}/close");
+    let (status, closed) = post(&app, &close, json!({"ownership_token": token, "outcome": "completed"})).await;
+    assert_eq!(status, StatusCode::OK, "{closed}");
+    assert_eq!(closed["state"], "closed");
     assert!(state.instances.lock().unwrap().is_empty());
 }
 

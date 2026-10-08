@@ -660,7 +660,7 @@ pub(super) async fn handle_persist(
     validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Find the running ephemeral instance
-    let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env, generation) = {
+    let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env, generation, labels) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
@@ -680,6 +680,7 @@ pub(super) async fn handle_persist(
             i.forked_from.clone(),
             i.env.clone(),
             i.generation,
+            i.labels.clone(),
         );
         drop(instances);
         result
@@ -728,6 +729,7 @@ pub(super) async fn handle_persist(
         last_error: None,
         checkpoint_path: None,
         env,
+        labels,
     };
     let claim_state = Arc::clone(&state);
     tokio::task::spawn_blocking(move || claim_persistent_name(&claim_state, entry))
@@ -894,6 +896,7 @@ pub(super) async fn handle_run(
                 version_override: Some(version),
                 persistent: false,
                 env,
+                labels: None,
                 from: None,
                 description: None,
             })
