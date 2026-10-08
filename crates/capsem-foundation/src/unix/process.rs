@@ -147,18 +147,29 @@ fn lone_exited_child_group(leader: ProcessId) -> bool {
 /// Observe an owned child's exit without reaping it. Keeping the zombie until
 /// group cleanup reserves its PID even if its descendants change groups.
 pub fn child_has_exited(pid: ProcessId) -> io::Result<bool> {
+    observe_child_exit(pid, true)
+}
+
+/// Wait for an owned child to exit without reaping it.
+///
+/// The caller retains custody of the child's PID and exit status until its
+/// process handle is explicitly waited. This call blocks and therefore belongs
+/// on a blocking worker when used from an async runtime.
+pub fn wait_for_child_exit(pid: ProcessId) -> io::Result<()> {
+    if observe_child_exit(pid, false)? {
+        Ok(())
+    } else {
+        Err(io::Error::other("blocking child exit observation returned no status"))
+    }
+}
+
+fn observe_child_exit(pid: ProcessId, nonblocking: bool) -> io::Result<bool> {
     loop {
         // SAFETY: zero is a valid initial siginfo_t; waitid writes this owned
         // buffer, and P_PID names only the validated positive child identifier.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        let result = unsafe {
-            libc::waitid(
-                libc::P_PID,
-                pid.get() as libc::id_t,
-                &mut info,
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-            )
-        };
+        let options = libc::WEXITED | libc::WNOWAIT | if nonblocking { libc::WNOHANG } else { 0 };
+        let result = unsafe { libc::waitid(libc::P_PID, pid.get() as libc::id_t, &mut info, options) };
         if result == 0 {
             // SAFETY: waitid initialized the child-status fields; an unchanged
             // zero PID means no status was available with WNOHANG.
