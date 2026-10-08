@@ -1,6 +1,18 @@
 use super::*;
 use clap::Parser;
 
+#[test]
+fn entry_closes_ambient_descriptors_before_runtime_initialization() {
+    let source = include_str!("main.rs");
+    let entry = source.split_once("fn main() -> Result<()> {").unwrap().1;
+    let close = entry
+        .find("close_inherited_descriptors()")
+        .expect("VM owner closes ambient descriptors at process entry");
+    let telemetry = entry.find("telemetry::init").unwrap();
+    let arguments = entry.find("Args::parse()").unwrap();
+    assert!(close < telemetry && close < arguments);
+}
+
 // -----------------------------------------------------------------------
 // Args parsing
 // -----------------------------------------------------------------------
