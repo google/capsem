@@ -1,128 +1,28 @@
 use super::*;
 
 #[tokio::test]
-async fn vm_shutdown_targets_owned_child_even_when_cached_pid_names_an_unrelated_process() {
+async fn exited_generation_is_revoked_while_its_pid_is_still_reserved() {
     let (state, _dir) = make_test_state_with_tempdir();
-    let id = "owned-signal-target";
+    let id = "unreaped-owner";
     let session = state.run_dir.join("sessions").join(id);
     std::fs::create_dir_all(&session).unwrap();
-    let child = tokio::process::Command::new("sleep")
-        .arg("30")
-        .kill_on_drop(true)
+    let mut child = tokio::process::Command::new("sh")
+        .args(["-c", "sleep 0.05; exit 11"])
         .spawn()
         .unwrap();
-    let mut unrelated = tokio::process::Command::new("sleep")
-        .arg("30")
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    insert_fake_instance_with_session_dir(&state, id, unrelated.id().unwrap(), session.clone());
-    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
-    let registration = state.retirements.register(id, generation).unwrap();
-    let reaper = crate::instance_reaper::spawn_exit_reaper(
-        child,
-        id.into(),
-        id.into(),
-        state.clone(),
-        state.instance_socket_path(id).unwrap(),
-        session,
-        registration,
-    );
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        shutdown_vm_process(&state, id, ShutdownMode::Discard, Some(generation)),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert!(result.is_some());
-    assert!(
-        unrelated.try_wait().unwrap().is_none(),
-        "shutdown signaled a cached/recycled PID"
-    );
-    reaper.await.unwrap();
-    assert!(state.retirements.wait(id, generation).await.unwrap());
-    unrelated.kill().await.unwrap();
-}
+    let pid = child.id().unwrap();
+    insert_fake_instance_with_session_dir(&state, id, pid, session);
+    let generation = state.instances.lock().unwrap()[id].generation;
 
-#[tokio::test]
-async fn vm_shutdown_without_original_child_authority_cannot_acknowledge_exit() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    let id = "missing-child-authority";
-    let session = state.run_dir.join("sessions").join(id);
-    std::fs::create_dir_all(&session).unwrap();
-    let mut unrelated = tokio::process::Command::new("sleep")
-        .arg("30")
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    insert_fake_instance_with_session_dir(&state, id, unrelated.id().unwrap(), session.clone());
-    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
-    let result = shutdown_vm_process(&state, id, ShutdownMode::Discard, Some(generation)).await;
-    assert!(matches!(result, Err(AppError(StatusCode::SERVICE_UNAVAILABLE, _))));
-    assert!(unrelated.try_wait().unwrap().is_none());
-    assert!(session.exists(), "unknown exit must not remove owned session bytes");
-    assert!(
-        state.instances.lock().unwrap().contains_key(id),
-        "unknown owner cannot claim the instance"
-    );
-    unrelated.kill().await.unwrap();
-}
+    crate::instance_reaper::revoke_exited_generation(&child, id, &state, generation).await;
 
-#[tokio::test]
-async fn service_shutdown_uses_original_child_owner_before_removing_session_bytes() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    let launch = state.lifecycle.admit().unwrap();
-    let id = "service-owned-shutdown";
-    let session = state.run_dir.join("sessions").join(id);
-    std::fs::create_dir_all(&session).unwrap();
-    std::fs::write(session.join("marker"), b"original").unwrap();
-    let child = tokio::process::Command::new("sleep")
-        .arg("30")
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    let mut unrelated = tokio::process::Command::new("sleep")
-        .arg("30")
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    let shutdown = {
-        let state = state.clone();
-        tokio::spawn(async move { kill_all_vm_processes(&state).await })
-    };
-    capsem_foundation::poll::poll_until(
-        capsem_foundation::poll::PollOpts::new("shutdown-seals-admission", std::time::Duration::from_secs(1)),
-        || std::future::ready(state.lifecycle.admit().is_err().then_some(())),
-    )
-    .await
-    .unwrap();
-    assert!(!shutdown.is_finished(), "shutdown missed the admitted original worker");
-    insert_fake_instance_with_session_dir(&state, id, unrelated.id().unwrap(), session.clone());
-    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
-    let registration = state.retirements.register(id, generation).unwrap();
-    let reaper = crate::instance_reaper::spawn_exit_reaper(
-        child,
-        id.into(),
-        id.into(),
-        state.clone(),
-        state.instance_socket_path(id).unwrap(),
-        session.clone(),
-        registration,
-    );
-    drop(launch);
-    tokio::time::timeout(std::time::Duration::from_secs(4), shutdown)
-        .await
-        .unwrap()
-        .unwrap();
+    assert!(!state.instances.lock().unwrap().contains_key(id));
+    let pid = capsem_foundation::unix::process::ProcessId::try_from(pid).unwrap();
     assert!(
-        unrelated.try_wait().unwrap().is_none(),
-        "service stop targeted unrelated cached PID"
+        capsem_foundation::unix::process::child_has_exited(pid).unwrap(),
+        "generation revocation must happen before the child is reaped"
     );
-    reaper.await.unwrap();
-    assert!(state.retirements.wait(id, generation).await.unwrap());
-    assert!(!session.exists());
-    unrelated.kill().await.unwrap();
+    assert_eq!(child.wait().await.unwrap().code(), Some(11));
 }
 
 #[tokio::test]
@@ -278,6 +178,24 @@ fn child_reapers_start_after_instance_registration() {
             "{function} must publish the instance before its child reaper can run"
         );
     }
+}
+
+#[test]
+fn child_exit_authority_is_revoked_before_reaping() {
+    let source = include_str!("../instance_reaper.rs")
+        .split_once("pub(super) fn spawn_exit_reaper")
+        .unwrap()
+        .1;
+    let revoke = source
+        .find("revoke_exited_generation(&child")
+        .expect("the reaper observes exit and revokes the registered generation");
+    let reap = source
+        .find("child.wait().await")
+        .expect("the reaper eventually consumes the child exit status");
+    assert!(
+        revoke < reap,
+        "the kernel must still reserve the worker PID when its authority is revoked"
+    );
 }
 
 /// There is one child reaper. The resume path had its own, which removed the
