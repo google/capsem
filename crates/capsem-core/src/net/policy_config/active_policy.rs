@@ -90,6 +90,12 @@ impl ActivePolicyFile {
         }
         let merged = MergedPolicies::from_files(settings, corp)?;
         let mut network = network_config_from_policy_and_dns(&merged.network, corp.network.dns.clone());
+        if network.dns.upstreams.is_empty() {
+            network.dns.upstreams = crate::net::dns::DEFAULT_UPSTREAMS
+                .iter()
+                .map(|upstream| (*upstream).to_string())
+                .collect();
+        }
         network.upstream_overrides = corp.network.upstream_overrides.clone();
 
         let active = Self {
