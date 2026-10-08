@@ -12,6 +12,13 @@ use capsem_core::net::policy_config::ActivePolicyFile;
 pub(crate) struct PublishedActivePolicy {
     pub(crate) path: PathBuf,
     pub(crate) digest: String,
+    runtime: Arc<capsem_core::net::policy_config::CompiledActivePolicy>,
+}
+
+impl PublishedActivePolicy {
+    pub(crate) fn broker_policy(&self) -> Arc<crate::upstream_broker::BrokerPolicy> {
+        crate::upstream_broker::BrokerPolicy::new(self.digest.clone(), Arc::clone(&self.runtime))
+    }
 }
 
 impl ServiceState {
@@ -28,19 +35,27 @@ impl ServiceState {
             .with_context(|| format!("create {}", active_policy_dir.display()))?;
         let active_policy_path = active_policy_dir.join(ACTIVE_POLICY_FILE);
         let serialized = toml::to_string_pretty(&active_policy).context("serialize active policy")?;
+        let exact: ActivePolicyFile = toml::from_str(&serialized).context("parse serialized active policy")?;
+        let runtime = Arc::new(
+            exact
+                .compile_runtime()
+                .map_err(anyhow::Error::msg)
+                .context("compile serialized active policy")?,
+        );
         // capsem-process reads this on every reload: publish it whole.
         capsem_foundation::unix::fs::atomic_write_private(&active_policy_path, serialized.as_bytes())
             .with_context(|| format!("write {}", active_policy_path.display()))?;
         Ok(PublishedActivePolicy {
             path: active_policy_path,
             digest: capsem_core::net::policy_config::active_policy_digest(serialized.as_bytes()),
+            runtime,
         })
     }
 
     /// Re-materialize the active policy of every running VM. Returns each VM's
     /// id with the digest it was given, or why it could not be; one VM that
     /// cannot take the policy does not keep the others on the old one.
-    pub(crate) fn refresh_active_policies(&self) -> Vec<(String, std::result::Result<String, String>)> {
+    pub(crate) fn refresh_active_policies(&self) -> Vec<(String, std::result::Result<PublishedActivePolicy, String>)> {
         // Copied out first: the instances lock is not held across file writes.
         let mut targets = Vec::new();
         for (id, info) in self.instances.lock().unwrap().iter() {
@@ -51,7 +66,6 @@ impl ServiceState {
             .map(|(id, session_dir)| {
                 let published = self
                     .materialize_active_policy(&session_dir)
-                    .map(|active| active.digest)
                     .map_err(|error| format!("{error:#}"));
                 (id, published)
             })
@@ -87,12 +101,16 @@ pub(crate) async fn push_policy_to_running_instances(
                     None
                 }
                 // A VM that stopped since it was listed has nothing to reload.
-                Ok(digest) => Some((id.clone(), instances.get(&id)?.uds_path.clone(), digest)),
+                Ok(published) => {
+                    let instance = instances.get(&id)?;
+                    Some((id.clone(), instance.generation, instance.uds_path.clone(), published))
+                }
             })
             .collect::<Vec<_>>()
     };
 
-    let results = futures::future::join_all(targets.iter().map(|(id, uds_path, expected)| async move {
+    let results = futures::future::join_all(targets.iter().map(|(id, generation, uds_path, published)| async move {
+        let expected = &published.digest;
         let request = ServiceToProcess::ReloadConfig {
             id: state.next_job_id(),
         };
@@ -101,7 +119,24 @@ pub(crate) async fn push_policy_to_running_instances(
                 active_policy_digest: Some(applied),
                 error: None,
                 ..
-            }) if &applied == expected => None,
+            }) if &applied == expected => {
+                let publisher = {
+                    let instances = state.instances.lock().unwrap();
+                    match instances.get(id) {
+                        Some(instance) if instance.generation == *generation => Some(instance.upstream_policy.clone()),
+                        Some(_) => return Some(format!("{id}: owner changed before broker policy publication")),
+                        None => None,
+                    }
+                };
+                match publisher {
+                    Some(publisher) => publisher
+                        .publish(published.broker_policy())
+                        .await
+                        .err()
+                        .map(|error| format!("{id}: {error}")),
+                    None => None,
+                }
+            }
             Ok(ProcessToService::ConfigReloadResult {
                 active_policy_digest: Some(applied),
                 error: None,

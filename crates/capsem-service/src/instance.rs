@@ -42,6 +42,7 @@ pub(crate) struct InstanceInfo {
     /// One actual spawn, never reused when an ID is resumed or replaced.
     pub(crate) generation: uuid::Uuid,
     pub(crate) authority: WorkerAuthority,
+    pub(crate) upstream_policy: crate::upstream_broker::PolicyPublisher,
     pub(crate) name: String,
     pub(crate) asset_pins: BootAssetPins,
     pub(crate) pid: u32,

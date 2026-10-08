@@ -131,6 +131,7 @@ pub(crate) fn test_instance() -> InstanceInfo {
     InstanceInfo {
         generation: uuid::Uuid::new_v4(),
         authority: Default::default(),
+        upstream_policy: upstream_broker::test_policy_publisher(),
         id: String::new(),
         name: String::new(),
         asset_pins: test_asset_pins(),

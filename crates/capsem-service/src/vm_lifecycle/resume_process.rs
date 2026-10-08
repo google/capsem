@@ -65,7 +65,11 @@ impl ServiceState {
         service_runtime::remove_instance_sentinels(&uds_path);
 
         self.validate_persistent_entry(&entry)?;
-        let active_policy_path = self.materialize_active_policy(&entry.session_dir)?.path;
+        let active_policy = self.materialize_active_policy(&entry.session_dir)?;
+        let active_policy_path = active_policy.path.clone();
+        let (upstream_broker, upstream_policy) =
+            crate::upstream_broker::PendingBroker::pair(active_policy.broker_policy())?;
+        let upstream_stdio = upstream_broker.worker_stdio()?;
         let scratch_disk_size_gb = session_rootfs_size_gb(&entry)?;
         let resolved = self.resolve_pinned_asset_paths(&entry.asset_pins)?;
         self.validate_pinned_asset_files(&resolved, &entry.asset_pins)?;
@@ -188,6 +192,7 @@ impl ServiceState {
                 .arg(&self.run_dir)
                 .arg("--service-socket")
                 .arg(&self.service_socket)
+                .stdin(upstream_stdio)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
                 .stderr(std::process::Stdio::from(process_log_file))
                 .spawn()
@@ -219,13 +224,16 @@ impl ServiceState {
             );
         }
 
+        let authority = crate::instance::WorkerAuthority::default();
+        let upstream_grant = authority.grant();
         let session_dir = entry.session_dir.clone();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             vm_id.clone(),
             InstanceInfo {
                 generation,
-                authority: Default::default(),
+                authority,
+                upstream_policy,
                 id: vm_id.clone(),
                 name: entry.name.clone(),
                 asset_pins: entry.asset_pins.clone(),
@@ -242,6 +250,7 @@ impl ServiceState {
             },
         );
         drop(instances);
+        let _upstream_broker = upstream_broker.start(upstream_grant);
         let _reaper = instance_reaper::spawn_exit_reaper(
             child,
             vm_id.clone(),

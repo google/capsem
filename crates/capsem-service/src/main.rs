@@ -63,6 +63,7 @@ mod startup;
 mod suspend_confirmation;
 mod update_command;
 mod update_status;
+mod upstream_broker;
 mod vm_files;
 mod vm_lifecycle;
 use asset_routes::*;

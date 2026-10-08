@@ -154,7 +154,11 @@ impl ServiceState {
             }
         }
 
-        let active_policy_path = self.materialize_active_policy(&session_dir)?.path;
+        let active_policy = self.materialize_active_policy(&session_dir)?;
+        let active_policy_path = active_policy.path.clone();
+        let (upstream_broker, upstream_policy) =
+            crate::upstream_broker::PendingBroker::pair(active_policy.broker_policy())?;
+        let upstream_stdio = upstream_broker.worker_stdio()?;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
@@ -259,6 +263,7 @@ impl ServiceState {
                 .arg(&self.run_dir)
                 .arg("--service-socket")
                 .arg(&self.service_socket)
+                .stdin(upstream_stdio)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
                 .stderr(std::process::Stdio::from(process_log_file))
                 .spawn()
@@ -324,12 +329,15 @@ impl ServiceState {
             }
         }
 
+        let authority = crate::instance::WorkerAuthority::default();
+        let upstream_grant = authority.grant();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             id.to_string(),
             InstanceInfo {
                 generation,
-                authority: Default::default(),
+                authority,
+                upstream_policy,
                 id: id.to_string(),
                 name: name.to_string(),
                 asset_pins,
@@ -346,6 +354,7 @@ impl ServiceState {
             },
         );
         drop(instances);
+        let _upstream_broker = upstream_broker.start(upstream_grant);
         let _reaper = instance_reaper::spawn_exit_reaper(
             child,
             id.to_string(),

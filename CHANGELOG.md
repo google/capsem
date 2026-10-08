@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Broker VM DNS and TCP upstream access through generation-bound connected
+  descriptors selected from the service's trusted active-policy snapshot.
+  Policy reload, worker replacement, release and malformed ownership attempts
+  revoke live sockets; workers cannot choose DNS servers or dial addresses.
+
 - Route VM-owner metrics through a generation-authenticated service broker
   with a fixed corporate collector destination, bounded protobuf bodies and
   no redirects, keeping collector addresses and credentials out of workers;

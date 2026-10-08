@@ -189,6 +189,7 @@ fn resolve_rejects_symlink_escape() {
         InstanceInfo {
             generation: uuid::Uuid::new_v4(),
             authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: "test-vm".into(),
             name: "test-vm".into(),
             asset_pins: test_asset_pins(),
@@ -223,6 +224,7 @@ fn resolve_valid_path_inside_workspace() {
         InstanceInfo {
             generation: uuid::Uuid::new_v4(),
             authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: "test-vm".into(),
             name: "test-vm".into(),
             asset_pins: test_asset_pins(),

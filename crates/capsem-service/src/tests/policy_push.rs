@@ -163,6 +163,43 @@ async fn a_reload_acknowledging_another_active_policy_fails_the_push() {
     process.await.unwrap();
 }
 
+#[tokio::test]
+async fn a_reload_ack_from_a_replaced_generation_cannot_update_its_broker() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (state, sessions, _env) = state_with_running_vms(&dir, &["replaced-vm"]);
+    let session_dir = sessions[0].clone();
+    let active_path = session_dir.join("vm/active_policy.toml");
+    let process = spawn_fake_process(&uds_path(&state, "replaced-vm"), 1, {
+        let state = Arc::clone(&state);
+        move |message| {
+            let ServiceToProcess::ReloadConfig { id } = *message else {
+                return Box::pin(async { None });
+            };
+            insert_fake_instance_with_session_dir(&state, "replaced-vm", std::process::id(), session_dir.clone());
+            let digest = capsem_core::net::policy_config::active_policy_digest(&std::fs::read(&active_path).unwrap());
+            Box::pin(async move {
+                Some(ProcessToService::ConfigReloadResult {
+                    id,
+                    active_policy_digest: Some(digest),
+                    error: None,
+                })
+            })
+        }
+    });
+
+    let error = handle_mcp_default_edit(State(Arc::clone(&state)), permission(SecurityRuleAction::Block))
+        .await
+        .expect_err("a stale generation cannot publish into its replacement's broker");
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        error.1.contains("replaced-vm: VM owner changed during IPC admission"),
+        "{}",
+        error.1
+    );
+    process.await.unwrap();
+}
+
 /// Start edit A, hold its VM acknowledgement, then start edit B. Release A
 /// once B is either waiting for A or has already rewritten A's session. The
 /// fake VM answers each reload with the digest of the active policy it finds
