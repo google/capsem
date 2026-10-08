@@ -410,7 +410,7 @@ async fn handle_vm_operation_status_rejects_unknown_vm() {
     let err = handle_vm_save_status(State(state), Path("missing-vm".into()))
         .await
         .unwrap_err();
-    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert_eq!(err.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -435,8 +435,8 @@ async fn handle_suspend_rejects_ephemeral_vm() {
 
     let result = handle_suspend(State(state), Path("eph-vm".into())).await;
     let err = result.unwrap_err();
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
-    assert!(err.1.contains("ephemeral"));
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    assert!(err.body.error.contains("ephemeral"));
 }
 
 #[tokio::test]
@@ -444,7 +444,7 @@ async fn handle_suspend_returns_not_found_for_missing_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
     let result = handle_suspend(State(state), Path("nonexistent".into())).await;
     let err = result.unwrap_err();
-    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert_eq!(err.status, StatusCode::NOT_FOUND);
 }
 
 #[test]

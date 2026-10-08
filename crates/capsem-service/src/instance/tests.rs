@@ -21,7 +21,7 @@ async fn stale_shutdown_binding_leaves_replacement_socket_and_ledger_intact() {
         .unwrap()
         .insert("replacement".into(), Arc::clone(&ledger));
     let result = shutdown_vm_process(&state, "replacement", ShutdownMode::Discard, Some(uuid::Uuid::new_v4())).await;
-    assert_eq!(result.unwrap_err().0, StatusCode::CONFLICT);
+    assert_eq!(result.unwrap_err().status, StatusCode::CONFLICT);
     assert_eq!(
         state.instances.lock().unwrap().get("replacement").unwrap().generation,
         generation

@@ -423,8 +423,8 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
     .await
     .expect_err("failed import ledger write must fail closed");
 
-    assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(err.1.contains("security ledger rejected import"));
+    assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(err.body.error.contains("security ledger rejected import"));
     let msg = ipc.await.unwrap();
     assert!(matches!(msg, ServiceToProcess::LogFileBoundary { .. }));
     assert!(
@@ -546,7 +546,7 @@ fn download_nonexistent_file_resolves_but_does_not_open() {
     let (parent, name) = resolve_workspace_target(&state, "404-vm", "nonexistent.txt", false).unwrap();
     assert_eq!(parent.entry_kind(&name).unwrap(), None);
     let err = parent.open_file(&name, ContainedOpenOptions::read_only()).unwrap_err();
-    assert_eq!(workspace_io_error(err).0, StatusCode::NOT_FOUND);
+    assert_eq!(workspace_io_error(err).status, StatusCode::NOT_FOUND);
 }
 
 // is_launchd_cleanup_transient identifies the misleading "missing
@@ -607,7 +607,7 @@ async fn upload_refuses_a_dangling_symlink_target() {
     .await
     .expect_err("an upload through a guest symlink must be refused");
 
-    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert_eq!(err.status, StatusCode::FORBIDDEN, "{}", err.body.error);
     assert!(!planted.exists(), "the symlink target must not be created on the host");
 }
 
@@ -630,7 +630,7 @@ async fn upload_refuses_a_symlinked_parent_even_when_the_leaf_directory_is_missi
     .await
     .expect_err("an upload below a guest symlink must be refused");
 
-    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert_eq!(err.status, StatusCode::FORBIDDEN, "{}", err.body.error);
     assert!(
         !tree.outside.join("sub").exists(),
         "no directory may be created outside the workspace"
@@ -655,7 +655,7 @@ async fn download_refuses_a_symlink_to_a_host_file() {
     .await
     .expect_err("a download through a guest symlink must be refused");
 
-    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert_eq!(err.status, StatusCode::FORBIDDEN, "{}", err.body.error);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -676,7 +676,7 @@ async fn listing_neither_follows_nor_shows_a_symlinked_directory() {
     )
     .await
     .expect_err("listing through a guest symlink must be refused");
-    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert_eq!(err.status, StatusCode::FORBIDDEN, "{}", err.body.error);
 
     let root = handle_list_files(
         State(state),
@@ -955,10 +955,10 @@ async fn handle_provision_rejects_invalid_labels_with_bad_request() {
         .await
         .expect_err("invalid labels must be rejected");
         assert_eq!(
-            err.0,
+            err.status,
             StatusCode::BAD_REQUEST,
             "expected 400 for {bad_labels:?}: {}",
-            err.1
+            err.body.error
         );
     }
 }

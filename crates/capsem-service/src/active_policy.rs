@@ -120,7 +120,7 @@ pub(crate) async fn push_policy_to_running_instances(
     if failures.is_empty() {
         Ok(total)
     } else {
-        Err(AppError(
+        Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
                 "policy applied to {} of {total} running VMs; not applied: {}",

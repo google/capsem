@@ -7,11 +7,11 @@ pub(crate) async fn handle_provision(
     let _launch = state
         .lifecycle
         .admit()
-        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
-    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::CONFLICT, e.to_string()))?;
+    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
     let labels = non_empty_labels(payload.labels.clone());
     if let Some(reason) = state.off_worker(|state| vm_asset_block_reason(&state)).await? {
-        return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
+        return Err(AppError::new(StatusCode::PRECONDITION_FAILED, reason));
     }
 
     let existing = state.off_worker(|state| existing_session_names(&state)).await?;
@@ -21,7 +21,7 @@ pub(crate) async fn handle_provision(
         .unwrap_or_else(|| generate_session_name(existing.iter().map(|s| s.as_str())));
     let persistent = payload.persistent || payload.name.is_some() || payload.from.is_some();
     if existing.iter().any(|existing| existing == &name) {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::CONFLICT,
             format!("persistent VM \"{}\" already exists", name),
         ));
@@ -133,7 +133,7 @@ pub(crate) async fn handle_provision(
                 attempts = timed_out.attempts,
                 "provision: launchd-cleanup retries exhausted"
             );
-            Err(AppError(
+            Err(AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!(
                     "sandbox {id} could not be provisioned after {} attempts ({}). \
@@ -158,7 +158,7 @@ pub(crate) async fn finish_create(
     container: Option<api::ContainerSpec>,
 ) -> Result<ProvisionResponse, AppError> {
     let created = complete_create(state, id, networks, container).await;
-    if matches!(&created, Err(error) if error.0 != StatusCode::GATEWAY_TIMEOUT) {
+    if matches!(&created, Err(error) if error.status != StatusCode::GATEWAY_TIMEOUT) {
         discard_failed_create(state, id).await;
     }
     created
@@ -180,7 +180,7 @@ pub(crate) async fn complete_create(
     if let Some(socket) = socket {
         crate::credential_routes::sync_memory(state, &socket)
             .await
-            .map_err(|error| AppError(StatusCode::SERVICE_UNAVAILABLE, error))?;
+            .map_err(|error| AppError::new(StatusCode::SERVICE_UNAVAILABLE, error))?;
     }
     network_routes::attach_provisioned(state, id, networks).await?;
     if container.is_none() {
@@ -203,7 +203,7 @@ async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
     // must not also lose the ledger it could not read.
     let session_dir = resolve_session_dir(state, id).ok();
     if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::Retain, None).await {
-        error!(vm_id = id, error = %error.1, "failed create did not shut down cleanly");
+        error!(vm_id = id, error = %error.body.error, "failed create did not shut down cleanly");
     }
     if let Some(session_dir) = session_dir {
         let (owner, vm_id) = (Arc::clone(state), id.to_owned());
@@ -216,7 +216,7 @@ async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
         match state.off_worker(move |state| state.forget_persistent_entry(&key)).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => error!(vm_id = id, error = %error, "failed create kept its name"),
-            Err(error) => error!(vm_id = id, error = %error.1, "failed create kept its name"),
+            Err(error) => error!(vm_id = id, error = %error.body.error, "failed create kept its name"),
         }
     }
     network_routes::vm_deleted(state, id).await;
@@ -231,7 +231,7 @@ pub(crate) fn provision_failure(e: &anyhow::Error) -> AppError {
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     };
-    AppError(status, format!("provision failed: {message}"))
+    AppError::new(status, format!("provision failed: {message}"))
 }
 
 #[cfg(test)]

@@ -26,6 +26,7 @@ export type { CredentialInjectResponse } from "./CredentialInjectResponse.js";
 export { CredentialOutcome } from "./CredentialOutcome.js";
 export { CredentialStorage } from "./CredentialStorage.js";
 export type { DnsEvent } from "./DnsEvent.js";
+export { ErrorCode } from "./ErrorCode.js";
 export type { ErrorEvent } from "./ErrorEvent.js";
 export type { ErrorResponse } from "./ErrorResponse.js";
 export type { EventBodiesResponse } from "./EventBodiesResponse.js";

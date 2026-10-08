@@ -16,7 +16,7 @@ pub(crate) async fn handle_timeline(
 ) -> Result<Json<api::TimelineResponse>, AppError> {
     let requested = params.layers.unwrap_or_else(|| LAYERS.to_vec());
     if requested.is_empty() {
-        return Err(AppError(StatusCode::BAD_REQUEST, "no layers selected".into()));
+        return Err(AppError::new(StatusCode::BAD_REQUEST, "no layers selected".into()));
     }
     let layers: Vec<TimelineLayer> = LAYERS.into_iter().filter(|layer| requested.contains(layer)).collect();
     let cutoff = params
@@ -27,7 +27,7 @@ pub(crate) async fn handle_timeline(
                 .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|duration| ledger_cutoff(duration.as_secs()))
                 .ok_or_else(|| {
-                    AppError(
+                    AppError::new(
                         StatusCode::BAD_REQUEST,
                         "since must be a duration or RFC3339 timestamp".into(),
                     )

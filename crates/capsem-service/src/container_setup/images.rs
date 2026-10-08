@@ -145,7 +145,7 @@ impl From<ImageError> for AppError {
             ImageError::Refused(_) => StatusCode::FORBIDDEN,
             ImageError::Failed(_) => StatusCode::BAD_GATEWAY,
         };
-        AppError(status, error.to_string())
+        AppError::new(status, error.to_string())
     }
 }
 
@@ -360,8 +360,8 @@ pub(crate) async fn handle_list_images(
             images: Vec::new(),
         }));
     };
-    let architecture =
-        stage::catalog_architecture().map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+    let architecture = stage::catalog_architecture()
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
     let mut images: Vec<ImageInfo> = loaded
         .catalog
         .entries()

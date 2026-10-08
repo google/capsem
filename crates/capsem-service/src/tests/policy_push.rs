@@ -120,8 +120,12 @@ async fn an_edit_of_a_corp_owned_setting_is_refused() {
     .await
     .expect_err("corp owns this plugin");
 
-    assert_eq!(error.0, StatusCode::BAD_REQUEST);
-    assert!(error.1.contains("set by the corp config"), "{}", error.1);
+    assert_eq!(error.status, StatusCode::BAD_REQUEST);
+    assert!(
+        error.body.error.contains("set by the corp config"),
+        "{}",
+        error.body.error
+    );
     assert_eq!(
         std::fs::read(dir.path().join("settings.toml")).unwrap(),
         settings_before
@@ -152,13 +156,14 @@ async fn a_reload_acknowledging_another_active_policy_fails_the_push() {
     let error = handle_mcp_default_edit(State(Arc::clone(&state)), permission(SecurityRuleAction::Block))
         .await
         .expect_err("an acknowledgement of another policy is not this edit applied");
-    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
         error
-            .1
+            .body
+            .error
             .contains("stale-ack-vm: applied active policy blake3:some-other-policy, expected blake3:"),
         "{}",
-        error.1
+        error.body.error
     );
     process.await.unwrap();
 }
@@ -211,7 +216,7 @@ async fn race_edit_b_against_held_edit_a(
         () = held.notified() => {}
         finished = &mut edit_a => panic!(
             "edit A finished before its VM acknowledged it: {:?}",
-            finished.unwrap().err().map(|error| error.1)
+            finished.unwrap().err().map(|error| error.body.error)
         ),
     }
     let published_by_a = std::fs::read(&active_path).unwrap();
@@ -290,13 +295,14 @@ async fn partial_apply_reaches_every_healthy_vm_and_names_the_failed_one() {
         .await
         .expect_err("an edit that did not reach every running VM is not a success");
 
-    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
         error
-            .1
+            .body
+            .error
             .starts_with("edit saved and recorded; policy applied to 1 of 2 running VMs; not applied: broken-vm: "),
         "{}",
-        error.1
+        error.body.error
     );
     assert!(only_reloads(&healthy.await.unwrap(), 1), "the healthy VM is reloaded");
     assert_eq!(
@@ -346,5 +352,5 @@ async fn a_tool_of_an_undeclared_server_is_refused() {
     .await
     .expect_err("undeclared server");
 
-    assert_eq!(error.0, StatusCode::BAD_REQUEST);
+    assert_eq!(error.status, StatusCode::BAD_REQUEST);
 }

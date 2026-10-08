@@ -1,5 +1,12 @@
 import {expect, it} from 'vitest';
-import {commandDeadlineMs, createDeadlineMs} from '../src/execution.js';
+import {
+  CREATE_READY_SECS,
+  EXEC_TIMEOUT_CEILING_SECS,
+  GATEWAY_REQUEST_BUDGET_SECS,
+  MAX_REQUEST_BODY_BYTES,
+  commandDeadlineMs,
+  createDeadlineMs,
+} from '../src/execution.js';
 import {Hypervisor, VM} from '../src/index.js';
 import {FacadeGateway} from './facade-gateway.js';
 import {gateway} from './gateway.js';
@@ -13,6 +20,10 @@ it.each([
   [5_000_000, 10, 5_000_000],
 ])('deadline for default %i ms and timeout_secs %s is %i ms', (fallback, timeoutSecs, expected) => {
   expect(commandDeadlineMs(fallback, timeoutSecs)).toBe(expected);
+  expect(EXEC_TIMEOUT_CEILING_SECS).toBe(3600);
+  expect(GATEWAY_REQUEST_BUDGET_SECS).toBe(120);
+  expect(CREATE_READY_SECS).toBe(110);
+  expect(MAX_REQUEST_BODY_BYTES).toBe(10 * 1024 * 1024);
 });
 
 it.each([[30_000, 230_000], [500_000, 500_000]])('create deadline preserves readiness and a larger default: %i', (fallback, expected) => {

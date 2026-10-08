@@ -297,7 +297,7 @@ fn update_runtime_rejects_invalid_manifest_without_replacing_cached_graph() {
 
     let error = reload_activated_update_runtime(&state).unwrap_err();
 
-    assert!(error.1.contains("validate activated update manifest"));
+    assert!(error.body.error.contains("validate activated update manifest"));
     assert_eq!(
         state.manifest.read().unwrap().as_ref().unwrap().assets.current,
         "assets-1"
@@ -477,11 +477,17 @@ async fn automatic_update_reports_command_failure_for_backoff() {
     let state = make_test_state();
 
     let outcome = run_automatic_update_once(&state).await;
+    std::fs::write(&cli, "#!/bin/sh\nexit 0\n").unwrap();
+    let reload_outcome = run_automatic_update_once(&state).await;
+    std::env::set_var("CAPSEM_CLI", dir.path().join("missing-capsem"));
+    let spawn_outcome = run_automatic_update_once(&state).await;
 
     match previous_cli {
         Some(value) => std::env::set_var("CAPSEM_CLI", value),
         None => std::env::remove_var("CAPSEM_CLI"),
     }
+    assert!(matches!(reload_outcome, AutomaticUpdateOutcome::Failed(_)));
+    assert!(matches!(spawn_outcome, AutomaticUpdateOutcome::Failed(_)));
     let AutomaticUpdateOutcome::Failed(error) = outcome else {
         panic!("expected automatic update failure");
     };

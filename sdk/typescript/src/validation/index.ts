@@ -26,6 +26,7 @@ export {CredentialInjectResponseSchema} from "./CredentialInjectResponse.js";
 export {CredentialOutcomeSchema} from "./CredentialOutcome.js";
 export {CredentialStorageSchema} from "./CredentialStorage.js";
 export {DnsEventSchema} from "./DnsEvent.js";
+export {ErrorCodeSchema} from "./ErrorCode.js";
 export {ErrorEventSchema} from "./ErrorEvent.js";
 export {ErrorResponseSchema} from "./ErrorResponse.js";
 export {EventBodiesResponseSchema} from "./EventBodiesResponse.js";

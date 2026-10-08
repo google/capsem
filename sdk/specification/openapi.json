@@ -3579,6 +3579,14 @@
           }
         }
       },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "vm_not_found",
+          "create_timeout",
+          "exec_timeout"
+        ]
+      },
       "ErrorEvent": {
         "type": "object",
         "required": [
@@ -3614,8 +3622,32 @@
           "error"
         ],
         "properties": {
+          "code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ErrorCode"
+              }
+            ]
+          },
           "error": {
             "type": "string"
+          },
+          "timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "vm_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

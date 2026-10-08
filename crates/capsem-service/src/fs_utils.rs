@@ -34,13 +34,13 @@ pub fn sanitize_file_path(raw: &str) -> Result<String, AppError> {
     }
     let trimmed = collapsed.trim_start_matches('/');
     if trimmed.is_empty() {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
             "empty path after sanitization".into(),
         ));
     }
     if trimmed.contains("..") {
-        return Err(AppError(StatusCode::BAD_REQUEST, "path traversal rejected".into()));
+        return Err(AppError::new(StatusCode::BAD_REQUEST, "path traversal rejected".into()));
     }
     Ok(trimmed.to_string())
 }
@@ -112,14 +112,14 @@ fn workspace_relative(raw: &str, exact: bool, container: bool) -> Result<&str, A
     };
     match raw.strip_prefix(root) {
         Some(rest) if rest.is_empty() || rest.starts_with('/') => Ok(rest),
-        _ if container => Err(AppError(
+        _ if container => Err(AppError::new(
             StatusCode::BAD_REQUEST,
             format!(
                 "{raw} is not reachable: this VM runs a container, which sees the workspace at {root}; \
                  pass a path under {root}, a relative path, or exact=true to place the path as written in the workspace"
             ),
         )),
-        _ => Err(AppError(
+        _ => Err(AppError::new(
             StatusCode::BAD_REQUEST,
             format!(
                 "{raw} is outside the workspace: only paths under {root} are reachable; \
