@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Authenticate private-network name lookups with the registered VM owner's
   kernel Unix identity, eliminating the reusable bearer secret previously
-  written into each session directory.
+  written into each session directory and carried in lookup requests.
 
 - Close ambient inherited file descriptors before each VM owner or gateway
   initializes, preventing service resources from leaking across worker exec

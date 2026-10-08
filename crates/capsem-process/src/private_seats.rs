@@ -1,8 +1,7 @@
 //! Binding this owner's private seats at start: the cables holding each
 //! network's guest stream, and the socket the service asks a cable's stream
 //! on.
-//! It needs the service's socket, the run directory the service named and
-//! the secret it minted for this VM.
+//! It needs the service's socket and the run directory the service named.
 use crate::job_store::JobStore;
 use anyhow::{Context, Result};
 use capsem_proto::ipc::ServiceToProcess;
@@ -16,7 +15,6 @@ pub(crate) struct Seats<'a> {
     pub service_socket: Option<&'a Path>,
     pub uds_path: &'a Path,
     pub run_dir: Option<&'a Path>,
-    pub session_dir: &'a Path,
 }
 
 fn bound(path: std::path::PathBuf, what: &str) -> Result<(std::path::PathBuf, UnixListener)> {
@@ -32,7 +30,6 @@ fn bound(path: std::path::PathBuf, what: &str) -> Result<(std::path::PathBuf, Un
 /// the service on its VM's behalf.
 pub(crate) struct Bound {
     pub service_socket: std::path::PathBuf,
-    pub owner_secret: String,
 }
 
 pub(crate) fn bind(
@@ -49,9 +46,6 @@ pub(crate) fn bind(
         .unwrap_or_else(|| Path::new("/tmp"))
         .to_path_buf();
     let run_dir = seats.run_dir.map(Path::to_path_buf).unwrap_or(walked_up);
-    let owner_secret = std::fs::read_to_string(seats.session_dir.join("owner-secret"))
-        .map(|secret| secret.trim().to_string())
-        .unwrap_or_default();
     let service_socket = seats
         .service_socket
         .map(Path::to_path_buf)
@@ -65,8 +59,5 @@ pub(crate) fn bind(
     )?;
     let _ = job_store.cable_seat.set(seat_path);
     tokio::spawn(cables.serve_seat(seat_listener));
-    Ok(Bound {
-        service_socket,
-        owner_secret,
-    })
+    Ok(Bound { service_socket })
 }

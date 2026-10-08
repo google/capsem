@@ -467,7 +467,6 @@ async fn run_async_main_loop(
             service_socket: args.service_socket.as_deref(),
             uds_path: &args.uds_path,
             run_dir: args.run_dir.as_deref(),
-            session_dir: &session_dir,
         },
         &job_store,
         ctrl_tx.clone(),
@@ -617,7 +616,6 @@ async fn run_async_main_loop(
     // The private zone is the service's to answer, for this VM's networks.
     let private_names = Arc::new(private_names::ServicePrivateNames::new(
         seats.service_socket,
-        seats.owner_secret,
         args.id.clone(),
     ));
     let dns_handler = Arc::new(
