@@ -8,30 +8,50 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use capsem_core::net::dns::{DnsDatagram, DnsGrantFuture, DnsUpstreamGrants};
+use capsem_core::net::mitm_proxy::{
+    protocol::Protocol, GrantedTcpStream, TcpConnectGrantFuture, TcpGrantSelection, TcpResolveGrantFuture,
+    TcpUpstreamGrants,
+};
 use capsem_foundation::unix::fd::{self, SocketShutdown};
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::upstream_grant::{
     decode_upstream_grant_response, encode_upstream_grant_request, UpstreamDescriptorKind, UpstreamGrantRequest,
-    UpstreamGrantResponse, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
+    UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
 };
 use tokio::sync::{mpsc, oneshot};
 
 const COMMAND_CAPACITY: usize = 64;
-const WIRE_TIMEOUT: Duration = Duration::from_secs(2);
+// The coordinator permits a TCP dial to take ten seconds. Leave room for its
+// response framing while still bounding a wedged generation channel.
+const WIRE_TIMEOUT: Duration = Duration::from_secs(12);
 
 type WireSender = DescriptorSender<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
 type WireReceiver = DescriptorReceiver<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
 
-struct OpenDns {
-    upstream_index: u16,
-    policy_digest: String,
-    reply: oneshot::Sender<Result<DnsDatagram, String>>,
+enum Command {
+    OpenDns {
+        upstream_index: u16,
+        policy_digest: String,
+        reply: oneshot::Sender<Result<DnsDatagram, String>>,
+    },
+    ResolveTcp {
+        protocol: Protocol,
+        host: String,
+        port: u16,
+        policy_digest: String,
+        reply: oneshot::Sender<Result<TcpGrantSelection, String>>,
+    },
+    ConnectTcp {
+        selection_id: u64,
+        policy_digest: String,
+        reply: oneshot::Sender<Result<GrantedTcpStream, String>>,
+    },
 }
 
 /// Serializes grant protocol traffic over the inherited generation channel.
 #[derive(Clone)]
 pub(crate) struct UpstreamGrantClient {
-    opens: mpsc::Sender<OpenDns>,
+    commands: mpsc::Sender<Command>,
     policy_digest: Arc<RwLock<String>>,
 }
 
@@ -39,10 +59,10 @@ impl UpstreamGrantClient {
     pub(crate) fn start(socket: UnixStream, policy_digest: String) -> io::Result<Self> {
         let sender = WireSender::new(socket.try_clone()?)?;
         let receiver = WireReceiver::new(socket.try_clone()?)?;
-        let (opens_tx, opens) = mpsc::channel(COMMAND_CAPACITY);
+        let (commands_tx, commands) = mpsc::channel(COMMAND_CAPACITY);
         let (actor_releases, releases) = mpsc::unbounded_channel();
         tokio::spawn(async move {
-            let result = run_actor(sender, receiver, opens, releases, actor_releases).await;
+            let result = run_actor(sender, receiver, commands, releases, actor_releases).await;
             if let Err(error) = result {
                 tracing::warn!(%error, "upstream grant channel stopped");
             }
@@ -51,7 +71,7 @@ impl UpstreamGrantClient {
             }
         });
         Ok(Self {
-            opens: opens_tx,
+            commands: commands_tx,
             policy_digest: Arc::new(RwLock::new(policy_digest)),
         })
     }
@@ -67,9 +87,9 @@ impl UpstreamGrantClient {
 
     #[cfg(test)]
     pub(crate) fn test_handle(policy_digest: String) -> Self {
-        let (opens, _commands) = mpsc::channel(COMMAND_CAPACITY);
+        let (commands, _requests) = mpsc::channel(COMMAND_CAPACITY);
         Self {
-            opens,
+            commands,
             policy_digest: Arc::new(RwLock::new(policy_digest)),
         }
     }
@@ -80,8 +100,8 @@ impl DnsUpstreamGrants for UpstreamGrantClient {
         Box::pin(async move {
             let policy_digest = self.policy_digest.read().unwrap().clone();
             let (reply, result) = oneshot::channel();
-            self.opens
-                .send(OpenDns {
+            self.commands
+                .send(Command::OpenDns {
                     upstream_index,
                     policy_digest,
                     reply,
@@ -96,10 +116,53 @@ impl DnsUpstreamGrants for UpstreamGrantClient {
     }
 }
 
+impl TcpUpstreamGrants for UpstreamGrantClient {
+    fn resolve(&self, protocol: Protocol, host: &str, port: u16) -> TcpResolveGrantFuture<'_> {
+        let host = host.to_owned();
+        Box::pin(async move {
+            let policy_digest = self.policy_digest.read().unwrap().clone();
+            let (reply, result) = oneshot::channel();
+            self.commands
+                .send(Command::ResolveTcp {
+                    protocol,
+                    host,
+                    port,
+                    policy_digest,
+                    reply,
+                })
+                .await
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "upstream grant channel is closed"))?;
+            result
+                .await
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "upstream grant channel stopped"))?
+                .map_err(io::Error::other)
+        })
+    }
+
+    fn connect(&self, selection_id: u64) -> TcpConnectGrantFuture<'_> {
+        Box::pin(async move {
+            let policy_digest = self.policy_digest.read().unwrap().clone();
+            let (reply, result) = oneshot::channel();
+            self.commands
+                .send(Command::ConnectTcp {
+                    selection_id,
+                    policy_digest,
+                    reply,
+                })
+                .await
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "upstream grant channel is closed"))?;
+            result
+                .await
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "upstream grant channel stopped"))?
+                .map_err(io::Error::other)
+        })
+    }
+}
+
 async fn run_actor(
     sender: WireSender,
     receiver: WireReceiver,
-    mut opens: mpsc::Receiver<OpenDns>,
+    mut commands: mpsc::Receiver<Command>,
     mut releases: mpsc::UnboundedReceiver<u64>,
     release_sender: mpsc::UnboundedSender<u64>,
 ) -> Result<(), String> {
@@ -109,29 +172,84 @@ async fn run_actor(
             biased;
             release = releases.recv() => {
                 let Some(resource_id) = release else {
-                    if opens.is_closed() {
+                    if commands.is_closed() {
                         return Ok(());
                     }
                     continue;
                 };
                 send_request(&sender, &UpstreamGrantRequest::Release { resource_id }).await?;
             }
-            open = opens.recv() => {
-                let Some(open) = open else {
+            command = commands.recv() => {
+                let Some(command) = command else {
                     return Ok(());
                 };
                 let request_id = next_request_id;
                 next_request_id = next_request_id.checked_add(1).ok_or("upstream request id exhausted")?;
-                match open_dns(&sender, &receiver, &release_sender, request_id, &open).await {
-                    Ok(result) => {
-                        let _ = open.reply.send(result);
-                    }
-                    Err(error) => {
-                        let _ = open.reply.send(Err(error.clone()));
-                        return Err(error);
-                    }
-                }
+                dispatch(&sender, &receiver, &release_sender, request_id, command).await?;
             }
+        }
+    }
+}
+
+async fn dispatch(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    releases: &mpsc::UnboundedSender<u64>,
+    request_id: u64,
+    command: Command,
+) -> Result<(), String> {
+    match command {
+        Command::OpenDns {
+            upstream_index,
+            policy_digest,
+            reply,
+        } => finish(
+            reply,
+            open_dns(sender, receiver, releases, request_id, upstream_index, &policy_digest).await,
+        ),
+        Command::ResolveTcp {
+            protocol,
+            host,
+            port,
+            policy_digest,
+            reply,
+        } => finish(
+            reply,
+            resolve_tcp(
+                sender,
+                receiver,
+                releases,
+                request_id,
+                protocol,
+                &host,
+                port,
+                &policy_digest,
+            )
+            .await,
+        ),
+        Command::ConnectTcp {
+            selection_id,
+            policy_digest,
+            reply,
+        } => finish(
+            reply,
+            connect_tcp(sender, receiver, releases, request_id, selection_id, &policy_digest).await,
+        ),
+    }
+}
+
+fn finish<T>(
+    reply: oneshot::Sender<Result<T, String>>,
+    result: Result<Result<T, String>, String>,
+) -> Result<(), String> {
+    match result {
+        Ok(result) => {
+            let _ = reply.send(result);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = reply.send(Err(error.clone()));
+            Err(error)
         }
     }
 }
@@ -141,16 +259,164 @@ async fn open_dns(
     receiver: &WireReceiver,
     releases: &mpsc::UnboundedSender<u64>,
     request_id: u64,
-    open: &OpenDns,
+    upstream_index: u16,
+    expected_policy_digest: &str,
 ) -> Result<Result<DnsDatagram, String>, String> {
     send_request(
         sender,
         &UpstreamGrantRequest::OpenDns {
             request_id,
-            upstream_index: open.upstream_index,
+            upstream_index,
         },
     )
     .await?;
+    let (response, fds) = receive_response(receiver).await?;
+    match response {
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("upstream DNS grant denied: {reason:?}"))),
+        UpstreamGrantResponse::DescriptorGranted {
+            request_id: response_id,
+            grant_id,
+            kind: UpstreamDescriptorKind::DnsUdp,
+            policy_digest: response_digest,
+        } if response_id == request_id => {
+            let descriptor = fds.into_iter().next().ok_or("DNS grant omitted its descriptor")?;
+            send_request(sender, &UpstreamGrantRequest::Adopted { grant_id }).await?;
+            if response_digest != expected_policy_digest {
+                send_request(sender, &UpstreamGrantRequest::Release { resource_id: grant_id }).await?;
+                return Ok(Err(format!(
+                    "upstream DNS grant policy mismatch: expected {expected_policy_digest}, received {response_digest}"
+                )));
+            }
+            let socket = datagram_from_descriptor(descriptor)?;
+            let releases = releases.clone();
+            Ok(Ok(DnsDatagram::new(socket, move || {
+                let _ = releases.send(grant_id);
+            })))
+        }
+        response => Err(format!(
+            "unexpected upstream DNS grant response for request {request_id}: {response:?}"
+        )),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_tcp(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    releases: &mpsc::UnboundedSender<u64>,
+    request_id: u64,
+    protocol: Protocol,
+    host: &str,
+    port: u16,
+    expected_policy_digest: &str,
+) -> Result<Result<TcpGrantSelection, String>, String> {
+    let protocol = match wire_protocol(protocol) {
+        Ok(protocol) => protocol,
+        Err(error) => return Ok(Err(error)),
+    };
+    send_request(
+        sender,
+        &UpstreamGrantRequest::ResolveTcp {
+            request_id,
+            protocol,
+            host: host.to_owned(),
+            port,
+        },
+    )
+    .await?;
+    let (response, _fds) = receive_response(receiver).await?;
+    match response {
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("upstream TCP selection denied: {reason:?}"))),
+        UpstreamGrantResponse::TcpResolved {
+            request_id: response_id,
+            selection_id,
+            protocol,
+            judged_ip,
+            policy_digest,
+        } if response_id == request_id => {
+            if policy_digest != expected_policy_digest {
+                send_request(
+                    sender,
+                    &UpstreamGrantRequest::Release {
+                        resource_id: selection_id,
+                    },
+                )
+                .await?;
+                return Ok(Err(format!(
+                    "upstream TCP selection policy mismatch: expected {expected_policy_digest}, received {policy_digest}"
+                )));
+            }
+            let releases = releases.clone();
+            Ok(Ok(TcpGrantSelection::new(
+                selection_id,
+                core_protocol(protocol),
+                judged_ip,
+                move || {
+                    let _ = releases.send(selection_id);
+                },
+            )))
+        }
+        response => Err(format!(
+            "unexpected upstream TCP selection response for request {request_id}: {response:?}"
+        )),
+    }
+}
+
+async fn connect_tcp(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    releases: &mpsc::UnboundedSender<u64>,
+    request_id: u64,
+    selection_id: u64,
+    expected_policy_digest: &str,
+) -> Result<Result<GrantedTcpStream, String>, String> {
+    send_request(
+        sender,
+        &UpstreamGrantRequest::ConnectTcp {
+            request_id,
+            selection_id,
+        },
+    )
+    .await?;
+    let (response, fds) = receive_response(receiver).await?;
+    match response {
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("upstream TCP connection denied: {reason:?}"))),
+        UpstreamGrantResponse::DescriptorGranted {
+            request_id: response_id,
+            grant_id,
+            kind: UpstreamDescriptorKind::Tcp,
+            policy_digest,
+        } if response_id == request_id => {
+            let descriptor = fds.into_iter().next().ok_or("TCP grant omitted its descriptor")?;
+            send_request(sender, &UpstreamGrantRequest::Adopted { grant_id }).await?;
+            if policy_digest != expected_policy_digest {
+                send_request(sender, &UpstreamGrantRequest::Release { resource_id: grant_id }).await?;
+                return Ok(Err(format!(
+                    "upstream TCP grant policy mismatch: expected {expected_policy_digest}, received {policy_digest}"
+                )));
+            }
+            let stream = stream_from_descriptor(descriptor)?;
+            let releases = releases.clone();
+            Ok(Ok(GrantedTcpStream::new(stream, move || {
+                let _ = releases.send(grant_id);
+            })))
+        }
+        response => Err(format!(
+            "unexpected upstream TCP grant response for request {request_id}: {response:?}"
+        )),
+    }
+}
+
+async fn receive_response(receiver: &WireReceiver) -> Result<(UpstreamGrantResponse, Vec<OwnedFd>), String> {
     let frame = tokio::time::timeout(WIRE_TIMEOUT, receiver.recv())
         .await
         .map_err(|_| "receive upstream grant response timed out".to_string())?
@@ -164,35 +430,23 @@ async fn open_dns(
             response.expected_descriptor_count()
         ));
     }
-    match response {
-        UpstreamGrantResponse::Denied {
-            request_id: response_id,
-            reason,
-        } if response_id == request_id => Ok(Err(format!("upstream DNS grant denied: {reason:?}"))),
-        UpstreamGrantResponse::DescriptorGranted {
-            request_id: response_id,
-            grant_id,
-            kind: UpstreamDescriptorKind::DnsUdp,
-            policy_digest,
-        } if response_id == request_id => {
-            let descriptor = frame.fds.into_iter().next().ok_or("DNS grant omitted its descriptor")?;
-            send_request(sender, &UpstreamGrantRequest::Adopted { grant_id }).await?;
-            if policy_digest != open.policy_digest {
-                send_request(sender, &UpstreamGrantRequest::Release { resource_id: grant_id }).await?;
-                return Ok(Err(format!(
-                    "upstream DNS grant policy mismatch: expected {}, received {policy_digest}",
-                    open.policy_digest
-                )));
-            }
-            let socket = datagram_from_descriptor(descriptor)?;
-            let releases = releases.clone();
-            Ok(Ok(DnsDatagram::new(socket, move || {
-                let _ = releases.send(grant_id);
-            })))
+    Ok((response, frame.fds))
+}
+
+fn wire_protocol(protocol: Protocol) -> Result<UpstreamProtocol, String> {
+    match protocol {
+        Protocol::Http => Ok(UpstreamProtocol::Http),
+        Protocol::Tls => Ok(UpstreamProtocol::Tls),
+        Protocol::McpFrame | Protocol::Unknown => {
+            Err(format!("protocol {} cannot select a TCP upstream", protocol.label()))
         }
-        response => Err(format!(
-            "unexpected upstream DNS grant response for request {request_id}: {response:?}"
-        )),
+    }
+}
+
+fn core_protocol(protocol: UpstreamProtocol) -> Protocol {
+    match protocol {
+        UpstreamProtocol::Http => Protocol::Http,
+        UpstreamProtocol::Tls => Protocol::Tls,
     }
 }
 
@@ -212,6 +466,17 @@ fn datagram_from_descriptor(descriptor: OwnedFd) -> Result<tokio::net::UdpSocket
         .set_nonblocking(true)
         .map_err(|error| format!("make granted DNS socket nonblocking: {error}"))?;
     tokio::net::UdpSocket::from_std(socket).map_err(|error| format!("adopt granted DNS socket: {error}"))
+}
+
+fn stream_from_descriptor(descriptor: OwnedFd) -> Result<tokio::net::TcpStream, String> {
+    let stream = std::net::TcpStream::from(descriptor);
+    stream
+        .set_nonblocking(true)
+        .map_err(|error| format!("make granted TCP stream nonblocking: {error}"))?;
+    stream
+        .set_nodelay(true)
+        .map_err(|error| format!("set granted TCP stream nodelay: {error}"))?;
+    tokio::net::TcpStream::from_std(stream).map_err(|error| format!("adopt granted TCP stream: {error}"))
 }
 
 /// Duplicate the inherited generation channel before runtime threads exist.
