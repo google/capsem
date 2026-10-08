@@ -1,9 +1,10 @@
 // Run after an ordinary package install outside the checkout.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import {createServer} from 'node:http';
-import {existsSync, readFileSync, lstatSync, readdirSync} from 'node:fs';
+import {existsSync, readFileSync, lstatSync, readdirSync, writeFileSync} from 'node:fs';
 import {dirname, join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {buffer} from 'node:stream/consumers';
@@ -36,9 +37,21 @@ for (const name of Object.keys(manifest.devDependencies)) {
 }
 /** @type {Record<string,string>} */
 const origins = {};
+// Node 20.0 needs a flag for this tooling-only resolver. Keep the consumer
+// and its actual SDK operations unflagged; delegate only origin inspection.
+/** @param {string} name @returns {string} */
+function resolveInstalled(name) {
+  if (typeof import.meta.resolve === 'function') return import.meta.resolve(name);
+  const resolver = join(project, 'resolve-installed.mjs');
+  writeFileSync(resolver, 'process.stdout.write(import.meta.resolve(process.argv[2]));\n');
+  return execFileSync(process.execPath, ['--experimental-import-meta-resolve',
+    resolver, name], {
+    cwd: project, encoding: 'utf8', timeout: 5000, env: {PATH: process.env.PATH ?? ''},
+  });
+}
 for (const entry of Object.keys(manifest.exports)) {
   const name = entry === '.' ? '@capsem/sdk' : '@capsem/sdk' + entry.slice(1);
-  const origin = fileURLToPath(import.meta.resolve(name));
+  const origin = fileURLToPath(resolveInstalled(name));
   assert.ok(origin.startsWith(packageRoot + '/'));
   await import(name);
   origins[name] = origin;
@@ -46,7 +59,7 @@ for (const entry of Object.keys(manifest.exports)) {
   assert.ok(exported);
   assert.ok(readFileSync(join(packageRoot, exported.types)).length > 0);
 }
-assert.ok(fileURLToPath(import.meta.resolve('zod')).startsWith(join(project, 'node_modules') + '/'));
+assert.ok(fileURLToPath(resolveInstalled('zod')).startsWith(join(project, 'node_modules') + '/'));
 /** @type {Record<string,string>} */
 const hashes = {};
 /** @param {string} directory */
@@ -151,6 +164,5 @@ assert.deepEqual(lifecycleRequests, [
 ]);
 assert.deepEqual(received[1]?.body, {image: 'code', registry: {username: 'fixture', password: 'fixture-access'}});
 assert.deepEqual(received[2]?.body, {image: 'code'});
-const {writeFileSync} = await import('node:fs');
-writeFileSync(output, JSON.stringify({archive, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex'), version: manifest.version, engines: manifest.engines, dependencies: manifest.dependencies, origins, payloadFiles: Object.keys(hashes).length, payloadHashes: hashes, httpPaths: imageRequests.map(request => request.path), lifecyclePaths: lifecycleRequests.map(request => request.path), ok: true}, null, 2) + '\n');
+writeFileSync(output, JSON.stringify({archive, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex'), version: manifest.version, engines: manifest.engines, dependencies: manifest.dependencies, origins, payloadFiles: Object.keys(hashes).length, payloadHashes: hashes, httpPaths: imageRequests.map(request => request.path), lifecyclePaths: lifecycleRequests.map(request => request.path), nodeVersion: process.version, nodeExecutable: process.execPath, nodeArgs: process.execArgv, ok: true}, null, 2) + '\n');
 process.stdout.write('SDK_IMAGE_PACKAGE_ACCEPTANCE_OK\n');
