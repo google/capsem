@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bind private-network and preview handoff endpoints to the coordinator's
   session identity and VM-owner spawn generation. Refuse worker replies that
-  name another endpoint or arrive after that owner has been replaced.
+  name another endpoint or arrive after that owner has been replaced, and
+  authenticate the preview owner's kernel identity before transferring a
+  browser connection descriptor.
 
 ### Fixed
 

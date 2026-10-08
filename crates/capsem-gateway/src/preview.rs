@@ -17,7 +17,7 @@ use capsem_foundation::unix::router_channel::{Receiver, Sender};
 use capsem_proto::privatelink::{decode_seat_frame, seat_frame, SEAT_PREVIEW};
 use http_body_util::BodyExt;
 use std::collections::HashMap;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -409,7 +409,14 @@ fn validate_bootstrap_head(head: &Head) -> anyhow::Result<()> {
 
 async fn handoff(stream: tokio::net::TcpStream, admitted: PreviewConnectionAdmissionResponse) -> anyhow::Result<()> {
     let source = stream.into_std()?;
-    let seat = std::os::unix::net::UnixStream::connect(&admitted.handoff_socket)?;
+    let seat = tokio::net::UnixStream::connect(&admitted.handoff_socket)
+        .await?
+        .into_std()?;
+    let owner = capsem_foundation::unix::peer::PeerIdentity {
+        pid: capsem_foundation::unix::process::ProcessId::try_from(admitted.owner_pid)?,
+        uid: admitted.owner_uid,
+    };
+    capsem_foundation::unix::peer::require(seat.as_fd(), owner).context("authenticate preview owner")?;
     let sender = Sender::new(seat.try_clone()?)?;
     sender
         .send(&seat_frame(SEAT_PREVIEW, admitted.handoff_token), &[source.as_raw_fd()])
