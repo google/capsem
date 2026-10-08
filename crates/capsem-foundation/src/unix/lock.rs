@@ -116,16 +116,34 @@ pub fn acquire(path: &Path, mode: LockMode) -> io::Result<FileLock> {
 
 /// Acquire an existing lockfile until an absolute deadline.
 pub fn acquire_existing_until(path: &Path, mode: LockMode, deadline: Instant) -> io::Result<FileLock> {
+    acquire_with_deadline(path, mode, deadline, try_acquire_existing)
+}
+
+/// Create or open a lockfile, waiting for contention only until `deadline`.
+pub fn acquire_until(path: &Path, mode: LockMode, deadline: Instant) -> io::Result<FileLock> {
+    acquire_with_deadline(path, mode, deadline, try_acquire)
+}
+
+fn acquire_with_deadline(
+    path: &Path,
+    mode: LockMode,
+    deadline: Instant,
+    attempt: fn(&Path, LockMode) -> io::Result<LockAttempt>,
+) -> io::Result<FileLock> {
     loop {
-        match try_acquire_existing(path, mode)? {
+        match attempt(path, mode)? {
             LockAttempt::Acquired(lock) => return Ok(lock),
             LockAttempt::Contended if Instant::now() >= deadline => {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    format!("timed out acquiring existing lock {}", path.display()),
+                    format!("timed out acquiring lock {}", path.display()),
                 ));
             }
-            LockAttempt::Contended => std::thread::sleep(Duration::from_millis(10)),
+            LockAttempt::Contended => std::thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(10)),
+            ),
         }
     }
 }
