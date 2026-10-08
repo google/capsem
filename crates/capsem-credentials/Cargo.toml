@@ -24,6 +24,7 @@ hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

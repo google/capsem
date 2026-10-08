@@ -7,8 +7,9 @@ mod store;
 
 pub use durable::STORE_PATH_ENV;
 pub use oauth::{
-    AuthorizationParameters, CallbackExchange, LoopbackRedirect, OAuthAttempt, OAuthError, OAuthListener,
-    OAuthListenerError, OAuthListenerPolicy, OAuthPolicy, OAuthState,
+    AuthorizationParameters, CallbackExchange, GoogleOAuthClient, GoogleRegistration, LoopbackRedirect, OAuthAttempt,
+    OAuthAuthorizationUrl, OAuthError, OAuthHttpPolicy, OAuthListener, OAuthListenerError, OAuthListenerPolicy,
+    OAuthPolicy, OAuthProviderError, OAuthState, OAuthTokenError, OAuthTokens,
 };
 pub use provider::CredentialProvider;
 pub use store::{

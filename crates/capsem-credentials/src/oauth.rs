@@ -11,7 +11,12 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
+mod google;
 mod listener;
+pub use google::{
+    GoogleOAuthClient, GoogleRegistration, OAuthAuthorizationUrl, OAuthHttpPolicy, OAuthProviderError, OAuthTokenError,
+    OAuthTokens,
+};
 pub use listener::{OAuthListener, OAuthListenerError, OAuthListenerPolicy};
 
 #[derive(Debug, Clone)]
@@ -89,6 +94,12 @@ impl fmt::Display for OAuthError {
 impl std::error::Error for OAuthError {}
 
 struct Secret(Zeroizing<String>);
+
+impl<'de> serde::Deserialize<'de> for Secret {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        <String as serde::Deserialize>::deserialize(deserializer).map(Self::new)
+    }
+}
 
 impl Secret {
     fn new(value: String) -> Self {
