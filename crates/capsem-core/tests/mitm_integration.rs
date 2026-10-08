@@ -195,6 +195,7 @@ fn make_proxy_config_with_mechanics(
         pipeline,
         mcp_endpoint: None,
         upstream_resolver: Default::default(),
+        upstream_grants: None,
     });
     (config, db)
 }

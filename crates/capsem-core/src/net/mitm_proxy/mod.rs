@@ -71,7 +71,10 @@ use util::{
 
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts, ScopedMcpTools};
 pub use mcp_frame::{dispatch_logged_mcp_request, McpTransport};
-pub use upstream::UpstreamTarget;
+pub use upstream::{
+    GrantedTcpStream, TcpConnectGrantFuture, TcpGrantSelection, TcpResolveGrantFuture, TcpUpstreamGrants,
+    UpstreamTarget,
+};
 
 /// Re-exported so capsem-app can reference the type without depending on rustls.
 pub type UpstreamTlsConfig = rustls::ClientConfig;
@@ -123,6 +126,8 @@ pub struct MitmProxyConfig {
     pub mcp_endpoint: Option<Arc<McpEndpointState>>,
     /// Resolves guest-named upstreams before policy; the dial goes only to what it judged.
     pub upstream_resolver: crate::net::upstream_address::UpstreamResolver,
+    /// Trusted coordinator connection grants for confined workers.
+    pub upstream_grants: Option<Arc<dyn TcpUpstreamGrants>>,
 }
 
 /// Build the default (empty) hook pipeline. T1 slices 2 + 3 will
@@ -876,7 +881,16 @@ async fn handle_request(
     let policy: Arc<NetworkMechanics> = config.policy.read().unwrap().clone();
     // Resolve before the rules run, so they judge the address the dial reaches.
     let resolver = &config.upstream_resolver;
-    let target = UpstreamTarget::select(resolver, &policy, domain, upstream_port, cached_upstream).await;
+    let target = UpstreamTarget::select(
+        resolver,
+        &policy,
+        protocol,
+        domain,
+        upstream_port,
+        cached_upstream,
+        config.upstream_grants.as_deref(),
+    )
+    .await;
     let upstream_ip = target.judged_ip(domain);
     let log_bodies = policy.log_bodies;
     let max_body = policy.max_body_capture;
@@ -1741,7 +1755,11 @@ async fn handle_request(
     } else {
         let dial_start = Instant::now();
         let tcp_start = Instant::now();
-        let upstream_tcp = match target.connect().instrument(upstream_prepare_span.clone()).await {
+        let upstream_tcp = match target
+            .connect_with_grants(config.upstream_grants.as_deref())
+            .instrument(upstream_prepare_span.clone())
+            .await
+        {
             Ok((tcp, pinned)) => {
                 connected = pinned;
                 tcp
@@ -1985,7 +2003,11 @@ async fn handle_request(
                 error = %e,
                 "cached upstream sender failed on send; reconnecting replayable request"
             );
-            let upstream_tcp = match target.connect().instrument(upstream_send_span.clone()).await {
+            let upstream_tcp = match target
+                .connect_with_grants(config.upstream_grants.as_deref())
+                .instrument(upstream_send_span.clone())
+                .await
+            {
                 Ok((tcp, pinned)) => {
                     connected = pinned;
                     tcp

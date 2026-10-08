@@ -211,7 +211,11 @@ pub(super) async fn handle_upgrade(
         .clone()
         .unwrap_or_else(|| matched_rule.clone());
 
-    let upstream_tcp = match target.connect().instrument(ws_span.clone()).await {
+    let upstream_tcp = match target
+        .connect_with_grants(config.upstream_grants.as_deref())
+        .instrument(ws_span.clone())
+        .await
+    {
         Ok((stream, _pinned)) => stream,
         Err(error) => {
             ws_span.record("decision", "error");

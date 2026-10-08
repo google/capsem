@@ -12,15 +12,146 @@
 //! target exactly as written, and the rules see what they always saw.
 
 use std::fmt;
+use std::future::Future;
+use std::io;
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use hyper::client::conn::http1::SendRequest;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
 use super::body::ProxyBoxBody;
 use super::protocol::Protocol;
 use crate::net::policy::{NetworkMechanics, UpstreamOverrideProtocol};
 use crate::net::upstream_address::{judged_address, UpstreamResolver};
+
+/// Future returned by a trusted TCP selection provider.
+pub type TcpResolveGrantFuture<'a> = Pin<Box<dyn Future<Output = io::Result<TcpGrantSelection>> + Send + 'a>>;
+/// Future returned by a trusted connected-stream provider.
+pub type TcpConnectGrantFuture<'a> = Pin<Box<dyn Future<Output = io::Result<GrantedTcpStream>> + Send + 'a>>;
+
+/// Selects and connects upstreams without exposing address choice to a worker.
+pub trait TcpUpstreamGrants: Send + Sync {
+    fn resolve(&self, protocol: Protocol, host: &str, port: u16) -> TcpResolveGrantFuture<'_>;
+    fn connect(&self, selection_id: u64) -> TcpConnectGrantFuture<'_>;
+}
+
+struct SelectionLease {
+    id: u64,
+    claimed: AtomicBool,
+    release: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Drop for SelectionLease {
+    fn drop(&mut self) {
+        if !self.claimed.load(Ordering::Acquire) {
+            if let Some(release) = self.release.get_mut().unwrap().take() {
+                release();
+            }
+        }
+    }
+}
+
+/// One coordinator-selected target, released if policy rejects it before use.
+#[derive(Clone)]
+pub struct TcpGrantSelection {
+    lease: Arc<SelectionLease>,
+    pub protocol: Protocol,
+    pub judged_ip: Option<IpAddr>,
+}
+
+impl TcpGrantSelection {
+    pub fn new(
+        selection_id: u64,
+        protocol: Protocol,
+        judged_ip: Option<IpAddr>,
+        release: impl FnOnce() + Send + 'static,
+    ) -> Self {
+        Self {
+            lease: Arc::new(SelectionLease {
+                id: selection_id,
+                claimed: AtomicBool::new(false),
+                release: Mutex::new(Some(Box::new(release))),
+            }),
+            protocol,
+            judged_ip,
+        }
+    }
+
+    fn claim(&self) -> io::Result<u64> {
+        self.lease
+            .claimed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| self.lease.id)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "upstream selection was already consumed"))
+    }
+}
+
+impl fmt::Debug for TcpGrantSelection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TcpGrantSelection")
+            .field("id", &self.lease.id)
+            .field("protocol", &self.protocol)
+            .field("judged_ip", &self.judged_ip)
+            .finish()
+    }
+}
+
+impl PartialEq for TcpGrantSelection {
+    fn eq(&self, other: &Self) -> bool {
+        self.lease.id == other.lease.id && self.protocol == other.protocol && self.judged_ip == other.judged_ip
+    }
+}
+
+impl Eq for TcpGrantSelection {}
+
+/// A connected upstream descriptor whose coordinator grant is released on drop.
+pub struct GrantedTcpStream {
+    stream: TcpStream,
+    release: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl GrantedTcpStream {
+    pub fn new(stream: TcpStream, release: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            stream,
+            release: Some(Box::new(release)),
+        }
+    }
+}
+
+impl Drop for GrantedTcpStream {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            release();
+        }
+    }
+}
+
+impl AsyncRead for GrantedTcpStream {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_read(cx, buffer)
+    }
+}
+
+impl AsyncWrite for GrantedTcpStream {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write(cx, bytes)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
 
 /// The upstream connection one request will use.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +160,16 @@ pub enum UpstreamTarget {
     Override { dial: String, protocol: Protocol },
     /// The addresses the guest's name resolved to, in the order to try.
     Resolved(Vec<SocketAddr>),
+    /// A trusted coordinator's opaque selection. Connected targets retain
+    /// their judged identity while a retry obtains a fresh one-shot token.
+    Granted {
+        host: String,
+        port: u16,
+        guest_protocol: Protocol,
+        selection: Option<TcpGrantSelection>,
+        protocol: Protocol,
+        judged_ip: Option<IpAddr>,
+    },
     /// The name did not resolve. Nothing is dialed; the reason is the error.
     Unresolved(String),
 }
@@ -53,12 +194,16 @@ impl UpstreamTarget {
     pub(super) async fn select(
         resolver: &UpstreamResolver,
         policy: &NetworkMechanics,
+        guest_protocol: Protocol,
         domain: &str,
         port: u16,
         cache: &UpstreamCache,
+        grants: Option<&dyn TcpUpstreamGrants>,
     ) -> Self {
-        if let Some(target) = Self::override_target(policy, domain, port) {
-            return target;
+        if grants.is_none() {
+            if let Some(target) = Self::override_target(policy, domain, port) {
+                return target;
+            }
         }
         if let Some(pinned) = cache
             .lock()
@@ -68,9 +213,26 @@ impl UpstreamTarget {
         {
             return pinned;
         }
+        if let Some(grants) = grants {
+            return Self::resolve_granted(grants, guest_protocol, domain, port).await;
+        }
         match resolver.resolve(domain, port).await {
             Ok(addresses) => Self::Resolved(addresses),
             Err(error) => Self::Unresolved(error),
+        }
+    }
+
+    async fn resolve_granted(grants: &dyn TcpUpstreamGrants, protocol: Protocol, host: &str, port: u16) -> Self {
+        match grants.resolve(protocol, host, port).await {
+            Ok(selection) => Self::Granted {
+                host: host.to_owned(),
+                port,
+                guest_protocol: protocol,
+                protocol: selection.protocol,
+                judged_ip: selection.judged_ip,
+                selection: Some(selection),
+            },
+            Err(error) => Self::Unresolved(error.to_string()),
         }
     }
 
@@ -92,6 +254,7 @@ impl UpstreamTarget {
     pub fn judged_ip(&self, domain: &str) -> Option<IpAddr> {
         match self {
             Self::Resolved(addresses) => judged_address(addresses),
+            Self::Granted { judged_ip, .. } => *judged_ip,
             Self::Override { .. } | Self::Unresolved(_) => domain.parse().ok(),
         }
     }
@@ -100,6 +263,7 @@ impl UpstreamTarget {
     pub fn protocol(&self, guest: Protocol) -> Protocol {
         match self {
             Self::Override { protocol, .. } => *protocol,
+            Self::Granted { protocol, .. } => *protocol,
             Self::Resolved(_) | Self::Unresolved(_) => guest,
         }
     }
@@ -111,6 +275,12 @@ impl UpstreamTarget {
         let stream = match self {
             Self::Override { dial, .. } => TcpStream::connect(dial.as_str()).await?,
             Self::Resolved(addresses) => TcpStream::connect(addresses.as_slice()).await?,
+            Self::Granted { .. } => {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "descriptor grant required for brokered upstream target",
+                ));
+            }
             Self::Unresolved(error) => return Err(std::io::Error::new(std::io::ErrorKind::NotFound, error.clone())),
         };
         let _ = stream.set_nodelay(true);
@@ -120,6 +290,58 @@ impl UpstreamTarget {
         };
         Ok((stream, pinned))
     }
+
+    /// Connect through the trusted grant provider. Direct targets are refused
+    /// whenever a provider is installed, preventing an accidental fallback.
+    pub async fn connect_with_grants(
+        &self,
+        grants: Option<&dyn TcpUpstreamGrants>,
+    ) -> io::Result<(GrantedTcpStream, Self)> {
+        let Some(grants) = grants else {
+            let (stream, pinned) = self.connect().await?;
+            return Ok((GrantedTcpStream::new(stream, || {}), pinned));
+        };
+        let Self::Granted {
+            host,
+            port,
+            guest_protocol,
+            selection,
+            protocol,
+            judged_ip,
+        } = self
+        else {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "direct upstream target refused while descriptor grants are required",
+            ));
+        };
+        let refreshed;
+        let selection = match selection {
+            Some(selection) => selection,
+            None => {
+                refreshed = grants.resolve(*guest_protocol, host, *port).await?;
+                if refreshed.protocol != *protocol || refreshed.judged_ip != *judged_ip {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "refreshed upstream selection changed the judged target",
+                    ));
+                }
+                &refreshed
+            }
+        };
+        let stream = grants.connect(selection.claim()?).await?;
+        Ok((
+            stream,
+            Self::Granted {
+                host: host.clone(),
+                port: *port,
+                guest_protocol: *guest_protocol,
+                selection: None,
+                protocol: *protocol,
+                judged_ip: *judged_ip,
+            },
+        ))
+    }
 }
 
 impl fmt::Display for UpstreamTarget {
@@ -127,6 +349,13 @@ impl fmt::Display for UpstreamTarget {
         match self {
             Self::Override { dial, .. } => write!(f, "override {dial}"),
             Self::Resolved(addresses) => write!(f, "{addresses:?}"),
+            Self::Granted {
+                host,
+                port,
+                protocol,
+                judged_ip,
+                ..
+            } => write!(f, "granted {host}:{port} ({protocol:?}, {judged_ip:?})"),
             Self::Unresolved(error) => write!(f, "unresolved ({error})"),
         }
     }
@@ -161,7 +390,12 @@ impl CachedUpstream {
     }
 
     fn pinned_for(&self, domain: &str, port: u16) -> Option<UpstreamTarget> {
-        let pinned = self.domain == domain && self.port == port && matches!(self.target, UpstreamTarget::Resolved(_));
+        let pinned = self.domain == domain
+            && self.port == port
+            && matches!(
+                self.target,
+                UpstreamTarget::Resolved(_) | UpstreamTarget::Granted { selection: None, .. }
+            );
         pinned.then(|| self.target.clone())
     }
 }
