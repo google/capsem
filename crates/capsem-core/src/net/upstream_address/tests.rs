@@ -110,6 +110,17 @@ async fn a_fixed_answer_replaces_the_system_resolver_for_that_name_only() {
     );
 }
 
+#[tokio::test]
+async fn a_disabled_resolver_has_no_system_or_literal_authority() {
+    let resolver = UpstreamResolver::disabled();
+    for host in ["localhost", "127.0.0.1", "::1"] {
+        assert_eq!(
+            resolver.resolve(host, 443).await.unwrap_err(),
+            "upstream resolution is disabled in this process"
+        );
+    }
+}
+
 #[test]
 fn the_judged_address_fails_closed_on_any_local_answer() {
     assert_eq!(judged_address(&[]), None);
