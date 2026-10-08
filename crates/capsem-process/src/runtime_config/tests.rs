@@ -148,3 +148,26 @@ protocol = "http"
         .is_none());
     assert!(runtime.network.find_upstream_override("evil.example", 443).is_none());
 }
+
+#[test]
+fn invalid_runtime_snapshot_names_its_active_policy_without_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let active_path = dir.path().join("vm/active_policy.toml");
+    std::fs::create_dir_all(active_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &active_path,
+        r#"
+[user_rules]
+[corp_rules]
+[network]
+[network.dns]
+upstreams = ["resolver.example:domain"]
+"#,
+    )
+    .unwrap();
+
+    let error = RuntimePolicySource::new(&active_path).load().unwrap_err();
+    let chain = format!("{error:#}");
+    assert!(chain.contains(&active_path.display().to_string()), "{chain}");
+    assert!(chain.contains("resolver.example:domain"), "{chain}");
+}
