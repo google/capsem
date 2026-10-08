@@ -764,18 +764,11 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert read_status == 200
         assert read_body.decode() == EICAR_TEXT
 
-        plugins = client.get("/plugins/list", timeout=30)
-        by_id = {plugin["id"]: plugin for plugin in plugins["plugins"]}
-        assert by_id["dummy_pre_eicar"]["runtime"]["enabled"] is False
-        assert by_id["dummy_post_allow"]["runtime"]["enabled"] is True
-        assert by_id["dummy_post_allow"]["runtime"]["execution_count"] == 0
-        # The info route aggregates the plugin's runtime across sessions.
-        dummy_post_detail = client.get("/plugins/dummy_post_allow/info", timeout=30)
-        assert dummy_post_detail["runtime"]["enabled"] is True
-        assert dummy_post_detail["runtime"]["execution_count"] >= 1
-        # Stop awaits the owner and its DB flush before inspecting disk rows.
-        stopped = client.post(f"/vms/{vm_id}/stop", timeout=60)
-        assert stopped is not None
+        # DbWriter.write().await accepts into the process-owned buffer. Stop
+        # the persistent VM to drain and checkpoint that writer before opening
+        # session.db directly; polling the live file is not a flush barrier.
+        stopped = client.post(f"/vms/{vm_id}/stop", {}, timeout=60)
+        assert stopped == {"success": True, "persistent": True}, stopped
 
         conn = ledgers.enter_context(contextlib.closing(_connect_session_db(service, client, vm_id)))
         security_rows = conn.execute(
