@@ -238,6 +238,7 @@ async fn run(
                             selection_id,
                             protocol: effective_protocol,
                             judged_ip,
+                            policy_digest: current.digest.clone(),
                         },
                         None,
                     )
@@ -301,7 +302,15 @@ async fn run(
                             adopted: false,
                         },
                     );
-                    send_active_grant(&responses, &active, request_id, grant_id, UpstreamDescriptorKind::Tcp).await?;
+                    send_active_grant(
+                        &responses,
+                        &active,
+                        request_id,
+                        grant_id,
+                        UpstreamDescriptorKind::Tcp,
+                        &current_digest,
+                    )
+                    .await?;
                     awaiting_adoption = Some(grant_id);
                 }
                 UpstreamGrantRequest::OpenDns {
@@ -373,6 +382,7 @@ async fn run(
                         request_id,
                         grant_id,
                         UpstreamDescriptorKind::DnsUdp,
+                        &current.digest,
                     )
                     .await?;
                     awaiting_adoption = Some(grant_id);
@@ -418,6 +428,7 @@ async fn send_active_grant(
     request_id: u64,
     grant_id: u64,
     kind: UpstreamDescriptorKind,
+    policy_digest: &str,
 ) -> Result<(), String> {
     let grant = active.get(&grant_id).ok_or("new descriptor grant disappeared")?;
     send_response(
@@ -426,6 +437,7 @@ async fn send_active_grant(
             request_id,
             grant_id,
             kind,
+            policy_digest: policy_digest.to_owned(),
         },
         Some(&grant.descriptor),
     )
