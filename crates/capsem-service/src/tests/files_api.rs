@@ -84,6 +84,7 @@ pub(super) fn setup_vm_with_workspace_and_uds(
         vm_id.into(),
         InstanceInfo {
             generation: uuid::Uuid::new_v4(),
+            authority: Default::default(),
             id: vm_id.into(),
             name: vm_id.into(),
             asset_pins: test_asset_pins(),

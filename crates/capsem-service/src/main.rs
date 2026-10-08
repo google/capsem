@@ -549,6 +549,7 @@ impl ServiceState {
             .extract_if(|_, info| probe.is_gone(info.pid))
             .map(|(id, info)| {
                 tracing::warn!(id, "drain_dead_instances removing instance");
+                info.authority.revoke();
                 (id, info)
             })
             .collect();

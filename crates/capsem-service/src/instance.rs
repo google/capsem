@@ -1,11 +1,47 @@
 //! One running VM as the service sees it: the owner process, its sockets,
 //! the boot assets it booted, and how its records are removed.
 use super::*;
+use tokio_util::sync::CancellationToken;
+
+/// Cancellation owned by one registered worker generation.
+pub(crate) struct WorkerAuthority(CancellationToken);
+
+/// A non-owning grant canceled when its registered generation is revoked.
+pub(crate) struct WorkerGrant(CancellationToken);
+
+impl Default for WorkerAuthority {
+    fn default() -> Self {
+        Self(CancellationToken::new())
+    }
+}
+
+impl WorkerAuthority {
+    pub(crate) fn grant(&self) -> WorkerGrant {
+        WorkerGrant(self.0.clone())
+    }
+
+    pub(crate) fn revoke(&self) {
+        self.0.cancel();
+    }
+}
+
+impl Drop for WorkerAuthority {
+    fn drop(&mut self) {
+        self.revoke();
+    }
+}
+
+impl WorkerGrant {
+    pub(crate) async fn revoked(&self) {
+        self.0.cancelled().await;
+    }
+}
 
 pub(crate) struct InstanceInfo {
     pub(crate) id: String,
     /// One actual spawn, never reused when an ID is resumed or replaced.
     pub(crate) generation: uuid::Uuid,
+    pub(crate) authority: WorkerAuthority,
     pub(crate) name: String,
     pub(crate) asset_pins: BootAssetPins,
     pub(crate) pid: u32,
@@ -45,7 +81,10 @@ impl ServiceState {
         if instances.get(id)?.generation != generation {
             return None;
         }
-        instances.remove(id)
+        let removed = instances.remove(id)?;
+        drop(instances);
+        removed.authority.revoke();
+        Some(removed)
     }
 
     /// Unregister a persistent VM. An absent entry is already forgotten, so

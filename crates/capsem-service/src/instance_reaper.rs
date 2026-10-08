@@ -196,5 +196,10 @@ pub(super) async fn revoke_exited_generation(
     {
         return ExitedGeneration::Replaced;
     }
-    ExitedGeneration::Current(instances.remove(id).map(Box::new))
+    let removed = instances.remove(id);
+    drop(instances);
+    if let Some(instance) = removed.as_ref() {
+        instance.authority.revoke();
+    }
+    ExitedGeneration::Current(removed.map(Box::new))
 }

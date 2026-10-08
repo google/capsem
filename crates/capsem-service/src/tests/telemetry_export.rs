@@ -389,3 +389,88 @@ async fn metric_relay_uses_only_current_owner_and_configured_collector() {
     collector.abort();
     redirect.abort();
 }
+
+#[tokio::test]
+async fn metric_relay_drops_the_upstream_connection_when_generation_is_revoked() {
+    use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
+
+    let _environment = SETTINGS_ENV_LOCK.lock().await;
+    let settings_dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, corp_path) = install_empty_settings_env(&settings_dir);
+    let collector_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let collector_base = format!("http://{}", collector_listener.local_addr().unwrap());
+    let mut corp = capsem_core::net::policy_config::SettingsFile::default();
+    corp.corp_rule_files.open_telemetry = Some(collector_base);
+    capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
+    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+    let collector = tokio::spawn(async move {
+        let (stream, _) = collector_listener.accept().await.unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut content_length = 0;
+        loop {
+            let mut line = Vec::new();
+            reader.read_until(b'\n', &mut line).await.unwrap();
+            if line == b"\r\n" {
+                break;
+            }
+            let text = String::from_utf8_lossy(&line).to_ascii_lowercase();
+            if let Some(value) = text.strip_prefix("content-length:") {
+                content_length = value.trim().parse().unwrap();
+            }
+        }
+        let mut body = vec![0; content_length];
+        reader.read_exact(&mut body).await.unwrap();
+        accepted_tx.send(body).unwrap();
+        let mut byte = [0];
+        closed_tx.send(reader.read(&mut byte).await.unwrap() == 0).unwrap();
+    });
+
+    let (state, directory) = make_test_state_with_tempdir();
+    insert_fake_instance(&state, "vm-a", std::process::id());
+    let generation = state.instances.lock().unwrap()["vm-a"].generation;
+    let socket = directory.path().join("metric-revocation.sock");
+    let service_listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let service_state = Arc::clone(&state);
+    let service = tokio::spawn(async move {
+        axum::serve(
+            service_listener,
+            build_service_router(service_state).into_make_service_with_connect_info::<ServicePeer>(),
+        )
+        .await
+        .unwrap();
+    });
+    let request_socket = socket.clone();
+    let request = tokio::spawn(async move {
+        capsem_core::service_uds::post_bytes(
+            &request_socket,
+            "/internal/vms/vm-a/metrics",
+            axum::http::HeaderValue::from_static("application/x-protobuf"),
+            axum::body::Bytes::from_static(b"cancel me"),
+        )
+        .await
+        .unwrap()
+    });
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), accepted_rx)
+            .await
+            .unwrap()
+            .unwrap(),
+        b"cancel me"
+    );
+    assert!(state.evict_instance("vm-a", generation).is_some());
+    let response = tokio::time::timeout(std::time::Duration::from_secs(1), request)
+        .await
+        .expect("revocation cancels the in-flight collector request")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), closed_rx)
+            .await
+            .unwrap()
+            .unwrap(),
+        "canceling the upstream future closes its collector connection"
+    );
+    service.abort();
+    collector.abort();
+}

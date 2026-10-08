@@ -106,3 +106,32 @@ fn teardown_claim_is_bound_to_generation_even_when_id_and_pid_are_reused() {
     assert!(claim_shutdown_instance(&state, "vm", replacement_generation));
     assert!(!claim_shutdown_instance(&state, "vm", replacement_generation));
 }
+
+#[tokio::test]
+async fn removing_or_replacing_an_instance_revokes_its_grants() {
+    let state = make_test_state();
+    let original = test_instance();
+    let generation = original.generation;
+    let grant = original.authority.grant();
+    let disposable = original.authority.grant();
+    drop(disposable);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(1), grant.revoked())
+            .await
+            .is_err(),
+        "dropping a non-owning grant cannot revoke its worker"
+    );
+    state.instances.lock().unwrap().insert("vm".into(), original);
+    assert!(state.evict_instance("vm", generation).is_some());
+    tokio::time::timeout(std::time::Duration::from_millis(100), grant.revoked())
+        .await
+        .expect("registry removal revokes the generation");
+
+    let replacement_target = test_instance();
+    let replaced = replacement_target.authority.grant();
+    state.instances.lock().unwrap().insert("vm".into(), replacement_target);
+    state.instances.lock().unwrap().insert("vm".into(), test_instance());
+    tokio::time::timeout(std::time::Duration::from_millis(100), replaced.revoked())
+        .await
+        .expect("registry replacement revokes the displaced generation");
+}

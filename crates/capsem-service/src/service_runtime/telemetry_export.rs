@@ -120,13 +120,19 @@ pub(crate) async fn handle_metric_relay(
     owner
         .validate(&state, false)
         .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
-    let response = match relay_client()?
+    let request = relay_client()?
         .post(collector)
         .header(axum::http::header::CONTENT_TYPE, "application/x-protobuf")
         .body(body)
-        .send()
-        .await
-    {
+        .send();
+    tokio::pin!(request);
+    let response = match tokio::select! {
+        biased;
+        () = owner.revoked() => {
+            return Err(AppError(StatusCode::FORBIDDEN, "VM owner authority was revoked".into()));
+        }
+        response = &mut request => response,
+    } {
         Ok(response) => response,
         Err(error) => {
             warn!(vm = id, %error, "metric collector request failed");

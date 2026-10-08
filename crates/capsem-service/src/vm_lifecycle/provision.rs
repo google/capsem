@@ -329,6 +329,7 @@ impl ServiceState {
             id.to_string(),
             InstanceInfo {
                 generation,
+                authority: Default::default(),
                 id: id.to_string(),
                 name: name.to_string(),
                 asset_pins,

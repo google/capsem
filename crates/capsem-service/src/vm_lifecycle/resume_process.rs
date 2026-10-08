@@ -225,6 +225,7 @@ impl ServiceState {
             vm_id.clone(),
             InstanceInfo {
                 generation,
+                authority: Default::default(),
                 id: vm_id.clone(),
                 name: entry.name.clone(),
                 asset_pins: entry.asset_pins.clone(),

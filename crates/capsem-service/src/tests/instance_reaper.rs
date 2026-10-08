@@ -13,15 +13,20 @@ async fn exited_generation_is_revoked_while_its_pid_is_still_reserved() {
     let pid = child.id().unwrap();
     insert_fake_instance_with_session_dir(&state, id, pid, session);
     let generation = state.instances.lock().unwrap()[id].generation;
+    let grant = state.instances.lock().unwrap()[id].authority.grant();
 
-    crate::instance_reaper::revoke_exited_generation(&child, id, &state, generation).await;
+    let revoked = crate::instance_reaper::revoke_exited_generation(&child, id, &state, generation).await;
 
     assert!(!state.instances.lock().unwrap().contains_key(id));
+    tokio::time::timeout(std::time::Duration::from_millis(100), grant.revoked())
+        .await
+        .expect("exit observation revokes grants before the removed instance is dropped");
     let pid = capsem_foundation::unix::process::ProcessId::try_from(pid).unwrap();
     assert!(
         capsem_foundation::unix::process::child_has_exited(pid).unwrap(),
         "generation revocation must happen before the child is reaped"
     );
+    drop(revoked);
     assert_eq!(child.wait().await.unwrap().code(), Some(11));
 }
 
