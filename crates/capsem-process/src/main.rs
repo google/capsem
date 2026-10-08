@@ -9,6 +9,7 @@ mod private_names;
 mod private_seats;
 mod runtime_config;
 mod terminal;
+mod upstream_grant;
 mod vsock;
 
 use anyhow::{Context, Result};
@@ -18,6 +19,7 @@ use capsem_core::{boot_vm, BootOptions, VirtioFsShare, VsockConnection};
 use capsem_logger::DbWriter;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use clap::Parser;
+use std::os::fd::AsFd as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::UnixListener;
@@ -204,6 +206,8 @@ fn main() -> Result<()> {
     // SAFETY: process entry precedes argument parsing, telemetry, descriptor
     // owners and runtime threads. Broker grants will be named here explicitly.
     unsafe { capsem_foundation::unix::fd::close_inherited_descriptors()? };
+    let upstream_socket =
+        upstream_grant::adopt_inherited(std::io::stdin().as_fd()).context("adopt inherited upstream grant channel")?;
     let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-process",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
@@ -331,6 +335,7 @@ fn main() -> Result<()> {
             trace_id_for_loop,
             session_dir_for_loop,
             shutdown_for_loop,
+            upstream_socket,
         )
         .await
         {
@@ -393,6 +398,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_async_main_loop(
     args: Args,
     controller: capsem_foundation::unix::peer::PeerIdentity,
@@ -401,9 +407,14 @@ async fn run_async_main_loop(
     trace_id: String,
     session_dir: std::path::PathBuf,
     shutdown: Arc<Mutex<Shutdown>>,
+    upstream_socket: std::os::unix::net::UnixStream,
 ) -> Result<()> {
     let runtime_source = runtime_config::RuntimePolicySource::new(args.active_policy.clone());
     let runtime_config = runtime_source.load()?;
+    let upstream_grants = Arc::new(upstream_grant::UpstreamGrantClient::start(
+        upstream_socket,
+        runtime_config.active_policy_digest.clone(),
+    )?);
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
     // 1024 queued events: a guest resolving and fetching in parallel enqueues
@@ -600,11 +611,10 @@ async fn run_async_main_loop(
 
     // DNS handler shares the same security rule/plugin handles as MITM
     // so admin enforcement edits take effect across protocols at once.
-    let dns_resolver = if runtime_config.dns_upstreams.is_empty() {
-        DnsResolver::new()
-    } else {
-        DnsResolver::with_upstreams(runtime_config.dns_upstreams.clone())
-    };
+    let dns_resolver = Arc::new(DnsResolver::with_grants(
+        runtime_config.dns_upstreams.clone(),
+        Arc::clone(&upstream_grants) as Arc<dyn capsem_core::net::dns::DnsUpstreamGrants>,
+    ));
     // The private zone is the service's to answer, for this VM's networks.
     let private_names = Arc::new(private_names::ServicePrivateNames::new(
         seats.service_socket,
@@ -615,7 +625,7 @@ async fn run_async_main_loop(
             Arc::clone(&net_state.policy),
             Arc::clone(&security_rules),
             Arc::clone(&plugin_policy),
-            Arc::new(dns_resolver),
+            Arc::clone(&dns_resolver),
             Arc::new(DnsAnswerCache::default()),
         )
         .with_private_names(private_names),
@@ -744,6 +754,8 @@ async fn run_async_main_loop(
         let builtin_bin_c = builtin_bin.clone();
         let builtin_env_c = builtin_env.clone();
         let ready_c = Arc::clone(&vm_ready);
+        let dns_resolver_c = Arc::clone(&dns_resolver);
+        let upstream_grants_c = Arc::clone(&upstream_grants);
 
         tokio::spawn(async move {
             if let Err(e) = ipc::handle_ipc_connection(
@@ -759,6 +771,8 @@ async fn run_async_main_loop(
                 builtin_bin_c,
                 builtin_env_c,
                 ready_c,
+                dns_resolver_c,
+                upstream_grants_c,
             )
             .await
             {

@@ -100,6 +100,8 @@ pub(in crate::ipc) struct Dispatcher {
     pub(in crate::ipc) mcp_runtime: Arc<McpRuntime>,
     runtime_source: RuntimePolicySource,
     pub(in crate::ipc) ready: Arc<AtomicBool>,
+    dns_resolver: Arc<capsem_core::net::dns::DnsResolver>,
+    upstream_grants: Arc<crate::upstream_grant::UpstreamGrantClient>,
 }
 
 impl Dispatcher {
@@ -191,6 +193,10 @@ impl Dispatcher {
         let job_store = Arc::new(JobStore::new());
         let (ctrl_tx, ctrl_rx) = mpsc::channel(16);
         let (events_tx, _) = broadcast::channel(16);
+        let initial_digest =
+            capsem_core::net::policy_config::active_policy_digest(&std::fs::read(&active_policy).unwrap());
+        let dns_resolver = Arc::new(capsem_core::net::dns::DnsResolver::with_upstreams(Vec::new()));
+        let upstream_grants = Arc::new(crate::upstream_grant::UpstreamGrantClient::test_handle(initial_digest));
         (
             Self {
                 job_store,
@@ -201,6 +207,8 @@ impl Dispatcher {
                 mcp_runtime,
                 runtime_source: RuntimePolicySource::new(active_policy),
                 ready: Arc::new(AtomicBool::new(true)),
+                dns_resolver,
+                upstream_grants,
             },
             ctrl_rx,
         )
@@ -221,6 +229,8 @@ impl Dispatcher {
             None,
             HashMap::new(),
             Arc::clone(&self.ready),
+            Arc::clone(&self.dns_resolver),
+            Arc::clone(&self.upstream_grants),
         ))
     }
 }
@@ -559,6 +569,11 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         } if error == "read fixture failed"
     ));
 
+    std::fs::write(
+        temp.path().join("active_policy.toml"),
+        "[user_rules]\n[corp_rules]\n[network]\n[network.dns]\nupstreams = [\"127.0.0.1:5353\"]\n",
+    )
+    .unwrap();
     service_tx
         .send(ServiceToProcess::ReloadConfig { id: 30 })
         .await
@@ -571,6 +586,11 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         ProcessToService::ConfigReloadResult { id: 30, active_policy_digest: Some(digest), error: None }
             if digest == applied
     ));
+    assert_eq!(dispatcher.upstream_grants.policy_digest(), applied);
+    assert_eq!(
+        dispatcher.dns_resolver.upstreams(),
+        vec!["127.0.0.1:5353".parse().unwrap()]
+    );
 
     service_tx
         .send(ServiceToProcess::McpListServers { id: 15 })
