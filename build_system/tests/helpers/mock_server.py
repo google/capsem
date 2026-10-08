@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from build_system.scripts.release.release_test_binary import ensure_host_test_binary
-from helpers.constants import host_bin_root
+from tests.helpers.constants import host_bin_root
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MOCK_SERVER_BINARY = host_bin_root() / "capsem-mock-server"
