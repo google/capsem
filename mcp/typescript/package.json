@@ -1,6 +1,6 @@
 {
   "name": "@capsem/mcp",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "Capsem MCP server over the authenticated gateway SDK",
   "type": "module",
   "engines": {"node": ">=20"},
@@ -15,7 +15,7 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
-    "@capsem/sdk": "workspace:0.6.3",
+    "@capsem/sdk": "workspace:0.7.0",
     "@modelcontextprotocol/sdk": "1.31.0",
     "zod": "4.6.1"
   },

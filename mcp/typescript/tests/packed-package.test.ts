@@ -102,7 +102,7 @@ describe('packed-package', () => {
     const {cli, dependencies, manifest} = pack();
     expect(lstatSync(dependencies).isSymbolicLink()).toBe(false);
     expect(manifest.bin).toEqual({'capsem-mcp': './dist/cli.js'});
-    expect(manifest.dependencies).toMatchObject({'@capsem/sdk': '0.6.3'});
+    expect(manifest.dependencies).toMatchObject({'@capsem/sdk': manifest.version});
 
     const authorizations: string[] = [];
     const pin = `registry.example/code@sha256:${'a'.repeat(64)}`;
@@ -156,6 +156,9 @@ describe('packed-package', () => {
     const [first, second] = await Promise.all([
       connect(cli, gatewayUrl, 'token-a'), connect(cli, gatewayUrl, 'token-b'),
     ]);
+    for (const connection of [first, second]) {
+      expect(connection.client.getServerVersion()).toEqual({name: 'capsem-mcp', version: manifest.version});
+    }
 
     const tools = await first.client.listTools();
     expect(tools.tools.some(tool => tool.name === 'capsem_network_list')).toBe(true);
