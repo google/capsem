@@ -5,6 +5,22 @@ description: Capsem system architecture: service, per-VM processes, CLI, guest a
 
 # Capsem Architecture
 
+## Security explanations
+
+Use the completed 0.7/#206 model for the requested security explanation,
+while recording unverified target boundaries before publication. Show actual
+processes, privilege separation, and OS/hardware sandbox boundaries; file
+permissions and separate libraries are not substitutes for confinement.
+Show multiple VMs, separate per-VM workers, and shared/per-network processes.
+Use labeled arrows to explain how they work together: control IPC, VM control,
+traffic, audit storage, private networks, and published ports. Distinguish these
+paths visually; split dense diagrams into readable views when needed. A list
+of process boxes does not explain their interactions. Use privilege colors
+with a legend, and distinguish assignment groups from OS sandbox boundaries.
+Honor a supplied diagram reference and inspect the rendered diagram in Astro.
+For each boundary, state permitted authority, denied access, and remaining
+trust assumptions without claiming more than the accepted final contract.
+
 ## System overview
 
 Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework (with a KVM backend for Linux). It runs as a daemon service (like Docker). The system has these layers:
@@ -15,10 +31,9 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 - **capsem** (CLI): user-facing CLI. Sessions are named by the service
   (`vm-N` unless the user supplies a name) and sized by create flags with
   fixed defaults.
-  `capsem shell` opens the TUI/session picker, creates or attaches through the
-  service, and talks to capsem-service over UDS HTTP. User-facing copy says
-  sessions; implementation/debug output may say VM when describing the
-  virtualization layer.
+  `capsem shell` opens the TUI over existing VMs; it creates nothing. VM
+  creation and control go through the service. User-facing documentation calls
+  the environment a VM consistently and uses complete CLI command names.
 - **@capsem/mcp** (npm MCP server): separately installed stdio server for AI agents. Uses the TypeScript SDK and an explicit gateway URL/token; it has no UDS, VM-runtime, or virtualization access.
 - **capsem-gateway** (HTTP gateway): TCP-to-UDS reverse proxy (default port 19222). Bearer token auth, CORS, 10MB body limit. Provides an explicit route table plus `/status` (cached 1s) and `/vms/{id}/stream` (authenticated `capsem.stream.v1` WebSocket upgrade tunneled unchanged to the service, which translates it to typed VM-owner IPC). Unknown routes return 404; the frontend and tray app connect through the gateway. Writes runtime files to `~/.capsem/run/` (gateway.token, gateway.port, gateway.pid).
 - **capsem-app** (Tauri GUI): thin webview shell. Connects to gateway at `http://127.0.0.1:19222`. No VM logic, no capsem-core dependency. Only 2 IPC commands: `open_url` (opens URL in system browser) and `check_for_app_update` (Tauri updater). Bundles `web/app/dist` so the app can render the service-unavailable screen when gateway is unreachable.
