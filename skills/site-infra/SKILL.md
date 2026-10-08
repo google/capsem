@@ -1,14 +1,88 @@
 ---
 name: site-infra
-description: The documentation site, docs.capsem.org. Use when rebuilding, writing, or editing the minimal manual and its operational contracts under user direction, or working with Astro Starlight.
+description: "The documentation site, docs.capsem.org. Use when rebuilding, writing, or reviewing its minimal, user-directed documentation under Diátaxis: tutorials, how-to guides, reference, and explanation; also for Astro Starlight work."
 ---
 
 # Documentation Site
 
-## Purpose and content budget
+## Site purpose
 
 - `capsem.org` answers: “Why Capsem, what can I do, and how quickly can I get value?” Marketing owns benefits, use cases, and the short path to value; see `/site-marketing`.
 - `docs.capsem.org` answers: “Exactly how does this work, how do I operate/integrate/administer it, and what is the contract?” Docs owns precise procedures, behavior, configuration, interfaces, limits, and guarantees.
+
+## Diátaxis is the authoring contract
+
+All technical documentation must follow the principles and structure of the
+[Diátaxis Framework](https://diataxis.fr/). Before drafting or reviewing a page,
+identify its reader, the question it answers, and exactly one of the four
+document types below. Its structure and content must serve that type.
+
+### Guiding principles
+
+1. **Clarity:** use simple, clear, unambiguous language. Explain necessary
+   terms for the intended reader; remove internal jargon that adds no value.
+2. **Accuracy:** check commands, code snippets, UI controls, defaults, limits,
+   and guarantees against the current target contracts. Verify examples through
+   the relevant project rails and record what was verified. Never invent output
+   or present an untested example as tested.
+3. **User-centricity:** identify a specific user and the task or need the page
+   serves. That need may be learning a skill, solving a problem, looking up a
+   fact, or understanding a topic; do not force all four into procedures.
+4. **Consistency:** use consistent tone, terminology, names, units, and example
+   conventions across the manual. Keep a stable structure within each type;
+   do not impose the same structure on all four types.
+
+### The four document types
+
+| Type | Orientation and purpose | Structure |
+| --- | --- | --- |
+| [Tutorial](https://diataxis.fr/tutorials/) | Learning: guide a newcomer through a practical lesson to a successful outcome. | Concrete outcome and prerequisites → small ordered actions → visible results and checkpoints → completed exercise. |
+| [How-to guide](https://diataxis.fr/how-to-guides/) | Problem-solving: help a competent user accomplish a specific real-world task. A recipe. | Specific goal and starting conditions → necessary actions and relevant decisions → result or completion check. |
+| [Reference](https://diataxis.fr/reference/) | Information: give precise technical descriptions of the machinery. A dictionary to consult. | Predictable entries that mirror the product's interfaces, with exact facts and concise examples. |
+| [Explanation](https://diataxis.fr/explanation/) | Understanding: clarify a bounded topic and its context. A discussion. | Topic or why question → concepts and relationships → rationale, constraints, implications, and relevant alternatives. |
+
+**Tutorials:** choose a reliable path for the learner and make success visible
+early and throughout. Explain only what they need for the next action; link to
+deeper explanation and reference. Avoid branches, optional advanced tasks,
+catalogues of alternatives, and exhaustive flags. A tutorial teaches through
+doing; it is not a collection of how-tos.
+
+**How-to guides:** start from the user's problem, not a feature tour. Assume
+the reader knows the basics and wants a result. Include choices or branches
+when the real task requires them, with enough guidance to choose. Omit lessons,
+background discussions, and complete option lists; link to the other types.
+
+**Reference:** describe accurately, neutrally, and completely within the
+declared scope. Use consistent fields for syntax, inputs, types, defaults,
+outputs, errors, constraints, and guarantees where applicable. Examples
+illustrate usage; they do not become a lesson or a procedural walkthrough.
+Link to guides for tasks and explanation for rationale.
+
+**Explanation:** develop understanding of how and why things fit together.
+Discuss design decisions, trade-offs, boundaries, and alternatives when useful,
+distinguishing established facts from interpretation. Do not bury installation
+steps, recipes, or API/CLI inventories in the discussion; link to their owners.
+
+Keep the types distinct. A short definition, illustrative example, or link can
+support a page's purpose without turning it into a second type. If substantial
+material belongs to another type, use an existing approved destination or wait
+for user direction; this framework does not authorize new pages or page splits.
+
+### Applying the types to our approved sections
+
+- `getting-started/`: newcomer tutorials for learning by doing. An installation
+  procedure can be a how-to; classify by reader need, not directory name.
+- `guides/`: task-specific how-to guides, written last as agreed.
+- `architecture/`: explanations of architecture and the security model.
+- `reference/`: CLI, MCP, API, and configuration reference.
+- `sdk/`: an integration subject area, not a fifth document type. Each SDK
+  page must be a tutorial, how-to, reference, or explanation with a distinct
+  purpose; link between those purposes instead of mixing them.
+
+These are the approved section names. Applying Diátaxis does not authorize
+renaming them, creating more directories, filling TODOs, or adding pages.
+
+## Content budget and user direction
 
 Write the minimum content on the minimum number of pages needed to answer
 those documentation questions completely. Prefer a section in an approved
@@ -92,42 +166,35 @@ manual VM asset releases, and the `release.capsem.org` asset-channel workflow.
 - Restoring detailed routes is a separate publication decision: register
   Starlight again only when the 0.6 documentation is approved for release.
 
-## Writing style
+## Writing and review
 
-Write for the person trying to use Capsem. Each section must explain what
-they can do, when it is useful, and how to do it. Lead with the reader's goal,
-then give the steps and the result they should expect. A list of commands is
-not a walkthrough.
+Write for the intended reader with the structure of the chosen document type.
+Keep one canonical explanation or contract and link to it instead of repeating
+it. No filler, marketing pitches, or speculative features. Use tables for
+comparable facts and Mermaid diagrams when they clarify relationships.
 
-- Explain options at their first use: `-n` gives a VM a name so it is kept;
-  `--image` chooses its container and tools. Explain sample names and what
-  placeholders the reader must replace.
-- Complete the path to use: after launching a VM, explain how to access it
-  through the TUI or graphical app, using verified commands and controls.
-  Say where commands run: the reader's computer or inside the VM.
-- Explain features through useful situations. Suspend lets someone pause
-  work and return later; fork lets them duplicate a prepared setup to try a
-  change without altering the original. Explain source and destination names
-  and what they can do with the copy.
-- Use ordinary words such as files, setup, and running programs. Avoid
-  internal terms such as disk state, workload, asset pins, or CPU state in
-  getting-started prose. When a technical term is needed, explain it through
-  its practical consequence rather than assuming the reader knows it.
-- Keep getting started focused on a complete usable path. Put exhaustive
-  options and implementation contracts in reference or architecture, and
-  link there when needed. Minimum content means removing duplication and
-  unnecessary detail, not removing the explanations that make steps usable.
+In tutorials and how-tos, explain necessary options when first used, identify
+sample names and replaceable values, and say whether commands run on the
+reader's computer or inside the VM. Complete the requested task: launching a
+VM must lead to accessing it when the goal is to work in it. Explain suspend
+as pausing and returning to work, and fork as duplicating a prepared setup for
+another use. Keep explanations proportional to the chosen type, with detailed
+mechanics and rationale in their reference and explanation destinations.
 
-Organize each approved page around a coherent reader task or contract, with
-related details in sections. No filler, marketing pitches, speculative
-features, or exhaustive tours of internals.
-Use tables for comparable settings or interface fields, code examples when
-needed to perform a task, and Mermaid diagrams when they clarify behavior.
-Link to marketing for rationale; keep technical truth in one canonical place.
+Review before delivery:
 
-Before delivering a page, read each section as a new user: can they explain
-why they would use it, follow the steps without guessing, and know what happens
-next? Fix missing explanations before treating a passing build as completion.
+- **Every page:** does it answer its description question for its intended
+  reader, use accurate and consistent terms, and stay within one type?
+- **Tutorial:** can a newcomer follow the chosen path without guessing and see
+  the promised result at each meaningful step?
+- **How-to:** can the intended user solve the stated problem, including any
+  necessary decisions, without being taken through an unrelated lesson?
+- **Reference:** can someone quickly find exact, complete facts for the stated
+  interface or contract without searching through a narrative?
+- **Explanation:** does the reader understand the topic, its relationships and
+  rationale without being diverted into a recipe or interface inventory?
+
+Fix editorial and task gaps before treating a passing build as completion.
 
 ## Frontmatter
 
