@@ -12,6 +12,7 @@
 /// 7. Forward request, stream response back
 /// 8. Emit per-request telemetry (one NetEvent per HTTP request, not per connection)
 pub mod body;
+mod config;
 pub mod decompression_hook;
 pub mod events;
 mod fd_stream;
@@ -38,7 +39,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
-use capsem_logger::{DbWriter, Decision, McpCall, NetEvent, WriteOp};
+use capsem_logger::{Decision, McpCall, NetEvent, WriteOp};
 use capsem_telemetry::mitm as m;
 use http_body_util::Full;
 use hyper::body::Bytes;
@@ -53,7 +54,6 @@ trait TokioReadWrite: AsyncRead + AsyncWrite {}
 
 impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 
-use super::cert_authority::CertAuthority;
 use super::policy::NetworkMechanics;
 use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKind};
 use crate::security_engine::{HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent};
@@ -69,6 +69,7 @@ use util::{
     parse_http_host_target, provider_label, request_can_replay_empty_body, split_path_query,
 };
 
+pub use config::MitmProxyConfig;
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts, ScopedMcpTools};
 pub use mcp_frame::{dispatch_logged_mcp_request, McpTransport};
 pub use upstream::{
@@ -87,48 +88,6 @@ const MCP_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 const CREDENTIAL_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 
 static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
-
-/// Configuration for the MITM proxy.
-pub struct MitmProxyConfig {
-    pub ca: Arc<CertAuthority>,
-    /// Guest-facing TLS config, built once (`make_server_tls_config`): one session cache for all.
-    pub server_tls: Arc<rustls::ServerConfig>,
-    /// Live policy, swappable via RwLock so settings changes take effect
-    /// without restarting the VM. Each HTTP request snapshots the Arc so
-    /// that disabling a provider blocks the next request even on an
-    /// existing keep-alive connection.
-    pub policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
-    /// Live model endpoint registry from settings and corp provider blocks.
-    /// MITM resolves host -> model protocol once per request and then passes
-    /// that typed metadata to enforcement, hooks, broker substitution, and
-    /// telemetry. Provider hooks must not infer protocol from domains.
-    pub model_endpoints: Arc<std::sync::RwLock<Arc<crate::net::policy_config::ModelEndpointRegistry>>>,
-    pub db: Arc<DbWriter>,
-    /// Cached upstream TLS config (shared across all connections).
-    pub upstream_tls: Arc<rustls::ClientConfig>,
-    /// Telemetry deps shared with the `TelemetryHook` registered in
-    /// `pipeline`. Held here as the same `Arc` so the hook and any
-    /// remaining direct callers (rare; should fold into the hook) read
-    /// the same `pricing` table + `trace_state` mutex. The Arc breaks
-    /// the would-be cycle (config → pipeline → hook → config); the
-    /// hook only points at this `TelemetryDeps`, not the surrounding
-    /// `MitmProxyConfig`.
-    pub telemetry: Arc<telemetry_hook::TelemetryDeps>,
-    /// Hook pipeline. `make_production_pipeline` registers the sync
-    /// ChunkHook chain (decompression → SSE parse →
-    /// provider interpreters → telemetry). `handle_request` dispatches
-    /// L1 events through this pipeline and seeds per-request context
-    /// into the `ChunkDispatchBody`'s `HookState` before serving.
-    pub pipeline: Arc<pipeline::Pipeline>,
-    /// T3 framed MCP endpoint on the MITM listener. Dispatch state lives
-    /// here so the low-privilege aggregator remains DB-free while MITM
-    /// owns policy, timeouts, protocol telemetry, and MCP-origin `tool_calls`.
-    pub mcp_endpoint: Option<Arc<McpEndpointState>>,
-    /// Resolves guest-named upstreams before policy; the dial goes only to what it judged.
-    pub upstream_resolver: crate::net::upstream_address::UpstreamResolver,
-    /// Trusted coordinator connection grants for confined workers.
-    pub upstream_grants: Option<Arc<dyn TcpUpstreamGrants>>,
-}
 
 /// Build the default (empty) hook pipeline. T1 slices 2 + 3 will
 /// extend this to register the production hook set; until then the

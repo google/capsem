@@ -6,85 +6,35 @@
 /// - Denied domains are rejected before TLS handshake completes
 /// - Telemetry records correct decisions, methods, and status codes
 ///
-use std::collections::{BTreeMap, HashMap};
-use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use capsem_core::net::cert_authority::CertAuthority;
-use capsem_core::net::mitm_proxy::{
-    self, protocol::Protocol, GrantedTcpStream, MitmProxyConfig, TcpConnectGrantFuture, TcpGrantSelection,
-    TcpResolveGrantFuture, TcpUpstreamGrants, UpstreamTarget,
-};
+use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
 use capsem_core::net::policy::{NetworkMechanics, UpstreamOverride, UpstreamOverrideProtocol};
 use capsem_core::net::upstream_address::UpstreamResolver;
 use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
-use rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
+use rustls::pki_types::ServerName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::TlsConnector;
 
 // Case modules live beside this file; the ratcheted line count stays flat.
 #[path = "mitm_integration/mod.rs"]
 mod cases;
+#[path = "mitm_integration/grants.rs"]
+mod grants;
+#[path = "mitm_integration/tls.rs"]
+mod tls;
+
+use grants::IntegrationGrants;
+use tls::make_tls_client_config;
 
 const CA_KEY: &str = include_str!("../resources/ca/capsem-ca.key");
 const CA_CERT: &str = include_str!("../resources/ca/capsem-ca.crt");
 const HERMETIC_UPSTREAM_DOMAIN: &str = "fixture.capsem.test";
-
-struct IntegrationGrants {
-    policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
-    resolver: UpstreamResolver,
-    selections: Arc<Mutex<HashMap<u64, UpstreamTarget>>>,
-    next_id: AtomicU64,
-}
-
-impl IntegrationGrants {
-    fn new(policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>, resolver: UpstreamResolver) -> Self {
-        Self {
-            policy,
-            resolver,
-            selections: Arc::new(Mutex::new(HashMap::new())),
-            next_id: AtomicU64::new(1),
-        }
-    }
-}
-
-impl TcpUpstreamGrants for IntegrationGrants {
-    fn resolve(&self, protocol: Protocol, host: &str, port: u16) -> TcpResolveGrantFuture<'_> {
-        let host = host.to_owned();
-        Box::pin(async move {
-            let policy = self.policy.read().unwrap().clone();
-            let target = UpstreamTarget::resolve(&self.resolver, &policy, &host, port).await;
-            if let UpstreamTarget::Unresolved(error) = &target {
-                return Err(io::Error::new(io::ErrorKind::NotFound, error.clone()));
-            }
-            let judged_ip = target.judged_ip(&host);
-            let protocol = target.protocol(protocol);
-            let selection_id = self.next_id.fetch_add(1, Ordering::Relaxed);
-            self.selections.lock().unwrap().insert(selection_id, target);
-            let selections = Arc::clone(&self.selections);
-            Ok(TcpGrantSelection::new(selection_id, protocol, judged_ip, move || {
-                selections.lock().unwrap().remove(&selection_id);
-            }))
-        })
-    }
-
-    fn connect(&self, selection_id: u64) -> TcpConnectGrantFuture<'_> {
-        Box::pin(async move {
-            let target = self
-                .selections
-                .lock()
-                .unwrap()
-                .remove(&selection_id)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown integration selection"))?;
-            let (stream, _pinned) = target.connect().await?;
-            Ok(GrantedTcpStream::new(stream, || {}))
-        })
-    }
-}
 
 /// Build a proxy config from allow/block lists for integration tests.
 ///
@@ -267,25 +217,6 @@ fn security_rules_from_toml(toml: &str) -> capsem_core::net::policy_config::Secu
         capsem_core::net::policy_config::SecurityRuleSource::User,
     )
     .expect("test security rules")
-}
-
-/// Build a rustls ClientConfig that trusts the Capsem MITM CA.
-fn make_tls_client_config() -> rustls::ClientConfig {
-    let mut root_store = rustls::RootCertStore::empty();
-    let certs: Vec<_> = CertificateDer::pem_slice_iter(CA_CERT.as_bytes())
-        .collect::<Result<_, _>>()
-        .unwrap();
-    for cert in certs {
-        root_store.add(cert).unwrap();
-    }
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let mut config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    config
 }
 
 /// Spawn the MITM proxy on a TCP listener and return the address.

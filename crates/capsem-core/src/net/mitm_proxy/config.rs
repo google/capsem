@@ -1,0 +1,52 @@
+use std::sync::Arc;
+
+use capsem_logger::DbWriter;
+
+use super::mcp_endpoint::McpEndpointState;
+use super::pipeline;
+use super::telemetry_hook;
+use super::upstream::TcpUpstreamGrants;
+use crate::net::cert_authority::CertAuthority;
+use crate::net::policy::NetworkMechanics;
+
+/// Configuration for the MITM proxy.
+pub struct MitmProxyConfig {
+    pub ca: Arc<CertAuthority>,
+    /// Guest-facing TLS config, built once (`make_server_tls_config`): one session cache for all.
+    pub server_tls: Arc<rustls::ServerConfig>,
+    /// Live policy, swappable via RwLock so settings changes take effect
+    /// without restarting the VM. Each HTTP request snapshots the Arc so
+    /// that disabling a provider blocks the next request even on an
+    /// existing keep-alive connection.
+    pub policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
+    /// Live model endpoint registry from settings and corp provider blocks.
+    /// MITM resolves host -> model protocol once per request and then passes
+    /// that typed metadata to enforcement, hooks, broker substitution, and
+    /// telemetry. Provider hooks must not infer protocol from domains.
+    pub model_endpoints: Arc<std::sync::RwLock<Arc<crate::net::policy_config::ModelEndpointRegistry>>>,
+    pub db: Arc<DbWriter>,
+    /// Cached upstream TLS config (shared across all connections).
+    pub upstream_tls: Arc<rustls::ClientConfig>,
+    /// Telemetry deps shared with the `TelemetryHook` registered in
+    /// `pipeline`. Held here as the same `Arc` so the hook and any
+    /// remaining direct callers (rare; should fold into the hook) read
+    /// the same `pricing` table + `trace_state` mutex. The Arc breaks
+    /// the would-be cycle (config → pipeline → hook → config); the
+    /// hook only points at this `TelemetryDeps`, not the surrounding
+    /// `MitmProxyConfig`.
+    pub telemetry: Arc<telemetry_hook::TelemetryDeps>,
+    /// Hook pipeline. `make_production_pipeline` registers the sync
+    /// ChunkHook chain (decompression → SSE parse →
+    /// provider interpreters → telemetry). `handle_request` dispatches
+    /// L1 events through this pipeline and seeds per-request context
+    /// into the `ChunkDispatchBody`'s `HookState` before serving.
+    pub pipeline: Arc<pipeline::Pipeline>,
+    /// T3 framed MCP endpoint on the MITM listener. Dispatch state lives
+    /// here so the low-privilege aggregator remains DB-free while MITM
+    /// owns policy, timeouts, protocol telemetry, and MCP-origin `tool_calls`.
+    pub mcp_endpoint: Option<Arc<McpEndpointState>>,
+    /// Resolves guest-named upstreams before policy; the dial goes only to what it judged.
+    pub upstream_resolver: crate::net::upstream_address::UpstreamResolver,
+    /// Trusted coordinator connection grants for confined workers.
+    pub upstream_grants: Option<Arc<dyn TcpUpstreamGrants>>,
+}
