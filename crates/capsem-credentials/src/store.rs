@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -8,6 +8,12 @@ use tracing::{info, warn};
 use crate::durable;
 use crate::provider::credential_provider_from_str;
 use crate::{is_broker_reference, CredentialProvider};
+
+mod injection;
+pub use injection::CredentialPersistence;
+
+#[cfg(test)]
+mod tests;
 
 static CREDENTIAL_STORE: OnceLock<CredentialStore> = OnceLock::new();
 
@@ -19,6 +25,7 @@ static CREDENTIAL_STORE: OnceLock<CredentialStore> = OnceLock::new();
 /// see memory-owned state and cannot accidentally read durable credentials.
 pub struct CredentialStore {
     cache: Mutex<HashMap<String, String>>,
+    memory_refs: Mutex<HashSet<String>>,
     durable_lock: Mutex<()>,
     status: Mutex<CredentialStoreStatusState>,
 }
@@ -57,6 +64,7 @@ impl Default for CredentialStore {
     fn default() -> Self {
         Self {
             cache: Mutex::new(HashMap::new()),
+            memory_refs: Mutex::new(HashSet::new()),
             durable_lock: Mutex::new(()),
             status: Mutex::new(CredentialStoreStatusState::default()),
         }
@@ -186,6 +194,7 @@ impl CredentialStore {
     #[doc(hidden)]
     pub fn clear_for_test(&self) {
         self.cache.lock().unwrap().clear();
+        self.memory_refs.lock().unwrap().clear();
         *self.status.lock().unwrap() = CredentialStoreStatusState::default();
     }
 
