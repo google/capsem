@@ -181,13 +181,28 @@ as pausing and returning to work, and fork as duplicating a prepared setup for
 another use. Keep explanations proportional to the chosen type, with detailed
 mechanics and rationale in their reference and explanation destinations.
 
+### One thing, one name
+
+Use the names exposed by the public command line for its concepts, commands,
+and options. One thing has one name throughout prose, headings, links, and
+examples; do not invent synonyms for variety. Write `image` as in `--image`
+and `images`, and use `fork`, `suspend`, and `resume` for those actions, then
+explain what each lets the user do in simple language.
+
+**VM** is the environment the user creates, accesses, suspends, resumes, or
+forks. Do not rename it a project, workspace, container, session, or setup.
+An **image** supplies its software; a container image and a VM are distinct
+things. Use **TUI** for the terminal interface and **Capsem UI** for the
+graphical interface, not “UI app.” Define these interface terms at first use.
+Keep exact command names and actual control labels when quoting them.
+
 ### Simplicity, links, and sequence
 
 Keep first-use explanations short and specific to what the reader can do.
 For example, explain that a name keeps a VM for stop/resume and reuse, then
 link to the sections on pausing work and duplicating a setup. Explain that
-`--image` selects a prebuilt or administrator-authorized custom container,
-then link to container selection. Preserve these useful capabilities instead
+`--image` selects a prebuilt or administrator-authorized custom image,
+then link to image selection. Preserve these useful capabilities instead
 of replacing them with vague wording such as “come back later.”
 
 Link at the point where the reader may need more detail: to the relevant

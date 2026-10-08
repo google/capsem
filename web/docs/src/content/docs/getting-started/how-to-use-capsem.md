@@ -24,12 +24,12 @@ capsem create -n my-work --image claude-code
 - `-n my-work` names the VM and makes it **persistent**: you can stop and
   resume it without losing your files or setup. You can also
   [pause and resume running work](#pause-your-work-and-return-later) or
-  [duplicate the setup with `fork`](#duplicate-a-setup). Use `my-work` to
+  [fork your VM](#fork-your-vm). Use `my-work` to
   select this VM in commands.
-- `--image claude-code` chooses the container to run inside the VM. You can
-  use one of Capsem's prebuilt containers, such as this one with Claude Code,
-  or your own container if your administrator authorizes it. See
-  [Choose a container](#choose-a-container) for the available images and how
+- `--image claude-code` chooses the image that provides the VM's software.
+  You can use one of Capsem's prebuilt images, such as this one with Claude Code,
+  or your own container image if your administrator authorizes it. See
+  [Choose an image for your VM](#choose-an-image-for-your-vm) for the available images and how
   to use your own.
 
 Capsem downloads the image if needed and starts the VM in the background.
@@ -37,9 +37,9 @@ Once creation finishes, [open the VM](#access-your-vm) to begin working.
 
 ## Access your VM
 
-Once your VM is created, you can access it from your terminal or from the
-graphical Capsem app. Choose either option below; both open the same VM,
-so you can switch between them later.
+Once your VM is created, you can access it through the terminal interface
+(TUI) or the graphical interface (Capsem UI). Choose either option below;
+both open the same VM, so you can switch between them later.
 
 ### From your terminal
 
@@ -54,10 +54,10 @@ With several VMs open, use **Alt + Left/Right** to move between them.
 When you want to close the TUI, press **Alt + Q**; your VM keeps running,
 and you can reopen it with the same command.
 
-### From the graphical app
+### From the Capsem UI
 
 Open **Capsem** (in Applications on macOS), or choose **Dashboard** from
-the Capsem system tray menu. Click `my-work` in the session list to open it,
+the Capsem system tray menu. Click `my-work` in the list of VMs to open it,
 then use its **Terminal** view to work inside the VM. The same VM tab also
 lets you inspect files, logs, and activity.
 
@@ -79,15 +79,16 @@ capsem resume my-work
 capsem shell my-work
 ```
 
-After resuming, you can also return through the [graphical app](#from-the-graphical-app).
+After resuming, you can also return through the [Capsem UI](#from-the-capsem-ui).
 
-## Duplicate a setup
+## Fork your VM
 
-After preparing a project and setting up your tools in `my-work`, you can
-reuse that setup instead of doing it again. **Fork** creates a copy of your
-files and setup in a new VM so you can try a change while keeping the original.
+After setting up your tools and files in `my-work`, you can reuse that VM's
+setup instead of doing it again. **Fork** duplicates your VM's files and setup
+in a new VM so you can try a change while keeping the original VM.
 
-For example, make a copy named `experiment`, start it, and open its terminal:
+For example, duplicate `my-work` into a VM named `experiment`, start the
+new VM, and open its terminal:
 
 ```sh
 capsem fork my-work experiment
@@ -95,15 +96,15 @@ capsem resume experiment
 capsem shell experiment
 ```
 
-`my-work` is the VM to copy; `experiment` names the new persistent VM.
-Once the copy is running, you can change files and try tools there without
-changing `my-work`. Programs start afresh in the copy; to continue programs
+`my-work` is the original VM; `experiment` names the new persistent VM.
+Once the new VM is running, you can change files and try tools there without
+changing `my-work`. Programs start afresh in the new VM; to continue programs
 already running in the original, use [suspend and resume](#pause-your-work-and-return-later).
 
-## Choose a container
+## Choose an image for your VM
 
-When creating your next VM, choose a different container if you want another
-agent or a workspace without an agent. Before creating it, see which images
+When creating your next VM, choose a different image if you want another
+agent or a VM without an agent. Before creating it, see which images
 are available to you:
 
 ```sh
@@ -128,7 +129,7 @@ capsem create -n coding --image codex-cli
 capsem shell coding
 ```
 
-If your team already has a container with the tools you need, you can use
+If your team already has a container image with the tools you need, you can use
 it instead. After your administrator authorizes the image and its registry,
 create a VM with its full image reference:
 
@@ -174,7 +175,7 @@ deleting it removes its files.
 
 For a quick check that should clean up after itself, `run` creates a VM,
 executes a command, and deletes the VM when that command finishes. This
-example prints the Linux system information using the `dev` container:
+example prints the Linux system information in a VM using the `dev` image:
 
 ```sh
 capsem run --image dev sh -c 'uname -a'
@@ -187,13 +188,13 @@ for other work, or allocate more for demanding tasks. Choose these resources
 when creating the VM:
 
 ```sh
-capsem create -n my-project --cpu 2 --ram 8 --image claude-code
+capsem create -n custom-vm --cpu 2 --ram 8 --image claude-code
 ```
 
 `--cpu 2` gives the VM two CPU cores; `--ram 8` gives it 8 GB of memory.
 Choose values your computer can spare and that your administrator permits.
-Put these options before `--image`; anything after the image is a command
-to run in the container.
+Put these options before `--image`; a command after the image replaces that
+image's startup command.
 
 ## Next steps
 
