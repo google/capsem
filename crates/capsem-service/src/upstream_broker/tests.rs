@@ -457,3 +457,114 @@ async fn disallowed_plain_http_port_is_denied_before_dial() {
         .is_err());
     stop_broker(authority, task).await;
 }
+
+#[tokio::test]
+async fn opaque_selections_cannot_cross_worker_generations() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let policy = || test_policy("policy-a", Some(listener.local_addr().unwrap()), vec![]);
+    let (first, _first_publisher, first_authority, first_task) = start_broker(policy());
+    let (second, _second_publisher, second_authority, second_task) = start_broker(policy());
+    let selection_id = resolve_override(&first, 1).await;
+
+    let (response, fds) = second
+        .request(&UpstreamGrantRequest::ConnectTcp {
+            request_id: 1,
+            selection_id,
+        })
+        .await;
+    assert!(fds.is_empty());
+    assert_eq!(
+        response,
+        UpstreamGrantResponse::Denied {
+            request_id: 1,
+            reason: UpstreamGrantDenial::InvalidResource,
+        }
+    );
+    assert!(tokio::time::timeout(Duration::from_millis(100), listener.accept())
+        .await
+        .is_err());
+    first
+        .send(&UpstreamGrantRequest::Release {
+            resource_id: selection_id,
+        })
+        .await;
+    stop_broker(first_authority, first_task).await;
+    stop_broker(second_authority, second_task).await;
+}
+
+#[tokio::test]
+async fn active_descriptor_capacity_is_bounded_and_recovers_after_release() {
+    let upstream = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let (client, _publisher, authority, task) =
+        start_broker(test_policy("policy-a", None, vec![upstream.local_addr().unwrap()]));
+    let mut descriptors = Vec::with_capacity(MAX_ACTIVE_GRANTS);
+    let mut grant_ids = Vec::with_capacity(MAX_ACTIVE_GRANTS);
+    for request_id in 1..=MAX_ACTIVE_GRANTS as u64 {
+        let (response, mut fds) = client
+            .request(&UpstreamGrantRequest::OpenDns {
+                request_id,
+                upstream_index: 0,
+            })
+            .await;
+        let UpstreamGrantResponse::DescriptorGranted { grant_id, .. } = response else {
+            panic!("expected descriptor grant, got {response:?}");
+        };
+        client.send(&UpstreamGrantRequest::Adopted { grant_id }).await;
+        grant_ids.push(grant_id);
+        descriptors.push(fds.pop().unwrap());
+    }
+
+    let denied_id = MAX_ACTIVE_GRANTS as u64 + 1;
+    let (response, fds) = client
+        .request(&UpstreamGrantRequest::OpenDns {
+            request_id: denied_id,
+            upstream_index: 0,
+        })
+        .await;
+    assert!(fds.is_empty());
+    assert_eq!(
+        response,
+        UpstreamGrantResponse::Denied {
+            request_id: denied_id,
+            reason: UpstreamGrantDenial::Capacity,
+        }
+    );
+
+    for grant_id in grant_ids {
+        client
+            .send(&UpstreamGrantRequest::Release { resource_id: grant_id })
+            .await;
+    }
+    drop(descriptors);
+    let (response, mut fds) = client
+        .request(&UpstreamGrantRequest::OpenDns {
+            request_id: denied_id + 1,
+            upstream_index: 0,
+        })
+        .await;
+    let UpstreamGrantResponse::DescriptorGranted { grant_id, .. } = response else {
+        panic!("capacity did not recover: {response:?}");
+    };
+    client.send(&UpstreamGrantRequest::Adopted { grant_id }).await;
+    client
+        .send(&UpstreamGrantRequest::Release { resource_id: grant_id })
+        .await;
+    drop(fds.pop().unwrap());
+    stop_broker(authority, task).await;
+}
+
+#[tokio::test]
+async fn malformed_frame_closes_the_generation_before_any_response() {
+    let (client, _publisher, _authority, task) = start_broker(test_policy("policy-a", None, vec![]));
+    let mut malformed = [0_u8; UPSTREAM_GRANT_FRAME_SIZE];
+    malformed[..2].copy_from_slice(b"XX");
+    client.requests.send(&malformed, &[]).await.unwrap();
+
+    let error = tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err();
+    assert!(error.contains("invalid upstream grant magic"), "{error}");
+    assert!(client.responses.recv().await.is_err());
+}
