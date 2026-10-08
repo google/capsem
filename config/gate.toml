@@ -878,11 +878,11 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 55
+invalid-argument-type = 37
 invalid-assignment = 5
-invalid-return-type = 3
+invalid-return-type = 2
 no-matching-overload = 5
-not-subscriptable = 110
+not-subscriptable = 11
 unresolved-attribute = 71
 unresolved-import = 1
 unsupported-operator = 2

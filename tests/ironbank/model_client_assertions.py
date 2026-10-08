@@ -20,9 +20,13 @@ from ironbank.model_ledger import (
 
 
 class ModelClientEnvironment(Protocol):
-    db_path: Path
+    @property
+    def db_path(self) -> Path: ...
+
     upstream_transcript_path: Path
-    log_paths: tuple[Path, ...]
+    @property
+    def log_paths(self) -> tuple[Path, ...]: ...
+
     dns_answer_ip: str
 
     def run_python(self, script: str, *, timeout_secs: int = 240) -> dict: ...
@@ -60,7 +64,7 @@ def assert_one_model_client(
     *,
     raw_secrets: tuple[str, ...] = (),
     expected_imported_text: str | None = None,
-) -> None:
+) -> dict:
     result = env.run_python(script)
     assert result["file_matches"] is True, result
     derived_raw_secrets = raw_secrets or _derive_model_client_raw_secrets(result)
