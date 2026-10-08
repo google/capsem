@@ -13,9 +13,9 @@ pub use grants::{
 pub use oauth::{
     AuthorizationParameters, CallbackExchange, GoogleAccessLease, GoogleAuthorization, GoogleConnection,
     GoogleConnectionError, GoogleConnectionState, GoogleConnectionStatus, GoogleIdentity, GoogleOAuthClient,
-    GoogleRegistration, GoogleRevocationOutcome, LoopbackRedirect, OAuthAttempt, OAuthAuthorizationUrl,
-    OAuthConnectionStorage, OAuthError, OAuthHttpPolicy, OAuthIdentityError, OAuthListener, OAuthListenerError,
-    OAuthListenerPolicy, OAuthPolicy, OAuthProviderError, OAuthState, OAuthTokenError, OAuthTokens,
+    GoogleRegistration, GoogleRevocationOutcome, GoogleRevocationState, LoopbackRedirect, OAuthAttempt,
+    OAuthAuthorizationUrl, OAuthConnectionStorage, OAuthError, OAuthHttpPolicy, OAuthIdentityError, OAuthListener,
+    OAuthListenerError, OAuthListenerPolicy, OAuthPolicy, OAuthProviderError, OAuthState, OAuthTokenError, OAuthTokens,
 };
 pub use provider::CredentialProvider;
 pub use store::{

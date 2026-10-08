@@ -23,6 +23,16 @@ pub enum GoogleConnectionState {
 pub struct GoogleConnectionStatus {
     pub state: GoogleConnectionState,
     pub revision: u64,
+    pub revocation: GoogleRevocationState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleRevocationState {
+    NotNeeded,
+    Pending,
+    Failed,
+    Succeeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +87,8 @@ struct Record {
     authorization_generation: u64,
     state: GoogleConnectionState,
     tokens: Option<Arc<OAuthTokens>>,
+    revocation: GoogleRevocationState,
+    pending_revocation: Option<Arc<Secret>>,
 }
 impl Record {
     fn advance(&self) -> Result<Self, GoogleConnectionError> {
@@ -201,6 +213,8 @@ impl GoogleOAuthClient {
             authorization_generation: 1,
             state: GoogleConnectionState::Connected,
             tokens: Some(Arc::new(tokens)),
+            revocation: GoogleRevocationState::NotNeeded,
+            pending_revocation: None,
         };
         let client = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
@@ -250,6 +264,7 @@ impl GoogleConnection {
             .lock()
             .map(|record| GoogleConnectionStatus {
                 revision: record.revision,
+                revocation: record.revocation,
                 state: if self.0.denied.load(Ordering::Acquire) && record.state == GoogleConnectionState::Connected {
                     GoogleConnectionState::Disconnecting
                 } else {
@@ -259,6 +274,7 @@ impl GoogleConnection {
             .unwrap_or(GoogleConnectionStatus {
                 revision: 0,
                 state: GoogleConnectionState::Degraded,
+                revocation: GoogleRevocationState::Pending,
             })
     }
 
@@ -399,6 +415,8 @@ impl GoogleConnection {
 
     /// Deny new access immediately; completed local disconnection is durable.
     /// Provider acknowledgement is reported separately and is not a VM fence.
+    /// Repeating this explicit operation retries unresolved provider retirement;
+    /// no background retry is started and completed retirement sends no request.
     pub async fn disconnect(&self) -> Result<GoogleRevocationOutcome, GoogleConnectionError> {
         // Share the admission lock with reconnect's final generation check and
         // flag publication; otherwise reconnect can overwrite a new denial.
@@ -408,7 +426,7 @@ impl GoogleConnection {
         drop(admission);
         let _lifecycle = self.0.lifecycle.lock().await;
         let owner = Arc::clone(&self.0);
-        let tokens = tokio::task::spawn_blocking(move || {
+        let retirement = tokio::task::spawn_blocking(move || {
             let _writer = owner
                 .writer
                 .lock()
@@ -419,24 +437,78 @@ impl GoogleConnection {
                 .map_err(|_| GoogleConnectionError::Unavailable)?
                 .clone();
             if current.state == GoogleConnectionState::Disconnected {
-                return Ok(None);
+                return Ok(current);
             }
             let mut next = current.advance_authority()?;
             next.state = GoogleConnectionState::Disconnected;
             next.tokens = None;
+            next.pending_revocation = current.tokens.as_ref().map(|tokens| {
+                Arc::new(Secret::new(
+                    tokens
+                        .refresh_token()
+                        .unwrap_or_else(|| tokens.access_token.expose())
+                        .to_owned(),
+                ))
+            });
+            next.revocation = if next.pending_revocation.is_some() {
+                GoogleRevocationState::Pending
+            } else {
+                GoogleRevocationState::NotNeeded
+            };
             owner.storage.write(&next)?;
-            *owner.data.lock().map_err(|_| GoogleConnectionError::Unavailable)? = next;
-            Ok(current.tokens)
+            *owner.data.lock().map_err(|_| GoogleConnectionError::Unavailable)? = next.clone();
+            Ok(next)
         })
         .await
         .map_err(|_| GoogleConnectionError::StorageUnavailable)??;
-        match tokens {
-            Some(tokens) => Ok(match self.0.client.revoke(&tokens).await {
-                Ok(()) => GoogleRevocationOutcome::Succeeded,
-                Err(error) => GoogleRevocationOutcome::Failed(error),
-            }),
-            None => Ok(GoogleRevocationOutcome::NotNeeded),
+        let Some(token) = retirement.pending_revocation.as_ref() else {
+            return Ok(if retirement.revocation == GoogleRevocationState::Succeeded {
+                GoogleRevocationOutcome::Succeeded
+            } else {
+                GoogleRevocationOutcome::NotNeeded
+            });
+        };
+        let result = self.0.client.revoke_material(token.expose()).await;
+        let mut next = retirement.advance()?;
+        next.revocation = if result.is_ok() {
+            GoogleRevocationState::Succeeded
+        } else {
+            GoogleRevocationState::Failed
+        };
+        if result.is_ok() {
+            next.pending_revocation = None;
         }
+        let owner = Arc::clone(&self.0);
+        tokio::task::spawn_blocking(move || {
+            let _writer = owner
+                .writer
+                .lock()
+                .map_err(|_| GoogleConnectionError::StorageUnavailable)?;
+            if owner
+                .data
+                .lock()
+                .map_err(|_| GoogleConnectionError::Unavailable)?
+                .revision
+                != retirement.revision
+            {
+                return Err(GoogleConnectionError::RevisionChanged);
+            }
+            // Keep file I/O off Tokio and publish only after durable success.
+            owner.storage.write(&next)?;
+            let mut data = owner.data.lock().map_err(|_| GoogleConnectionError::Unavailable)?;
+            if data.revision != retirement.revision {
+                return Err(GoogleConnectionError::RevisionChanged);
+            }
+            *data = next;
+            drop(data);
+            Ok(())
+        })
+        .await
+        .map_err(|_| GoogleConnectionError::StorageUnavailable)??;
+        Ok(match result {
+            Ok(()) => GoogleRevocationOutcome::Succeeded,
+            Err(error) => GoogleRevocationOutcome::Failed(error),
+        })
     }
 
     /// Reauthorization must prove the original account again. Old access
@@ -445,6 +517,9 @@ impl GoogleConnection {
         let denial = self.0.denial_generation.load(Ordering::Acquire);
         let _lifecycle = self.0.lifecycle.lock().await;
         let current = self.snapshot()?;
+        if current.pending_revocation.is_some() {
+            return Err(GoogleConnectionError::Unavailable);
+        }
         if self.0.denial_generation.load(Ordering::Acquire) != denial
             || (current.state == GoogleConnectionState::Connected && self.0.denied.load(Ordering::Acquire))
         {
@@ -460,6 +535,7 @@ impl GoogleConnection {
         let mut next = current.advance_authority()?;
         next.state = GoogleConnectionState::Connected;
         next.tokens = Some(Arc::new(tokens));
+        next.revocation = GoogleRevocationState::NotNeeded;
         let owner = Arc::clone(&self.0);
         tokio::task::spawn_blocking(move || {
             let _writer = owner

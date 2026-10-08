@@ -367,3 +367,85 @@ async fn disconnect_during_account_verification_prevents_reconnect_publication()
     assert!(connection.access(Instant::now()).await.is_err());
     assert_eq!(fixture.records.lock().unwrap().len(), 4);
 }
+
+#[tokio::test]
+async fn failed_revocation_can_be_explicitly_retried_after_file_restart() {
+    let mut failure = Reply::json(r#"{"error_description":"private-provider-detail"}"#);
+    failure.status = 503;
+    let (fixture, client, tokens) = setup(vec![failure, Reply::json("")]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("private/connection.json");
+    let connection = client
+        .open_connection(tokens, OAuthConnectionStorage::file(path.clone(), 65536).await.unwrap())
+        .await
+        .unwrap();
+    let result = connection.disconnect().await.unwrap();
+    assert!(matches!(result, GoogleRevocationOutcome::Failed(_)));
+    assert_eq!(connection.status().revocation, GoogleRevocationState::Failed);
+    assert!(connection.access(Instant::now()).await.is_err());
+    assert!(!format!("{result:?} {connection:?}").contains("private-provider-detail"));
+    let bytes = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        bytes.contains("private-refresh"),
+        "only private retirement material remains until provider acknowledgement"
+    );
+    assert!(!bytes.contains("private-access"));
+    let (_fresh, _, fresh_tokens) = setup(vec![]).await;
+    assert_eq!(
+        connection.reconnect(fresh_tokens).await.unwrap_err(),
+        GoogleConnectionError::Unavailable
+    );
+    assert_eq!(
+        fixture.records.lock().unwrap().len(),
+        3,
+        "unresolved retirement denies reconnect before provider work"
+    );
+    drop(connection);
+    let restored = GoogleConnection::restore(client, OAuthConnectionStorage::file(path.clone(), 65536).await.unwrap())
+        .await
+        .unwrap();
+    assert!(restored.access(Instant::now()).await.is_err());
+    assert_eq!(restored.status().revocation, GoogleRevocationState::Failed);
+    assert_eq!(restored.disconnect().await.unwrap(), GoogleRevocationOutcome::Succeeded);
+    let bytes = std::fs::read_to_string(&path).unwrap();
+    assert!(!bytes.contains("private-refresh"));
+    assert!(!bytes.contains("private-access"));
+    assert_eq!(restored.status().revocation, GoogleRevocationState::Succeeded);
+    assert_eq!(restored.disconnect().await.unwrap(), GoogleRevocationOutcome::Succeeded);
+    let records = fixture.records.lock().unwrap();
+    assert_eq!(records.len(), 4);
+    assert_eq!(records[2].fields["token"], "private-refresh");
+    assert_eq!(records[3].fields["token"], "private-refresh");
+    drop(records);
+}
+
+#[tokio::test]
+async fn retirement_status_and_private_material_must_agree_on_restore() {
+    let mut failure = Reply::json("");
+    failure.status = 503;
+    let (_fixture, client, tokens) = setup(vec![failure]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("private/connection.json");
+    let connection = client
+        .open_connection(tokens, OAuthConnectionStorage::file(path.clone(), 65536).await.unwrap())
+        .await
+        .unwrap();
+    connection.disconnect().await.unwrap();
+    drop(connection);
+    let original: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for (status, material) in [
+        ("succeeded", serde_json::json!("private-refresh")),
+        ("failed", serde_json::Value::Null),
+        ("pending", serde_json::json!("\r\nprivate-invalid")),
+    ] {
+        let mut corrupt = original.clone();
+        corrupt["revocation"] = serde_json::json!(status);
+        corrupt["pending_revocation"] = material;
+        capsem_foundation::unix::fs::atomic_write_private(&path, &serde_json::to_vec(&corrupt).unwrap()).unwrap();
+        let storage = OAuthConnectionStorage::file(path.clone(), 65536).await.unwrap();
+        assert_eq!(
+            GoogleConnection::restore(client.clone(), storage).await.unwrap_err(),
+            GoogleConnectionError::InvalidRecord
+        );
+    }
+}

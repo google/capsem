@@ -18,8 +18,8 @@ mod listener;
 pub use google::{
     GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionState,
     GoogleConnectionStatus, GoogleIdentity, GoogleOAuthClient, GoogleRegistration, GoogleRevocationOutcome,
-    OAuthAuthorizationUrl, OAuthConnectionStorage, OAuthHttpPolicy, OAuthIdentityError, OAuthProviderError,
-    OAuthTokenError, OAuthTokens,
+    GoogleRevocationState, OAuthAuthorizationUrl, OAuthConnectionStorage, OAuthHttpPolicy, OAuthIdentityError,
+    OAuthProviderError, OAuthTokenError, OAuthTokens,
 };
 pub use listener::{OAuthListener, OAuthListenerError, OAuthListenerPolicy};
 

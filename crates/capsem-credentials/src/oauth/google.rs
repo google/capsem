@@ -19,7 +19,7 @@ pub(crate) use tests::fixture::Reply as TestReply;
 mod identity;
 pub use connection::{
     GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionState,
-    GoogleConnectionStatus, GoogleRevocationOutcome, OAuthConnectionStorage,
+    GoogleConnectionStatus, GoogleRevocationOutcome, GoogleRevocationState, OAuthConnectionStorage,
 };
 pub use identity::{GoogleIdentity, OAuthIdentityError};
 
@@ -304,6 +304,10 @@ impl GoogleOAuthClient {
     pub async fn revoke(&self, tokens: &OAuthTokens) -> Result<(), OAuthTokenError> {
         self.check_registration(tokens)?;
         let token = tokens.refresh_token().unwrap_or_else(|| tokens.access_token.expose());
+        self.revoke_material(token).await
+    }
+
+    async fn revoke_material(&self, token: &str) -> Result<(), OAuthTokenError> {
         self.post_form(&self.revoke_endpoint, &[("token", token)], false)
             .await?;
         Ok(())

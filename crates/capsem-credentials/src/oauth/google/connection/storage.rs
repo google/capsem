@@ -87,7 +87,7 @@ impl OAuthConnectionStorage {
             })
             .transpose()?;
         let view = RecordView {
-            version: 2,
+            version: 3,
             client_id: &record.client_id,
             subject: record.subject.expose(),
             revision: record.revision,
@@ -95,6 +95,8 @@ impl OAuthConnectionStorage {
             state: record.state,
             saved_at_ms: epoch,
             tokens,
+            revocation: record.revocation,
+            pending_revocation: record.pending_revocation.as_ref().map(|token| token.expose()),
         };
         let bytes = Zeroizing::new(serde_json::to_vec(&view).map_err(|_| GoogleConnectionError::InvalidRecord)?);
         if bytes.len() > self.max_bytes {
@@ -133,7 +135,7 @@ impl OAuthConnectionStorage {
         let stored: Stored = serde_json::from_slice(&bytes).map_err(|_| GoogleConnectionError::InvalidRecord)?;
         let epoch = unix_ms()?;
         let now = Instant::now();
-        if stored.version != 2
+        if stored.version != 3
             || stored.client_id != client.registration.client_id
             || stored.revision == 0
             || stored.revision > (1_u64 << 53) - 1
@@ -144,6 +146,16 @@ impl OAuthConnectionStorage {
             || stored.subject.expose().len() > 255
             || (stored.state == GoogleConnectionState::Disconnected && stored.tokens.is_some())
             || (stored.state == GoogleConnectionState::Connected && stored.tokens.is_none())
+            || (matches!(
+                stored.revocation,
+                GoogleRevocationState::Pending | GoogleRevocationState::Failed
+            ) != stored.pending_revocation.is_some())
+            || (stored.state != GoogleConnectionState::Disconnected
+                && stored.revocation != GoogleRevocationState::NotNeeded)
+            || stored
+                .pending_revocation
+                .as_ref()
+                .is_some_and(|token| !super::super::valid_token(token.expose()))
         {
             return Err(GoogleConnectionError::InvalidRecord);
         }
@@ -187,6 +199,8 @@ impl OAuthConnectionStorage {
             authorization_generation: stored.authorization_generation,
             state: stored.state,
             tokens,
+            revocation: stored.revocation,
+            pending_revocation: stored.pending_revocation.map(Arc::new),
         }))
     }
 }
@@ -208,6 +222,8 @@ struct RecordView<'a> {
     state: GoogleConnectionState,
     saved_at_ms: u64,
     tokens: Option<TokenView<'a>>,
+    revocation: GoogleRevocationState,
+    pending_revocation: Option<&'a str>,
 }
 #[derive(Serialize)]
 struct TokenView<'a> {
@@ -227,6 +243,8 @@ struct Stored {
     state: GoogleConnectionState,
     saved_at_ms: u64,
     tokens: Option<StoredTokens>,
+    revocation: GoogleRevocationState,
+    pending_revocation: Option<Secret>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
