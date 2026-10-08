@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Keep an exited VM owner's process identity under coordinator custody until
+  its registered generation has been revoked, preventing PID reuse from
+  inheriting worker and broker authority.
+
 - Authenticate coordinator connections against each registered VM owner's kernel
   process and user identity before sending protocol bytes. Refuse stale owner
   generations for commands, streams and private-network descriptor handoffs;
