@@ -6,6 +6,10 @@ const dashboard = readFileSync(
   new URL('../components/shell/NewTabPage.svelte', import.meta.url),
   'utf8',
 );
+const sessionActionErrors = readFileSync(
+  new URL('../models/session-action-error.ts', import.meta.url),
+  'utf8',
+);
 const appShell = readFileSync(
   new URL('../components/shell/App.svelte', import.meta.url),
   'utf8',
@@ -46,8 +50,8 @@ describe('user-facing session language contract', () => {
     expect(dashboard).toContain('Sessions');
     expect(dashboard).toContain('Loading sessions');
     expect(dashboard).toContain('No sessions');
-    expect(dashboard).toContain('actionError = sessionActionError(error)');
-    expect(sessionActionError(null)).toBe('Failed to create session');
+    expect(dashboard).toContain('sessionActionError(error)');
+    expect(sessionActionErrors).toContain('Failed to create session');
     expect(dashboard).not.toContain('>' + legacyVmPlural + '<');
     expect(dashboard).not.toContain('Customize ' + 'VM');
     expect(dashboard).not.toContain('Loading ' + legacyVmPlural);
