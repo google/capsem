@@ -41,6 +41,22 @@ async fn select(resolver: &UpstreamResolver, policy: &NetworkMechanics, domain: 
 }
 
 #[tokio::test]
+async fn fresh_selection_is_the_same_target_the_mitm_path_judges() {
+    let resolver = UpstreamResolver::system().with_fixed_answer(
+        "same.example",
+        vec!["93.184.216.34".parse().unwrap(), "10.1.2.3".parse().unwrap()],
+    );
+    let policy = NetworkMechanics::new();
+
+    let trusted = UpstreamTarget::resolve(&resolver, &policy, "same.example", 443).await;
+    let mitm = select(&resolver, &policy, "same.example", 443).await;
+
+    assert_eq!(trusted, mitm);
+    assert_eq!(trusted.judged_ip("same.example"), Some("10.1.2.3".parse().unwrap()));
+    assert_eq!(trusted.protocol(Protocol::Tls), Protocol::Tls);
+}
+
+#[tokio::test]
 async fn a_public_looking_name_that_resolves_locally_is_asked_by_the_default_guard() {
     for (name, address) in [
         ("loopback.example", "127.0.0.1"),
@@ -187,5 +203,29 @@ async fn keep_alive_requests_reuse_only_their_own_pinned_upstream() {
     assert!(
         !cached.serves("other.example", 80, &pinned),
         "the host is part of the key"
+    );
+}
+
+#[tokio::test]
+async fn a_trusted_override_preempts_an_existing_resolved_connection() {
+    let pinned = UpstreamTarget::Resolved(vec!["93.184.216.34:443".parse().unwrap()]);
+    let cache = UpstreamCache::new(Some(CachedUpstream::new("site.example", 443, pinned, sender().await)));
+    let mut policy = NetworkMechanics::new();
+    policy.upstream_overrides = BTreeMap::from([(
+        "site.example:443".to_string(),
+        UpstreamOverride {
+            dial: "127.0.0.1:3713".to_string(),
+            protocol: UpstreamOverrideProtocol::Http,
+        },
+    )]);
+
+    let selected = UpstreamTarget::select(&UpstreamResolver::system(), &policy, "site.example", 443, &cache).await;
+
+    assert_eq!(
+        selected,
+        UpstreamTarget::Override {
+            dial: "127.0.0.1:3713".to_string(),
+            protocol: Protocol::Http,
+        }
     );
 }

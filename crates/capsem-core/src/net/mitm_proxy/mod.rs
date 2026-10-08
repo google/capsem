@@ -62,7 +62,7 @@ use fd_stream::{AsyncFdStream, ReplayReader};
 use mcp_observe::{observed_mcp_http_request_for_body, should_sniff_mcp_http_body, ObservedMcpHttpRequest};
 use protocol::Protocol;
 use telemetry_hook::TelemetryRequestContext;
-use upstream::{CachedUpstream, UpstreamCache, UpstreamTarget};
+use upstream::{CachedUpstream, UpstreamCache};
 use util::{
     current_unix_ms, format_headers, format_headers_for_domain, http_upstream_port_allowed, is_anthropic_model_name,
     is_google_model_name, is_llm_api_path, is_openai_model_name, materialize_collected_response_headers,
@@ -71,6 +71,7 @@ use util::{
 
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts, ScopedMcpTools};
 pub use mcp_frame::{dispatch_logged_mcp_request, McpTransport};
+pub use upstream::UpstreamTarget;
 
 /// Re-exported so capsem-app can reference the type without depending on rustls.
 pub type UpstreamTlsConfig = rustls::ClientConfig;
