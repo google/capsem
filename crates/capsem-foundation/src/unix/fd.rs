@@ -1,7 +1,7 @@
 //! Owned descriptor operations with atomic inheritance guarantees.
 
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::time::Duration;
 
 use nix::errno::Errno;
@@ -9,6 +9,53 @@ use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{self, Shutdown};
 
 use super::errno;
+
+/// Close every inherited descriptor except standard streams.
+///
+/// # Safety
+/// Call only at process entry, before any other code owns descriptors above 2
+/// or another thread can open and reuse them.
+pub unsafe fn close_inherited_descriptors() -> io::Result<()> {
+    unsafe { close_inherited_descriptors_except(&[]) }
+}
+
+/// Close ambient inherited descriptors while retaining explicit grants.
+///
+/// # Safety
+/// Call only at process entry, before any other code owns descriptors above 2
+/// or another thread can open and reuse them. Every descriptor in `preserved`
+/// must be an intentional grant whose ownership the caller establishes next.
+pub unsafe fn close_inherited_descriptors_except(preserved: &[RawFd]) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let directory = "/dev/fd";
+    #[cfg(not(target_os = "macos"))]
+    let directory = "/proc/self/fd";
+    let mut descriptors = Vec::new();
+    for entry in std::fs::read_dir(directory)? {
+        let name = entry?.file_name();
+        let fd: RawFd = name
+            .to_str()
+            .ok_or_else(|| io::Error::other("invalid descriptor name"))?
+            .parse()
+            .map_err(io::Error::other)?;
+        if should_close_inherited_descriptor(fd, preserved) {
+            descriptors.push(fd);
+        }
+    }
+    for fd in descriptors {
+        // The caller guarantees no live Rust owner or fd reuse. The directory
+        // iterator itself has closed; EBADF for that fd is expected.
+        match nix::unistd::close(fd) {
+            Ok(()) | Err(Errno::EBADF) => {}
+            Err(error) => return Err(errno::io(error)),
+        }
+    }
+    Ok(())
+}
+
+fn should_close_inherited_descriptor(fd: RawFd, preserved: &[RawFd]) -> bool {
+    fd > 2 && !preserved.contains(&fd)
+}
 
 /// Which half of a connected socket to close.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
