@@ -47,13 +47,25 @@ def default_field_violations(source: str) -> list[str]:
     """Return defaultable wire fields whose omission/decoding pair is incomplete."""
     violations: list[str] = []
     depth = 0
+    inspect_type = False
+    type_attributes: list[str] = []
+    type_attribute_open = False
     attributes: list[str] = []
     attribute_open = False
     for number, original in enumerate(source.splitlines(), 1):
         line = original.split("//", 1)[0].strip()
         if depth == 0:
+            if line.startswith("#[") or type_attribute_open:
+                type_attributes.append(line)
+                type_attribute_open = not line.endswith(")]" )
+                continue
             if TYPE_START.search(line):
                 depth = line.count("{") - line.count("}")
+                derives = " ".join(type_attributes)
+                inspect_type = "Serialize" in derives or "Deserialize" in derives
+                type_attributes.clear()
+            elif line:
+                type_attributes.clear()
             continue
         if line.startswith("#[serde(") or attribute_open:
             attributes.append(line)
@@ -63,7 +75,9 @@ def default_field_violations(source: str) -> list[str]:
         else:
             attrs = " ".join(attributes)
             missing_pair = "default" not in attrs or "skip_serializing_if" not in attrs
-            if (FIELD.search(line) and missing_pair) or ("default" in attrs and "skip_serializing_if" not in attrs):
+            if inspect_type and (
+                (FIELD.search(line) and missing_pair) or ("default" in attrs and "skip_serializing_if" not in attrs)
+            ):
                 violations.append(f"line {number}: {line}")
             attributes.clear()
         depth += line.count("{") - line.count("}")
@@ -80,22 +94,29 @@ def encoder_violations(relative: Path, source: str) -> list[str]:
 
 
 def test_guard_rejects_missing_omission_and_wild_encoding() -> None:
-    missing = "pub struct Event {\n    pub value: Option<String>,\n}"
-    assert default_field_violations(missing) == ["line 2: pub value: Option<String>,"]
-    default_scalar = "pub struct Event {\n    #[serde(default)]\n    pub count: u64,\n}"
-    assert default_field_violations(default_scalar) == ["line 3: pub count: u64,"]
-    multiline = "pub struct Event {\n    #[serde(\n        default,\n    )]\n    pub count: u64,\n}"
-    assert default_field_violations(multiline) == ["line 5: pub count: u64,"]
+    missing = "#[derive(Serialize)]\npub struct Event {\n    pub value: Option<String>,\n}"
+    assert default_field_violations(missing) == ["line 3: pub value: Option<String>,"]
+    default_scalar = "#[derive(Deserialize)]\npub struct Event {\n    #[serde(default)]\n    pub count: u64,\n}"
+    assert default_field_violations(default_scalar) == ["line 4: pub count: u64,"]
+    multiline = (
+        "#[derive(\n    Serialize,\n)]\n"
+        "pub struct Event {\n    #[serde(\n        default,\n    )]\n    pub count: u64,\n}"
+    )
+    assert default_field_violations(multiline) == ["line 8: pub count: u64,"]
+    fixed_record = "pub enum FixedRecord {\n    Answer { value: Option<String> },\n}"
+    assert default_field_violations(fixed_record) == []
     assert encoder_violations(Path("crates/rogue/src/lib.rs"), "rmp_serde::to_vec_named(&event)")
     assert encoder_violations(Path("crates/rogue/src/lib.rs"), "use rmp_serde as codec;")
     assert encoder_violations(Path("crates/capsem-proto/src/lib.rs"), "rmp_serde::to_vec(&event)")
 
 
 def test_new_protocol_modules_are_scanned(tmp_path: Path) -> None:
-    (tmp_path / "new_wire.rs").write_text("pub struct NewWire {\n    pub value: Option<String>,\n}\n")
+    (tmp_path / "new_wire.rs").write_text(
+        "#[derive(serde::Serialize)]\npub struct NewWire {\n    pub value: Option<String>,\n}\n"
+    )
     sources = wire_type_sources(tmp_path)
     assert [path.name for path in sources] == ["new_wire.rs"]
-    assert default_field_violations(sources[0].read_text()) == ["line 2: pub value: Option<String>,"]
+    assert default_field_violations(sources[0].read_text()) == ["line 3: pub value: Option<String>,"]
 
 
 def test_capsem_messagepack_is_sparse_and_owned() -> None:
