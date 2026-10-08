@@ -13,6 +13,14 @@ fn entry_closes_ambient_descriptors_before_runtime_initialization() {
     assert!(close < telemetry && close < arguments);
 }
 
+#[test]
+fn private_name_broker_carries_no_session_bearer() {
+    for source in [include_str!("private_names.rs"), include_str!("private_seats.rs")] {
+        assert!(!source.contains("owner_secret"));
+        assert!(!source.contains("owner-secret"));
+    }
+}
+
 // -----------------------------------------------------------------------
 // Args parsing
 // -----------------------------------------------------------------------

@@ -11,9 +11,6 @@ async fn fake_service(socket: PathBuf, seen: Arc<Mutex<Vec<serde_json::Value>>>)
             let seen = Arc::clone(&seen);
             async move {
                 seen.lock().unwrap().push(body.clone());
-                if body["owner_secret"] != "secret-a" {
-                    return (axum::http::StatusCode::FORBIDDEN, axum::Json(serde_json::json!({})));
-                }
                 match (body["name"].as_str(), body["address"].as_str()) {
                     (Some("beta.team"), None) => (
                         axum::http::StatusCode::OK,
@@ -44,7 +41,7 @@ async fn names_and_addresses_are_the_services_answers_and_misses_are_none() {
     let socket = dir.path().join("service.sock");
     let seen = Arc::new(Mutex::new(Vec::new()));
     fake_service(socket.clone(), Arc::clone(&seen)).await;
-    let names = ServicePrivateNames::new(socket, "secret-a".into(), "vm-a".into());
+    let names = ServicePrivateNames::new(socket, "vm-a".into());
     assert_eq!(names.address_of("beta.team").await, Some(Ipv4Addr::new(10, 128, 0, 3)));
     assert_eq!(names.address_of("nobody.team").await, None);
     assert_eq!(
@@ -54,9 +51,8 @@ async fn names_and_addresses_are_the_services_answers_and_misses_are_none() {
     assert_eq!(names.name_of(Ipv4Addr::new(10, 128, 0, 9)).await, None);
     let asked = seen.lock().unwrap().clone();
     assert_eq!(asked.len(), 4);
-    assert!(asked
-        .iter()
-        .all(|ask| ask["source_vm"] == "vm-a" && ask["owner_secret"] == "secret-a"));
+    assert!(asked.iter().all(|ask| ask["source_vm"] == "vm-a"));
+    assert!(asked.iter().all(|ask| ask.get("owner_secret").is_none()));
     assert_eq!(asked[0]["name"], "beta.team");
     assert_eq!(asked[2]["address"], "10.128.0.3");
 }
@@ -65,9 +61,16 @@ async fn names_and_addresses_are_the_services_answers_and_misses_are_none() {
 async fn a_refusal_or_an_absent_service_is_a_miss_not_a_failure() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("service.sock");
-    fake_service(socket.clone(), Arc::new(Mutex::new(Vec::new()))).await;
-    let wrong = ServicePrivateNames::new(socket, "wrong".into(), "vm-a".into());
-    assert_eq!(wrong.address_of("beta.team").await, None);
-    let absent = ServicePrivateNames::new(dir.path().join("nobody.sock"), "secret-a".into(), "vm-a".into());
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/networks/private/resolve",
+            axum::routing::post(|| async { axum::http::StatusCode::FORBIDDEN }),
+        );
+        let _ = axum::serve(listener, app).await;
+    });
+    let refused = ServicePrivateNames::new(socket, "vm-a".into());
+    assert_eq!(refused.address_of("beta.team").await, None);
+    let absent = ServicePrivateNames::new(dir.path().join("nobody.sock"), "vm-a".into());
     assert_eq!(absent.address_of("beta.team").await, None);
 }

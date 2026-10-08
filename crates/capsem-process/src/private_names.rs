@@ -8,23 +8,17 @@ use std::path::PathBuf;
 
 pub(crate) struct ServicePrivateNames {
     service_socket: PathBuf,
-    owner_secret: String,
     vm_id: String,
 }
 
 impl ServicePrivateNames {
-    pub(crate) fn new(service_socket: PathBuf, owner_secret: String, vm_id: String) -> Self {
-        Self {
-            service_socket,
-            owner_secret,
-            vm_id,
-        }
+    pub(crate) fn new(service_socket: PathBuf, vm_id: String) -> Self {
+        Self { service_socket, vm_id }
     }
 
     async fn ask(&self, question: serde_json::Value) -> Option<serde_json::Value> {
         let mut request = question;
         request["source_vm"] = serde_json::Value::String(self.vm_id.clone());
-        request["owner_secret"] = serde_json::Value::String(self.owner_secret.clone());
         match capsem_core::service_uds::post_json(&self.service_socket, "/networks/private/resolve", &request).await {
             Ok((200, answer)) => Some(answer),
             Ok((404, _)) => None,
