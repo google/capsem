@@ -81,6 +81,7 @@ const receipt = /** @type {{archiveSha256:string,files:Record<string,string>}} *
 assert.equal(receipt.archiveSha256, createHash('sha256').update(readFileSync(archive)).digest('hex'));
 assert.deepEqual(hashes, receipt.files);
 const pin = `registry.example/code@sha256:${'a'.repeat(64)}`;
+const secret = 'fixture-injected-secret', reference = `credential:blake3:${'c'.repeat(64)}`;
 /** @type {{method:string|undefined,path:string|undefined,body:unknown}[]} */
 const received = [];
 let restoreEntered = () => {};
@@ -89,6 +90,12 @@ const server = createServer((request, response) => {
   void buffer(request).then(async bytes => {
     assert.equal(request.headers.authorization, 'Bearer fixture-token');
     received.push({method: request.method, path: request.url, body: bytes.length ? /** @type {unknown} */ (JSON.parse(bytes.toString())) : null});
+    if (request.url === '/credentials/inject') {
+      const body = /** @type {{storage:string}} */ (received.at(-1)?.body);
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({credential_ref: reference, storage: body.storage}));
+      return;
+    }
     if (request.url?.startsWith('/vms/')) {
       if (request.url.endsWith('/start') || request.url.endsWith('/resume')) {
         restoreEntered();
@@ -117,6 +124,11 @@ try {
   assert.equal(catalog.images[0]?.cached, ImageCacheState.UNKNOWN);
   assert.equal((await hv.images.pull('code', {registry: {username: 'fixture', password: 'fixture-access'}})).resolved, pin);
   await hv.images.pull('code');
+  for (const storage of /** @type {const} */ (['memory', 'file'])) {
+    const injected = await hv.credentials.inject('openai', secret, {storage});
+    assert.deepEqual(injected, {credential_ref: reference, storage});
+    assert.ok(!JSON.stringify(injected).includes(secret));
+  }
   const images = hv.images;
   hv.close();
   await assert.rejects(images.list(), /closed/);
@@ -151,7 +163,9 @@ try {
 }
 const imageRequests = received.filter(request => request.path?.startsWith('/images'));
 const lifecycleRequests = received.filter(request => request.path?.startsWith('/vms/'));
-assert.equal(imageRequests.length + lifecycleRequests.length, received.length);
+const credentialRequests = received.filter(request => request.path === '/credentials/inject');
+assert.equal(imageRequests.length + lifecycleRequests.length + credentialRequests.length, received.length);
+assert.deepEqual(credentialRequests, ['memory', 'file'].map(storage => ({method: 'POST', path: '/credentials/inject', body: {provider: 'openai', value: secret, storage}})));
 assert.deepEqual(imageRequests.map(({method, path}) => [method, path]), [['GET', '/images?refresh=true'], ['POST', '/images/pull'], ['POST', '/images/pull']]);
 assert.deepEqual(lifecycleRequests, [
   {method: 'POST', path: '/vms/restore-vm/start', body: null},
@@ -164,5 +178,5 @@ assert.deepEqual(lifecycleRequests, [
 ]);
 assert.deepEqual(received[1]?.body, {image: 'code', registry: {username: 'fixture', password: 'fixture-access'}});
 assert.deepEqual(received[2]?.body, {image: 'code'});
-writeFileSync(output, JSON.stringify({archive, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex'), version: manifest.version, engines: manifest.engines, dependencies: manifest.dependencies, origins, payloadFiles: Object.keys(hashes).length, payloadHashes: hashes, httpPaths: imageRequests.map(request => request.path), lifecyclePaths: lifecycleRequests.map(request => request.path), nodeVersion: process.version, nodeExecutable: process.execPath, nodeArgs: process.execArgv, ok: true}, null, 2) + '\n');
+writeFileSync(output, JSON.stringify({archive, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex'), version: manifest.version, engines: manifest.engines, dependencies: manifest.dependencies, origins, payloadFiles: Object.keys(hashes).length, payloadHashes: hashes, httpPaths: imageRequests.map(request => request.path), lifecyclePaths: lifecycleRequests.map(request => request.path), credentialPaths: credentialRequests.map(request => request.path), nodeVersion: process.version, nodeExecutable: process.execPath, nodeArgs: process.execArgv, ok: true}, null, 2) + '\n');
 process.stdout.write('SDK_IMAGE_PACKAGE_ACCEPTANCE_OK\n');

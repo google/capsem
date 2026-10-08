@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {expect, it} from 'vitest';
 
 interface Manifest {name: string; version: string; dependencies: Record<string, string>; devDependencies: Record<string, string>}
-interface Report {ok: boolean; sha256: string; version: string; httpPaths: string[]; lifecyclePaths: string[]; nodeVersion: string; nodeExecutable: string; nodeArgs: string[]}
+interface Report {ok: boolean; sha256: string; version: string; httpPaths: string[]; lifecyclePaths: string[]; credentialPaths: string[]; nodeVersion: string; nodeExecutable: string; nodeArgs: string[]}
 
 const source = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(source, '../..');
@@ -107,6 +107,7 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
     expect(realpathSync(report.nodeExecutable)).toBe(realpathSync(consumerNode));
     expect(report.nodeArgs).toEqual([]);
     expect(report.httpPaths).toEqual(['/images?refresh=true', '/images/pull', '/images/pull']);
+    expect(report.credentialPaths).toEqual(['/credentials/inject', '/credentials/inject']);
     expect(report.lifecyclePaths).toEqual([
       '/vms/restore-vm/start', '/vms/restore-vm/resume',
       '/vms/restore-vm/start', '/vms/restore-vm/info',
