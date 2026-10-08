@@ -126,14 +126,10 @@ struct Args {
     service_socket: Option<PathBuf>,
     /// Export metrics through the service's generation-authenticated local
     /// broker. The service grants this without exposing a collector address.
-    #[arg(long, conflicts_with = "metric_endpoint")]
+    #[arg(long)]
     metric_broker: bool,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
-    /// Transitional direct-export grant, removed after the service switches
-    /// every launch to `--metric-broker`.
-    #[arg(long)]
-    metric_endpoint: Option<String>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
     #[arg(long = "env")]
     env: Vec<String>,
@@ -241,12 +237,7 @@ fn main() -> Result<()> {
 
     info!(id = %args.id, "capsem-sandbox-process starting");
     // Held until the process exits: dropping it flushes the last measurements.
-    let _metric_export = metric_export::install(
-        &args.id,
-        args.service_socket.as_deref(),
-        args.metric_broker,
-        args.metric_endpoint.as_deref(),
-    );
+    let _metric_export = metric_export::install(&args.id, args.service_socket.as_deref(), args.metric_broker);
 
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
     // The image share is attached to every session, read-only at the device:
