@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- KVM image workloads retain write access to their workspace after VM-root
+  access by expiring caller-owned VirtioFS attributes across user namespaces.
+
 - Rust SDK start and resume cover workload readiness with the same deadline
   budget as creation, retaining larger client defaults and cancellation.
 

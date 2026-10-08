@@ -252,7 +252,7 @@ impl FuseProcessor {
             nodeid: ino,
             generation: 0,
             entry_valid: 1,
-            attr_valid: 1,
+            attr_valid: fuse::ATTR_CACHE_SECONDS,
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
             attr: fuse::metadata_to_fuse_attr(ino, meta, header),

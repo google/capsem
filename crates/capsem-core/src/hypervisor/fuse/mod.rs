@@ -15,6 +15,9 @@ pub use protocol::*;
 
 use std::os::unix::fs::MetadataExt;
 
+/// Caller-owned attributes cannot be cached across namespaces sharing an inode.
+pub const ATTR_CACHE_SECONDS: u64 = 0;
+
 // ---------------------------------------------------------------------------
 // Struct serialization helpers
 // ---------------------------------------------------------------------------
