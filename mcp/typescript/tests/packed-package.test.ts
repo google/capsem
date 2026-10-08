@@ -1,5 +1,6 @@
 import {execFileSync} from 'node:child_process';
-import {lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {createServer as createHttpServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
 import {tmpdir} from 'node:os';
@@ -15,6 +16,7 @@ describe('packed-package', () => {
   const fixtures: string[] = [];
   const clients: PackedClient[] = [];
   const gateways: ReturnType<typeof createHttpServer>[] = [];
+  const retained: {path: string; sha256: string}[] = [];
 
   afterEach(async () => {
     for (const packed of clients.splice(0)) await packed.client.close();
@@ -23,7 +25,10 @@ describe('packed-package', () => {
       await new Promise<void>((resolve, reject) => gateway.close(error => error ? reject(error) : resolve()));
     }
     for (const fixture of fixtures.splice(0)) rmSync(fixture, {recursive: true, force: true});
+    for (const archive of retained.splice(0)) expect(digest(archive.path)).toBe(archive.sha256);
   });
+
+  const digest = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
 
   function pack(): {cli: string; dependencies: string; manifest: Record<string, unknown>} {
     const packageRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -34,12 +39,19 @@ describe('packed-package', () => {
     for (const [owner, source] of Object.entries(sources)) {
       const destination = join(fixture, owner);
       mkdirSync(destination);
-      execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', destination], {
+      const selectedDirectory = process.env.CAPSEM_MCP_PACKAGE_ARCHIVES;
+      if (selectedDirectory) {
+        const version = (JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) as {version: string}).version;
+        const path = join(selectedDirectory, `capsem-${owner}-${version}.tgz`);
+        retained.push({path, sha256: digest(path)});
+        copyFileSync(path, join(destination, `capsem-${owner}-${version}.tgz`));
+      } else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', destination], {
         cwd: source, stdio: 'pipe', timeout: 15_000,
       });
       const name = readdirSync(destination).find(entry => entry.endsWith('.tgz'));
       if (!name) throw new Error('pnpm pack did not create a tarball');
       const archive = join(destination, name);
+      if (selectedDirectory) expect(digest(archive)).toBe(retained.at(-1)?.sha256);
       archives.push(archive);
       execFileSync('tar', ['-xzf', archive, '-C', destination], {timeout: 5000});
     }
@@ -210,5 +222,10 @@ describe('packed-package', () => {
     ]);
     expect(first.stderr.join('')).toBe('');
     expect(second.stderr.join('')).toBe('');
+    if (process.env.CAPSEM_MCP_PACKAGE_RECEIPT) {
+      writeFileSync(process.env.CAPSEM_MCP_PACKAGE_RECEIPT, JSON.stringify({archives: retained,
+        version: manifest.version, node: execFileSync(process.env.CAPSEM_MCP_PACKAGE_NODE ?? process.execPath,
+          ['-p', 'process.version'], {encoding: 'utf8', timeout: 5000}).trim(), ok: true}, null, 2) + '\n');
+    }
   }, 90_000);
 });
