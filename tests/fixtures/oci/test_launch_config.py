@@ -1074,6 +1074,23 @@ def test_a_named_session_unpacks_its_image_once(launcher, tmp_path, monkeypatch)
     assert not (launcher.RUNTIME / "image").exists(), "the assembled layout is not kept"
 
 
+def test_image_unpack_has_headroom_under_parallel_vm_load(launcher, tmp_path, monkeypatch):
+    _, _, digest = _fake_unpack(launcher, tmp_path, monkeypatch)
+    delegated = launcher.command
+    calls = []
+
+    def command(*argv, **kwargs):
+        calls.append((argv, kwargs.copy()))
+        return delegated(*argv, **kwargs)
+
+    monkeypatch.setattr(launcher, "command", command)
+    launcher.unpacked_root(digest, SECURITY["id_map"], launcher.image_share)
+
+    assert calls[0][0][0:2] == ("umoci", "unpack")
+    assert calls[0][1]["timeout"] == launcher.IMAGE_UNPACK_TIMEOUT
+    assert launcher.IMAGE_UNPACK_TIMEOUT > launcher.COMMAND_TIMEOUT
+
+
 def test_only_the_current_digest_keeps_a_root(launcher, tmp_path, monkeypatch):
     _, _, digest = _fake_unpack(launcher, tmp_path, monkeypatch)
     stale = tmp_path / "roots" / ("d" * 64)
