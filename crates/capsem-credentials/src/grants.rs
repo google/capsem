@@ -29,12 +29,12 @@ impl std::error::Error for GrantError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GrantSession {
     session: [u8; 16],
-    ownership: u64,
-    runtime: u64,
+    ownership: [u8; 16],
+    runtime: [u8; 16],
 }
 impl GrantSession {
-    pub fn new(session: [u8; 16], ownership: u64, runtime: u64) -> Result<Self, GrantError> {
-        if session == [0; 16] || ownership == 0 || runtime == 0 {
+    pub fn new(session: [u8; 16], ownership: [u8; 16], runtime: [u8; 16]) -> Result<Self, GrantError> {
+        if session == [0; 16] || ownership == [0; 16] || runtime == [0; 16] {
             return Err(GrantError::Invalid);
         }
         Ok(Self {
@@ -247,6 +247,19 @@ impl GrantAuthority {
     pub fn revoke(&self, handle: GrantHandle) -> Result<(), GrantError> {
         self.grants.lock().map_err(|_| GrantError::Unavailable)?.remove(&handle);
         Ok(())
+    }
+    /// Terminal ownership cleanup includes inactive preserved grants and all
+    /// runtime incarnations, without affecting other sessions or owners.
+    pub fn revoke_owner(&self, session: [u8; 16], ownership: [u8; 16]) -> Result<usize, GrantError> {
+        if session == [0; 16] || ownership == [0; 16] {
+            return Err(GrantError::Invalid);
+        }
+        let mut grants = self.grants.lock().map_err(|_| GrantError::Unavailable)?;
+        let before = grants.len();
+        grants.retain(|_, grant| grant.session.session != session || grant.session.ownership != ownership);
+        let retired = before - grants.len();
+        drop(grants);
+        Ok(retired)
     }
     pub fn detach(&self, session: GrantSession, policy: GrantStopPolicy) -> Result<(), GrantError> {
         let mut grants = self.grants.lock().map_err(|_| GrantError::Unavailable)?;

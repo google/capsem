@@ -4,7 +4,7 @@ use crate::OAuthConnectionStorage;
 use futures::FutureExt;
 
 fn session() -> GrantSession {
-    GrantSession::new([1; 16], 1, 1).unwrap()
+    GrantSession::new([1; 16], [1; 16], [1; 16]).unwrap()
 }
 fn target() -> GrantTarget {
     GrantTarget::new("POST", "https://api.example.test/v1/run").unwrap()
@@ -36,9 +36,9 @@ async fn denied_requests_never_resolve_or_refresh_credentials() {
         .issue(connection, session(), capability(), Duration::from_secs(10), now, allow)
         .unwrap();
     let wrong = [
-        GrantSession::new([2; 16], 1, 1).unwrap(),
-        GrantSession::new([1; 16], 2, 1).unwrap(),
-        GrantSession::new([1; 16], 1, 2).unwrap(),
+        GrantSession::new([2; 16], [1; 16], [1; 16]).unwrap(),
+        GrantSession::new([1; 16], [2; 16], [1; 16]).unwrap(),
+        GrantSession::new([1; 16], [1; 16], [2; 16]).unwrap(),
     ];
     let later = now + Duration::from_secs(2);
     for binding in wrong {
@@ -169,13 +169,13 @@ async fn preservation_requires_explicit_same_owner_rebind_with_fresh_handle() {
         Err(GrantError::Denied)
     );
     assert!(grants
-        .rebind(old, GrantSession::new([2; 16], 1, 2).unwrap(), now, allow)
+        .rebind(old, GrantSession::new([2; 16], [1; 16], [2; 16]).unwrap(), now, allow)
         .is_err());
     assert!(grants
-        .rebind(old, GrantSession::new([1; 16], 2, 2).unwrap(), now, allow)
+        .rebind(old, GrantSession::new([1; 16], [2; 16], [2; 16]).unwrap(), now, allow)
         .is_err());
     assert!(grants.rebind(old, session(), now, allow).is_err());
-    let resumed = GrantSession::new([1; 16], 1, 2).unwrap();
+    let resumed = GrantSession::new([1; 16], [1; 16], [2; 16]).unwrap();
     let fresh = grants.rebind(old, resumed, now, allow).unwrap();
     assert_ne!(fresh, old);
     assert!(grants
@@ -191,7 +191,7 @@ async fn preservation_requires_explicit_same_owner_rebind_with_fresh_handle() {
     );
     grants.detach(resumed, GrantStopPolicy::Revoke).unwrap();
     assert!(grants
-        .rebind(fresh, GrantSession::new([1; 16], 1, 3).unwrap(), now, allow)
+        .rebind(fresh, GrantSession::new([1; 16], [1; 16], [3; 16]).unwrap(), now, allow)
         .is_err());
 }
 
@@ -242,8 +242,9 @@ async fn revoke_or_policy_change_while_refresh_is_in_flight_prevents_materializa
 
 #[test]
 fn authority_inputs_are_finite_explicit_and_destination_constrained() {
-    assert!(GrantSession::new([0; 16], 1, 1).is_err());
-    assert!(GrantSession::new([1; 16], 0, 1).is_err());
+    assert!(GrantSession::new([0; 16], [1; 16], [1; 16]).is_err());
+    assert!(GrantSession::new([1; 16], [0; 16], [1; 16]).is_err());
+    assert!(GrantSession::new([1; 16], [1; 16], [0; 16]).is_err());
     assert!(GrantAuthority::new(GrantLimits {
         max_grants: 0,
         max_lifetime: Duration::from_secs(60)
@@ -349,5 +350,80 @@ async fn grant_issuance_requires_scopes_policy_and_bounded_capacity() {
         .with_token(first, session(), &target(), later, allow, |_| ())
         .await
         .is_err());
+    assert_eq!(fixture.records.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn owner_retirement_preserves_other_full_uuid_generations_and_sessions() {
+    let (fixture, client, tokens) = test_connection(vec![]).await;
+    let connection = client
+        .open_connection(tokens, OAuthConnectionStorage::memory(65536).unwrap())
+        .await
+        .unwrap();
+    let grants = authority();
+    let now = Instant::now();
+    let issue = |binding| {
+        grants
+            .issue(
+                connection.clone(),
+                binding,
+                capability(),
+                Duration::from_secs(30),
+                now,
+                allow,
+            )
+            .unwrap()
+    };
+    let original = issue(session());
+    grants.detach(session(), GrantStopPolicy::Preserve).unwrap();
+    let resumed = GrantSession::new([1; 16], [1; 16], [2; 16]).unwrap();
+    let active = issue(resumed);
+    let mut owner = [1; 16];
+    owner[15] = 2;
+    let other_owner = GrantSession::new([1; 16], owner, [2; 16]).unwrap();
+    let retained_owner = issue(other_owner);
+    let other_session = GrantSession::new([2; 16], [1; 16], [2; 16]).unwrap();
+    let retained_session = issue(other_session);
+    assert_eq!(
+        grants
+            .with_token(active, other_owner, &target(), now, allow, |_| ())
+            .await,
+        Err(GrantError::Denied)
+    );
+    let mut runtime = [2; 16];
+    runtime[15] = 3;
+    assert_eq!(
+        grants
+            .with_token(
+                active,
+                GrantSession::new([1; 16], [1; 16], runtime).unwrap(),
+                &target(),
+                now,
+                allow,
+                |_| ()
+            )
+            .await,
+        Err(GrantError::Denied)
+    );
+    assert_eq!(grants.revoke_owner([1; 16], [1; 16]).unwrap(), 2);
+    assert!(grants.rebind(original, resumed, now, allow).is_err());
+    assert_eq!(
+        grants.with_token(active, resumed, &target(), now, allow, |_| ()).await,
+        Err(GrantError::Denied)
+    );
+    assert_eq!(
+        grants
+            .with_token(retained_owner, other_owner, &target(), now, allow, str::to_owned)
+            .await
+            .unwrap(),
+        "private-access"
+    );
+    assert_eq!(
+        grants
+            .with_token(retained_session, other_session, &target(), now, allow, str::to_owned)
+            .await
+            .unwrap(),
+        "private-access"
+    );
     assert_eq!(fixture.records.lock().unwrap().len(), 2);
 }
