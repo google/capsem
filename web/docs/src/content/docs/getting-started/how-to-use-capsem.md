@@ -21,11 +21,16 @@ To get a workspace with Claude Code available, launch this VM:
 capsem create -n my-work --image claude-code
 ```
 
-- `-n my-work` names the VM and makes it **persistent**: Capsem keeps it so
-  you can come back to your files and setup later. Use this name in commands
-  to select the VM.
-- `--image claude-code` chooses the container to run inside the VM. This one
-  includes Claude Code; another image can provide a different agent or tools.
+- `-n my-work` names the VM and makes it **persistent**: you can stop and
+  resume it without losing your files or setup. You can also
+  [suspend and resume](#pause-your-work-and-return-later) to continue running
+  programs where you left off, or [duplicate the setup with `fork`](#duplicate-a-setup)
+  to try changes in a separate VM. Use `my-work` to select this VM in commands.
+- `--image claude-code` chooses the container to run inside the VM. You can
+  use one of Capsem's prebuilt containers, such as this one with Claude Code,
+  or your own container if your administrator authorizes it. See
+  [Choose a container](#choose-a-container) for the available images and how
+  to use your own.
 
 Capsem downloads the image if needed and starts the VM in the background.
 The next step is to open it.
