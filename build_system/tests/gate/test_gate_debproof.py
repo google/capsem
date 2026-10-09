@@ -214,6 +214,26 @@ def test_read_only_content_is_staged_before_record_binary_mutates_the_generated_
     assert not runner.ran(r"docker exec(?: [^ ]+)* capsem-install-test(?: |$)")
 
 
+def test_non_root_staging_claims_only_configured_scratch_before_copying_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    owned = CONFIG.install.layout.owned_paths(CONFIG.install.mount)
+    parents = CONFIG.install.layout.owned_parent_paths(CONFIG.install.mount)
+    container = PROOF.container
+    claim = f"docker exec {container} chown -R capsem:capsem " + " ".join(owned)
+    replace = f"docker exec {container} chown capsem:capsem " + " ".join(parents)
+    assert claim in runner.rendered
+    assert replace in runner.rendered
+    transcript = "\n".join(runner.rendered)
+    assert transcript.index(claim) < transcript.index(replace) < transcript.index("cp -R")
+    assert not runner.ran(r"chown -R capsem:capsem /src(?: |$)")
+    assert f":{CONFIG.install.proof_assets_mount}:ro" in runner.matching(r"docker run -d")[0]
+
+
 def test_runtime_dependency_authority_is_verified_before_dpkg(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
