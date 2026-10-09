@@ -21,6 +21,7 @@ async fn hook_writes_substitution_event_and_shared_credential_ref() {
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     });
@@ -98,6 +99,7 @@ async fn hook_does_not_repay_capture_ledger_for_repeated_identical_credential() 
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     });
@@ -200,6 +202,7 @@ match = 'http.host == "api.anthropic.com" && http.path == "/v1/messages" && tcp.
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     });
@@ -262,6 +265,7 @@ match = 'model.provider == "anthropic" && model.name == "claude-test"'
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     });
@@ -322,6 +326,7 @@ async fn hook_writes_injected_substitution_event_for_broker_ref_replay() {
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     });
@@ -394,6 +399,7 @@ async fn hook_detects_response_body_token_exchange_and_redacts_preview() {
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     });

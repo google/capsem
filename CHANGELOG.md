@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP routing, security plugins, provider identity, response telemetry and
   guest DNS, preventing a request from combining authority from two revisions.
 
+- Route proxy policy evaluation, credential capture, upstream substitution and
+  redaction through a transport-independent engine with typed ledger and
+  credential capabilities, so a confined proxy needs no credential-store or
+  session-database path authority.
+
 - Confine each session-ledger owner before readiness to its one database and
   inherited channels, denying sibling sessions, socket creation, execution,
   signals and ambient files; erase inherited environment bytes and reject

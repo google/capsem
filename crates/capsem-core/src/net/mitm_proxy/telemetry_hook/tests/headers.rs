@@ -21,6 +21,7 @@ async fn an_observed_credential_is_redacted_from_every_stored_header_and_body() 
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let hook = TelemetryHook::new(Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     }));
