@@ -212,6 +212,19 @@ async fn accepted_durable_query_body_retention_and_warc_run_through_one_owner() 
         .await,
         LedgerReply::Retained { .. }
     ));
+    let commitments = request(
+        &reader,
+        &reader_replies,
+        7,
+        LedgerCommand::Query {
+            query: LedgerQuery::Commitments {
+                after_global_sequence: 0,
+                limit: 10,
+            },
+        },
+    )
+    .await;
+    assert!(matches!(commitments, LedgerReply::Query { ref sets } if sets.len() == 1 && sets[0].rows.len() == 1));
 
     drop(producer);
     drop(reader);
