@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Confine the Linux API gateway before readiness to its inherited listeners
+  and coordinator-minted service and VM-owner channels, denying filesystem
+  access, process execution and direct network or control-socket dialing.
+
 - Confine Linux VM-owner runtime threads before readiness to their session,
   read-only boot assets, prepared service channels and inherited network
   grants; deny sibling files, path-based control connections and direct
