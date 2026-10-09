@@ -176,7 +176,17 @@ fn make_proxy_config_with_mechanics(
     policy_inner: NetworkMechanics,
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
-    let policy = Arc::new(std::sync::RwLock::new(Arc::new(policy_inner)));
+    let policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(
+        capsem_core::net::proxy_engine::ProxyPolicySnapshot::new(
+            "blake3:integration".into(),
+            policy_inner,
+            security_rules,
+            BTreeMap::new(),
+            capsem_core::net::policy_config::ProviderRuleProfile::builtin_defaults()
+                .endpoint_registry()
+                .expect("builtin provider endpoint registry"),
+        ),
+    );
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
     std::mem::forget(dir); // the tempdir lives as long as the test
@@ -184,20 +194,13 @@ fn make_proxy_config_with_mechanics(
         db: db.clone(),
         pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
         trace_state: Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new())),
-        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(security_rules))),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
-    let pipeline = mitm_proxy::make_production_pipeline(Arc::clone(&policy), Arc::clone(&telemetry));
-    let upstream_grants = Arc::new(IntegrationGrants::new(Arc::clone(&policy), UpstreamResolver::system()));
+    let pipeline = mitm_proxy::make_production_pipeline(Arc::clone(&telemetry));
+    let upstream_grants = Arc::new(IntegrationGrants::new(policy.clone(), UpstreamResolver::system()));
     let config = Arc::new(MitmProxyConfig {
         server_tls: mitm_proxy::make_server_tls_config(&ca),
         ca,
         policy,
-        model_endpoints: Arc::new(std::sync::RwLock::new(Arc::new(
-            capsem_core::net::policy_config::ProviderRuleProfile::builtin_defaults()
-                .endpoint_registry()
-                .expect("builtin provider endpoint registry"),
-        ))),
         db: db.clone(),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
         telemetry,

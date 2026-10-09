@@ -19,7 +19,7 @@ pub(super) struct UpgradeRequest<'a> {
     pub upstream_tls: &'a Arc<rustls::ClientConfig>,
     pub config: &'a Arc<MitmProxyConfig>,
     pub process_name: &'a Option<String>,
-    pub policy: &'a NetworkMechanics,
+    pub policy_snapshot: &'a Arc<crate::net::proxy_engine::ProxyPolicySnapshot>,
     pub ai_provider: Option<ProviderKind>,
     pub ai_protocol: Option<ModelProtocol>,
     pub method: String,
@@ -53,7 +53,7 @@ pub(super) async fn handle_upgrade(
         upstream_tls,
         config,
         process_name,
-        policy,
+        policy_snapshot,
         ai_provider,
         ai_protocol,
         method,
@@ -83,6 +83,7 @@ pub(super) async fn handle_upgrade(
     let make_ws_error = |error: &dyn std::fmt::Display| -> hyper::Response<ProxyBoxBody> {
         let body_text = format!("Capsem: websocket upstream error ({error})\n");
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -128,6 +129,7 @@ pub(super) async fn handle_upgrade(
                   decision: &SecurityBoundaryDecisionFields|
      -> hyper::Response<ProxyBoxBody> {
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -162,7 +164,7 @@ pub(super) async fn handle_upgrade(
             .body(seal_with_telemetry(body, req_ctx, ai_provider, ai_protocol))
             .unwrap()
     };
-    if !http_upstream_port_allowed(policy, protocol, upstream_port) {
+    if !http_upstream_port_allowed(policy_snapshot.network(), protocol, upstream_port) {
         let matched = "security.web.http_upstream_ports";
         tracing::Span::current().record("decision", "deny");
         return Ok(refuse(
@@ -185,10 +187,10 @@ pub(super) async fn handle_upgrade(
     if let Some(trace_id) = capsem_foundation::telemetry::ambient_capsem_trace_id() {
         upgrade_event = upgrade_event.with_trace_id(trace_id);
     }
-    let rules = config.telemetry.security_rules.read().unwrap().clone();
+    let rules = Arc::clone(policy_snapshot.security_rules());
     let upgrade_evaluation = crate::security_engine::evaluate_security_boundary(
         &rules,
-        config.telemetry.plugin_policy.read().unwrap().clone(),
+        Arc::clone(policy_snapshot.plugins()),
         upgrade_event,
     );
     let upgrade_decision = match upgrade_evaluation {
@@ -212,7 +214,7 @@ pub(super) async fn handle_upgrade(
         .unwrap_or_else(|| matched_rule.clone());
 
     let upstream_tcp = match target
-        .connect_with_grants(config.upstream_grants.as_deref())
+        .connect_with_grants(config.upstream_grants.as_deref(), policy_snapshot.digest())
         .instrument(ws_span.clone())
         .await
     {
@@ -332,6 +334,7 @@ pub(super) async fn handle_upgrade(
     }
 
     let req_ctx = TelemetryRequestContext {
+        policy_snapshot: Arc::clone(policy_snapshot),
         domain: domain.to_string(),
         process_name: process_name.clone(),
         ai_provider,

@@ -59,8 +59,10 @@ fn proxy_with_gateway() -> (Arc<MitmProxyConfig>, Arc<DbWriter>, Called) {
     });
     config.mcp_endpoint = Some(Arc::new(McpEndpointState::new(
         aggregator,
-        Arc::clone(&config.telemetry.security_rules),
-        Arc::clone(&config.telemetry.plugin_policy),
+        Arc::new(std::sync::RwLock::new(Arc::clone(
+            config.policy.snapshot().security_rules(),
+        ))),
+        Arc::new(std::sync::RwLock::new(Arc::clone(config.policy.snapshot().plugins()))),
         Arc::new(tokio::sync::Semaphore::new(4)),
         McpTimeouts::default(),
     )));

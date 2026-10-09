@@ -54,7 +54,6 @@ trait TokioReadWrite: AsyncRead + AsyncWrite {}
 
 impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 
-use super::policy::NetworkMechanics;
 use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKind};
 use crate::security_engine::{HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent};
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
@@ -62,7 +61,7 @@ use fd_stream::{AsyncFdStream, ReplayReader};
 use mcp_observe::{observed_mcp_http_request_for_body, should_sniff_mcp_http_body, ObservedMcpHttpRequest};
 use protocol::Protocol;
 use telemetry_hook::TelemetryRequestContext;
-use upstream::{CachedUpstream, UpstreamCache};
+use upstream::{CachedUpstream, UpstreamCache, UpstreamPolicy};
 use util::{
     current_unix_ms, format_headers, format_headers_for_domain, http_upstream_port_allowed, is_anthropic_model_name,
     is_google_model_name, is_llm_api_path, is_openai_model_name, materialize_collected_response_headers,
@@ -118,11 +117,7 @@ impl Drop for ConnectionGauge {
 /// (Content-Encoding / Content-Length strip) happen inline in
 /// `handle_request` before chunk dispatch begins -- the chunk hooks
 /// themselves never see the head.
-pub fn make_production_pipeline(
-    policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
-    telemetry: Arc<telemetry_hook::TelemetryDeps>,
-) -> Arc<pipeline::Pipeline> {
-    let _ = policy;
+pub fn make_production_pipeline(telemetry: Arc<telemetry_hook::TelemetryDeps>) -> Arc<pipeline::Pipeline> {
     let p = pipeline::Pipeline::builder()
         // Chunk-hook order is load-bearing:
         //   1. DecompressionHook -- gzip detection on first chunk's
@@ -143,20 +138,6 @@ pub fn make_production_pipeline(
         .register_chunk(Arc::new(telemetry_hook::TelemetryHook::new(telemetry)))
         .build();
     Arc::new(p)
-}
-
-fn ai_provider_for_domain(config: &MitmProxyConfig, domain: &str) -> Option<ProviderKind> {
-    config.model_endpoints.read().unwrap().provider_for_host(domain)
-}
-
-fn ai_provider_for_target(
-    config: &MitmProxyConfig,
-    domain: &str,
-    upstream_port: u16,
-    path: &str,
-) -> Option<ProviderKind> {
-    let registry = config.model_endpoints.read().unwrap();
-    ai_identity_for_target_or_path(&registry, domain, upstream_port, path).provider
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -699,10 +680,13 @@ async fn serve_pipeline<IO>(
                 let (domain, port) = (&request_domain, upstream_port);
                 return Ok(mcp_http::serve(req, route, domain, port, protocol, &config_arc, &process_name).await);
             }
-            let ai_identity = {
-                let registry = config_arc.model_endpoints.read().unwrap();
-                ai_identity_for_target_or_path(&registry, &request_domain, upstream_port, req.uri().path())
-            };
+            let policy_snapshot = config_arc.policy.snapshot();
+            let ai_identity = ai_identity_for_target_or_path(
+                policy_snapshot.model_endpoints(),
+                &request_domain,
+                upstream_port,
+                req.uri().path(),
+            );
             handle_request(
                 req,
                 &request_domain,
@@ -714,6 +698,7 @@ async fn serve_pipeline<IO>(
                 ai_identity.provider,
                 ai_identity.protocol,
                 &cached_upstream,
+                policy_snapshot,
             )
             .await
         }
@@ -792,7 +777,7 @@ fn security_event_with_transport(mut event: SecurityEvent, ip: Option<IpAddr>, u
 /// Handle a single HTTP request within a MITM-proxied connection
 /// (TLS or plain HTTP).
 ///
-/// Reads the live policy from `config.policy` RwLock per-request so that
+/// Reads one live policy revision per request so that
 /// settings changes (e.g. disabling a provider) take effect immediately,
 /// even for in-flight keep-alive connections.
 #[allow(clippy::too_many_arguments)]
@@ -819,6 +804,7 @@ async fn handle_request(
     ai_provider: Option<ProviderKind>,
     ai_protocol: Option<ModelProtocol>,
     cached_upstream: &UpstreamCache,
+    policy_snapshot: Arc<crate::net::proxy_engine::ProxyPolicySnapshot>,
 ) -> Result<hyper::Response<ProxyBoxBody>, anyhow::Error> {
     use http_body_util::BodyExt;
 
@@ -834,15 +820,12 @@ async fn handle_request(
         None
     };
 
-    // Snapshot the live policy for this request (not per-connection) so that
-    // hot-reloaded settings take effect for subsequent requests on the same
-    // keep-alive connection.
-    let policy: Arc<NetworkMechanics> = config.policy.read().unwrap().clone();
+    let policy = policy_snapshot.network();
     // Resolve before the rules run, so they judge the address the dial reaches.
     let resolver = &config.upstream_resolver;
     let target = UpstreamTarget::select(
         resolver,
-        &policy,
+        UpstreamPolicy::from(policy_snapshot.as_ref()),
         protocol,
         domain,
         upstream_port,
@@ -950,7 +933,7 @@ async fn handle_request(
                 upstream_tls,
                 config,
                 process_name,
-                policy: &policy,
+                policy_snapshot: &policy_snapshot,
                 ai_provider,
                 ai_protocol,
                 method: method.clone(),
@@ -985,6 +968,7 @@ async fn handle_request(
         warn!(domain, method, path, error = %error, "MITM proxy: upstream error");
         let body_text = format!("Capsem: upstream error ({error})\n");
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(&policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -1148,7 +1132,7 @@ async fn handle_request(
     if let Some(trace_id) = capsem_foundation::telemetry::ambient_capsem_trace_id() {
         http_security_event = http_security_event.with_trace_id(trace_id);
     }
-    let rules = config.telemetry.security_rules.read().unwrap().clone();
+    let rules = Arc::clone(policy_snapshot.security_rules());
     let actions_span = tracing::debug_span!(
         target: "capsem.mitm",
         spans::MITM_SECURITY_ACTIONS,
@@ -1161,7 +1145,7 @@ async fn handle_request(
     let http_evaluation = match actions_span.in_scope(|| {
         crate::security_engine::evaluate_security_boundary(
             &rules,
-            config.telemetry.plugin_policy.read().unwrap().clone(),
+            Arc::clone(policy_snapshot.plugins()),
             http_security_event,
         )
     }) {
@@ -1201,6 +1185,7 @@ async fn handle_request(
             format!("capsem: HTTP request blocked by security rule: {rule_id}\n")
         };
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(&policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -1238,12 +1223,13 @@ async fn handle_request(
     // Host-side plain-HTTP port allowlist. The port came from the guest's Host
     // header; enforce it before any upstream dial so a guest reaching the proxy
     // directly cannot make the host connect to an arbitrary port.
-    if !http_upstream_port_allowed(&policy, protocol, upstream_port) {
+    if !http_upstream_port_allowed(policy, protocol, upstream_port) {
         actions_span.record("decision", "deny");
         actions_span.record("status", "ok");
         let matched = "security.web.http_upstream_ports";
         let body_text = format!("capsem: HTTP upstream port {upstream_port} blocked by {matched}\n");
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(&policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -1329,11 +1315,7 @@ async fn handle_request(
             upstream_port,
         );
         let mcp_evaluation = match mcp_span.in_scope(|| {
-            crate::security_engine::evaluate_security_boundary(
-                &rules,
-                config.telemetry.plugin_policy.read().unwrap().clone(),
-                mcp_event,
-            )
+            crate::security_engine::evaluate_security_boundary(&rules, Arc::clone(policy_snapshot.plugins()), mcp_event)
         }) {
             Ok(evaluation) => evaluation,
             Err(error) => {
@@ -1413,6 +1395,7 @@ async fn handle_request(
             let mut scrubbed_stats = BodyStats::new(0);
             scrubbed_stats.bytes = observed.bytes_sent;
             let req_ctx = TelemetryRequestContext {
+                policy_snapshot: Arc::clone(&policy_snapshot),
                 domain: domain.to_string(),
                 process_name: process_name.clone(),
                 ai_provider: effective_ai_provider,
@@ -1549,7 +1532,7 @@ async fn handle_request(
             let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
             let model_evaluation = match crate::security_engine::evaluate_security_boundary(
                 &rules,
-                config.telemetry.plugin_policy.read().unwrap().clone(),
+                Arc::clone(policy_snapshot.plugins()),
                 model_event,
             ) {
                 Ok(evaluation) => evaluation,
@@ -1579,6 +1562,7 @@ async fn handle_request(
                 let mut scrubbed_stats = BodyStats::new(0);
                 scrubbed_stats.bytes = body_bytes.len() as u64;
                 let req_ctx = TelemetryRequestContext {
+                    policy_snapshot: Arc::clone(&policy_snapshot),
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
                     ai_provider: effective_ai_provider,
@@ -1715,7 +1699,7 @@ async fn handle_request(
         let dial_start = Instant::now();
         let tcp_start = Instant::now();
         let upstream_tcp = match target
-            .connect_with_grants(config.upstream_grants.as_deref())
+            .connect_with_grants(config.upstream_grants.as_deref(), policy_snapshot.digest())
             .instrument(upstream_prepare_span.clone())
             .await
         {
@@ -1963,7 +1947,7 @@ async fn handle_request(
                 "cached upstream sender failed on send; reconnecting replayable request"
             );
             let upstream_tcp = match target
-                .connect_with_grants(config.upstream_grants.as_deref())
+                .connect_with_grants(config.upstream_grants.as_deref(), policy_snapshot.digest())
                 .instrument(upstream_send_span.clone())
                 .await
             {
@@ -2201,7 +2185,7 @@ async fn handle_request(
             let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
             let model_evaluation = match crate::security_engine::evaluate_security_boundary(
                 &rules,
-                config.telemetry.plugin_policy.read().unwrap().clone(),
+                Arc::clone(policy_snapshot.plugins()),
                 model_event,
             ) {
                 Ok(evaluation) => evaluation,
@@ -2231,6 +2215,7 @@ async fn handle_request(
                     model_evaluation.enforcement.rule_id.as_deref().unwrap_or("unknown")
                 );
                 let req_ctx = TelemetryRequestContext {
+                    policy_snapshot: Arc::clone(&policy_snapshot),
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
                     ai_provider: effective_ai_provider,
@@ -2349,6 +2334,7 @@ async fn handle_request(
     };
 
     let req_ctx = TelemetryRequestContext {
+        policy_snapshot: Arc::clone(&policy_snapshot),
         domain: domain.to_string(),
         process_name: process_name.clone(),
         ai_provider: effective_ai_provider,

@@ -7,23 +7,15 @@ use super::pipeline;
 use super::telemetry_hook;
 use super::upstream::TcpUpstreamGrants;
 use crate::net::cert_authority::CertAuthority;
-use crate::net::policy::NetworkMechanics;
+use crate::net::proxy_engine::ProxyPolicyHandle;
 
 /// Configuration for the MITM proxy.
 pub struct MitmProxyConfig {
     pub ca: Arc<CertAuthority>,
     /// Guest-facing TLS config, built once (`make_server_tls_config`): one session cache for all.
     pub server_tls: Arc<rustls::ServerConfig>,
-    /// Live policy, swappable via RwLock so settings changes take effect
-    /// without restarting the VM. Each HTTP request snapshots the Arc so
-    /// that disabling a provider blocks the next request even on an
-    /// existing keep-alive connection.
-    pub policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
-    /// Live model endpoint registry from settings and corp provider blocks.
-    /// MITM resolves host -> model protocol once per request and then passes
-    /// that typed metadata to enforcement, hooks, broker substitution, and
-    /// telemetry. Provider hooks must not infer protocol from domains.
-    pub model_endpoints: Arc<std::sync::RwLock<Arc<crate::net::policy_config::ModelEndpointRegistry>>>,
+    /// One digest-keyed active-policy revision, snapshotted per request.
+    pub policy: ProxyPolicyHandle,
     pub db: Arc<DbWriter>,
     /// Cached upstream TLS config (shared across all connections).
     pub upstream_tls: Arc<rustls::ClientConfig>,

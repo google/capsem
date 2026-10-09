@@ -40,7 +40,8 @@ use crate::net::ai_traffic::events::{
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ModelProtocol, ProviderKind};
 use crate::net::ai_traffic::{request_parser, TraceState};
-use crate::net::policy_config::{snapshot_plugin_policy, PluginPolicySnapshot, SecurityRuleSet, SharedPluginPolicy};
+use crate::net::policy_config::{PluginPolicySnapshot, SecurityRuleSet};
+use crate::net::proxy_engine::ProxyPolicySnapshot;
 use crate::security_engine::{
     emit_evaluated_security_rules, emit_security_write, HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent,
     RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
@@ -53,6 +54,8 @@ use capsem_telemetry::mitm as m;
 /// the request head and upstream response head have been observed,
 /// before the body wrapper begins iterating chunks.
 pub struct TelemetryRequestContext {
+    /// The exact active-policy revision that admitted this request.
+    pub policy_snapshot: Arc<ProxyPolicySnapshot>,
     pub domain: String,
     pub process_name: Option<String>,
     pub ai_provider: Option<ProviderKind>,
@@ -109,8 +112,6 @@ pub struct TelemetryDeps {
     pub db: Arc<DbWriter>,
     pub pricing: Arc<PricingTable>,
     pub trace_state: Arc<Mutex<TraceState>>,
-    pub security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
-    pub plugin_policy: SharedPluginPolicy,
 }
 
 /// Sync `ChunkHook` that tracks response bytes/preview and, on
@@ -305,8 +306,8 @@ impl ChunkHook for TelemetryHook {
 
         let stage_started = Instant::now();
         let db = Arc::clone(&self.deps.db);
-        let rules = Arc::clone(&self.deps.security_rules.read().unwrap());
-        let plugin_policy = snapshot_plugin_policy(&self.deps.plugin_policy);
+        let rules = Arc::clone(req_ctx.policy_snapshot.security_rules());
+        let plugin_policy = Arc::clone(req_ctx.policy_snapshot.plugins());
         let credential_injections = req_ctx.credential_injections;
         record_telemetry_stage(stage_started, "ledger_deps_clone");
 

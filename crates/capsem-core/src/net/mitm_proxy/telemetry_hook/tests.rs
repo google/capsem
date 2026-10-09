@@ -128,6 +128,7 @@ impl Drop for TraceEnvGuard {
 /// Returns a generic request context for an allowed Anthropic POST.
 fn anthropic_req_ctx() -> TelemetryRequestContext {
     TelemetryRequestContext {
+        policy_snapshot: policy_snapshot(SecurityRuleSet::new(Vec::new())),
         domain: "api.anthropic.com".into(),
         process_name: Some("agent".into()),
         ai_provider: Some(ProviderKind::Anthropic),
@@ -154,6 +155,16 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         credential_observations: Vec::new(),
         credential_injections: Vec::new(),
     }
+}
+
+fn policy_snapshot(rules: SecurityRuleSet) -> Arc<crate::net::proxy_engine::ProxyPolicySnapshot> {
+    Arc::new(crate::net::proxy_engine::ProxyPolicySnapshot::new(
+        "blake3:telemetry-test".into(),
+        crate::net::policy::NetworkMechanics::new(),
+        rules,
+        BTreeMap::new(),
+        crate::net::policy_config::ModelEndpointRegistry::default(),
+    ))
 }
 
 fn empty_resp_stats() -> TelemetryResponseStats {
@@ -590,13 +601,7 @@ fn fake_deps() -> Arc<TelemetryDeps> {
         db,
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     })
-}
-
-fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
-    Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new()))))
 }
 
 /// Without a seeded request context, the hook is shadow-mode: it
@@ -659,8 +664,6 @@ async fn hook_accepts_primary_net_event_before_completing_response() {
         db: Arc::clone(&db),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let hook = TelemetryHook::new(deps);
 
@@ -718,8 +721,6 @@ async fn bounded_logger_backpressure_keeps_every_completed_response_event() {
         db: Arc::clone(&db),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     }));
     let conn = ConnMeta {
         domain: "127.0.0.1".to_string(),

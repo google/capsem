@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Apply each proxy policy reload as one digest-keyed immutable revision across
+  HTTP routing, security plugins, provider identity, response telemetry and
+  guest DNS, preventing a request from combining authority from two revisions.
+
 - Confine each session-ledger owner before readiness to its one database and
   inherited channels, denying sibling sessions, socket creation, execution,
   signals and ambient files; erase inherited environment bytes and reject
