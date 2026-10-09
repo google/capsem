@@ -1,11 +1,45 @@
 use super::*;
 use std::path::Path;
 
+fn service_paths(bin_dir: &Path) -> paths::CapsemPaths {
+    paths::CapsemPaths {
+        service_bin: bin_dir.join("capsem-service"),
+        process_bin: bin_dir.join("capsem-process"),
+        ledger_bin: bin_dir.join("capsem-ledger"),
+        proxy_bin: bin_dir.join("capsem-proxy"),
+        gateway_bin: bin_dir.join("capsem-gateway"),
+        tray_bin: bin_dir.join("capsem-tray"),
+        assets_dir: bin_dir.join("assets"),
+    }
+}
+
+#[test]
+fn service_install_refuses_missing_confined_workers() {
+    for missing in ["capsem-ledger", "capsem-proxy"] {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "capsem-service",
+            "capsem-process",
+            "capsem-ledger",
+            "capsem-proxy",
+            "capsem-gateway",
+            "capsem-tray",
+        ] {
+            if name != missing {
+                std::fs::write(dir.path().join(name), b"binary").unwrap();
+            }
+        }
+        let error = validate_service_binaries(&service_paths(dir.path())).unwrap_err();
+        assert!(error.to_string().contains(missing), "{error:#}");
+    }
+}
+
 #[test]
 fn test_generate_plist_absolute_paths() {
     let plist = generate_plist(
         Path::new("/Users/test/.capsem/bin/capsem-service"),
         Path::new("/Users/test/.capsem/bin/capsem-process"),
+        Path::new("/Users/test/.capsem/bin/capsem-proxy"),
         Path::new("/Users/test/.capsem/bin/capsem-gateway"),
         Path::new("/Users/test/.capsem/bin/capsem-tray"),
         Path::new("/Users/test/.capsem/assets"),
@@ -14,6 +48,8 @@ fn test_generate_plist_absolute_paths() {
     // ProgramArguments binary and path args must be absolute
     assert!(plist.contains("<string>/Users/test/.capsem/bin/capsem-service</string>"));
     assert!(plist.contains("<string>/Users/test/.capsem/bin/capsem-process</string>"));
+    assert!(plist.contains("<string>--proxy-binary</string>"));
+    assert!(plist.contains("<string>/Users/test/.capsem/bin/capsem-proxy</string>"));
     assert!(plist.contains("<string>/Users/test/.capsem/assets</string>"));
     // Log path must be absolute
     assert!(plist.contains("<string>/Users/test/Library/Logs/capsem/service.log</string>"));
@@ -26,6 +62,7 @@ fn test_generate_plist_valid_xml() {
     let plist = generate_plist(
         Path::new("/usr/local/bin/capsem-service"),
         Path::new("/usr/local/bin/capsem-process"),
+        Path::new("/usr/local/bin/capsem-proxy"),
         Path::new("/usr/local/bin/capsem-gateway"),
         Path::new("/usr/local/bin/capsem-tray"),
         Path::new("/home/test/.capsem/assets"),
@@ -45,6 +82,7 @@ fn test_generate_plist_has_keep_alive() {
     let plist = generate_plist(
         Path::new("/bin/capsem-service"),
         Path::new("/bin/capsem-process"),
+        Path::new("/bin/capsem-proxy"),
         Path::new("/bin/capsem-gateway"),
         Path::new("/bin/capsem-tray"),
         Path::new("/assets"),
@@ -60,6 +98,7 @@ fn test_generate_plist_pins_file_backed_credential_store() {
     let plist = generate_plist(
         Path::new("/Users/test/.capsem/bin/capsem-service"),
         Path::new("/Users/test/.capsem/bin/capsem-process"),
+        Path::new("/Users/test/.capsem/bin/capsem-proxy"),
         Path::new("/Users/test/.capsem/bin/capsem-gateway"),
         Path::new("/Users/test/.capsem/bin/capsem-tray"),
         Path::new("/Users/test/.capsem/assets"),
@@ -117,6 +156,7 @@ fn test_generate_systemd_unit_absolute_paths() {
     let unit = generate_systemd_unit(
         Path::new("/home/test/.capsem/bin/capsem-service"),
         Path::new("/home/test/.capsem/bin/capsem-process"),
+        Path::new("/home/test/.capsem/bin/capsem-proxy"),
         Path::new("/home/test/.capsem/bin/capsem-gateway"),
         Path::new("/home/test/.capsem/bin/capsem-tray"),
         Path::new("/home/test/.capsem/assets"),
@@ -130,6 +170,7 @@ fn test_generate_systemd_unit_absolute_paths() {
     );
     // --process-binary value should be absolute
     assert!(exec_line.contains("--process-binary /"));
+    assert!(exec_line.contains("--proxy-binary /"));
     // --assets-dir value should be absolute
     assert!(exec_line.contains("--assets-dir /"));
 }
@@ -139,6 +180,7 @@ fn test_generate_systemd_unit_restart_policy() {
     let unit = generate_systemd_unit(
         Path::new("/bin/svc"),
         Path::new("/bin/proc"),
+        Path::new("/bin/proxy"),
         Path::new("/bin/gw"),
         Path::new("/bin/tray"),
         Path::new("/assets"),
@@ -152,6 +194,7 @@ fn test_generate_systemd_unit_wanted_by() {
     let unit = generate_systemd_unit(
         Path::new("/bin/svc"),
         Path::new("/bin/proc"),
+        Path::new("/bin/proxy"),
         Path::new("/bin/gw"),
         Path::new("/bin/tray"),
         Path::new("/assets"),
@@ -182,6 +225,7 @@ fn test_plist_with_special_chars_in_path() {
     let plist = generate_plist(
         Path::new("/Users/AT&T Corp/.capsem/bin/capsem-service"),
         Path::new("/Users/AT&T Corp/.capsem/bin/capsem-process"),
+        Path::new("/Users/AT&T Corp/.capsem/bin/capsem-proxy"),
         Path::new("/Users/AT&T Corp/.capsem/bin/capsem-gateway"),
         Path::new("/Users/AT&T Corp/.capsem/bin/capsem-tray"),
         Path::new("/Users/AT&T Corp/.capsem/assets"),
@@ -215,6 +259,7 @@ fn test_systemd_unit_with_spaces_in_path() {
     let unit = generate_systemd_unit(
         Path::new("/home/John Doe/.capsem/bin/capsem-service"),
         Path::new("/home/John Doe/.capsem/bin/capsem-process"),
+        Path::new("/home/John Doe/.capsem/bin/capsem-proxy"),
         Path::new("/home/John Doe/.capsem/bin/capsem-gateway"),
         Path::new("/home/John Doe/.capsem/bin/capsem-tray"),
         Path::new("/home/John Doe/.capsem/assets"),

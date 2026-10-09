@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Pass the packaged proxy worker path explicitly to installed and direct
+  services, refuse incomplete confined-worker cohorts, and retire ledger and
+  proxy children during reinstall or uninstall.
+
 - Ship the confined ledger and proxy workers in every supported package and
   sign them without macOS virtualization authority, so clean installs cannot
   fall back to privileged in-process execution or grant VM capabilities to
