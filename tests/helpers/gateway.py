@@ -6,10 +6,13 @@ Reads the generated token from the runtime file for authenticated requests.
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from array import array
 from pathlib import Path
 from urllib.parse import quote
 
@@ -48,6 +51,8 @@ class GatewayInstance:
         self._log_file = None
         self._stdio_log_path = self.tmp_dir / "gateway-stdio.log"
         self._log_path = self.tmp_dir / ".capsem" / "run" / "gateway.log"
+        self._grant_socket = None
+        self._grant_thread = None
         self.token = ""
         self.port = port
 
@@ -95,16 +100,27 @@ class GatewayInstance:
             str(run_dir),
             "--parent-pid",
             str(os.getpid()),
+            "--service-grant-stdin",
         ]
         if self.frontend_dir:
             cmd += ["--frontend-dir", self.frontend_dir]
 
+        grant_server, grant_client = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._grant_socket = grant_server
+        self._grant_thread = threading.Thread(
+            target=self._serve_grants,
+            args=(grant_server, run_dir),
+            daemon=True,
+        )
+        self._grant_thread.start()
         self.proc = subprocess.Popen(
             cmd,
             env=env,
+            stdin=grant_client,
             stdout=self._log_file,
             stderr=self._log_file,
         )
+        grant_client.close()
 
         # Wait for gateway to start and write runtime files
         token_path = run_dir / "gateway.token"
@@ -120,7 +136,7 @@ class GatewayInstance:
                     _, _, body = probe.request("GET", "/health", timeout=2)
                     if b"ok" in body.lower():
                         return
-                except Exception:
+                except (OSError, TimeoutError):
                     pass
                 finally:
                     probe.close()
@@ -146,9 +162,66 @@ class GatewayInstance:
                 self.proc.kill()
                 self.proc.wait()
             self.proc = None
+        if self._grant_socket:
+            self._grant_socket.close()
+            self._grant_socket = None
+        if self._grant_thread:
+            self._grant_thread.join(timeout=2)
+            self._grant_thread = None
         if self._log_file:
             self._log_file.close()
             self._log_file = None
+
+    def _serve_grants(self, channel: socket.socket, run_dir: Path) -> None:
+        """Test coordinator: mint only connections to this fixture's service."""
+        try:
+            while request := self._recv_exact(channel, 80):
+                if request[:3] != b"GG\x01":
+                    return
+                request_id = request[4:12]
+                kind = request[3]
+                response = bytearray(80)
+                response[:3] = b"GG\x01"
+                response[4:12] = request_id
+                granted = None
+                if kind == 1:
+                    try:
+                        granted = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        granted.connect(self.uds_path)
+                    except OSError:
+                        if granted:
+                            granted.close()
+                        granted = None
+                if granted:
+                    response[3] = 101
+                    response[12] = kind
+                    fds = array("i", [granted.fileno()])
+                    sent = channel.sendmsg([response], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds)])
+                    if sent < len(response):
+                        channel.sendall(response[sent:])
+                    granted.close()
+                else:
+                    response[3] = 102
+                    response[12] = 1
+                    channel.sendall(response)
+        except OSError:
+            pass
+        finally:
+            for name in ("gateway.token", "gateway.port", "gateway.pid", "preview.port"):
+                try:
+                    (run_dir / name).unlink()
+                except FileNotFoundError:
+                    pass
+
+    @staticmethod
+    def _recv_exact(channel: socket.socket, size: int) -> bytes:
+        data = bytearray()
+        while len(data) < size:
+            chunk = channel.recv(size - len(data))
+            if not chunk:
+                return b""
+            data.extend(chunk)
+        return bytes(data)
 
     def stop_and_read_log(self) -> str:
         """Stop the gateway so Rust's stdout/stderr log buffer is flushed.
