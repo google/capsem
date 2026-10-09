@@ -16,6 +16,13 @@ pub struct ProxyMetricRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ProxyMetricBrokerMessage {
+    Hello { session_id: String },
+    Response(ProxyMetricResponse),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProxyMetricResponse {
     Relayed {
         status: u16,
@@ -47,6 +54,15 @@ mod tests {
         assert_eq!(
             rmp_serde::from_slice::<ProxyMetricResponse>(&encoded).unwrap(),
             response
+        );
+
+        let hello = ProxyMetricBrokerMessage::Hello {
+            session_id: "vm-a".into(),
+        };
+        let encoded = rmp_serde::to_vec_named(&hello).unwrap();
+        assert_eq!(
+            rmp_serde::from_slice::<ProxyMetricBrokerMessage>(&encoded).unwrap(),
+            hello
         );
     }
 }
