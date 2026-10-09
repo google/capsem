@@ -132,9 +132,9 @@ fn history_statements(
         .join(" UNION ALL ");
     let params = vec![
         search.clone().map_or(Value::Null, Value::String),
-        json!(offset.saturating_add(u64::from(limit))),
+        json!(i64::try_from(offset.saturating_add(u64::from(limit))).unwrap_or(i64::MAX)),
         json!(limit),
-        json!(offset),
+        json!(i64::try_from(offset).unwrap_or(i64::MAX)),
     ];
     let mut statements = vec![(format!("{page} ORDER BY timestamp DESC LIMIT ?3 OFFSET ?4"), params)];
     if let Some(search) = search {
