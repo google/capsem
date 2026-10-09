@@ -35,14 +35,22 @@ def _read_cli_startup(proc: subprocess.Popen[bytes]) -> tuple[str, str]:
                 f"capsem proxy exited before startup: {proc.returncode}; output={received!r}"
             )
         for key, _ in selector.select(timeout=0.2):
-            received.extend(os.read(key.fileobj.fileno(), 4096))
+            received.extend(os.read(key.fd, 4096))
         lines = received.decode(errors="replace").splitlines()
         session = next(
-            (line.removeprefix("Proxy session: ") for line in lines if line.startswith("Proxy session: ")),
+            (
+                line.removeprefix("Proxy session: ")
+                for line in lines
+                if line.startswith("Proxy session: ")
+            ),
             None,
         )
         base_url = next(
-            (line.removeprefix("Base URL: ") for line in lines if line.startswith("Base URL: ")),
+            (
+                line.removeprefix("Base URL: ")
+                for line in lines
+                if line.startswith("Base URL: ")
+            ),
             None,
         )
         if session and base_url:
@@ -69,7 +77,11 @@ def _run_json(command: list[str]) -> dict[str, object]:
 def _records(path: Path) -> list[dict[str, object]]:
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
 
 
 def _wait_for_model_rows(db_path: Path, minimum: int = 8) -> list[sqlite3.Row]:
@@ -82,7 +94,9 @@ def _wait_for_model_rows(db_path: Path, minimum: int = 8) -> list[sqlite3.Row]:
                 if len(rows) >= minimum:
                     return rows
         time.sleep(0.25)
-    raise AssertionError(f"standalone ledger did not reach {minimum} model rows: {db_path}")
+    raise AssertionError(
+        f"standalone ledger did not reach {minimum} model rows: {db_path}"
+    )
 
 
 def _raw_http(port: int, request: bytes) -> bytes:
@@ -105,7 +119,9 @@ def _assert_no_raw_secret(db_path: Path, session_dir: Path) -> None:
         ]
         for table in tables:
             columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
-            text_columns = [row[1] for row in columns if str(row[2]).upper() in {"TEXT", ""}]
+            text_columns = [
+                row[1] for row in columns if str(row[2]).upper() in {"TEXT", ""}
+            ]
             if not text_columns:
                 continue
             selected = ", ".join(f'"{column}"' for column in text_columns)
@@ -241,14 +257,23 @@ def test_standalone_proxy_serves_official_sdks_without_a_vm():
         }
         assert {row["provider"] for row in model_rows} == {"openai"}
         assert {row["status_code"] for row in model_rows} >= {200, 503}
-        assert any(row["input_tokens"] == 66 and row["output_tokens"] == 390 for row in model_rows)
-        assert any(row["input_tokens"] == 7 and row["output_tokens"] == 5 for row in model_rows)
+        assert any(
+            row["input_tokens"] == 66 and row["output_tokens"] == 390
+            for row in model_rows
+        )
+        assert any(
+            row["input_tokens"] == 7 and row["output_tokens"] == 5 for row in model_rows
+        )
         upstream = _records(transcript)
         assert {row["path"] for row in upstream} >= {
             "/v1/chat/completions",
             "/v1/responses",
         }
-        assert all(row["headers"].get("host") == "api.openai.com" for row in upstream)
+        headers = [row["headers"] for row in upstream]
+        assert all(
+            isinstance(value, dict) and value.get("host") == "api.openai.com"
+            for value in headers
+        )
         _assert_no_raw_secret(db_path, session_dir)
 
         proxy_proc.send_signal(signal.SIGTERM)

@@ -126,7 +126,7 @@ class GatewayInstance:
         self.proc = subprocess.Popen(
             cmd,
             env=env,
-            stdin=grant_client,
+            stdin=grant_client.fileno(),
             stdout=self._log_file,
             stderr=self._log_file,
         )
