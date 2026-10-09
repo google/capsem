@@ -5,6 +5,7 @@ use capsem_foundation::ipc_channel;
 use capsem_logger::ledger_protocol::{LedgerClientMessage, LedgerCommand, LedgerReply, LedgerServerMessage};
 use capsem_logger::{Decision, NetEvent, WriteOp};
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerHello, LedgerOutcome, LedgerRequest};
+use capsem_proto::ledger_commitment::{LedgerCommitment, ZERO_COMMITMENT_HASH};
 use capsem_proto::ledger_control::{
     decode_ledger_control_event, encode_ledger_control_request, LedgerControlEvent, LedgerControlRequest,
 };
@@ -42,6 +43,18 @@ fn event() -> WriteOp {
         trace_id: None,
         credential_ref: None,
     })
+}
+
+fn commitment(grant: LedgerChannelGrant, event: &WriteOp) -> LedgerCommitment {
+    LedgerCommitment::new(
+        grant,
+        1,
+        1,
+        event.kind(),
+        capsem_logger::commitment_event_hash(event).unwrap(),
+        ZERO_COMMITMENT_HASH,
+    )
+    .unwrap()
 }
 
 async fn control_event(receiver: &ControlReceiver) -> LedgerControlEvent {
@@ -93,11 +106,13 @@ async fn worker_adopts_one_client_flushes_and_stops() {
         receiver.recv().await.unwrap(),
         LedgerServerMessage::Welcome { .. }
     ));
+    let admitted = event();
     for (request_id, operation) in [
         (
             1,
             LedgerCommand::Admit {
-                event: Box::new(event()),
+                commitment: commitment(grant, &admitted),
+                event: Box::new(admitted),
             },
         ),
         (2, LedgerCommand::Flush),
