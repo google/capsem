@@ -478,7 +478,10 @@ async fn stats_detail_lists_the_newest_tool_calls_with_their_joins() {
 async fn triage_lists_the_newest_tool_errors_first() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = seed_ledger(&dir.path().join("triage"), SMALL_LEDGER_ROWS);
-    let db = capsem_logger::DbHandle::open_external_reader(&db_path).unwrap();
+    let state = make_test_state();
+    let db = state
+        .register_session_db_handle("plans", db_path.parent().unwrap())
+        .unwrap();
     let triage = session_db_triage("plans", &db, &db_path, 5).await.unwrap();
     let rows = triage["tool_errors"]["rows"].as_array().unwrap();
     let messages: Vec<&str> = rows.iter().map(|row| row[8].as_str().unwrap()).collect();

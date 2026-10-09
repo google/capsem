@@ -1,57 +1,219 @@
-//! The per-session logger DB handles the service holds for its routes:
-//! registration, replacement on a rebound path, and startup hydration.
+//! Authenticated per-session ledger channels held by service routes.
 
 use super::*;
+use capsem_logger::ledger_protocol::{LedgerQuery, LedgerRows};
+#[cfg(not(test))]
+use capsem_proto::ledger::LedgerClientRole;
+use capsem_proto::ledger_counters::LedgerCounters;
 
 pub(super) fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf {
     session_dir.join("session.db")
 }
 
-/// The one place the service opens a per-session external reader. Blocking:
-/// callers on the runtime reach it through `spawn_blocking`.
-fn open_session_db_reader(db_path: &StdPath) -> Result<capsem_logger::DbHandle, String> {
-    capsem_logger::DbHandle::open_external_reader(db_path).map_err(|error| error.to_string())
+pub(crate) struct SessionLedger {
+    path: PathBuf,
+    client: Option<capsem_logger::ledger_client::LedgerClient>,
+    #[cfg(test)]
+    embedded: Option<capsem_logger::DbHandle>,
+}
+
+impl SessionLedger {
+    #[cfg(not(test))]
+    fn remote(path: PathBuf, client: capsem_logger::ledger_client::LedgerClient) -> Self {
+        Self {
+            path,
+            client: Some(client),
+            #[cfg(test)]
+            embedded: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn embedded(path: PathBuf, db: capsem_logger::DbHandle) -> Self {
+        Self {
+            path,
+            client: None,
+            embedded: Some(db),
+        }
+    }
+
+    pub(crate) fn path(&self) -> &StdPath {
+        &self.path
+    }
+
+    pub(crate) async fn ready(&self) -> Result<(), String> {
+        #[cfg(test)]
+        if let Some(db) = &self.embedded {
+            return db.ready().await;
+        }
+        self.client().counters().await.map(|_| ())
+    }
+
+    pub(crate) async fn query(&self, query: LedgerQuery) -> Result<Vec<LedgerRows>, String> {
+        #[cfg(test)]
+        if let Some(db) = &self.embedded {
+            return capsem_logger::ledger_server::execute_named_query(db, query).await;
+        }
+        self.client().query(query).await
+    }
+
+    pub(crate) async fn ledger_counters(&self) -> Result<Arc<LedgerCounters>, String> {
+        #[cfg(test)]
+        if let Some(db) = &self.embedded {
+            return db.ledger_counters().await;
+        }
+        self.client().counters().await
+    }
+
+    pub(crate) fn read_cache_epoch(&self, _domain: capsem_logger::ReadCacheDomain) -> u64 {
+        #[cfg(test)]
+        if let Some(db) = &self.embedded {
+            return db.read_cache_epoch(capsem_logger::ReadCacheDomain::All);
+        }
+        self.client().read_cache_epoch()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reader_requests(&self) -> u64 {
+        self.embedded
+            .as_ref()
+            .map_or(0, capsem_logger::DbHandle::reader_requests)
+    }
+
+    pub(crate) async fn read_bodies(&self, event_id: &str) -> Result<Vec<capsem_logger::StoredBody>, String> {
+        #[cfg(test)]
+        if let Some(db) = &self.embedded {
+            return db.read_bodies(event_id).await;
+        }
+        self.client().read_bodies(event_id).await
+    }
+
+    pub(crate) async fn export_warc(&self) -> Result<SessionWarcExport, String> {
+        #[cfg(test)]
+        if let Some(db) = &self.embedded {
+            let bytes = Arc::new(Mutex::new(Vec::new()));
+            let writer = TestWarcWriter(Arc::clone(&bytes));
+            let summary = db.export_warc(writer).await?;
+            let bytes = std::mem::take(&mut *bytes.lock().unwrap());
+            return Ok(SessionWarcExport::Embedded {
+                bytes: Some(bytes),
+                summary: capsem_logger::ledger_protocol::LedgerExportSummary {
+                    records: summary.records,
+                    bytes_written: summary.bytes_written,
+                    skipped_count: summary.skipped_count,
+                    skipped_by_reason: summary
+                        .counts_by_reason()
+                        .into_iter()
+                        .map(|(reason, count)| (reason.to_string(), count))
+                        .collect(),
+                },
+            });
+        }
+        Ok(SessionWarcExport::Remote(self.client().export_warc().await?))
+    }
+
+    fn client(&self) -> &capsem_logger::ledger_client::LedgerClient {
+        self.client.as_ref().expect("production session ledger has a client")
+    }
+}
+
+#[cfg(test)]
+struct TestWarcWriter(Arc<Mutex<Vec<u8>>>);
+
+#[cfg(test)]
+impl std::io::Write for TestWarcWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+pub(crate) enum SessionWarcExport {
+    Remote(capsem_logger::ledger_client::LedgerWarcExport),
+    #[cfg(test)]
+    Embedded {
+        bytes: Option<Vec<u8>>,
+        summary: capsem_logger::ledger_protocol::LedgerExportSummary,
+    },
+}
+
+impl SessionWarcExport {
+    pub(crate) async fn next_chunk(&mut self) -> Option<Result<Vec<u8>, String>> {
+        match self {
+            Self::Remote(export) => export.next_chunk().await,
+            #[cfg(test)]
+            Self::Embedded { bytes, .. } => bytes.take().map(Ok),
+        }
+    }
+
+    pub(crate) async fn finish(self) -> Result<capsem_logger::ledger_protocol::LedgerExportSummary, String> {
+        match self {
+            Self::Remote(export) => export.finish().await,
+            #[cfg(test)]
+            Self::Embedded { summary, .. } => Ok(summary),
+        }
+    }
 }
 
 impl ServiceState {
-    /// Register `vm_id`'s ledger reader, opening it on this thread.
-    ///
-    /// Opening a reader is a blocking SQLite open and schema check, so this is
-    /// for code already off the runtime: startup hydration and `resume_sandbox`.
-    /// Async routes call [`Self::register_session_db_handle_async`].
+    #[cfg(test)]
     pub(crate) fn register_session_db_handle(
         &self,
         vm_id: &str,
         session_dir: &StdPath,
-    ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
+    ) -> anyhow::Result<Arc<SessionLedger>> {
         let db_path = session_db_path_for_session_dir(session_dir);
         let started = std::time::Instant::now();
         if let Some(handle) = self.registered_session_db_handle(vm_id, &db_path, started) {
             return Ok(handle);
         }
-        let opened = open_session_db_reader(&db_path);
+        let opened = crate::tests::test_session_ledger(db_path.clone());
         self.install_session_db_handle(vm_id, db_path, opened, started)
     }
 
-    /// Register `vm_id`'s ledger reader without blocking a tokio worker.
-    ///
-    /// Same answer as [`Self::register_session_db_handle`]; the open runs on
-    /// the blocking pool, where a slow disk or a large schema check stalls one
-    /// blocking thread instead of every request sharing the worker.
     pub(crate) async fn register_session_db_handle_async(
         &self,
         vm_id: &str,
         session_dir: &StdPath,
-    ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
+    ) -> anyhow::Result<Arc<SessionLedger>> {
+        #[cfg(test)]
+        return self.register_session_db_handle(vm_id, session_dir);
+
+        #[cfg(not(test))]
         let db_path = session_db_path_for_session_dir(session_dir);
+        #[cfg(not(test))]
         let started = std::time::Instant::now();
+        #[cfg(not(test))]
         if let Some(handle) = self.registered_session_db_handle(vm_id, &db_path, started) {
             return Ok(handle);
         }
-        let open_path = db_path.clone();
-        let opened = tokio::task::spawn_blocking(move || open_session_db_reader(&open_path))
+        #[cfg(not(test))]
+        let opened = self
+            .ledger_workers
+            .acquire(
+                vm_id,
+                &db_path,
+                &session_dir.join("ledger.log"),
+                LedgerClientRole::Reader,
+            )
             .await
-            .unwrap_or_else(|error| Err(format!("session DB open task failed: {error}")));
+            .map_err(|error| error.to_string())
+            .map(|channel| {
+                let (stream, grant) = channel.into_parts();
+                (stream, grant)
+            });
+        #[cfg(not(test))]
+        let opened = match opened {
+            Ok((stream, grant)) => capsem_logger::ledger_client::LedgerClient::connect(stream, grant, db_path.clone())
+                .await
+                .map(|client| SessionLedger::remote(db_path.clone(), client)),
+            Err(error) => Err(error),
+        };
+        #[cfg(not(test))]
         self.install_session_db_handle(vm_id, db_path, opened, started)
     }
 
@@ -62,7 +224,7 @@ impl ServiceState {
         vm_id: &str,
         db_path: &StdPath,
         started: std::time::Instant,
-    ) -> Option<Arc<capsem_logger::DbHandle>> {
+    ) -> Option<Arc<SessionLedger>> {
         let handle = self.session_db_handles.lock().unwrap().get(vm_id).cloned()?;
         if handle.path() == db_path {
             tracing::debug!(
@@ -88,9 +250,9 @@ impl ServiceState {
         &self,
         vm_id: &str,
         db_path: PathBuf,
-        opened: Result<capsem_logger::DbHandle, String>,
+        opened: Result<SessionLedger, String>,
         started: std::time::Instant,
-    ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
+    ) -> anyhow::Result<Arc<SessionLedger>> {
         let handle = match opened {
             Ok(handle) => Arc::new(handle),
             Err(error) => {
@@ -149,11 +311,11 @@ impl ServiceState {
         }
     }
 
-    pub(crate) fn session_db_handle(&self, vm_id: &str) -> Option<Arc<capsem_logger::DbHandle>> {
+    pub(crate) fn session_db_handle(&self, vm_id: &str) -> Option<Arc<SessionLedger>> {
         self.session_db_handles.lock().unwrap().get(vm_id).cloned()
     }
 
-    pub(crate) fn hydrate_session_db_handles(&self) {
+    pub(crate) async fn hydrate_session_db_handles(&self) {
         let mut candidates: Vec<(String, PathBuf)> = {
             let instances = self.instances.lock().unwrap();
             instances
@@ -184,7 +346,7 @@ impl ServiceState {
                 );
                 continue;
             }
-            match self.register_session_db_handle(&vm_id, &session_dir) {
+            match self.register_session_db_handle_async(&vm_id, &session_dir).await {
                 Ok(_) => hydrated += 1,
                 Err(error) => {
                     warn!(

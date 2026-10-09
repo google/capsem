@@ -5,7 +5,7 @@ pub(super) use bodies::{handle_bodies_warc_export, handle_event_bodies};
 mod response_cache;
 mod rows;
 pub(crate) use response_cache::{forget_session_responses, session_response_cache_lookup, SessionResponseCache};
-use rows::{query_route_objects, query_route_typed_rows, route_query_objects};
+use rows::{ledger_rows_to_objects, query_route_typed_rows};
 pub(crate) mod stats_detail;
 pub(super) use stats_detail::read_stats_detail_payload_from_session_db;
 pub(crate) mod history;
@@ -149,7 +149,7 @@ pub(super) async fn open_ready_session_db(
     vm_id: &str,
     ledger: &str,
     db_path: &StdPath,
-) -> Result<Arc<capsem_logger::DbHandle>, AppError> {
+) -> Result<Arc<session_db_handles::SessionLedger>, AppError> {
     let db = session_db(state, vm_id, ledger, db_path).await?;
     db.ready()
         .await
@@ -166,7 +166,7 @@ pub(super) async fn session_db(
     vm_id: &str,
     ledger: &str,
     db_path: &StdPath,
-) -> Result<Arc<capsem_logger::DbHandle>, AppError> {
+) -> Result<Arc<session_db_handles::SessionLedger>, AppError> {
     if !db_path.exists() {
         error!(
             vm_id,

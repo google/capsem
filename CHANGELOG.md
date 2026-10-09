@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Serve live and stopped-session inspection through coordinator-granted,
+  role-bound ledger channels and bounded named operations, eliminating the
+  service's per-session SQLite readers and closing ledger workers before a
+  session is deleted.
+
 - Give each VM owner one coordinator-minted, generation- and role-bound
   ledger channel and route its existing event writer through the supervised
   session owner, eliminating the VM process's direct SQLite open.
