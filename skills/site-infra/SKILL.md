@@ -372,6 +372,12 @@ sips -z 512 512 web/graphics/icon/1024w/capsem-logo-color.png --out web/docs/pub
 
 ## Keep docs in sync
 
+For rule authoring, put task steps and a few practical examples in a how-to
+guide; put the complete supported syntax and limits in its reference. Link the
+architecture explanation to both. Document the product's implemented language
+subset, not every feature of the upstream CEL or Sigma specification. Separate
+detection severity from enforcement action, including defaults that affect access.
+
 For requested documentation updates, edit the corresponding approved page and verify it
 against the owning source contract. Consolidate overlapping explanations and
 remove obsolete claims within the requested scope. Do not create pages or stubs

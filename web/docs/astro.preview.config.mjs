@@ -25,9 +25,17 @@ export default defineConfig({
         },
         {
           label: 'Guides',
-          items: [{ slug: 'guides' }, { slug: 'guides/sdk' }],
+          items: [
+            { slug: 'guides' },
+            { slug: 'guides/writing-access-rules' },
+            { slug: 'guides/writing-detection-rules' },
+            { slug: 'guides/sdk' },
+          ],
         },
-        { slug: 'reference' },
+        {
+          label: 'Reference',
+          items: [{ slug: 'reference' }, { slug: 'reference/cel' }, { slug: 'reference/sigma' }],
+        },
         { slug: 'sdk' },
       ],
     }),

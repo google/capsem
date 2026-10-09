@@ -101,6 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Access-rule and Sigma detection-rule guides link to complete supported CEL
+  and Sigma syntax references, with navigation from the security engine.
+
 - Security engine architecture explains event processing, plugins and rules,
   credential handling, enforcement, and the separate sanitized ledger path.
 

@@ -160,6 +160,11 @@ and inline rules. Corp constraints take precedence. Relative file paths are
 resolved from the configuration file's directory. A detection records a match
 and its level; it does not automatically block the operation.
 
+Write rules with [Writing access rules](/guides/writing-access-rules/) and
+[Writing detection rules](/guides/writing-detection-rules/). Use the
+[CEL syntax reference](/reference/cel/) and [Sigma syntax reference](/reference/sigma/)
+for supported expressions, fields, and file formats.
+
 ## Enforcement and observation
 
 | Event source | What the engine can do |
