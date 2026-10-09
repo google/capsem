@@ -1,7 +1,7 @@
 //! Process-side client for coordinator-minted upstream descriptors.
 
 use std::io;
-use std::os::fd::{AsFd as _, BorrowedFd, OwnedFd};
+use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -15,8 +15,8 @@ use capsem_foundation::unix::fd::{self, SocketShutdown};
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::upstream_grant::{
-    decode_upstream_grant_response, encode_upstream_grant_request, UpstreamDescriptorKind, UpstreamGrantRequest,
-    UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
+    decode_upstream_grant_response, encode_upstream_grant_request, ProxyTrafficService, UpstreamDescriptorKind,
+    UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -29,6 +29,15 @@ type WireSender = DescriptorSender<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX
 type WireReceiver = DescriptorReceiver<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
 
 enum Command {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "guest dispatch uses this after proxy traffic handlers land")
+    )]
+    AttachProxyTraffic {
+        service: ProxyTrafficService,
+        descriptor: OwnedFd,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     OpenLedger {
         reply: oneshot::Sender<Result<(UnixStream, LedgerChannelGrant), String>>,
     },
@@ -84,6 +93,26 @@ impl UpstreamGrantClient {
         let (reply, result) = oneshot::channel();
         self.commands
             .send(Command::OpenLedger { reply })
+            .await
+            .map_err(|_| anyhow!("upstream grant channel is closed"))?;
+        result
+            .await
+            .map_err(|_| anyhow!("upstream grant channel stopped"))?
+            .map_err(anyhow::Error::msg)
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "guest dispatch uses this after proxy traffic handlers land")
+    )]
+    pub(crate) async fn attach_proxy_traffic(&self, service: ProxyTrafficService, descriptor: OwnedFd) -> Result<()> {
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .send(Command::AttachProxyTraffic {
+                service,
+                descriptor,
+                reply,
+            })
             .await
             .map_err(|_| anyhow!("upstream grant channel is closed"))?;
         result
@@ -214,6 +243,14 @@ async fn dispatch(
     command: Command,
 ) -> Result<(), String> {
     match command {
+        Command::AttachProxyTraffic {
+            service,
+            descriptor,
+            reply,
+        } => finish(
+            reply,
+            attach_proxy_traffic(sender, receiver, request_id, service, descriptor).await,
+        ),
         Command::OpenLedger { reply } => finish(reply, open_ledger(sender, receiver, request_id).await),
         Command::SetGuestMode {
             relative_path,
@@ -259,6 +296,37 @@ async fn dispatch(
             reply,
             connect_tcp(sender, receiver, releases, request_id, selection_id, &policy_digest).await,
         ),
+    }
+}
+
+async fn attach_proxy_traffic(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    request_id: u64,
+    service: ProxyTrafficService,
+    descriptor: OwnedFd,
+) -> Result<Result<(), String>, String> {
+    let request = UpstreamGrantRequest::AttachProxyTraffic { request_id, service };
+    let bytes =
+        encode_upstream_grant_request(&request).map_err(|error| format!("encode proxy traffic handoff: {error:#}"))?;
+    tokio::time::timeout(WIRE_TIMEOUT, sender.send(&bytes, &[descriptor.as_raw_fd()]))
+        .await
+        .map_err(|_| "send proxy traffic handoff timed out".to_string())?
+        .map_err(|error| format!("send proxy traffic handoff: {error}"))?;
+    drop(descriptor);
+    let (response, fds) = receive_response(receiver).await?;
+    debug_assert!(fds.is_empty());
+    match response {
+        UpstreamGrantResponse::ProxyTrafficAdopted {
+            request_id: response_id,
+        } if response_id == request_id => Ok(Ok(())),
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("proxy traffic handoff denied: {reason:?}"))),
+        response => Err(format!(
+            "unexpected proxy traffic response for request {request_id}: {response:?}"
+        )),
     }
 }
 

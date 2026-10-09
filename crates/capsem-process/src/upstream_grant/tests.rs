@@ -7,8 +7,8 @@ use capsem_core::net::mitm_proxy::{TcpUpstreamGrants, UpstreamTarget};
 use capsem_core::GuestMetadataAuthority as _;
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use capsem_proto::upstream_grant::{
-    decode_upstream_grant_request, encode_upstream_grant_response, UpstreamDescriptorKind, UpstreamGrantDenial,
-    UpstreamGrantRequest, UpstreamGrantResponse,
+    decode_upstream_grant_request, encode_upstream_grant_response, ProxyTrafficService, UpstreamDescriptorKind,
+    UpstreamGrantDenial, UpstreamGrantRequest, UpstreamGrantResponse,
 };
 
 use super::*;
@@ -49,6 +49,42 @@ async fn ledger_channel_preserves_grant_and_is_adopted_before_use() {
     let mut message = [0_u8; 5];
     ledger_peer.read_exact(&mut message).unwrap();
     assert_eq!(&message, b"hello");
+    broker_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn proxy_traffic_descriptor_is_surrendered_before_adoption_returns() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let (traffic, mut guest) = UnixStream::pair().unwrap();
+    let broker_task = tokio::spawn(async move {
+        let frame = requests.recv().await.unwrap();
+        assert_eq!(frame.fds.len(), 1);
+        assert_eq!(
+            decode_upstream_grant_request(&frame.bytes).unwrap(),
+            UpstreamGrantRequest::AttachProxyTraffic {
+                request_id: 1,
+                service: ProxyTrafficService::Dns,
+            }
+        );
+        let mut adopted = UnixStream::from(frame.fds.into_iter().next().unwrap());
+        adopted.write_all(b"owned").unwrap();
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::ProxyTrafficAdopted { request_id: 1 },
+            None,
+        )
+        .await;
+    });
+
+    client
+        .attach_proxy_traffic(ProxyTrafficService::Dns, traffic.into())
+        .await
+        .unwrap();
+    let mut proof = [0; 5];
+    guest.read_exact(&mut proof).unwrap();
+    assert_eq!(&proof, b"owned");
     broker_task.await.unwrap();
 }
 
