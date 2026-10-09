@@ -7,6 +7,11 @@ import asyncio
 import json
 
 from openai import APIStatusError, AsyncOpenAI
+from openai.types.chat import (
+    ChatCompletionFunctionToolParam,
+    ChatCompletionMessageFunctionToolCall,
+)
+from openai.types.responses import FunctionToolParam
 
 
 async def probe(base_url: str) -> dict[str, object]:
@@ -16,7 +21,7 @@ async def probe(base_url: str) -> dict[str, object]:
         max_retries=0,
         timeout=5.0,
     )
-    tools = [
+    tools: list[ChatCompletionFunctionToolParam] = [
         {
             "type": "function",
             "function": {
@@ -35,7 +40,10 @@ async def probe(base_url: str) -> dict[str, object]:
         messages=[{"role": "user", "content": "Use the fixture."}],
         tools=tools,
     )
-    tool_call = chat.choices[0].message.tool_calls[0]
+    tool_calls = chat.choices[0].message.tool_calls
+    assert tool_calls is not None
+    tool_call = tool_calls[0]
+    assert isinstance(tool_call, ChatCompletionMessageFunctionToolCall)
     assert tool_call.function.name == "fixture_lookup"
     assert json.loads(tool_call.function.arguments)["query"] == "Capsem ironbank poem"
     assert chat.usage is not None and chat.usage.total_tokens == 456
@@ -50,11 +58,12 @@ async def probe(base_url: str) -> dict[str, object]:
         streamed_chat += chunk.choices[0].delta.content or ""
     assert streamed_chat == "Capsem ironbank poem"
 
-    response_tools = [
+    response_tools: list[FunctionToolParam] = [
         {
             "type": "function",
             "name": "exec_command",
             "description": "Run the deterministic fixture command.",
+            "strict": False,
             "parameters": {
                 "type": "object",
                 "properties": {"cmd": {"type": "string"}},
@@ -123,6 +132,7 @@ async def probe(base_url: str) -> dict[str, object]:
         )
     except APIStatusError as error:
         upstream_status = error.status_code
+        assert isinstance(error.body, dict)
         upstream_code = error.body["code"]
     else:
         raise AssertionError("upstream failure was returned as success")
