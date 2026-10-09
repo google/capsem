@@ -24,6 +24,11 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
+        if let Some(remote) = &self.remote {
+            let result = remote.admit(op).await;
+            record_enqueue(started, if result.is_ok() { "queued" } else { "closed" }, &span);
+            return result;
+        }
         let Some(tx) = self.clone_sender() else {
             record_enqueue(started, "missing_sender", &span);
             return Err("db writer sender missing".to_string());
@@ -46,6 +51,11 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
+        if let Some(remote) = &self.remote {
+            let accepted = remote.try_admit(op);
+            record_enqueue(started, if accepted { "queued" } else { "full" }, &span);
+            return accepted;
+        }
         let queue_result = match self.clone_sender() {
             Some(tx) => match tx.try_send(WriterMessage::write(op)) {
                 Ok(()) => "queued",
@@ -78,6 +88,11 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
+        if let Some(remote) = &self.remote {
+            let result = remote.admit_blocking(op);
+            record_enqueue(started, if result.is_ok() { "queued" } else { "closed" }, &span);
+            return result;
+        }
         let Some(tx) = self.clone_sender() else {
             record_enqueue(started, "missing_sender", &span);
             return Err("db writer sender missing".to_string());
