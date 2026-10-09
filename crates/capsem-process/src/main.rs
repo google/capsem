@@ -726,7 +726,7 @@ async fn run_async_main_loop(
     // separate file rather than the socket's existence, because a stale
     // socket from an earlier run at this path was just deleted above.
     let launched_path = uds_path.with_extension("launched");
-    std::fs::File::create(&launched_path)?;
+    std::fs::write(&launched_path, b"launched\n")?;
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&launched_path, std::fs::Permissions::from_mode(0o600))?;
