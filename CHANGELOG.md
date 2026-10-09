@@ -157,6 +157,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The authenticated gateway forwards standalone proxy create, heartbeat and
+  stop operations instead of returning 404 for documented SDK endpoints.
+
 - The authenticated gateway forwards host credential injection, so desktop
   settings and TCP SDK clients can use file and memory storage.
 
