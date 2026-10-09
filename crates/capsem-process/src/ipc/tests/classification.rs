@@ -37,7 +37,7 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         | ServiceToProcess::PlugCable { .. }
         | ServiceToProcess::UnplugCable { .. } => IpcAction::Unexpected,
         ServiceToProcess::ReloadConfig { .. } => IpcAction::Reload,
-        ServiceToProcess::Shutdown | ServiceToProcess::Suspend { .. } => IpcAction::Lifecycle,
+        ServiceToProcess::Shutdown | ServiceToProcess::Suspend => IpcAction::Lifecycle,
     }
 }
 

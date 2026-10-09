@@ -712,12 +712,9 @@ pub(crate) async fn handle_ipc_connection(
                 info!("Received Shutdown command, exiting IPC loop gracefully");
                 break;
             }
-            ServiceToProcess::Suspend { checkpoint_path } => {
+            ServiceToProcess::Suspend => {
                 info!("Received Suspend command, forwarding to ctrl channel");
-                capsem_core::try_send!(
-                    "ctrl_suspend",
-                    ctrl_tx.send(ServiceToProcess::Suspend { checkpoint_path }).await
-                );
+                capsem_core::try_send!("ctrl_suspend", ctrl_tx.send(ServiceToProcess::Suspend).await);
             }
             ServiceToProcess::McpListServers { id } => {
                 let mcp = Arc::clone(&mcp_runtime);

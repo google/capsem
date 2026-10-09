@@ -565,8 +565,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 ServiceToProcess::CloneState { id } => {
                     clone_state::spawn(&hub_tx, &js_for_cmd, &ipc_tx_for_cmd, id);
                 }
-                ServiceToProcess::Suspend { checkpoint_path } => {
-                    let full_path = session_dir.join(checkpoint_path);
+                ServiceToProcess::Suspend => {
+                    let full_path = crate::owner_checkpoint_path(&session_dir);
                     let complete_path = checkpoint_complete_path(&full_path);
                     let _ = std::fs::remove_file(&complete_path);
                     let checkpoint_path_for_save = full_path.clone();
@@ -933,12 +933,7 @@ fn dispatch_aux_connection(
                             "ipc_lifecycle_suspend",
                             itx.send(ProcessToService::SuspendRequested { id })
                         );
-                        capsem_core::try_send!(
-                            "ctrl_lifecycle_suspend",
-                            ctx.blocking_send(ServiceToProcess::Suspend {
-                                checkpoint_path: "checkpoint.vzsave".into()
-                            })
-                        );
+                        capsem_core::try_send!("ctrl_lifecycle_suspend", ctx.blocking_send(ServiceToProcess::Suspend));
                     }
                     other => {
                         // W4: a lifecycle-port frame the host doesn't recognize

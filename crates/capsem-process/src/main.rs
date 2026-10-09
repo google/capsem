@@ -174,6 +174,14 @@ fn aggregator_log_path(session_dir: &Path) -> PathBuf {
     session_dir.join("mcp-aggregator.stderr.log")
 }
 
+const OWNER_CHECKPOINT_FILE: &str = "checkpoint.vzsave";
+
+fn owner_checkpoint_path(session_dir: &Path) -> PathBuf {
+    session_dir
+        .join(capsem_core::session::OWNER_STATE_DIR)
+        .join(OWNER_CHECKPOINT_FILE)
+}
+
 fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Result<PathBuf> {
     capsem_core::create_virtiofs_session(session_dir, scratch_disk_size_gb)?;
     let guest_dir = capsem_core::guest_share_dir(session_dir);
@@ -230,12 +238,37 @@ fn grant_owner_path(
     Ok(policy.allow(canonical, access))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn grant_owner_session_paths(
+    mut policy: capsem_foundation::unix::worker_sandbox::Policy,
+    session_dir: &Path,
+) -> Result<capsem_foundation::unix::worker_sandbox::Policy> {
+    use capsem_foundation::unix::worker_sandbox::Access;
+
+    for (path, access) in [
+        (capsem_core::guest_share_dir(session_dir), Access::ReadWrite),
+        (
+            capsem_core::session::system_overlay_image_path(session_dir),
+            Access::ReadWrite,
+        ),
+        (capsem_core::session::image_share_path(session_dir), Access::ReadOnly),
+        (
+            session_dir.join(capsem_core::session::OWNER_STATE_DIR),
+            Access::ReadWrite,
+        ),
+        (session_dir.join("serial.log"), Access::ReadWrite),
+    ] {
+        policy = grant_owner_path(policy, &path, access)?;
+    }
+    Ok(policy)
+}
+
 #[cfg(target_os = "linux")]
 fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
     use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
 
     let mut policy = Policy::new(Role::VmOwner);
-    policy = grant_owner_path(policy, session_dir, Access::ReadWrite)?;
+    policy = grant_owner_session_paths(policy, session_dir)?;
     policy = grant_owner_path(policy, &args.assets_dir, Access::ReadOnly)?;
     policy = grant_owner_path(policy, &args.rootfs, Access::ReadOnly)?;
     policy = grant_owner_path(policy, &args.active_policy, Access::ReadOnly)?;
@@ -272,7 +305,7 @@ fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
     use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
 
     let mut policy = Policy::new(Role::VmOwner);
-    policy = grant_owner_path(policy, session_dir, Access::ReadWrite)?;
+    policy = grant_owner_session_paths(policy, session_dir)?;
     policy = grant_owner_path(policy, &args.assets_dir, Access::ReadOnly)?;
     policy = grant_owner_path(policy, &args.rootfs, Access::ReadOnly)?;
     policy = grant_owner_path(policy, &args.active_policy, Access::ReadOnly)?;
@@ -312,6 +345,7 @@ struct OwnerSandboxAttestation {
     direct_file: std::fs::File,
     guest_path: PathBuf,
     guest_relative: Vec<u8>,
+    ledger_path: PathBuf,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -335,7 +369,9 @@ fn prepare_owner_sandbox_attestation(session_dir: &Path) -> Result<OwnerSandboxA
             .unwrap_or_default()
             .as_nanos()
     );
-    let direct_path = session_dir.join(format!(".owner-sandbox-attestation-{nonce}"));
+    let direct_path = session_dir
+        .join(capsem_core::session::OWNER_STATE_DIR)
+        .join(format!(".owner-sandbox-attestation-{nonce}"));
     let guest_relative = format!("workspace/.owner-metadata-attestation-{nonce}").into_bytes();
     let guest_path = session_dir
         .join(capsem_core::GUEST_SHARE_DIR)
@@ -347,6 +383,7 @@ fn prepare_owner_sandbox_attestation(session_dir: &Path) -> Result<OwnerSandboxA
         direct_file,
         guest_path,
         guest_relative,
+        ledger_path: session_dir.join("session.db"),
     })
 }
 
@@ -368,6 +405,10 @@ async fn attest_owner(
     require_denied(
         std::fs::File::open("/etc/passwd").map(|_| ()),
         "read unrelated host files",
+    )?;
+    require_denied(
+        std::fs::File::open(&attestation.ledger_path).map(|_| ()),
+        "open session ledger storage",
     )?;
     require_denied(
         std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, 9)).map(|_| ()),
@@ -445,6 +486,7 @@ fn main() -> Result<()> {
 
     info!(id = %args.id, "capsem-sandbox-process starting");
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
+    capsem_core::session::prepare_owner_state_dir(&session_dir)?;
     // The image share is attached to every session, read-only at the device:
     // a device cannot be added after boot, and an image is pulled only once
     // the VM runs (its owner admits the pull). It stays empty until the
@@ -475,6 +517,13 @@ fn main() -> Result<()> {
     let system_img = capsem_core::session::system_overlay_image_path(&session_dir);
     let machine_identifier_path = session_dir.join("machine_identifier");
     let serial_log_path = session_dir.join("serial.log");
+    drop(
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&serial_log_path)
+            .with_context(|| format!("prepare serial log {}", serial_log_path.display()))?,
+    );
     let (vm, vsock_rx, sm) = boot_vm(BootOptions {
         assets: &args.assets_dir,
         kernel_override: args.kernel.as_deref(),
