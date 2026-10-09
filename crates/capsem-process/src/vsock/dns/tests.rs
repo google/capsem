@@ -4,17 +4,17 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 
 fn handler() -> Arc<DnsHandler> {
-    let policy = Arc::new(std::sync::RwLock::new(Arc::new(
-        capsem_core::net::policy::NetworkMechanics::default(),
-    )));
-    let rules = Arc::new(std::sync::RwLock::new(Arc::new(
-        capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
-    )));
-    let plugins = Arc::new(std::sync::RwLock::new(std::collections::BTreeMap::new().into()));
+    let policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(
+        capsem_core::net::proxy_engine::ProxyPolicySnapshot::new(
+            "blake3:test".into(),
+            capsem_core::net::policy::NetworkMechanics::default(),
+            capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
+            std::collections::BTreeMap::new(),
+            capsem_core::net::policy_config::ModelEndpointRegistry::default(),
+        ),
+    );
     Arc::new(DnsHandler::new(
         policy,
-        rules,
-        plugins,
         Arc::new(DnsResolver::with_upstreams(Vec::new())),
     ))
 }

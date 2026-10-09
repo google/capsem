@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use capsem_core::container::publish::Publisher;
 use capsem_core::net::mitm_proxy::{McpEndpointState, ScopedMcpTools};
-use capsem_core::net::policy_config::{ModelEndpointRegistry, SecurityRuleSet, SharedPluginPolicy};
+use capsem_core::net::policy_config::{SecurityRuleSet, SharedPluginPolicy};
+use capsem_core::net::proxy_engine::ProxyPolicyHandle;
 use capsem_logger::DbWriter;
 use capsem_proto::mcp_aggregator::AggregatorClient;
 use capsem_proto::mcp_contracts::{McpToolDef, ToolAnnotations};
@@ -135,7 +136,7 @@ pub(crate) struct McpRuntime {
     pub(crate) db: Arc<DbWriter>,
     pub(crate) security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
     pub(crate) plugin_policy: SharedPluginPolicy,
-    pub(crate) model_endpoints: Arc<std::sync::RwLock<Arc<ModelEndpointRegistry>>>,
+    pub(crate) proxy_policy: ProxyPolicyHandle,
 }
 
 #[cfg(test)]

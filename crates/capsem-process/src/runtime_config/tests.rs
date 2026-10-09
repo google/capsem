@@ -39,6 +39,25 @@ local = false
     assert_eq!(runtime.plugins["credential_broker"].mode, SecurityPluginMode::Rewrite);
     assert!(!runtime.mcp.server_enabled["local"]);
     assert_eq!(runtime.network.http_upstream_ports, vec![80, 3128, 3713, 8080, 11434]);
+    let snapshot = runtime.proxy_policy_snapshot();
+    assert_eq!(snapshot.digest(), runtime.active_policy_digest);
+    assert_eq!(
+        snapshot.network().http_upstream_ports,
+        runtime.network.http_upstream_ports
+    );
+    assert!(snapshot
+        .security_rules()
+        .rules()
+        .iter()
+        .any(|rule| rule.rule_id == "profiles.rules.runtime_http"));
+    assert_eq!(
+        snapshot.plugins()["credential_broker"].mode,
+        SecurityPluginMode::Rewrite
+    );
+    assert!(snapshot
+        .model_endpoints()
+        .provider_for_host("api.anthropic.com")
+        .is_some());
 }
 
 #[test]
