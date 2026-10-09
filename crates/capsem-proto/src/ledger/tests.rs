@@ -70,6 +70,20 @@ fn role_rejects_wrong_operation_before_dispatch() {
 }
 
 #[test]
+fn only_maintainers_can_snapshot_a_ledger() {
+    for role in [
+        LedgerClientRole::VmOwner,
+        LedgerClientRole::Proxy,
+        LedgerClientRole::Coordinator,
+        LedgerClientRole::Reader,
+        LedgerClientRole::Supervisor,
+    ] {
+        assert!(!role.permits(LedgerCapability::Snapshot), "{role:?}");
+    }
+    assert!(LedgerClientRole::Maintainer.permits(LedgerCapability::Snapshot));
+}
+
+#[test]
 fn compatibility_mismatch_fails_closed() {
     let expected = grant(LedgerClientRole::Reader);
     let mut hello = LedgerHello::for_grant(&expected);
