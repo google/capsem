@@ -239,6 +239,10 @@ impl ServiceState {
             instance_reaper::kill_and_reap(child);
             return Err(error);
         }
+        if let Err(error) = tokio::runtime::Handle::current().block_on(self.grant_proxy_private_names(&vm_id, &proxy)) {
+            instance_reaper::kill_and_reap(child);
+            return Err(error);
+        }
         if let Err(error) = tokio::runtime::Handle::current()
             .block_on(proxy.grant(capsem_proto::proxy_control::ProxyCapability::Upstream, proxy_upstream))
         {

@@ -49,6 +49,7 @@ mod plugin_routes;
 mod private_routes;
 mod process_control;
 mod proxy_credentials;
+mod proxy_private_names;
 mod proxy_worker;
 mod sandbox_info;
 mod session_cleanup;

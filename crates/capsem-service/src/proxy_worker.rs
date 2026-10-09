@@ -644,6 +644,32 @@ fn generation_hex(generation: ProxyGeneration) -> String {
 }
 
 impl ServiceState {
+    pub(crate) async fn grant_proxy_private_names(
+        self: &std::sync::Arc<Self>,
+        vm_id: &str,
+        worker: &ProxyWorker,
+    ) -> Result<()> {
+        let (service, proxy) = UnixStream::pair().context("create proxy private-name capability")?;
+        let serving = tokio::spawn(crate::proxy_private_names::serve(
+            std::sync::Arc::clone(self),
+            vm_id.to_string(),
+            service,
+        ));
+        if let Err(error) = worker.grant(ProxyCapability::PrivateNames, proxy).await {
+            serving.abort();
+            let _ = serving.await;
+            return Err(error.context("grant proxy private-name capability"));
+        }
+        tokio::spawn(async move {
+            match serving.await {
+                Ok(Ok(())) => tracing::debug!("proxy private-name capability disconnected"),
+                Ok(Err(error)) => tracing::warn!(%error, "proxy private-name capability failed"),
+                Err(error) => tracing::warn!(%error, "proxy private-name capability task failed"),
+            }
+        });
+        Ok(())
+    }
+
     pub(crate) async fn grant_proxy_credentials(&self, worker: &ProxyWorker) -> Result<()> {
         let (service, proxy) = UnixStream::pair().context("create proxy credential capability")?;
         let serving = tokio::spawn(crate::proxy_credentials::serve(service));
