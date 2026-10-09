@@ -9,10 +9,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
-
-import tomllib
 
 from helpers.bounded import bounded
 
