@@ -225,6 +225,7 @@ impl ServiceState {
                 return Err(error.context("start confined proxy worker"));
             }
         };
+        let upstream_broker = upstream_broker.with_proxy(proxy.clone());
 
         info!(
             vm_id,

@@ -295,6 +295,7 @@ impl ServiceState {
                 return Err(error.context("start confined proxy worker"));
             }
         };
+        let upstream_broker = upstream_broker.with_proxy(proxy.clone());
 
         // Provisioning runs on a blocking thread that keeps the runtime
         // handle, so the event lands before anything can stop the session.
