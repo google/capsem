@@ -130,6 +130,39 @@ async fn durable_checkpoints_survive_restart_and_continue_global_order() {
 }
 
 #[tokio::test]
+async fn multiple_producers_share_global_order_and_unanchored_tail_is_not_a_checkpoint() {
+    let root = tempfile::tempdir().unwrap();
+    let authority = CommitmentAuthority::open(root.path(), "session-tail").await.unwrap();
+    let first = grant(1, 7);
+    let second = grant(1, 8);
+
+    let first_global = authority
+        .reserve(first, 1, "net_event".into(), [1; 32], ZERO_COMMITMENT_HASH)
+        .await
+        .unwrap();
+    let second_global = authority
+        .reserve(second, 1, "dns_event".into(), [2; 32], ZERO_COMMITMENT_HASH)
+        .await
+        .unwrap();
+    assert_eq!(second_global, first_global + 1);
+
+    let first_commitment =
+        LedgerCommitment::new(first, 1, first_global, "net_event", [1; 32], ZERO_COMMITMENT_HASH).unwrap();
+    authority.anchor(first, vec![first_commitment.clone()]).await.unwrap();
+    drop(authority);
+
+    let restarted = CommitmentAuthority::open(root.path(), "session-tail").await.unwrap();
+    assert_eq!(restarted.anchored().await, vec![first_commitment]);
+    assert_eq!(
+        restarted
+            .reserve(second, 1, "dns_event".into(), [2; 32], ZERO_COMMITMENT_HASH)
+            .await
+            .unwrap(),
+        first_global + 1
+    );
+}
+
+#[tokio::test]
 async fn substitution_reorder_and_stale_authority_are_refused() {
     let root = tempfile::tempdir().unwrap();
     let authority = CommitmentAuthority::open(root.path(), "session-b").await.unwrap();
