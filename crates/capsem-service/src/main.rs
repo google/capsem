@@ -43,6 +43,7 @@ mod owner_connection;
 mod owner_handoff;
 mod policy_mutation;
 use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
+mod ledger_worker;
 mod mcp_routes;
 mod plugin_routes;
 mod private_routes;
