@@ -42,6 +42,24 @@ async fn post_bytes_preserves_status_headers_and_body() {
 }
 
 #[tokio::test]
+async fn persistent_client_reuses_a_prepared_connection() {
+    let (_directory, socket, task) = server(Router::new().route("/bytes", post(echo))).await;
+    let client = Client::connect(&socket).await.unwrap();
+    for body in [b"first".as_slice(), b"second".as_slice()] {
+        let response = client
+            .post_bytes(
+                "/bytes",
+                http::HeaderValue::from_static("application/x-protobuf"),
+                Bytes::copy_from_slice(body),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.body(), body);
+    }
+    task.abort();
+}
+
+#[tokio::test]
 async fn post_bytes_refuses_an_oversized_request_before_connecting() {
     let socket = std::path::Path::new("/a/socket/that/must/not/be-opened");
     let error = post_bytes(
