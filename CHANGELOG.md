@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Security engine architecture names the network analysis engine and shows
+  TOML rule files and Sigma detection files as inputs to the shared rule set.
+
 - Security diagrams use a shared permission-color legend and separate per-VM
   ownership groups from hardware boundaries; redundant ownership labels are removed.
 

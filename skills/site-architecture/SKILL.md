@@ -8,7 +8,8 @@ description: Capsem system architecture: service, per-VM processes, CLI, guest a
 ## Security explanations
 
 Use BLUF: start with one or two short sentences stating how the system is
-organized. Describe components directly; do not open with abstract threat
+organized. Introduce a component by its process type, ownership, and concrete
+responsibilities before describing its pipeline. Describe components directly; do not open with abstract threat
 statements or broad security promises. Prefer a compact table of **Process,
 Role, Sandboxing rules** over paragraphs repeating each component's job.
 Keep clients, libraries, and host/guest processes distinct. Include the SDKs,
@@ -65,6 +66,11 @@ For a component pipeline, distinguish internal stages from OS processes. Show
 where a decision is enforced, separate runtime bytes from sanitized ledger
 records, and identify observation-only events that cannot prevent an operation.
 Link to the owning process-boundary explanation instead of repeating it.
+Explain an unfamiliar pipeline through one concrete operation and what each
+stage does to it; stage names alone do not explain how components work together.
+Show configuration files as explicit inputs with their formats and compilation
+destination. Distinguish detection evidence from enforcement actions; use the
+same component name in diagrams and tables, including the network analysis engine.
 
 Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework (with a KVM backend for Linux). It runs as a daemon service (like Docker). The system has these layers:
 
