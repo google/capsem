@@ -55,6 +55,7 @@ pub(crate) fn test_state(
         managed,
         connections,
         instances: Mutex::new(HashMap::new()),
+        proxy_workers: Mutex::new(HashMap::new()),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(
@@ -64,6 +65,7 @@ pub(crate) fn test_state(
             run_dir.join("networks"),
         )),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
+        proxy_binary: PathBuf::from("/nonexistent/capsem-proxy"),
         assets_dir,
         service_socket: run_dir.join("service.sock"),
         switches: switches::Switches::in_process(),

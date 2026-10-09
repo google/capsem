@@ -104,18 +104,18 @@ pub(crate) async fn handle_resume(
 
 /// Tear down a warm-restore process that failed to reach ready while the
 /// caller already holds the save/restore locks.
-pub(crate) async fn stop_failed_restore_process_under_lock(state: &ServiceState, id: &str) -> Result<(), AppError> {
-    let Some((uds_path, generation)) = ({
+pub(crate) async fn stop_failed_restore_process_under_lock(state: &ServiceState, id: &str) {
+    let Some((uds_path, pid, generation)) = ({
         let instances = state.instances.lock().unwrap();
-        instances.get(id).map(|i| (i.uds_path.clone(), i.generation))
+        instances.get(id).map(|i| (i.uds_path.clone(), i.pid, i.generation))
     }) else {
         return Ok(());
     };
 
     signal_vm_process(state, id, generation, process_control::Signal::Terminate).await?;
 
-    tracing::warn!(id, "removing failed warm restore before cold fallback");
-    claim_shutdown_instance(state, id, generation);
+    tracing::warn!(id, pid, "removing failed warm restore before cold fallback");
+    state.evict_instance(id, generation);
     state.unregister_session_db_handle(id);
     wait_for_process_exit(state, id, generation, std::time::Duration::from_secs(1)).await?;
     state

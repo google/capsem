@@ -151,6 +151,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let process_binary = args
         .process_binary
         .unwrap_or_else(|| PathBuf::from("cache/target/cargo/debug/capsem-process"));
+    let proxy_binary = args.proxy_binary.unwrap_or_else(|| find_sibling_binary("capsem-proxy"));
     let assets_base_dir = args
         .assets_dir
         .unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
@@ -258,11 +259,13 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         managed,
         connections,
         instances: Mutex::new(HashMap::new()),
+        proxy_workers: Mutex::new(HashMap::new()),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(persistent_registry),
         networks: tokio::sync::Mutex::new(networks),
         process_binary: process_binary.clone(),
+        proxy_binary,
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
         service_socket: service_sock.clone(),

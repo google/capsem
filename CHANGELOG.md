@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Start one fresh-generation confined proxy worker with every live VM, apply
+  exact active-policy bytes before registration, revoke it with the VM owner,
+  and terminate only the matching owner generation if its proxy dies.
+
 - Apply each proxy policy reload as one digest-keyed immutable revision across
   HTTP routing, security plugins, provider identity, response telemetry and
   guest DNS, preventing a request from combining authority from two revisions.
