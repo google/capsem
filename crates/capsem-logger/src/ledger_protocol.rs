@@ -6,6 +6,7 @@ use capsem_foundation::ipc_channel::MAX_IPC_FRAME_SIZE;
 use capsem_proto::ledger::{
     LedgerCapability, LedgerHello, LedgerOperation, LedgerProtocolError, LedgerRequest, LedgerWelcome,
 };
+use capsem_proto::ledger_commitment::LedgerCommitment;
 use capsem_proto::ledger_counters::LedgerCounters;
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +49,7 @@ pub enum LedgerServerMessage {
 pub enum LedgerCommand {
     Admit {
         event: Box<WriteOp>,
+        commitment: LedgerCommitment,
     },
     /// Make every accepted event through the returned admission id durable.
     Flush,
@@ -85,6 +87,18 @@ impl LedgerOperation for LedgerCommand {
 
     fn validate(&self) -> Result<(), LedgerProtocolError> {
         match self {
+            Self::Admit { event, commitment } => {
+                commitment
+                    .validate()
+                    .map_err(|_| LedgerProtocolError::InvalidOperation)?;
+                if commitment.event_kind() != event.kind()
+                    || commitment.event_hash()
+                        != crate::writer::commitment_event_hash(event)
+                            .map_err(|_| LedgerProtocolError::InvalidOperation)?
+                {
+                    return Err(LedgerProtocolError::InvalidOperation);
+                }
+            }
             Self::Query { query } => query.validate()?,
             Self::ReadBodies { event_id } if !valid_event_id(event_id) => {
                 return Err(LedgerProtocolError::InvalidOperation)
@@ -139,6 +153,10 @@ pub enum LedgerQuery {
     Triage {
         limit: u16,
     },
+    Commitments {
+        after_global_sequence: u64,
+        limit: u16,
+    },
 }
 
 impl LedgerQuery {
@@ -146,7 +164,9 @@ impl LedgerQuery {
         let valid_limit = |limit: u16| limit > 0 && usize::from(limit) <= MAX_LEDGER_QUERY_ROWS;
         let bounded_text = |value: &str| value.len() <= MAX_QUERY_TEXT_BYTES;
         let valid = match self {
-            Self::SecurityLatest { limit, .. } | Self::Triage { limit } => valid_limit(*limit),
+            Self::SecurityLatest { limit, .. } | Self::Triage { limit } | Self::Commitments { limit, .. } => {
+                valid_limit(*limit)
+            }
             Self::Timeline {
                 layers,
                 cutoff,

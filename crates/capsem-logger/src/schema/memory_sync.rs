@@ -17,6 +17,7 @@ use super::*;
 const DISK_ONLY_TABLES: &[&str] = &[
     "archive_state",
     "ledger_counters",
+    "ledger_commitments",
     "event_body_blobs",
     "body_blocks",
     "transport_schema",

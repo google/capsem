@@ -236,7 +236,7 @@ type RetainReply = tokio::sync::oneshot::Sender<Result<RetainOutcome, String>>;
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum WriterMessage {
-    Write(WriteOp),
+    Write(WriteEnvelope),
     /// Commit everything queued before this and report whether the disk flush
     /// happened.
     Flush(tokio::sync::oneshot::Sender<FlushOutcome>),
@@ -250,11 +250,34 @@ enum WriterMessage {
 
 impl WriterMessage {
     fn write(op: WriteOp) -> Self {
-        Self::Write(op)
+        Self::Write(WriteEnvelope { op, commitment: None })
+    }
+
+    fn committed(op: WriteOp, commitment: capsem_proto::ledger_commitment::LedgerCommitment) -> Self {
+        Self::Write(WriteEnvelope {
+            op,
+            commitment: Some(commitment),
+        })
     }
 
     fn flush(reply: tokio::sync::oneshot::Sender<FlushOutcome>) -> Self {
         Self::Flush(reply)
+    }
+}
+
+#[derive(Debug)]
+struct WriteEnvelope {
+    op: WriteOp,
+    commitment: Option<capsem_proto::ledger_commitment::LedgerCommitment>,
+}
+
+impl WriteEnvelope {
+    #[cfg(test)]
+    fn plain(op: WriteOp) -> Self {
+        Self {
+            op,
+            commitment: None,
+        }
     }
 }
 
@@ -272,8 +295,11 @@ fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessag
 mod barriers;
 mod batch;
 mod operation;
+pub(crate) use operation::commitment_event_hash;
 mod recording;
 mod remote;
+#[cfg(test)]
+pub(crate) use remote::test_commitment_channel;
 mod retention;
 mod retention_faults;
 mod writer_lock;
@@ -480,6 +506,7 @@ impl DbWriter {
     /// dedicated ledger worker owns both.
     pub fn from_ledger_channel(
         stream: std::os::unix::net::UnixStream,
+        commitment_stream: std::os::unix::net::UnixStream,
         grant: capsem_proto::ledger::LedgerChannelGrant,
         logical_path: &Path,
         capacity: usize,
@@ -489,7 +516,7 @@ impl DbWriter {
             join_handle: std::sync::Mutex::new(None),
             db_path: logical_path.to_path_buf(),
             pending_body_bytes: Arc::new(AtomicU64::new(0)),
-            remote: Some(remote::RemoteWriter::start(stream, grant, capacity)?),
+            remote: Some(remote::RemoteWriter::start(stream, commitment_stream, grant, capacity)?),
         })
     }
 

@@ -62,6 +62,17 @@ fn statements(query: LedgerQuery) -> Result<Vec<Statement>, String> {
         } => history_statements(&layers, search, limit, offset),
         LedgerQuery::StatsDetail => Ok(stats_detail_statements()),
         LedgerQuery::Triage { limit } => Ok(triage_statements(limit)),
+        LedgerQuery::Commitments {
+            after_global_sequence,
+            limit,
+        } => Ok(vec![(
+            "SELECT global_sequence, lower(hex(generation)) AS generation, client_id, producer_role, \
+             producer_sequence, event_kind, lower(hex(event_hash)) AS event_hash, \
+             lower(hex(previous_hash)) AS previous_hash, lower(hex(commitment_hash)) AS commitment_hash \
+             FROM ledger_commitments WHERE global_sequence > ?1 ORDER BY global_sequence ASC LIMIT ?2"
+                .into(),
+            vec![json!(after_global_sequence), json!(limit)],
+        )]),
     }
 }
 

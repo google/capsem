@@ -24,22 +24,23 @@ pub(super) struct BatchWriteOutcome {
 /// second pass. Nothing here runs when the batch commits.
 pub(super) fn retry_batch_ops_individually(
     conn: &Connection,
-    batch: &[WriteOp],
+    batch: &[WriteEnvelope],
     bodies: &mut BodyArchive,
     exec_floor: i64,
     tally: &mut LedgerTally,
 ) -> BatchWriteOutcome {
-    let expected_writes = batch.iter().filter(|op| write_op_affects_storage(op)).count();
+    let expected_writes = batch.iter().filter(|write| affects_storage(write)).count();
     let mut salvaged = BatchWriteOutcome {
         tables: BTreeSet::new(),
         written: 0,
     };
-    for op in batch {
-        if !write_op_affects_storage(op) {
+    for write in batch {
+        let op = &write.op;
+        if !affects_storage(write) {
             continue;
         }
         let op_kind = op.kind();
-        match execute_memory_batch(conn, std::slice::from_ref(op), bodies, exec_floor, tally) {
+        match execute_memory_batch(conn, std::slice::from_ref(write), bodies, exec_floor, tally) {
             Ok(outcome) => {
                 salvaged.tables.extend(outcome.tables);
                 salvaged.written += outcome.written;
@@ -70,12 +71,12 @@ pub(super) fn retry_batch_ops_individually(
 
 pub(super) fn execute_memory_batch(
     conn: &Connection,
-    batch: &[WriteOp],
+    batch: &[WriteEnvelope],
     bodies: &mut BodyArchive,
     exec_floor: i64,
     tally: &mut LedgerTally,
 ) -> rusqlite::Result<BatchWriteOutcome> {
-    let stored_ops = batch.iter().filter(|op| write_op_affects_storage(op)).count();
+    let stored_ops = batch.iter().filter(|write| affects_storage(write)).count();
     if stored_ops == 0 {
         return Ok(BatchWriteOutcome {
             tables: BTreeSet::new(),
@@ -152,15 +153,16 @@ fn counted_on_disk_now(
 
 fn insert_batch_ops<'a>(
     tx: &rusqlite::Transaction<'_>,
-    batch: &'a [WriteOp],
+    batch: &'a [WriteEnvelope],
     bodies: &mut BodyArchive,
     exec_floor: i64,
     affected_tables: &mut BTreeSet<&'static str>,
     op_counts: &mut std::collections::BTreeMap<&'static str, usize>,
     effects: &mut Vec<(&'a WriteOp, StoredEffect)>,
 ) -> rusqlite::Result<()> {
-    for op in batch {
-        if !write_op_affects_storage(op) {
+    for write in batch {
+        let op = &write.op;
+        if !affects_storage(write) {
             continue;
         }
         *op_counts.entry(op.kind()).or_default() += 1;
@@ -192,7 +194,42 @@ fn insert_batch_ops<'a>(
             WriteOp::Network(n) => event_rows::upsert_network(tx, n, WriteTarget::Memory)?,
             WriteOp::NetworkMembership(m) => event_rows::upsert_network_membership(tx, m, WriteTarget::Memory)?,
         }
+        if let Some(commitment) = &write.commitment {
+            insert_commitment(tx, commitment)?;
+        }
         effects.push((op, effect));
     }
+    Ok(())
+}
+
+fn affects_storage(write: &WriteEnvelope) -> bool {
+    write.commitment.is_some() || write_op_affects_storage(&write.op)
+}
+
+fn insert_commitment(
+    tx: &rusqlite::Transaction<'_>,
+    commitment: &capsem_proto::ledger_commitment::LedgerCommitment,
+) -> rusqlite::Result<()> {
+    let role = commitment
+        .role()
+        .producer_name()
+        .ok_or_else(|| rusqlite::Error::InvalidParameterName("non-producer ledger commitment".into()))?;
+    tx.execute(
+        "INSERT INTO main.ledger_commitments (
+             global_sequence, generation, client_id, producer_role, producer_sequence,
+             event_kind, event_hash, previous_hash, commitment_hash
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            commitment.global_sequence(),
+            commitment.generation().as_bytes().as_slice(),
+            commitment.client_id(),
+            role,
+            commitment.producer_sequence(),
+            commitment.event_kind(),
+            commitment.event_hash().as_slice(),
+            commitment.previous_hash().as_slice(),
+            commitment.commitment_hash().as_slice(),
+        ],
+    )?;
     Ok(())
 }

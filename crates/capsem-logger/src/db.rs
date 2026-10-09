@@ -757,6 +757,22 @@ impl DbHandle {
         Ok(())
     }
 
+    pub(crate) async fn write_committed(
+        &self,
+        op: WriteOp,
+        commitment: capsem_proto::ledger_commitment::LedgerCommitment,
+    ) -> DbResult<()> {
+        let affects_session_summary = !matches!(&op, WriteOp::PolicyMutationEvent(_) | WriteOp::HostEvent(_));
+        let writer = self
+            .inner
+            .writer
+            .as_ref()
+            .ok_or_else(|| "db handle is read-only; no writer is available".to_string())?;
+        writer.write_committed(op, commitment).await?;
+        self.invalidate_after_write(affects_session_summary);
+        Ok(())
+    }
+
     /// Flush accepted writes through the DB-owned writer path.
     ///
     /// Tests and read-after-write callers use this as the visibility barrier.

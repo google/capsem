@@ -93,27 +93,33 @@ impl LedgerServer {
                 send_failure(&sender, request_id, code, error.to_string()).await?;
                 continue;
             }
-            if self.dispatch(&sender, request).await? {
+            if self.dispatch(&sender, request, grant).await? {
                 return Ok(LedgerClientExit::ShutdownRequested);
             }
         }
     }
 
-    async fn dispatch(&self, sender: &ServerSender, request: LedgerRequest<LedgerCommand>) -> Result<bool, String> {
+    async fn dispatch(
+        &self,
+        sender: &ServerSender,
+        request: LedgerRequest<LedgerCommand>,
+        grant: LedgerChannelGrant,
+    ) -> Result<bool, String> {
         let request_id = request.request_id();
         let result = match request.into_operation() {
-            LedgerCommand::Admit { event } => {
+            LedgerCommand::Admit { event, commitment } => {
                 let admission_id = {
                     let mut admission = self.admission.lock().await;
-                    match self.db.write(*event).await {
-                        Ok(()) => {
-                            admission.last_accepted = admission
+                    match commitment.validate_grant(grant) {
+                        Ok(()) => match self.db.write_committed(*event, commitment).await {
+                            Ok(()) => admission
                                 .last_accepted
                                 .checked_add(1)
-                                .ok_or_else(|| "ledger admission id exhausted".to_string())?;
-                            Ok(admission.last_accepted)
-                        }
-                        Err(error) => Err(storage(error)),
+                                .ok_or_else(|| "ledger admission id exhausted".to_string())
+                                .inspect(|next| admission.last_accepted = *next),
+                            Err(error) => Err(storage(error)),
+                        },
+                        Err(error) => Err(error.to_string()),
                     }
                 };
                 match admission_id {

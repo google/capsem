@@ -99,13 +99,24 @@ async fn accepted_durable_query_body_retention_and_warc_run_through_one_owner() 
     let producer_grant = grant(LedgerClientRole::VmOwner);
     let (producer, producer_replies, producer_task) = connect(Arc::clone(&server), producer_grant).await;
     let body = vec![b'z'; 300_000];
+    let event = body_event(body.clone());
+    let event_hash = crate::writer::commitment_event_hash(&event).unwrap();
     assert!(matches!(
         request(
             &producer,
             &producer_replies,
             1,
             LedgerCommand::Admit {
-                event: Box::new(body_event(body.clone())),
+                commitment: capsem_proto::ledger_commitment::LedgerCommitment::new(
+                    producer_grant,
+                    1,
+                    1,
+                    event.kind(),
+                    event_hash,
+                    capsem_proto::ledger_commitment::ZERO_COMMITMENT_HASH,
+                )
+                .unwrap(),
+                event: Box::new(event),
             },
         )
         .await,

@@ -73,6 +73,14 @@ impl WriteOp {
     }
 }
 
+pub(crate) fn commitment_event_hash(op: &WriteOp) -> Result<[u8; 32], String> {
+    let encoded = rmp_serde::to_vec_named(op).map_err(|error| format!("encode ledger event commitment: {error}"))?;
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"capsem-ledger-event-v1\0");
+    hash.update(&encoded);
+    Ok(*hash.finalize().as_bytes())
+}
+
 fn ensure_option_event_id(event_id: &mut Option<String>) -> Option<String> {
     if event_id.is_none() {
         *event_id = Some(new_event_id());
