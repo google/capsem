@@ -22,13 +22,7 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             Some(8),
         ),
         (ServiceToProcess::McpRefreshTools { id: 10 }, Some(10)),
-        (
-            ServiceToProcess::CloneState {
-                id: 12,
-                destination: "/tmp/fork".into(),
-            },
-            Some(12),
-        ),
+        (ServiceToProcess::CloneState { id: 12 }, Some(12)),
         (
             ServiceToProcess::LinkDetach {
                 id: 11,
@@ -48,6 +42,14 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
         ),
         (ServiceToProcess::Ping, None),
         (ServiceToProcess::ReloadConfig { id: 13 }, Some(13)),
+        (
+            ServiceToProcess::CloneStateComplete {
+                id: 14,
+                size_bytes: Some(1),
+                error: None,
+            },
+            None,
+        ),
     ];
     for (request, id) in requests {
         assert_eq!(request.request_id(), id, "{request:?}");

@@ -107,14 +107,20 @@ pub enum ServiceToProcess {
     Suspend {
         checkpoint_path: String,
     },
-    /// Clone this sandbox's state into `destination`, an empty session
-    /// directory the service created. The owner freezes the guest's system
-    /// filesystem for the copy and always thaws it, so the fork's overlay
-    /// image is consistent and a service that disappears mid-fork cannot
-    /// leave the guest frozen.
+    /// Freeze the guest for a coordinator-owned state clone. The owner emits
+    /// `CloneStateReady` after the freeze and always thaws before its final
+    /// result. No source or destination path enters the VM owner.
     CloneState {
         id: u64,
-        destination: String,
+    },
+    /// Complete the coordinator-owned copy while the owner holds the guest
+    /// frozen. The size or error becomes the owner's final result after thaw.
+    CloneStateComplete {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size_bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     /// Query MCP aggregator for server list with connection status.
     McpListServers {
@@ -315,7 +321,9 @@ pub enum ProcessToService {
     ShutdownRequested { id: String },
     /// Guest requested suspend (forwarded from capsem-sysutil via vsock:5004).
     SuspendRequested { id: String },
-    /// Result of CloneState: the clone's disk usage, or why it failed.
+    /// The owner froze the guest and is waiting for the coordinator copy.
+    CloneStateReady { id: u64 },
+    /// Result of CloneState after the guest has been thawed.
     CloneStateResult {
         id: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -460,7 +468,7 @@ impl ServiceToProcess {
             | Self::WriteFile { id, .. }
             | Self::ReadFile { id, .. }
             | Self::LogFileBoundary { id, .. }
-            | Self::CloneState { id, .. }
+            | Self::CloneState { id }
             | Self::McpListServers { id }
             | Self::McpListTools { id }
             | Self::McpRefreshTools { id }

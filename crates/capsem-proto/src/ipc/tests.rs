@@ -465,18 +465,32 @@ fn suspend_requested_roundtrip() {
 
 #[test]
 fn clone_state_roundtrip() {
-    let msg = ServiceToProcess::CloneState {
-        id: 12,
-        destination: "/run/persistent/fork".into(),
-    };
+    let msg = ServiceToProcess::CloneState { id: 12 };
     let bytes = serde_json::to_vec(&msg).unwrap();
     match serde_json::from_slice::<ServiceToProcess>(&bytes).unwrap() {
-        ServiceToProcess::CloneState { id, destination } => {
-            assert_eq!(id, 12);
-            assert_eq!(destination, "/run/persistent/fork");
-        }
+        ServiceToProcess::CloneState { id } => assert_eq!(id, 12),
         _ => panic!("wrong variant"),
     }
+    let ready = ProcessToService::CloneStateReady { id: 12 };
+    let bytes = serde_json::to_vec(&ready).unwrap();
+    assert!(matches!(
+        serde_json::from_slice::<ProcessToService>(&bytes).unwrap(),
+        ProcessToService::CloneStateReady { id: 12 }
+    ));
+    let complete = ServiceToProcess::CloneStateComplete {
+        id: 12,
+        size_bytes: Some(4096),
+        error: None,
+    };
+    let bytes = serde_json::to_vec(&complete).unwrap();
+    assert!(matches!(
+        serde_json::from_slice::<ServiceToProcess>(&bytes).unwrap(),
+        ServiceToProcess::CloneStateComplete {
+            id: 12,
+            size_bytes: Some(4096),
+            error: None
+        }
+    ));
     let reply = ProcessToService::CloneStateResult {
         id: 12,
         size_bytes: Some(4096),
