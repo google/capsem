@@ -87,7 +87,8 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// service-to-owner freeze messages, and adds `CloneState` for forks.
 /// Version 12 makes cloning a coordinator operation bracketed by the owner's
 /// guest freeze, so no destination path crosses into the VM owner.
-pub const PROTOCOL_VERSION: u16 = 12;
+/// Version 13 fixes suspend to the owner's confined checkpoint location.
+pub const PROTOCOL_VERSION: u16 = 13;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;

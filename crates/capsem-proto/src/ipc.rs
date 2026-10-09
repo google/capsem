@@ -103,10 +103,8 @@ pub enum ServiceToProcess {
     /// longer reading -- prevents late writes from leaking into the
     /// user's parent shell after raw mode is restored.
     StopTerminalStream,
-    /// Suspend VM and save checkpoint to disk.
-    Suspend {
-        checkpoint_path: String,
-    },
+    /// Suspend the VM into its fixed, confined checkpoint location.
+    Suspend,
     /// Freeze the guest for a coordinator-owned state clone. The owner emits
     /// `CloneStateReady` after the freeze and always thaws before its final
     /// result. No source or destination path enters the VM owner.

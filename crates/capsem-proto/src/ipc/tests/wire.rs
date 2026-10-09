@@ -57,9 +57,7 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
         ServiceToProcess::ReloadConfig { id: 11 },
         ServiceToProcess::StartTerminalStream,
         ServiceToProcess::StopTerminalStream,
-        ServiceToProcess::Suspend {
-            checkpoint_path: "/tmp/checkpoint".into(),
-        },
+        ServiceToProcess::Suspend,
         ServiceToProcess::CloneState { id: 11 },
         ServiceToProcess::CloneStateComplete {
             id: 11,
