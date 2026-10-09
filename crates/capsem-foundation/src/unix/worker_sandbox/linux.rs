@@ -235,12 +235,9 @@ fn install_seccomp(role: Role) -> io::Result<()> {
         libc::SYS_init_module,
         libc::SYS_finit_module,
         libc::SYS_delete_module,
-        libc::SYS_chmod,
         libc::SYS_fchmod,
         libc::SYS_fchmodat,
-        libc::SYS_chown,
         libc::SYS_fchown,
-        libc::SYS_lchown,
         libc::SYS_fchownat,
         libc::SYS_setxattr,
         libc::SYS_lsetxattr,
@@ -248,11 +245,17 @@ fn install_seccomp(role: Role) -> io::Result<()> {
         libc::SYS_removexattr,
         libc::SYS_lremovexattr,
         libc::SYS_fremovexattr,
+        libc::SYS_utimensat,
+    ];
+    #[cfg(target_arch = "x86_64")]
+    denied.extend([
+        libc::SYS_chmod,
+        libc::SYS_chown,
+        libc::SYS_lchown,
         libc::SYS_utime,
         libc::SYS_utimes,
         libc::SYS_futimesat,
-        libc::SYS_utimensat,
-    ];
+    ]);
     if matches!(role, Role::Gateway | Role::Ledger | Role::Proxy) {
         denied.extend([libc::SYS_execve, libc::SYS_execveat]);
     }
