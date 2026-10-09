@@ -161,10 +161,10 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                             let rejection = if grant_ids.contains(&grant_id) {
                                 Some(ProxyControlRejection::DuplicateGrant)
                             } else if grant_ids.len() >= GRANT_LIMIT
-                                || (capability == ProxyCapability::Traffic && current >= TRAFFIC_GRANT_LIMIT)
+                                || (is_traffic(capability) && current >= TRAFFIC_GRANT_LIMIT)
                             {
                                 Some(ProxyControlRejection::Capacity)
-                            } else if capability != ProxyCapability::Traffic && current != 0 {
+                            } else if !is_traffic(capability) && current != 0 {
                                 Some(ProxyControlRejection::DuplicateCapability)
                             } else {
                                 None
@@ -220,6 +220,10 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
     outcome?;
     reader_outcome?;
     Ok(())
+}
+
+const fn is_traffic(capability: ProxyCapability) -> bool {
+    matches!(capability, ProxyCapability::HttpTraffic | ProxyCapability::DnsTraffic)
 }
 
 enum ControlInput {

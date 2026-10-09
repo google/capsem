@@ -77,7 +77,8 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
 
     let mut peers = Vec::new();
     for (index, capability) in [
-        ProxyCapability::Traffic,
+        ProxyCapability::HttpTraffic,
+        ProxyCapability::DnsTraffic,
         ProxyCapability::Upstream,
         ProxyCapability::Credential,
         ProxyCapability::Ledger,
@@ -111,7 +112,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
     }
 
     let (duplicate_peer, duplicate) = UnixStream::pair().unwrap();
-    let duplicate_grant = ProxyChannelGrant::new(GENERATION, 9, ProxyCapability::Ledger).unwrap();
+    let duplicate_grant = ProxyChannelGrant::new(GENERATION, 10, ProxyCapability::Ledger).unwrap();
     requests
         .send(
             &encode_proxy_control_request(ProxyControlRequest::Attach(duplicate_grant)),
@@ -124,7 +125,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         event(&events).await,
         ProxyControlEvent::Rejected {
             generation: GENERATION,
-            grant_id: 9,
+            grant_id: 10,
             reason: ProxyControlRejection::DuplicateCapability,
         }
     );
