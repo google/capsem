@@ -4,8 +4,10 @@ use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+use capsem_foundation::ipc_channel;
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
-use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
+use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration, LedgerWelcome};
+use capsem_proto::ledger_commitment::{CommitmentClientMessage, CommitmentServerMessage};
 use capsem_proto::proxy_control::{
     decode_proxy_control_event, encode_proxy_control_request, ProxyCapability, ProxyChannelGrant, ProxyControlEvent,
     ProxyControlRejection, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
@@ -232,16 +234,34 @@ async fn ledger_grant_is_authenticated_before_adoption() {
         }
     });
     let (server_stream, granted) = UnixStream::pair().unwrap();
+    let (commitment_server, commitment_granted) = UnixStream::pair().unwrap();
     let ledger_grant = LedgerChannelGrant::new(LedgerGeneration::new([4; 16]), 17, LedgerClientRole::Proxy).unwrap();
+    let commitment_serving = tokio::spawn(async move {
+        let (sender, receiver) =
+            ipc_channel::channel_from_std::<CommitmentServerMessage, CommitmentClientMessage>(commitment_server)
+                .unwrap();
+        let CommitmentClientMessage::Hello { hello } = receiver.recv().await.unwrap() else {
+            panic!("commitment client omitted hello")
+        };
+        ledger_grant.validate_hello(&hello).unwrap();
+        sender
+            .send(CommitmentServerMessage::Welcome {
+                welcome: LedgerWelcome::for_grant(&ledger_grant),
+            })
+            .await
+            .unwrap();
+        while receiver.recv().await.is_ok() {}
+    });
     let grant = ProxyChannelGrant::with_ledger(GENERATION, 1, ledger_grant).unwrap();
     requests
         .send(
             &encode_proxy_control_request(ProxyControlRequest::Attach(grant)),
-            &[granted.as_raw_fd()],
+            &[granted.as_raw_fd(), commitment_granted.as_raw_fd()],
         )
         .await
         .unwrap();
     drop(granted);
+    drop(commitment_granted);
 
     assert!(tokio::time::timeout(Duration::from_millis(100), event_rx.recv())
         .await
@@ -289,6 +309,7 @@ async fn ledger_grant_is_authenticated_before_adoption() {
     );
     event_pump.await.unwrap();
     assert!(serving.await.unwrap().is_ok());
+    commitment_serving.await.unwrap();
     let child = child.take();
     let output = tokio::task::spawn_blocking(move || child.wait_with_output())
         .await
