@@ -74,6 +74,33 @@ match = 'http.host == "worker.example"'
     );
 }
 
+#[tokio::test]
+async fn standalone_http_runtime_pins_provider_without_mcp_capability() {
+    let active_policy = br#"
+[network]
+[user_rules.profiles.rules.worker_http]
+name = "worker_http"
+action = "allow"
+match = 'http.host == "api.openai.com"'
+[corp_rules]
+"#;
+    let mut state = ProxyRuntimeState::standalone("openai".to_string());
+    state.apply(active_policy).unwrap();
+    state.attach_ledger(Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()));
+    state.attach_credentials(Arc::new(UnavailableCredentials));
+    let (client, _broker) = UnixStream::pair().unwrap();
+    state.attach_upstream(Arc::new(
+        capsem_core::net::upstream_grant::UpstreamGrantClient::start(client).unwrap(),
+    ));
+
+    let runtime = state.http_runtime().unwrap().expect("standalone runtime is ready");
+
+    assert!(runtime.config.mcp_endpoint.is_none());
+    let target = runtime.target.expect("standalone target");
+    assert_eq!(target.provider_id(), "openai");
+    assert_eq!(target.domain(), "api.openai.com");
+}
+
 struct EmptyPrivateNames;
 
 impl capsem_core::net::dns::private::PrivateNames for EmptyPrivateNames {
