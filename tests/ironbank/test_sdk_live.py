@@ -98,6 +98,7 @@ def test_inspect_ai_live_vm_sandbox_acceptance() -> None:
         )
         assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in output
         assert "INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK" in output
+        assert "INSPECT_CAPSEM_HOST_BUILD_ACCEPTANCE_OK" in output
         assert "INSPECT_CAPSEM_VM_ACCEPTANCE_OK" in output
         print(output.strip())
     finally:
