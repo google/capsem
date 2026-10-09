@@ -4,6 +4,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
+use capsem_archive::ArchiveCodecs;
 use capsem_telemetry::db::{
     DB_QUERY_DURATION_MS, DB_QUERY_PARAMS_COUNT, DB_QUERY_RESULT_BYTES, DB_QUERY_RESULT_ROWS, DB_QUERY_TOTAL,
 };
@@ -254,13 +255,17 @@ impl DbHandle {
     /// reader can open the same DB, and starts a DB-owned reader worker. Route
     /// code receives a handle; it does not receive a connection.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
+        Self::open_with_codecs(path, ArchiveCodecs::default())
+    }
+
+    pub fn open_with_codecs(path: &Path, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
         let started = Instant::now();
-        let writer = Arc::new(DbWriter::open(path, 1024)?);
+        let writer = Arc::new(DbWriter::open_with_codecs(path, 1024, codecs.clone())?);
         // Reads go to the file, like every other handle's: the writer's
         // memory holds only rows it has not flushed, and SQLite's
         // `data_version` tells the reader when a flush landed.
         DbReader::open(path)?;
-        let handle = Self::open_with_writer(path.to_path_buf(), writer)?;
+        let handle = Self::open_with_writer(path.to_path_buf(), writer, codecs)?;
 
         tracing::debug!(
             db_path = %path.display(),
@@ -284,7 +289,7 @@ impl DbHandle {
     pub fn open_external_reader(path: &Path) -> rusqlite::Result<Self> {
         let started = Instant::now();
         DbReader::open(path)?;
-        let handle = Self::open_reader(path.to_path_buf())?;
+        let handle = Self::open_reader(path.to_path_buf(), ArchiveCodecs::default())?;
         tracing::debug!(
             db_path = %path.display(),
             operation = "open_external_reader",
@@ -294,14 +299,14 @@ impl DbHandle {
         Ok(handle)
     }
 
-    fn open_reader(db_path: PathBuf) -> rusqlite::Result<Self> {
+    fn open_reader(db_path: PathBuf, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
         let (reader_tx, reader_rx) = mpsc::channel();
         let reader_path = db_path.clone();
         let hot = Arc::new(HotCounters::default());
         let reader_hot = Arc::clone(&hot);
         let reader_join = std::thread::Builder::new()
             .name("capsem-db-reader".into())
-            .spawn(move || reader_loop(reader_path, reader_rx, reader_hot))
+            .spawn(move || reader_loop(reader_path, reader_rx, reader_hot, codecs))
             .expect("failed to spawn db reader thread");
 
         Ok(Self {
@@ -322,12 +327,12 @@ impl DbHandle {
         })
     }
 
-    fn open_with_writer(db_path: PathBuf, writer: Arc<DbWriter>) -> rusqlite::Result<Self> {
+    fn open_with_writer(db_path: PathBuf, writer: Arc<DbWriter>, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
         // Owning the writer changes only whether `write` is accepted. Its
         // writes reach the file on the writer's flush, which the reader sees
         // through `data_version` like any other commit; a local write moving
         // the epoch is not the moment the rows become readable.
-        let handle = Self::open_reader(db_path)?;
+        let handle = Self::open_reader(db_path, codecs)?;
         let mut inner = Arc::try_unwrap(handle.inner).ok().expect("new handle is unique");
         inner.writer = Some(writer);
         Ok(Self { inner: Arc::new(inner) })
@@ -337,7 +342,7 @@ impl DbHandle {
     pub(crate) fn open_existing_for_tests(path: &Path) -> rusqlite::Result<Self> {
         DbReader::open(path)?;
         let writer = Arc::new(DbWriter::open_in_memory(1)?);
-        Self::open_with_writer(path.to_path_buf(), writer)
+        Self::open_with_writer(path.to_path_buf(), writer, ArchiveCodecs::default())
     }
 
     pub fn path(&self) -> &Path {

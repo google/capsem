@@ -42,7 +42,15 @@ fn recovered_writer_fences_then_collects_only_owned_orphan_generations() {
     drop(directory.create_new_private_file(OsStr::new("operator-note")).unwrap());
     directory.sync().unwrap();
 
-    drop(BodyArchive::open_existing(&db_path, SystemTime::now, &conn).unwrap());
+    drop(
+        BodyArchive::open_existing(
+            &db_path,
+            SystemTime::now,
+            &conn,
+            capsem_archive::ArchiveCodecs::default(),
+        )
+        .unwrap(),
+    );
 
     let after = crate::schema::archive_state(&conn).unwrap();
     assert_eq!(
@@ -731,7 +739,13 @@ fn publication_crash_boundaries_recover_and_append_to_the_elected_generation() {
         let writer = DbWriter::open(&db_path, 1).unwrap();
         writer.shutdown_blocking();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let mut archive = BodyArchive::open_existing(&db_path, SystemTime::now, &conn).unwrap();
+        let mut archive = BodyArchive::open_existing(
+            &db_path,
+            SystemTime::now,
+            &conn,
+            capsem_archive::ArchiveCodecs::default(),
+        )
+        .unwrap();
         archive.stage(&conn, body_blob("aa0000000001", "old bytes"));
         archive.close_block();
         commit(&mut archive, &conn);
@@ -761,7 +775,13 @@ fn publication_crash_boundaries_recover_and_append_to_the_elected_generation() {
             published,
             "{case}"
         );
-        let mut archive = BodyArchive::open_existing(&db_path, SystemTime::now, &conn).unwrap();
+        let mut archive = BodyArchive::open_existing(
+            &db_path,
+            SystemTime::now,
+            &conn,
+            capsem_archive::ArchiveCodecs::default(),
+        )
+        .unwrap();
         let fenced = crate::schema::archive_state(&conn).unwrap();
         assert_eq!(fenced.revision, elected.revision + 1, "{case} recovery fence");
 

@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
+use capsem_archive::ArchiveCodecs;
 use capsem_telemetry::db::{DB_MEMORY_UNFLUSHED_OPS, DB_SHUTDOWN_FLUSH_MS};
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -315,7 +316,11 @@ impl DbWriter {
     /// Spawn a dedicated writer thread that owns the DB connection.
     /// `capacity` controls the mpsc channel size (backpressure).
     pub fn open(path: &Path, capacity: usize) -> rusqlite::Result<Self> {
-        Self::open_with_clock(path, capacity, SystemTime::now)
+        Self::open_with_codecs(path, capacity, ArchiveCodecs::default())
+    }
+
+    pub fn open_with_codecs(path: &Path, capacity: usize, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
+        Self::open_with_clock_and_codecs(path, capacity, SystemTime::now, codecs)
     }
 
     /// `open`, with the archive index's timestamps read from `now`.
@@ -323,13 +328,22 @@ impl DbWriter {
     /// Only a replay of an existing ledger has any business supplying one; see
     /// `LedgerClock`.
     pub fn open_with_clock(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
+        Self::open_with_clock_and_codecs(path, capacity, now, ArchiveCodecs::default())
+    }
+
+    fn open_with_clock_and_codecs(
+        path: &Path,
+        capacity: usize,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<Self> {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
 
         let mut last_busy = None;
         for _ in 0..50 {
-            match Self::open_once(path, capacity, now) {
+            match Self::open_once(path, capacity, now, codecs.clone()) {
                 Ok(writer) => return Ok(writer),
                 Err(error) if is_sqlite_busy(&error) => {
                     last_busy = Some(error);
@@ -344,7 +358,7 @@ impl DbWriter {
         )))
     }
 
-    fn open_once(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
+    fn open_once(path: &Path, capacity: usize, now: LedgerClock, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
         let held = writer_lock::acquire(path)?;
         legacy::set_aside_pre_archive_ledger(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -359,14 +373,14 @@ impl DbWriter {
         schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
         let bodies = match schema::archive_schema_status(&conn)? {
             schema::ArchiveSchemaStatus::Fresh => {
-                let (bodies, archive_lock, header) = BodyArchive::prepare_new(path, now)?;
+                let (bodies, archive_lock, header) = BodyArchive::prepare_new(path, now, codecs)?;
                 schema::create_tables_with_archive_header(&conn, Some(header))?;
                 drop(archive_lock);
                 bodies
             }
             schema::ArchiveSchemaStatus::Current(_) => {
                 schema::create_tables(&conn)?;
-                BodyArchive::open_existing(path, now, &conn)?
+                BodyArchive::open_existing(path, now, &conn, codecs)?
             }
             // Moved aside above, under this same writer lock.
             schema::ArchiveSchemaStatus::PreArchive => {
