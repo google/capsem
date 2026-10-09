@@ -11,7 +11,7 @@ mod workspace;
 mod tests;
 
 pub use capsem_logger::{epoch_to_iso, generate_session_id, is_valid_session_id, now_iso};
-pub use clone::{clone_file, clone_sandbox_state};
+pub use clone::{clone_file, clone_sandbox_files, clone_sandbox_state};
 pub use image_share::{
     carry_image_share, clear_image_share, image_share_blobs, image_share_path, prepare_image_share,
     publish_image_share, IMAGE_SHARE_DIR, IMAGE_SHARE_TAG,
