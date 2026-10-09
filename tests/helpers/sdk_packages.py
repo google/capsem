@@ -9,9 +9,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
 from collections.abc import Mapping
 from pathlib import Path
+
+import tomllib
 
 from helpers.bounded import bounded
 
@@ -51,9 +52,17 @@ def python_gateway(
             assert not work.resolve().is_relative_to(root.resolve())
             prefix = work / "runtime"
             python = prefix / "bin/python"
-            _run(["uv", "venv", "--offline", "--python", sys.executable, str(prefix)], work, environment)
-            _run(["uv", "pip", "install", "--offline", "--python", str(python), str(archive)],
+            runtime_lock = work / "pylock.toml"
+            _run(["uv", "export", "--project", str(root / settings["project"]),
+                  "--frozen", "--offline", "--no-dev", "--no-emit-project",
+                  "--format", "pylock.toml", "--output-file", str(runtime_lock)],
                  work, environment)
+            _run(["uv", "venv", "--offline", "--python", sys.executable, str(prefix)], work, environment)
+            _run(["uv", "pip", "sync", "--offline", "--python", str(python), str(runtime_lock)],
+                 work, environment)
+            _run(["uv", "pip", "install", "--offline", "--no-deps", "--python", str(python), str(archive)],
+                 work, environment)
+            _run(["uv", "pip", "check", "--python", str(python)], work, environment)
             payload = work / "payload.py"
             gateway = work / "gateway.py"
             for name, destination in (("image_package_acceptance.py", payload),
