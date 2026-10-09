@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Keep host-worker confinement fail-closed across supported Linux Landlock
+  ABIs, including single-threaded startup on ABI 6 and 7, and canonicalize
+  macOS Seatbelt grants so system path aliases cannot silently deny or widen
+  the intended authority.
+
 - Bind each standalone model-proxy lease to one service-selected provider and
   one revocable worker generation; client traffic receives only connected
   descriptors and cannot choose an upstream with `Host` or proxy semantics.

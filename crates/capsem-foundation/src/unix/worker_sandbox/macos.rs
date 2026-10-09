@@ -13,8 +13,8 @@ unsafe extern "C" {
 }
 
 pub(super) fn confine(policy: &Policy) -> io::Result<()> {
-    validate_paths(policy)?;
-    let compiled = super::seatbelt::compile(policy)?;
+    let policy = canonical_policy(policy)?;
+    let compiled = super::seatbelt::compile(&policy)?;
     let parameters = compiled.parameter_ptrs();
     let mut error = std::ptr::null_mut();
     // SAFETY: source and every alternating key/value parameter are NUL
@@ -36,7 +36,8 @@ pub(super) fn confine(policy: &Policy) -> io::Result<()> {
     Err(io::Error::other(message))
 }
 
-fn validate_paths(policy: &Policy) -> io::Result<()> {
+pub(super) fn canonical_policy(policy: &Policy) -> io::Result<Policy> {
+    let mut canonical = Policy::new(policy.role());
     for rule in policy.paths() {
         let metadata = std::fs::symlink_metadata(rule.path())?;
         if metadata.file_type().is_symlink() {
@@ -51,6 +52,16 @@ fn validate_paths(policy: &Policy) -> io::Result<()> {
                 format!("sandbox executable grant is not a file: {}", rule.path().display()),
             ));
         }
+        let path = std::fs::canonicalize(rule.path())?;
+        let canonical_metadata = std::fs::metadata(&path)?;
+        use std::os::unix::fs::MetadataExt;
+        if metadata.dev() != canonical_metadata.dev() || metadata.ino() != canonical_metadata.ino() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("sandbox grant changed while it was prepared: {}", rule.path().display()),
+            ));
+        }
+        canonical = canonical.allow(path, rule.access());
     }
-    Ok(())
+    Ok(canonical)
 }

@@ -8,6 +8,7 @@ const CREATE_RULESET_VERSION: u32 = 1;
 const RESTRICT_SELF_TSYNC: u32 = 1 << 3;
 const RULE_PATH_BENEATH: u32 = 1;
 const MINIMUM_ABI: i32 = 6;
+const TSYNC_ABI: i32 = 8;
 
 const FS_EXECUTE: u64 = 1 << 0;
 const FS_WRITE_FILE: u64 = 1 << 1;
@@ -70,16 +71,16 @@ struct PathBeneathAttr {
 }
 
 pub(super) fn confine(policy: &Policy) -> io::Result<()> {
-    let ruleset = create_ruleset()?;
+    let (ruleset, abi) = create_ruleset()?;
     for rule in policy.paths() {
         add_path_rule(&ruleset, rule.path(), rule.access())?;
     }
     nix::sys::prctl::set_no_new_privs().map_err(super::super::errno::io)?;
-    restrict_all_threads(&ruleset)?;
+    restrict_all_threads(&ruleset, abi)?;
     install_seccomp(policy.role())
 }
 
-fn create_ruleset() -> io::Result<OwnedFd> {
+fn create_ruleset() -> io::Result<(OwnedFd, i32)> {
     // nix has no Landlock API. The kernel reads no attribute when VERSION is
     // set, and returns the supported ABI directly.
     let abi = unsafe {
@@ -118,7 +119,7 @@ fn create_ruleset() -> io::Result<OwnedFd> {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: a successful create_ruleset result is a new owned descriptor.
-    Ok(unsafe { OwnedFd::from_raw_fd(descriptor as i32) })
+    Ok((unsafe { OwnedFd::from_raw_fd(descriptor as i32) }, abi as i32))
 }
 
 fn add_path_rule(ruleset: &OwnedFd, path: &std::path::Path, access: Access) -> io::Result<()> {
@@ -173,21 +174,31 @@ fn add_path_rule(ruleset: &OwnedFd, path: &std::path::Path, access: Access) -> i
     Ok(())
 }
 
-fn restrict_all_threads(ruleset: &OwnedFd) -> io::Result<()> {
-    // nix has no Landlock API. TSYNC is mandatory: workers create their Tokio
-    // runtime before confinement, and a single ambient sibling thread would
-    // invalidate the process boundary.
-    let result = unsafe {
-        libc::syscall(
-            libc::SYS_landlock_restrict_self,
-            ruleset.as_raw_fd(),
-            RESTRICT_SELF_TSYNC,
-        )
-    };
+fn restrict_all_threads(ruleset: &OwnedFd, abi: i32) -> io::Result<()> {
+    let thread_count =
+        std::fs::read_dir("/proc/self/task")?.try_fold(0usize, |count, entry| entry.map(|_| count + 1))?;
+    let flags = restriction_flags_for(abi, thread_count)?;
+    // nix has no Landlock API. ABI 8 introduced TSYNC. Older supported
+    // kernels can safely confine only a process that has not created sibling
+    // threads yet; descendants inherit the caller's Landlock domain.
+    let result = unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset.as_raw_fd(), flags) };
     if result < 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+pub(super) fn restriction_flags_for(abi: i32, thread_count: usize) -> io::Result<u32> {
+    if abi >= TSYNC_ABI {
+        return Ok(RESTRICT_SELF_TSYNC);
+    }
+    if thread_count != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Landlock ABI {abi} requires single-threaded worker startup; found {thread_count} threads"),
+        ));
+    }
+    Ok(0)
 }
 
 fn install_seccomp(role: Role) -> io::Result<()> {

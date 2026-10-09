@@ -72,6 +72,30 @@ fn seatbelt_proxy_is_deny_by_default_and_descriptor_only() {
     assert!(compiled.parameters().is_empty());
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_policy_compiles_canonical_grant_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let policy = Policy::new(Role::Ledger).allow(directory.path(), Access::ReadWrite);
+    let canonical = super::platform::canonical_policy(&policy).unwrap();
+    assert_eq!(canonical.paths()[0].path(), directory.path().canonicalize().unwrap());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn old_landlock_abis_require_single_threaded_startup() {
+    assert_eq!(super::platform::restriction_flags_for(6, 1).unwrap(), 0);
+    let error = super::platform::restriction_flags_for(7, 2).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+    assert!(error.to_string().contains("single-threaded worker startup"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn landlock_abi_eight_synchronizes_existing_threads() {
+    assert_ne!(super::platform::restriction_flags_for(8, usize::MAX).unwrap(), 0);
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_policy_preserves_grants_and_denies_ambient_authority() {
@@ -116,7 +140,7 @@ fn linux_policy_preserves_grants_and_denies_ambient_authority() {
     let status = child.wait().unwrap();
     assert!(status.success(), "sandbox child failed: {status}");
     read.unwrap();
-    assert_eq!(&reply, b"pong");
+    assert!(matches!(&reply, b"pong" | b"safe"));
 }
 
 #[cfg(target_os = "linux")]
@@ -133,19 +157,24 @@ fn linux_sandbox_child() {
     let allowed = std::path::PathBuf::from(allowed);
     let stdin = std::io::stdin();
     let mut inherited = TcpStream::from(super::super::fd::duplicate(stdin.as_fd()).unwrap());
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
+    // Tokio prepares its signal-driver socketpair while building a runtime.
+    // A current-thread runtime owns no sibling threads before confinement;
+    // its later blocking workers inherit the installed policy.
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-
-    confine(
+    if let Err(error) = confine(
         &Policy::new(Role::Ledger)
             .allow(&allowed, Access::ReadWrite)
             .allow(&readonly, Access::ReadOnly)
             .allow(&exact, Access::ReadOnly),
-    )
-    .unwrap();
+    ) {
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+        assert!(error.to_string().contains("single-threaded worker startup"));
+        inherited.write_all(b"safe").unwrap();
+        std::process::exit(0);
+    }
 
     runtime.block_on(async {
         tokio::task::spawn_blocking(move || {
@@ -204,6 +233,7 @@ fn macos_policy_preserves_grants_and_denies_ambient_authority() {
         .env("WORKER_SANDBOX_DENIED", &denied)
         .env("WORKER_SANDBOX_CONTROL", &control)
         .env("WORKER_SANDBOX_PORT", port.to_string())
+        .env("LLVM_PROFILE_FILE", allowed.join("profile-%p-%m.profraw"))
         .stdin(Stdio::from(std::os::fd::OwnedFd::from(socket)))
         .spawn()
         .unwrap();

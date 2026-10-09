@@ -143,8 +143,8 @@ fingerprint = "d14267a19410254a6633ba264e8046ea3dbd9c9046b72006155d76ee76db008f"
 reason = "seccomp(2) filter install with TSYNC; nix has no seccomp"
 
 [foundation.raw_calls."crates/capsem-foundation/src/unix/worker_sandbox/linux.rs::syscall"]
-fingerprint = "47970efa29a92b2183616ae27524b3453bc9c3abdd320c180f24a4423dd7488d"
-reason = "Landlock rules and thread-synchronized seccomp installation have no nix API"
+fingerprint = "7286c55845201710a915c8334492ab2a9cb35c11f6bcb1ebb4843554cf1f8986"
+reason = "Landlock ABI-aware rules and thread-synchronized seccomp installation have no nix API"
 
 [foundation.raw_calls."crates/capsem-foundation/src/unix/worker_sandbox/macos.rs::sandbox_free_error"]
 fingerprint = "429f4efde365972763d15c7976b45af1d29819c8342fa1c4da5be3e123555fdb"
