@@ -31,8 +31,11 @@ pub struct ProxyCredentialObservation {
     pub provider: ProxyCredentialProvider,
     pub raw_value: String,
     pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_json: Option<String>,
 }
 
@@ -70,8 +73,10 @@ pub enum ProxyCredentialRequest {
     Substitute {
         request_id: u64,
         domain: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         ai_provider: Option<ProxyModelProvider>,
         headers: Vec<ProxyHeader>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         query: Option<String>,
     },
 }
@@ -124,7 +129,9 @@ pub enum ProxyCredentialResponse {
     Substituted {
         request_id: u64,
         headers: Vec<ProxyHeader>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         query: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         credential_ref: Option<String>,
     },
     Rejected {
@@ -178,54 +185,4 @@ pub enum ProxyCredentialProtocolError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bounded_capture_and_substitution_requests_validate() {
-        let capture = ProxyCredentialRequest::Capture {
-            request_id: 1,
-            observation: ProxyCredentialObservation {
-                provider: ProxyCredentialProvider::OpenAi,
-                raw_value: "secret".to_string(),
-                source: "http.header.authorization".to_string(),
-                event_type: Some("http.request".to_string()),
-                trace_id: None,
-                context_json: None,
-            },
-        };
-        capture.validate().unwrap();
-
-        let substitute = ProxyCredentialRequest::Substitute {
-            request_id: 2,
-            domain: "api.openai.com".to_string(),
-            ai_provider: Some(ProxyModelProvider::OpenAi),
-            headers: vec![ProxyHeader::new(
-                "authorization",
-                b"Bearer credential:blake3:abc".to_vec(),
-            )],
-            query: Some("key=credential%3Ablake3%3Aabc".to_string()),
-        };
-        substitute.validate().unwrap();
-        assert_eq!(capture.request_id(), 1);
-        assert_eq!(substitute.request_id(), 2);
-    }
-
-    #[test]
-    fn oversized_or_uncorrelated_values_fail_closed() {
-        let request = ProxyCredentialRequest::Capture {
-            request_id: 0,
-            observation: ProxyCredentialObservation {
-                provider: ProxyCredentialProvider::Google,
-                raw_value: "x".repeat(MAX_CREDENTIAL_VALUE_BYTES + 1),
-                source: "test".to_string(),
-                event_type: None,
-                trace_id: None,
-                context_json: None,
-            },
-        };
-        assert!(request.validate().is_err());
-        assert!(ProxyCredentialResponse::rejected(0, "no").is_err());
-        assert!(ProxyCredentialResponse::rejected(1, "x".repeat(MAX_CREDENTIAL_ERROR_BYTES + 1)).is_err());
-    }
-}
+mod tests;
