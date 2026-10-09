@@ -11,11 +11,13 @@ use std::net::IpAddr;
 use anyhow::{bail, Result};
 
 /// Exact record size carried by the bounded SCM_RIGHTS channel.
-pub const UPSTREAM_GRANT_FRAME_SIZE: usize = 360;
+pub const UPSTREAM_GRANT_FRAME_SIZE: usize = 4480;
 /// A response grants at most one connected TCP or UDP descriptor.
 pub const UPSTREAM_GRANT_MAX_FDS: usize = 1;
 /// DNS names are at most 253 wire-text bytes without a root dot.
 pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
+/// Maximum relative path carried by a guest-share metadata request.
+pub const MAX_GUEST_SHARE_PATH_BYTES: usize = 4096;
 
 const MAGIC: [u8; 2] = *b"UG";
 const VERSION: u8 = 1;
@@ -30,16 +32,21 @@ const NAME_LENGTH_OFFSET: usize = 24;
 const NAME_RANGE: std::ops::Range<usize> = 25..25 + MAX_UPSTREAM_HOST_BYTES;
 const POLICY_DIGEST_BYTES: usize = 71;
 const POLICY_DIGEST_RANGE: std::ops::Range<usize> = NAME_RANGE.end..NAME_RANGE.end + POLICY_DIGEST_BYTES;
-const RESERVED_RANGE: std::ops::Range<usize> = POLICY_DIGEST_RANGE.end..UPSTREAM_GRANT_FRAME_SIZE;
+const PATH_LENGTH_RANGE: std::ops::Range<usize> = POLICY_DIGEST_RANGE.end..POLICY_DIGEST_RANGE.end + 2;
+const PATH_RANGE: std::ops::Range<usize> =
+    PATH_LENGTH_RANGE.end..PATH_LENGTH_RANGE.end + MAX_GUEST_SHARE_PATH_BYTES;
+const RESERVED_RANGE: std::ops::Range<usize> = PATH_RANGE.end..UPSTREAM_GRANT_FRAME_SIZE;
 
 const RESOLVE_TCP: u8 = 1;
 const CONNECT_TCP: u8 = 2;
 const OPEN_DNS: u8 = 3;
 const ADOPTED: u8 = 4;
 const RELEASE: u8 = 5;
+const SET_GUEST_MODE: u8 = 6;
 const TCP_RESOLVED: u8 = 101;
 const DESCRIPTOR_GRANTED: u8 = 102;
 const DENIED: u8 = 103;
+const GUEST_MODE_SET: u8 = 104;
 
 /// Application protocol spoken over a granted TCP stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -152,6 +159,11 @@ pub enum UpstreamGrantRequest {
     Release {
         resource_id: u64,
     },
+    SetGuestMode {
+        request_id: u64,
+        relative_path: Vec<u8>,
+        mode: u16,
+    },
 }
 
 /// Coordinator-to-worker record. Only `DescriptorGranted` carries one fd.
@@ -174,6 +186,9 @@ pub enum UpstreamGrantResponse {
         request_id: u64,
         reason: UpstreamGrantDenial,
     },
+    GuestModeSet {
+        request_id: u64,
+    },
 }
 
 impl UpstreamGrantRequest {
@@ -188,7 +203,7 @@ impl UpstreamGrantResponse {
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
             Self::DescriptorGranted { .. } => 1,
-            Self::TcpResolved { .. } | Self::Denied { .. } => 0,
+            Self::TcpResolved { .. } | Self::Denied { .. } | Self::GuestModeSet { .. } => 0,
         }
     }
 }
@@ -243,6 +258,21 @@ pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[
             frame[KIND_OFFSET] = RELEASE;
             put_u64(&mut frame, RESOURCE_ID_RANGE, *resource_id);
         }
+        UpstreamGrantRequest::SetGuestMode {
+            request_id,
+            relative_path,
+            mode,
+        } => {
+            require_nonzero("request id", *request_id)?;
+            if *mode & !0o7777 != 0 {
+                bail!("guest mode contains non-permission bits");
+            }
+            validate_guest_share_path(relative_path)?;
+            frame[KIND_OFFSET] = SET_GUEST_MODE;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+            put_u16(&mut frame, DETAIL_RANGE, *mode);
+            put_path(&mut frame, relative_path)?;
+        }
     }
     Ok(frame)
 }
@@ -256,6 +286,7 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
     let port = get_u16(frame, PORT_RANGE);
     let detail = get_u16(frame, DETAIL_RANGE);
     let name = get_name(frame)?;
+    let relative_path = get_path(frame)?;
     match frame[KIND_OFFSET] {
         RESOLVE_TCP => {
             require_nonzero("request id", request_id)?;
@@ -264,6 +295,7 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
             }
             let protocol = UpstreamProtocol::decode(detail)?;
             validate_normalized_host(&name)?;
+            require_empty_path(&relative_path)?;
             Ok(UpstreamGrantRequest::ResolveTcp {
                 request_id,
                 protocol,
@@ -275,6 +307,7 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
             require_nonzero("request id", request_id)?;
             require_nonzero("selection id", resource_id)?;
             require_empty_fields(port, detail, &name)?;
+            require_empty_path(&relative_path)?;
             Ok(UpstreamGrantRequest::ConnectTcp {
                 request_id,
                 selection_id: resource_id,
@@ -285,6 +318,7 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
             if resource_id != 0 || port != 0 || !name.is_empty() {
                 bail!("invalid DNS grant fields");
             }
+            require_empty_path(&relative_path)?;
             Ok(UpstreamGrantRequest::OpenDns {
                 request_id,
                 upstream_index: detail,
@@ -296,6 +330,7 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
                 bail!("adoption cannot carry a request id");
             }
             require_empty_fields(port, detail, &name)?;
+            require_empty_path(&relative_path)?;
             Ok(UpstreamGrantRequest::Adopted { grant_id: resource_id })
         }
         RELEASE => {
@@ -304,7 +339,20 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
                 bail!("release cannot carry a request id");
             }
             require_empty_fields(port, detail, &name)?;
+            require_empty_path(&relative_path)?;
             Ok(UpstreamGrantRequest::Release { resource_id })
+        }
+        SET_GUEST_MODE => {
+            require_nonzero("request id", request_id)?;
+            if resource_id != 0 || port != 0 || !name.is_empty() || detail & !0o7777 != 0 {
+                bail!("invalid guest mode request fields");
+            }
+            validate_guest_share_path(&relative_path)?;
+            Ok(UpstreamGrantRequest::SetGuestMode {
+                request_id,
+                relative_path,
+                mode: detail,
+            })
         }
         kind => bail!("invalid upstream request kind {kind}"),
     }
@@ -352,6 +400,11 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
             put_u16(&mut frame, DETAIL_RANGE, reason.code());
         }
+        UpstreamGrantResponse::GuestModeSet { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = GUEST_MODE_SET;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
     }
     Ok(frame)
 }
@@ -365,6 +418,8 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
     let detail = get_u16(frame, DETAIL_RANGE);
     let name = get_name(frame)?;
     let policy_digest = get_policy_digest(frame)?;
+    let relative_path = get_path(frame)?;
+    require_empty_path(&relative_path)?;
     require_nonzero("request id", request_id)?;
     if port != 0 {
         bail!("upstream response cannot carry a port");
@@ -413,6 +468,12 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
                 request_id,
                 reason: UpstreamGrantDenial::decode(detail)?,
             })
+        }
+        GUEST_MODE_SET => {
+            if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {
+                bail!("guest mode response carries unrelated fields");
+            }
+            Ok(UpstreamGrantResponse::GuestModeSet { request_id })
         }
         kind => bail!("invalid upstream response kind {kind}"),
     }
@@ -464,6 +525,47 @@ fn validate_normalized_host(host: &str) -> Result<()> {
         {
             bail!("invalid normalized upstream host");
         }
+    }
+    Ok(())
+}
+
+fn validate_guest_share_path(path: &[u8]) -> Result<()> {
+    if path.len() > MAX_GUEST_SHARE_PATH_BYTES || path.contains(&0) || path.first() == Some(&b'/') {
+        bail!("invalid guest-share path");
+    }
+    if !path.is_empty()
+        && path
+            .split(|byte| *byte == b'/')
+            .any(|component| component.is_empty() || component == b"." || component == b"..")
+    {
+        bail!("guest-share path is not normalized");
+    }
+    Ok(())
+}
+
+fn put_path(frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE], path: &[u8]) -> Result<()> {
+    validate_guest_share_path(path)?;
+    let length = u16::try_from(path.len()).map_err(|_| anyhow::anyhow!("guest-share path is too long"))?;
+    put_u16(frame, PATH_LENGTH_RANGE, length);
+    frame[PATH_RANGE.start..PATH_RANGE.start + path.len()].copy_from_slice(path);
+    Ok(())
+}
+
+fn get_path(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<Vec<u8>> {
+    let length = usize::from(get_u16(frame, PATH_LENGTH_RANGE));
+    if length > PATH_RANGE.len() {
+        bail!("guest-share path length exceeds its field");
+    }
+    let (used, padding) = frame[PATH_RANGE].split_at(length);
+    if padding.iter().any(|byte| *byte != 0) {
+        bail!("guest-share path padding is nonzero");
+    }
+    Ok(used.to_vec())
+}
+
+fn require_empty_path(path: &[u8]) -> Result<()> {
+    if !path.is_empty() {
+        bail!("record carries an unrelated guest-share path");
     }
     Ok(())
 }

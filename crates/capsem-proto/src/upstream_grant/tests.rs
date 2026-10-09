@@ -37,6 +37,11 @@ fn every_request_round_trips_exactly() {
         },
         UpstreamGrantRequest::Adopted { grant_id: 51 },
         UpstreamGrantRequest::Release { resource_id: 61 },
+        UpstreamGrantRequest::SetGuestMode {
+            request_id: 7,
+            relative_path: b"workspace/pyvenv/bin/activate".to_vec(),
+            mode: 0o755,
+        },
     ] {
         request_roundtrip(request);
     }
@@ -82,9 +87,51 @@ fn every_response_round_trips_exactly() {
             request_id: 6,
             reason: UpstreamGrantDenial::Revoked,
         },
+        UpstreamGrantResponse::GuestModeSet { request_id: 7 },
     ] {
         response_roundtrip(response);
     }
+}
+
+#[test]
+fn guest_mode_paths_are_bounded_normalized_bytes() {
+    request_roundtrip(UpstreamGrantRequest::SetGuestMode {
+        request_id: 1,
+        relative_path: vec![0xff, b'a'],
+        mode: 0o700,
+    });
+    request_roundtrip(UpstreamGrantRequest::SetGuestMode {
+        request_id: 2,
+        relative_path: Vec::new(),
+        mode: 0o755,
+    });
+
+    for relative_path in [
+        b"/absolute".to_vec(),
+        b"../escape".to_vec(),
+        b"a/../escape".to_vec(),
+        b"a//b".to_vec(),
+        b"trailing/".to_vec(),
+        b"nul\0byte".to_vec(),
+        vec![b'x'; MAX_GUEST_SHARE_PATH_BYTES + 1],
+    ] {
+        assert!(
+            encode_upstream_grant_request(&UpstreamGrantRequest::SetGuestMode {
+                request_id: 3,
+                relative_path,
+                mode: 0o644,
+            })
+            .is_err()
+        );
+    }
+    assert!(
+        encode_upstream_grant_request(&UpstreamGrantRequest::SetGuestMode {
+            request_id: 4,
+            relative_path: b"file".to_vec(),
+            mode: 0o10_000,
+        })
+        .is_err()
+    );
 }
 
 #[test]
@@ -195,6 +242,7 @@ fn envelope_and_trailing_bytes_are_strict() {
         |frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE]| frame[VERSION_OFFSET] = VERSION + 1,
         |frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE]| frame[RESERVED_RANGE.start] = 1,
         |frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE]| frame[NAME_RANGE.start + 1] = 1,
+        |frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE]| frame[PATH_RANGE.start + 1] = 1,
     ] {
         let mut malformed = valid;
         mutate(&mut malformed);
