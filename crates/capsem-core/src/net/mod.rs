@@ -10,6 +10,7 @@ pub mod network_registry;
 pub mod parsers;
 pub mod policy;
 pub mod policy_config;
+pub mod proxy_engine;
 pub mod router_process;
 pub mod switch_host;
 pub mod upstream_address;

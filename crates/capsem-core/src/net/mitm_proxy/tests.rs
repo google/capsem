@@ -1,4 +1,5 @@
 use super::*;
+use crate::net::policy::NetworkMechanics;
 use crate::net::policy_config::{SecurityRuleAction, SecurityRuleProfile, SecurityRuleSet};
 
 #[test]

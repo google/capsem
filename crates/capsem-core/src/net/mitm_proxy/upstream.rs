@@ -27,6 +27,7 @@ use tokio::net::TcpStream;
 use super::body::ProxyBoxBody;
 use super::protocol::Protocol;
 use crate::net::policy::{NetworkMechanics, UpstreamOverrideProtocol};
+use crate::net::proxy_engine::ProxyPolicySnapshot;
 use crate::net::upstream_address::{judged_address, UpstreamResolver};
 
 /// Future returned by a trusted TCP selection provider.
@@ -36,8 +37,30 @@ pub type TcpConnectGrantFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Gran
 
 /// Selects and connects upstreams without exposing address choice to a worker.
 pub trait TcpUpstreamGrants: Send + Sync {
-    fn resolve(&self, protocol: Protocol, host: &str, port: u16) -> TcpResolveGrantFuture<'_>;
-    fn connect(&self, selection_id: u64) -> TcpConnectGrantFuture<'_>;
+    fn resolve(&self, protocol: Protocol, host: &str, port: u16, policy_digest: &str) -> TcpResolveGrantFuture<'_>;
+    fn connect(&self, selection_id: u64, policy_digest: &str) -> TcpConnectGrantFuture<'_>;
+}
+
+/// The policy authority carried into one upstream selection.
+pub(super) struct UpstreamPolicy<'a> {
+    network: &'a NetworkMechanics,
+    digest: &'a str,
+}
+
+impl<'a> UpstreamPolicy<'a> {
+    #[cfg(test)]
+    fn new(network: &'a NetworkMechanics, digest: &'a str) -> Self {
+        Self { network, digest }
+    }
+}
+
+impl<'a> From<&'a ProxyPolicySnapshot> for UpstreamPolicy<'a> {
+    fn from(snapshot: &'a ProxyPolicySnapshot) -> Self {
+        Self {
+            network: snapshot.network(),
+            digest: snapshot.digest(),
+        }
+    }
 }
 
 struct SelectionLease {
@@ -193,7 +216,7 @@ impl UpstreamTarget {
     /// connection was judged and opened with instead of resolving again.
     pub(super) async fn select(
         resolver: &UpstreamResolver,
-        policy: &NetworkMechanics,
+        policy: UpstreamPolicy<'_>,
         guest_protocol: Protocol,
         domain: &str,
         port: u16,
@@ -201,7 +224,7 @@ impl UpstreamTarget {
         grants: Option<&dyn TcpUpstreamGrants>,
     ) -> Self {
         if grants.is_none() {
-            if let Some(target) = Self::override_target(policy, domain, port) {
+            if let Some(target) = Self::override_target(policy.network, domain, port) {
                 return target;
             }
         }
@@ -214,7 +237,7 @@ impl UpstreamTarget {
             return pinned;
         }
         if let Some(grants) = grants {
-            return Self::resolve_granted(grants, guest_protocol, domain, port).await;
+            return Self::resolve_granted(grants, guest_protocol, domain, port, policy.digest).await;
         }
         match resolver.resolve(domain, port).await {
             Ok(addresses) => Self::Resolved(addresses),
@@ -222,8 +245,14 @@ impl UpstreamTarget {
         }
     }
 
-    async fn resolve_granted(grants: &dyn TcpUpstreamGrants, protocol: Protocol, host: &str, port: u16) -> Self {
-        match grants.resolve(protocol, host, port).await {
+    async fn resolve_granted(
+        grants: &dyn TcpUpstreamGrants,
+        protocol: Protocol,
+        host: &str,
+        port: u16,
+        policy_digest: &str,
+    ) -> Self {
+        match grants.resolve(protocol, host, port, policy_digest).await {
             Ok(selection) => Self::Granted {
                 host: host.to_owned(),
                 port,
@@ -296,6 +325,7 @@ impl UpstreamTarget {
     pub async fn connect_with_grants(
         &self,
         grants: Option<&dyn TcpUpstreamGrants>,
+        policy_digest: &str,
     ) -> io::Result<(GrantedTcpStream, Self)> {
         let Some(grants) = grants else {
             let (stream, pinned) = self.connect().await?;
@@ -319,7 +349,7 @@ impl UpstreamTarget {
         let selection = match selection {
             Some(selection) => selection,
             None => {
-                refreshed = grants.resolve(*guest_protocol, host, *port).await?;
+                refreshed = grants.resolve(*guest_protocol, host, *port, policy_digest).await?;
                 if refreshed.protocol != *protocol || refreshed.judged_ip != *judged_ip {
                     return Err(io::Error::new(
                         io::ErrorKind::PermissionDenied,
@@ -329,7 +359,7 @@ impl UpstreamTarget {
                 &refreshed
             }
         };
-        let stream = grants.connect(selection.claim()?).await?;
+        let stream = grants.connect(selection.claim()?, policy_digest).await?;
         Ok((
             stream,
             Self::Granted {

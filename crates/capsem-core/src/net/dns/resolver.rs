@@ -73,13 +73,13 @@ pub type DnsGrantFuture<'a> = Pin<Box<dyn Future<Output = Result<DnsDatagram>> +
 
 /// Supplies a connected UDP socket for one configured upstream index.
 pub trait DnsUpstreamGrants: Send + Sync {
-    fn open(&self, upstream_index: u16) -> DnsGrantFuture<'_>;
+    fn open(&self, upstream_index: u16, policy_digest: &str) -> DnsGrantFuture<'_>;
 }
 
 struct DirectDnsUpstreams(Arc<RwLock<Vec<SocketAddr>>>);
 
 impl DnsUpstreamGrants for DirectDnsUpstreams {
-    fn open(&self, upstream_index: u16) -> DnsGrantFuture<'_> {
+    fn open(&self, upstream_index: u16, _policy_digest: &str) -> DnsGrantFuture<'_> {
         Box::pin(async move {
             let upstream = self
                 .0
@@ -175,6 +175,11 @@ impl DnsResolver {
     /// On total failure (every upstream timed out or errored) returns
     /// the cumulative error so the caller can synthesize a SERVFAIL.
     pub async fn resolve(&self, query_bytes: &[u8]) -> Result<(Vec<u8>, Duration)> {
+        self.resolve_for_policy(query_bytes, "direct").await
+    }
+
+    /// Forward under the exact active-policy revision that admitted the query.
+    pub async fn resolve_for_policy(&self, query_bytes: &[u8], policy_digest: &str) -> Result<(Vec<u8>, Duration)> {
         let upstreams = self.upstreams();
         if upstreams.is_empty() {
             return Err(anyhow!("no upstream nameservers configured"));
@@ -183,7 +188,10 @@ impl DnsResolver {
         for (index, upstream) in upstreams.iter().enumerate() {
             let t0 = Instant::now();
             let upstream_index = u16::try_from(index).map_err(|_| anyhow!("too many DNS upstreams configured"))?;
-            match self.try_one(upstream_index, *upstream, query_bytes).await {
+            match self
+                .try_one(upstream_index, *upstream, query_bytes, policy_digest)
+                .await
+            {
                 Ok(resp) => {
                     let elapsed = t0.elapsed();
                     debug!(
@@ -203,9 +211,15 @@ impl DnsResolver {
         Err(last_err.unwrap_or_else(|| anyhow!("all DNS upstreams failed")))
     }
 
-    async fn try_one(&self, upstream_index: u16, upstream: SocketAddr, query_bytes: &[u8]) -> Result<Vec<u8>> {
+    async fn try_one(
+        &self,
+        upstream_index: u16,
+        upstream: SocketAddr,
+        query_bytes: &[u8],
+        policy_digest: &str,
+    ) -> Result<Vec<u8>> {
         let expected = ExpectedAnswer::for_query(query_bytes)?;
-        let grant = self.grants.open(upstream_index).await?;
+        let grant = self.grants.open(upstream_index, policy_digest).await?;
         let sock = grant.socket();
         sock.send(query_bytes).await?;
         let deadline = Instant::now() + self.per_attempt_timeout;

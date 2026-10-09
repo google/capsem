@@ -17,10 +17,12 @@ struct TestGrants {
     next_id: AtomicU64,
     selection_releases: Arc<AtomicUsize>,
     stream_releases: Arc<AtomicUsize>,
+    policy_digests: Arc<Mutex<Vec<String>>>,
 }
 
 impl TcpUpstreamGrants for TestGrants {
-    fn resolve(&self, _protocol: Protocol, _host: &str, _port: u16) -> TcpResolveGrantFuture<'_> {
+    fn resolve(&self, _protocol: Protocol, _host: &str, _port: u16, policy_digest: &str) -> TcpResolveGrantFuture<'_> {
+        self.policy_digests.lock().unwrap().push(policy_digest.to_string());
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let releases = Arc::clone(&self.selection_releases);
         Box::pin(async move {
@@ -35,7 +37,8 @@ impl TcpUpstreamGrants for TestGrants {
         })
     }
 
-    fn connect(&self, _selection_id: u64) -> TcpConnectGrantFuture<'_> {
+    fn connect(&self, _selection_id: u64, policy_digest: &str) -> TcpConnectGrantFuture<'_> {
+        self.policy_digests.lock().unwrap().push(policy_digest.to_string());
         let address = self.address;
         let releases = Arc::clone(&self.stream_releases);
         Box::pin(async move {
@@ -75,7 +78,7 @@ fn decision(target: &UpstreamTarget, domain: &str, port: u16) -> (String, Securi
 async fn select(resolver: &UpstreamResolver, policy: &NetworkMechanics, domain: &str, port: u16) -> UpstreamTarget {
     UpstreamTarget::select(
         resolver,
-        policy,
+        UpstreamPolicy::new(policy, "blake3:test"),
         Protocol::Tls,
         domain,
         port,
@@ -231,12 +234,38 @@ async fn keep_alive_requests_reuse_only_their_own_pinned_upstream() {
         .with_fixed_answer("other.example", vec!["127.0.0.1".parse().unwrap()]);
     let policy = NetworkMechanics::new();
 
-    let same = UpstreamTarget::select(&rebound, &policy, Protocol::Http, "site.example", 80, &cache, None).await;
+    let same = UpstreamTarget::select(
+        &rebound,
+        UpstreamPolicy::new(&policy, "blake3:test"),
+        Protocol::Http,
+        "site.example",
+        80,
+        &cache,
+        None,
+    )
+    .await;
     assert_eq!(same, pinned, "the same host stays on the address it was judged with");
 
-    let other_port =
-        UpstreamTarget::select(&rebound, &policy, Protocol::Http, "site.example", 8080, &cache, None).await;
-    let other_host = UpstreamTarget::select(&rebound, &policy, Protocol::Http, "other.example", 80, &cache, None).await;
+    let other_port = UpstreamTarget::select(
+        &rebound,
+        UpstreamPolicy::new(&policy, "blake3:test"),
+        Protocol::Http,
+        "site.example",
+        8080,
+        &cache,
+        None,
+    )
+    .await;
+    let other_host = UpstreamTarget::select(
+        &rebound,
+        UpstreamPolicy::new(&policy, "blake3:test"),
+        Protocol::Http,
+        "other.example",
+        80,
+        &cache,
+        None,
+    )
+    .await;
     assert_eq!(
         other_host.judged_ip("other.example"),
         Some("127.0.0.1".parse().unwrap())
@@ -267,7 +296,7 @@ async fn a_trusted_override_preempts_an_existing_resolved_connection() {
 
     let selected = UpstreamTarget::select(
         &UpstreamResolver::system(),
-        &policy,
+        UpstreamPolicy::new(&policy, "blake3:test"),
         Protocol::Tls,
         "site.example",
         443,
@@ -295,11 +324,12 @@ async fn brokered_selection_is_judged_connected_pinned_and_released() {
         next_id: AtomicU64::new(1),
         selection_releases: Arc::clone(&selection_releases),
         stream_releases: Arc::clone(&stream_releases),
+        policy_digests: Arc::new(Mutex::new(Vec::new())),
     };
     let cache = UpstreamCache::default();
     let target = UpstreamTarget::select(
         &UpstreamResolver::system(),
-        &NetworkMechanics::new(),
+        UpstreamPolicy::new(&NetworkMechanics::new(), "blake3:test"),
         Protocol::Tls,
         "brokered.example",
         443,
@@ -310,17 +340,24 @@ async fn brokered_selection_is_judged_connected_pinned_and_released() {
     assert_eq!(target.judged_ip("brokered.example"), Some("127.0.0.1".parse().unwrap()));
     assert_eq!(target.protocol(Protocol::Tls), Protocol::Http);
 
-    let (connected, accepted) = tokio::join!(target.connect_with_grants(Some(&grants)), listener.accept());
+    let (connected, accepted) = tokio::join!(
+        target.connect_with_grants(Some(&grants), "blake3:test"),
+        listener.accept()
+    );
     let (stream, pinned) = connected.unwrap();
     let (_peer, _) = accepted.unwrap();
     assert!(matches!(pinned, UpstreamTarget::Granted { selection: None, .. }));
     assert_eq!(selection_releases.load(Ordering::Relaxed), 0);
     drop(stream);
     assert_eq!(stream_releases.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        *grants.policy_digests.lock().unwrap(),
+        vec!["blake3:test".to_string(), "blake3:test".to_string()]
+    );
 
     let unused = UpstreamTarget::select(
         &UpstreamResolver::system(),
-        &NetworkMechanics::new(),
+        UpstreamPolicy::new(&NetworkMechanics::new(), "blake3:test"),
         Protocol::Tls,
         "blocked.example",
         443,
@@ -340,9 +377,10 @@ async fn installed_grants_never_fall_back_to_a_direct_target() {
         next_id: AtomicU64::new(1),
         selection_releases: Arc::new(AtomicUsize::new(0)),
         stream_releases: Arc::new(AtomicUsize::new(0)),
+        policy_digests: Arc::new(Mutex::new(Vec::new())),
     };
     let direct = UpstreamTarget::Resolved(vec![listener.local_addr().unwrap()]);
-    let error = match direct.connect_with_grants(Some(&grants)).await {
+    let error = match direct.connect_with_grants(Some(&grants), "blake3:test").await {
         Ok(_) => panic!("direct connection bypassed installed grants"),
         Err(error) => error,
     };

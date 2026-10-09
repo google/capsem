@@ -196,11 +196,13 @@ async fn a_hundred_concurrent_resolves_complete_against_one_upstream() {
 struct IndexedGrants {
     upstreams: Arc<Vec<SocketAddr>>,
     requested: Arc<Mutex<Vec<u16>>>,
+    policy_digests: Arc<Mutex<Vec<String>>>,
     refuse: bool,
 }
 
 impl DnsUpstreamGrants for IndexedGrants {
-    fn open(&self, upstream_index: u16) -> DnsGrantFuture<'_> {
+    fn open(&self, upstream_index: u16, policy_digest: &str) -> DnsGrantFuture<'_> {
+        self.policy_digests.lock().unwrap().push(policy_digest.to_string());
         Box::pin(async move {
             self.requested.lock().unwrap().push(upstream_index);
             if self.refuse {
@@ -228,19 +230,25 @@ async fn injected_grants_preserve_configured_failover_order() {
     })
     .await;
     let requested = Arc::new(Mutex::new(Vec::new()));
+    let policy_digests = Arc::new(Mutex::new(Vec::new()));
     let grants = IndexedGrants {
         upstreams: Arc::new(vec![primary, failover]),
         requested: Arc::clone(&requested),
+        policy_digests: Arc::clone(&policy_digests),
         refuse: false,
     };
     let resolver =
         DnsResolver::with_grants(vec![primary, failover], Arc::new(grants)).with_timeout(Duration::from_millis(50));
 
     resolver
-        .resolve(&query_bytes(7, "ordered.example."))
+        .resolve_for_policy(&query_bytes(7, "ordered.example."), "blake3:dns")
         .await
         .expect("the second configured grant answers");
     assert_eq!(*requested.lock().unwrap(), vec![0, 1]);
+    assert_eq!(
+        *policy_digests.lock().unwrap(),
+        vec!["blake3:dns".to_string(), "blake3:dns".to_string()]
+    );
 }
 
 #[tokio::test]
@@ -254,6 +262,7 @@ async fn refused_grant_never_falls_back_to_direct_udp() {
     let grants = IndexedGrants {
         upstreams: Arc::new(vec![upstream]),
         requested: Arc::clone(&requested),
+        policy_digests: Arc::new(Mutex::new(Vec::new())),
         refuse: true,
     };
     let error = DnsResolver::with_grants(vec![upstream], Arc::new(grants))
@@ -275,6 +284,7 @@ async fn a_policy_reload_replaces_the_configured_grant_order() {
     let grants = IndexedGrants {
         upstreams: Arc::new(vec![upstream]),
         requested: Arc::clone(&requested),
+        policy_digests: Arc::new(Mutex::new(Vec::new())),
         refuse: false,
     };
     let resolver = DnsResolver::with_grants(Vec::new(), Arc::new(grants));

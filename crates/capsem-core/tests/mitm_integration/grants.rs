@@ -7,18 +7,18 @@ use capsem_core::net::mitm_proxy::{
     protocol::Protocol, GrantedTcpStream, TcpConnectGrantFuture, TcpGrantSelection, TcpResolveGrantFuture,
     TcpUpstreamGrants, UpstreamTarget,
 };
-use capsem_core::net::policy::NetworkMechanics;
+use capsem_core::net::proxy_engine::ProxyPolicyHandle;
 use capsem_core::net::upstream_address::UpstreamResolver;
 
 pub(super) struct IntegrationGrants {
-    policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
+    policy: ProxyPolicyHandle,
     resolver: UpstreamResolver,
     selections: Arc<Mutex<HashMap<u64, UpstreamTarget>>>,
     next_id: AtomicU64,
 }
 
 impl IntegrationGrants {
-    pub(super) fn new(policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>, resolver: UpstreamResolver) -> Self {
+    pub(super) fn new(policy: ProxyPolicyHandle, resolver: UpstreamResolver) -> Self {
         Self {
             policy,
             resolver,
@@ -29,11 +29,11 @@ impl IntegrationGrants {
 }
 
 impl TcpUpstreamGrants for IntegrationGrants {
-    fn resolve(&self, protocol: Protocol, host: &str, port: u16) -> TcpResolveGrantFuture<'_> {
+    fn resolve(&self, protocol: Protocol, host: &str, port: u16, _policy_digest: &str) -> TcpResolveGrantFuture<'_> {
         let host = host.to_owned();
         Box::pin(async move {
-            let policy = self.policy.read().unwrap().clone();
-            let target = UpstreamTarget::resolve(&self.resolver, &policy, &host, port).await;
+            let policy = self.policy.snapshot();
+            let target = UpstreamTarget::resolve(&self.resolver, policy.network(), &host, port).await;
             if let UpstreamTarget::Unresolved(error) = &target {
                 return Err(io::Error::new(io::ErrorKind::NotFound, error.clone()));
             }
@@ -48,7 +48,7 @@ impl TcpUpstreamGrants for IntegrationGrants {
         })
     }
 
-    fn connect(&self, selection_id: u64) -> TcpConnectGrantFuture<'_> {
+    fn connect(&self, selection_id: u64, _policy_digest: &str) -> TcpConnectGrantFuture<'_> {
         Box::pin(async move {
             let target = self
                 .selections
