@@ -18,6 +18,7 @@ pub mod handshake;
 pub mod host_session;
 pub mod ipc;
 pub mod ledger;
+pub mod ledger_control;
 pub mod ledger_counters;
 pub mod mcp;
 pub mod mcp_aggregator;
