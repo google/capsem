@@ -33,8 +33,7 @@ const NAME_RANGE: std::ops::Range<usize> = 25..25 + MAX_UPSTREAM_HOST_BYTES;
 const POLICY_DIGEST_BYTES: usize = 71;
 const POLICY_DIGEST_RANGE: std::ops::Range<usize> = NAME_RANGE.end..NAME_RANGE.end + POLICY_DIGEST_BYTES;
 const PATH_LENGTH_RANGE: std::ops::Range<usize> = POLICY_DIGEST_RANGE.end..POLICY_DIGEST_RANGE.end + 2;
-const PATH_RANGE: std::ops::Range<usize> =
-    PATH_LENGTH_RANGE.end..PATH_LENGTH_RANGE.end + MAX_GUEST_SHARE_PATH_BYTES;
+const PATH_RANGE: std::ops::Range<usize> = PATH_LENGTH_RANGE.end..PATH_LENGTH_RANGE.end + MAX_GUEST_SHARE_PATH_BYTES;
 const RESERVED_RANGE: std::ops::Range<usize> = PATH_RANGE.end..UPSTREAM_GRANT_FRAME_SIZE;
 
 const RESOLVE_TCP: u8 = 1;

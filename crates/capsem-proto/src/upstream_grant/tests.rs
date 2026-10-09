@@ -115,23 +115,19 @@ fn guest_mode_paths_are_bounded_normalized_bytes() {
         b"nul\0byte".to_vec(),
         vec![b'x'; MAX_GUEST_SHARE_PATH_BYTES + 1],
     ] {
-        assert!(
-            encode_upstream_grant_request(&UpstreamGrantRequest::SetGuestMode {
-                request_id: 3,
-                relative_path,
-                mode: 0o644,
-            })
-            .is_err()
-        );
-    }
-    assert!(
-        encode_upstream_grant_request(&UpstreamGrantRequest::SetGuestMode {
-            request_id: 4,
-            relative_path: b"file".to_vec(),
-            mode: 0o10_000,
+        assert!(encode_upstream_grant_request(&UpstreamGrantRequest::SetGuestMode {
+            request_id: 3,
+            relative_path,
+            mode: 0o644,
         })
-        .is_err()
-    );
+        .is_err());
+    }
+    assert!(encode_upstream_grant_request(&UpstreamGrantRequest::SetGuestMode {
+        request_id: 4,
+        relative_path: b"file".to_vec(),
+        mode: 0o10_000,
+    })
+    .is_err());
 }
 
 #[test]
