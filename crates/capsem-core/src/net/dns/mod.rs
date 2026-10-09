@@ -42,6 +42,7 @@ mod coalesce;
 pub mod private;
 pub mod resolver;
 pub mod server;
+pub mod session;
 pub mod telemetry;
 
 pub use cache::{DnsAnswerCache, DEFAULT_CAPACITY, DEFAULT_MAX_TTL_SECS};
