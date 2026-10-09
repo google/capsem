@@ -12,6 +12,7 @@ fn grants_round_trip_without_session_path_or_destination_authority() {
         ProxyCapability::PrivateNames,
         ProxyCapability::Mcp,
         ProxyCapability::Telemetry,
+        ProxyCapability::Policy,
     ] {
         let grant = ProxyChannelGrant::new(GENERATION, 41, capability).unwrap();
         let request = ProxyControlRequest::Attach(grant);

@@ -58,6 +58,7 @@ pub enum ProxyCapability {
     PrivateNames = 5,
     Mcp = 6,
     Telemetry = 7,
+    Policy = 8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -297,6 +298,7 @@ fn decode_capability(value: u8) -> Result<ProxyCapability, ProxyControlError> {
         5 => Ok(ProxyCapability::PrivateNames),
         6 => Ok(ProxyCapability::Mcp),
         7 => Ok(ProxyCapability::Telemetry),
+        8 => Ok(ProxyCapability::Policy),
         value => Err(ProxyControlError::InvalidCapability(value)),
     }
 }
