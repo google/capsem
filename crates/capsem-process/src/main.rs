@@ -667,7 +667,7 @@ async fn run_async_main_loop(
 ) -> Result<()> {
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
-    let (ledger_stream, ledger_grant) = upstream_grants
+    let (ledger_stream, commitment_stream, ledger_grant) = upstream_grants
         .open_ledger()
         .await
         .context("acquire supervised session ledger")?;
@@ -679,7 +679,13 @@ async fn run_async_main_loop(
     // the worker that exclusively owns and opens the database.
     let db = Arc::new(
         tokio::task::spawn_blocking(move || {
-            capsem_logger::DbWriter::from_ledger_channel(ledger_stream, ledger_grant, &ledger_path, 1024)
+            capsem_logger::DbWriter::from_ledger_channel(
+                ledger_stream,
+                commitment_stream,
+                ledger_grant,
+                &ledger_path,
+                1024,
+            )
         })
         .await
         .context("join supervised session ledger handshake")??,
