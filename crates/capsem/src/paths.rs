@@ -16,6 +16,8 @@ pub fn capsem_home() -> Result<PathBuf> {
 pub struct CapsemPaths {
     pub service_bin: PathBuf,
     pub process_bin: PathBuf,
+    pub ledger_bin: PathBuf,
+    pub proxy_bin: PathBuf,
     pub gateway_bin: PathBuf,
     pub tray_bin: PathBuf,
     pub assets_dir: PathBuf,
@@ -34,6 +36,8 @@ pub fn discover_paths() -> Result<CapsemPaths> {
     Ok(CapsemPaths {
         service_bin: bin_dir.join("capsem-service"),
         process_bin: bin_dir.join("capsem-process"),
+        ledger_bin: bin_dir.join("capsem-ledger"),
+        proxy_bin: bin_dir.join("capsem-proxy"),
         gateway_bin: bin_dir.join("capsem-gateway"),
         tray_bin: bin_dir.join("capsem-tray"),
         assets_dir: capsem_foundation::paths::capsem_assets_dir(),

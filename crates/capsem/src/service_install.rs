@@ -57,6 +57,7 @@ pub struct ServiceStatus {
 pub fn generate_plist(
     service_bin: &Path,
     process_bin: &Path,
+    proxy_bin: &Path,
     gateway_bin: &Path,
     tray_bin: &Path,
     assets_dir: &Path,
@@ -65,6 +66,7 @@ pub fn generate_plist(
     let log_dir = xml_escape(&format!("{}/Library/Logs/capsem", home));
     let service_bin = xml_escape(&service_bin.display().to_string());
     let process_bin = xml_escape(&process_bin.display().to_string());
+    let proxy_bin = xml_escape(&proxy_bin.display().to_string());
     let gateway_bin = xml_escape(&gateway_bin.display().to_string());
     let tray_bin = xml_escape(&tray_bin.display().to_string());
     let assets_dir = xml_escape(&assets_dir.display().to_string());
@@ -89,6 +91,8 @@ pub fn generate_plist(
         <string>{assets_dir}</string>
         <string>--process-binary</string>
         <string>{process_bin}</string>
+        <string>--proxy-binary</string>
+        <string>{proxy_bin}</string>
         <string>--gateway-binary</string>
         <string>{gateway_bin}</string>
         <string>--tray-binary</string>
@@ -115,12 +119,14 @@ pub fn generate_plist(
 pub fn generate_systemd_unit(
     service_bin: &Path,
     process_bin: &Path,
+    proxy_bin: &Path,
     gateway_bin: &Path,
     tray_bin: &Path,
     assets_dir: &Path,
 ) -> String {
     let service_bin = systemd_escape_path(service_bin);
     let process_bin = systemd_escape_path(process_bin);
+    let proxy_bin = systemd_escape_path(proxy_bin);
     let gateway_bin = systemd_escape_path(gateway_bin);
     let tray_bin = systemd_escape_path(tray_bin);
     let assets_dir = systemd_escape_path(assets_dir);
@@ -129,7 +135,7 @@ pub fn generate_systemd_unit(
 Description=Capsem sandbox service
 
 [Service]
-ExecStart={service_bin} --foreground --assets-dir {assets_dir} --process-binary {process_bin} --gateway-binary {gateway_bin} --tray-binary {tray_bin}
+ExecStart={service_bin} --foreground --assets-dir {assets_dir} --process-binary {process_bin} --proxy-binary {proxy_bin} --gateway-binary {gateway_bin} --tray-binary {tray_bin}
 Restart=always
 RestartSec=2
 
@@ -176,6 +182,22 @@ fn reject_test_isolation_env() -> Result<()> {
     );
 }
 
+fn validate_service_binaries(capsem_paths: &paths::CapsemPaths) -> Result<()> {
+    for (name, path) in [
+        ("capsem-service", &capsem_paths.service_bin),
+        ("capsem-process", &capsem_paths.process_bin),
+        ("capsem-ledger", &capsem_paths.ledger_bin),
+        ("capsem-proxy", &capsem_paths.proxy_bin),
+        ("capsem-gateway", &capsem_paths.gateway_bin),
+        ("capsem-tray", &capsem_paths.tray_bin),
+    ] {
+        if !path.is_file() {
+            anyhow::bail!("{name} not found at {}", path.display());
+        }
+    }
+    Ok(())
+}
+
 /// Install the capsem service as a LaunchAgent (macOS) or systemd user unit (Linux).
 pub async fn install_service() -> Result<()> {
     reject_test_isolation_env()?;
@@ -183,12 +205,7 @@ pub async fn install_service() -> Result<()> {
     let capsem_paths = paths::discover_paths().context("cannot discover paths for service installation")?;
     let home = std::env::var("HOME").context("HOME not set")?;
 
-    if !capsem_paths.service_bin.exists() {
-        anyhow::bail!("capsem-service not found at {}", capsem_paths.service_bin.display());
-    }
-    if !capsem_paths.process_bin.exists() {
-        anyhow::bail!("capsem-process not found at {}", capsem_paths.process_bin.display());
-    }
+    validate_service_binaries(&capsem_paths)?;
 
     #[cfg(target_os = "macos")]
     {
@@ -523,7 +540,14 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
             .map(|d| format!("{}/{name}", d.display()))
             .unwrap_or_else(|| name.to_string())
     };
-    let names = ["capsem-service", "capsem-tray", "capsem-gateway", "capsem-process"];
+    let names = [
+        "capsem-service",
+        "capsem-tray",
+        "capsem-gateway",
+        "capsem-process",
+        "capsem-ledger",
+        "capsem-proxy",
+    ];
     for name in names {
         let pattern = scoped_name(name);
         let _ = tokio::process::Command::new("pkill")
@@ -558,6 +582,7 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     let plist_content = generate_plist(
         &capsem_paths.service_bin,
         &capsem_paths.process_bin,
+        &capsem_paths.proxy_bin,
         &capsem_paths.gateway_bin,
         &capsem_paths.tray_bin,
         &capsem_paths.assets_dir,
@@ -640,6 +665,7 @@ async fn install_systemd_unit(capsem_paths: &paths::CapsemPaths, home: &str) -> 
     let unit_content = generate_systemd_unit(
         &capsem_paths.service_bin,
         &capsem_paths.process_bin,
+        &capsem_paths.proxy_bin,
         &capsem_paths.gateway_bin,
         &capsem_paths.tray_bin,
         &capsem_paths.assets_dir,

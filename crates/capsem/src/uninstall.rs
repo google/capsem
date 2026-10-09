@@ -45,7 +45,14 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
     let install_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    for name in ["capsem-service", "capsem-process", "capsem-gateway", "capsem-tray"] {
+    for name in [
+        "capsem-service",
+        "capsem-process",
+        "capsem-ledger",
+        "capsem-proxy",
+        "capsem-gateway",
+        "capsem-tray",
+    ] {
         let pattern = match install_dir.as_ref() {
             Some(dir) => format!("{}/{name}", dir.display()),
             None => name.to_string(),
@@ -62,10 +69,20 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
     // Remove binaries from the detected install location
     const CAPSEM_BINARIES: &[&str] = &[
         "capsem",
+        "capsem-admin",
+        "capsem-app",
+        "capsem-bench-rs",
+        "capsem-gateway",
+        "capsem-ledger",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+        "capsem-mock-server",
         "capsem-service",
         "capsem-process",
-        "capsem-gateway",
+        "capsem-proxy",
+        "capsem-router",
         "capsem-tray",
+        "capsem-tui",
     ];
     if let Some(bin_dir) = platform::install_bin_dir() {
         if bin_dir.exists() {
