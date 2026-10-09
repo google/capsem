@@ -58,15 +58,6 @@ flowchart TB
   style engine fill:#fef9c3,stroke:#b59b00,stroke-width:3px,color:#172033
 ```
 
-For an HTTPS request, the network analysis engine terminates TLS and extracts
-facts such as the hostname, method, and URL. Preprocess plugins prepare those
-facts for rule evaluation, including identifying credentials. Rules match the
-facts; postprocess plugins can tighten the decision. An allowed request gets
-its assigned credentials and is forwarded. A separate sanitized copy goes to
-the log writer, so restoring a secret for the upstream does not put that secret
-in the stored record.
-Responses and model messages are also evaluated before being forwarded to the caller.
-
 ## Responsibilities
 
 | Component | Role | Boundary |
@@ -82,6 +73,80 @@ Responses and model messages are also evaluated before being forwarded to the ca
 `ask` does not mean allow: the operation cannot proceed until approval is
 resolved. If a required audit record is refused, the operation is refused too.
 Network connection and probe events require an explicit allow rule.
+
+## Protocol parsing and HTTPS inspection
+
+Guest helpers send traffic over vsock to the network analysis engine. It parses
+DNS questions, HTTP requests and responses, model API messages, and MCP messages
+into fields that rules and plugins can inspect.
+
+HTTPS inspection uses a **man-in-the-middle (MITM) certificate**:
+
+1. The VM trusts the Capsem certificate authority (CA). Its certificate bundle
+   is also mounted read-only into the OCI container, with certificate environment
+   variables pointing tools to that bundle.
+2. The engine reads the hostname from the TLS handshake and generates a
+   certificate for that hostname, signed by the Capsem CA. The client establishes
+   TLS with the engine, which can then read the HTTP request.
+3. After policy allows the request, the engine connects separately to the real
+   upstream. It checks the upstream certificate against the hostname and its
+   public CA trust store.
+
+The engine can therefore inspect the method, URL, headers, and body before
+forwarding a request, and inspect the response before returning it. The Capsem
+CA certificate is used on the VM side; it does not replace upstream certificate
+validation. A client that rejects the Capsem CA or pins the upstream certificate
+cannot use this intercepted TLS connection.
+
+## Model and MCP parsing and logging
+
+HTTP parsing identifies the request. Model and MCP parsers identify what that
+request does, so rules can inspect a model call or tool call rather than only
+its URL.
+
+| Traffic | Parsed facts | Recorded data |
+| --- | --- | --- |
+| Model API | Provider, model, request and response content, and tool calls. Parsers handle supported JSON, streaming SSE, and model WebSocket messages. | Model calls, tool calls and results, available token usage, timing, and completion status. |
+| MCP | JSON-RPC method, server, tool name, arguments, result, or error. | Tool calls and results, tool-list operations, timing, and outcome. |
+
+Trace IDs relate traffic, model or MCP records, and security decisions for an
+operation. The engine sends sanitized records to the
+log writer, which stores them in `session.db` and its body archive. Matched rules,
+detections, and plugin execution evidence are recorded alongside the operation.
+Restoring a real credential for an allowed upstream request is separate from
+preparing its stored record.
+
+## What a security event contains
+
+A `SecurityEvent` combines an operation type with the facts needed to evaluate
+it. HTTP events carry HTTP fields; model and MCP events add their own fields.
+Plugins can enrich those facts and record detections before the operation is
+forwarded.
+
+This illustrative excerpt shows an evaluated HTTP request. Unused fields are
+omitted; it is not a complete event or an export-format contract.
+
+```json
+{
+  "event_type": "http.request",
+  "trace_id": "example-request-1",
+  "http": {
+    "host": "example.com",
+    "method": "GET",
+    "path": "/health"
+  },
+  "decision": { "effective": "allow" },
+  "detections": [],
+  "plugin_executions": [],
+  "credential_ref": null
+}
+```
+
+Rules can match fields such as `http.host` and `http.method`. The effective
+decision is `allow`, `ask`, or `block`; detections identify matches and their
+severity. Plugin execution records identify the plugin, stage, whether it
+applied, and how long it took. `credential_ref` identifies a brokered credential
+without containing its secret.
 
 ## Rule and detection inputs
 

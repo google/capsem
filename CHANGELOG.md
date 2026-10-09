@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Security engine architecture separates protocol parsing and MITM certificate
+  trust, model/MCP logging, and an illustrative security-event structure.
+
 - Security engine prose describes request and response handling directly,
   without mixing diagram notation into the explanation.
 
