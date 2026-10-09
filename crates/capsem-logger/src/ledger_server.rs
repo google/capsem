@@ -244,6 +244,16 @@ impl LedgerServer {
     }
 }
 
+/// Execute the same bounded named intent as a descriptor client against an
+/// already-owned handle. Embedded tests and the worker dispatch share this
+/// rail so neither can grow a second SQL definition.
+pub async fn execute_named_query(
+    db: &DbHandle,
+    query: crate::ledger_protocol::LedgerQuery,
+) -> Result<Vec<crate::ledger_protocol::LedgerRows>, String> {
+    queries::execute(db, query).await
+}
+
 struct WarcChunkWriter {
     chunks: tokio::sync::mpsc::Sender<Vec<u8>>,
 }
