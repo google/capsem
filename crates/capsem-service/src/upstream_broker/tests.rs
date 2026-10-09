@@ -109,6 +109,29 @@ fn policy_digest(label: &str) -> String {
     format!("blake3:{}", blake3::hash(label.as_bytes()).to_hex())
 }
 
+#[tokio::test]
+async fn merged_policy_publisher_waits_for_every_broker() {
+    let (first_tx, mut first_rx) = tokio::sync::mpsc::channel(1);
+    let (second_tx, mut second_rx) = tokio::sync::mpsc::channel(1);
+    let publisher = PolicyPublisher {
+        updates: vec![first_tx],
+    }
+    .merge(PolicyPublisher {
+        updates: vec![second_tx],
+    });
+    let first = tokio::spawn(async move {
+        let update = first_rx.recv().await.unwrap();
+        update.applied.send(Ok(())).unwrap();
+    });
+    let second = tokio::spawn(async move {
+        let update = second_rx.recv().await.unwrap();
+        update.applied.send(Ok(())).unwrap();
+    });
+    publisher.publish(test_policy("merged", None, vec![])).await.unwrap();
+    first.await.unwrap();
+    second.await.unwrap();
+}
+
 fn start_broker(
     policy: Arc<BrokerPolicy>,
 ) -> (
@@ -668,7 +691,7 @@ async fn worker_supplied_descriptor_terminates_before_resolution() {
         .unwrap()
         .unwrap()
         .unwrap_err();
-    assert_eq!(error, "worker sent an upstream descriptor");
+    assert_eq!(error, "worker upstream request carried 1 descriptors, expected 0");
     assert!(client.responses.recv().await.is_err());
 }
 

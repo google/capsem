@@ -67,13 +67,17 @@ impl ServiceState {
         self.validate_persistent_entry(&entry)?;
         let active_policy = self.materialize_active_policy(&entry.session_dir)?;
         let active_policy_path = active_policy.path.clone();
-        let (upstream_broker, upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(
+        let (upstream_broker, owner_upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(
             active_policy.broker_policy(),
             entry.session_dir.clone(),
         )?;
         let upstream_broker =
             upstream_broker.with_vm_ledger(Arc::clone(&self.ledger_workers), &vm_id, &entry.session_dir);
         let upstream_stdio = upstream_broker.worker_stdio()?;
+        let (proxy_upstream_broker, proxy_upstream_policy) =
+            crate::upstream_broker::PendingBroker::pair(active_policy.broker_policy())?;
+        let proxy_upstream = proxy_upstream_broker.worker_stream()?;
+        let upstream_policy = owner_upstream_policy.merge(proxy_upstream_policy);
         let scratch_disk_size_gb = session_rootfs_size_gb(&entry)?;
         let resolved = self.resolve_pinned_asset_paths(&entry.asset_pins)?;
         self.validate_pinned_asset_files(&resolved, &entry.asset_pins)?;
@@ -235,6 +239,12 @@ impl ServiceState {
             instance_reaper::kill_and_reap(child);
             return Err(error);
         }
+        if let Err(error) = tokio::runtime::Handle::current()
+            .block_on(proxy.grant(capsem_proto::proxy_control::ProxyCapability::Upstream, proxy_upstream))
+        {
+            instance_reaper::kill_and_reap(child);
+            return Err(error.context("grant proxy upstream broker"));
+        }
         let upstream_broker = upstream_broker.with_proxy(proxy.clone());
 
         info!(
@@ -246,6 +256,7 @@ impl ServiceState {
 
         let authority = crate::instance::WorkerAuthority::default();
         let upstream_grant = authority.grant();
+        let proxy_upstream_grant = authority.grant();
         let session_dir = entry.session_dir.clone();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
@@ -276,6 +287,7 @@ impl ServiceState {
             return Err(error.context("register proxy worker"));
         }
         let _upstream_broker = upstream_broker.start(upstream_grant);
+        let _proxy_upstream_broker = proxy_upstream_broker.start(proxy_upstream_grant);
         let _reaper = instance_reaper::spawn_exit_reaper(
             child,
             vm_id.clone(),

@@ -156,12 +156,16 @@ impl ServiceState {
 
         let active_policy = self.materialize_active_policy(&session_dir)?;
         let active_policy_path = active_policy.path.clone();
-        let (upstream_broker, upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(
+        let (upstream_broker, owner_upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(
             active_policy.broker_policy(),
             session_dir.clone(),
         )?;
         let upstream_broker = upstream_broker.with_vm_ledger(Arc::clone(&self.ledger_workers), id, &session_dir);
         let upstream_stdio = upstream_broker.worker_stdio()?;
+        let (proxy_upstream_broker, proxy_upstream_policy) =
+            crate::upstream_broker::PendingBroker::pair(active_policy.broker_policy())?;
+        let proxy_upstream = proxy_upstream_broker.worker_stream()?;
+        let upstream_policy = owner_upstream_policy.merge(proxy_upstream_policy);
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
@@ -305,6 +309,12 @@ impl ServiceState {
             instance_reaper::kill_and_reap(child);
             return Err(error);
         }
+        if let Err(error) = tokio::runtime::Handle::current()
+            .block_on(proxy.grant(capsem_proto::proxy_control::ProxyCapability::Upstream, proxy_upstream))
+        {
+            instance_reaper::kill_and_reap(child);
+            return Err(error.context("grant proxy upstream broker"));
+        }
         let upstream_broker = upstream_broker.with_proxy(proxy.clone());
 
         // Provisioning runs on a blocking thread that keeps the runtime
@@ -357,6 +367,7 @@ impl ServiceState {
 
         let authority = crate::instance::WorkerAuthority::default();
         let upstream_grant = authority.grant();
+        let proxy_upstream_grant = authority.grant();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             id.to_string(),
@@ -386,6 +397,7 @@ impl ServiceState {
             return Err(error.context("register proxy worker"));
         }
         let _upstream_broker = upstream_broker.start(upstream_grant);
+        let _proxy_upstream_broker = proxy_upstream_broker.start(proxy_upstream_grant);
         let _reaper = instance_reaper::spawn_exit_reaper(
             child,
             id.to_string(),
