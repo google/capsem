@@ -68,7 +68,7 @@ fn connecting_child() {
 
 #[test]
 fn mismatched_uid_is_refused_even_when_the_pid_matches() {
-    let (socket, _) = UnixStream::pair().unwrap();
+    let (socket, _peer) = UnixStream::pair().unwrap();
     let mut wrong = current();
     wrong.uid ^= 1;
     assert_eq!(

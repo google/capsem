@@ -316,6 +316,12 @@ impl ContainedDir {
         for component in parents {
             parent = parent.descend(component)?;
         }
+        if parent.entry_kind(name)? == Some(EntryKind::Other) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a file or directory", Path::new(name).display()),
+            ));
+        }
         fchmodat(
             Some(parent.fd.as_raw_fd()),
             *name,

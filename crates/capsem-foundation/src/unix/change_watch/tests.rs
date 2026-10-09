@@ -18,14 +18,11 @@ fn directory_path_watch_tracks_ancestor_replacement_and_retains_original_root() 
     let root = watch.open_directory(&path).unwrap();
     let original = root.metadata().unwrap().ino();
     assert!(!watch.changed().unwrap());
-    #[cfg(target_os = "linux")]
-    {
-        std::fs::write(parent.path().join("unrelated"), b"sibling").unwrap();
-        assert!(
-            !watch.changed().unwrap(),
-            "unrelated ancestor siblings must not invalidate"
-        );
-    }
+    std::fs::write(parent.path().join("unrelated"), b"sibling").unwrap();
+    assert!(
+        !watch.changed().unwrap(),
+        "unrelated ancestor siblings must not invalidate"
+    );
     std::fs::rename(&ancestor, parent.path().join("moved")).unwrap();
     std::fs::create_dir_all(&path).unwrap();
     assert!(

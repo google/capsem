@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Reject symlink and special-entry targets before descriptor-relative mode
+  changes, preserving the contained-filesystem contract on macOS as well as
+  Linux without following a guest-controlled link.
+
 - Install VM-owner confinement before starting its runtime, hypervisor,
   parent watcher, ledger client, filesystem monitor, or metric workers;
   pre-bind only the exact IPC and VSOCK descriptors those workers inherit.
@@ -78,9 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session-database path authority.
 
 - Confine each session-ledger owner before readiness to its one database and
-  inherited channels, denying sibling sessions, socket creation, execution,
-  signals and ambient files; erase inherited environment bytes and reject
-  symlinked session grants before serving clients.
+  inherited channels, denying sibling sessions, ambient network and control
+  sockets, execution, signals and files; erase inherited environment bytes and
+  reject symlinked session grants before serving clients.
 
 - Compress new session body blocks with streaming zstd only inside the
   confined ledger owner, retaining durable cross-flush history and legacy
