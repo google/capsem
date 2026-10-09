@@ -87,6 +87,7 @@ async fn subprocess_exit_fails_inflight_callers_immediately() {
     let call = tokio::spawn(async move { client.request(AggregatorMethod::ListTools).await });
 
     fake.next_request().await;
+    let mut stopped = fake.inflight.stop_receiver();
     fake.exit();
 
     let result = tokio::time::timeout(PROMPT, call)
@@ -94,6 +95,8 @@ async fn subprocess_exit_fails_inflight_callers_immediately() {
         .expect("an in-flight call must fail promptly when the aggregator exits")
         .unwrap();
     assert!(result.is_err(), "no aggregator can answer this call: {result:?}");
+    stopped.changed().await.unwrap();
+    assert!(*stopped.borrow());
 }
 
 #[tokio::test]
