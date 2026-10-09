@@ -258,6 +258,96 @@ fn confine_linux_owner(args: &Args, session_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+struct OwnerSandboxAttestation {
+    direct_path: PathBuf,
+    direct_file: std::fs::File,
+    guest_path: PathBuf,
+    guest_relative: Vec<u8>,
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_owner_sandbox_attestation(session_dir: &Path) -> Result<OwnerSandboxAttestation> {
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let create = |path: &Path| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("prepare owner sandbox attestation {}", path.display()))
+    };
+    let nonce = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let direct_path = session_dir.join(format!(".owner-sandbox-attestation-{nonce}"));
+    let guest_relative = format!("workspace/.owner-metadata-attestation-{nonce}").into_bytes();
+    let guest_path = session_dir
+        .join(capsem_core::GUEST_SHARE_DIR)
+        .join(std::ffi::OsStr::from_bytes(&guest_relative));
+    let direct_file = create(&direct_path)?;
+    drop(create(&guest_path)?);
+    Ok(OwnerSandboxAttestation {
+        direct_path,
+        direct_file,
+        guest_path,
+        guest_relative,
+    })
+}
+
+#[cfg(target_os = "linux")]
+async fn attest_linux_owner(
+    attestation: OwnerSandboxAttestation,
+    service_socket: PathBuf,
+    upstream_grants: Arc<upstream_grant::UpstreamGrantClient>,
+) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    let require_denied = |result: std::io::Result<()>, authority: &str| -> Result<()> {
+        match result {
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+            Err(error) => anyhow::bail!("VM owner sandbox returned {error} while denying {authority}"),
+            Ok(()) => anyhow::bail!("VM owner sandbox retained authority to {authority}"),
+        }
+    };
+    require_denied(
+        std::fs::File::open("/etc/passwd").map(|_| ()),
+        "read unrelated host files",
+    )?;
+    require_denied(
+        std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, 9)).map(|_| ()),
+        "dial TCP sockets directly",
+    )?;
+    require_denied(
+        std::os::unix::net::UnixStream::connect(service_socket).map(|_| ()),
+        "dial control sockets by path",
+    )?;
+    require_denied(
+        attestation
+            .direct_file
+            .set_permissions(std::fs::Permissions::from_mode(0o777)),
+        "change host modes directly",
+    )?;
+
+    tokio::task::spawn_blocking(move || {
+        capsem_core::GuestMetadataAuthority::set_mode(upstream_grants.as_ref(), &attestation.guest_relative, 0o701)
+    })
+    .await
+    .context("join brokered metadata attestation")??;
+    let mode = std::fs::metadata(&attestation.guest_path)?.mode() & 0o7777;
+    anyhow::ensure!(mode == 0o701, "brokered metadata attestation returned mode {mode:o}");
+    std::fs::remove_file(&attestation.guest_path)?;
+    std::fs::remove_file(&attestation.direct_path)?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     // SAFETY: process entry precedes argument parsing, telemetry, descriptor
     // owners and runtime threads. Broker grants will be named here explicitly.
@@ -764,7 +854,13 @@ async fn run_async_main_loop(
     let ready = prepare_sentinel(&uds_path.with_extension("ready"))?;
 
     #[cfg(target_os = "linux")]
-    confine_linux_owner(&args, &session_dir).context("install Linux VM-owner confinement")?;
+    {
+        let attestation = prepare_owner_sandbox_attestation(&session_dir)?;
+        confine_linux_owner(&args, &session_dir).context("install Linux VM-owner confinement")?;
+        attest_linux_owner(attestation, seats.service_socket.clone(), Arc::clone(&upstream_grants))
+            .await
+            .context("attest Linux VM-owner confinement")?;
+    }
 
     seats.start();
     use std::io::Write as _;
