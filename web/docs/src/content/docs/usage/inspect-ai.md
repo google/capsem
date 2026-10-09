@@ -54,21 +54,39 @@ def my_eval() -> Task:
     )
 ```
 
-A string sandbox config is also accepted: a `compose.yaml` / `docker-compose.yml` path or a pre-built OCI image reference (`"python:3.12-slim"`).
+A string sandbox config is also accepted: a `compose.yaml` / `docker-compose.yml` path, a `Dockerfile` / `Containerfile` path, or a pre-built OCI image reference (`"python:3.12-slim"`).
 
 ## `vm` vs `container` modes
 
 - **`execution_mode="vm"` (default)**: Commands and file operations execute directly inside an
   ephemeral Capsem micro-VM.
-- **`execution_mode="container"`**: Commands execute inside a rootless OCI workload container provisioned by `capsem-init` (`Hypervisor.create(image="docker://<image>")`) and entered via `runc exec --cwd / -u 0 workload bash -c …` (selected automatically when `compose_file` or `image` is set). The container image must provide `bash`, coreutils (`timeout`, `stat`, `base64`, `head`, `split`), `tar`/`gzip`, and `setpriv`/`su`/`getent`/`id` when executing as a non-root user. `connection()` (`capsem shell <vm_id>`) opens an interactive shell in the backing Capsem VM.
+- **`execution_mode="container"`**: Commands execute inside a rootless OCI workload container provisioned by `capsem-init` (`Hypervisor.create(image="docker://<image>")`) and entered via `runc exec --cwd / -u 0 workload bash -c …` (selected automatically when `compose_file`, `image`, `dockerfile`, or `build` is set). The container image must provide `bash`, coreutils (`timeout`, `stat`, `base64`, `head`, `split`), `tar`/`gzip`, and `setpriv`/`su`/`getent`/`id` when executing as a non-root user. `connection()` (`capsem shell <vm_id>`) opens an interactive shell in the backing Capsem VM.
 
 ### Compose support
 
 In `container` mode, `inspect-capsem-sandbox` parses single-service `compose.yaml` / `docker-compose.yml` files with `PyYAML`:
 
-- **Supported service fields**: `image`, `working_dir`, `environment` (mapping or `KEY=VALUE` list, with project `.env` interpolation, Inspect `SAMPLE_METADATA_<KEY>` synthesis from scalar sample metadata, and operator-owned host environment allowlisting via `CAPSEM_INSPECT_ALLOWED_HOST_ENV`), `user`, `command`, `entrypoint`, `volumes` (host bind-mount sources inside the Compose directory or `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` staged once at sample start as one-way, root-owned `0:0` copies capped at 256 MiB, preserving file modes), `healthcheck` (polled via `sh -c` with default `retries=3`, `interval` sleep capped at 2 s), `mem_limit` / `deploy.resources.limits.memory` (mapped to VM `ram_gb`), and `cpus` / `deploy.resources.limits.cpus` (mapped to VM `cpu_count`).
+- **Supported service fields**: `image`, `build` / `dockerfile`, `working_dir`, `environment` (mapping or `KEY=VALUE` list, with project `.env` interpolation, Inspect `SAMPLE_METADATA_<KEY>` synthesis from scalar sample metadata, and operator-owned host environment allowlisting via `CAPSEM_INSPECT_ALLOWED_HOST_ENV`), `user`, `command`, `entrypoint`, `volumes` (host bind-mount sources inside the Compose directory or `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` staged once at sample start as one-way, root-owned `0:0` copies capped at 256 MiB, preserving file modes), `healthcheck` (polled via `sh -c` with default `retries=3`, `interval` sleep capped at 2 s), `mem_limit` / `deploy.resources.limits.memory` (mapped to VM `ram_gb`), and `cpus` / `deploy.resources.limits.cpus` (mapped to VM `cpu_count`).
 - **Host environment and path isolation**: Host `os.environ` is default-deny in Compose interpolation and bare `environment` keys unless allowlisted by the operator via `CAPSEM_INSPECT_ALLOWED_HOST_ENV` (explicit variable names or literal-prefix patterns; wildcard-only and character-class patterns are rejected), optionally narrowed by `CapsemSandboxConfig.allowed_host_env`. Host bind-mount `volumes` are restricted to the resolved `compose.yaml` directory (`os.path.realpath` containment) or `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` (optionally narrowed by `CapsemSandboxConfig.allowed_host_paths`).
-- **Unsupported**: `Dockerfile` / `build` sections, Compose files without a non-empty `services:` mapping, multi-service `services:` (>1 service), `depends_on`, `env_file`, `ports`, non-default `network_mode` (including `none`, `host`, and `service:<name>`), `internal: true` networks, and privilege/namespace keys (`privileged`, `cap_add`, `cap_drop`, `devices`, `security_opt`, `sysctls`, `pid`, `ipc`, `uts`, `cgroup`) raise `ValueError`. Other unrecognized service keys log a `WARNING` and are ignored (`x-*` extension keys are ignored silently). `x-inspect_k8s_sandbox.allow_domains`, `template`, `allow_domains`, and `host_workspace_dir` raise `NotImplementedError`.
+- **Unsupported**: Compose files without a non-empty `services:` mapping, multi-service `services:` (>1 service), `depends_on`, `env_file`, `ports`, non-default `network_mode` (including `none`, `host`, and `service:<name>`), `internal: true` networks, and privilege/namespace keys (`privileged`, `cap_add`, `cap_drop`, `devices`, `security_opt`, `sysctls`, `pid`, `ipc`, `uts`, `cgroup`) raise `ValueError`. Other unrecognized service keys log a `WARNING` and are ignored (`x-*` extension keys are ignored silently). `x-inspect_k8s_sandbox.allow_domains`, `template`, `allow_domains`, and `host_workspace_dir` raise `NotImplementedError`.
+
+### Evaluator-granted host image builds (`Compose build:` & `Dockerfile`)
+
+Host-assisted `Dockerfile` and Compose `build:` execution is **opt-in and disabled by default** (permission is never inferred from the presence of a `Dockerfile` or `build:` stanza). The evaluator process environment is the root authority (`CAPSEM_INSPECT_HOST_BUILD=1` and `CAPSEM_INSPECT_ALLOWED_HOST_PATHS`), and task config (`CapsemSandboxConfig(host_build=HostBuildGrant(...))`) can only narrow — never widen — those grants. When granted, `inspect_capsem` builds a Linux OCI image on the host (`--network none` and an isolated empty `DOCKER_CONFIG` by default), ingests the `docker image save` archive into a local content-addressed blob cache, and serves it over a loopback HTTPS OCI v2 registry (`127.0.0.1:5055` by default) with a per-VM `[images]` `ca_pem` trust anchor passed to `capsem-service`.
+
+> **Evaluator environment authority (`CAPSEM_INSPECT_HOST_BUILD` & `HostBuildGrant`):** `Dockerfile` `RUN` instructions execute inside `docker build` on the **host Docker daemon** before the built image is pulled into the Capsem micro-VM by digest (`127.0.0.1:<port>/inspect-capsem/build@sha256:<digest>`). Without `CAPSEM_INSPECT_HOST_BUILD=1` in the evaluator environment, any `Dockerfile` or Compose `build:` config fails fast with `ValueError` (even if `host_build` is set on the task). A task passing `host_build=False` or `HostBuildGrant(enabled=False)` disables host builds for that task.
+>
+> **Explicit context & symlink containment (`CAPSEM_INSPECT_ALLOWED_HOST_PATHS` & `HostBuildGrant.allowed_contexts`):** Build context roots are **never** inferred from a `compose.yaml` file's parent directory. The evaluator must allowlist build context and `Dockerfile` directories via `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` (optionally narrowed per task via `allowed_host_paths` or `HostBuildGrant(allowed_contexts=(...,))`). Non-`.dockerignore`d symlinks inside the build context whose `os.path.realpath` escapes the context root are rejected before `docker build` runs, and mounting `docker.sock` into a sandbox is forbidden.
+>
+> **Network, CA trust, credentials, and cache integrity (`CAPSEM_INSPECT_BUILD_CACHE_DIR`):** Host builds default to `--network none` (operator ceiling `CAPSEM_INSPECT_BUILD_NETWORK=none|default`, optionally narrowed by `HostBuildGrant(network="none")`; `--network host` is always refused) and an isolated temporary `DOCKER_CONFIG` (`{"auths":{}}`) so ambient `~/.docker/config.json` credentials are never read unless `CAPSEM_INSPECT_BUILD_DOCKER_CONFIG` is explicitly set under an allowed host path. When `CAPSEM_INSPECT_BUILD_CA_PEM_FILE` (for example `~/.capsem/ca.crt`) is set under `CAPSEM_INSPECT_ALLOWED_HOST_PATHS`, `inspect_capsem` stages `.capsem-ca.crt` (the Capsem CA only, copied to `/usr/local/share/ca-certificates/capsem-ca.crt` for `update-ca-certificates` and `NODE_EXTRA_CA_CERTS`) and `.capsem-ca-bundle.crt` (the full root bundle from `CAPSEM_INSPECT_BUILD_CA_BUNDLE_FILE` plus the Capsem CA, copied to `/usr/local/share/capsem/ca-bundle.crt` for `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `PIP_CERT`, `CURL_CA_BUNDLE`, and `GIT_SSL_CAINFO`, plus `UV_NATIVE_TLS=1`), runs the distro CA updater and NSS `certutil` (`$HOME/.pki/nssdb`) before the first shell-form `RUN`, and seeds `$HOME/.pki/nssdb` at container startup (while `capsem-init` bind-mounts `/etc/ssl/certs/ca-certificates.crt` and sets the runtime TLS environment inside the VM). Networked builds (`--network default`) with `CAPSEM_INSPECT_BUILD_CA_PEM_FILE` require `CAPSEM_INSPECT_BUILD_CA_BUNDLE_FILE` (for example `/etc/ssl/certs/ca-certificates.crt`) so public root CAs remain trusted during `docker build`. Cache keys hash all regular files in the build context (plus non-`.dockerignore`d symlinks), `Dockerfile`, `args`, `target`, `network`, target platform, and the SHA-256 fingerprint of any configured build CA files (so CA rotation automatically invalidates cached builds). On cache hits, manifest, config, and layer blobs are verified by SHA-256; any corrupted blob and stale cache-key pointer are unlinked before rebuilding. Inside the VM, `capsem-init` applies the built OCI image's `Config.WorkingDir` (probed by `inspect_capsem` when `working_dir` is not explicitly set) and `Config.User` at container start.
+
+Host-side image builds require the `docker` CLI (with BuildKit enabled, the default since Docker 23.0; `DOCKER_BUILDKIT=0` is refused) and `openssl` on `PATH`, plus an explicit image source admission rule in `~/.capsem/settings.toml` (matching the loopback registry `host:port`, `127.0.0.1:5055` by default) before starting `capsem-service`:
+
+```toml
+[images]
+sources = ["127.0.0.1:5055"]
+admit = ["127.0.0.1:5055/inspect-capsem/build"]
+```
 
 ## Configuration reference (`CapsemSandboxConfig`)
 
@@ -80,12 +98,15 @@ In `container` mode, `inspect-capsem-sandbox` parses single-service `compose.yam
 | `ram_gb` | `int` | `8` | Memory allocation in GiB for the Capsem VM |
 | `working_dir` | `str \| None` | `None` (`"/workspace"` in `vm`; image `WORKDIR` or `"/"` in `container`) | Working directory inside the guest VM or container |
 | `compose_file` | `str \| None` | `None` | Path to a single-service `compose.yaml` / `docker-compose.yml` file |
+| `dockerfile` | `str \| None` | `None` | Path to a standalone `Dockerfile` / `Containerfile` (requires `CAPSEM_INSPECT_HOST_BUILD=1`) |
+| `build` | `dict[str, Any] \| None` | `None` | Normalized Compose `build:` specification (requires `CAPSEM_INSPECT_HOST_BUILD=1`) |
+| `host_build` | `HostBuildGrant \| bool \| None` | `None` | Task-level host-build policy narrowing `CAPSEM_INSPECT_HOST_BUILD` and `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` |
 | `environment` | `dict[str, str]` | `{}` | Default environment variables passed to the VM session |
 | `command` | `tuple[str, ...] \| str \| None` | `None` | Override container command |
 | `volumes` | `tuple[str, ...]` | `()` | Host bind-mount specifications (`host_path:container_path[:mode]`) |
 | `healthcheck` | `dict[str, Any] \| None` | `None` | Container healthcheck readiness polling configuration |
 | `mem_limit` | `str \| None` | `None` | Container memory limit (for example `"2g"`), mapped to VM `ram_gb` |
-| `user` | `str \| None` | `None` | Default execution user (`uid`, `uid:gid`, or username) |
+| `user` | `str \| None` | `None` (root in `vm`; image `USER` or root in `container`) | Default execution user (`uid`, `uid:gid`, or username) |
 | `allowed_host_env` | `tuple[str, ...]` | `()` | Optional task-level subset narrowing `CAPSEM_INSPECT_ALLOWED_HOST_ENV` |
 | `allowed_host_paths` | `tuple[str, ...]` | `()` | Optional task-level subset narrowing `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` |
 
@@ -104,7 +125,16 @@ Gateway discovery follows the same precedence as the `capsem` CLI:
   and attaches `inspect-capsem-prefix: <slug>` so leftover sweeps and
   `inspect sandbox cleanup capsem` only reap VMs matching the active prefix.
 - `CAPSEM_INSPECT_ALLOWED_HOST_ENV`: Operator-owned comma-separated list of host environment variable names or literal-prefix patterns permitted in Compose interpolation and bare `environment` entries.
-- `CAPSEM_INSPECT_ALLOWED_HOST_PATHS`: Operator-owned list of host directory or file roots permitted for bind-mount sources outside the Compose directory.
+- `CAPSEM_INSPECT_ALLOWED_HOST_PATHS`: Operator-owned list of host directory or file roots permitted for bind-mount sources and `Dockerfile` / `build:` contexts.
+- `CAPSEM_INSPECT_HOST_BUILD`: Set to `1` (`true`) in the evaluator environment to authorize host-side `docker build` execution, or `0` (`false`) to deny (defaults to disabled).
+- `CAPSEM_INSPECT_BUILD_NETWORK`: Operator ceiling for `docker build --network` (`none` or `default`; defaults to `none`; `host` is refused).
+- `CAPSEM_INSPECT_BUILD_DOCKER_CONFIG`: Optional operator-allowlisted `docker --config` directory when pulling private base images during host builds.
+- `CAPSEM_INSPECT_BUILD_CA_PEM_FILE`: Optional operator-allowlisted Capsem CA PEM file (for example `~/.capsem/ca.crt`) staged into `.capsem-ca.crt` during host builds (`HostBuildGrant(ca_pem=False)` disables per task).
+- `CAPSEM_INSPECT_BUILD_CA_BUNDLE_FILE`: Optional operator-allowlisted base root CA bundle (for example `/etc/ssl/certs/ca-certificates.crt`; required when `CAPSEM_INSPECT_BUILD_CA_PEM_FILE` is combined with `--network default`) merged with the Capsem CA into `.capsem-ca-bundle.crt`.
+- `CAPSEM_INSPECT_BUILD_TIMEOUT`: Timeout in seconds for host `docker build` and `docker image save` commands (defaults to `600`).
+- `CAPSEM_INSPECT_BUILD_REGISTRY_PORT`: Loopback HTTPS OCI v2 registry port (defaults to `5055`; must match `sources` and `admit` under `[images]` in `~/.capsem/settings.toml`).
+- `CAPSEM_INSPECT_BUILD_CACHE_DIR`: Directory storing cached OCI blobs and local TLS certificates (defaults to `~/.cache/capsem/inspect-oci-builds`).
+- `CAPSEM_INSPECT_BUILD_PLATFORM`: Target platform passed to `docker build --platform` (defaults to `linux/arm64` on `aarch64`/`arm64` hosts and `linux/amd64` on `x86_64` hosts).
 - `INSPECT_CAPSEM_SANDBOX_TOOLS_PATH`: Optional host path override for the `inspect-sandbox-tools`
   binary baked into `/var/tmp/sandbox-services/inspect-sandbox-tools`.
 

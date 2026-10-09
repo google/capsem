@@ -9,11 +9,15 @@ import inspect_capsem.sandbox as sb_mod
 import pytest
 from inspect_ai.util import ComposeConfig, ComposeService
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
+from inspect_capsem.containers import HostBuildGrant
 
 from .helpers import LocalFakeCapsemController
 
 
-def test_coerce_config_variants(tmp_path: Path) -> None:
+def test_coerce_config_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", raising=False)
+    monkeypatch.delenv("CAPSEM_INSPECT_HOST_BUILD", raising=False)
     coerce = compose_mod.coerce_config
     compose = tmp_path / "compose.yaml"
     compose.write_text("services:\n  default:\n    image: ubuntu:24.04\n    working_dir: /src\n")
@@ -22,8 +26,16 @@ def test_coerce_config_variants(tmp_path: Path) -> None:
     plain = CapsemSandboxConfig(image="x")
     assert coerce(plain) is plain
     assert coerce(CapsemSandboxConfig(compose_file="")).compose_file == ""
-    with pytest.raises(ValueError, match="Dockerfile / Containerfile builds"):
+    with pytest.raises(ValueError, match="disabled by default"):
         coerce("Dockerfile")
+    monkeypatch.setenv("CAPSEM_INSPECT_HOST_BUILD", "1")
+    with pytest.raises(ValueError, match="allowed_host_paths"):
+        coerce("Dockerfile")
+    monkeypatch.setenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", str(tmp_path))
+    df_coerced = coerce("Dockerfile")
+    assert df_coerced.execution_mode == "container" and df_coerced.build is not None
+    assert CapsemSandboxEnvironment.config_deserialize(df_coerced.model_dump()) == df_coerced
+    assert CapsemSandboxConfig.model_validate_json(df_coerced.model_dump_json()) == df_coerced
     assert coerce(str(compose)).image == "ubuntu:24.04"
     absent = str(tmp_path / "absent.yml")
     with pytest.raises(FileNotFoundError, match="Compose file not found"):
@@ -53,7 +65,9 @@ def test_compose_file_config_applies_service_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Compose file parses service image, working_dir, env, command, volumes, limits."""
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", raising=False)
+    monkeypatch.delenv("CAPSEM_INSPECT_HOST_BUILD", raising=False)
     host_dir = tmp_path / "mounted_dir"
     host_dir.mkdir()
     (host_dir / "file.txt").write_text("hello", encoding="utf-8")
@@ -111,10 +125,42 @@ def test_compose_file_config_applies_service_fields(
     )
     assert coerced_cc.to_container_spec().working_dir_explicit is True
 
+    for forbidden_direct in (
+        {"build": {"context": "/etc", "dockerfile": "/etc/passwd"}},
+        {"build": str(Path.home())},
+        {"dockerfile": "/etc/hostname"},
+        {"image": "alpine:3.20", "registry_ca_pem": "-----BEGIN CERTIFICATE-----"},
+    ):
+        with pytest.raises(ValueError):
+            compose_mod.coerce_config(forbidden_direct)
+
+    df_file = tmp_path / "Dockerfile"
+    df_file.write_text("FROM alpine:3.20\nWORKDIR /app/work\nUSER 1002:1002\n", encoding="utf-8")
+    grant = HostBuildGrant(allowed_contexts=(str(tmp_path),))
+    with pytest.raises(ValueError, match="CAPSEM_INSPECT_HOST_BUILD"):
+        compose_mod.coerce_config({"dockerfile": str(df_file), "host_build": grant})
+
+    monkeypatch.setenv("CAPSEM_INSPECT_HOST_BUILD", "1")
+    monkeypatch.setenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", str(tmp_path))
+    direct_df = compose_mod.coerce_config({"dockerfile": str(df_file), "host_build": grant})
+    assert direct_df.build is not None and direct_df.execution_mode == "container"
+    assert CapsemSandboxEnvironment.config_deserialize(direct_df.model_dump()) == direct_df
+    assert CapsemSandboxConfig.model_validate_json(direct_df.model_dump_json()) == direct_df
+    cc_build = compose_mod.coerce_config(
+        ComposeConfig(services={"default": ComposeService(build=str(tmp_path))})
+    )
+    assert cc_build.build is not None and cc_build.execution_mode == "container"
+    assert CapsemSandboxEnvironment.config_deserialize(cc_build.model_dump()) == cc_build
+    assert CapsemSandboxConfig.model_validate_json(cc_build.model_dump_json()) == cc_build
+
+    expected_roots = (str(tmp_path.resolve()),)
     for df_str in ("Dockerfile", "Containerfile", "path/to/Custom.Dockerfile", "dev.containerfile"):
-        with pytest.raises(ValueError, match="Dockerfile / Containerfile builds"):
-            compose_mod.coerce_config(df_str)
-    for bad_dict_key in ("dockerfile", "build", "build_context", "build_args", "build_target"):
+        coerced_df = compose_mod.coerce_config(df_str)
+        assert coerced_df.execution_mode == "container" and coerced_df.build is not None
+        assert coerced_df.to_container_spec().allowed_host_paths == expected_roots
+    assert compose_mod.coerce_config({"dockerfile": str(df_file)}).build is not None
+    assert compose_mod.coerce_config({"build": str(tmp_path)}).build is not None
+    for bad_dict_key in ("build_context", "build_args", "build_target", "dockerfile_inline"):
         with pytest.raises(ValueError, match=bad_dict_key):
             compose_mod.coerce_config({bad_dict_key: "x"})
 

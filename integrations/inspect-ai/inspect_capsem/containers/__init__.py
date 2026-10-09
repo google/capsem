@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .build_grant import HostBuildGrant
 from .compose import extract_compose_fields, parse_compose_yaml_file, parse_host_compose_yaml_file
 from .compose_fields import (
     extract_capsem_compose_fields,
@@ -17,6 +18,7 @@ __all__ = [
     "ContainerCommandResult",
     "ContainerController",
     "ContainerSpec",
+    "HostBuildGrant",
     "extract_capsem_compose_fields",
     "extract_compose_fields",
     "normalize_volumes",

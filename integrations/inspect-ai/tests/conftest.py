@@ -51,6 +51,9 @@ def pytest_configure(config: pytest.Config) -> None:
         if tmp_factory is not None:
             tmp_factory._given_basetemp = Path(namespaced).resolve()
             tmp_factory._basetemp = None
+    config.addinivalue_line(
+        "markers", "requires_docker: test requires a local docker CLI and daemon"
+    )
 
 
 _PORTABLE_TIMEOUT_SHIM = f"""#!{sys.executable}

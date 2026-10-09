@@ -1271,7 +1271,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Inspect AI](https://inspect.aisi.org.uk/) `SandboxEnvironment` registered
   under `capsem`, supporting direct VM execution (`execution_mode="vm"`) and
   rootless OCI workload container execution (`execution_mode="container"`)
-  with single-service Docker Compose support, `SAMPLE_METADATA_*`
+  with single-service Docker Compose support, evaluator-granted `Dockerfile`
+  and Compose `build:` image builds served via a loopback HTTPS OCI v2
+  registry with `[images]` `ca_pem` and `admit`, `SAMPLE_METADATA_*`
   interpolation, and operator-owned host environment and bind-mount
   allowlists, backed by the Capsem Python gateway SDK (`capsem>=0.7.0`).
 

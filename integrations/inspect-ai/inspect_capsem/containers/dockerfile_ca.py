@@ -1,6 +1,26 @@
-"""Pure Dockerfile support from Pierre Tholoniat's bb61fc82d integration."""
+"""Pure Dockerfile support from Pierre Tholoniat's bb61fc82d integration.
+
+In Capsem 0.7, the Capsem MITM CA is owned by the operator/evaluator on the host
+(e.g. `~/.capsem/ca.crt` or the profile CA; no SDK route exposes it). When host
+image builds opt into CA patching via `CAPSEM_INSPECT_BUILD_CA_PEM_FILE`:
+- `.capsem-ca.crt` (`/usr/local/share/ca-certificates/capsem-ca.crt`) holds the Capsem
+  CA certificate and is registered via `update-ca-certificates` and NSS `certutil`.
+- `.capsem-ca-bundle.crt` (`/usr/local/share/capsem/ca-bundle.crt`) holds the full
+  root CA bundle (`CAPSEM_INSPECT_BUILD_CA_BUNDLE_FILE` + Capsem CA, required when
+  `network != "none"`) so host `docker build` `RUN` steps verify public TLS hosts.
+- Build-time `ENV` sets `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `PIP_CERT`,
+  `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO` to `/usr/local/share/capsem/ca-bundle.crt`,
+  `NODE_EXTRA_CA_CERTS` to `/usr/local/share/ca-certificates/capsem-ca.crt`, and
+  `UV_NATIVE_TLS=1`. At runtime inside the VM, `guest/artifacts/container/launch.py`
+  bind-mounts `/etc/ssl/certs/ca-certificates.crt` read-only and overrides
+  `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, and `NODE_EXTRA_CA_CERTS`.
+- `is_root_user_spec` (shared via `inspect_capsem._users`) checks both user and group
+  parts so `USER root:<non-root-group>` (e.g. `root:1000`) is treated as non-root.
+"""
 
 from __future__ import annotations
+
+from inspect_capsem._users import is_root_user_spec
 
 from .dockerfile_scan import _dockerfile_instructions
 
@@ -26,10 +46,19 @@ _CA_STAGE_LINES = (
     "ENV " + " ".join(f"{k}={v}" for k, v in _CA_ENV.items()),
 )
 
+_CA_NSS_SCRIPT = (
+    "if command -v certutil >/dev/null 2>&1; then "
+    'db="sql:${HOME:-/root}/.pki/nssdb"; mkdir -p "${HOME:-/root}/.pki/nssdb"; '
+    'certutil -d "$db" -L >/dev/null 2>&1 || certutil -d "$db" -N --empty-password; '
+    f'certutil -d "$db" -A -n capsem-ca -t C,, -i {_IMAGE_CA}; '
+    "fi"
+)
+
 _CA_UPDATE_LINE = (
-    "RUN command -v update-ca-certificates >/dev/null 2>&1 "
+    "RUN { command -v update-ca-certificates >/dev/null 2>&1 "
     '&& { [ "$(id -u)" = 0 ] && update-ca-certificates >/dev/null 2>&1 '
-    "|| sudo -n update-ca-certificates >/dev/null 2>&1; } || true"
+    "|| sudo -n update-ca-certificates >/dev/null 2>&1; } || true; }; "
+    f"{{ {_CA_NSS_SCRIPT}; }} || true"
 )
 
 
@@ -62,14 +91,6 @@ def _stage_has_any_run(rest: list[tuple[str, str, list[str]]]) -> bool:
         if keyword == "RUN":
             return True
     return False
-
-
-def is_root_user_spec(user: str | None) -> bool:
-    """Return True when `user` is unset, empty, or resolves to root (`root`, `0`, `0:0`, `root:root`)."""
-    if user is None:
-        return True
-    head = user.strip().split(":", 1)[0].strip().lower()
-    return head in ("", "root", "0")
 
 
 def patch_dockerfile_for_capsem_ca(text: str) -> str:

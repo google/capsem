@@ -10,11 +10,13 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 if TYPE_CHECKING:
-    from .containers import ContainerSpec
+    from .containers import ContainerSpec, HostBuildGrant
+else:
+    HostBuildGrant = Any
 
 logger = logging.getLogger(__name__)
 _REJECTED_DOCKERFILE_KEYS = frozenset(
-    {"dockerfile", "build", "build_context", "build_args", "build_target", "dockerfile_inline"}
+    {"build_context", "build_args", "build_target", "dockerfile_inline"}
 )
 
 
@@ -59,8 +61,8 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
             for bad_key in _REJECTED_DOCKERFILE_KEYS:
                 if data.get(bad_key) is not None:
                     raise ValueError(
-                        f"Config field {bad_key!r} is not supported in Capsem OCI-workload mode; "
-                        "specify a pre-built 'image' reference instead."
+                        f"Config field {bad_key!r} is not supported on CapsemSandboxConfig; "
+                        "pass 'build' or 'dockerfile' or 'compose_file' instead."
                     )
             out = dict(data)
             out.pop("ports", None)
@@ -70,15 +72,36 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
                     "Ignoring 'init=True' on CapsemSandboxConfig: Capsem OCI-workload mode "
                     "supervises the container process directly."
                 )
+            if out.get("host_build") is not None:
+                from .containers.build_grant import HostBuildGrant
+
+                grant = HostBuildGrant.from_value(out["host_build"])
+                out["host_build"] = (
+                    out["host_build"]
+                    if isinstance(out["host_build"], bool)
+                    else (grant.to_dict() if grant is not None else None)
+                )
             if out.get("allowed_host_env"):
                 from .containers import validate_host_env_patterns
 
                 validate_host_env_patterns(out["allowed_host_env"], source="allowed_host_env")
-            if "execution_mode" not in out:
-                for key in ("compose_file", "image"):
-                    if isinstance(out.get(key), str) and out[key].strip():
-                        out["execution_mode"] = "container"
-                        break
+            if out.get("build") is not None or out.get("dockerfile") is not None:
+                from .containers.build_grant import resolve_direct_host_build
+
+                out["build"] = resolve_direct_host_build(
+                    {"build": out.get("build"), "dockerfile": out.get("dockerfile")},
+                    allowed_host_paths=tuple(out.get("allowed_host_paths") or ()),
+                    allowed_host_env=tuple(out.get("allowed_host_env") or ()),
+                    host_build=out.get("host_build"),
+                )
+            if "execution_mode" not in out and (
+                out.get("build") is not None
+                or any(
+                    isinstance(out.get(k), str) and out[k].strip()
+                    for k in ("compose_file", "image", "dockerfile")
+                )
+            ):
+                out["execution_mode"] = "container"
             return out
         return data
 
@@ -88,10 +111,12 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
             self.execution_mode == "container"
             and not (self.image and self.image.strip())
             and not (self.compose_file and self.compose_file.strip())
+            and not (self.dockerfile and self.dockerfile.strip())
+            and not self.build
         ):
             raise ValueError(
                 "execution_mode='container' requires an explicit OCI image reference "
-                "(set 'image' or 'compose_file')."
+                "(set 'image', 'compose_file', 'dockerfile', or 'build')."
             )
         return self
 
@@ -101,6 +126,9 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
     ram_gb: int = Field(default=8)
     working_dir: str | None = Field(default=None)
     compose_file: str | None = None
+    dockerfile: str | None = None
+    build: dict[str, Any] | None = None
+    host_build: HostBuildGrant | bool | None = None
     environment: dict[str, str] = Field(default_factory=dict)
     command: tuple[str, ...] | str | None = None
     volumes: tuple[str, ...] = ()
@@ -117,10 +145,10 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
         """Convert this sandbox config into an Inspect-free `ContainerSpec`."""
         from .containers import ContainerSpec, resolve_effective_allowed_host_paths
 
-        if not self.image or not self.image.strip():
+        if not (self.image and self.image.strip()) and not self.build:
             raise ValueError(
                 "execution_mode='container' requires an explicit OCI image reference "
-                "(set 'image' or a Compose service 'image')."
+                "(set 'image', 'build', or a Compose service 'image')."
             )
         eff_paths = list(resolve_effective_allowed_host_paths(self.allowed_host_paths))
         if self.compose_file and self.compose_file.strip():
@@ -138,4 +166,5 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
             mem_limit=self.mem_limit,
             user=self.user,
             allowed_host_paths=tuple(eff_paths),
+            build=dict(self.build) if self.build is not None else None,
         )

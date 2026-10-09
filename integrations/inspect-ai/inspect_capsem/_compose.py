@@ -50,6 +50,7 @@ def resolve_compose_file(
             allowed_host_env=cfg.allowed_host_env,
             allowed_host_paths=cfg.allowed_host_paths,
             sample_metadata=meta,
+            host_build=cfg.host_build,
         )
 
     overrides = _extract(sample_metadata)
@@ -92,10 +93,7 @@ def coerce_config(
                 else cfg
             )
         if _is_dockerfile_string(s):
-            raise ValueError(
-                f"Dockerfile / Containerfile builds ({s!r}) are not supported in Capsem "
-                "OCI-workload mode; specify a pre-built OCI image reference instead."
-            )
+            return CapsemSandboxConfig(execution_mode="container", dockerfile=s)
         return CapsemSandboxConfig(execution_mode="container", image=s)
     if isinstance(config, ComposeConfig):
         from .containers import extract_capsem_compose_fields
