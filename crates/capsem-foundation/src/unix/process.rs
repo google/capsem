@@ -9,6 +9,55 @@ use nix::unistd::Pid;
 
 use super::errno;
 
+/// Erase the inherited environment and detach it from the C process image.
+///
+/// `remove_var` alone leaves the original stack bytes visible through Linux
+/// `/proc/<pid>/environ`. This scrubs those bytes before emptying `environ`.
+///
+/// # Safety
+/// Call only at process entry, before any library can replace environment
+/// pointers and before another thread can read or mutate the environment.
+pub unsafe fn clear_inherited_environment() {
+    let environment = inherited_environment();
+    if environment.is_null() {
+        return;
+    }
+    let mut entry = environment;
+    while !unsafe { *entry }.is_null() {
+        let value = unsafe { *entry };
+        // SAFETY: process-entry `environ` is a null-terminated array of
+        // writable, NUL-terminated inherited strings. No other thread exists.
+        let length = unsafe { std::ffi::CStr::from_ptr(value) }.to_bytes().len();
+        unsafe { std::ptr::write_bytes(value.cast::<u8>(), 0, length) };
+        entry = unsafe { entry.add(1) };
+    }
+    // libc and Rust observe an empty list without retaining scrubbed entries.
+    unsafe { *environment = std::ptr::null_mut() };
+}
+
+#[cfg(target_os = "linux")]
+fn inherited_environment() -> *mut *mut libc::c_char {
+    unsafe extern "C" {
+        static mut environ: *mut *mut libc::c_char;
+    }
+    // SAFETY: the caller upholds process-entry exclusivity.
+    unsafe { environ }
+}
+
+#[cfg(target_os = "macos")]
+fn inherited_environment() -> *mut *mut libc::c_char {
+    unsafe extern "C" {
+        fn _NSGetEnviron() -> *mut *mut *mut libc::c_char;
+    }
+    // SAFETY: Darwin returns the address of this process's environ pointer.
+    unsafe { *_NSGetEnviron() }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn inherited_environment() -> *mut *mut libc::c_char {
+    std::ptr::null_mut()
+}
+
 /// A positive process identifier representable by the host kernel ABI.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ProcessId(NonZeroI32);
@@ -40,6 +89,15 @@ impl TryFrom<u32> for ProcessId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcessState {
     Alive,
+    Gone,
+}
+
+/// Whether `kill(pid, 0)` is permitted, denied, or names no process.
+/// Unlike [`probe`], this preserves `EPERM` for sandbox attestation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SignalProbe {
+    Allowed,
+    Denied,
     Gone,
 }
 
@@ -96,6 +154,20 @@ pub fn parent_process_id() -> Option<ProcessId> {
 /// `ESRCH` means it is gone; every other errno is preserved for the caller.
 pub fn probe(pid: ProcessId) -> io::Result<ProcessState> {
     classify_probe(kill(pid.as_nix(), None))
+}
+
+/// Probe signal authority without folding permission denial into liveness.
+pub fn probe_signal_authority(pid: ProcessId) -> io::Result<SignalProbe> {
+    classify_signal_probe(kill(pid.as_nix(), None))
+}
+
+fn classify_signal_probe(result: Result<(), Errno>) -> io::Result<SignalProbe> {
+    match result {
+        Ok(()) => Ok(SignalProbe::Allowed),
+        Err(Errno::EPERM) => Ok(SignalProbe::Denied),
+        Err(Errno::ESRCH) => Ok(SignalProbe::Gone),
+        Err(error) => Err(errno::io(error)),
+    }
 }
 
 fn classify_probe(result: Result<(), Errno>) -> io::Result<ProcessState> {
