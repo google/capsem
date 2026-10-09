@@ -464,7 +464,7 @@ pub(super) async fn handle_suspend(
             process_control::send_or_log(pid, process_control::Signal::Kill, "failed-suspend-cleanup");
         }
         tracing::warn!(id, outcome, "handle_suspend removing failed instance");
-        state.instances.lock().unwrap().remove(&id);
+        state.evict_instance(&id, owner.generation());
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
         return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error));
@@ -480,7 +480,7 @@ pub(super) async fn handle_suspend(
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
 
     tracing::warn!(id, "handle_suspend (success) removing instance");
-    state.instances.lock().unwrap().remove(&id);
+    state.evict_instance(&id, owner.generation());
     state.unregister_session_db_handle(&id);
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));

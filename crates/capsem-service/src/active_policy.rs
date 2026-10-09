@@ -12,6 +12,7 @@ use capsem_core::net::policy_config::ActivePolicyFile;
 pub(crate) struct PublishedActivePolicy {
     pub(crate) path: PathBuf,
     pub(crate) digest: String,
+    pub(crate) bytes: Vec<u8>,
     runtime: Arc<capsem_core::net::policy_config::CompiledActivePolicy>,
 }
 
@@ -48,6 +49,7 @@ impl ServiceState {
         Ok(PublishedActivePolicy {
             path: active_policy_path,
             digest: capsem_core::net::policy_config::active_policy_digest(serialized.as_bytes()),
+            bytes: serialized.into_bytes(),
             runtime,
         })
     }
@@ -129,11 +131,23 @@ pub(crate) async fn push_policy_to_running_instances(
                     }
                 };
                 match publisher {
-                    Some(publisher) => publisher
-                        .publish(published.broker_policy())
-                        .await
-                        .err()
-                        .map(|error| format!("{id}: {error}")),
+                    Some(publisher) => {
+                        let proxy = match state.proxy_worker(id, *generation) {
+                            Ok(proxy) => proxy,
+                            Err(error) => return Some(format!("{id}: {error}")),
+                        };
+                        match proxy.apply_policy(published.bytes.clone()).await {
+                            Ok(applied) if applied == *expected => publisher
+                                .publish(published.broker_policy())
+                                .await
+                                .err()
+                                .map(|error| format!("{id}: {error}")),
+                            Ok(applied) => Some(format!(
+                                "{id}: proxy applied active policy {applied}, expected {expected}"
+                            )),
+                            Err(error) => Some(format!("{id}: proxy reload refused: {error:#}")),
+                        }
+                    }
                     None => None,
                 }
             }

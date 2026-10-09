@@ -38,6 +38,10 @@ impl OwnerConnection {
         self.identity.uid
     }
 
+    pub(crate) fn generation(&self) -> uuid::Uuid {
+        self.generation
+    }
+
     pub(crate) fn authenticate(
         &self,
         state: &ServiceState,

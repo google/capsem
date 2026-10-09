@@ -200,6 +200,7 @@ pub(super) async fn revoke_exited_generation(
     drop(instances);
     if let Some(instance) = removed.as_ref() {
         instance.authority.revoke();
+        state.remove_proxy_worker(id, generation);
     }
     ExitedGeneration::Current(removed.map(Box::new))
 }

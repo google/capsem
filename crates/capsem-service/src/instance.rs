@@ -85,6 +85,7 @@ impl ServiceState {
         let removed = instances.remove(id)?;
         drop(instances);
         removed.authority.revoke();
+        self.remove_proxy_worker(id, generation);
         Some(removed)
     }
 

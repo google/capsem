@@ -212,6 +212,18 @@ impl ServiceState {
         let pid = child.id().unwrap_or(0);
         info!(name, pid, "capsem-process resumed");
 
+        let proxy = match crate::proxy_worker::spawn_for_session(
+            &self.proxy_binary,
+            active_policy.bytes,
+            &entry.session_dir.join("proxy.log"),
+        ) {
+            Ok(proxy) => proxy,
+            Err(error) => {
+                instance_reaper::kill_and_reap(child);
+                return Err(error.context("start confined proxy worker"));
+            }
+        };
+
         if session_db_path_for_session_dir(&entry.session_dir).exists() {
             if let Err(error) = self.register_session_db_handle(&vm_id, &entry.session_dir) {
                 instance_reaper::kill_and_reap(child);
@@ -252,6 +264,11 @@ impl ServiceState {
             },
         );
         drop(instances);
+        if let Err(error) = self.register_proxy_worker(&vm_id, generation, proxy) {
+            self.evict_instance(&vm_id, generation);
+            instance_reaper::kill_and_reap(child);
+            return Err(error.context("register proxy worker"));
+        }
         let _upstream_broker = upstream_broker.start(upstream_grant);
         let _reaper = instance_reaper::spawn_exit_reaper(
             child,

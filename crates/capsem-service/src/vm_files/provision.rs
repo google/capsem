@@ -75,7 +75,17 @@ pub(crate) async fn handle_provision(
                         let _ = state.persistent_registry.lock().unwrap().unregister(&stale_name);
                     })
                     .await;
-                state.instances.lock().unwrap().remove(&id);
+                let generation = {
+                    state
+                        .instances
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .map(|instance| instance.generation)
+                };
+                if let Some(generation) = generation {
+                    state.evict_instance(&id, generation);
+                }
                 warn!(id, attempt, "retrying provision after launchd-cleanup transient");
             }
 

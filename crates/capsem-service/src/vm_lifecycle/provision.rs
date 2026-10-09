@@ -283,6 +283,18 @@ impl ServiceState {
         let pid = child.id().unwrap_or(0);
         info!(id, pid, version, asset_version = %resolved.asset_version, "capsem-process spawned");
 
+        let proxy = match crate::proxy_worker::spawn_for_session(
+            &self.proxy_binary,
+            active_policy.bytes,
+            &session_dir.join("proxy.log"),
+        ) {
+            Ok(proxy) => proxy,
+            Err(error) => {
+                instance_reaper::kill_and_reap(child);
+                return Err(error.context("start confined proxy worker"));
+            }
+        };
+
         // Provisioning runs on a blocking thread that keeps the runtime
         // handle, so the event lands before anything can stop the session.
         let created = capsem_proto::host_session::HostSessionDetail {
@@ -356,6 +368,11 @@ impl ServiceState {
             },
         );
         drop(instances);
+        if let Err(error) = self.register_proxy_worker(id, generation, proxy) {
+            self.evict_instance(id, generation);
+            instance_reaper::kill_and_reap(child);
+            return Err(error.context("register proxy worker"));
+        }
         let _upstream_broker = upstream_broker.start(upstream_grant);
         let _reaper = instance_reaper::spawn_exit_reaper(
             child,

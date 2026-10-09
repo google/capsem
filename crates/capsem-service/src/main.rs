@@ -47,6 +47,7 @@ mod mcp_routes;
 mod plugin_routes;
 mod private_routes;
 mod process_control;
+mod proxy_worker;
 mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
@@ -160,6 +161,8 @@ struct Args {
     #[arg(long)]
     process_binary: Option<PathBuf>,
     #[arg(long)]
+    proxy_binary: Option<PathBuf>,
+    #[arg(long)]
     gateway_binary: Option<PathBuf>,
     #[arg(long)]
     gateway_port: Option<u16>,
@@ -201,6 +204,7 @@ const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 
 pub struct ServiceState {
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
+    proxy_workers: Mutex<HashMap<String, (uuid::Uuid, proxy_worker::ProxyWorker)>>,
     retirements: instance_reaper::Retirements,
     /// Logger-owned DB handles keyed by session/VM id. Logged-data routes
     /// resolve a handle here and call `ready/query`; they do not open SQLite
@@ -210,6 +214,7 @@ pub struct ServiceState {
     /// Named networks as groups of VMs, durable in each network's database.
     networks: tokio::sync::Mutex<capsem_core::net::network_registry::NetworkRegistry>,
     process_binary: PathBuf,
+    proxy_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
     service_socket: PathBuf,      // this service's own, where an owner asks on a guest's behalf
