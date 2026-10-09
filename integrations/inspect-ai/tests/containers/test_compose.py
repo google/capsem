@@ -10,7 +10,9 @@ import inspect_capsem.containers.compose
 import inspect_capsem.containers.compose_fields as compose_fields_mod
 import pytest
 import yaml
+from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
 from inspect_capsem._compose import coerce_config
+from inspect_capsem.containers import HostBuildGrant
 
 
 def test_compose_field_extraction_and_operator_allowlists(
@@ -147,15 +149,42 @@ def test_compose_long_form_env_and_volumes(
             compose_fields_mod.normalize_volumes(bad_vols, tmp_path)
 
 
-def test_unsupported_compose_features_rejected_at_coerce_config(tmp_path: Path) -> None:
+def test_unsupported_compose_features_rejected_at_coerce_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     compose_path = tmp_path / "compose.yaml"
     lkeys = ("cap_add", "cap_drop", "devices", "security_opt", "ports", "env_file", "depends_on")
     nmodes = ("none", "host", "service:db", "container:db")
+    (tmp_path / "Dockerfile").write_text("FROM alpine:3.20\nWORKDIR /from-df\nUSER 1001\n")
+    compose_path.write_text(yaml.safe_dump({"services": {"app": {"build": "."}}}))
+    grant = HostBuildGrant(allowed_contexts=(str(tmp_path),))
+    with pytest.raises(ValueError, match="CAPSEM_INSPECT_HOST_BUILD"):
+        coerce_config(str(compose_path))
+    with pytest.raises(ValueError, match="CAPSEM_INSPECT_HOST_BUILD"):
+        coerce_config(CapsemSandboxConfig(compose_file=str(compose_path), host_build=grant))
+    monkeypatch.setenv("CAPSEM_INSPECT_HOST_BUILD", "1")
+    with pytest.raises(ValueError, match="CAPSEM_INSPECT_ALLOWED_HOST_PATHS"):
+        coerce_config(str(compose_path))
+    monkeypatch.setenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", str(tmp_path))
+
+    for valid_build in (
+        {"build": "."},
+        {"build": {"context": ".", "dockerfile": "Dockerfile"}},
+        {"dockerfile": "Dockerfile"},
+    ):
+        compose_path.write_text(yaml.safe_dump({"services": {"app": valid_build}}))
+        resolved = coerce_config(
+            CapsemSandboxConfig(compose_file=str(compose_path), host_build=grant)
+        )
+        assert resolved.build is not None and resolved.execution_mode == "container"
+        assert CapsemSandboxEnvironment.config_deserialize(resolved.model_dump()) == resolved
+        assert CapsemSandboxConfig.model_validate_json(resolved.model_dump_json()) == resolved
     cases: tuple[tuple[dict[str, object], str], ...] = (
-        ({"build": "."}, "build"),
-        ({"build": {"context": ".", "dockerfile": "Dockerfile"}}, "build"),
-        ({"build": {"dockerfile_inline": "FROM alpine\n"}}, "build"),
-        ({"dockerfile": "Dockerfile"}, "dockerfile"),
+        ({"build": {"dockerfile_inline": "FROM alpine\n"}}, "dockerfile_inline"),
+        ({"build": {"context": ".", "secrets": ["s"]}}, "Unsupported Compose build option"),
+        ({"build": 123}, "build"),
+        ({"build": "https://github.com/example/repo.git"}, "Remote build context"),
+        ({"build": "../outside"}, "CAPSEM_INSPECT_ALLOWED_HOST_PATHS"),
         ({"privileged": True}, "privileged"),
         *(({k: ["x"]}, k) for k in lkeys),
         *(({k: "host"}, k) for k in ("pid", "ipc", "uts", "cgroup")),
