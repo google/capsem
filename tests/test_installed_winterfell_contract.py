@@ -148,11 +148,15 @@ def test_installed_winterfell_rejects_source_built_roots(bin_dir: Path, assets_d
 
 def test_installed_winterfell_rejects_binary_symlinks_into_target_debug(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bin_dir, assets_dir = _installed_roots(tmp_path)
-    source_binary = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-service"
-    if not source_binary.is_file():
-        pytest.skip("source service binary has not been built")
+    source_dir = tmp_path / "source-built"
+    source_dir.mkdir()
+    source_binary = source_dir / "capsem-service"
+    source_binary.write_text("#!/bin/sh\nexit 0\n")
+    source_binary.chmod(0o755)
+    monkeypatch.setattr(service, "host_bin_root", lambda _environment: source_dir)
     (bin_dir / "capsem-service").unlink()
     (bin_dir / "capsem-service").symlink_to(source_binary)
 

@@ -73,7 +73,9 @@ def test_build_assets_uses_capsem_admin() -> None:
     assert argv[: len(config.imagebuild.admin)] == list(config.imagebuild.admin)
     assert argv[argv.index("--config-root") + 1] == config.imagebuild.config_root
     assert argv[argv.index("--arch") + 1] == "arm64"
-    assert "uv run --project build_system --frozen capsem-builder build guest/" not in " ".join(argv)
+    assert "uv run --project build_system --frozen capsem-builder build guest/" not in " ".join(
+        argv
+    )
 
 
 def test_every_asset_build_rail_materializes_exact_bases_before_building() -> None:
@@ -180,9 +182,7 @@ def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
     default = build_argv(config, arch="arm64", template="all")
     assert default[default.index("--output") + 1] == config.imagebuild.output
 
-    isolated = build_argv(
-        config, arch="arm64", template="all", output="/tmp/lane-a"
-    )
+    isolated = build_argv(config, arch="arm64", template="all", output="/tmp/lane-a")
     assert isolated[isolated.index("--output") + 1] == "/tmp/lane-a"
 
 
@@ -307,9 +307,7 @@ def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
     assert "ASSET_ARCH: ${{ matrix.arch }}" in workflow
     # The recipe takes the architecture alone.
     assert re.search(r'^\s*just build-assets "\$ASSET_ARCH"$', workflow, re.MULTILINE)
-    assert "pack-initrds" in _planned(
-        "build-assets", arch="arm64", template="rootfs"
-    )
+    assert "pack-initrds" in _planned("build-assets", arch="arm64", template="rootfs")
     # The lanes reach the same builder invocation directly, each with its own
     # output. Asserting they still *mention* the retired recipe was asserting
     # on a comment; this is the claim underneath it.
@@ -357,9 +355,7 @@ def test_asset_matrix_preflights_once_and_reuses_the_public_build_primitive() ->
 
     # The primitive builds; it does not preflight. Preflighting per stage is
     # what made a four-cell matrix run doctor four times.
-    assert "install-tools" not in " ".join(
-        build_argv(config, arch="arm64", template="all")
-    )
+    assert "install-tools" not in " ".join(build_argv(config, arch="arm64", template="all"))
     assert "doctor" not in lanes
 
 
@@ -374,13 +370,16 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
 
     config = gate_config.load(PROJECT_ROOT)
     guest = config.install.guest_user
-    container = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installcontainer.py").read_text()
+    container = (
+        PROJECT_ROOT / "build_system" / "builder" / "gate" / "installcontainer.py"
+    ).read_text()
     proof = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "installproof.py").read_text()
 
     # Replacing any owned path needs write permission on its parent. Parents
     # are derived from the typed layout and claimed without recursively
     # walking unrelated Cargo or release output.
-    assert "owned_parent_paths(self._settings.mount)" in container
+    assert "settings.layout.owned_parent_paths(settings.mount)" in container
+    assert "claim_owned_paths(self._docker, self.name, self._settings)" in container
     assert '["chown", f"{guest}:{guest}", *parents]' in container
     assert '["chown", "-R", f"{guest}:{guest}", *parents]' not in container
 
@@ -425,8 +424,12 @@ def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
     from capsem_builder.gate.command import GateCommand
     from helpers.gate import RecordingRunner
 
-    workspace_source = (PROJECT_ROOT / "build_system/builder/gate/workspace.py").read_text(encoding="utf-8")
-    pidfile_source = (PROJECT_ROOT / "build_system/builder/gate/pidfiles.py").read_text(encoding="utf-8")
+    workspace_source = (PROJECT_ROOT / "build_system/builder/gate/workspace.py").read_text(
+        encoding="utf-8"
+    )
+    pidfile_source = (PROJECT_ROOT / "build_system/builder/gate/pidfiles.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "stop_gate_service" in workspace_source
     assert gate_config.load(PROJECT_ROOT).pidfiles.names == ("gateway.pid", "service.pid")
@@ -451,8 +454,7 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
     release = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
     stager = (
-        PROJECT_ROOT
-        / "build_system/builder/release/tools/stage_runtime_publication.py"
+        PROJECT_ROOT / "build_system/builder/release/tools/stage_runtime_publication.py"
     ).read_text()
 
     assert "npm install -g @cyclonedx/cdxgen" not in workflow

@@ -1114,7 +1114,7 @@ must_stay_below_lines = 3000
 "crates/capsem-proto/src/lib.rs" = 1008
 "crates/capsem-proto/src/tests.rs" = 1446
 "crates/capsem-service/src/tests/assets_registry.rs" = 1111
-"crates/capsem-service/src/tests/lifecycle.rs" = 1452
+"crates/capsem-service/src/tests/lifecycle.rs" = 1404
 "crates/capsem-service/src/vm_files.rs" = 1031
 "crates/capsem/src/main.rs" = 2025
 "crates/capsem/src/tests.rs" = 1259
@@ -3015,7 +3015,7 @@ slowest_steps = 10
 # `internal` is a reasoned, ratcheted inventory for service-UDS control routes
 # that are deliberately neither public gateway routes nor benchmark subjects.
 [benchmark.routes]
-internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/vms/{id}/metrics" = "An authenticated VM owner submits its OTLP metrics to the service over the local UDS for host export; the gateway must never expose this ingestion route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS", "/proxies" = "The local CLI asks the trusted service to create one supervised standalone proxy worker; the gateway never exposes worker lifecycle control", "/proxies/{id}/heartbeat" = "A local standalone proxy owner renews its service supervision lease over the UDS", "/proxies/{id}/stop" = "The local CLI asks the trusted service to stop its supervised standalone proxy worker over the UDS" }
+internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/vms/{id}/metrics" = "An authenticated VM owner submits its OTLP metrics to the service over the local UDS for host export; the gateway must never expose this ingestion route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
 measured = [
     "/vms/{id}/bodies/{event_id}",
     "/vms/{id}/status",
@@ -3035,6 +3035,11 @@ measured = [
     "/update/status",
 ]
 unmeasured = [
+    # Standalone proxy lifecycle mutations require a supervised worker fixture;
+    # their functional acceptance owns successful create, lease, and teardown.
+    "/proxies",
+    "/proxies/{id}/heartbeat",
+    "/proxies/{id}/stop",
     # Restart needs a disposable supervisor; the read-only route collector
     # cannot time accepted restarts. Its functional proof owns that lifecycle.
     "/restart",
