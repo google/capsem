@@ -53,6 +53,53 @@ pub(crate) fn grant_metric_broker(command: &mut tokio::process::Command, corp: &
     }
 }
 
+/// Grant the confined proxy a generation-bound metrics relay. The channel
+/// carries only OTLP bodies; collector identity and credentials stay here.
+pub(crate) async fn grant_proxy_metric_broker(
+    state: &Arc<ServiceState>,
+    id: &str,
+    generation: uuid::Uuid,
+    worker: &crate::proxy_worker::ProxyWorker,
+) -> anyhow::Result<()> {
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    if Destination::corp(corp.corp_rule_files.open_telemetry.as_deref()).is_none() {
+        return Ok(());
+    }
+    let owner = {
+        let instances = state.instances.lock().unwrap();
+        let instance = instances
+            .get(id)
+            .filter(|instance| instance.generation == generation)
+            .ok_or_else(|| anyhow::anyhow!("VM owner changed before proxy metric grant"))?;
+        let owner = owner_connection::OwnerConnection::capture(instance).map_err(anyhow::Error::msg)?;
+        drop(instances);
+        owner
+    };
+    let (service, proxy) = std::os::unix::net::UnixStream::pair().context("create proxy metric capability")?;
+    let serving = tokio::spawn(serve_proxy_metric_channel(
+        Arc::clone(state),
+        id.to_string(),
+        owner,
+        service,
+    ));
+    if let Err(error) = worker
+        .grant(capsem_proto::proxy_control::ProxyCapability::Telemetry, proxy)
+        .await
+    {
+        serving.abort();
+        let _ = serving.await;
+        return Err(error.context("grant proxy metric capability"));
+    }
+    tokio::spawn(async move {
+        match serving.await {
+            Ok(Ok(())) => tracing::debug!("proxy metric capability disconnected"),
+            Ok(Err(error)) => tracing::warn!(%error, "proxy metric capability failed"),
+            Err(error) => tracing::warn!(%error, "proxy metric capability task failed"),
+        }
+    });
+    Ok(())
+}
+
 const COLLECTOR_TIMEOUT: Duration = Duration::from_secs(10);
 static RELAY_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
 
@@ -116,9 +163,31 @@ pub(crate) async fn handle_metric_relay(
             "metric request body is too large".into(),
         ));
     }
+    let response = relay_metric_body(&state, &id, &owner, body).await?;
+    Ok((response.status, response.headers, response.body))
+}
+
+struct MetricRelayResponse {
+    status: StatusCode,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+}
+
+async fn relay_metric_body(
+    state: &Arc<ServiceState>,
+    id: &str,
+    owner: &owner_connection::OwnerConnection,
+    body: axum::body::Bytes,
+) -> Result<MetricRelayResponse, AppError> {
+    if body.len() > capsem_proto::proxy_metrics::MAX_PROXY_METRIC_BODY_BYTES {
+        return Err(AppError(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "metric request body is too large".into(),
+        ));
+    }
     let collector = current_collector_url()?;
     owner
-        .validate(&state, false)
+        .validate(state, false)
         .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
     let request = relay_client()?
         .post(collector)
@@ -167,13 +236,50 @@ pub(crate) async fn handle_metric_relay(
         bytes.extend_from_slice(&chunk);
     }
     owner
-        .validate(&state, false)
+        .validate(state, false)
         .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
     let mut response_headers = axum::http::HeaderMap::new();
     if let Some(content_type) = content_type {
         response_headers.insert(axum::http::header::CONTENT_TYPE, content_type);
     }
-    Ok((status, response_headers, axum::body::Bytes::from(bytes)))
+    Ok(MetricRelayResponse {
+        status,
+        headers: response_headers,
+        body: axum::body::Bytes::from(bytes),
+    })
+}
+
+pub(crate) async fn serve_proxy_metric_channel(
+    state: Arc<ServiceState>,
+    id: String,
+    owner: owner_connection::OwnerConnection,
+    stream: std::os::unix::net::UnixStream,
+) -> anyhow::Result<()> {
+    use capsem_proto::proxy_metrics::{ProxyMetricRequest, ProxyMetricResponse};
+
+    let (responses, requests) =
+        capsem_foundation::ipc_channel::channel_from_std::<ProxyMetricResponse, ProxyMetricRequest>(stream)
+            .context("open proxy metric channel")?;
+    loop {
+        let request = match requests.recv().await {
+            Ok(request) => request,
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
+            Err(error) => return Err(error).context("receive proxy metric request"),
+        };
+        let response = match relay_metric_body(&state, &id, &owner, request.body.into()).await {
+            Ok(relayed) => ProxyMetricResponse::Relayed {
+                status: relayed.status.as_u16(),
+                content_type: relayed
+                    .headers
+                    .get(axum::http::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string),
+                body: relayed.body.to_vec(),
+            },
+            Err(AppError(_, message)) => ProxyMetricResponse::Rejected { message },
+        };
+        responses.send(response).await.context("send proxy metric response")?;
+    }
 }
 
 /// One session's totals and the attributes its series carry.
