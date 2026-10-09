@@ -225,6 +225,23 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     let reason = closed.borrow().unwrap_or(ProxyChannelCloseReason::Disconnected);
                                     (capability, grant_id, reason)
                                 });
+                            } else if capability == ProxyCapability::Upstream {
+                                let grants = Arc::new(
+                                    capsem_core::net::upstream_grant::UpstreamGrantClient::start(stream)
+                                        .context("open proxy upstream capability")?,
+                                );
+                                let mut stopped = grants.stop_receiver();
+                                let mut runtime = state.lock().unwrap_or_else(|error| error.into_inner());
+                                runtime.upstream_grants = Some(grants);
+                                tracing::debug!(
+                                    upstream_capability = runtime.upstream_grants.is_some(),
+                                    "proxy upstream authority attached"
+                                );
+                                drop(runtime);
+                                tasks.spawn(async move {
+                                    while stopped.borrow().is_none() && stopped.changed().await.is_ok() {}
+                                    (capability, grant_id, ProxyChannelCloseReason::Disconnected)
+                                });
                             } else {
                                 descriptors.insert(grant_id, stream);
                             }
@@ -284,6 +301,7 @@ struct ProxyRuntimeState {
     engine: Option<ProxyEngine>,
     ledger: Arc<dyn ProxyLedger>,
     credentials: Arc<dyn ProxyCredentials>,
+    upstream_grants: Option<Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>>,
     dns_upstreams: Vec<std::net::SocketAddr>,
     mcp: capsem_core::mcp::policy::McpConfig,
 }
@@ -294,6 +312,7 @@ impl Default for ProxyRuntimeState {
             engine: None,
             ledger: Arc::new(UnavailableLedger),
             credentials: Arc::new(UnavailableCredentials),
+            upstream_grants: None,
             dns_upstreams: Vec::new(),
             mcp: capsem_core::mcp::policy::McpConfig::default(),
         }
