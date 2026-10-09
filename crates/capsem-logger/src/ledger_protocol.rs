@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 
 use capsem_foundation::ipc_channel::MAX_IPC_FRAME_SIZE;
-use capsem_proto::ledger::{LedgerCapability, LedgerOperation, LedgerProtocolError};
+use capsem_proto::ledger::{
+    LedgerCapability, LedgerHello, LedgerOperation, LedgerProtocolError, LedgerRequest, LedgerWelcome,
+};
 use capsem_proto::ledger_counters::LedgerCounters;
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +25,20 @@ const MAX_EVENT_ID_BYTES: usize = 12;
 const MAX_TIMESTAMP_BYTES: usize = 64;
 
 pub type LedgerResponse = capsem_proto::ledger::LedgerResponse<LedgerReply>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedgerClientMessage {
+    Hello { hello: LedgerHello },
+    Request { request: LedgerRequest<LedgerCommand> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedgerServerMessage {
+    Welcome { welcome: LedgerWelcome },
+    Response { response: LedgerResponse },
+}
 
 /// Every operation accepted by the ledger worker. None selects a session or
 /// filesystem path; the authenticated descriptor already selects both.
