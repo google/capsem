@@ -16,7 +16,7 @@ async fn the_launch_sentinel_returns_long_before_the_ceiling() {
         let launched = launched.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(60)).await;
-            std::fs::File::create(launched).unwrap();
+            std::fs::write(launched, b"launched\n").unwrap();
         })
     };
     let started = Instant::now();
@@ -33,8 +33,8 @@ async fn the_launch_sentinel_returns_long_before_the_ceiling() {
 #[tokio::test]
 async fn readiness_still_wins_when_the_guest_is_already_up() {
     let (_dir, ready, launched) = paths();
-    std::fs::File::create(&ready).unwrap();
-    std::fs::File::create(&launched).unwrap();
+    std::fs::write(&ready, b"ready\n").unwrap();
+    std::fs::write(&launched, b"launched\n").unwrap();
     assert_eq!(
         wait_for_launch(&ready, &launched, || true, LAUNCH_CEILING).await,
         LaunchWait::Ready
@@ -64,7 +64,7 @@ async fn a_crash_after_launch_is_not_reported_by_create() {
     // The launch sentinel exists; the instance dying afterwards is exec's
     // to surface, not create's.
     let (_dir, ready, launched) = paths();
-    std::fs::File::create(&launched).unwrap();
+    std::fs::write(&launched, b"launched\n").unwrap();
     assert_eq!(
         wait_for_launch(&ready, &launched, || false, LAUNCH_CEILING).await,
         LaunchWait::Launched
@@ -88,4 +88,17 @@ async fn nothing_within_the_ceiling_times_out_at_the_ceiling() {
 #[test]
 fn the_ceiling_is_the_old_fixed_wait() {
     assert_eq!(LAUNCH_CEILING, Duration::from_millis(500));
+}
+
+#[test]
+fn prepared_empty_sentinels_do_not_publish_readiness() {
+    let (_dir, ready, launched) = paths();
+    std::fs::File::create(&ready).unwrap();
+    std::fs::File::create(&launched).unwrap();
+    assert!(!stamped(&ready, "ready"));
+    assert!(!stamped(&launched, "launched"));
+    std::fs::write(&ready, b"ready\n").unwrap();
+    std::fs::write(&launched, b"launched\n").unwrap();
+    assert!(stamped(&ready, "ready"));
+    assert!(stamped(&launched, "launched"));
 }
