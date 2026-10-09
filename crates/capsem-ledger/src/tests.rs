@@ -236,3 +236,26 @@ fn generation_parser_is_exact_and_nonzero() {
         assert!(parse_generation(invalid).is_err(), "accepted {invalid}");
     }
 }
+
+#[test]
+fn database_path_is_one_absolute_session_directory() {
+    assert_eq!(
+        session_directory(Path::new("/run/capsem/sessions/one/session.db")).unwrap(),
+        Path::new("/run/capsem/sessions/one")
+    );
+    for invalid in ["session.db", "/session.db", "/run/capsem/other.db"] {
+        assert!(session_directory(Path::new(invalid)).is_err(), "accepted {invalid}");
+    }
+}
+
+#[test]
+fn inherited_authority_is_removed_and_confinement_precedes_readiness() {
+    let source = include_str!("main.rs");
+    let clear = source.find("clear_inherited_environment();").unwrap();
+    let close = source.find("close_inherited_descriptors()?").unwrap();
+    let telemetry = source.find("telemetry::init").unwrap();
+    let confine = source.find("worker_sandbox::confine").unwrap();
+    let attest = source.find("attest_confinement(&session_dir").unwrap();
+    let run = source.find("runtime.block_on(run_control").unwrap();
+    assert!(clear < close && close < telemetry && telemetry < confine && confine < attest && attest < run);
+}

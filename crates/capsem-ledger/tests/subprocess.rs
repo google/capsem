@@ -54,6 +54,7 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
             .arg(&database)
             .arg("--generation")
             .arg("06060606060606060606060606060606")
+            .env("CAPSEM_LEDGER_SECRET", "must-not-survive")
             .stdin(Stdio::from(OwnedFd::from(child_control)))
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -66,6 +67,13 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
         event(&events).await,
         LedgerControlEvent::Ready { generation: GENERATION }
     );
+    #[cfg(target_os = "linux")]
+    {
+        let environ = std::fs::read(format!("/proc/{}/environ", child.0.as_ref().unwrap().id())).unwrap();
+        assert!(!environ
+            .windows(b"CAPSEM_LEDGER_SECRET".len())
+            .any(|value| value == b"CAPSEM_LEDGER_SECRET"));
+    }
     requests
         .send(
             &encode_ledger_control_request(LedgerControlRequest::Shutdown { generation: GENERATION }),
@@ -89,4 +97,42 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(database.is_file());
+}
+
+#[tokio::test]
+async fn executable_refuses_a_symlinked_session_before_readiness() {
+    let dir = tempfile::tempdir().unwrap();
+    let actual = dir.path().join("actual");
+    let linked = dir.path().join("linked");
+    std::fs::create_dir(&actual).unwrap();
+    std::os::unix::fs::symlink(&actual, &linked).unwrap();
+    let (coordinator, child_control) = UnixStream::pair().unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_capsem-ledger"))
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string())
+        .arg("--database")
+        .arg(linked.join("session.db"))
+        .arg("--generation")
+        .arg("06060606060606060606060606060606")
+        .stdin(Stdio::from(OwnedFd::from(child_control)))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(coordinator);
+    let output = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::task::spawn_blocking(move || child.wait_with_output()),
+    )
+    .await
+    .expect("unconfined ledger worker did not exit")
+    .unwrap()
+    .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("open session ledger") || stderr.contains("confine ledger worker before readiness"),
+        "unexpected refusal: {}",
+        stderr
+    );
 }
