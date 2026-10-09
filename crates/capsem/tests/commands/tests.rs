@@ -249,3 +249,66 @@ async fn mcp_calls_validate_names_and_json_before_dispatch() {
     }
     assert_eq!(service.calls(), ["POST /mcp/servers/demo/tools/echo/call"]);
 }
+
+#[tokio::test]
+async fn unicode_table_cells_truncate_at_utf8_boundaries() {
+    let service = FakeService::start();
+    listed(&service, true);
+    let command_text = "雪".repeat(40);
+    service.route(
+        "GET",
+        "/vms/vm-canonical/history",
+        200,
+        json!({
+            "commands": [{"timestamp":"snowtime", "layer":"exec", "command":command_text,
+                "exit_code":0, "duration_ms":2, "stdout_preview":null, "stderr_preview":null, "details":{}}],
+            "total":1, "has_more":false
+        }),
+    );
+    let description = format!("a{}", "雪".repeat(30));
+    service.route(
+        "GET",
+        "/mcp/servers/demo/tools/list",
+        200,
+        json!([{
+            "namespaced_name":"demo__echo", "server_name":"demo", "approved":true, "description":description
+        }]),
+    );
+    // Check both old panic paths before asserting their successful output.
+    let history = command(&service, &["history", "work"]).await;
+    let tools = command(&service, &["mcp", "tools", "--server", "demo"]).await;
+    assert!(
+        history.status.success() && tools.status.success(),
+        "history: {}; tools: {}",
+        String::from_utf8_lossy(&history.stderr),
+        String::from_utf8_lossy(&tools.stderr)
+    );
+    let history = success(history);
+    let tools = success(tools);
+    assert_eq!(
+        history
+            .lines()
+            .find(|line| line.contains("snowtime"))
+            .unwrap()
+            .split_whitespace()
+            .last(),
+        Some(format!("{}...", "雪".repeat(25)).as_str())
+    );
+    assert_eq!(
+        tools
+            .lines()
+            .find(|line| line.starts_with("demo__echo"))
+            .unwrap()
+            .split_whitespace()
+            .last(),
+        Some(format!("a{}", "雪".repeat(19)).as_str())
+    );
+    assert_eq!(
+        service.calls(),
+        [
+            "GET /vms/list",
+            "GET /vms/vm-canonical/history?limit=500&layer=all",
+            "GET /mcp/servers/demo/tools/list"
+        ]
+    );
+}

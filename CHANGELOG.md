@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CLI history and MCP tool tables truncate Unicode text at character
+  boundaries instead of panicking on a split UTF-8 character.
+
 - The authenticated gateway forwards host credential injection, so desktop
   settings and TCP SDK clients can use file and memory storage.
 

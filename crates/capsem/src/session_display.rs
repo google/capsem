@@ -2,6 +2,10 @@
 //! and networks on screen.
 use crate::client::{NetworkInfo, NetworkLogEvent, SessionInfo};
 
+pub(crate) fn table_prefix(text: &str, max_bytes: usize) -> &str {
+    &text[..text.floor_char_boundary(max_bytes)]
+}
+
 pub(crate) fn format_uptime(secs: Option<u64>) -> String {
     match secs {
         None | Some(0) => "-".into(),
