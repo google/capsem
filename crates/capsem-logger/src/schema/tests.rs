@@ -224,8 +224,13 @@ fn writer_pragmas_use_full_wal_durability() {
 
     let journal: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0)).unwrap();
     let synchronous: i64 = conn.query_row("PRAGMA synchronous", [], |row| row.get(0)).unwrap();
+    let temp_store: i64 = conn.query_row("PRAGMA temp_store", [], |row| row.get(0)).unwrap();
     assert_eq!(journal.to_ascii_lowercase(), "wal");
     assert_eq!(synchronous, 2, "SQLite FULL is pragma value 2");
+    assert_eq!(
+        temp_store, 2,
+        "writer sort and copy scratch state must stay inside the confined process"
+    );
     #[cfg(target_os = "macos")]
     assert_eq!(
         conn.query_row("PRAGMA fullfsync", [], |row| row.get::<_, i64>(0))

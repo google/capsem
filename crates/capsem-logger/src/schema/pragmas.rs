@@ -85,6 +85,11 @@ pub fn record_sqlite_mmap_telemetry(conn: &Connection, path: &Path, role: &'stat
 pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "FULL")?;
+    // A confined ledger owner has authority over its session directory, not
+    // the process-wide temporary directory SQLite otherwise selects for
+    // large INSERT..SELECT and sort operations. Keep that scratch state in
+    // the connection so a burst can flush without ambient filesystem access.
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
     #[cfg(target_os = "macos")]
     conn.pragma_update(None, "fullfsync", "ON")?;
     apply_mmap_pragma(conn)?;
