@@ -164,8 +164,8 @@ async fn run_control(
                     }
                     match request {
                         ProxyControlRequest::Attach(grant) => {
-                            if frame.fds.len() != 1 {
-                                bail!("proxy capability attach requires exactly one descriptor");
+                            if frame.fds.len() != grant.expected_descriptor_count() {
+                                bail!("proxy capability attach descriptor count does not match its grant");
                             }
                             let capability = grant.capability();
                             let grant_id = grant.grant_id();
@@ -200,7 +200,8 @@ async fn run_control(
                                 .await?;
                                 continue;
                             }
-                            let descriptor = frame.fds.into_iter().next().expect("one checked descriptor");
+                            let mut descriptors = frame.fds.into_iter();
+                            let descriptor = descriptors.next().expect("at least one checked descriptor");
                             grants.entry(capability).or_default().push(grant_id);
                             grant_ids.insert(grant_id);
                             if capability == ProxyCapability::Policy {
@@ -212,12 +213,16 @@ async fn run_control(
                                 });
                             } else if capability == ProxyCapability::Ledger {
                                 let stream = UnixStream::from(descriptor);
+                                let commitment = UnixStream::from(
+                                    descriptors.next().expect("ledger commitment descriptor was checked"),
+                                );
                                 let ledger_grant = grant
                                     .ledger_grant()
                                     .expect("ledger capability was decoded with exact authority");
                                 let writer = tokio::task::spawn_blocking(move || {
                                     capsem_logger::DbWriter::from_ledger_channel(
                                         stream,
+                                        commitment,
                                         ledger_grant,
                                         Path::new("capability:session-ledger"),
                                         1024,
