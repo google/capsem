@@ -212,3 +212,18 @@ fn session_db_is_copied_coherently_outside_the_share() {
     assert_eq!(payload, "committed-in-wal");
     drop(conn);
 }
+
+#[test]
+fn sandbox_file_clone_never_copies_ledger_files() {
+    let s = sessions();
+    std::fs::write(s.src.join("session.db"), b"database").unwrap();
+    std::fs::write(s.src.join("session.db-wal"), b"wal").unwrap();
+    std::fs::create_dir(s.src.join("session.bodies")).unwrap();
+    std::fs::write(s.src.join("session.bodies/generation"), b"bodies").unwrap();
+
+    clone_sandbox_files(&s.src, &s.dst).unwrap();
+
+    assert!(!s.dst.join("session.db").exists());
+    assert!(!s.dst.join("session.db-wal").exists());
+    assert!(!s.dst.join("session.bodies").exists());
+}
