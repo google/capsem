@@ -16,7 +16,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
 use crate::net::dns::private::MCP_HOST;
-use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet};
+#[cfg(test)]
+use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
     emit_evaluated_security_rules, emit_security_write, evaluate_security_boundary, McpSecurityEvent,
     ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction, SecurityEnforcementDecision,
@@ -112,7 +113,7 @@ pub async fn dispatch_logged_mcp_request(
         let response = policy_blocked_response(request.id.clone(), "request", &request_decision);
         let emission = log_mcp_call_with_policy(
             Arc::clone(&db),
-            &endpoint.security_rules,
+            &endpoint,
             &request,
             &response,
             caller,
@@ -151,7 +152,7 @@ pub async fn dispatch_logged_mcp_request(
     };
     let emission = log_mcp_call_with_policy(
         Arc::clone(&db),
-        &endpoint.security_rules,
+        &endpoint,
         &request,
         &response,
         caller,
@@ -366,7 +367,7 @@ where
                     };
                     log_mcp_call_with_policy(
                         db_h,
-                        &endpoint_h.security_rules,
+                        &endpoint_h,
                         &request_h,
                         &response,
                         McpCaller::frame(&process_name_h),
@@ -383,7 +384,7 @@ where
                 let response = policy_blocked_response(request.id.clone(), "request", &request_decision);
                 log_mcp_call_with_policy(
                     Arc::clone(&db),
-                    &endpoint.security_rules,
+                    &endpoint,
                     &dispatch_request,
                     &response,
                     McpCaller::frame(&process_name),
@@ -448,7 +449,7 @@ where
                 let policy_fields = McpCallPolicyFields::from(&final_decision);
                 log_mcp_call_with_policy(
                     db_h,
-                    &endpoint_h.security_rules,
+                    &endpoint_h,
                     &dispatch_request,
                     &response,
                     McpCaller::frame(&process_name_h),
@@ -639,7 +640,7 @@ struct LoggedMcpEmission {
 
 async fn log_mcp_call_with_policy(
     db: Arc<DbWriter>,
-    security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+    endpoint: &McpEndpointState,
     req: &JsonRpcRequest,
     resp: &JsonRpcResponse,
     caller: McpCaller<'_>,
@@ -710,7 +711,7 @@ async fn log_mcp_call_with_policy(
     if let Some(event_id) = emit_security_write(&db, WriteOp::McpCall(call)).await {
         // Complete the derived rule emission before replying so an immediate
         // shutdown cannot lose audit rows for an already-completed call.
-        let rules = security_rules.read().unwrap().clone();
+        let (rules, _) = endpoint.policy_snapshot();
         emit_evaluated_security_rules(
             Arc::clone(&db),
             event_id.clone(),
@@ -824,8 +825,7 @@ fn ensure_mcp_request_identity(mcp: &mut McpSecurityEvent, request_id: Option<St
 }
 
 fn evaluate_mcp_security_event(endpoint: &McpEndpointState, event: SecurityEvent) -> SecurityEnforcementDecision {
-    let rules = endpoint.security_rules.read().unwrap().clone();
-    let plugin_policy = snapshot_plugin_policy(&endpoint.plugin_policy);
+    let (rules, plugin_policy) = endpoint.policy_snapshot();
     match evaluate_security_boundary(&rules, plugin_policy, event) {
         Ok(evaluation) => evaluation.enforcement,
         Err(error) => {
