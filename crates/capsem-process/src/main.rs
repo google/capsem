@@ -401,7 +401,8 @@ fn main() -> Result<()> {
     // SAFETY: process entry precedes argument parsing, telemetry, descriptor
     // owners and runtime threads. Broker grants will be named here explicitly.
     unsafe { capsem_foundation::unix::fd::close_inherited_descriptors()? };
-    let upstream_socket = adopt_inherited(std::io::stdin().as_fd()).context("adopt inherited upstream grant channel")?;
+    let upstream_socket =
+        adopt_inherited(std::io::stdin().as_fd()).context("adopt inherited upstream grant channel")?;
     let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-process",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
