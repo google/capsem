@@ -83,7 +83,7 @@ pub(crate) async fn grant_proxy_metric_broker(
         service,
     ));
     if let Err(error) = worker
-        .grant(capsem_proto::proxy_control::ProxyCapability::Telemetry, proxy)
+        .grant(capsem_proto::proxy_control::ProxyCapability::Telemetry, proxy.into())
         .await
     {
         serving.abort();
@@ -95,6 +95,53 @@ pub(crate) async fn grant_proxy_metric_broker(
             Ok(Ok(())) => tracing::debug!("proxy metric capability disconnected"),
             Ok(Err(error)) => tracing::warn!(%error, "proxy metric capability failed"),
             Err(error) => tracing::warn!(%error, "proxy metric capability task failed"),
+        }
+    });
+    Ok(())
+}
+
+/// Grant a standalone proxy the same collector relay without inventing a VM
+/// owner identity. Revocation is tied to that standalone worker generation.
+pub(crate) async fn grant_standalone_proxy_metric_broker(
+    state: &Arc<ServiceState>,
+    id: &str,
+    authority: crate::instance::WorkerGrant,
+    worker: &crate::proxy_worker::ProxyWorker,
+) -> anyhow::Result<()> {
+    let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    if Destination::corp(corp.corp_rule_files.open_telemetry.as_deref()).is_none() {
+        return Ok(());
+    }
+    let (service, proxy) = std::os::unix::net::UnixStream::pair().context("create proxy metric capability")?;
+    let metric_session = id.to_string();
+    let serving = tokio::spawn(serve_proxy_metric_channel_authorized(
+        Arc::clone(state),
+        metric_session.clone(),
+        MetricRelayAuthority::Standalone(authority),
+        service,
+    ));
+    if let Err(error) = worker
+        .grant(capsem_proto::proxy_control::ProxyCapability::Telemetry, proxy.into())
+        .await
+    {
+        serving.abort();
+        let _ = serving.await;
+        return Err(error.context("grant standalone proxy metric capability"));
+    }
+    tokio::spawn(async move {
+        match serving.await {
+            Ok(Ok(())) => {
+                tracing::debug!(
+                    session = metric_session,
+                    "standalone proxy metric capability disconnected"
+                )
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(session = metric_session, %error, "standalone proxy metric capability failed")
+            }
+            Err(error) => {
+                tracing::warn!(session = metric_session, %error, "standalone proxy metric capability task failed")
+            }
         }
     });
     Ok(())
@@ -163,7 +210,7 @@ pub(crate) async fn handle_metric_relay(
             "metric request body is too large".into(),
         ));
     }
-    let response = relay_metric_body(&state, &id, &owner, body).await?;
+    let response = relay_metric_body_authorized(&state, &id, &MetricRelayAuthority::Vm(owner), body).await?;
     Ok((response.status, response.headers, response.body))
 }
 
@@ -173,10 +220,34 @@ struct MetricRelayResponse {
     body: axum::body::Bytes,
 }
 
-async fn relay_metric_body(
+enum MetricRelayAuthority {
+    Vm(owner_connection::OwnerConnection),
+    Standalone(crate::instance::WorkerGrant),
+}
+
+impl MetricRelayAuthority {
+    fn validate(&self, state: &ServiceState) -> Result<(), String> {
+        match self {
+            Self::Vm(owner) => owner.validate(state, false),
+            Self::Standalone(authority) if authority.is_revoked() => {
+                Err("standalone proxy authority was revoked".to_string())
+            }
+            Self::Standalone(_) => Ok(()),
+        }
+    }
+
+    async fn revoked(&self) {
+        match self {
+            Self::Vm(owner) => owner.revoked().await,
+            Self::Standalone(authority) => authority.revoked().await,
+        }
+    }
+}
+
+async fn relay_metric_body_authorized(
     state: &Arc<ServiceState>,
     id: &str,
-    owner: &owner_connection::OwnerConnection,
+    authority: &MetricRelayAuthority,
     body: axum::body::Bytes,
 ) -> Result<MetricRelayResponse, AppError> {
     if body.len() > capsem_proto::proxy_metrics::MAX_PROXY_METRIC_BODY_BYTES {
@@ -186,8 +257,8 @@ async fn relay_metric_body(
         ));
     }
     let collector = current_collector_url()?;
-    owner
-        .validate(state, false)
+    authority
+        .validate(state)
         .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
     let request = relay_client()?
         .post(collector)
@@ -197,8 +268,8 @@ async fn relay_metric_body(
     tokio::pin!(request);
     let response = match tokio::select! {
         biased;
-        () = owner.revoked() => {
-            return Err(AppError(StatusCode::FORBIDDEN, "VM owner authority was revoked".into()));
+        () = authority.revoked() => {
+            return Err(AppError(StatusCode::FORBIDDEN, "proxy metric authority was revoked".into()));
         }
         response = &mut request => response,
     } {
@@ -235,8 +306,8 @@ async fn relay_metric_body(
         }
         bytes.extend_from_slice(&chunk);
     }
-    owner
-        .validate(state, false)
+    authority
+        .validate(state)
         .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
     let mut response_headers = axum::http::HeaderMap::new();
     if let Some(content_type) = content_type {
@@ -255,6 +326,15 @@ pub(crate) async fn serve_proxy_metric_channel(
     owner: owner_connection::OwnerConnection,
     stream: std::os::unix::net::UnixStream,
 ) -> anyhow::Result<()> {
+    serve_proxy_metric_channel_authorized(state, id, MetricRelayAuthority::Vm(owner), stream).await
+}
+
+async fn serve_proxy_metric_channel_authorized(
+    state: Arc<ServiceState>,
+    id: String,
+    authority: MetricRelayAuthority,
+    stream: std::os::unix::net::UnixStream,
+) -> anyhow::Result<()> {
     use capsem_proto::proxy_metrics::{ProxyMetricBrokerMessage, ProxyMetricRequest, ProxyMetricResponse};
 
     let (responses, requests) =
@@ -270,7 +350,7 @@ pub(crate) async fn serve_proxy_metric_channel(
             Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
             Err(error) => return Err(error).context("receive proxy metric request"),
         };
-        let response = match relay_metric_body(&state, &id, &owner, request.body.into()).await {
+        let response = match relay_metric_body_authorized(&state, &id, &authority, request.body.into()).await {
             Ok(relayed) => ProxyMetricResponse::Relayed {
                 status: relayed.status.as_u16(),
                 content_type: relayed

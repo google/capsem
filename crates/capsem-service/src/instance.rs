@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct WorkerAuthority(CancellationToken);
 
 /// A non-owning grant canceled when its registered generation is revoked.
+#[derive(Clone)]
 pub(crate) struct WorkerGrant(CancellationToken);
 
 impl Default for WorkerAuthority {
@@ -32,6 +33,10 @@ impl Drop for WorkerAuthority {
 }
 
 impl WorkerGrant {
+    pub(crate) fn is_revoked(&self) -> bool {
+        self.0.is_cancelled()
+    }
+
     pub(crate) async fn revoked(&self) {
         self.0.cancelled().await;
     }

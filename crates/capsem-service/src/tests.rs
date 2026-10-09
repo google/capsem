@@ -62,6 +62,7 @@ pub(crate) fn test_state(
         connections,
         instances: Mutex::new(HashMap::new()),
         proxy_workers: Mutex::new(HashMap::new()),
+        standalone_proxies: tokio::sync::Mutex::new(HashMap::new()),
         ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(PathBuf::from(
             "/nonexistent/capsem-ledger",
         ))),

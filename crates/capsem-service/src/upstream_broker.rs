@@ -600,7 +600,7 @@ async fn run(
                         ProxyTrafficService::Http => capsem_proto::proxy_control::ProxyCapability::HttpTraffic,
                         ProxyTrafficService::Dns => capsem_proto::proxy_control::ProxyCapability::DnsTraffic,
                     };
-                    match proxy.grant(capability, UnixStream::from(descriptor)).await {
+                    match proxy.grant(capability, descriptor).await {
                         Ok(()) => {
                             send_response(
                                 &responses,
@@ -622,10 +622,7 @@ async fn run(
                     };
                     let descriptor = frame.fds.into_iter().next().expect("one validated MCP descriptor");
                     match proxy
-                        .grant(
-                            capsem_proto::proxy_control::ProxyCapability::Mcp,
-                            UnixStream::from(descriptor),
-                        )
+                        .grant(capsem_proto::proxy_control::ProxyCapability::Mcp, descriptor)
                         .await
                     {
                         Ok(()) => {

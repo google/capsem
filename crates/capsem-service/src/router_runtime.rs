@@ -60,8 +60,9 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             delete(connection_routes::revoke_grant),
         )
         .route("/vms/create", post(handle_provision))
-        .route("/vms/managed/{request_id}/claim", post(managed_routes::claim))
-        .route("/vms/managed/{request_id}/close", post(managed_routes::close))
+        .route("/proxies", post(standalone_proxy::handle_create))
+        .route("/proxies/{id}/heartbeat", post(standalone_proxy::handle_heartbeat))
+        .route("/proxies/{id}/stop", post(standalone_proxy::handle_stop))
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))

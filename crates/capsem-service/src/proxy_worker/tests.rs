@@ -24,6 +24,33 @@ fn decode_generation(value: &str) -> ProxyGeneration {
     ProxyGeneration::new(bytes)
 }
 
+#[test]
+fn standalone_worker_command_carries_trusted_provider_selection() {
+    let mut command = Command::new("capsem-proxy");
+    configure_worker_command(
+        &mut command,
+        GENERATION,
+        &ProxyWorkerMode::Standalone("openai".to_string()),
+    );
+    let args = command
+        .as_std()
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        args,
+        vec![
+            "--parent-pid".to_string(),
+            std::process::id().to_string(),
+            "--generation".to_string(),
+            "09090909090909090909090909090909".to_string(),
+            "--standalone-provider".to_string(),
+            "openai".to_string(),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn fake_proxy_worker_child() {
     let Ok(mode) = std::env::var("CAPSEM_FAKE_PROXY_WORKER") else {
@@ -101,6 +128,17 @@ async fn fake_proxy_worker_child() {
                             }),
                             &[],
                         ).await.unwrap();
+                        if mode == "traffic_close" {
+                            assert_eq!(grant.capability(), ProxyCapability::HttpTraffic);
+                            control_tx.send(
+                                &encode_proxy_control_event(ProxyControlEvent::Closed {
+                                    generation,
+                                    grant_id: grant.grant_id(),
+                                    reason: capsem_proto::proxy_control::ProxyChannelCloseReason::Disconnected,
+                                }),
+                                &[],
+                            ).await.unwrap();
+                        }
                     }
                     ProxyControlRequest::Shutdown { .. } if mode == "stall_shutdown" => {
                         std::future::pending::<()>().await;
@@ -153,8 +191,27 @@ async fn supervisor_applies_policy_grants_connected_descriptors_and_reaps() {
         capsem_core::net::policy_config::active_policy_digest(ACTIVE_POLICY)
     );
     let (peer, granted) = UnixStream::pair().unwrap();
-    worker.grant(ProxyCapability::Telemetry, granted).await.unwrap();
+    worker.grant(ProxyCapability::Telemetry, granted.into()).await.unwrap();
     drop(peer);
+    worker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn ordinary_traffic_disconnect_does_not_terminate_the_proxy_generation() {
+    let worker = fake("traffic_close").await.unwrap();
+    let (peer, granted) = UnixStream::pair().unwrap();
+    worker
+        .grant(ProxyCapability::HttpTraffic, granted.into())
+        .await
+        .unwrap();
+    drop(peer);
+    tokio::task::yield_now().await;
+
+    let digest = worker.apply_policy(ACTIVE_POLICY.to_vec()).await.unwrap();
+    assert_eq!(
+        digest,
+        capsem_core::net::policy_config::active_policy_digest(ACTIVE_POLICY)
+    );
     worker.shutdown().await.unwrap();
 }
 
