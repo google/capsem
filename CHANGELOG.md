@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signals and ambient files; erase inherited environment bytes and reject
   symlinked session grants before serving clients.
 
+- Compress new session body blocks with streaming zstd only inside the
+  confined ledger owner, retaining durable cross-flush history and legacy
+  deflate reads without linking the native decoder into privileged workers.
+
 - Confine the Linux API gateway before readiness to its inherited listeners
   and coordinator-minted service and VM-owner channels, denying filesystem
   access, process execution and direct network or control-socket dialing.

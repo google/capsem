@@ -20,6 +20,8 @@ use capsem_proto::ledger_control::{
 use clap::Parser;
 use tokio::task::{JoinError, JoinSet};
 
+mod codec;
+
 const CLIENT_LIMIT: usize = 64;
 
 type ControlSender = router_channel::DescriptorSender<LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_MAX_FDS>;
@@ -56,7 +58,8 @@ fn main() -> Result<()> {
     let control = UnixStream::from(fd::duplicate(stdin.as_fd())?);
     let session_dir = session_directory(&args.database)?;
     let denied_file = std::env::current_exe().context("resolve ledger executable before confinement")?;
-    let server = Arc::new(LedgerServer::open(&args.database).context("open session ledger")?);
+    let codecs = codec::archive_codecs().context("initialize confined archive codecs")?;
+    let server = Arc::new(LedgerServer::open_with_codecs(&args.database, codecs).context("open session ledger")?);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()

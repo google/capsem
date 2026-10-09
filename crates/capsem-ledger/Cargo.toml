@@ -11,6 +11,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+capsem-archive = { path = "../capsem-archive" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
@@ -18,6 +19,7 @@ capsem-proto = { path = "../capsem-proto" }
 clap = { workspace = true, features = ["derive"] }
 tokio.workspace = true
 tracing.workspace = true
+zstd = "0.13"
 
 [dev-dependencies]
 tempfile = "3"

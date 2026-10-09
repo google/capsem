@@ -986,6 +986,7 @@ name = "capsem-ledger"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "capsem-archive",
  "capsem-foundation",
  "capsem-guard",
  "capsem-logger",
@@ -994,6 +995,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "zstd",
 ]
 
 [[package]]

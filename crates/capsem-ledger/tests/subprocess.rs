@@ -1,10 +1,15 @@
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
+use capsem_foundation::ipc_channel;
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
-use capsem_proto::ledger::LedgerGeneration;
+use capsem_logger::ledger_protocol::{LedgerClientMessage, LedgerCommand, LedgerReply, LedgerServerMessage};
+use capsem_logger::{Decision, NetEvent, WriteOp};
+use capsem_proto::ledger::{
+    LedgerChannelGrant, LedgerClientRole, LedgerGeneration, LedgerHello, LedgerOutcome, LedgerRequest,
+};
 use capsem_proto::ledger_control::{
     decode_ledger_control_event, encode_ledger_control_request, LedgerControlEvent, LedgerControlRequest,
     LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_MAX_FDS,
@@ -41,6 +46,37 @@ async fn event(receiver: &ControlReceiver) -> LedgerControlEvent {
     decode_ledger_control_event(&frame.bytes).expect("valid ledger control event")
 }
 
+fn body_event() -> WriteOp {
+    WriteOp::NetEvent(NetEvent {
+        event_id: Some("0123456789ab".into()),
+        timestamp: SystemTime::UNIX_EPOCH,
+        domain: "confined-zstd.test".into(),
+        port: 443,
+        decision: Decision::Allowed,
+        process_name: None,
+        pid: None,
+        method: Some("POST".into()),
+        path: Some("/archive".into()),
+        query: None,
+        status_code: Some(200),
+        bytes_sent: 0,
+        bytes_received: 0,
+        duration_ms: 1,
+        matched_rule: None,
+        request_headers: Some("content-type: application/json".into()),
+        response_headers: None,
+        request_body: Some(br#"{"body":"written after confinement"}"#.to_vec()),
+        response_body: None,
+        conn_type: Some("https".into()),
+        policy_mode: None,
+        policy_action: None,
+        policy_rule: None,
+        policy_reason: None,
+        trace_id: None,
+        credential_ref: None,
+    })
+}
+
 #[tokio::test]
 async fn executable_opens_one_ledger_and_reports_durable_stop() {
     let dir = tempfile::tempdir().unwrap();
@@ -74,6 +110,59 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
             .windows(b"CAPSEM_LEDGER_SECRET".len())
             .any(|value| value == b"CAPSEM_LEDGER_SECRET"));
     }
+    let grant = LedgerChannelGrant::new(GENERATION, 1, LedgerClientRole::VmOwner).unwrap();
+    let (client, ledger_end) = UnixStream::pair().unwrap();
+    requests
+        .send(
+            &encode_ledger_control_request(LedgerControlRequest::Attach(grant)),
+            &[ledger_end.as_raw_fd()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        event(&events).await,
+        LedgerControlEvent::Adopted {
+            generation: GENERATION,
+            client_id: 1,
+        }
+    );
+    drop(ledger_end);
+    let (sender, receiver) = ipc_channel::channel_from_std::<LedgerClientMessage, LedgerServerMessage>(client).unwrap();
+    sender
+        .send(LedgerClientMessage::Hello {
+            hello: LedgerHello::for_grant(&grant),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        receiver.recv().await.unwrap(),
+        LedgerServerMessage::Welcome { .. }
+    ));
+    for (request_id, operation) in [
+        (
+            1,
+            LedgerCommand::Admit {
+                event: Box::new(body_event()),
+            },
+        ),
+        (2, LedgerCommand::Flush),
+    ] {
+        sender
+            .send(LedgerClientMessage::Request {
+                request: LedgerRequest::new(request_id, operation).unwrap(),
+            })
+            .await
+            .unwrap();
+        let LedgerServerMessage::Response { response } = receiver.recv().await.unwrap() else {
+            panic!("expected ledger response")
+        };
+        assert!(matches!(
+            response.outcome(),
+            LedgerOutcome::Success {
+                reply: LedgerReply::Accepted { .. } | LedgerReply::Durable { .. }
+            }
+        ));
+    }
     requests
         .send(
             &encode_ledger_control_request(LedgerControlRequest::Shutdown { generation: GENERATION }),
@@ -97,6 +186,18 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(database.is_file());
+    let archive_dir = database.with_extension("bodies");
+    let generation = std::fs::read_dir(&archive_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("cbl"))
+        .expect("one archive generation");
+    let archive = std::fs::read(generation).unwrap();
+    assert_eq!(
+        archive[capsem_archive::FILE_HEADER_BYTES + 4],
+        capsem_archive::CODEC_ZSTD,
+        "body admitted after worker readiness must use the confined zstd codec"
+    );
 }
 
 #[tokio::test]
