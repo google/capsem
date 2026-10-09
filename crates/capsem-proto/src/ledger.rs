@@ -11,7 +11,8 @@ use thiserror::Error;
 
 /// Version of the ledger handshake, request envelopes and logger-owned
 /// operation/reply enums. Bump it when any of those wire shapes changes.
-pub const LEDGER_PROTOCOL_VERSION: u16 = 1;
+/// Version 2 adds the fixed coordinator-to-worker descriptor handoff record.
+pub const LEDGER_PROTOCOL_VERSION: u16 = 2;
 /// Hash of ledger wire declarations, separate from the guest protocol hash.
 pub const LEDGER_SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/ledger_schema_hash.txt"));
 /// Largest diagnostic admitted into a response.
