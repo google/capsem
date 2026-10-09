@@ -7,12 +7,18 @@ must obtain explicit grants before supplying environment, file or directory data
 
 from __future__ import annotations
 
-from pathlib import PurePath
+from collections.abc import Mapping, Sequence
+from pathlib import Path, PurePath
 from typing import Any
 
 import yaml
 
-from .compose_inputs import EMPTY_INPUTS, InterpolationBudget
+from .compose_inputs import (
+    DEFAULT_COMPOSE_LIMITS,
+    EMPTY_INPUTS,
+    InterpolationBudget,
+    build_host_compose_inputs,
+)
 from .compose_inputs import ComposeInputs as ComposeInputs
 from .compose_inputs import ComposeLimits as ComposeLimits
 from .compose_interpolation import _interpolate_compose_str, _load_dotenv
@@ -137,12 +143,18 @@ def _bounded_yaml(text: str, limits: ComposeLimits) -> Any:
 
 
 def parse_compose_yaml(
-    text: str, *, limits: ComposeLimits, inputs: ComposeInputs = EMPTY_INPUTS, dotenv: str = ""
+    text: str,
+    *,
+    limits: ComposeLimits = DEFAULT_COMPOSE_LIMITS,
+    inputs: ComposeInputs = EMPTY_INPUTS,
+    dotenv: str = "",
 ) -> dict[str, Any]:
     if len(text.encode("utf-8")) + len(dotenv.encode("utf-8")) > limits.maximum_bytes:
         raise ValueError("Compose input byte limit exceeded")
     budget = InterpolationBudget(limits)
     dotenv_variables = _load_dotenv(dotenv, inputs.environment, budget)
+    budget.blocked_environment = inputs.blocked_environment - set(dotenv_variables)
+    budget.warned_blocked = inputs.warned_blocked
     raw = _bounded_yaml(text, limits)
     if not isinstance(raw, dict):
         return {}
@@ -153,7 +165,10 @@ def parse_compose_yaml(
 
 
 def parse_compose_yaml_file(
-    compose_path: PurePath, *, inputs: ComposeInputs, limits: ComposeLimits
+    compose_path: PurePath,
+    *,
+    inputs: ComposeInputs,
+    limits: ComposeLimits = DEFAULT_COMPOSE_LIMITS,
 ) -> dict[str, Any]:
     """Parse already-supplied file text; never opens or probes its pathname."""
     text = inputs.files.get(inputs.resolve(compose_path))
@@ -161,3 +176,20 @@ def parse_compose_yaml_file(
         raise PermissionError("Compose file text was not supplied by the evaluator")
     dotenv = inputs.files.get(inputs.resolve(compose_path.parent / ".env"), "")
     return parse_compose_yaml(text, inputs=inputs, dotenv=dotenv, limits=limits)
+
+
+def parse_host_compose_yaml_file(
+    compose_path: Path,
+    *,
+    allowed_host_env: Sequence[str] = (),
+    sample_metadata: Mapping[str, Any] | None = None,
+    limits: ComposeLimits = DEFAULT_COMPOSE_LIMITS,
+) -> dict[str, Any]:
+    """Parse `compose_path` from host disk with bounded YAML, `.env`, and allowlisted host env."""
+    inputs = build_host_compose_inputs(
+        compose_path,
+        allowed_host_env=allowed_host_env,
+        sample_metadata=sample_metadata,
+        limits=limits,
+    )
+    return parse_compose_yaml_file(compose_path, inputs=inputs, limits=limits)

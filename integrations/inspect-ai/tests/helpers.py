@@ -132,10 +132,13 @@ class LocalFakeCapsemController:
         *,
         cpu_count: int,
         ram_gb: int,
+        image: str | None = None,
+        command: Sequence[str] | None = None,
         env: dict[str, str] | None = None,
         labels: Mapping[str, str] | None = None,
+        registry_ca_pem: str | None = None,
     ) -> str:
-        del env
+        del image, command, env, registry_ca_pem
         if self.fail_start_vm:
             raise RuntimeError("start_vm failed")
         vm_id = f"vm-fake-{len(self.started_vms)}"

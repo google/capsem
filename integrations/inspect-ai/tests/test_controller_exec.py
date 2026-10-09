@@ -60,9 +60,12 @@ async def test_sdk_exec_forwards_timeout_secs(monkeypatch: pytest.MonkeyPatch) -
         vid = await ctrl.start_vm(cpu_count=1, ram_gb=1)
         await ctrl.exec_in_vm(vid, "true", timeout=910)
         await ctrl.exec_in_vm(vid, "true", timeout=3610)
+        vid_oci = await ctrl.start_vm(cpu_count=1, ram_gb=1, image="alpine:3.19")
+        await ctrl.exec_in_vm(vid_oci, "true", timeout=60)
         assert calls == [
             (910, models.ExecTarget.VM),
             (3600, models.ExecTarget.VM),
+            (60, models.ExecTarget.WORKLOAD),
         ]
     finally:
         await ctrl.close()
@@ -134,6 +137,8 @@ async def test_sdk_controller_maps_gateway_errors_and_timeouts(
 
 
 async def test_sdk_controller_with_async_capsem_hypervisor_and_vm() -> None:
+    seen_targets: list[Any] = []
+
     class FakeAsyncVM:
         id = "vm-async-123"
         name = "sdk-vm-test"
@@ -143,7 +148,7 @@ async def test_sdk_controller_with_async_capsem_hypervisor_and_vm() -> None:
             self, command: str, *, timeout_secs: int | None = None, target: Any = None
         ) -> object:
             del timeout_secs
-            assert target == models.ExecTarget.VM
+            seen_targets.append(target)
             return exec_response(0, stdout=f"ran:{command}\n")
 
         async def delete(self) -> None:
@@ -157,15 +162,8 @@ async def test_sdk_controller_with_async_capsem_hypervisor_and_vm() -> None:
             del name, id
             return self._vm
 
-        async def create(
-            self,
-            *,
-            name: str = "",
-            cpus: int | None = None,
-            memory: int | None = None,
-            labels: Any = None,
-        ) -> FakeAsyncVM:
-            del name, cpus, memory, labels
+        async def create(self, **kwargs: Any) -> FakeAsyncVM:
+            del kwargs
             return self._vm
 
         async def close(self) -> None:
@@ -180,17 +178,16 @@ async def test_sdk_controller_with_async_capsem_hypervisor_and_vm() -> None:
         assert res.exit_code == 0 and res.stdout == "ran:uname -a\n"
         await ctrl.stop_vm(vid)
         assert hv._vm.deleted is True
+        vid_oci = await ctrl.start_vm(cpu_count=2, ram_gb=4, image="alpine:3.19")
+        await ctrl.exec_in_vm(vid_oci, "id", timeout=30)
+        assert seen_targets == [models.ExecTarget.VM, models.ExecTarget.WORKLOAD]
     finally:
         await ctrl.close()
 
 
 def test_exec_output_text_decodes_sdk_streams() -> None:
-    assert (
-        decode_exec_output(ExecOutput(data="hé\n", encoding=ExecOutputEncoding.UTF8)).decode(
-            "utf-8", errors="replace"
-        )
-        == "hé\n"
-    )
+    utf8 = ExecOutput(data="hé\n", encoding=ExecOutputEncoding.UTF8)
+    assert decode_exec_output(utf8).decode("utf-8", errors="replace") == "hé\n"
     b64 = ExecOutput(data="aGk=", encoding=ExecOutputEncoding.BASE64)
     assert decode_exec_output(b64).decode("utf-8", errors="replace") == "hi"
 
@@ -198,6 +195,7 @@ def test_exec_output_text_decodes_sdk_streams() -> None:
 async def test_sdk_controller_reuses_persistent_event_loop_with_aiohttp() -> None:
     """SdkCapsemController reuses a persistent event loop across real Hypervisor aiohttp calls."""
     seen_targets: list[Any] = []
+    created_count = 0
 
     class _Handler(http.server.BaseHTTPRequestHandler):
         def _send_json(self, payload: dict[str, Any]) -> None:
@@ -209,12 +207,13 @@ async def test_sdk_controller_reuses_persistent_event_loop_with_aiohttp() -> Non
             self.wfile.write(raw)
 
         def do_POST(self) -> None:
+            nonlocal created_count
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
             if self.path == "/vms/create":
-                self._send_json(
-                    {"id": "sb-1", "name": "sb-1", "status": "Running", "available_actions": []}
-                )
+                created_count += 1
+                s = f"sb-{created_count}"
+                self._send_json({"id": s, "name": s, "status": "Running", "available_actions": []})
             elif self.path.endswith("/exec"):
                 seen_targets.append(body.get("target"))
                 out = {"data": f"ok:{body.get('command', '')}\n", "encoding": "utf8"}
@@ -240,8 +239,12 @@ async def test_sdk_controller_reuses_persistent_event_loop_with_aiohttp() -> Non
         assert res1.exit_code == 0 and res1.stdout == "ok:echo hi\n"
         res2 = await ctrl.exec_in_vm(vid, "echo second", timeout=10)
         assert res2.exit_code == 0 and res2.stdout == "ok:echo second\n"
-        assert seen_targets == ["vm", "vm"]
+        vid_oci = await ctrl.start_vm(cpu_count=2, ram_gb=4, image="alpine:3.19")
+        assert vid_oci == "sb-2"
+        await ctrl.exec_in_vm(vid_oci, "echo oci", timeout=10)
+        assert seen_targets == ["vm", "vm", "workload"]
         await ctrl.stop_vm(vid)
+        await ctrl.stop_vm(vid_oci)
     finally:
         await ctrl.close()
         srv.shutdown()

@@ -15,12 +15,13 @@ from inspect_ai.util import SandboxEnvironmentConfigType as _CfgType
 
 from inspect_capsem import _cleanup as _cl
 from inspect_capsem import _lifecycle as _lc
+from inspect_capsem._compose import coerce_config
 from inspect_capsem._controller import CapsemController, SdkCapsemController
 from inspect_capsem._exec import exec_in_sandbox
 from inspect_capsem._files import read_guest_file, write_guest_file
 from inspect_capsem._lifecycle import sweep_leftover_vms
 from inspect_capsem._tools import bake_sandbox_tools_into_controller
-from inspect_capsem.config import CapsemSandboxConfig, coerce_config
+from inspect_capsem.config import CapsemSandboxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class CapsemSandboxEnvironment(SandboxEnvironment):
         controller: CapsemController | None = None,
         *,
         working_dir: str = "/workspace",
+        execution_mode: Literal["vm", "container"] = "vm",
         owns_controller: bool | None = None,
         task_name: str | None = None,
         user: str | None = None,
@@ -59,25 +61,31 @@ class CapsemSandboxEnvironment(SandboxEnvironment):
         super().__init__()
         self._vm_id = vm_id
         self._working_dir = working_dir
+        self._execution_mode: Literal["vm", "container"] = execution_mode
         self._cleaned_up = False
         self._controller = SdkCapsemController() if controller is None else controller
         self._owns_controller = (controller is None) if owns_controller is None else owns_controller
         self._task_name = task_name
         self._user = user
-        self._instance_id = f"{vm_id}:{uuid.uuid4().hex[:6]}"
+        self._instance_id = f"{vm_id}:{execution_mode}:{uuid.uuid4().hex[:6]}"
         CapsemSandboxEnvironment._active_environments[self._instance_id] = self
 
     @property
     def vm_id(self) -> str:
         return self._vm_id
 
+    @property
+    def execution_mode(self) -> Literal["vm", "container"]:
+        return self._execution_mode
+
     @classmethod
     def config_files(cls) -> list[str]:
-        return []
+        compose = [f"{p}.{e}" for p in ("compose", "docker-compose") for e in ("yaml", "yml")]
+        return [*compose, "Dockerfile", "Containerfile"]
 
     @classmethod
     def is_docker_compatible(cls) -> bool:
-        return False
+        return True
 
     @classmethod
     def default_concurrency(cls) -> int | None:
@@ -85,7 +93,7 @@ class CapsemSandboxEnvironment(SandboxEnvironment):
 
     @classmethod
     def config_deserialize(cls, config: dict[str, Any]) -> CapsemSandboxConfig:
-        return coerce_config(config)
+        return coerce_config(config, resolve_compose=False)
 
     @classmethod
     async def task_init(cls, task_name: str, config: _CfgType | str | None) -> None:
@@ -120,17 +128,30 @@ class CapsemSandboxEnvironment(SandboxEnvironment):
     async def sample_init(
         cls, task_name: str, config: _CfgType | str | None, metadata: dict[str, str]
     ) -> dict[str, SandboxEnvironment]:
-        del metadata
-        cfg = coerce_config(config)
+        cfg = coerce_config(config, sample_metadata=metadata)
         controller = SdkCapsemController()
         vm_id = ""
         try:
             vm_id = await _lc._init_sample_vm(controller, cfg, task_name)
-            mkdir_cmd = f"mkdir -p {shlex.quote(cfg.working_dir)}"
-            await controller.exec_in_vm(vm_id, mkdir_cmd, timeout=30)
+            working_dir = cfg.working_dir or "/workspace"
+            if cfg.execution_mode == "container":
+                from inspect_capsem import containers as _c
+
+                spec = cfg.to_container_spec()
+                await _c.prepare_oci_workload_container(controller, vm_id, spec)
+                if not spec.working_dir_explicit:
+                    working_dir = await _c.resolve_container_working_dir(controller, vm_id)
+            else:
+                mkdir_cmd = f"mkdir -p {shlex.quote(working_dir)}"
+                await controller.exec_in_vm(vm_id, mkdir_cmd, timeout=30)
             await bake_sandbox_tools_into_controller(controller, vm_id)
             env = cls(
-                vm_id, controller, working_dir=cfg.working_dir, task_name=task_name, user=cfg.user
+                vm_id,
+                controller,
+                working_dir=working_dir,
+                execution_mode=cfg.execution_mode,
+                task_name=task_name,
+                user=cfg.user,
             )
             env._owns_controller = True
             return {"default": env}
@@ -187,10 +208,24 @@ class CapsemSandboxEnvironment(SandboxEnvironment):
     ) -> ExecResult[str]:
         del timeout_retry, concurrency
         args = (self._working_dir, self._user, input, cwd, env, user, timeout)
-        return await exec_in_sandbox(self._controller, self._vm_id, cmd, *args)
+        return await exec_in_sandbox(
+            self._controller,
+            self._vm_id,
+            cmd,
+            *args,
+            is_container=self._execution_mode == "container",
+        )
 
     async def write_file(self, file: str, contents: str | bytes) -> None:
-        await write_guest_file(self._controller, self._vm_id, self._working_dir, file, contents)
+        await write_guest_file(
+            self._controller,
+            self._vm_id,
+            self._working_dir,
+            file,
+            contents,
+            is_container=self._execution_mode == "container",
+            default_user=self._user,
+        )
 
     @overload
     async def read_file(self, file: str, text: Literal[True] = True) -> str: ...

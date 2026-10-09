@@ -19,7 +19,7 @@ gateway (`capsem-service`).
 
 ## Install and configure
 
-`inspect-capsem-sandbox` depends on `capsem` (`>=0.7.0`), `inspect-ai`, and `pydantic`:
+`inspect-capsem-sandbox` depends on `inspect-ai`, `capsem` (`>=0.7.0`), `pydantic`, and `pyyaml`:
 
 ```sh
 pip install inspect-capsem-sandbox
@@ -54,20 +54,40 @@ def my_eval() -> Task:
     )
 ```
 
-## VM execution
+A string sandbox config is also accepted: a `compose.yaml` / `docker-compose.yml` path or a pre-built OCI image reference (`"python:3.12-slim"`).
 
-Commands and file operations execute directly inside an
-ephemeral Capsem micro-VM.
+## `vm` vs `container` modes
+
+- **`execution_mode="vm"` (default)**: Commands and file operations execute directly inside an
+  ephemeral Capsem micro-VM.
+- **`execution_mode="container"`**: Commands execute inside a rootless OCI workload container provisioned by `capsem-init` (`Hypervisor.create(image="docker://<image>")`) and entered via `runc exec --cwd / -u 0 workload bash -c …` (selected automatically when `compose_file` or `image` is set). The container image must provide `bash`, coreutils (`timeout`, `stat`, `base64`, `head`, `split`), `tar`/`gzip`, and `setpriv`/`su`/`getent`/`id` when executing as a non-root user. `connection()` (`capsem shell <vm_id>`) opens an interactive shell in the backing Capsem VM.
+
+### Compose support
+
+In `container` mode, `inspect-capsem-sandbox` parses single-service `compose.yaml` / `docker-compose.yml` files with `PyYAML`:
+
+- **Supported service fields**: `image`, `working_dir`, `environment` (mapping or `KEY=VALUE` list, with project `.env` interpolation, Inspect `SAMPLE_METADATA_<KEY>` synthesis from scalar sample metadata, and operator-owned host environment allowlisting via `CAPSEM_INSPECT_ALLOWED_HOST_ENV`), `user`, `command`, `entrypoint`, `volumes` (host bind-mount sources inside the Compose directory or `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` staged once at sample start as one-way, root-owned `0:0` copies capped at 256 MiB, preserving file modes), `healthcheck` (polled via `sh -c` with default `retries=3`, `interval` sleep capped at 2 s), `mem_limit` / `deploy.resources.limits.memory` (mapped to VM `ram_gb`), and `cpus` / `deploy.resources.limits.cpus` (mapped to VM `cpu_count`).
+- **Host environment and path isolation**: Host `os.environ` is default-deny in Compose interpolation and bare `environment` keys unless allowlisted by the operator via `CAPSEM_INSPECT_ALLOWED_HOST_ENV` (explicit variable names or literal-prefix patterns; wildcard-only and character-class patterns are rejected), optionally narrowed by `CapsemSandboxConfig.allowed_host_env`. Host bind-mount `volumes` are restricted to the resolved `compose.yaml` directory (`os.path.realpath` containment) or `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` (optionally narrowed by `CapsemSandboxConfig.allowed_host_paths`).
+- **Unsupported**: `Dockerfile` / `build` sections, Compose files without a non-empty `services:` mapping, multi-service `services:` (>1 service), `depends_on`, `env_file`, `ports`, non-default `network_mode` (including `none`, `host`, and `service:<name>`), `internal: true` networks, and privilege/namespace keys (`privileged`, `cap_add`, `cap_drop`, `devices`, `security_opt`, `sysctls`, `pid`, `ipc`, `uts`, `cgroup`) raise `ValueError`. Other unrecognized service keys log a `WARNING` and are ignored (`x-*` extension keys are ignored silently). `x-inspect_k8s_sandbox.allow_domains`, `template`, `allow_domains`, and `host_workspace_dir` raise `NotImplementedError`.
 
 ## Configuration reference (`CapsemSandboxConfig`)
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
+| `execution_mode` | `"vm" \| "container"` | `"vm"` | Execute directly in the Capsem VM or inside an OCI workload container |
+| `image` | `str \| None` | `None` | Pre-built OCI container image admitted in `~/.capsem/settings.toml` when `execution_mode="container"` |
 | `cpu_count` | `int` | `4` | Virtual CPU count for the Capsem VM |
 | `ram_gb` | `int` | `8` | Memory allocation in GiB for the Capsem VM |
-| `working_dir` | `str` | `"/workspace"` | Default working directory inside the guest VM |
+| `working_dir` | `str \| None` | `None` (`"/workspace"` in `vm`; image `WORKDIR` or `"/"` in `container`) | Working directory inside the guest VM or container |
+| `compose_file` | `str \| None` | `None` | Path to a single-service `compose.yaml` / `docker-compose.yml` file |
 | `environment` | `dict[str, str]` | `{}` | Default environment variables passed to the VM session |
+| `command` | `tuple[str, ...] \| str \| None` | `None` | Override container command |
+| `volumes` | `tuple[str, ...]` | `()` | Host bind-mount specifications (`host_path:container_path[:mode]`) |
+| `healthcheck` | `dict[str, Any] \| None` | `None` | Container healthcheck readiness polling configuration |
+| `mem_limit` | `str \| None` | `None` | Container memory limit (for example `"2g"`), mapped to VM `ram_gb` |
 | `user` | `str \| None` | `None` | Default execution user (`uid`, `uid:gid`, or username) |
+| `allowed_host_env` | `tuple[str, ...]` | `()` | Optional task-level subset narrowing `CAPSEM_INSPECT_ALLOWED_HOST_ENV` |
+| `allowed_host_paths` | `tuple[str, ...]` | `()` | Optional task-level subset narrowing `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` |
 
 ## Environment variables
 
@@ -83,6 +103,8 @@ Gateway discovery follows the same precedence as the `capsem` CLI:
   `labels={"managed-by": "inspect-capsem"}`; setting `CAPSEM_VM_PREFIX=<value>` normalizes `<value>`
   and attaches `inspect-capsem-prefix: <slug>` so leftover sweeps and
   `inspect sandbox cleanup capsem` only reap VMs matching the active prefix.
+- `CAPSEM_INSPECT_ALLOWED_HOST_ENV`: Operator-owned comma-separated list of host environment variable names or literal-prefix patterns permitted in Compose interpolation and bare `environment` entries.
+- `CAPSEM_INSPECT_ALLOWED_HOST_PATHS`: Operator-owned list of host directory or file roots permitted for bind-mount sources outside the Compose directory.
 - `INSPECT_CAPSEM_SANDBOX_TOOLS_PATH`: Optional host path override for the `inspect-sandbox-tools`
   binary baked into `/var/tmp/sandbox-services/inspect-sandbox-tools`.
 
@@ -118,4 +140,3 @@ Gateway discovery follows the same precedence as the `capsem` CLI:
   `inspect sandbox cleanup capsem` to delete any remaining VMs carrying the
   `managed-by=inspect-capsem` label (and matching `inspect-capsem-prefix` when `CAPSEM_VM_PREFIX` is
   set).
-

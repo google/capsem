@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
-from .compose_inputs import Fragments, InterpolationBudget
+from .compose_inputs import (
+    CAPSEM_INSPECT_ALLOWED_HOST_ENV_VAR,
+    Fragments,
+    InterpolationBudget,
+)
 
 _BRACED_VAR_HEAD_RE = re.compile(
     r"^([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-|:\?|\?|:\+|\+)(.*))?$", re.DOTALL
@@ -80,7 +84,7 @@ def _load_dotenv(
         else:
             val = _INLINE_COMMENT_RE.sub("", val).strip()
             val = _interpolate_compose_str(val, {**env_vars, **environment}, budget)
-        if key:
+        if key and not key.startswith("SAMPLE_METADATA_"):
             env_vars[key] = val
     return env_vars
 
@@ -95,6 +99,14 @@ def _eval_braced_compose_var(
     name = m.group(1)
     op = m.group(2)
     raw_arg = m.group(3) or ""
+    if name not in env_lookup and name in budget.blocked_environment:
+        if op in (":?", "?"):
+            raise ValueError(
+                f"Required Compose variable {name!r} is set in the host environment "
+                f"but is not allowlisted via {CAPSEM_INSPECT_ALLOWED_HOST_ENV_VAR} / "
+                "allowed_host_env"
+            )
+        budget.warn_blocked(name)
     if op is None:
         return env_lookup.get(name, "")
     if op == ":-":
@@ -181,7 +193,10 @@ def _interpolate_compose_str(
             raise ValueError(msg)
         var_match = _BARE_VAR_RE.match(text, i + 1)
         if var_match is not None:
-            out.append(env_lookup.get(var_match.group(1), ""))
+            var_name = var_match.group(1)
+            if var_name not in env_lookup and var_name in budget.blocked_environment:
+                budget.warn_blocked(var_name)
+            out.append(env_lookup.get(var_name, ""))
             i = var_match.end()
             continue
         out.append("$")

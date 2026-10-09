@@ -1269,8 +1269,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `integrations/inspect-ai` (`inspect-capsem-sandbox`) provides a standalone
   [Inspect AI](https://inspect.aisi.org.uk/) `SandboxEnvironment` registered
-  under `capsem`, supporting direct VM execution
-  backed by the Capsem Python gateway SDK (`capsem>=0.7.0`).
+  under `capsem`, supporting direct VM execution (`execution_mode="vm"`) and
+  rootless OCI workload container execution (`execution_mode="container"`)
+  with single-service Docker Compose support, `SAMPLE_METADATA_*`
+  interpolation, and operator-owned host environment and bind-mount
+  allowlists, backed by the Capsem Python gateway SDK (`capsem>=0.7.0`).
 
 - The profile catalog names its own defaults, one per runtime: the binary
   compiles them from `config/profile-catalog.toml` (a runtime's default
