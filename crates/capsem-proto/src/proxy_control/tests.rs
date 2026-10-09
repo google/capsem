@@ -1,4 +1,5 @@
 use super::*;
+use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 
 const GENERATION: ProxyGeneration = ProxyGeneration::new([7; 16]);
 
@@ -9,7 +10,6 @@ fn grants_round_trip_without_session_path_or_destination_authority() {
         ProxyCapability::DnsTraffic,
         ProxyCapability::Upstream,
         ProxyCapability::Credential,
-        ProxyCapability::Ledger,
         ProxyCapability::PrivateNames,
         ProxyCapability::Mcp,
         ProxyCapability::Telemetry,
@@ -29,6 +29,26 @@ fn grants_round_trip_without_session_path_or_destination_authority() {
     assert_eq!(
         decode_proxy_control_request(&encode_proxy_control_request(shutdown)).unwrap(),
         shutdown
+    );
+}
+
+#[test]
+fn ledger_grants_round_trip_exact_worker_authority() {
+    let ledger = LedgerChannelGrant::new(LedgerGeneration::new([9; 16]), 73, LedgerClientRole::Proxy).unwrap();
+    let grant = ProxyChannelGrant::with_ledger(GENERATION, 41, ledger).unwrap();
+    let request = ProxyControlRequest::Attach(grant);
+    assert_eq!(
+        decode_proxy_control_request(&encode_proxy_control_request(request)).unwrap(),
+        request
+    );
+    assert_eq!(grant.ledger_grant(), Some(ledger));
+}
+
+#[test]
+fn ledger_capability_without_exact_authority_is_rejected() {
+    assert_eq!(
+        ProxyChannelGrant::new(GENERATION, 41, ProxyCapability::Ledger).unwrap_err(),
+        ProxyControlError::MissingLedgerAuthority
     );
 }
 
