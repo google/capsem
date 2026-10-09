@@ -86,6 +86,10 @@ fn main() -> Result<()> {
 }
 
 async fn run(args: Args) -> Result<()> {
+    anyhow::ensure!(
+        args.service_grant_stdin,
+        "capsem-gateway requires a coordinator descriptor grant channel"
+    );
     let run_dir = gateway_run_dir(&args);
     let _ = std::fs::create_dir_all(&run_dir);
     let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
@@ -150,20 +154,16 @@ async fn run(args: Args) -> Result<()> {
         .context("failed to bind preview listener")?;
     let preview_port = preview_listener.local_addr()?.port();
 
-    // Generate auth token and write runtime files only after both listeners
-    // exist. gateway.token is the final readiness marker.
+    // Prepare private marker descriptors before confinement. Their empty files
+    // are not readiness; the complete token is stamped only after confinement.
     let token = auth::generate_token();
-    let auth_state = AuthState::new(&run_dir, &token, bound_port, preview_port)?;
+    let mut auth_state = AuthState::prepare(&run_dir)?;
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<String>(64);
-    let service_client = if args.service_grant_stdin {
-        // SAFETY: the service gives this child sole ownership of stdin as its
-        // descriptor grant socket. No standard-input owner has been created.
-        let grant_socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(0) };
-        ServiceClient::granted(service_grant::GatewayGrantClient::start(grant_socket)?)
-    } else {
-        ServiceClient::new(&uds_path)
-    };
+    // SAFETY: the service gives this child sole ownership of stdin as its
+    // descriptor grant socket. No standard-input owner has been created.
+    let grant_socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(0) };
+    let service_client = ServiceClient::granted(service_grant::GatewayGrantClient::start(grant_socket)?);
     let state = Arc::new(AppState {
         token,
         uds_path,
@@ -173,6 +173,8 @@ async fn run(args: Args) -> Result<()> {
         events_tx,
         previews: preview::PreviewState::new(preview_port),
     });
+
+    confine_linux_gateway()?;
 
     let preview_state = state.clone();
     tokio::spawn(async move {
@@ -201,6 +203,8 @@ async fn run(args: Args) -> Result<()> {
         .layer(request_trace_layer())
         .with_state(state.clone());
 
+    auth_state.publish(&state.token, bound_port, preview_port)?;
+
     info!(
         port = bound_port,
         token_path = %auth_state.token_path.display(),
@@ -210,7 +214,6 @@ async fn run(args: Args) -> Result<()> {
     );
 
     // Graceful shutdown on SIGTERM/SIGINT
-    let shutdown_auth = auth_state.clone();
     axum::serve(
         listener::low_latency(listener),
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -218,14 +221,23 @@ async fn run(args: Args) -> Result<()> {
     .with_graceful_shutdown(async move {
         shutdown_signal().await;
         info!("shutting down");
-        shutdown_auth.cleanup();
     })
     .await
     .context("server error")?;
 
-    // Belt-and-suspenders cleanup (signal handler may not run on all exit paths)
-    auth_state.cleanup();
+    Ok(())
+}
 
+#[cfg(target_os = "linux")]
+fn confine_linux_gateway() -> Result<()> {
+    use capsem_foundation::unix::worker_sandbox::{Policy, Role};
+    capsem_foundation::unix::worker_sandbox::confine(&Policy::new(Role::Gateway))
+        .context("confine gateway before readiness")?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn confine_linux_gateway() -> Result<()> {
     Ok(())
 }
 

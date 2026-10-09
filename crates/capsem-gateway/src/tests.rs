@@ -16,7 +16,7 @@ fn entry_closes_ambient_descriptors_before_runtime_construction() {
         .find("close_inherited_descriptors()")
         .expect("gateway closes ambient descriptors at process entry");
     let runtime = entry.find("tokio::runtime::Builder").unwrap();
-    let run = entry.find("runtime.block_on(run())").unwrap();
+    let run = entry.find("runtime.block_on(run(args))").unwrap();
     assert!(close < runtime && runtime < run);
 }
 

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{fs::File, io::Seek, io::Write};
 
 use anyhow::{Context, Result};
 use axum::extract::State;
@@ -76,48 +77,40 @@ impl AuthFailureTracker {
 }
 
 /// Runtime file state for cleanup on shutdown.
-#[derive(Clone)]
 pub struct AuthState {
     pub token_path: PathBuf,
     pub port_path: PathBuf,
     pub pid_path: PathBuf,
     pub preview_port_path: PathBuf,
+    token_file: File,
+    port_file: File,
+    pid_file: File,
+    preview_port_file: File,
 }
 
 impl AuthState {
     /// Generate runtime files. The token is written last: its presence is the
     /// readiness marker, after both listeners and every other marker exist.
+    #[cfg(test)]
     pub fn new(run_dir: &Path, token: &str, port: u16, preview_port: u16) -> Result<Self> {
+        let mut state = Self::prepare(run_dir)?;
+        state.publish(token, port, preview_port)?;
+        Ok(state)
+    }
+
+    /// Create empty, private marker files while filesystem authority remains.
+    pub fn prepare(run_dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(run_dir).with_context(|| format!("failed to create run dir: {}", run_dir.display()))?;
 
         let token_path = run_dir.join("gateway.token");
         let port_path = run_dir.join("gateway.port");
         let pid_path = run_dir.join("gateway.pid");
         let preview_port_path = run_dir.join("preview.port");
-
-        std::fs::write(&preview_port_path, preview_port.to_string())
-            .with_context(|| format!("failed to write {}", preview_port_path.display()))?;
-        #[cfg(unix)]
-        std::fs::set_permissions(&preview_port_path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-        std::fs::write(&port_path, port.to_string())?;
-        std::fs::write(&pid_path, std::process::id().to_string())?;
-        std::fs::write(&token_path, token).with_context(|| format!("failed to write {}", token_path.display()))?;
-
-        // chmod 600 on token file
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600))?;
-        }
-
-        info!(
-            token_path = %token_path.display(),
-            port_path = %port_path.display(),
-            pid_path = %pid_path.display(),
-            "runtime files written"
-        );
-
         Ok(Self {
+            token_file: prepare_file(&token_path)?,
+            port_file: prepare_file(&port_path)?,
+            pid_file: prepare_file(&pid_path)?,
+            preview_port_file: prepare_file(&preview_port_path)?,
             token_path,
             port_path,
             pid_path,
@@ -125,7 +118,25 @@ impl AuthState {
         })
     }
 
+    /// Stamp listener metadata through prepared descriptors. The token is
+    /// written last because a complete token is the readiness marker.
+    pub fn publish(&mut self, token: &str, port: u16, preview_port: u16) -> Result<()> {
+        write_prepared(&mut self.preview_port_file, preview_port.to_string().as_bytes())?;
+        write_prepared(&mut self.port_file, port.to_string().as_bytes())?;
+        write_prepared(&mut self.pid_file, std::process::id().to_string().as_bytes())?;
+        write_prepared(&mut self.token_file, token.as_bytes())?;
+        info!(
+            token_path = %self.token_path.display(),
+            port_path = %self.port_path.display(),
+            pid_path = %self.pid_path.display(),
+            preview_port_path = %self.preview_port_path.display(),
+            "runtime files written"
+        );
+        Ok(())
+    }
+
     /// Remove runtime files on shutdown.
+    #[cfg(test)]
     pub fn cleanup(&self) {
         for path in [
             &self.token_path,
@@ -141,6 +152,27 @@ impl AuthState {
         }
         info!("runtime files cleaned up");
     }
+}
+
+fn prepare_file(path: &Path) -> Result<File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("failed to prepare {}", path.display()))?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+fn write_prepared(file: &mut File, value: &[u8]) -> Result<()> {
+    file.set_len(0)?;
+    file.rewind()?;
+    file.write_all(value)?;
+    file.flush()?;
+    Ok(())
 }
 
 /// Generate a 64-character alphanumeric random token.
