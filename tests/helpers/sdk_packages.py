@@ -123,3 +123,67 @@ def typescript_gateway(
     assert not work.exists()
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
     return result
+
+
+def inspect_ai_gateway(
+    root: Path, environment: Mapping[str, str], *, probe: str = "live_acceptance.py",
+    success_marker: str = "INSPECT_CAPSEM_VM_ACCEPTANCE_OK", timeout_seconds: int = 240,
+) -> str:
+    gate_cfg = tomllib.loads((root / "config/gate.toml").read_text())
+    sdk_settings = gate_cfg["sdk_python"]
+    sdk_manifest = tomllib.loads((root / sdk_settings["manifest"]).read_text())["project"]
+    sdk_stem = f"{sdk_manifest['name'].replace('-', '_')}-{sdk_manifest['version']}"
+    sdk_wheel = _archive(root / sdk_settings["build_output"], f"{sdk_stem}-*.whl")
+    settings = gate_cfg["integrations_inspect_ai"]
+    project_python = root / settings["project"] / ".venv/bin/python"
+    base_python = str(project_python.resolve()) if project_python.exists() else sys.executable
+    manifest = tomllib.loads((root / settings["manifest"]).read_text())["project"]
+    stem = f"{manifest['name'].replace('-', '_')}-{manifest['version']}"
+    output = root / settings["build_output"]
+    results = []
+    for kind, pattern in (("wheel", f"{stem}-*.whl"), ("sdist", f"{stem}.tar.gz")):
+        archive = _archive(output, pattern)
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory(prefix=f"braavos-inspect-{kind}-") as temporary:
+            work = Path(temporary)
+            assert not work.resolve().is_relative_to(root.resolve())
+            prefix = work / "runtime"
+            python = prefix / "bin/python"
+            _run(
+                [
+                    "env", f"UV_PROJECT_ENVIRONMENT={prefix}",
+                    "uv", "sync", "--project", str(root / settings["project"]),
+                    "--frozen", "--no-dev", "--no-install-project", "--no-install-local",
+                    "--offline", "--python", base_python,
+                ],
+                work, environment,
+            )
+            _run(
+                ["uv", "pip", "install", "--offline", "--no-deps", "--python", str(python), str(sdk_wheel), str(archive)],
+                work, environment,
+            )
+            payload = work / "payload.py"
+            gateway = work / "gateway.py"
+            tests_dir = root / settings["tests"]
+            for name, destination in (("image_package_acceptance.py", payload), (probe, gateway)):
+                shutil.copyfile(tests_dir / name, destination)
+            fixture_helper = tests_dir / "oci_workload_fixture.py"
+            if fixture_helper.is_file():
+                shutil.copyfile(fixture_helper, work / "oci_workload_fixture.py")
+            report = work / "payload.json"
+            result = _run([str(python), "-I", str(payload), "--archive", str(archive),
+                           "--source-root", str(root), "--output", str(report)], work, environment)
+            assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in result
+            receipt = json.loads(report.read_text())
+            assert receipt["ok"] and receipt["isolated"]
+            assert receipt["sha256"] == digest and receipt["version"] == manifest["version"]
+            assert receipt["entry_point"] == "inspect_capsem._registry"
+            assert Path(receipt["prefix"]).resolve() == prefix.resolve()
+            result += _run([str(python), "-I", str(gateway)], work, environment,
+                           timeout_seconds=timeout_seconds)
+            assert success_marker in result
+            results.append(result)
+        assert not work.exists()
+        assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
+    return "".join(results)
+

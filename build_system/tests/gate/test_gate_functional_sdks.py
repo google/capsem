@@ -14,8 +14,13 @@ from capsem_builder.gate import host
 from helpers.gate import PROJECT_ROOT, gate_plan
 
 PREPARED = (
-    "sdk.python.sync", "functional.sdk.rust.example", "fast.sdk.python.build",
-    "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm",
+    "sdk.python.sync",
+    "integrations.inspect-ai.sync",
+    "functional.sdk.rust.example",
+    "fast.sdk.python.build",
+    "fast.integrations.inspect-ai.build",
+    "fast.sdk.typescript.build",
+    "fast.sdk.typescript.package-prewarm",
 )
 
 
@@ -35,6 +40,12 @@ def test_python_sdk_tests_cannot_start_before_the_archives_they_install_are_buil
     assert "fast.sdk.python.build" in _ancestors(plan, "fast.sdk.python.tests"), (
         "clean installed-package acceptance must consume this source's wheel and sdist, "
         "not whichever archive a previous run happened to leave"
+    )
+    assert {"fast.sdk.python.build", "fast.integrations.inspect-ai.build"} <= _ancestors(
+        plan, "fast.integrations.inspect-ai.tests"
+    ), (
+        "clean installed inspect-capsem acceptance must consume this source's SDK and "
+        "inspect-capsem wheel and sdist archives"
     )
 
 
@@ -64,21 +75,24 @@ def test_functional_installed_sdks_use_current_archives_and_declared_network_pre
 
     plan = gate_plan("test-functional")
     python = "fast.sdk.python.build"
+    inspect_pkg = "fast.integrations.inspect-ai.build"
     npm = "fast.sdk.typescript.build"
     warmed = "fast.sdk.typescript.package-prewarm"
-    assert {python, npm, warmed} <= set(plan.labels), "Braavos needs actual installed SDK artifacts"
+    assert {python, inspect_pkg, npm, warmed} <= set(plan.labels), "Braavos needs actual installed SDK artifacts"
     assert "sdk.python.sync" in _ancestors(plan, python)
+    assert "integrations.inspect-ai.sync" in _ancestors(plan, inspect_pkg)
     assert npm in _ancestors(plan, warmed)
     assert Needs.NETWORK in plan.step_named(warmed).needs
     assert "[outside kernel sandbox]" in plan.step_named(warmed).actions[0].render()
     assert "--no-isolation" in plan.step_named(python).actions[0].render()
+    assert "--no-isolation" in plan.step_named(inspect_pkg).actions[0].render()
 
 
 def test_composed_sdk_packages_have_one_producer_and_no_dependency_cycle() -> None:
     plan = gate_plan("candidate")
     labels = plan.labels
-    for label in ("fast.sdk.python.build", "fast.sdk.typescript.build",
-                  "fast.sdk.typescript.package-prewarm"):
+    for label in ("fast.sdk.python.build", "fast.integrations.inspect-ai.build",
+                  "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm"):
         assert labels.count(label) == 1
 
 
@@ -103,8 +117,11 @@ def test_the_packages_the_suites_drive_are_among_the_installed_workspaces() -> N
 
 def test_sdk_preparation_stays_offline_inside_the_sandbox() -> None:
     plan = gate_plan("test-functional")
-    sync = plan.step_named("sdk.python.sync").actions[0].render()
-    assert "--no-build-isolation" in sync, "an isolated build fetches its backend from the network"
+    for label in ("sdk.python.sync", "integrations.inspect-ai.sync"):
+        sync = plan.step_named(label).actions[0].render()
+        assert "--no-build-isolation" in sync, (
+            "an isolated build fetches its backend from the network"
+        )
     example = plan.step_named("functional.sdk.rust.example").actions[0].render()
     assert "--frozen" in example, "cargo must not reach the registry from inside the sandbox"
 

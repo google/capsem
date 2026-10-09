@@ -39,7 +39,9 @@ def test_no_ambient_environment_or_filesystem_access(monkeypatch: pytest.MonkeyP
                 "/project/.env": "IMAGE=alpine:3.20\n",
             },
         )
-        parsed = parse_compose_yaml_file(Path("/project/compose.yaml"), inputs=supplied, limits=LIMITS)
+        parsed = parse_compose_yaml_file(
+            Path("/project/compose.yaml"), inputs=supplied, limits=LIMITS
+        )
         assert parsed["services"]["app"]["image"] == "alpine:3.20"
 
 
