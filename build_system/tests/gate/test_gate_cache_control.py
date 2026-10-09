@@ -1,10 +1,15 @@
 """The gate is a thin caller of the typed cache control plane."""
 
+import argparse
 from pathlib import Path
+from types import SimpleNamespace
 
 from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.leases import active_path
+from capsem_builder.gate import cachelayout
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.cachecontrol import CacheControl
+from capsem_builder.gate.cachecontrol import CacheControl, CacheGenerationLease
+from capsem_builder.gate.imagequalify import ImageQualifyModule
 from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingRunner
 
@@ -56,6 +61,40 @@ def test_receipt_policy_comes_from_validated_cache_policy() -> None:
     assert policy.maximum_age_seconds == 336 * 3600
     assert policy.warm_size_bytes == 6 * 1024**3
     assert policy.max_size_bytes == 12 * 1024**3
+
+
+def test_a_managed_candidate_layout_is_leased_for_the_command_lifetime(
+    monkeypatch, tmp_path: Path
+) -> None:
+    stage = tmp_path / "images"
+    layout = stage / "capsem-debug-candidate"
+    layout.mkdir(parents=True)
+    policy = SimpleNamespace(
+        stages={
+            "test-images": SimpleNamespace(
+                lease_template=".{key}.lock", managed_globs=("*",)
+            )
+        }
+    )
+    paths = SimpleNamespace(policy=policy, stage=lambda _stage_id: stage)
+    monkeypatch.setattr(cachelayout, "cache_paths", lambda _config: paths)
+    lease = CacheGenerationLease(CONFIG, "test-images", layout)
+
+    lease.acquire()
+    lease_path = stage / ".capsem-debug-candidate.lock"
+    assert active_path(lease_path)
+    lease.release()
+    assert not active_path(lease_path)
+
+
+def test_image_qualification_holds_its_explicit_candidate_layout(tmp_path: Path) -> None:
+    runner = RecordingRunner(PROJECT_ROOT)
+    command = ImageQualifyModule(
+        runner,
+        argparse.Namespace(image="capsem-debug", layout=tmp_path / "layout", sandbox=None),
+    )
+
+    assert any(isinstance(resource, CacheGenerationLease) for resource in command.resources(runner))
 
 
 def test_private_gate_controls_outer_cache_with_private_policy(monkeypatch, tmp_path: Path) -> None:

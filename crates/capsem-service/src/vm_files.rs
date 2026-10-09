@@ -627,9 +627,16 @@ pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &s
 async fn failed_process_log_tail(state: &Arc<ServiceState>, id: &str) -> String {
     let vm_id = id.to_string();
     state
-        .off_worker(move |state| match find_failed_session_dir(&state.run_dir, &vm_id) {
-            Some(dir) => read_process_log_tail(&dir, 20),
-            None => "(no preserved log found)".to_string(),
+        .off_worker(move |state| {
+            if let Some(entry) = find_persistent_entry_by_route_id(&state, &vm_id) {
+                return entry
+                    .last_error
+                    .unwrap_or_else(|| read_process_log_tail(&entry.session_dir, 20));
+            }
+            match find_failed_session_dir(&state.run_dir, &vm_id) {
+                Some(dir) => read_process_log_tail(&dir, 20),
+                None => "(no preserved log found)".to_string(),
+            }
         })
         .await
         .unwrap_or_else(|error| format!("(log read failed: {})", error.1))
@@ -742,16 +749,9 @@ pub(super) async fn provision_attempt(
         launch::LaunchWait::Launched => ProvisionAttemptOutcome::Launched { uds_path },
         launch::LaunchWait::TimedOut => ProvisionAttemptOutcome::StillBootingTimedOut { uds_path },
         launch::LaunchWait::Crashed => {
-            // Crash before ready. Prefer the persistent entry's
-            // cached last_error (already computed by the child-exit
-            // handler) to avoid re-reading the log; fall back to
-            // find_failed_session_dir for ephemeral VMs whose dir was
-            // renamed to `-failed-*`.
-            let cached = find_persistent_entry_by_route_id(state, id).and_then(|e| e.last_error);
-            let tail = match cached {
-                Some(tail) => tail,
-                None => failed_process_log_tail(state, id).await,
-            };
+            // The instance may disappear before its persistent last_error is
+            // cached. Read its log during that window; ephemeral evidence lives in `-failed-*`.
+            let tail = failed_process_log_tail(state, id).await;
             if is_launchd_cleanup_transient(&tail) {
                 warn!(
                     id,

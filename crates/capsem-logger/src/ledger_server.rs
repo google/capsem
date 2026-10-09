@@ -16,7 +16,7 @@ use crate::ledger_protocol::{
     LedgerBodyMetadata, LedgerClientMessage, LedgerCommand, LedgerExportSummary, LedgerReply, LedgerServerMessage,
     MAX_LEDGER_STREAM_CHUNK_BYTES,
 };
-use crate::{DbHandle, StoredBody};
+use crate::{DbHandle, ReadCacheDomain, StoredBody};
 
 mod queries;
 
@@ -166,12 +166,13 @@ impl LedgerServer {
                 Err(error) => Err(storage(error)),
             },
             LedgerCommand::Counters => match self.current_counters().await {
-                Ok(counters) => {
+                Ok((counters, read_cache_epoch)) => {
                     send_success(
                         sender,
                         request_id,
                         LedgerReply::Counters {
                             counters: Box::new((*counters).clone()),
+                            read_cache_epoch,
                         },
                     )
                     .await
@@ -212,9 +213,15 @@ impl LedgerServer {
         Ok(false)
     }
 
-    async fn current_counters(&self) -> Result<Arc<capsem_proto::ledger_counters::LedgerCounters>, String> {
+    async fn current_counters(&self) -> Result<(Arc<capsem_proto::ledger_counters::LedgerCounters>, u64), String> {
         self.db.ready().await?;
-        self.db.ledger_counters().await
+        let counters = self.db.ledger_counters().await?;
+        Ok((counters, self.db.read_cache_epoch(ReadCacheDomain::All)))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalidate_read_cache_for_tests(&self) {
+        self.db.invalidate_read_cache();
     }
 
     async fn send_bodies(&self, sender: &ServerSender, request_id: u64, bodies: Vec<StoredBody>) -> Result<(), String> {

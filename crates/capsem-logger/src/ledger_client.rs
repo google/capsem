@@ -213,17 +213,8 @@ async fn run_actor(
     read_cache_epoch: Arc<AtomicU64>,
 ) {
     let mut request_id = 1_u64;
-    let mut counters = None;
     while let Some(command) = commands.recv().await {
-        let result = dispatch(
-            &sender,
-            &receiver,
-            request_id,
-            command,
-            &mut counters,
-            &read_cache_epoch,
-        )
-        .await;
+        let result = dispatch(&sender, &receiver, request_id, command, &read_cache_epoch).await;
         if let Err(error) = result {
             tracing::error!(%error, "ledger client operation failed");
             fail_pending(&mut commands, &error);
@@ -242,7 +233,6 @@ async fn dispatch(
     receiver: &ClientReceiver,
     request_id: u64,
     command: Command,
-    previous_counters: &mut Option<Arc<LedgerCounters>>,
     read_cache_epoch: &AtomicU64,
 ) -> Result<(), String> {
     match command {
@@ -259,15 +249,15 @@ async fn dispatch(
             let result = one_reply(sender, receiver, request_id, LedgerCommand::Counters)
                 .await
                 .and_then(|response| match response {
-                    LedgerReply::Counters { counters } => Ok(Arc::new(*counters)),
+                    LedgerReply::Counters {
+                        counters,
+                        read_cache_epoch: remote_epoch,
+                    } => {
+                        read_cache_epoch.store(remote_epoch, Ordering::Release);
+                        Ok(Arc::new(*counters))
+                    }
                     response => Err(unexpected("counters", response)),
                 });
-            if let Ok(current) = &result {
-                if previous_counters.as_deref() != Some(current.as_ref()) {
-                    *previous_counters = Some(Arc::clone(current));
-                    read_cache_epoch.fetch_add(1, Ordering::AcqRel);
-                }
-            }
             finish(reply, result)
         }
         Command::ReadBodies { event_id, reply } => {

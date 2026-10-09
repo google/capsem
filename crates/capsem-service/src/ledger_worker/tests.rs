@@ -290,6 +290,60 @@ async fn stopping_one_session_leaves_an_unrelated_session_generation_alive() {
 
     drop(client_b);
     drop(second_b);
+    workers.shutdown_all().await;
+    assert_eq!(workers.generation("b").await, None);
+}
+
+#[tokio::test]
+async fn preserving_a_failed_session_moves_its_checkpoint_authority() {
+    let directory = tempfile::tempdir().unwrap();
+    let binary = fake_binary(directory.path(), "normal");
+    let commitment_root = directory.path().join("commitments");
+    let workers = Arc::new(LedgerWorkers::new(binary, commitment_root.clone()));
+    let (database, log) = session_paths(directory.path(), "session-a");
+    let client = workers
+        .acquire("a", &database, &log, LedgerClientRole::Reader)
+        .await
+        .unwrap();
+    drop(client);
+    workers.shutdown("a").await.unwrap();
+
+    workers.preserve_quiesced("a", "a-failed-1").unwrap();
+    assert!(!commitment_root.join(checkpoint_key("a")).exists());
+    assert!(commitment_root.join(checkpoint_key("a-failed-1")).exists());
+    workers.retire_quiesced("a-failed-1").unwrap();
+    assert!(!commitment_root.join(checkpoint_key("a-failed-1")).exists());
+}
+
+#[tokio::test]
+async fn retiring_a_stopped_session_removes_only_its_trusted_checkpoints() {
+    let directory = tempfile::tempdir().unwrap();
+    let binary = fake_binary(directory.path(), "normal");
+    let commitment_root = directory.path().join("commitments");
+    let workers = Arc::new(LedgerWorkers::new(binary, commitment_root.clone()));
+    let (database_a, log_a) = session_paths(directory.path(), "session-a");
+    let (database_b, log_b) = session_paths(directory.path(), "session-b");
+    let client_a = workers
+        .acquire("a", &database_a, &log_a, LedgerClientRole::Reader)
+        .await
+        .unwrap();
+    let client_b = workers
+        .acquire("b", &database_b, &log_b, LedgerClientRole::Reader)
+        .await
+        .unwrap();
+    let key_a = blake3::hash(b"a").to_hex().to_string();
+    let key_b = blake3::hash(b"b").to_hex().to_string();
+    assert!(commitment_root.join(&key_a).exists());
+    assert!(commitment_root.join(&key_b).exists());
+
+    assert!(workers.retire("a").await.is_err());
+    drop(client_a);
+    workers.shutdown("a").await.unwrap();
+    workers.retire("a").await.unwrap();
+    assert!(!commitment_root.join(key_a).exists());
+    assert!(commitment_root.join(key_b).exists());
+
+    drop(client_b);
     workers.shutdown("b").await.unwrap();
 }
 

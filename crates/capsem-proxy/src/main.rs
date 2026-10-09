@@ -30,6 +30,7 @@ mod credential_client;
 mod mcp_client;
 mod metric_client;
 mod private_names_client;
+mod trace_hint_client;
 
 const CONTROL_QUEUE_CAPACITY: usize = 16;
 const GRANT_LIMIT: usize = 71;
@@ -61,12 +62,14 @@ fn main() -> Result<()> {
         capsem_foundation::unix::process::clear_inherited_environment();
         fd::close_inherited_descriptors()?;
     }
+    let args = Args::parse();
+    capsem_foundation::telemetry::install_in_band_trace_id(trace_id_from_generation(args.generation))
+        .map_err(anyhow::Error::msg)?;
     let _telemetry = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-proxy",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
         default_filter: "capsem_proxy=info,capsem_core=info,capsem_foundation=warn",
     })?;
-    let args = Args::parse();
     let stdin = io::stdin();
     let control = UnixStream::from(fd::duplicate(stdin.as_fd())?);
     let denied_file = std::env::current_exe().context("resolve proxy executable before confinement")?;
@@ -86,6 +89,10 @@ fn attest_confinement(denied_file: &std::path::Path, parent_pid: u32) -> Result<
         bail!("proxy worker retained inherited environment state");
     }
     require_denied(std::fs::read(denied_file), "read an ambient file")?;
+    // Linux seccomp denies socket(2) itself. Seatbelt denies endpoint bind,
+    // listen and connect operations but permits authority-free private
+    // socketpairs, which Tokio and worker-internal channels may use.
+    #[cfg(target_os = "linux")]
     require_denied(UnixStream::pair(), "create a Unix socket")?;
     require_denied(
         std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)),
@@ -310,6 +317,13 @@ async fn run_control(
                                     .lock()
                                     .unwrap_or_else(|error| error.into_inner())
                                     .attach_metric_exporter(exporter);
+                            } else if capability == ProxyCapability::TraceHints {
+                                let client = trace_hint_client::TraceHintClient::start(UnixStream::from(descriptor))
+                                    .context("open proxy trace-hint capability")?;
+                                state
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .attach_trace_hints(client);
                             } else if capability == ProxyCapability::HttpTraffic {
                                 let runtime = state
                                     .lock()
@@ -418,6 +432,7 @@ struct ProxyRuntimeState {
     http_config: Option<Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>>,
     dns_runtime: Option<Arc<DnsRuntime>>,
     metric_exporter: Option<capsem_telemetry::export::Exporter>,
+    trace_hints: Option<Arc<dyn capsem_core::net::ai_traffic::TraceHintSink>>,
 }
 
 impl Default for ProxyRuntimeState {
@@ -448,6 +463,7 @@ impl ProxyRuntimeState {
             http_config: None,
             dns_runtime: None,
             metric_exporter: None,
+            trace_hints: None,
         }
     }
 
@@ -525,6 +541,11 @@ impl ProxyRuntimeState {
         self.metric_exporter = Some(exporter);
     }
 
+    fn attach_trace_hints(&mut self, trace_hints: Arc<dyn capsem_core::net::ai_traffic::TraceHintSink>) {
+        self.trace_hints = Some(trace_hints);
+        self.http_config = None;
+    }
+
     fn traffic_ready(&mut self, capability: ProxyCapability) -> Result<bool> {
         match capability {
             ProxyCapability::HttpTraffic => Ok(self.http_runtime()?.is_some()),
@@ -553,7 +574,16 @@ impl ProxyRuntimeState {
             pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
             trace_state: Arc::new(Mutex::new(capsem_core::net::ai_traffic::TraceState::new())),
         });
-        let pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(Arc::clone(&telemetry));
+        let pipeline = match &self.trace_hints {
+            Some(trace_hints) => capsem_core::net::mitm_proxy::make_production_pipeline_with_trace_hints(
+                Arc::clone(&telemetry),
+                Arc::clone(trace_hints),
+            ),
+            None if self.standalone_provider.is_some() => {
+                capsem_core::net::mitm_proxy::make_production_pipeline(Arc::clone(&telemetry))
+            }
+            None => return Ok(None),
+        };
         let upstream_grants: Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants> = upstream_grants.clone();
         let mcp_endpoint = match &self.mcp_client {
             Some((mcp_client, mcp_hello)) => Some(Arc::new(
@@ -759,6 +789,20 @@ fn parse_generation(value: &str) -> std::result::Result<ProxyGeneration, String>
         return Err("generation must not be zero".into());
     }
     Ok(generation)
+}
+
+fn trace_id_from_generation(generation: ProxyGeneration) -> String {
+    let bytes = generation.as_bytes();
+    let compact = if bytes[8..].iter().any(|byte| *byte != 0) {
+        &bytes[8..]
+    } else {
+        &bytes[..8]
+    };
+    compact.iter().fold(String::with_capacity(16), |mut trace_id, byte| {
+        use std::fmt::Write as _;
+        write!(trace_id, "{byte:02x}").expect("write to String");
+        trace_id
+    })
 }
 
 #[cfg(test)]

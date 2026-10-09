@@ -367,6 +367,9 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     shape: the builder's git, the staging rm, pytest's cache, and an
     unmaterialized generated tree."""
     from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.docker import Docker
+    from capsem_builder.gate.installcontainer import claim_owned_paths
+    from helpers.gate import RecordingRunner
 
     config = gate_config.load(PROJECT_ROOT)
     guest = config.install.guest_user
@@ -380,7 +383,16 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     # walking unrelated Cargo or release output.
     assert "settings.layout.owned_parent_paths(settings.mount)" in container
     assert "claim_owned_paths(self._docker, self.name, self._settings)" in container
-    assert '["chown", f"{guest}:{guest}", *parents]' in container
+    runner = RecordingRunner(PROJECT_ROOT)
+    claim_owned_paths(Docker(runner), config.install.container, config.install)
+    assert list(runner.commands[-1].argv) == [
+        "docker",
+        "exec",
+        config.install.container,
+        "chown",
+        f"{guest.name}:{guest.name}",
+        *config.install.layout.owned_parent_paths(config.install.mount),
+    ]
     assert '["chown", "-R", f"{guest}:{guest}", *parents]' not in container
 
     # Every path this user writes has to live off the bind mount.

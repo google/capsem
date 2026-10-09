@@ -10,6 +10,8 @@ mod asset_status;
 mod asset_wait;
 mod instance_reaper;
 mod policy_push;
+#[path = "tests/session_housekeeping.rs"]
+mod session_housekeeping_tests;
 
 pub(crate) static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -296,24 +298,17 @@ pub(crate) fn spawn_fake_fork_owner(
 }
 
 /// A fake process that answers ping, and reloads by reporting the digest of
-/// the active policy it finds in its session, as capsem-process does.
+/// the exact active policy the service delivered, as capsem-process does.
 pub(crate) fn spawn_fake_process_reload_ack(
     uds_path: &StdPath,
     expected: usize,
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    let active_policy = uds_path
-        .parent()
-        .unwrap()
-        .join(ACTIVE_POLICY_DIR)
-        .join(ACTIVE_POLICY_FILE);
-    spawn_fake_process(uds_path, expected, move |message| {
+    spawn_fake_process(uds_path, expected, |message| {
         let reply = match message {
             ServiceToProcess::Ping => Some(ProcessToService::Pong),
-            ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
+            ServiceToProcess::ReloadConfig { id, active_policy } => Some(ProcessToService::ConfigReloadResult {
                 id: *id,
-                active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(
-                    &std::fs::read(&active_policy).unwrap(),
-                )),
+                active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(active_policy)),
                 error: None,
             }),
             _ => None,

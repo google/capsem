@@ -1614,7 +1614,7 @@ async fn main() -> Result<()> {
                     };
                     // Truncate command to terminal width
                     let cmd = if entry.command.len() > 80 {
-                        format!("{}...", &entry.command[..77])
+                        format!("{}...", session_display::table_prefix(&entry.command, 77))
                     } else {
                         entry.command.clone()
                     };
@@ -1717,7 +1717,7 @@ async fn main() -> Result<()> {
                 }
                 for t in &tools {
                     let desc = t["description"].as_str().unwrap_or("-");
-                    let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };
+                    let short_desc = session_display::table_prefix(desc, 60);
                     println!(
                         "{:<40} {:<20} {:<10} {}",
                         t["namespaced_name"].as_str().unwrap_or("-"),

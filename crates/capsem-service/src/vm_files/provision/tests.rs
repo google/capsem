@@ -71,6 +71,21 @@ impl ImageSource for RefusingImages {
     }
 }
 
+#[tokio::test]
+async fn persistent_boot_crash_reads_the_log_before_the_reaper_caches_its_tail() {
+    let state = Arc::new(crate::tests::make_test_state_owned());
+    let session_dir = state.run_dir.join("persistent").join("named-box");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("process.log"), b"ledger confinement failed\n").unwrap();
+    let mut entry = crate::tests::test_persistent_entry("named-box", session_dir);
+    entry.id = "box".into();
+    state.persistent_registry.lock().unwrap().register(entry).unwrap();
+
+    let tail = failed_process_log_tail(&state, "box").await;
+
+    assert_eq!(tail, "ledger confinement failed");
+}
+
 /// A create whose container fails after the VM is registered used to answer
 /// 500 and leave the VM running: the caller never learned its id, and a named
 /// VM kept its name, so the retry got 409. The failed create is discarded --

@@ -88,7 +88,10 @@ pub(super) async fn remove_purged_session_dir(state: &Arc<ServiceState>, vm_id: 
     let dir = session_dir.clone();
     let outcome = tokio::task::spawn_blocking(move || delete_state.delete_session_dir(&dir)).await;
     let error = match outcome {
-        Ok(Ok(())) => return true,
+        Ok(Ok(())) => match state.ledger_workers.retire(vm_id).await {
+            Ok(()) => return true,
+            Err(error) => format!("purge checkpoint cleanup failed: {error:#}"),
+        },
         Ok(Err(error)) => error.to_string(),
         Err(join_error) => format!("purge delete task failed: {join_error}"),
     };

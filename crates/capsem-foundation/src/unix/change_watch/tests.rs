@@ -7,10 +7,24 @@ use std::{
     os::unix::fs::PermissionsExt,
 };
 
+fn namespace_fixture() -> tempfile::TempDir {
+    // Keep unrelated tests' temporary-directory churn outside the watched
+    // ancestor chain; deliberate sibling and backlog stimuli remain real.
+    let temporary = std::env::temp_dir();
+    let parent = temporary
+        .parent()
+        .filter(|parent| *parent != std::path::Path::new("/"))
+        .unwrap_or(std::path::Path::new("/var/tmp"));
+    tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir_in(parent)
+        .unwrap()
+}
+
 #[test]
 fn directory_path_watch_tracks_ancestor_replacement_and_retains_original_root() {
     use std::os::unix::fs::MetadataExt;
-    let parent = tempfile::tempdir().unwrap();
+    let parent = namespace_fixture();
     let ancestor = parent.path().join("ancestor");
     let path = ancestor.join("cache");
     std::fs::create_dir_all(&path).unwrap();
@@ -39,7 +53,7 @@ fn directory_path_watch_tracks_ancestor_replacement_and_retains_original_root() 
 #[test]
 fn directory_path_watch_tracks_alias_rebinding_without_redirecting_held_descriptors() {
     use std::os::unix::fs::MetadataExt;
-    let parent = tempfile::tempdir().unwrap();
+    let parent = namespace_fixture();
     let original = parent.path().join("original");
     let replacement = parent.path().join("replacement");
     std::fs::create_dir_all(original.join("cache")).unwrap();
@@ -76,7 +90,7 @@ fn directory_path_watch_refuses_relative_or_parent_components() {
 #[cfg(target_os = "linux")]
 #[test]
 fn ancestor_notification_backlog_cannot_hide_rebinding() {
-    let parent = tempfile::tempdir().unwrap();
+    let parent = namespace_fixture();
     let ancestor = parent.path().join("ancestor");
     let path = ancestor.join("cache");
     std::fs::create_dir_all(&path).unwrap();

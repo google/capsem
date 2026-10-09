@@ -18,12 +18,13 @@ def test_frontend_uses_current_route_vocabulary_not_retired_policy_vm_terms() ->
     toolbar = read("lib/components/shell/Toolbar.svelte")
 
     assert "Sessions" in dashboard
+    assert "import { sessionActionError }" in dashboard
     assert "sessionActionError(error)" in dashboard
     assert "Failed to create session" in session_errors
     assert "Session {vmId} ledger" in stats
     assert "Session Logs" in toolbar
 
-    combined = "\n".join([dashboard, settings, stats, toolbar])
+    combined = f"{dashboard}\n{settings}\n{stats}\n{toolbar}"
     assert ">VMs<" not in combined
     assert "Customize VM" not in combined
     assert "label: 'Policy'" not in combined

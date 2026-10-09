@@ -11,7 +11,9 @@ import tempfile
 import time
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
+
+from capsem_builder.cache.config import load_paths
 
 from build_system.scripts.release.release_test_binary import ensure_host_test_binary
 from tests.helpers.constants import host_bin_root
@@ -24,13 +26,20 @@ MOCK_SERVER_ADDR = "127.0.0.1:3713"
 DEFAULT_LOCK_TIMEOUT_S = 600.0
 
 
+class _MockServerProcess(subprocess.Popen[str]):
+    _capsem_mock_server_lock: TextIO | None = None
+
+
 def _lock_path_for_addr(addr: str) -> Path:
     safe_addr = addr.replace(":", "-").replace(".", "-")
-    return Path(tempfile.gettempdir()) / f"capsem-mock-server-{safe_addr}.lock"
+    # Bounded commands have private TMPDIRs but share host listening ports.
+    return load_paths(PROJECT_ROOT).stage("test-temp") / f"capsem-mock-server-{safe_addr}.lock"
 
 
-def _acquire_lock(addr: str = MOCK_SERVER_ADDR, timeout_s: float = 120) -> Any:
-    lock_file = _lock_path_for_addr(addr).open("w")
+def _acquire_lock(addr: str = MOCK_SERVER_ADDR, timeout_s: float = 120) -> TextIO:
+    lock_path = _lock_path_for_addr(addr)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("w")
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
@@ -39,7 +48,7 @@ def _acquire_lock(addr: str = MOCK_SERVER_ADDR, timeout_s: float = 120) -> Any:
         except BlockingIOError:
             time.sleep(0.1)
     lock_file.close()
-    raise TimeoutError(f"timed out waiting for {_lock_path_for_addr(addr)}")
+    raise TimeoutError(f"timed out waiting for {lock_path}")
 
 
 def _lock_timeout(timeout_s: float) -> float:
@@ -64,10 +73,11 @@ def _address_in_use_error(exc: BaseException) -> bool:
 
 
 def read_ready_json(proc: subprocess.Popen[str], timeout_s: float = 10) -> dict[str, Any]:
-    if proc.stdout is None:
+    stdout = proc.stdout
+    if stdout is None:
         raise RuntimeError("capsem-mock-server stdout must be piped")
     selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ)
+    selector.register(stdout, selectors.EVENT_READ)
     deadline = time.monotonic() + timeout_s
     lines: list[str] = []
     while time.monotonic() < deadline:
@@ -76,8 +86,8 @@ def read_ready_json(proc: subprocess.Popen[str], timeout_s: float = 10) -> dict[
                 f"capsem-mock-server exited early with code {proc.returncode}: "
                 f"{''.join(lines)}"
             )
-        for key, _ in selector.select(timeout=0.2):
-            line = key.fileobj.readline()
+        for _key, _ in selector.select(timeout=0.2):
+            line = stdout.readline()
             if not line:
                 continue
             lines.append(line)
@@ -164,14 +174,14 @@ def start_mock_server(
         elif request_log is not None:
             raise ValueError("request_log requires capture_requests=True")
 
-        proc = subprocess.Popen(
+        proc = _MockServerProcess(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
         )
-        proc._capsem_mock_server_lock = lock_file  # type: ignore[attr-defined]
+        proc._capsem_mock_server_lock = lock_file
         try:
             ready = read_ready_json(proc)
             return proc, ready

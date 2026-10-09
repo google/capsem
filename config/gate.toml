@@ -889,7 +889,7 @@ invalid-assignment = 5
 invalid-return-type = 2
 no-matching-overload = 5
 not-subscriptable = 11
-unresolved-attribute = 71
+unresolved-attribute = 69
 unresolved-import = 1
 unsupported-operator = 2
 unused-ignore-comment = 3
@@ -900,7 +900,7 @@ unused-type-ignore-comment = 3
 # and no value may grow.
 [lint.suppression_budget]
 noqa = 214
-type_ignore = 22
+type_ignore = 21
 ty_ignore = 5
 ruff_global_ignore = 1
 ruff_per_file_ignore = 0
@@ -1103,7 +1103,7 @@ must_stay_below_lines = 3000
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 2065
-"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2558
+"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2528
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1549
 "crates/capsem-core/src/security_engine/mod.rs" = 2114
 "crates/capsem-core/tests/mitm_integration.rs" = 2087
@@ -2348,7 +2348,7 @@ context = "images/capsem-debug"
 script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/capsem-debug"
 cache_stage = "test-images"
-digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6", "linux/amd64" = "sha256:7e5df4cf8375e28939d710c221ac95ac823c961799638b18dfe64f8242763d53" }
+digests = { "linux/arm64" = "sha256:15395ce8120d3b2a0962eaed621b071bb06cf51ad1d26375d027f266289333b2", "linux/amd64" = "sha256:c74821e950ed5457a2f19a01768a5ccb35da5992c0c1d7272307c0b608cf3a0c" }
 
 # The reference image: a pinned digest of the official `dev` image. Every
 # runtime test that boots a workload boots this one, so main development
@@ -2370,7 +2370,7 @@ cache_stage = "test-images"
 # replay) boot this image from the layout this variable names, mounted into
 # their container at its own path.
 layout_variable = "CAPSEM_REFERENCE_IMAGE_LAYOUT"
-digests = { "linux/arm64" = "sha256:64729596d6cdf9e5005c6d0d4745c842b1d159eea95b7e4025350d1d830b80b1", "linux/amd64" = "sha256:aa823bfde4361684dc3f496bd591b2d10c64f8a2c2654204b98f57d479786b3d" }
+digests = { "linux/arm64" = "sha256:206fb5037e1e3e25b798c00ad66867aaea67a667c169059f25b2cddcfd612719", "linux/amd64" = "sha256:f0188eeb3f3aaeafd87d44a77fb76f3027c7c56c7ae6d47c263bdb7a9ec9001b" }
 
 [modules]
 # The build-chain suites that need built artifacts. The release-contracts
@@ -2424,11 +2424,11 @@ rust_coverage_crate_minimum = 40.0
 # Raise to about measured minus 2.5, not minus 3: a floor on the band's edge
 # is refused by the next run's +0.04 jitter.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-archive = 97.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-ledger = 40.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-proxy = 40.0, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-telemetry = 97.0, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-archive = 97.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-ledger = 74.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-proxy = 42.84, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-telemetry = 97.0, capsem-tray = 54.0, capsem-tui = 70.0 }
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
-rust_coverage_platform_crate_floors = { Linux = { capsem = 60.51, capsem-agent = 53.91, capsem-api = 95.84, capsem-assets = 91.05, capsem-bench = 49.89, capsem-config = 90.19, capsem-core = 79.67, capsem-foundation = 80.63, capsem-gateway = 80.24, capsem-logger = 92.39, capsem-mcp-aggregator = 64.06, capsem-mcp-builtin = 57.06, capsem-mock-server = 59.1, capsem-network = 98.0, capsem-process = 48.78, capsem-proto = 90.98, capsem-router = 80.52, capsem-sdk = 97.39, capsem-service = 75.33, capsem-tray = 55.01 }, Darwin = { capsem = 51.27, capsem-agent = 53.13, capsem-api = 95.34, capsem-assets = 90.3, capsem-bench = 50.56, capsem-config = 89.69, capsem-core = 81.0, capsem-foundation = 83.8, capsem-logger = 91.88, capsem-mcp-builtin = 56.56, capsem-mock-server = 58.6, capsem-network = 97.5, capsem-process = 48.12, capsem-proto = 91.54, capsem-router = 79.8, capsem-service = 74.73 } }
+rust_coverage_platform_crate_floors = { Linux = { capsem = 61.69, capsem-agent = 53.91, capsem-api = 95.84, capsem-assets = 93.38, capsem-bench = 49.89, capsem-config = 90.19, capsem-core = 81.55, capsem-foundation = 81.75, capsem-gateway = 82.24, capsem-logger = 92.39, capsem-mcp-aggregator = 64.06, capsem-mcp-builtin = 57.06, capsem-mock-server = 71.1, capsem-network = 98.0, capsem-process = 49.39, capsem-proto = 90.98, capsem-router = 80.52, capsem-sdk = 97.39, capsem-service = 75.97, capsem-tray = 57.4, capsem-admin = 75.66 }, Darwin = { capsem = 51.27, capsem-agent = 53.13, capsem-api = 95.34, capsem-assets = 90.3, capsem-bench = 50.56, capsem-config = 89.69, capsem-core = 81.0, capsem-foundation = 83.8, capsem-logger = 91.88, capsem-mcp-builtin = 56.56, capsem-mock-server = 58.6, capsem-network = 97.5, capsem-process = 48.12, capsem-proto = 91.54, capsem-router = 79.8, capsem-service = 74.73 } }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"
@@ -3679,6 +3679,8 @@ specification = "sdk/specification/openapi.json"
 source = "sdk/python/capsem"
 tests = "sdk/python/tests"
 build_output = "cache/target/sdk/python"
+environment_python = "sdk/python/.venv/bin/python"
+package_build_requirements = "cache/target/sdk/python/package-build-requirements.txt"
 
 [sdk_rust]
 project = "sdk/rust"

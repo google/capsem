@@ -38,7 +38,7 @@ pub(super) fn compile(policy: &Policy) -> io::Result<Compiled> {
         ));
         match rule.access() {
             Access::ReadOnly => source.push_str(&format!("(allow file-read* {filter})\n")),
-            Access::ReadWrite => {
+            Access::ReadWrite | Access::ReadWriteDevice => {
                 source.push_str(&format!("(allow file-read* file-write* {filter})\n"));
             }
             Access::Executable => {

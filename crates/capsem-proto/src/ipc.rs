@@ -91,10 +91,12 @@ pub enum ServiceToProcess {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
-    /// Request the process to reload its active policy from disk. Answered by
-    /// `ConfigReloadResult` naming the digest of the bytes it applied.
+    /// Deliver the exact active-policy bytes the service published. Answered
+    /// by `ConfigReloadResult` naming the digest of the bytes it applied.
     ReloadConfig {
         id: u64,
+        #[serde(with = "serde_bytes")]
+        active_policy: Vec<u8>,
     },
     /// Seed host broker memory. This material must never cross the guest bridge.
     InjectCredentials {
@@ -492,7 +494,7 @@ impl ServiceToProcess {
             | Self::LinkAttach { id, .. }
             | Self::LinkDetach { id, .. }
             | Self::AdmitContainerPull { id, .. }
-            | Self::ReloadConfig { id }
+            | Self::ReloadConfig { id, .. }
             | Self::InjectCredentials { id, .. } => Some(*id),
             _ => None,
         }

@@ -20,8 +20,13 @@ async fn failed_reload_answers_with_its_error_and_keeps_the_previous_policy() {
         .await
         .unwrap();
 
-    std::fs::write(temp.path().join("active_policy.toml"), "id = [not toml").unwrap();
-    service_tx.send(ServiceToProcess::ReloadConfig { id: 7 }).await.unwrap();
+    service_tx
+        .send(ServiceToProcess::ReloadConfig {
+            id: 7,
+            active_policy: b"id = [not toml".to_vec(),
+        })
+        .await
+        .unwrap();
     match service_rx.recv().await.unwrap() {
         ProcessToService::ConfigReloadResult {
             id: 7,

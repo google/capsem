@@ -160,7 +160,7 @@ fn proxy_ledger_grant() -> LedgerChannelGrant {
     LedgerChannelGrant::new(LedgerGeneration::new([3; 16]), 29, LedgerClientRole::Proxy).unwrap()
 }
 
-async fn fake(mode: &'static str) -> Result<ProxyWorker> {
+pub(crate) async fn fake(mode: &'static str) -> Result<ProxyWorker> {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args(["--exact", "proxy_worker::tests::fake_proxy_worker_child", "--nocapture"])

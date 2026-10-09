@@ -264,6 +264,24 @@ fn database_path_is_one_absolute_session_directory() {
 }
 
 #[test]
+fn database_path_uses_the_resolved_session_directory() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().unwrap();
+    let real_parent = root.path().join("real");
+    let session = real_parent.join("session");
+    std::fs::create_dir_all(&session).unwrap();
+    let alias = root.path().join("alias");
+    symlink(&real_parent, &alias).unwrap();
+
+    let database = alias.join("session/session.db");
+    assert_eq!(
+        resolved_session_directory(&database).unwrap(),
+        session.canonicalize().unwrap()
+    );
+}
+
+#[test]
 fn inherited_authority_is_removed_and_confinement_precedes_readiness() {
     let source = include_str!("main.rs");
     let clear = source.find("clear_inherited_environment();").unwrap();

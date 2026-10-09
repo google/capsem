@@ -1,8 +1,7 @@
 //! Capsem protocol types for host/guest communication over vsock.
 //!
 //! Defines disjoint `HostToGuest` and `GuestToHost` message enums with
-//! MessagePack framing. No platform-specific dependencies, so this crate
-//! cross-compiles for both macOS host and aarch64-linux-musl guest.
+//! MessagePack framing with no platform dependencies for macOS and aarch64-linux-musl.
 //!
 //! # Security invariant (RFC T14)
 //!
@@ -33,6 +32,7 @@ pub mod proxy_mcp;
 pub mod proxy_metrics;
 pub mod proxy_policy;
 pub mod proxy_private_names;
+pub mod proxy_trace_hints;
 pub mod repeated;
 pub mod router;
 mod sparse;
@@ -89,8 +89,8 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// Version 12 makes cloning a coordinator operation bracketed by the owner's
 /// guest freeze, so no destination path crosses into the VM owner.
 /// Version 13 fixes suspend to the owner's confined checkpoint location.
-/// Version 14 adds host-only memory credential injection and acknowledgement.
-pub const PROTOCOL_VERSION: u16 = 14;
+/// Version 14 adds host-only credential injection; version 15 carries active-policy bytes.
+pub const PROTOCOL_VERSION: u16 = 15;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;

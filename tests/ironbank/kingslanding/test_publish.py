@@ -251,9 +251,8 @@ def test_port_collision_does_not_replace_a_listener(service, tmp_path):
             timeout=30,
             check=False,
         )
-        assert (
-            result.returncode != 0 and b"bind publication listener" in result.stderr
-        ), result.stderr
+        assert result.returncode != 0, result.stderr
+        assert b"loopback listener grant denied: BindFailed" in result.stderr, result.stderr
         assert service.client().get("/vms/list")["sandboxes"] == []
         with socket.create_connection(("127.0.0.1", port), timeout=2):
             accepted, _ = listener.accept()

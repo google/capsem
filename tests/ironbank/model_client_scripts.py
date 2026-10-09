@@ -155,7 +155,7 @@ first_events = parse_sse(post(first_body))
 tool_item = next(
     event["item"]
     for event in first_events
-    if event.get("type") in {"response.output_item.added", "response.output_item.done"}
+    if event.get("type") == "response.output_item.done"
     and event.get("item", {}).get("type") == "function_call"
 )
 call_args = json.loads(tool_item["arguments"])
@@ -668,7 +668,7 @@ def run_one(index):
     tool_item = next(
         event["item"]
         for event in first_events
-        if event.get("type") in {"response.output_item.added", "response.output_item.done"}
+        if event.get("type") == "response.output_item.done"
         and event.get("item", {}).get("type") == "function_call"
     )
     call_args = json.loads(tool_item["arguments"])
@@ -934,7 +934,7 @@ completed = subprocess.run(
 )
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
+call_args = {"cmd": "printf '%s\\n' " + "'" + NONCE + "' > '" + TARGET + "'", "yield_time_ms": 1000, "max_output_tokens": 2000}
 emit_result("ollama", BASE_DOMAIN, "/v1/responses", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0", credential_provider="openai")
 '''
     ).strip()
@@ -977,7 +977,7 @@ completed = subprocess.run(
 )
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"command": "printf '%s\\n' " + NONCE + " > " + TARGET, "description": "write ironbank token"}
+call_args = {"command": "printf '%s\\n' " + "'" + NONCE + "' > '" + TARGET + "'", "description": "write ironbank token"}
 emit_result("ollama", BASE_DOMAIN, "/v1/messages", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "Bash", call_args, "(Bash completed with no output)")
 '''
     ).strip()
@@ -1016,7 +1016,7 @@ completed = subprocess.run(
 )
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
+call_args = {"cmd": "printf '%s\\n' " + "'" + NONCE + "' > '" + TARGET + "'", "yield_time_ms": 1000, "max_output_tokens": 2000}
 emit_result("ollama", BASE_DOMAIN, "/v1/responses", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
 '''
     ).strip()
@@ -1077,7 +1077,7 @@ if not Path(TARGET).exists():
         + (completed.stderr or "")[-12000:]
     )
 call_args = {
-    "CommandLine": "printf '%s\\n' " + NONCE + " > " + TARGET,
+    "CommandLine": "printf '%s\\n' " + "'" + NONCE + "' > '" + TARGET + "'",
     "Cwd": WORKSPACE,
     "WaitMsBeforeAsync": 1000,
     "toolSummary": "Write proof",

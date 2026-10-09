@@ -158,6 +158,20 @@ the broker's hermetic OAuth endpoint -- stays a `"target": "vm"` exec.
    amd64 emulator here) and add its `linux/amd64` digest beside the arm64 one.
    Until then the x86_64 lanes fail at the prefetch, naming the missing pin.
 
+### Building and pinning the reference image (maintainers)
+
+The official `images/dev` image follows the same immutable-layout workflow.
+Run `capsem-gate reference-image` on each native architecture, qualify the
+printed layout with `capsem-gate image-qualify --image dev --layout
+<built-layout>`, and update `[functional.reference_image] digests` only after
+that native qualification passes. Publish the exact layout bytes to
+`ghcr.io/google/capsem/dev` with `oras cp`; rebuilding or using `docker push`
+can produce a different manifest digest. Attach the OBOM with
+`images/ci/rootfs.py --image dev:<arch>`, make the package public, and verify an
+anonymous manifest fetch by digest before relying on the pin in CI. The pinned
+layout is also mounted read-only into installed-package proofs through
+`CAPSEM_REFERENCE_IMAGE_LAYOUT`.
+
 ## Artifact identities and evidence
 
 Supported ARM64 proof: **23 passed in 123.47s** at

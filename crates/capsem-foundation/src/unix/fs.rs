@@ -314,12 +314,16 @@ pub fn create_private_sibling(path: &Path) -> io::Result<PrivateSibling> {
                     path: temporary,
                     kept: false,
                 };
-                // Through the handle, and before the guard could hand it out:
-                // a mode the filesystem refuses fails the create, and the
-                // guard removes the file on the way out.
-                sibling
-                    .file
-                    .set_permissions(std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))?;
+                // The create mode is already private under every umask. Avoid
+                // an unnecessary fchmod when it is exactly right: confined
+                // workers deliberately cannot change file modes. A stricter
+                // process umask is repaired before the guard can hand the
+                // sibling out.
+                if sibling.file.metadata()?.permissions().mode() & 0o777 != PRIVATE_FILE_MODE {
+                    sibling
+                        .file
+                        .set_permissions(std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))?;
+                }
                 return Ok(sibling);
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}

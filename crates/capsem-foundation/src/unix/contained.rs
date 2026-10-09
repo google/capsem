@@ -465,10 +465,20 @@ impl ContainedDir {
             | OFlag::O_NONBLOCK;
         let fd = openat(Some(self.fd.as_raw_fd()), name, flags, permission_mode(0o600))?;
         let file = File::from(owned(fd));
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        let metadata = file.metadata()?;
+        let mut metadata = file.metadata()?;
+        // Normal umasks leave an explicitly requested 0600 mode unchanged.
+        // Avoid a redundant fchmod so sandboxed workers can create private
+        // files while permission changes remain outside their authority.
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            metadata = file.metadata()?;
+        }
         let uid = super::process::current_uid();
-        if !metadata.is_file() || metadata.uid() != uid || metadata.nlink() != 1 {
+        if !metadata.is_file()
+            || metadata.uid() != uid
+            || metadata.nlink() != 1
+            || metadata.permissions().mode() & 0o777 != 0o600
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!("refusing newly created private file {}", Path::new(name).display()),

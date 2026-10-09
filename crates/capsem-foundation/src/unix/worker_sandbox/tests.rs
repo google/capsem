@@ -2,6 +2,9 @@ use super::*;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::os::fd::AsFd;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -98,6 +101,58 @@ fn landlock_abi_eight_synchronizes_existing_threads() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn linux_device_grant_preserves_kvm_ioctls() {
+    let kvm = std::path::Path::new("/dev/kvm");
+    if !kvm.exists() {
+        return;
+    }
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "unix::worker_sandbox::tests::linux_kvm_device_child",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("WORKER_SANDBOX_KVM", kvm)
+        .status()
+        .unwrap();
+    assert!(status.success(), "sandboxed KVM probe failed: {status}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_kvm_device_child() {
+    let Some(kvm) = std::env::var_os("WORKER_SANDBOX_KVM") else {
+        return;
+    };
+    let kvm = std::path::PathBuf::from(kvm);
+    let device = std::fs::OpenOptions::new().read(true).write(true).open(&kvm).unwrap();
+    confine(&Policy::new(Role::VmOwner).allow(&kvm, Access::ReadWriteDevice)).unwrap();
+
+    // nix's no-argument ioctl wrapper omits the variadic argument while the
+    // KVM ABI expects an explicit zero. The descriptor and constant are valid
+    // for KVM_GET_API_VERSION, which reads no userspace pointer.
+    let version = unsafe { libc::ioctl(device.as_raw_fd(), 0xae00, 0u64) };
+    assert_eq!(
+        version,
+        12,
+        "KVM_GET_API_VERSION failed: {}",
+        std::io::Error::last_os_error()
+    );
+    std::process::exit(0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_device_grant_rejects_regular_files() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let error = confine(&Policy::new(Role::VmOwner).allow(file.path(), Access::ReadWriteDevice)).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(error.to_string().contains("sandbox device grant is not a device"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn linux_policy_preserves_grants_and_denies_ambient_authority() {
     let directory = tempfile::tempdir().unwrap();
     let allowed = directory.path().join("allowed");
@@ -182,6 +237,13 @@ fn linux_sandbox_child() {
             assert_eq!(std::fs::read(exact).unwrap(), b"one file");
             assert!(std::fs::write(readonly.join("value"), b"changed").is_err());
             std::fs::write(allowed.join("created"), b"ok").unwrap();
+            let atomic = allowed.join("atomic");
+            super::super::fs::atomic_write_private(&atomic, b"private").unwrap();
+            assert_eq!(std::fs::read(&atomic).unwrap(), b"private");
+            assert_eq!(
+                std::fs::symlink_metadata(&atomic).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
             assert!(std::fs::read(denied.join("secret")).is_err());
             assert!(UnixStream::connect(control).is_err());
             assert!(UnixStream::pair().is_err());

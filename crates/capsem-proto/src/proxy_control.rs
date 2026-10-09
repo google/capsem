@@ -6,7 +6,7 @@ use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration, Ledg
 
 pub const PROXY_CONTROL_FRAME_SIZE: usize = 56;
 pub const PROXY_CONTROL_MAX_FDS: usize = 2;
-pub const PROXY_CONTROL_VERSION: u16 = 5;
+pub const PROXY_CONTROL_VERSION: u16 = 6;
 
 const MAGIC: [u8; 2] = *b"PX";
 const VERSION_RANGE: std::ops::Range<usize> = 2..4;
@@ -64,6 +64,7 @@ pub enum ProxyCapability {
     Mcp = 7,
     Telemetry = 8,
     Policy = 9,
+    TraceHints = 10,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -380,6 +381,7 @@ fn decode_capability(value: u8) -> Result<ProxyCapability, ProxyControlError> {
         7 => Ok(ProxyCapability::Mcp),
         8 => Ok(ProxyCapability::Telemetry),
         9 => Ok(ProxyCapability::Policy),
+        10 => Ok(ProxyCapability::TraceHints),
         value => Err(ProxyControlError::InvalidCapability(value)),
     }
 }

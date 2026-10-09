@@ -38,7 +38,7 @@ use crate::net::ai_traffic::events::{
 };
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ModelProtocol, ProviderKind};
-use crate::net::ai_traffic::{request_parser, TraceState};
+use crate::net::ai_traffic::{request_parser, TraceHintSink, TraceState};
 use crate::net::policy_config::{PluginPolicySnapshot, SecurityRuleSet};
 use crate::net::proxy_engine::{ProxyCredentials, ProxyPolicySnapshot};
 use crate::security_engine::{
@@ -119,6 +119,7 @@ pub struct TelemetryDeps {
 /// `ModelCall` for the request just completed.
 pub struct TelemetryHook {
     deps: Arc<TelemetryDeps>,
+    trace_hint_sink: Option<Arc<dyn TraceHintSink>>,
 }
 
 struct PendingTelemetryCompletion {
@@ -131,6 +132,7 @@ struct PendingTelemetryCompletion {
     model_call: Option<ModelCall>,
     credential_observations: Vec<CredentialObservation>,
     credential_injections: Vec<CredentialInjection>,
+    trace_hints: Option<(Arc<dyn TraceHintSink>, String, Vec<String>)>,
 }
 
 impl PendingTelemetryCompletion {
@@ -145,7 +147,14 @@ impl PendingTelemetryCompletion {
             model_call,
             credential_observations,
             credential_injections,
+            trace_hints,
         } = self;
+
+        if let Some((sink, trace_id, paths)) = trace_hints {
+            if let Err(error) = sink.register(&trace_id, &paths).await {
+                warn!(%error, "proxy trace-hint capability stopped");
+            }
+        }
 
         let model_was_denied = net_event.decision == Decision::Denied;
         if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
@@ -190,7 +199,15 @@ impl PendingTelemetryCompletion {
 
 impl TelemetryHook {
     pub fn new(deps: Arc<TelemetryDeps>) -> Self {
-        Self { deps }
+        Self {
+            deps,
+            trace_hint_sink: None,
+        }
+    }
+
+    pub fn with_trace_hint_sink(mut self, trace_hint_sink: Arc<dyn TraceHintSink>) -> Self {
+        self.trace_hint_sink = Some(trace_hint_sink);
+        self
     }
 }
 
@@ -293,13 +310,25 @@ impl ChunkHook for TelemetryHook {
         record_telemetry_stage(stage_started, "credential_detect_and_redact");
 
         let stage_started = Instant::now();
-        let model_call = maybe_build_model_call(
+        let model_call = maybe_build_model_call_with_hints(
             &req_ctx,
             &resp_stats,
             &llm_events,
             &self.deps.pricing,
             &self.deps.trace_state,
         );
+        let (model_call, trace_hints) = match model_call {
+            Some((model_call, paths)) => {
+                let trace_hints = self
+                    .trace_hint_sink
+                    .as_ref()
+                    .zip(model_call.trace_id.clone())
+                    .filter(|_| !paths.is_empty())
+                    .map(|(sink, trace_id)| (Arc::clone(sink), trace_id, paths));
+                (Some(model_call), trace_hints)
+            }
+            None => (None, None),
+        };
         record_telemetry_stage(stage_started, "model_call_build");
 
         let stage_started = Instant::now();
@@ -342,6 +371,7 @@ impl ChunkHook for TelemetryHook {
             model_call,
             credential_observations,
             credential_injections,
+            trace_hints,
         });
         record_telemetry_stage(stage_started, "ledger_handoff");
         record_telemetry_response_end(response_end_started, has_model_call);
@@ -514,6 +544,17 @@ pub fn maybe_build_model_call(
     pricing: &PricingTable,
     trace_state: &Arc<Mutex<TraceState>>,
 ) -> Option<ModelCall> {
+    maybe_build_model_call_with_hints(req_ctx, resp_stats, llm_events, pricing, trace_state)
+        .map(|(model_call, _)| model_call)
+}
+
+fn maybe_build_model_call_with_hints(
+    req_ctx: &TelemetryRequestContext,
+    resp_stats: &TelemetryResponseStats,
+    llm_events: &[crate::net::ai_traffic::events::LlmEvent],
+    pricing: &PricingTable,
+    trace_state: &Arc<Mutex<TraceState>>,
+) -> Option<(ModelCall, Vec<String>)> {
     let provider = req_ctx.ai_provider?;
     let protocol = req_ctx.ai_protocol?;
     if req_ctx.method == "HEAD"
@@ -647,7 +688,7 @@ pub fn maybe_build_model_call(
     // non-tool-use stop completes the trace.
     let tool_response_ids: Vec<String> = req_meta.tool_results.iter().map(|tr| tr.call_id.clone()).collect();
     let tool_call_ids: Vec<String> = tool_calls.iter().map(|tc| tc.call_id.clone()).collect();
-    let trace_id = {
+    let (trace_id, file_hints) = {
         let mut state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
         let tid = state.lookup(&tool_response_ids).unwrap_or_else(|| {
             if tool_call_ids.is_empty() {
@@ -662,16 +703,21 @@ pub fn maybe_build_model_call(
                 .as_deref()
                 .map(|r| r.contains("tool") || r == "tool_use")
                 .unwrap_or(false);
-        if is_tool_use && !tool_call_ids.is_empty() {
+        let correlation = if is_tool_use && !tool_call_ids.is_empty() {
             state.register_tool_calls(&tid, &tool_call_ids);
-            state.register_tool_file_hints(
+            let hints = state.register_tool_file_hints(
                 &tid,
                 tool_calls.iter().filter_map(|tool_call| tool_call.arguments.as_deref()),
             );
+            (tid, hints)
         } else if !is_tool_use {
             state.complete_trace(&tid);
-        }
-        tid
+            (tid, Vec::new())
+        } else {
+            (tid, Vec::new())
+        };
+        drop(state);
+        correlation
     };
     for tool_call in &mut tool_calls {
         if tool_call.trace_id.is_none() {
@@ -745,7 +791,7 @@ pub fn maybe_build_model_call(
         );
     }
 
-    Some(model_call)
+    Some((model_call, file_hints))
 }
 
 /// Per-request log line, mirrors what `TelemetryEmitter::emit` does.

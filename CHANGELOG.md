@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Preserve HTTP/security trace IDs and model-to-filesystem attribution after
+  proxy isolation through coordinator-derived process identity and a bounded,
+  acknowledged, one-way trace-hint capability to the VM owner. Preopen the
+  contained workspace before owner confinement and fail VM startup if its
+  filesystem audit rail cannot start.
+
 - Reject symlink and special-entry targets before descriptor-relative mode
   changes, preserving the contained-filesystem contract on macOS as well as
   Linux without following a guest-controlled link.
@@ -16,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Install VM-owner confinement before starting its runtime, hypervisor,
   parent watcher, ledger client, filesystem monitor, or metric workers;
   pre-bind only the exact IPC and VSOCK descriptors those workers inherit.
+
+- Keep dynamic port publication inside VM-owner confinement by having the
+  generation-bound coordinator channel grant an exact loopback listener. The
+  owner validates and admits that descriptor while retaining no ambient bind
+  authority, grants only `/dev/null` for the confined router's closed output,
+  persists restored mappings without mode-change authority, and preserves TCP
+  resets through descriptor closure without restoring outbound connect. The
+  service never accepts or forwards workload bytes.
 
 - Keep host-worker confinement fail-closed across supported Linux Landlock
   ABIs, including single-threaded startup on ABI 6 and 7, and canonicalize
@@ -48,7 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serve live and stopped-session inspection through coordinator-granted,
   role-bound ledger channels and bounded named operations, eliminating the
   service's per-session SQLite readers and closing ledger workers before a
-  session is deleted.
+  session is deleted. Ledger counter replies now carry the DB-owned read-cache
+  epoch so service routes invalidate cached security rows after every commit.
 
 - Give each VM owner one coordinator-minted, generation- and role-bound
   ledger channel and route its existing event writer through the supervised
@@ -58,6 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commitment, and acknowledge a flush only after the trusted service syncs
   the matching checkpoint outside the ledger directory. Startup verification
   now rejects altered, substituted, reordered, or omitted checkpointed rows.
+
+- Split high-volume ledger flushes across bounded commitment checkpoints, so
+  filesystem and package-manager audit bursts cannot stop the fail-closed
+  security ledger and refuse later VM commands.
+
+- Retire trusted ledger checkpoints with every permanent session deletion and
+  move them with retained failure evidence, so a reused ephemeral session name
+  cannot inherit an earlier ledger's authority.
 
 - Pass the packaged ledger and proxy worker paths explicitly to installed and
   direct services, refuse incomplete confined-worker cohorts, and retire both
@@ -75,6 +98,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apply each proxy policy reload as one digest-keyed immutable revision across
   HTTP routing, security plugins, provider identity, response telemetry and
   guest DNS, preventing a request from combining authority from two revisions.
+
+- Deliver VM-owner policy reloads as exact authenticated IPC bytes and retain
+  the last valid snapshot for MCP refreshes, so atomic policy publication
+  cannot replace the file inode granted at confinement and leave a running VM
+  stuck on stale policy; drop that post-boot path grant.
+
+- Keep credential broker calls valid on the confined proxy's single-threaded
+  runtime, preventing credential capture during model requests from panicking
+  the proxy and tearing down its VM session.
 
 - Route proxy policy evaluation, credential capture, upstream substitution and
   redaction through a transport-independent engine with typed ledger and
@@ -169,8 +201,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Confined Linux VM owners retain ioctl authority only for their KVM and
+  vhost devices, and prepare saved-publication state before confinement, so
+  VMs boot without reopening authority to the session root or ordinary files.
+
+- Persistent VMs that crash during creation report their `process.log` tail
+  even when the child reaper has not yet cached it in the registry.
+
+- Confined macOS ledger and proxy workers now distinguish private unnamed
+  socketpairs from external endpoint authority during readiness attestation,
+  allowing worker-internal channels while Seatbelt continues to deny bind,
+  listen and connect operations.
+
+- OCI cache inventory no longer watches the flock-only control directory or
+  its files, preventing macOS from invalidating observations on the inventory's
+  own lock probes.
+
 - The authenticated gateway forwards standalone proxy create, heartbeat and
   stop operations instead of returning 404 for documented SDK endpoints.
+
+- CLI history and MCP tool tables truncate Unicode text at character
+  boundaries instead of panicking on a split UTF-8 character.
 
 - The authenticated gateway forwards host credential injection, so desktop
   settings and TCP SDK clients can use file and memory storage.
@@ -1944,9 +1995,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A half-close on a published connection is carried as a signal:
   a slow reply after the client stops sending, and an upload after the peer
   stops sending, both arrive in full.
-- Published TCP listeners stay with the VM owner. The confined router receives
-  only connected descriptor pairs; bounded acknowledgements and control failure
-  close both endpoints even when the router retains duplicate descriptors.
+- Published TCP listeners are granted to and held by the VM owner. The confined
+  router receives only connected descriptor pairs; bounded acknowledgements and
+  control failure close both endpoints even when the router retains duplicate
+  descriptors.
 - The confined network companion is now named `capsem-router`; package signing
   continues to exclude virtualization authority.
 - Shell runs flush captured output before exiting, preserving short output

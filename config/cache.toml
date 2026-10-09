@@ -231,6 +231,7 @@ max_size_bytes = 2147483648 # 2 GiB
 prune_strategy = "lru"
 maximum_age_hours = 720
 maximum_count = 4
+lease_template = ".{key}.lock"
 
 [stages.test-benchmarks]
 description = "Local benchmark recordings used for performance regression checks."

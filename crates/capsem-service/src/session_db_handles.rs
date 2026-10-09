@@ -21,7 +21,7 @@ struct RemoteLedger {
     session_dir: PathBuf,
     workers: Arc<crate::ledger_worker::LedgerWorkers>,
     client: tokio::sync::Mutex<capsem_logger::ledger_client::LedgerClient>,
-    counters: Mutex<Option<Arc<LedgerCounters>>>,
+    observed_remote_epoch: Mutex<Option<u64>>,
     read_cache_epoch: AtomicU64,
 }
 
@@ -40,7 +40,7 @@ impl SessionLedger {
                 session_dir,
                 workers,
                 client: tokio::sync::Mutex::new(client),
-                counters: Mutex::new(None),
+                observed_remote_epoch: Mutex::new(None),
                 read_cache_epoch: AtomicU64::new(0),
             }),
             #[cfg(test)]
@@ -66,10 +66,7 @@ impl SessionLedger {
         if let Some(db) = &self.embedded {
             return db.ready().await;
         }
-        self.remote_state()
-            .call(|client| async move { client.counters().await })
-            .await
-            .map(|_| ())
+        self.remote_state().refresh_counters().await.map(|_| ())
     }
 
     pub(crate) async fn query(&self, query: LedgerQuery) -> Result<Vec<LedgerRows>, String> {
@@ -90,17 +87,7 @@ impl SessionLedger {
         if let Some(db) = &self.embedded {
             return db.ledger_counters().await;
         }
-        let current = self
-            .remote_state()
-            .call(|client| async move { client.counters().await })
-            .await?;
-        let mut previous = self.remote_state().counters.lock().unwrap();
-        if previous.as_deref() != Some(current.as_ref()) {
-            *previous = Some(Arc::clone(&current));
-            self.remote_state().read_cache_epoch.fetch_add(1, Ordering::AcqRel);
-        }
-        drop(previous);
-        Ok(current)
+        self.remote_state().refresh_counters().await
     }
 
     pub(crate) fn read_cache_epoch(&self, _domain: capsem_logger::ReadCacheDomain) -> u64 {
@@ -168,6 +155,22 @@ impl SessionLedger {
 }
 
 impl RemoteLedger {
+    async fn refresh_counters(&self) -> Result<Arc<LedgerCounters>, String> {
+        let (current, remote_epoch) = self
+            .call(|client| async move {
+                let counters = client.counters().await?;
+                Ok((counters, client.read_cache_epoch()))
+            })
+            .await?;
+        let mut observed = self.observed_remote_epoch.lock().unwrap();
+        if *observed != Some(remote_epoch) {
+            *observed = Some(remote_epoch);
+            self.read_cache_epoch.fetch_add(1, Ordering::AcqRel);
+        }
+        drop(observed);
+        Ok(current)
+    }
+
     async fn call<T, F, Fut>(&self, operation: F) -> Result<T, String>
     where
         F: Fn(capsem_logger::ledger_client::LedgerClient) -> Fut,
@@ -183,6 +186,7 @@ impl RemoteLedger {
             .reconnect()
             .await
             .map_err(|error| format!("ledger operation failed ({first_error}); reconnect failed: {error}"))?;
+        *self.observed_remote_epoch.lock().unwrap() = None;
         *client = replacement.clone();
         drop(client);
         operation(replacement).await

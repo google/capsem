@@ -2,7 +2,7 @@
 
 Bodies left SQLite for a block archive beside it: ``event_body_blobs`` says
 which block a body is in and where inside that block it starts, and the block
-itself is a deflated span of raw bytes. A black-box test that wants to know
+itself is a compressed span of raw bytes. A black-box test that wants to know
 what the ledger actually stored has to read it the way the product does, so
 this is the reader, in the few lines the format needs.
 
@@ -20,14 +20,15 @@ The layout, from that file (version 3)::
     file header (80 bytes):  magic "CAPSEMBL"  u16 version=3  u16 flags=0
                              u32 header_len=80  archive_id[16]
                              generation_id[16]  blake3(bytes[0:48])[32]
-    block header (8 bytes):  magic "BLK2"  u8 codec (1 = raw deflate)  u8 flags  u16 pad
+    block header (8 bytes):  magic "BLK2"  u8 codec (1 = raw deflate, 2 = zstd)
+                             u8 flags  u16 pad
     segment (repeated):      magic "SGMT"  u8 flags (bit 0 FINAL)  u8[3] pad
                              u32 raw_start  u32 raw_len  u32 comp_len
-                             blake3(segment raw)[32]  deflate bytes
+                             blake3(segment raw)[32]  compressed bytes
 
-A block is one deflate stream cut at sync-flush points into segments; one
-inflater runs across them, and the last segment of a closed block ends the
-stream. A block that is still being written simply has no FINAL segment yet.
+A block is one codec stream cut at flush points into segments; one decoder
+runs across them, and the last segment of a closed block ends the stream. A
+block that is still being written simply has no FINAL segment yet.
 
 Every read verifies each segment's blake3 against its header and the body's
 own blake3 against the index row that named it, exactly as the product reader
@@ -47,6 +48,8 @@ import zlib
 from pathlib import Path
 from typing import Any, BinaryIO, Self
 
+import pyzstd
+
 FILE_MAGIC = b"CAPSEMBL"
 FILE_VERSION = 3
 # The ledger's own format (`archive_state.format_version`). It moved to 4 when
@@ -56,6 +59,7 @@ FILE_HEADER_BYTES = 80
 BLOCK_MAGIC = b"BLK2"
 BLOCK_HEADER_BYTES = 8
 CODEC_DEFLATE = 1
+CODEC_ZSTD = 2
 SEGMENT_MAGIC = b"SGMT"
 SEGMENT_HEADER_BYTES = 52
 SEGMENT_FINAL = 0x01
@@ -131,11 +135,18 @@ def generation_path_for_db(db_path: Path | str) -> Path:
 class _Cursor:
     """One block inflated up to the end of some segment, as the product keeps it."""
 
-    def __init__(self, block_offset: int, disk_len: int, raw_len: int) -> None:
+    def __init__(
+        self, block_offset: int, disk_len: int, raw_len: int, codec: int
+    ) -> None:
         self.block_offset = block_offset
         self.block_end = block_offset + disk_len
         self.raw_limit = raw_len
-        self.inflater = zlib.decompressobj(-15)
+        self.codec = codec
+        self.inflater: Any = (
+            zlib.decompressobj(-15)
+            if codec == CODEC_DEFLATE
+            else pyzstd.ZstdDecompressor()
+        )
         self.raw = bytearray()
         self.next_segment_at = block_offset + BLOCK_HEADER_BYTES
         self.finished = False
@@ -198,10 +209,17 @@ class SessionArchive:
         if row is None:
             return None
         if row[7] != self._expected_generation_id:
-            raise AssertionError(f"{self.db_path} selected another archive generation while it was being read")
+            raise AssertionError(
+                f"{self.db_path} selected another archive generation while it was being read"
+            )
         self.committed_end = max(self.committed_end, int(row[6]))
         block_offset, body_offset, body_len, body_hash, disk_len, raw_len = (
-            int(row[0]), int(row[1]), int(row[2]), row[3], int(row[4]), int(row[5])
+            int(row[0]),
+            int(row[1]),
+            int(row[2]),
+            row[3],
+            int(row[4]),
+            int(row[5]),
         )
         end = body_offset + body_len
         try:
@@ -232,7 +250,9 @@ class SessionArchive:
             raise AssertionError(f"{source_table} does not archive a security payload")
         body = self.read(event_id, source_table, "payload")
         if body is None:
-            raise AssertionError(f"{source_table} has no archived payload for {event_id}")
+            raise AssertionError(
+                f"{source_table} has no archived payload for {event_id}"
+            )
         return forensic_payload(body)
 
     def _verify_file_header(self) -> None:
@@ -249,7 +269,9 @@ class SessionArchive:
             or _blake3(header[:48]) != header[48:80].hex()
             or self.generation_path.stat().st_size < self.committed_end
         ):
-            raise AssertionError(f"{self.generation_path} is not the selected v3 archive generation")
+            raise AssertionError(
+                f"{self.generation_path} is not the selected v3 archive generation"
+            )
 
     def _span(
         self, block_offset: int, start: int, end: int, disk_len: int, raw_len: int
@@ -288,13 +310,18 @@ class SessionArchive:
             file.seek(block_offset)
             header = file.read(BLOCK_HEADER_BYTES)
         if len(header) != BLOCK_HEADER_BYTES or header[:4] != BLOCK_MAGIC:
-            raise AssertionError(f"no block at offset {block_offset} of {self._archive}")
-        if header[4] != CODEC_DEFLATE or header[5:] != b"\x00\x00\x00":
+            raise AssertionError(
+                f"no block at offset {block_offset} of {self._archive}"
+            )
+        if (
+            header[4] not in (CODEC_DEFLATE, CODEC_ZSTD)
+            or header[5:] != b"\x00\x00\x00"
+        ):
             raise AssertionError(
                 f"block at {block_offset} of {self.generation_path} uses codec {header[4]}, "
                 "which this reader does not know"
             )
-        return _Cursor(block_offset, disk_len, raw_len)
+        return _Cursor(block_offset, disk_len, raw_len, header[4])
 
     def _inflate_segment(self, file: BinaryIO, cursor: _Cursor) -> None:
         at = cursor.next_segment_at
@@ -302,7 +329,9 @@ class SessionArchive:
         header = file.read(SEGMENT_HEADER_BYTES)
         where = f"segment at {at} of {self.generation_path}"
         if len(header) != SEGMENT_HEADER_BYTES:
-            raise AssertionError(f"{where} is truncated: the block was never written this far")
+            raise AssertionError(
+                f"{where} is truncated: the block was never written this far"
+            )
         flags = header[4]
         raw_start = int.from_bytes(header[8:12], "little")
         raw_len = int.from_bytes(header[12:16], "little")
@@ -333,7 +362,11 @@ class SessionArchive:
         compressed = file.read(comp_len)
         if len(compressed) != comp_len:
             raise AssertionError(f"{where} is truncated")
-        if not final and not compressed.endswith(SYNC_FLUSH_TAIL):
+        if (
+            cursor.codec == CODEC_DEFLATE
+            and not final
+            and not compressed.endswith(SYNC_FLUSH_TAIL)
+        ):
             raise AssertionError(f"{where} does not end on a sync flush")
         # One inflater across the block's segments, bounded by the length the
         # header declared plus one byte, so an overlong segment is seen rather
@@ -342,15 +375,21 @@ class SessionArchive:
         inflater = cursor.inflater
         try:
             raw = inflater.decompress(compressed, raw_len + 1)
-        except zlib.error as error:
+        except (zlib.error, pyzstd.ZstdError) as error:
             raise AssertionError(f"{where} did not inflate: {error}") from error
+        if cursor.codec == CODEC_DEFLATE:
+            stream_invalid = bool(inflater.unconsumed_tail)
+        else:
+            stream_invalid = inflater.needs_input != (not final)
         if (
             len(raw) != raw_len
-            or inflater.unconsumed_tail
+            or stream_invalid
             or inflater.eof != final
             or (final and inflater.unused_data)
         ):
-            raise AssertionError(f"{where} did not inflate to the {raw_len} bytes it declares")
+            raise AssertionError(
+                f"{where} did not inflate to the {raw_len} bytes it declares"
+            )
         expected_hash = header[20:SEGMENT_HEADER_BYTES].hex()
         if _blake3(raw) != expected_hash:
             raise AssertionError(
@@ -360,10 +399,17 @@ class SessionArchive:
         cursor.raw += raw
         cursor.next_segment_at = at + SEGMENT_HEADER_BYTES + comp_len
         cursor.finished = final
-        if cursor.next_segment_at == cursor.block_end and len(cursor.raw) != cursor.raw_limit:
-            raise AssertionError(f"{where} ends at {len(cursor.raw)} raw bytes, not {cursor.raw_limit}")
+        if (
+            cursor.next_segment_at == cursor.block_end
+            and len(cursor.raw) != cursor.raw_limit
+        ):
+            raise AssertionError(
+                f"{where} ends at {len(cursor.raw)} raw bytes, not {cursor.raw_limit}"
+            )
         if final and cursor.next_segment_at != cursor.block_end:
-            raise AssertionError(f"{where} is final before the recorded block extent ends")
+            raise AssertionError(
+                f"{where} is final before the recorded block extent ends"
+            )
 
 
 def archived_bodies(db_path: Path | str) -> list[tuple[str, str, str, bytes]]:
@@ -374,7 +420,9 @@ def archived_bodies(db_path: Path | str) -> list[tuple[str, str, str, bytes]]:
     bodies when they moved to the archive, and security payloads when those
     followed; it has to walk this too, or it passes by not looking.
     """
-    with contextlib.closing(sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True)) as conn:
+    with contextlib.closing(
+        sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True)
+    ) as conn:
         has_index = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_body_blobs'"
         ).fetchone()
@@ -393,7 +441,9 @@ def archived_bodies(db_path: Path | str) -> list[tuple[str, str, str, bytes]]:
         for source_table, event_id, direction in keys:
             body = archive.read(event_id, source_table, direction)
             if body is None:
-                raise AssertionError(f"{source_table}/{direction} of {event_id} vanished mid-scan")
+                raise AssertionError(
+                    f"{source_table}/{direction} of {event_id} vanished mid-scan"
+                )
             bodies.append((source_table, event_id, direction, body))
         return bodies
 
@@ -500,7 +550,7 @@ def forensic_payload(body: bytes) -> dict[str, Any]:
     """
     payload = _messagepack().decode(body)
     if not isinstance(payload, dict):
-        raise AssertionError(f"security payload is not a map: {type(payload).__name__}")
+        raise TypeError(f"security payload is not a map: {type(payload).__name__}")
     for name in FORENSIC_LIST_FIELDS:
         payload.setdefault(name, [])
     for name in FORENSIC_OPTION_FIELDS:
@@ -522,6 +572,12 @@ def served_security_payload(
             continue
         assert not body["truncated"] and not body["truncated_for_transport"], body
         content = str(body["content"])
-        raw = base64.b64decode(content) if body["encoding"] == "base64" else content.encode()
+        raw = (
+            base64.b64decode(content)
+            if body["encoding"] == "base64"
+            else content.encode()
+        )
         return forensic_payload(raw)
-    raise AssertionError(f"{source_table} has no served payload for {event_id}: {served}")
+    raise AssertionError(
+        f"{source_table} has no served payload for {event_id}: {served}"
+    )

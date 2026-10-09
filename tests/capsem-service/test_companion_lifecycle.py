@@ -24,6 +24,7 @@ import contextlib
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,7 @@ GATEWAY_BIN = PROJECT_ROOT / "cache/target/cargo/debug/capsem-gateway"
 # Parent-watch poll interval is 500ms in capsem-guard; give a generous factor
 # for loaded CI while still catching real regressions.
 WATCH_DEADLINE_SECS = 5.0
+_GATEWAY_TEST_SOCKETS: dict[int, tuple[socket.socket, socket.socket]] = {}
 
 
 def _sign():
@@ -89,12 +91,28 @@ def _spawn_under_parent(
     This matches production: the service is a long-lived parent process that
     spawns companions; the test shell stands in for the service.
     """
+    grant_peer = None
+    grant_stdin = None
+    service_listener = None
+    if binary == GATEWAY_BIN:
+        assert env_extra is not None
+        grant_stdin, grant_peer = socket.socketpair()
+        service_listener = socket.socket(socket.AF_UNIX)
+        service_path = Path(env_extra["CAPSEM_RUN_DIR"]) / f"service-{child_pid_file.stem}.sock"
+        service_listener.bind(str(service_path))
+        service_listener.listen()
+        extra_args = [
+            *extra_args,
+            "--service-grant-stdin",
+            "--uds-path",
+            str(service_path),
+        ]
     args_q = " ".join(f'"{a}"' for a in extra_args)
     # Parent shell: prints its own PID, forks the companion with --parent-pid $$,
     # writes the companion's pid, then sleeps forever to stay as parent.
     script = (
         f'echo "$$" > "{parent_pid_file}"\n'
-        f'"{binary}" --parent-pid "$$" {args_q} &\n'
+        f'"{binary}" --parent-pid "$$" {args_q} <&0 &\n'
         f'echo "$!" > "{child_pid_file}"\n'
         f"exec sleep 600\n"
     )
@@ -103,12 +121,20 @@ def _spawn_under_parent(
     env.setdefault("CAPSEM_TRAY_HEADLESS", "1")
     if env_extra:
         env.update(env_extra)
-    return subprocess.Popen(
-        ["bash", "-c", script],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        parent = subprocess.Popen(
+            ["bash", "-c", script],
+            env=env,
+            stdin=grant_stdin.fileno() if grant_stdin is not None else None,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if grant_peer is not None and service_listener is not None:
+            _GATEWAY_TEST_SOCKETS[parent.pid] = (grant_peer, service_listener)
+        return parent
+    finally:
+        if grant_stdin is not None:
+            grant_stdin.close()
 
 
 def _read_pid(path: Path, deadline: float) -> int:
@@ -122,6 +148,11 @@ def _read_pid(path: Path, deadline: float) -> int:
             pass
         time.sleep(0.05)
     raise TimeoutError(f"pid file {path} never populated")
+
+
+def _close_gateway_test_sockets(parent: subprocess.Popen) -> None:
+    for test_socket in _GATEWAY_TEST_SOCKETS.pop(parent.pid, ()):
+        test_socket.close()
 
 
 def _wait_exit(proc: subprocess.Popen, deadline: float) -> int | None:
@@ -243,9 +274,11 @@ class TestCompanionSingleton:
                 finally:
                     second_parent.kill()
                     second_parent.wait(timeout=5)
+                    _close_gateway_test_sockets(second_parent)
             finally:
                 first_parent.kill()
                 first_parent.wait(timeout=5)
+                _close_gateway_test_sockets(first_parent)
 
     def test_tray_hammer_20_parallel_yields_one_live(self):
         """Spawn 20 trays concurrently against one lock path. Exactly one
@@ -329,9 +362,11 @@ class TestCompanionSingleton:
                 finally:
                     second_parent.kill()
                     second_parent.wait(timeout=5)
+                    _close_gateway_test_sockets(second_parent)
             finally:
                 first_parent.kill()
                 first_parent.wait(timeout=5)
+                _close_gateway_test_sockets(first_parent)
 
 
 class TestCompanionDiesWithParent:
@@ -371,6 +406,7 @@ class TestCompanionDiesWithParent:
                     parent.kill()
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     parent.wait(timeout=5)
+                _close_gateway_test_sockets(parent)
 
     def test_gateway_exits_when_parent_sigkilled(self):
         _sign()
@@ -402,6 +438,7 @@ class TestCompanionDiesWithParent:
                     parent.kill()
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     parent.wait(timeout=5)
+                _close_gateway_test_sockets(parent)
 
 
 class TestServiceSigkillReapsAllCompanions:

@@ -39,6 +39,7 @@ macro_rules! operation {
 operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
 operation!(get_asset_status, "getAssetStatus");
+operation!(inject_credential, "injectCredential", InjectCredentialParams);
 operation!(get_mcp_info, "getMcpInfo");
 operation!(list_mcp_servers, "listMcpServers");
 operation!(get_mcp_default, "getMcpDefault");
@@ -51,7 +52,6 @@ operation!(get_panics, "getPanics", GetPanicsParams);
 operation!(get_triage, "getTriage", GetTriageParams);
 operation!(get_update_status, "getUpdateStatus");
 operation!(update_hypervisor, "updateHypervisor", UpdateHypervisorParams);
-operation!(inject_credential, "injectCredential", InjectCredentialParams);
 operation!(create_proxy, "createProxy", CreateProxyParams);
 operation!(heartbeat_proxy, "heartbeatProxy", HeartbeatProxyParams);
 operation!(stop_proxy, "stopProxy", StopProxyParams);

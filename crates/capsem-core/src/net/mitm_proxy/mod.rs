@@ -23,6 +23,7 @@ mod mcp_frame;
 mod mcp_http;
 mod mcp_observe;
 pub mod pipeline;
+mod pipeline_factory;
 pub mod protocol;
 pub mod spans;
 pub mod sse_parser_hook;
@@ -72,6 +73,7 @@ use util::{
 pub use config::MitmProxyConfig;
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts, ScopedMcpTools};
 pub use mcp_frame::{dispatch_logged_mcp_request, McpTransport};
+pub use pipeline_factory::{make_production_pipeline, make_production_pipeline_with_trace_hints};
 pub use upstream::{
     GrantedTcpStream, TcpConnectGrantFuture, TcpGrantSelection, TcpResolveGrantFuture, TcpUpstreamGrants,
     UpstreamTarget,
@@ -104,38 +106,6 @@ impl Drop for ConnectionGauge {
     fn drop(&mut self) {
         ::metrics::gauge!(m::ACTIVE_CONNECTIONS).decrement(1.0);
     }
-}
-
-/// Build the production hook pipeline. Registers the full sync ChunkHook chain
-/// (decompression → SSE parse → provider interpreters → telemetry).
-///
-/// All four ChunkHook stages are pure-sync: per-chunk work runs
-/// inline from `poll_frame` with no `.await`, no channel hop, no
-/// async wrapper. Header mutations needed for decompression
-/// (Content-Encoding / Content-Length strip) happen inline in
-/// `handle_request` before chunk dispatch begins -- the chunk hooks
-/// themselves never see the head.
-pub fn make_production_pipeline(telemetry: Arc<telemetry_hook::TelemetryDeps>) -> Arc<pipeline::Pipeline> {
-    let p = pipeline::Pipeline::builder()
-        // Chunk-hook order is load-bearing:
-        //   1. DecompressionHook -- gzip detection on first chunk's
-        //      magic; subsequent chunks fed through flate2::Decompress.
-        //   2. SseParserHook -- needs decompressed bytes for AI
-        //      domains.
-        //   3. Interpreter hooks -- drain SseParserHook's queue and
-        //      build LlmEvents. Three providers; only the matching
-        //      one runs.
-        //   4. TelemetryHook -- counts response bytes, captures
-        //      preview, fires NetEvent + optional ModelCall on
-        //      on_response_end.
-        .register_chunk(Arc::new(decompression_hook::DecompressionHook::new()))
-        .register_chunk(Arc::new(sse_parser_hook::SseParserHook::new()))
-        .register_chunk(Arc::new(interpreter_hook::AnthropicInterpreterHook::new()))
-        .register_chunk(Arc::new(interpreter_hook::OpenAiInterpreterHook::new()))
-        .register_chunk(Arc::new(interpreter_hook::GoogleInterpreterHook::new()))
-        .register_chunk(Arc::new(telemetry_hook::TelemetryHook::new(telemetry)))
-        .build();
-    Arc::new(p)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

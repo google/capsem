@@ -290,6 +290,7 @@ pub enum LedgerReply {
     },
     Counters {
         counters: Box<LedgerCounters>,
+        read_cache_epoch: u64,
     },
     BodyStart {
         body_id: u32,

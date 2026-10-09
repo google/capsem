@@ -3,6 +3,10 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
+use capsem_proto::ledger_commitment::{
+    CommitmentClientMessage, CommitmentReply, CommitmentServerMessage, LedgerCommitment,
+    MAX_COMMITMENTS_PER_CHECKPOINT, ZERO_COMMITMENT_HASH,
+};
 
 use crate::ledger_protocol::{LedgerClientMessage, LedgerServerMessage};
 use crate::ledger_server::LedgerServer;
@@ -141,6 +145,75 @@ async fn descriptor_writer_preserves_blocking_and_try_admission_order() {
         task.await.unwrap().unwrap(),
         crate::ledger_server::LedgerClientExit::Disconnected
     );
+}
+
+#[tokio::test]
+async fn a_flush_splits_more_than_one_checkpoint_of_commitments() {
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([7; 16]), 11, LedgerClientRole::VmOwner).unwrap();
+    let (client, server) = UnixStream::pair().unwrap();
+    let serving = tokio::spawn(async move {
+        let (responses, requests) = capsem_foundation::ipc_channel::channel_from_std::<
+            CommitmentServerMessage,
+            CommitmentClientMessage,
+        >(server)
+        .unwrap();
+        let mut batch_sizes = Vec::new();
+        loop {
+            let Ok(CommitmentClientMessage::Request {
+                request_id,
+                command: capsem_proto::ledger_commitment::CommitmentCommand::Anchor { commitments },
+            }) = requests.recv().await
+            else {
+                break;
+            };
+            if commitments.is_empty() || commitments.len() > MAX_COMMITMENTS_PER_CHECKPOINT {
+                responses
+                    .send(CommitmentServerMessage::Response {
+                        request_id,
+                        reply: CommitmentReply::Failed {
+                            message: "checkpoint batch exceeds its bound".into(),
+                        },
+                    })
+                    .await
+                    .unwrap();
+                continue;
+            }
+            batch_sizes.push(commitments.len());
+            responses
+                .send(CommitmentServerMessage::Response {
+                    request_id,
+                    reply: CommitmentReply::Anchored {
+                        checkpoint_sequence: batch_sizes.len() as u64,
+                    },
+                })
+                .await
+                .unwrap();
+        }
+        batch_sizes
+    });
+    let (sender, receiver) =
+        capsem_foundation::ipc_channel::channel_from_std::<CommitmentClientMessage, CommitmentServerMessage>(client)
+            .unwrap();
+    let mut state = super::CommitmentState::new(sender, receiver, grant);
+    let mut previous_hash = ZERO_COMMITMENT_HASH;
+    for sequence in 1..=(MAX_COMMITMENTS_PER_CHECKPOINT as u64 + 1) {
+        let commitment = LedgerCommitment::new(
+            grant,
+            sequence,
+            sequence,
+            "net_event",
+            [sequence as u8; 32],
+            previous_hash,
+        )
+        .unwrap();
+        previous_hash = commitment.commitment_hash();
+        state.pending.push((sequence, commitment));
+    }
+
+    state.anchor_through(u64::MAX).await.unwrap();
+    assert!(state.pending.is_empty());
+    drop(state);
+    assert_eq!(serving.await.unwrap(), vec![MAX_COMMITMENTS_PER_CHECKPOINT, 1]);
 }
 
 #[tokio::test]

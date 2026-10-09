@@ -8,6 +8,7 @@
     )
 )]
 
+use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io;
 use std::os::fd::{AsRawFd as _, OwnedFd};
@@ -165,6 +166,56 @@ impl LedgerWorkers {
         result
     }
 
+    /// Stop every remaining worker before the service relinquishes its
+    /// checkpoint authority. Continue after one failed shutdown so no sibling
+    /// generation is left running merely because an earlier child was sick.
+    pub(crate) async fn shutdown_all(&self) {
+        let session_ids = self.slots.lock().await.keys().cloned().collect::<Vec<_>>();
+        for session_id in session_ids {
+            if let Err(error) = self.shutdown(&session_id).await {
+                tracing::warn!(session_id, %error, "failed to stop ledger worker during service shutdown");
+            }
+        }
+    }
+
+    /// Remove the trusted checkpoint state after the corresponding session
+    /// directory has been permanently deleted. A stopped persistent session
+    /// keeps its checkpoints and therefore continues to verify on restart.
+    pub(crate) async fn retire(&self, session_id: &str) -> Result<()> {
+        if self.slots.lock().await.contains_key(session_id) {
+            bail!("cannot retire checkpoints for a live ledger worker");
+        }
+        let root = self.commitment_root.clone();
+        let session_id = session_id.to_string();
+        tokio::task::spawn_blocking(move || retire_checkpoints(&root, &session_id))
+            .await
+            .context("join ledger checkpoint retirement")?
+    }
+
+    /// Move trusted checkpoints with a failed session's forensic directory.
+    /// Failed IDs are never live worker slots, so retention can later remove
+    /// both artifacts without weakening the active session name.
+    pub(crate) fn preserve_quiesced(&self, session_id: &str, failed_id: &str) -> Result<()> {
+        let root = match capsem_foundation::unix::contained::ContainedDir::open_root(&self.commitment_root) {
+            Ok(root) => root,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        let source = checkpoint_key(session_id);
+        let destination = checkpoint_key(failed_id);
+        match root.rename_to(OsStr::new(&source), &root, OsStr::new(&destination)) {
+            Ok(()) => root.sync().map_err(Into::into),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Remove checkpoints for a session that cannot have a live worker, such
+    /// as a retained failed-session directory being culled synchronously.
+    pub(crate) fn retire_quiesced(&self, session_id: &str) -> Result<()> {
+        retire_checkpoints(&self.commitment_root, session_id)
+    }
+
     async fn spawn(&self, database: &Path, log_path: &Path) -> Result<LedgerWorker> {
         let log = tokio::fs::OpenOptions::new()
             .create(true)
@@ -184,6 +235,23 @@ impl LedgerWorkers {
             .await
             .get(session_id)
             .map(|slot| slot.worker.generation())
+    }
+}
+
+fn checkpoint_key(session_id: &str) -> String {
+    blake3::hash(session_id.as_bytes()).to_hex().to_string()
+}
+
+fn retire_checkpoints(root: &Path, session_id: &str) -> Result<()> {
+    let root = match capsem_foundation::unix::contained::ContainedDir::open_root(root) {
+        Ok(root) => root,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    match root.remove_tree(OsStr::new(&checkpoint_key(session_id))) {
+        Ok(()) => root.sync().map_err(Into::into),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 

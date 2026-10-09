@@ -139,7 +139,7 @@ async fn a_reload_acknowledging_another_active_policy_fails_the_push() {
     let (state, _, _env) = state_with_running_vms(&dir, &["stale-ack-vm"]);
     let process = spawn_fake_process(&uds_path(&state, "stale-ack-vm"), 1, |message| {
         let reply = match message {
-            ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
+            ServiceToProcess::ReloadConfig { id, .. } => Some(ProcessToService::ConfigReloadResult {
                 id: *id,
                 active_policy_digest: Some("blake3:some-other-policy".to_string()),
                 error: None,
@@ -169,15 +169,15 @@ async fn a_reload_ack_from_a_replaced_generation_cannot_update_its_broker() {
     let dir = tempfile::tempdir().unwrap();
     let (state, sessions, _env) = state_with_running_vms(&dir, &["replaced-vm"]);
     let session_dir = sessions[0].clone();
-    let active_path = session_dir.join("vm/active_policy.toml");
     let process = spawn_fake_process(&uds_path(&state, "replaced-vm"), 1, {
         let state = Arc::clone(&state);
         move |message| {
-            let ServiceToProcess::ReloadConfig { id } = *message else {
+            let ServiceToProcess::ReloadConfig { id, active_policy } = message else {
                 return Box::pin(async { None });
             };
+            let id = *id;
+            let digest = capsem_core::net::policy_config::active_policy_digest(active_policy);
             insert_fake_instance_with_session_dir(&state, "replaced-vm", std::process::id(), session_dir.clone());
-            let digest = capsem_core::net::policy_config::active_policy_digest(&std::fs::read(&active_path).unwrap());
             Box::pin(async move {
                 Some(ProcessToService::ConfigReloadResult {
                     id,
@@ -202,9 +202,9 @@ async fn a_reload_ack_from_a_replaced_generation_cannot_update_its_broker() {
 
 /// Start edit A, hold its VM acknowledgement, then start edit B. Release A
 /// once B is either waiting for A or has already rewritten A's session. The
-/// fake VM answers each reload with the digest of the active policy it finds
-/// when it answers, as capsem-process does. Returns the session's active
-/// policy after both edits.
+/// fake VM answers each reload with the digest of the active policy bytes in
+/// that request, as capsem-process does. Returns the session's active policy
+/// after both edits.
 async fn race_edit_b_against_held_edit_a(
     edit_b: impl FnOnce(Arc<ServiceState>) -> tokio::task::JoinHandle<Result<(), AppError>>,
 ) -> ActivePolicyFile {
@@ -216,13 +216,13 @@ async fn race_edit_b_against_held_edit_a(
     let (release, released) = tokio::sync::oneshot::channel::<()>();
     let released = Arc::new(std::sync::Mutex::new(Some(released)));
     let process = spawn_fake_process(&uds_path(&state, "race-vm"), 2, {
-        let (held, active_path) = (Arc::clone(&held), active_path.clone());
+        let held = Arc::clone(&held);
         move |message| {
-            let ServiceToProcess::ReloadConfig { id } = *message else {
+            let ServiceToProcess::ReloadConfig { id, active_policy } = message else {
                 return Box::pin(async { None });
             };
-            let (held, released, active_path) =
-                (Arc::clone(&held), released.lock().unwrap().take(), active_path.clone());
+            let (id, active_policy) = (*id, active_policy.clone());
+            let (held, released) = (Arc::clone(&held), released.lock().unwrap().take());
             Box::pin(async move {
                 if let Some(released) = released {
                     held.notify_one();
@@ -230,9 +230,7 @@ async fn race_edit_b_against_held_edit_a(
                 }
                 Some(ProcessToService::ConfigReloadResult {
                     id,
-                    active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(
-                        &std::fs::read(&active_path).unwrap(),
-                    )),
+                    active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(&active_policy)),
                     error: None,
                 })
             })

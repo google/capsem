@@ -15,11 +15,13 @@ destinations, and never opens a socket of its own.
 
 ## Current descriptor and process ownership
 
-The VM owner binds and accepts the loopback listener, connects the guest VSOCK
-stream, and grants the two connected descriptors over a private Unix socket.
-The companion receives no listener. Linux also denies accept syscalls; macOS
-preserves existing FD authority, so closing inherited FDs and rejecting listener
-grants are essential. Ten-byte,
+The service binds an exact loopback listener and grants it over the VM owner's
+generation-bound coordinator channel. The owner validates and accepts that
+listener, connects the guest VSOCK stream, and grants only the two connected
+descriptors over a private Unix socket. The service never accepts or reads the
+published byte stream, and the companion receives no listener. Linux also
+denies accept syscalls; macOS preserves existing FD authority, so closing
+inherited FDs and rejecting listener grants are essential. Ten-byte,
 versioned headers carry grants, acknowledgements, closes, and aborts; only grants
 carry FDs. Close reports append 17 bytes for a typed reason and two delivered-byte
 counts. Cooperative cancellation preserves those counts during active transfer
@@ -99,13 +101,15 @@ guest cancellation identity until cleanup. Host control I/O is asynchronous,
 with five-second write and started-frame deadlines and an owned reader.
 TCP descriptors are armed for abortive close before setup/handoff and again at
 child adoption, covering SIGKILL without relying on destructors. Normal Complete
-clears that setting; other exits avoid an early FIN. The trusted owner immediately revokes its TCP endpoint using
-linger-zero plus `disconnectx` on macOS or `connect(AF_UNSPEC)` on Linux; this
-also revokes a malicious child's retained copies. The child retains no connect
-authority. Guest cancellation resets the container TCP endpoint. Normal Complete
-still drains both directions. Guest `PortClosed` reports keep their VSOCK stream
-open after abnormal termination until `PortCloseAck`: the host revokes TCP before
-acknowledging, so stream EOF cannot race an unintended FIN through the copier.
+clears that setting; other exits avoid an early FIN. The trusted owner can
+immediately revoke its TCP endpoint with `disconnectx` on macOS. The confined
+Linux owner retains no `connect` syscall, including `connect(AF_UNSPEC)`, so
+abnormal cleanup instead closes the owner and router copies while linger-zero
+remains armed. The child retains no connect authority. Guest cancellation
+resets the container TCP endpoint. Normal Complete still drains both
+directions. Guest `PortClosed` reports keep their VSOCK stream open after
+abnormal termination until `PortCloseAck`, and the host arms TCP reset before
+acknowledging so stream EOF cannot turn cleanup into an unintended FIN.
 The control actor accepts reports only for the owning generation and flow lease,
 but acknowledges retired duplicates to release guest credits. Child cancellation
 retains its observer for final byte counts; a missing close ACK terminates the child.

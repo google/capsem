@@ -50,6 +50,7 @@ flowchart TB
     Owner -->|"virtio and VSOCK"| VM
     Owner -->|"connected stream pairs"| Relay
     Proxy -->|"MCP requests after policy"| MCPBridge
+    Proxy -->|"bounded trace hints"| Owner
     Owner -->|"owns"| MCPBridge
     MCPBridge --> Aggregator
     Owner -->|"one cable per membership"| Switch
@@ -80,7 +81,7 @@ authority.
 |---|---|---|
 | Control | client API, service-to-owner IPC, worker grant frames, policy reload | Typed and bounded messages; fresh process generation required |
 | Private data plane | VSOCK, private-network frames, published-port byte streams | Connected descriptors for one session, network membership, or flow |
-| Proxied traffic | HTTP, DNS, model API, framed guest MCP | A descriptor granted to the session proxy plus separate upstream, policy, credential, ledger, and telemetry capabilities |
+| Proxied traffic | HTTP, DNS, model API, framed guest MCP | A descriptor granted to the session proxy plus separate upstream, policy, credential, ledger, telemetry, and trace-hint capabilities |
 
 A worker does not receive a path and then reopen the resource. The coordinator
 opens or accepts the resource, creates a connected channel, attaches the file
@@ -92,10 +93,10 @@ grants fail closed.
 
 | Process | Permitted after readiness | Denied or absent |
 |---|---|---|
-| `capsem-service` | Global lifecycle, settings and corp policy, credential store, MCP discovery catalog, session registry, resource creation and capability grants; producer ordering and external commitment checkpoints | It is part of the trusted computing base; clients reach it through the local UDS or authenticated gateway routes |
+| `capsem-service` | Global lifecycle, settings and corp policy, credential store, MCP discovery catalog, session registry, resource creation and capability grants, including exact loopback publication listeners; producer ordering and external commitment checkpoints | It is part of the trusted computing base; clients reach it through the local UDS or authenticated gateway routes |
 | `capsem-gateway` | Accept on listeners bound before confinement; use coordinator-granted service/owner channels; update its private readiness files | Ambient file reads, path-based UDS connects, outbound TCP, new binds, process execution |
-| `capsem-process` | One VM and its exact session runtime paths; read exact boot assets and active policy; use coordinator-granted upstream and ledger channels; execute only the installed router helper | Other sessions, the global MCP discovery catalog, direct `session.db` access, ambient outbound connects/binds, unrelated host files and processes |
-| `capsem-proxy` | Consume granted HTTP, DNS, MCP, upstream, credential, ledger, metrics, private-name, and policy channels | All filesystem access, arbitrary dial/bind/listen and control-socket access, process execution, signals to the coordinator |
+| `capsem-process` | One VM and its exact session runtime paths; read exact boot assets and initial active policy; receive policy reload bytes and use upstream, loopback-listener, and ledger capabilities granted by the coordinator; execute only the installed router helper | Other sessions, the global MCP discovery catalog, direct `session.db` access, ambient outbound connects/binds, unrelated host files and processes |
+| `capsem-proxy` | Consume granted HTTP, DNS, MCP, upstream, credential, ledger, metrics, private-name, policy, and one-way trace-hint channels | All filesystem access, arbitrary dial/bind/listen and control-socket access, process execution, signals to the coordinator |
 | `capsem-ledger` | Read and write one session directory; serve authenticated operations over granted connected channels | Other paths, ambient network and control-socket access, process execution, signals to the coordinator |
 | `capsem-router --expose` | Copy bytes between connected host TCP and guest VSOCK descriptors | Listener ownership, destination selection, filesystem, arbitrary network, VM control |
 | `capsem-router --network` | Switch frames among the descriptor-backed cables of one named network | Uplink, listener, outbound socket, another network's members, policy decisions |
@@ -112,8 +113,9 @@ On macOS, workers install Seatbelt profiles. Proxy and ledger workers use
 `deny default`; the proxy has no path parameters, and the ledger receives one
 read-write session directory. Gateway and VM-owner profiles deny filesystem,
 network, execution, and cross-sandbox signal operations, then add their exact
-path grants. Only the gateway may accept inbound traffic on a listener it
-already owns.
+path grants. The gateway accepts only on listeners it already owns. A VM owner
+accepts only on an exact loopback listener granted over its generation-bound
+coordinator channel; it cannot create or bind another network socket.
 
 On Linux, workers support Landlock ABI 6 and newer. ABI 8 adds synchronized
 restriction of existing threads. On ABI 6 and 7, startup remains
@@ -121,24 +123,63 @@ single-threaded until Landlock is installed; every later runtime, hypervisor,
 database, monitor, logging, and parent-watch thread inherits that domain. A
 worker refuses startup if an older ABI already has a sibling thread. Seccomp
 is installed with thread synchronization after the Landlock ruleset. Landlock
-limits filesystem scope; seccomp denies direct connect, bind, listen, process
-inspection, namespace and mount operations, kernel attack surfaces, and
-permission or ownership changes. Proxy and ledger workers also cannot create
-sockets or send signals. Existing connected descriptors remain usable because
-they are the capability.
+limits filesystem scope; seccomp denies direct socket creation, connect, bind,
+listen, process inspection, namespace and mount operations, kernel attack
+surfaces, and permission or ownership changes. On macOS, Seatbelt denies
+external bind, listen and connect operations but permits private unnamed Unix
+socketpairs, which carry no filesystem or network destination authority. Proxy
+and ledger workers cannot send signals on either platform. Existing connected
+descriptors remain usable because they are the capability.
+
+A writable Landlock path does not carry device-ioctl authority. The VM owner
+receives that authority only for the exact `/dev/kvm` and `/dev/vhost-vsock`
+device nodes it needs. A regular file is rejected if code tries to grant it the
+device class, so widening an ordinary writable path cannot also widen KVM or
+VSOCK control.
 
 The VM owner prepares only resources that cannot be acquired after the
 sandbox: its inherited coordinator channel, exact IPC listeners, readiness and
-log files, metric channel, and Linux AF_VSOCK listeners. It then installs and
-self-attests confinement before starting the parent watcher, hypervisor,
-Tokio or blocking worker threads, ledger client, filesystem monitor, metric
-exporter, or any VM worker. KVM consumes the prepared VSOCK descriptors after
-confinement; it does not regain `socket` or `bind` authority.
+log files, metric channel, Linux AF_VSOCK listeners, `/dev/null` for the router's
+closed output streams, and saved publication state. Publication state is
+materialized and migrated before confinement; the
+confined publisher consumes that prepared state without reopening the session
+root. Updates create private files at their final mode and need no later
+permission change. When that publisher opens or restores a port, the
+coordinator binds the exact `127.0.0.1` listener and passes its descriptor to
+the owner. The owner validates the descriptor address before admission and
+acceptance. Host TCP streams are armed for reset on close before handoff; on
+Linux, abnormal cleanup closes the owner and confined-router copies with that
+setting still armed instead of restoring a direct `connect` syscall. The
+service never accepts a publication connection or reads its workload bytes.
+Before confinement, the owner asks the coordinator for its ledger
+capability. The grant arrives only after `capsem-ledger` has initialized
+`session.db`; the owner keeps the connected descriptors, installs its sandbox,
+and verifies that opening that existing database by path is denied. It then
+starts the parent watcher, hypervisor, ledger client, filesystem monitor,
+metric exporter, and VM workers. KVM opens only its explicitly granted device
+nodes and consumes the prepared VSOCK descriptors after confinement; it does
+not regain general device-ioctl, `socket`, or `bind` authority.
 
 Both platforms clear inherited environment state where secrets could otherwise
 leak and close descriptors that were not deliberately preserved. The sandbox
 is additive to normal ownership and mode checks; mode `0600` sockets and mode
 `0700` session directories remain in use.
+
+The proxy keeps request correlation without retaining trace environment
+variables. After clearing its environment, it derives a compact process trace
+identity from the coordinator-minted worker generation passed on the command
+line. Model tool calls that name workspace files cross a separate fixed-size
+channel to the VM owner. The owner validates each relative path, installs the
+hint in the filesystem monitor's bounded correlation table, and acknowledges
+it before the model response completes. That channel grants the proxy no
+workspace descriptor or read authority; malformed, escaping, or oversized
+hints close it.
+
+The VM owner opens the workspace as a contained directory before confinement
+and carries that descriptor across the boundary. It never reopens the broader
+session directory, which also contains the ledger. If the filesystem monitor
+cannot start from the contained descriptor, VM startup fails instead of
+running without filesystem audit coverage.
 
 ## Shared proxy engine
 
@@ -157,6 +198,7 @@ flowchart LR
     Engine --> Ledger["session ledger capability"]
     Engine --> Metrics["metric capability"]
     Engine --> MCP["scoped MCP capability"]
+    Engine --> Hints["one-way trace hints<br/>to VM owner"]
 ```
 
 The engine owns request normalization, policy evaluation, preprocessing and
@@ -192,7 +234,16 @@ role:
 The VM owner and proxy use `DbWriter` as a remote typed client; a diagnostic
 path in that object does not grant filesystem authority. Service routes also
 query through a ledger client, including after the VM stops. A missing table or
-column is a schema error, and a flush is the read-after-write barrier.
+column is a schema error, and a flush is the read-after-write barrier. Reader
+counter replies carry the ledger handle's DB-owned cache epoch. The service
+maps changes in that epoch, including after a worker reconnect, to its route
+cache generation before serving cached security, history, or statistics rows.
+
+Snapshot and retention work stays inside the ledger worker's one session
+directory. New lock and archive-generation files are opened at their final
+owner-only modes; the worker has no `chmod` or ownership-changing authority.
+A fork copies a coherent staged snapshot through descriptor-contained tree
+operations, then removes the staging directory.
 
 Producers also receive a separate connected channel to the service's trusted
 commitment authority. Before admission, that authority assigns one global

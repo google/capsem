@@ -16,6 +16,7 @@ from helpers.gate import PROJECT_ROOT, gate_plan
 PREPARED = (
     "sdk.python.sync", "functional.sdk.rust.example", "fast.sdk.python.build",
     "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm",
+    "functional.sdk.python.package-prewarm",
 )
 
 
@@ -72,6 +73,19 @@ def test_functional_installed_sdks_use_current_archives_and_declared_network_pre
     assert Needs.NETWORK in plan.step_named(warmed).needs
     assert "[outside kernel sandbox]" in plan.step_named(warmed).actions[0].render()
     assert "--no-isolation" in plan.step_named(python).actions[0].render()
+
+
+def test_candidate_rehydrates_python_build_backends_after_cache_enforcement() -> None:
+    from capsem_builder.gate.execution import Needs
+
+    plan = gate_plan("candidate")
+    label = "functional.sdk.python.package-prewarm"
+    warmed = plan.step_named(label)
+    assert {"fast.sdk.python.build", "prepare.cache-enforcement"} <= _ancestors(plan, label)
+    assert Needs.NETWORK in warmed.needs
+    exported, installed = (action.render() for action in warmed.actions)
+    assert "--only-group package-build" in exported
+    assert "--reinstall" in installed and "[outside kernel sandbox]" in installed
 
 
 def test_composed_sdk_packages_have_one_producer_and_no_dependency_cycle() -> None:

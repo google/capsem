@@ -19,6 +19,18 @@ fn generation_parser_requires_canonical_nonzero_hex() {
 }
 
 #[test]
+fn generation_carries_trace_identity_without_environment_state() {
+    let generation = parse_generation("0102030405060708a1a2a3a4a5a6a7a8").unwrap();
+    assert_eq!(trace_id_from_generation(generation), "a1a2a3a4a5a6a7a8");
+}
+
+#[test]
+fn generation_never_derives_an_all_zero_trace_identity() {
+    let generation = parse_generation("01020304050607080000000000000000").unwrap();
+    assert_eq!(trace_id_from_generation(generation), "0102030405060708");
+}
+
+#[test]
 fn failed_policy_update_preserves_the_running_engine_revision() {
     let active_policy = br#"
 [network]
@@ -65,6 +77,7 @@ match = 'http.host == "worker.example"'
         mcp,
         capsem_proto::proxy_mcp::ProxyMcpHello::new(Vec::new(), 1, 1, 1, 1).unwrap(),
     );
+    state.attach_trace_hints(Arc::new(EmptyTraceHints));
     let config = state.http_config().unwrap().expect("complete capability set");
     assert!(config.upstream_grants.is_some());
     assert!(config.mcp_endpoint.is_some());
@@ -72,6 +85,18 @@ match = 'http.host == "worker.example"'
         config.engine.policy().snapshot().digest(),
         state.engine.as_ref().unwrap().policy().snapshot().digest()
     );
+}
+
+struct EmptyTraceHints;
+
+impl capsem_core::net::ai_traffic::TraceHintSink for EmptyTraceHints {
+    fn register<'a>(
+        &'a self,
+        _trace_id: &'a str,
+        _relative_paths: &'a [String],
+    ) -> capsem_core::net::ai_traffic::TraceHintFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 #[tokio::test]

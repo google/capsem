@@ -1,9 +1,9 @@
 import {execFileSync} from 'node:child_process';
-import {copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {createServer as createHttpServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
-import {tmpdir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
@@ -46,8 +46,7 @@ describe('packed-package', () => {
         retained.push({path, sha256: digest(path)});
         copyFileSync(path, join(destination, `capsem-${owner}-${version}.tgz`));
       } else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', destination], {
-        cwd: source, stdio: 'pipe', timeout: 15_000,
-        env: {...process.env, HOME: fixture},
+        cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: fixture},
       });
       const name = readdirSync(destination).find(entry => entry.endsWith('.tgz'));
       if (!name) throw new Error('pnpm pack did not create a tarball');
@@ -57,12 +56,10 @@ describe('packed-package', () => {
       execFileSync('tar', ['-xzf', archive, '-C', destination], {timeout: 5000});
     }
     writeFileSync(join(fixture, 'package.json'), JSON.stringify({name: 'capsem-mcp-clean-consumer', private: true}));
-    const npmCache = process.env.NPM_CONFIG_CACHE
-      ?? (process.env.HOME && existsSync(process.env.HOME) ? join(process.env.HOME, '.npm') : undefined);
     execFileSync('npm', ['install', '--offline', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...archives], {
       cwd: fixture, stdio: 'pipe', timeout: 60_000,
-      env: {HOME: fixture, PATH: process.env.PATH ?? '',
-        ...(npmCache ? {NPM_CONFIG_CACHE: npmCache} : {})},
+      env: {PATH: process.env.PATH ?? '', HOME: fixture,
+        NPM_CONFIG_CACHE: process.env.NPM_CONFIG_CACHE ?? join(homedir(), '.npm')},
     });
     const dependencies = join(fixture, 'node_modules');
     for (const [owner, source] of Object.entries(sources)) {

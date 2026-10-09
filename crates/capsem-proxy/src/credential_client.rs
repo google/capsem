@@ -86,10 +86,11 @@ impl CredentialClient {
                 .recv_timeout(OPERATION_TIMEOUT)
                 .map_err(|_| "proxy credential operation timed out".to_string())?
         };
-        if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::task::block_in_place(receive)
-        } else {
-            receive()
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(receive)
+            }
+            _ => receive(),
         }
     }
 }

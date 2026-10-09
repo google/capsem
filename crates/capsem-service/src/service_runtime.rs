@@ -450,8 +450,15 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
             }
         }
         info!("service shutting down, stopping VM processes and draining replies");
-        kill_all_vm_processes(&shutdown_state);
+        let ephemeral_sessions = kill_all_vm_processes(&shutdown_state);
         shutdown_state.stop_all_standalone_proxies().await;
+        shutdown_state.ledger_workers.shutdown_all().await;
+        let deleted_ephemeral = delete_shutdown_ephemeral_sessions(&shutdown_state, ephemeral_sessions);
+        for id in deleted_ephemeral {
+            if let Err(error) = shutdown_state.ledger_workers.retire(&id).await {
+                warn!(id, %error, "failed to retire ephemeral checkpoints during service shutdown");
+            }
+        }
     })
     .await;
 
@@ -583,23 +590,31 @@ pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
 /// NOT orphan running guests. Without this, each service shutdown leaked one
 /// `capsem-process` per live VM, which in turn held Apple VZ memory -- making
 /// long test runs increasingly slow until boots timed out.
-pub(super) fn kill_all_vm_processes(state: &ServiceState) {
-    let pids_and_sockets: Vec<(u32, PathBuf, PathBuf, bool)> = {
+pub(super) fn kill_all_vm_processes(state: &ServiceState) -> Vec<(String, PathBuf)> {
+    let pids_and_sockets: Vec<(String, u32, PathBuf, PathBuf, bool)> = {
         let instances = state.instances.lock().unwrap();
         instances
             .values()
-            .map(|i| (i.pid, i.uds_path.clone(), i.session_dir.clone(), i.persistent))
+            .map(|i| {
+                (
+                    i.id.clone(),
+                    i.pid,
+                    i.uds_path.clone(),
+                    i.session_dir.clone(),
+                    i.persistent,
+                )
+            })
             .collect()
     };
     // Nothing to reap -- skip the grace sleep. `_ensure-service` only waits
     // 500ms before respawning the service, so every unnecessary ms here
     // widens the orphan-gateway race.
     if pids_and_sockets.is_empty() {
-        return;
+        return Vec::new();
     }
     let mut signaled_any_vm = false;
     let mut probe = process_control::ProcessProbe::new("probe-vm-during-service-shutdown");
-    for (pid, uds_path, session_dir, persistent) in &pids_and_sockets {
+    for (_, pid, uds_path, _, _) in &pids_and_sockets {
         let pid = *pid;
         if pid > 0 {
             // SIGTERM first so capsem-process gets a chance to run its own cleanup
@@ -610,43 +625,70 @@ pub(super) fn kill_all_vm_processes(state: &ServiceState) {
         }
         let _ = std::fs::remove_file(uds_path);
         remove_instance_sentinels(uds_path);
-        if !persistent {
-            let _ = std::fs::remove_dir_all(session_dir);
-        }
     }
-    if !signaled_any_vm {
-        return;
-    }
-
-    // Bounded wait: poll for up to 2 seconds
-    let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(2);
-    let poll_interval = std::time::Duration::from_millis(100);
-
-    loop {
-        let survivors: Vec<u32> = pids_and_sockets
-            .iter()
-            .map(|(pid, _, _, _)| *pid)
-            .filter(|&pid| pid > 0 && probe.is_alive(pid))
-            .collect();
-
-        if survivors.is_empty() {
-            break;
-        }
-
-        if start.elapsed() >= timeout {
-            tracing::warn!(
-                count = survivors.len(),
-                "some VMs survived SIGTERM, escalating to SIGKILL"
-            );
-            for pid in survivors {
-                process_control::send_or_log(pid, process_control::Signal::Kill, "escalate-service-shutdown-vm");
+    if signaled_any_vm {
+        // Bounded wait: poll for up to 2 seconds.
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(2);
+        let poll_interval = std::time::Duration::from_millis(100);
+        loop {
+            let survivors: Vec<u32> = pids_and_sockets
+                .iter()
+                .map(|(_, pid, _, _, _)| *pid)
+                .filter(|&pid| pid > 0 && probe.is_alive(pid))
+                .collect();
+            if survivors.is_empty() {
+                break;
             }
-            break;
+            if start.elapsed() >= timeout {
+                tracing::warn!(
+                    count = survivors.len(),
+                    "some VMs survived SIGTERM, escalating to SIGKILL"
+                );
+                for pid in survivors {
+                    process_control::send_or_log(pid, process_control::Signal::Kill, "escalate-service-shutdown-vm");
+                }
+                break;
+            }
+            std::thread::sleep(poll_interval);
         }
-
-        std::thread::sleep(poll_interval);
+        let kill_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while pids_and_sockets
+            .iter()
+            .any(|(_, pid, _, _, _)| *pid > 0 && probe.is_alive(*pid))
+            && std::time::Instant::now() < kill_deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
+    let mut ephemeral_sessions = Vec::new();
+    for (id, pid, _, session_dir, persistent) in &pids_and_sockets {
+        if !persistent {
+            if *pid > 0 && probe.is_alive(*pid) {
+                tracing::error!(
+                    id,
+                    pid,
+                    "refusing to delete an ephemeral session whose process is still alive"
+                );
+                continue;
+            }
+            ephemeral_sessions.push((id.clone(), session_dir.clone()));
+        }
+    }
+    ephemeral_sessions
+}
+
+fn delete_shutdown_ephemeral_sessions(state: &ServiceState, sessions: Vec<(String, PathBuf)>) -> Vec<String> {
+    sessions
+        .into_iter()
+        .filter_map(|(id, session_dir)| match state.delete_session_dir(&session_dir) {
+            Ok(()) => Some(id),
+            Err(error) => {
+                tracing::warn!(id, %error, "failed to delete ephemeral session during service shutdown");
+                None
+            }
+        })
+        .collect()
 }
 
 pub(super) async fn shutdown_signal() {

@@ -86,10 +86,6 @@ fn main() -> Result<()> {
 }
 
 async fn run(args: Args) -> Result<()> {
-    anyhow::ensure!(
-        args.service_grant_stdin,
-        "capsem-gateway requires a coordinator descriptor grant channel"
-    );
     let run_dir = gateway_run_dir(&args);
     let _ = std::fs::create_dir_all(&run_dir);
     let log_path = run_dir.join("gateway.log");
@@ -109,6 +105,10 @@ async fn run(args: Args) -> Result<()> {
     let Some(_singleton) = capsem_guard::Singleton::try_acquire(&lock_path)? else {
         return Ok(());
     };
+    anyhow::ensure!(
+        args.service_grant_stdin,
+        "capsem-gateway requires a coordinator descriptor grant channel"
+    );
     let uds_path = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
     let service_socket_missing = !uds_path.exists();
 

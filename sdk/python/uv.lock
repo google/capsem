@@ -208,6 +208,9 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
 ]
+package-build = [
+    { name = "hatchling" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -227,6 +230,7 @@ dev = [
     { name = "ruff", specifier = ">=0.15.16" },
     { name = "ty", specifier = ">=0.0.46" },
 ]
+package-build = [{ name = "hatchling", specifier = "==1.29.0" }]
 
 [[package]]
 name = "certifi"

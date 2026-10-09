@@ -1,4 +1,4 @@
-//! VM owner: bind declared listeners and broker data fds, never route TCP bytes.
+//! VM owner: admit granted listeners and broker data fds, never route TCP bytes.
 use crate::hypervisor::VsockConnection;
 use anyhow::{ensure, Context, Result};
 use capsem_proto::ipc::ServiceToProcess;
@@ -29,6 +29,7 @@ pub use security::{AuditFlow, ContainerPullRefused, ExposureRefused};
 
 pub struct Publisher {
     security: Option<Arc<security::Authority>>,
+    listener_authority: Option<Arc<dyn LoopbackListenerAuthority>>,
     control_lease: Mutex<Option<CancellationToken>>,
     budgets: capsem_config::router::RouterConfig,
     /// Nonzero by type: audit identities and guest flow keys both require it,
@@ -47,6 +48,46 @@ pub struct Publisher {
     drain: tokio::sync::Mutex<()>,
     router: tokio::sync::Mutex<Option<Arc<companion::Router>>>,
     declared: registry::Registry<Publication>,
+}
+
+pub type LoopbackListenerFuture<'a> =
+    std::pin::Pin<Box<dyn Future<Output = std::io::Result<LoopbackListenerGrant>> + Send + 'a>>;
+
+pub struct LoopbackListenerGrant {
+    listener: std::net::TcpListener,
+    lease: Option<Box<dyn Send + Sync>>,
+}
+
+impl std::fmt::Debug for LoopbackListenerGrant {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LoopbackListenerGrant")
+            .field("listener", &self.listener)
+            .finish_non_exhaustive()
+    }
+}
+
+impl LoopbackListenerGrant {
+    pub fn untracked(listener: std::net::TcpListener) -> Self {
+        Self { listener, lease: None }
+    }
+
+    pub(crate) fn tracked(listener: std::net::TcpListener, lease: impl Send + Sync + 'static) -> Self {
+        Self {
+            listener,
+            lease: Some(Box::new(lease)),
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (std::net::TcpListener, Option<Box<dyn Send + Sync>>) {
+        (self.listener, self.lease)
+    }
+}
+
+/// Opens an exact loopback listener without granting the confined VM owner an
+/// ambient bind syscall.
+pub trait LoopbackListenerAuthority: Send + Sync {
+    fn open(&self, port: u16) -> LoopbackListenerFuture<'_>;
 }
 
 type GuestClose = (capsem_proto::router::FlowKey, capsem_proto::router::CloseReport);
@@ -72,9 +113,19 @@ impl Source {
         Ok(())
     }
 
-    /// End the flow now, discarding what the peer has not read.
+    /// End the flow, discarding what the peer has not read.
+    ///
+    /// Linux's immediate reset uses `connect(AF_UNSPEC)`, which the confined
+    /// VM owner cannot call. Linger-zero is already armed, so keeping it armed
+    /// makes the last parent/router descriptor close deliver the same reset
+    /// without restoring ambient connect authority.
     fn reset(&self) -> std::io::Result<()> {
-        capsem_foundation::unix::fd::reset_tcp(self.as_fd()).map(|_| ())
+        match capsem_foundation::unix::fd::reset_tcp(self.as_fd()) {
+            Ok(_) => Ok(()),
+            #[cfg(target_os = "linux")]
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     /// End the flow after what was written has been delivered.
@@ -118,6 +169,7 @@ impl Publisher {
         budgets.validate().map_err(anyhow::Error::msg)?;
         Ok(Self {
             security: None,
+            listener_authority: None,
             control_lease: Mutex::new(None),
             // The UUID variant bits make its low half nonzero; the fallback is
             // unreachable and exists so that nothing here can panic.
@@ -141,6 +193,11 @@ impl Publisher {
             budgets,
         })
     }
+
+    pub fn with_listener_authority(mut self, authority: Arc<dyn LoopbackListenerAuthority>) -> Self {
+        self.listener_authority = Some(authority);
+        self
+    }
 }
 
 pub struct Publication {
@@ -152,6 +209,7 @@ pub struct Publication {
     task: tokio::task::AbortHandle,
     cancellation: CancellationToken,
     preview: Option<Arc<PreviewState>>,
+    _listener_lease: Option<Box<dyn Send + Sync>>,
 }
 
 const PREVIEW_BOOTSTRAP_LIFETIME: Duration = Duration::from_secs(capsem_proto::PREVIEW_BOOTSTRAP_LIFETIME_SECS as u64);
@@ -432,11 +490,18 @@ impl Publisher {
             .clone()
             .try_acquire_owned()
             .context("VM publication limit reached")?;
-        let listener =
-            std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, host_port)).context("bind publication listener")?;
-        let host_address = listener.local_addr()?;
+        let listener_authority = self
+            .listener_authority
+            .as_ref()
+            .context("publication listener authority missing")?;
+        let listener = listener_authority
+            .open(host_port)
+            .await
+            .context("request publication listener")?;
+        let (listener, listener_lease) = listener.into_parts();
+        let host_address = listener.local_addr().context("inspect publication listener")?;
         let host_port = host_address.port();
-        // Bound, so the audited listener is the real one, but not accepting:
+        // Granted, so the audited listener is the real one, but not accepting:
         // dropping it on refusal serves nothing.
         let publication_id = uuid::Uuid::new_v4();
         authority
@@ -448,12 +513,12 @@ impl Publisher {
                 capsem_proto::PublicationAccess::LoopbackTcp,
                 action,
             )
-            .await?;
-        listener.set_nonblocking(true)?;
-        let listener = tokio::net::TcpListener::from_std(listener)?;
+            .await
+            .context("record publication admission")?;
+        let listener = tokio::net::TcpListener::from_std(listener).context("register publication listener")?;
         let mut current = self.router.lock().await;
         if current.as_ref().is_none_or(|router| router.closed.is_cancelled()) {
-            *current = Some(companion::start(self).await?);
+            *current = Some(companion::start(self).await.context("start publication router")?);
         }
         let router = current.as_ref().unwrap().clone();
         drop(current);
@@ -461,7 +526,9 @@ impl Publisher {
         let owner = self.clone();
         let cancellation = self.cancellation.child_token();
         let stop = cancellation.clone();
-        let incoming = self.accept_publication(listener, publication_id, guest_port, target, stop.clone())?;
+        let incoming = self
+            .accept_publication(listener, publication_id, guest_port, target, stop.clone())
+            .context("start publication listener")?;
         let task = self.spawn(async move {
             let _permit = permit;
             if let Err(error) = broker::serve(owner, incoming, control, router, stop).await {
@@ -477,6 +544,7 @@ impl Publisher {
             task,
             cancellation,
             preview: None,
+            _listener_lease: listener_lease,
         })
     }
 
@@ -553,9 +621,9 @@ impl Publisher {
             }
         }
         drop(pending);
-        // Apply the reset before the control actor ACKs. The guest keeps its
-        // VSOCK endpoint open until that ACK, preventing EOF from racing a FIN
-        // through the confined copier ahead of this TCP reset.
+        // Arm the reset before the control actor ACKs. The trusted owner can
+        // revoke it immediately; under Linux confinement the parent and router
+        // retain linger-zero until their last descriptor closes.
         if report.reason != capsem_proto::router::CloseReason::Complete {
             if let Some(source) = source {
                 source.reset()?;
@@ -697,6 +765,7 @@ impl Publisher {
             task,
             cancellation,
             preview: Some(preview),
+            _listener_lease: None,
         };
         let info = capsem_proto::ipc::PublicationInfo {
             id: id.clone(),

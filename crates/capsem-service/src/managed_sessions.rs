@@ -301,6 +301,7 @@ impl ManagedLifecycle {
     async fn remove_session(&self, binding: VmBinding, require_identity: bool) -> Result<()> {
         let state = Arc::clone(&self.state);
         let target = binding;
+        let id = target.id().to_string();
         self.state
             .off_worker(move |_| {
                 let directory = state.run_dir.join("sessions").join(target.id());
@@ -319,7 +320,8 @@ impl ManagedLifecycle {
                 Ok(())
             })
             .await
-            .map_err(app_error)?
+            .map_err(app_error)??;
+        self.state.ledger_workers.retire(&id).await
     }
 }
 

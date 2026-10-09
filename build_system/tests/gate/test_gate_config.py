@@ -502,7 +502,7 @@ def _source_package_type():
 
 
 def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> None:
-    from capsem_builder.gate.buildschema import SdkConfig
+    from capsem_builder.gate.buildschema import PythonSdkConfig, SdkConfig
 
     source = _source_package_type()
     fields = ("project", "manifest", "source", "tests", "build_output")
@@ -513,23 +513,30 @@ def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> Non
     # last, while remaining mandatory and preserving every SDK owner type.
     assert tuple(SdkConfig.model_fields) == (*fields, "specification")
     assert all(field.is_required() for field in SdkConfig.model_fields.values())
-    for owner in ("sdk_python", "sdk_typescript", "sdk_rust"):
+    for owner in ("sdk_typescript", "sdk_rust"):
         assert gate_config.GateConfig.model_fields[owner].annotation is SdkConfig
         assert isinstance(getattr(CONFIG, owner), SdkConfig)
+    assert gate_config.GateConfig.model_fields["sdk_python"].annotation is PythonSdkConfig
+    assert tuple(PythonSdkConfig.model_fields) == (
+        *SdkConfig.model_fields,
+        "environment_python",
+        "package_build_requirements",
+    )
+    assert all(field.is_required() for field in PythonSdkConfig.model_fields.values())
 
 
 def test_hand_written_source_package_needs_no_codegen_specification() -> None:
     source = _source_package_type()
-    values = CONFIG.sdk_python.model_dump(exclude={"specification"})
+    values = CONFIG.sdk_rust.model_dump(exclude={"specification"})
     assert source.model_validate(values).model_dump() == values
     with pytest.raises(ValidationError, match="extra_forbidden"):
-        source.model_validate(CONFIG.sdk_python.model_dump())
+        source.model_validate(CONFIG.sdk_rust.model_dump())
 
 
 @pytest.mark.parametrize("field", ("project", "manifest", "source", "tests", "build_output"))
 def test_source_package_cannot_omit_a_required_input(field: str) -> None:
     source = _source_package_type()
-    values = CONFIG.sdk_python.model_dump(exclude={"specification", field})
+    values = CONFIG.sdk_rust.model_dump(exclude={"specification", field})
     with pytest.raises(ValidationError, match="Field required"):
         source.model_validate(values)
 
@@ -538,12 +545,12 @@ def test_sdk_cannot_lose_its_generated_source_specification() -> None:
     from capsem_builder.gate.buildschema import SdkConfig
 
     with pytest.raises(ValidationError, match="specification"):
-        SdkConfig.model_validate(CONFIG.sdk_python.model_dump(exclude={"specification"}))
+        SdkConfig.model_validate(CONFIG.sdk_rust.model_dump(exclude={"specification"}))
 
 
 def test_source_package_retains_strict_frozen_configuration() -> None:
     source = _source_package_type()
-    values = CONFIG.sdk_python.model_dump(exclude={"specification"})
+    values = CONFIG.sdk_rust.model_dump(exclude={"specification"})
     with pytest.raises(ValidationError, match="extra_forbidden"):
         source.model_validate({**values, "unknown": "input"})
     package = source.model_validate(values)

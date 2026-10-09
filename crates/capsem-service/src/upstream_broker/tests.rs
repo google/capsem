@@ -22,6 +22,67 @@ struct TestClient {
     responses: WireReceiver,
 }
 
+#[tokio::test]
+async fn loopback_listener_grant_is_bound_by_the_coordinator_and_usable_by_the_owner() {
+    let (client, _publisher, authority, task) = start_broker(test_policy("policy-a", None, vec![]));
+    let (response, mut fds) = client
+        .request(&UpstreamGrantRequest::OpenLoopbackListener { request_id: 1, port: 0 })
+        .await;
+    let (grant_id, granted_port) = match response {
+        UpstreamGrantResponse::LoopbackListenerGranted {
+            request_id: 1,
+            grant_id,
+            port,
+        } => (grant_id, port),
+        response => panic!("unexpected listener grant response: {response:?}"),
+    };
+    client.send(&UpstreamGrantRequest::Adopted { grant_id }).await;
+    let listener = std::net::TcpListener::from(fds.pop().unwrap());
+    assert!(fds.is_empty());
+    let address = listener.local_addr().unwrap();
+    assert_eq!(address.ip(), std::net::Ipv4Addr::LOCALHOST);
+    assert_eq!(address.port(), granted_port);
+    let client_stream = std::net::TcpStream::connect(address).unwrap();
+    let (accepted, peer) = listener.accept().unwrap();
+    assert_eq!(accepted.local_addr().unwrap(), address);
+    assert_eq!(peer, client_stream.local_addr().unwrap());
+    drop(accepted);
+    drop(client_stream);
+    drop(listener);
+    client
+        .send(&UpstreamGrantRequest::Release { resource_id: grant_id })
+        .await;
+    let (replacement, descriptors) = client
+        .request(&UpstreamGrantRequest::OpenLoopbackListener {
+            request_id: 2,
+            port: granted_port,
+        })
+        .await;
+    let replacement_id = match replacement {
+        UpstreamGrantResponse::LoopbackListenerGranted {
+            request_id: 2,
+            grant_id,
+            port,
+        } => {
+            assert_eq!(port, granted_port);
+            grant_id
+        }
+        response => panic!("released listener port was not reusable: {response:?}"),
+    };
+    client
+        .send(&UpstreamGrantRequest::Adopted {
+            grant_id: replacement_id,
+        })
+        .await;
+    drop(descriptors);
+    client
+        .send(&UpstreamGrantRequest::Release {
+            resource_id: replacement_id,
+        })
+        .await;
+    stop_broker(authority, task).await;
+}
+
 impl TestClient {
     fn new(socket: UnixStream) -> Self {
         Self {
@@ -90,6 +151,18 @@ async fn typed_guest_traffic_is_adopted_by_the_registered_proxy_generation() {
         .request_with_descriptor(&UpstreamGrantRequest::AttachProxyMcp { request_id: 2 }, &mcp)
         .await;
     assert_eq!(response, UpstreamGrantResponse::ProxyMcpAdopted { request_id: 2 });
+
+    let (trace_hints, _trace_hints_peer) = UnixStream::pair().unwrap();
+    let response = client
+        .request_with_descriptor(
+            &UpstreamGrantRequest::AttachProxyTraceHints { request_id: 3 },
+            &trace_hints,
+        )
+        .await;
+    assert_eq!(
+        response,
+        UpstreamGrantResponse::ProxyTraceHintsAdopted { request_id: 3 }
+    );
 
     authority.revoke();
     assert!(task.await.unwrap().unwrap_err().contains("revoked"));
@@ -779,14 +852,19 @@ async fn active_descriptor_capacity_is_bounded_and_recovers_after_release() {
     let mut descriptors = Vec::with_capacity(MAX_ACTIVE_GRANTS);
     let mut grant_ids = Vec::with_capacity(MAX_ACTIVE_GRANTS);
     for request_id in 1..=MAX_ACTIVE_GRANTS as u64 {
-        let (response, mut fds) = client
-            .request(&UpstreamGrantRequest::OpenDns {
+        let request = if request_id == 1 {
+            UpstreamGrantRequest::OpenLoopbackListener { request_id, port: 0 }
+        } else {
+            UpstreamGrantRequest::OpenDns {
                 request_id,
                 upstream_index: 0,
-            })
-            .await;
-        let UpstreamGrantResponse::DescriptorGranted { grant_id, .. } = response else {
-            panic!("expected descriptor grant, got {response:?}");
+            }
+        };
+        let (response, mut fds) = client.request(&request).await;
+        let grant_id = match response {
+            UpstreamGrantResponse::DescriptorGranted { grant_id, .. }
+            | UpstreamGrantResponse::LoopbackListenerGranted { grant_id, .. } => grant_id,
+            response => panic!("expected descriptor grant, got {response:?}"),
         };
         client.send(&UpstreamGrantRequest::Adopted { grant_id }).await;
         grant_ids.push(grant_id);

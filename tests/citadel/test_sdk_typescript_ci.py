@@ -17,10 +17,14 @@ def _assert_owners(fast: dict, ci: dict, coverage: dict) -> None:
     assert prewarm < sealed, RATIONALE
     steps = ci["jobs"]["test"]["steps"]
     test = next(step for step in steps if step.get("name") == "TypeScript SDK tests with coverage")
-    assert test["run"].splitlines() == ["pnpm install --frozen-lockfile", (
-        "pnpm test --reporter=default --reporter=junit "
-        "--outputFile=../../cache/target/coverage/junit/typescript-sdk.xml"
-    )], RATIONALE
+    assert test["run"].splitlines() == [
+        "pnpm install --frozen-lockfile",
+        "pnpm run prewarm:package",
+        (
+            "pnpm test --reporter=default --reporter=junit "
+            "--outputFile=../../cache/target/coverage/junit/typescript-sdk.xml"
+        ),
+    ], RATIONALE
     upload = next(step for step in steps if step.get("with", {}).get("flags") == "typescript-sdk")
     assert upload["with"]["files"] == "cache/target/coverage/typescript-sdk/lcov.info", RATIONALE
     assert upload["uses"].startswith("codecov/codecov-action@"), RATIONALE

@@ -29,6 +29,8 @@ pub mod provider;
 pub mod request_parser;
 
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 
 pub use provider::{ModelProtocol, Provider, ProviderKind};
 
@@ -44,6 +46,14 @@ pub struct TraceState {
     /// arguments to the trace_id that produced the tool call.
     file_hints: HashMap<String, String>,
     file_hint_order: VecDeque<(String, String)>,
+}
+
+/// Narrow one-way authority for delivering model/file correlation hints to
+/// the process that owns the workspace monitor.
+pub type TraceHintFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+pub trait TraceHintSink: Send + Sync {
+    fn register<'a>(&'a self, trace_id: &'a str, relative_paths: &'a [String]) -> TraceHintFuture<'a>;
 }
 
 const MAX_FILE_HINTS: usize = 4096;
@@ -85,14 +95,38 @@ impl TraceState {
     /// Register workspace file paths found in model-emitted tool-call
     /// arguments. The fs monitor later uses this to attribute ordinary
     /// workspace writes to the model/tool trace that caused them.
-    pub fn register_tool_file_hints<'a>(&mut self, trace_id: &str, arguments: impl IntoIterator<Item = &'a str>) {
+    pub fn register_tool_file_hints<'a>(
+        &mut self,
+        trace_id: &str,
+        arguments: impl IntoIterator<Item = &'a str>,
+    ) -> Vec<String> {
+        let mut registered = Vec::new();
         for arguments in arguments {
             for path in extract_workspace_file_hints(arguments) {
                 self.file_hints.insert(path.clone(), trace_id.to_string());
-                self.file_hint_order.push_back((path, trace_id.to_string()));
+                self.file_hint_order.push_back((path.clone(), trace_id.to_string()));
                 self.trim_file_hints();
+                registered.push(path);
             }
         }
+        registered.sort();
+        registered.dedup();
+        registered
+    }
+
+    /// Register one already-normalized hint received over the proxy's narrow
+    /// trace-hint capability. Invalid or escaping paths are rejected.
+    pub fn register_file_hint(&mut self, trace_id: &str, relative_path: &str) -> bool {
+        if trace_id.is_empty() || trace_id.len() > 64 {
+            return false;
+        }
+        let Some(path) = normalize_workspace_path_hint(relative_path) else {
+            return false;
+        };
+        self.file_hints.insert(path.clone(), trace_id.to_string());
+        self.file_hint_order.push_back((path, trace_id.to_string()));
+        self.trim_file_hints();
+        true
     }
 
     /// Look up a trace_id for a workspace-relative file path.

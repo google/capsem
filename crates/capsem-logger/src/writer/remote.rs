@@ -9,7 +9,7 @@ use capsem_foundation::ipc_channel;
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerHello, LedgerOutcome, LedgerRequest};
 use capsem_proto::ledger_commitment::{
     CommitmentClientMessage, CommitmentCommand, CommitmentReply, CommitmentServerMessage, LedgerCommitment,
-    ZERO_COMMITMENT_HASH,
+    MAX_COMMITMENTS_PER_CHECKPOINT, ZERO_COMMITMENT_HASH,
 };
 use tokio::sync::oneshot;
 
@@ -435,25 +435,26 @@ impl CommitmentState {
     }
 
     async fn anchor_through(&mut self, through_admission_id: u64) -> Result<(), String> {
-        let count = self
+        let mut remaining = self
             .pending
             .iter()
             .take_while(|(admission_id, _)| *admission_id <= through_admission_id)
             .count();
-        if count == 0 {
-            return Ok(());
+        while remaining > 0 {
+            let count = remaining.min(MAX_COMMITMENTS_PER_CHECKPOINT);
+            let commitments = self.pending[..count]
+                .iter()
+                .map(|(_, commitment)| commitment.clone())
+                .collect();
+            let reply = self.request(CommitmentCommand::Anchor { commitments }).await?;
+            if !matches!(reply, CommitmentReply::Anchored { .. }) {
+                return Err(format!(
+                    "ledger commitment coordinator returned {reply:?} for checkpoint"
+                ));
+            }
+            self.pending.drain(..count);
+            remaining -= count;
         }
-        let commitments = self.pending[..count]
-            .iter()
-            .map(|(_, commitment)| commitment.clone())
-            .collect();
-        let reply = self.request(CommitmentCommand::Anchor { commitments }).await?;
-        if !matches!(reply, CommitmentReply::Anchored { .. }) {
-            return Err(format!(
-                "ledger commitment coordinator returned {reply:?} for checkpoint"
-            ));
-        }
-        self.pending.drain(..count);
         Ok(())
     }
 }

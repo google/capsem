@@ -9,6 +9,7 @@ mod private_seats;
 mod proxy_mcp;
 mod runtime_config;
 mod terminal;
+mod trace_hints;
 mod vsock;
 
 use anyhow::{Context, Result};
@@ -41,10 +42,12 @@ pub(crate) struct Shutdown {
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
     proxy_mcp: Option<tokio::task::JoinHandle<()>>,
+    proxy_trace_hints: Option<tokio::task::JoinHandle<()>>,
 }
 
 struct PreparedOwnerResources {
     seats: private_seats::Prepared,
+    workspace: capsem_foundation::unix::contained::ContainedDir,
     metric_service: Option<std::os::unix::net::UnixStream>,
     ipc_listener: std::os::unix::net::UnixListener,
     launched: std::fs::File,
@@ -54,6 +57,29 @@ struct PreparedOwnerResources {
     mcp_servers: Vec<capsem_proto::mcp_contracts::McpServerDef>,
     builtin_bin: Option<PathBuf>,
     builtin_env: std::collections::HashMap<String, String>,
+    ledger: PreparedLedger,
+}
+
+struct PreparedLedger {
+    stream: std::os::unix::net::UnixStream,
+    commitment: std::os::unix::net::UnixStream,
+    grant: capsem_proto::ledger::LedgerChannelGrant,
+}
+
+impl PreparedLedger {
+    fn from_grant(
+        (stream, commitment, grant): (
+            std::os::unix::net::UnixStream,
+            std::os::unix::net::UnixStream,
+            capsem_proto::ledger::LedgerChannelGrant,
+        ),
+    ) -> Self {
+        Self {
+            stream,
+            commitment,
+            grant,
+        }
+    }
 }
 
 impl Shutdown {
@@ -78,6 +104,10 @@ pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
     if let Some(proxy_mcp) = owned.proxy_mcp.take() {
         proxy_mcp.abort();
         let _ = proxy_mcp.await;
+    }
+    if let Some(proxy_trace_hints) = owned.proxy_trace_hints.take() {
+        proxy_trace_hints.abort();
+        let _ = proxy_trace_hints.await;
     }
     if let Some(publisher) = owned.publisher.take() {
         publisher.shutdown().await;
@@ -285,7 +315,7 @@ fn main() -> Result<()> {
 
     info!(id = %args.id, "capsem-sandbox-process starting");
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
-    capsem_core::session::prepare_owner_state_dir(&session_dir)?;
+    capsem_core::container::publish::Publisher::prepare_session(&session_dir)?;
     // The image share is attached to every session, read-only at the device:
     // a device cannot be added after boot, and an image is pulled only once
     // the VM runs (its owner admits the pull). It stays empty until the
@@ -403,6 +433,19 @@ fn main() -> Result<()> {
     let launched_path = args.uds_path.with_extension("launched");
     let launched = prepare_sentinel(&launched_path)?;
     let ready = prepare_sentinel(&args.uds_path.with_extension("ready"))?;
+    // The grant response proves the supervised ledger worker has opened and
+    // initialized session.db. Acquire it before confinement so the denial
+    // attestation below always tests an existing ledger, then carry only the
+    // connected descriptors across the boundary.
+    let ledger = PreparedLedger::from_grant(
+        rt.block_on(upstream_grants.open_ledger())
+            .context("acquire supervised session ledger")?,
+    );
+    // Opening through the session root after confinement would require read
+    // authority over session.db and every other sibling. Resolve the
+    // guest-writable workspace before confinement, then carry only its
+    // no-follow directory descriptor into the VM owner.
+    let workspace = capsem_core::session::open_workspace(&session_dir).context("open workspace before confinement")?;
     let attestation = prepare_owner_sandbox_attestation(&session_dir)?;
 
     confine_owner(&args, &session_dir).context("install VM-owner confinement")?;
@@ -432,6 +475,7 @@ fn main() -> Result<()> {
 
     let prepared_resources = PreparedOwnerResources {
         seats: prepared_seats,
+        workspace,
         metric_service,
         ipc_listener,
         launched,
@@ -441,6 +485,7 @@ fn main() -> Result<()> {
         mcp_servers,
         builtin_bin,
         builtin_env,
+        ledger,
     };
 
     // Emit boot timeline state transitions for process.log.
@@ -558,6 +603,7 @@ async fn run_async_main_loop(
 ) -> Result<()> {
     let PreparedOwnerResources {
         seats: prepared_seats,
+        workspace,
         metric_service,
         ipc_listener,
         mut launched,
@@ -567,13 +613,10 @@ async fn run_async_main_loop(
         mcp_servers,
         builtin_bin,
         builtin_env,
+        ledger,
     } = prepared;
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
-    let (ledger_stream, commitment_stream, ledger_grant) = upstream_grants
-        .open_ledger()
-        .await
-        .context("acquire supervised session ledger")?;
     let ledger_path = session_dir.join("session.db");
     // 1024 queued events: a guest resolving and fetching in parallel enqueues
     // several rows per request, and a full queue makes every producer sleep
@@ -583,9 +626,9 @@ async fn run_async_main_loop(
     let db = Arc::new(
         tokio::task::spawn_blocking(move || {
             capsem_logger::DbWriter::from_ledger_channel(
-                ledger_stream,
-                commitment_stream,
-                ledger_grant,
+                ledger.stream,
+                ledger.commitment,
+                ledger.grant,
                 &ledger_path,
                 1024,
             )
@@ -618,10 +661,11 @@ async fn run_async_main_loop(
     let proxy_policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(runtime_config.proxy_policy_snapshot());
     let job_store = Arc::new(JobStore {
         publisher: Arc::new(
-            capsem_core::container::publish::Publisher::for_session(
+            capsem_core::container::publish::Publisher::for_prepared_session(
                 &session_dir,
                 runtime_config.network.router.clone(),
             )?
+            .with_listener_authority(upstream_grants.clone())
             .with_security(
                 args.id.clone(),
                 args.vm_name.clone().unwrap_or_else(|| args.id.clone()),
@@ -648,24 +692,15 @@ async fn run_async_main_loop(
     info!(restored, "restored published ports");
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
-    match capsem_core::session::open_workspace(&session_dir)
-        .map_err(anyhow::Error::from)
-        .and_then(|workspace| {
-            capsem_core::fs_monitor::FsMonitor::start(
-                workspace,
-                Arc::clone(&db),
-                Arc::clone(&security_rules),
-                Arc::clone(&model_trace_state),
-            )
-        }) {
-        Ok(monitor) => {
-            info!("host file monitor started");
-            shutdown.lock().await.fs_monitor = Some(monitor);
-        }
-        Err(e) => {
-            error!(error = %e, "failed to start host file monitor");
-        }
-    }
+    let monitor = capsem_core::fs_monitor::FsMonitor::start(
+        workspace,
+        Arc::clone(&db),
+        Arc::clone(&security_rules),
+        Arc::clone(&model_trace_state),
+    )
+    .context("start host file monitor")?;
+    info!("host file monitor started");
+    shutdown.lock().await.fs_monitor = Some(monitor);
 
     let net_state = Arc::new(capsem_core::create_net_state_with_policy(
         &args.id,
@@ -700,6 +735,19 @@ async fn run_async_main_loop(
         plugin_policy: Arc::clone(&plugin_policy),
         proxy_policy: proxy_policy.clone(),
     });
+    let (proxy_trace_hints, owner_trace_hints) = std::os::unix::net::UnixStream::pair()?;
+    let owner_trace_state = Arc::clone(&model_trace_state);
+    let proxy_trace_hints_task = tokio::spawn(async move {
+        if let Err(error) = trace_hints::serve(owner_trace_hints, owner_trace_state).await {
+            tracing::warn!(%error, "proxy trace-hint capability stopped");
+        }
+    });
+    if let Err(error) = upstream_grants.attach_proxy_trace_hints(proxy_trace_hints.into()).await {
+        proxy_trace_hints_task.abort();
+        let _ = proxy_trace_hints_task.await;
+        return Err(error.context("grant proxy trace-hint capability"));
+    }
+    shutdown.lock().await.proxy_trace_hints = Some(proxy_trace_hints_task);
     let (proxy_mcp, owner_mcp) = std::os::unix::net::UnixStream::pair()?;
     let proxy_mcp_task = tokio::spawn(async move {
         if let Err(error) = proxy_mcp::serve(

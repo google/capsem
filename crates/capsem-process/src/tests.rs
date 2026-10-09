@@ -1,5 +1,7 @@
 use super::*;
+use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use clap::Parser;
+use std::os::fd::AsRawFd as _;
 
 #[test]
 fn entry_closes_ambient_descriptors_before_runtime_initialization() {
@@ -25,10 +27,26 @@ fn production_vm_owner_never_opens_the_session_database() {
 }
 
 #[test]
+fn prepared_ledger_retains_the_connected_channels_and_exact_grant() {
+    let (stream, _stream_peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let (commitment, _commitment_peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let stream_fd = stream.as_raw_fd();
+    let commitment_fd = commitment.as_raw_fd();
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([7; 16]), 41, LedgerClientRole::VmOwner).unwrap();
+
+    let prepared = PreparedLedger::from_grant((stream, commitment, grant));
+
+    assert_eq!(prepared.stream.as_raw_fd(), stream_fd);
+    assert_eq!(prepared.commitment.as_raw_fd(), commitment_fd);
+    assert_eq!(prepared.grant, grant);
+}
+
+#[test]
 fn confinement_grants_exact_runtime_paths_and_attests_ledger_denial() {
     let sandbox = include_str!("owner_sandbox.rs");
     assert!(!sandbox.contains("grant_owner_path(policy, session_dir"));
     assert!(sandbox.contains("grant_owner_session_paths(policy, session_dir)"));
+    assert!(!sandbox.contains("&args.active_policy"));
     assert!(sandbox.contains("session_dir.join(\"session.db\")"));
     assert!(sandbox.contains("std::fs::File::open(&attestation.ledger_path)"));
     assert!(sandbox.contains("open session ledger storage"));
@@ -44,6 +62,12 @@ fn suspend_checkpoint_stays_in_owner_state() {
 fn platform_confinement_and_attestation_precede_owner_readiness() {
     let source = include_str!("main.rs");
     let entry = source.split_once("fn main() -> Result<()> {").unwrap().1;
+    let ledger = entry
+        .find("open_ledger()")
+        .expect("VM owner acquires its initialized ledger before confinement");
+    let workspace = entry
+        .find("let workspace = capsem_core::session::open_workspace")
+        .expect("VM owner preopens the contained workspace before confinement");
     let prepare = entry.find("prepare_owner_sandbox_attestation").unwrap();
     let runtime = entry.find("Builder::new_current_thread()").unwrap();
     let confine = entry
@@ -56,8 +80,25 @@ fn platform_confinement_and_attestation_precede_owner_readiness() {
     let boot = entry.find("prepared_vm.boot()").unwrap();
     let run = entry.find("run_async_main_loop(").unwrap();
     assert!(!entry.contains("Builder::new_multi_thread()"));
-    assert!(runtime < prepare && prepare < confine && confine < attest && attest < watcher);
+    assert!(
+        runtime < ledger
+            && ledger < workspace
+            && workspace < prepare
+            && prepare < confine
+            && confine < attest
+            && attest < watcher
+    );
     assert!(confine < boot && boot < run);
+
+    let async_loop = source.split_once("async fn run_async_main_loop(").unwrap().1;
+    assert!(
+        !async_loop.contains("open_workspace(&session_dir)"),
+        "the confined owner must use its preopened workspace descriptor"
+    );
+    assert!(
+        async_loop.contains(".context(\"start host file monitor\")?"),
+        "a missing filesystem audit rail must fail VM startup"
+    );
 }
 
 #[test]

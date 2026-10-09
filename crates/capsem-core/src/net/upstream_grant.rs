@@ -29,7 +29,15 @@ type WireSender = DescriptorSender<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX
 type WireReceiver = DescriptorReceiver<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
 
 enum Command {
+    OpenLoopbackListener {
+        port: u16,
+        reply: oneshot::Sender<Result<crate::container::publish::LoopbackListenerGrant, String>>,
+    },
     AttachProxyMcp {
+        descriptor: OwnedFd,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    AttachProxyTraceHints {
         descriptor: OwnedFd,
         reply: oneshot::Sender<Result<(), String>>,
     },
@@ -65,6 +73,17 @@ enum Command {
     },
 }
 
+struct ListenerLease {
+    grant_id: u64,
+    releases: mpsc::UnboundedSender<u64>,
+}
+
+impl Drop for ListenerLease {
+    fn drop(&mut self) {
+        let _ = self.releases.send(self.grant_id);
+    }
+}
+
 /// Serializes grant protocol traffic over the inherited generation channel.
 #[derive(Clone)]
 pub struct UpstreamGrantClient {
@@ -98,6 +117,18 @@ impl UpstreamGrantClient {
 
     pub fn stop_receiver(&self) -> tokio::sync::watch::Receiver<Option<String>> {
         self.stopped.clone()
+    }
+
+    pub async fn open_loopback_listener(&self, port: u16) -> Result<crate::container::publish::LoopbackListenerGrant> {
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .send(Command::OpenLoopbackListener { port, reply })
+            .await
+            .map_err(|_| anyhow!("upstream grant channel is closed"))?;
+        result
+            .await
+            .map_err(|_| anyhow!("upstream grant channel stopped"))?
+            .map_err(anyhow::Error::msg)
     }
 
     pub async fn open_ledger(&self) -> Result<(UnixStream, UnixStream, LedgerChannelGrant)> {
@@ -138,6 +169,24 @@ impl UpstreamGrantClient {
             .await
             .map_err(|_| anyhow!("upstream grant channel stopped"))?
             .map_err(anyhow::Error::msg)
+    }
+
+    pub async fn attach_proxy_trace_hints(&self, descriptor: OwnedFd) -> Result<()> {
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .send(Command::AttachProxyTraceHints { descriptor, reply })
+            .await
+            .map_err(|_| anyhow!("upstream grant channel is closed"))?;
+        result
+            .await
+            .map_err(|_| anyhow!("upstream grant channel stopped"))?
+            .map_err(anyhow::Error::msg)
+    }
+}
+
+impl crate::container::publish::LoopbackListenerAuthority for UpstreamGrantClient {
+    fn open(&self, port: u16) -> crate::container::publish::LoopbackListenerFuture<'_> {
+        Box::pin(async move { self.open_loopback_listener(port).await.map_err(io::Error::other) })
     }
 }
 
@@ -262,9 +311,17 @@ async fn dispatch(
     command: Command,
 ) -> Result<(), String> {
     match command {
+        Command::OpenLoopbackListener { port, reply } => finish(
+            reply,
+            open_loopback_listener(sender, receiver, releases, request_id, port).await,
+        ),
         Command::AttachProxyMcp { descriptor, reply } => {
             finish(reply, attach_proxy_mcp(sender, receiver, request_id, descriptor).await)
         }
+        Command::AttachProxyTraceHints { descriptor, reply } => finish(
+            reply,
+            attach_proxy_trace_hints(sender, receiver, request_id, descriptor).await,
+        ),
         Command::AttachProxyTraffic {
             service,
             descriptor,
@@ -321,6 +378,67 @@ async fn dispatch(
     }
 }
 
+async fn open_loopback_listener(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    releases: &mpsc::UnboundedSender<u64>,
+    request_id: u64,
+    requested_port: u16,
+) -> Result<Result<crate::container::publish::LoopbackListenerGrant, String>, String> {
+    send_request(
+        sender,
+        &UpstreamGrantRequest::OpenLoopbackListener {
+            request_id,
+            port: requested_port,
+        },
+    )
+    .await?;
+    let (response, mut fds) = receive_response(receiver).await?;
+    match response {
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("loopback listener grant denied: {reason:?}"))),
+        UpstreamGrantResponse::LoopbackListenerGranted {
+            request_id: response_id,
+            grant_id,
+            port: granted_port,
+        } if response_id == request_id => {
+            let descriptor = fds.pop().ok_or("loopback listener grant omitted its descriptor")?;
+            send_request(sender, &UpstreamGrantRequest::Adopted { grant_id }).await?;
+            let listener = std::net::TcpListener::from(descriptor);
+            let address = listener
+                .local_addr()
+                .map_err(|error| format!("inspect granted loopback listener: {error}"))?;
+            if address.ip() != std::net::Ipv4Addr::LOCALHOST || address.port() != granted_port {
+                send_request(sender, &UpstreamGrantRequest::Release { resource_id: grant_id }).await?;
+                return Err(format!(
+                    "granted listener address {address} does not match 127.0.0.1:{granted_port}"
+                ));
+            }
+            if requested_port != 0 && requested_port != granted_port {
+                send_request(sender, &UpstreamGrantRequest::Release { resource_id: grant_id }).await?;
+                return Err(format!(
+                    "granted listener port {granted_port} does not match requested port {requested_port}"
+                ));
+            }
+            listener
+                .set_nonblocking(true)
+                .map_err(|error| format!("prepare granted loopback listener: {error}"))?;
+            Ok(Ok(crate::container::publish::LoopbackListenerGrant::tracked(
+                listener,
+                ListenerLease {
+                    grant_id,
+                    releases: releases.clone(),
+                },
+            )))
+        }
+        response => Err(format!(
+            "unexpected loopback listener response for request {request_id}: {response:?}"
+        )),
+    }
+}
+
 async fn attach_proxy_mcp(
     sender: &WireSender,
     receiver: &WireReceiver,
@@ -346,6 +464,35 @@ async fn attach_proxy_mcp(
         } if response_id == request_id => Ok(Err(format!("proxy MCP handoff denied: {reason:?}"))),
         response => Err(format!(
             "unexpected proxy MCP response for request {request_id}: {response:?}"
+        )),
+    }
+}
+
+async fn attach_proxy_trace_hints(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    request_id: u64,
+    descriptor: OwnedFd,
+) -> Result<Result<(), String>, String> {
+    let bytes = encode_upstream_grant_request(&UpstreamGrantRequest::AttachProxyTraceHints { request_id })
+        .map_err(|error| format!("encode proxy trace-hint handoff: {error:#}"))?;
+    tokio::time::timeout(WIRE_TIMEOUT, sender.send(&bytes, &[descriptor.as_raw_fd()]))
+        .await
+        .map_err(|_| "send proxy trace-hint handoff timed out".to_string())?
+        .map_err(|error| format!("send proxy trace-hint handoff: {error}"))?;
+    drop(descriptor);
+    let (response, fds) = receive_response(receiver).await?;
+    debug_assert!(fds.is_empty());
+    match response {
+        UpstreamGrantResponse::ProxyTraceHintsAdopted {
+            request_id: response_id,
+        } if response_id == request_id => Ok(Ok(())),
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("proxy trace-hint handoff denied: {reason:?}"))),
+        response => Err(format!(
+            "unexpected proxy trace-hint response for request {request_id}: {response:?}"
         )),
     }
 }
