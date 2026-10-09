@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Restrict registered VM-owner service connections to private-name lookup and
+  that owner's metrics route, preventing a compromised worker from invoking
+  the coordinator's public API over its same-user control socket.
+
 - Add the Linux worker confinement primitive that restricts every runtime
   thread to explicit filesystem grants, inherited network descriptors and its
   signal domain while denying ambient control sockets and process execution.
