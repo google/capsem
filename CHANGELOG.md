@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Give each VM owner one coordinator-minted, generation- and role-bound
+  ledger channel and route its existing event writer through the supervised
+  session owner, eliminating the VM process's direct SQLite open.
+
 - Pass the packaged ledger and proxy worker paths explicitly to installed and
   direct services, refuse incomplete confined-worker cohorts, and retire both
   children during reinstall or uninstall.

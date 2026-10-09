@@ -14,6 +14,13 @@ fn entry_closes_ambient_descriptors_before_runtime_initialization() {
 }
 
 #[test]
+fn production_vm_owner_never_opens_the_session_database() {
+    let source = include_str!("main.rs");
+    assert!(!source.contains("DbWriter::open("));
+    assert!(source.contains("DbWriter::from_ledger_channel("));
+}
+
+#[test]
 fn platform_confinement_and_attestation_precede_owner_readiness() {
     let source = include_str!("main.rs");
     let run = source.split_once("async fn run_async_main_loop(").unwrap().1;

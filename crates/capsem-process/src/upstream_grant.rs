@@ -13,6 +13,7 @@ use capsem_core::net::mitm_proxy::{
 };
 use capsem_foundation::unix::fd::{self, SocketShutdown};
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
+use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::upstream_grant::{
     decode_upstream_grant_response, encode_upstream_grant_request, UpstreamDescriptorKind, UpstreamGrantRequest,
     UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
@@ -28,6 +29,9 @@ type WireSender = DescriptorSender<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX
 type WireReceiver = DescriptorReceiver<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
 
 enum Command {
+    OpenLedger {
+        reply: oneshot::Sender<Result<(UnixStream, LedgerChannelGrant), String>>,
+    },
     SetGuestMode {
         relative_path: Vec<u8>,
         mode: u16,
@@ -74,6 +78,18 @@ impl UpstreamGrantClient {
             }
         });
         Ok(Self { commands: commands_tx })
+    }
+
+    pub(crate) async fn open_ledger(&self) -> Result<(UnixStream, LedgerChannelGrant)> {
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .send(Command::OpenLedger { reply })
+            .await
+            .map_err(|_| anyhow!("upstream grant channel is closed"))?;
+        result
+            .await
+            .map_err(|_| anyhow!("upstream grant channel stopped"))?
+            .map_err(anyhow::Error::msg)
     }
 }
 
@@ -198,6 +214,7 @@ async fn dispatch(
     command: Command,
 ) -> Result<(), String> {
     match command {
+        Command::OpenLedger { reply } => finish(reply, open_ledger(sender, receiver, request_id).await),
         Command::SetGuestMode {
             relative_path,
             mode,
@@ -242,6 +259,42 @@ async fn dispatch(
             reply,
             connect_tcp(sender, receiver, releases, request_id, selection_id, &policy_digest).await,
         ),
+    }
+}
+
+async fn open_ledger(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    request_id: u64,
+) -> Result<Result<(UnixStream, LedgerChannelGrant), String>, String> {
+    send_request(sender, &UpstreamGrantRequest::OpenLedger { request_id }).await?;
+    let (response, mut fds) = receive_response(receiver).await?;
+    match response {
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("session ledger grant denied: {reason:?}"))),
+        UpstreamGrantResponse::LedgerGranted {
+            request_id: response_id,
+            grant,
+        } if response_id == request_id => {
+            let descriptor = fds.pop().ok_or("ledger grant omitted its descriptor")?;
+            send_request(
+                sender,
+                &UpstreamGrantRequest::Adopted {
+                    grant_id: grant.client_id(),
+                },
+            )
+            .await?;
+            let stream = UnixStream::from(descriptor);
+            stream
+                .peer_addr()
+                .map_err(|error| format!("adopt granted ledger channel: {error}"))?;
+            Ok(Ok((stream, grant)))
+        }
+        response => Err(format!(
+            "unexpected session ledger response for request {request_id}: {response:?}"
+        )),
     }
 }
 
