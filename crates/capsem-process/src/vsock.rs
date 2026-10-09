@@ -185,7 +185,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     );
     vm_ready.store(true, Ordering::Release);
     let ready_path = uds_path.with_extension("ready");
-    if let Err(e) = std::fs::File::create(&ready_path) {
+    if let Err(e) = std::fs::write(&ready_path, b"ready\n") {
         warn!(error = %e, "failed to create ready sentinel");
     }
 
