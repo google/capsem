@@ -20,7 +20,11 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(not(test))]
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(test)]
-const OPERATION_TIMEOUT: Duration = Duration::from_millis(200);
+// Large body admission includes framing, archive compression, SQLite commit,
+// and its producer commitment. Two hundred milliseconds made the WARC
+// backpressure regression fail during fixture setup on otherwise healthy
+// macOS and loaded Linux builders.
+const OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
 const BACKPRESSURE_MAX_WAIT: Duration = Duration::from_millis(5);
 
 type ClientSender = ipc_channel::Sender<LedgerClientMessage>;

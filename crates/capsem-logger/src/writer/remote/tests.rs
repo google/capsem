@@ -178,6 +178,6 @@ async fn a_stalled_owner_fails_the_pending_operation_and_bounded_shutdown() {
     tokio::task::spawn_blocking(move || writer.shutdown_blocking())
         .await
         .unwrap();
-    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
     server.abort();
 }
