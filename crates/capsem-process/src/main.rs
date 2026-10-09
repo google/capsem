@@ -294,6 +294,15 @@ fn main() -> Result<()> {
         .context("this session already has a running VM owner")?;
 
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let runtime_source = runtime_config::RuntimePolicySource::new(args.active_policy.clone());
+    let runtime_config = runtime_source.load()?;
+    let upstream_grants = {
+        let _runtime = rt.enter();
+        Arc::new(upstream_grant::UpstreamGrantClient::start(
+            upstream_socket,
+            runtime_config.active_policy_digest.clone(),
+        )?)
+    };
 
     info!(id = %args.id, "capsem-sandbox-process starting");
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
@@ -307,11 +316,13 @@ fn main() -> Result<()> {
             tag: "capsem".into(),
             host_path: guest_dir,
             read_only: false,
+            metadata_authority: Some(upstream_grants.clone()),
         },
         VirtioFsShare {
             tag: capsem_core::session::IMAGE_SHARE_TAG.into(),
             host_path: capsem_core::session::prepare_image_share(&session_dir)?,
             read_only: true,
+            metadata_authority: None,
         },
     ];
 
@@ -380,7 +391,7 @@ fn main() -> Result<()> {
     let vm_for_signal = Arc::clone(&vm_arc);
     let vm_for_exit = Arc::clone(&vm_arc);
     rt.spawn(async move {
-        if let Err(e) = run_async_main_loop(
+        if let Err(e) = Box::pin(run_async_main_loop(
             args,
             controller,
             vm_arc,
@@ -388,8 +399,10 @@ fn main() -> Result<()> {
             trace_id_for_loop,
             session_dir_for_loop,
             shutdown_for_loop,
-            upstream_socket,
-        )
+            runtime_source,
+            runtime_config,
+            upstream_grants,
+        ))
         .await
         {
             error!(error = format!("{e:#}"), "async loop failed");
@@ -460,14 +473,10 @@ async fn run_async_main_loop(
     trace_id: String,
     session_dir: std::path::PathBuf,
     shutdown: Arc<Mutex<Shutdown>>,
-    upstream_socket: std::os::unix::net::UnixStream,
+    runtime_source: runtime_config::RuntimePolicySource,
+    runtime_config: runtime_config::RuntimePolicyConfig,
+    upstream_grants: Arc<upstream_grant::UpstreamGrantClient>,
 ) -> Result<()> {
-    let runtime_source = runtime_config::RuntimePolicySource::new(args.active_policy.clone());
-    let runtime_config = runtime_source.load()?;
-    let upstream_grants = Arc::new(upstream_grant::UpstreamGrantClient::start(
-        upstream_socket,
-        runtime_config.active_policy_digest.clone(),
-    )?);
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
     // 1024 queued events: a guest resolving and fetching in parallel enqueues

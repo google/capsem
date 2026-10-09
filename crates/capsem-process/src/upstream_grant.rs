@@ -29,6 +29,11 @@ type WireSender = DescriptorSender<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX
 type WireReceiver = DescriptorReceiver<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
 
 enum Command {
+    SetGuestMode {
+        relative_path: Vec<u8>,
+        mode: u16,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     OpenDns {
         upstream_index: u16,
         policy_digest: String,
@@ -92,6 +97,23 @@ impl UpstreamGrantClient {
             commands,
             policy_digest: Arc::new(RwLock::new(policy_digest)),
         }
+    }
+}
+
+impl capsem_core::GuestMetadataAuthority for UpstreamGrantClient {
+    fn set_mode(&self, relative_path: &[u8], mode: u16) -> io::Result<()> {
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .blocking_send(Command::SetGuestMode {
+                relative_path: relative_path.to_vec(),
+                mode,
+                reply,
+            })
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "upstream grant channel is closed"))?;
+        result
+            .blocking_recv()
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "upstream grant channel stopped"))?
+            .map_err(io::Error::other)
     }
 }
 
@@ -199,6 +221,14 @@ async fn dispatch(
     command: Command,
 ) -> Result<(), String> {
     match command {
+        Command::SetGuestMode {
+            relative_path,
+            mode,
+            reply,
+        } => finish(
+            reply,
+            set_guest_mode(sender, receiver, request_id, relative_path, mode).await,
+        ),
         Command::OpenDns {
             upstream_index,
             policy_digest,
@@ -235,6 +265,40 @@ async fn dispatch(
             reply,
             connect_tcp(sender, receiver, releases, request_id, selection_id, &policy_digest).await,
         ),
+    }
+}
+
+async fn set_guest_mode(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    request_id: u64,
+    relative_path: Vec<u8>,
+    mode: u16,
+) -> Result<Result<(), String>, String> {
+    send_request(
+        sender,
+        &UpstreamGrantRequest::SetGuestMode {
+            request_id,
+            relative_path,
+            mode,
+        },
+    )
+    .await?;
+    let (response, fds) = receive_response(receiver).await?;
+    if !fds.is_empty() {
+        return Err("guest mode response carried a descriptor".into());
+    }
+    match response {
+        UpstreamGrantResponse::GuestModeSet {
+            request_id: response_id,
+        } if response_id == request_id => Ok(Ok(())),
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("guest mode change denied: {reason:?}"))),
+        response => Err(format!(
+            "unexpected guest mode response for request {request_id}: {response:?}"
+        )),
     }
 }
 

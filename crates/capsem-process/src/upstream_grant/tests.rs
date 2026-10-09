@@ -3,6 +3,7 @@ use std::os::fd::{AsFd as _, AsRawFd as _, RawFd};
 
 use capsem_core::net::dns::{DnsResolver, DnsUpstreamGrants};
 use capsem_core::net::mitm_proxy::{TcpUpstreamGrants, UpstreamTarget};
+use capsem_core::GuestMetadataAuthority as _;
 use capsem_proto::upstream_grant::{
     decode_upstream_grant_request, encode_upstream_grant_response, UpstreamDescriptorKind, UpstreamGrantDenial,
     UpstreamGrantRequest, UpstreamGrantResponse,
@@ -44,6 +45,33 @@ fn query() -> Vec<u8> {
     query.extend_from_slice(&[7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0]);
     query.extend_from_slice(&[0, 1, 0, 1]);
     query
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn guest_mode_changes_use_the_serialized_coordinator_channel() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = Arc::new(UpstreamGrantClient::start(worker, POLICY_A.into()).unwrap());
+    let (requests, responses) = channels(broker);
+    let broker_task = tokio::spawn(async move {
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::SetGuestMode {
+                request_id: 1,
+                relative_path: b"workspace/pyvenv/bin/activate".to_vec(),
+                mode: 0o755,
+            }
+        );
+        send_response(&responses, &UpstreamGrantResponse::GuestModeSet { request_id: 1 }, None).await;
+    });
+    let client_for_mode = Arc::clone(&client);
+    tokio::task::spawn_blocking(move || {
+        client_for_mode
+            .set_mode(b"workspace/pyvenv/bin/activate", 0o755)
+            .unwrap();
+    })
+    .await
+    .unwrap();
+    broker_task.await.unwrap();
 }
 
 #[tokio::test]
