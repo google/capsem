@@ -81,7 +81,7 @@ fn main() -> Result<()> {
     // SAFETY: argument parsing has opened no descriptors or threads; process
     // entry still precedes telemetry, descriptor owners and runtime threads.
     unsafe { capsem_foundation::unix::fd::close_inherited_descriptors()? };
-    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     runtime.block_on(run(args))
 }
 
@@ -92,54 +92,25 @@ async fn run(args: Args) -> Result<()> {
     );
     let run_dir = gateway_run_dir(&args);
     let _ = std::fs::create_dir_all(&run_dir);
-    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
-        service: "capsem-gateway",
-        sink: capsem_foundation::telemetry::LogSink::File {
-            path: run_dir.join("gateway.log"),
-        },
-        // tower_http + hyper at debug so request-level and connection-level
-        // failures (parse errors, early RST, malformed headers) land in the
-        // gateway log; without these, auth-path flakes surface as curl "000"
-        // with nothing on the gateway side to explain it.
-        default_filter: "capsem_gateway=info,tower_http=debug,hyper=info",
-    })?;
-
-    // Surface any gateway panic in the log instead of letting it vanish into
-    // the void -- under test load a panicked task would otherwise just drop
-    // the connection, leaving the client with no response and no trace.
-    capsem_foundation::telemetry::install_panic_logger("capsem-gateway");
+    let log_path = run_dir.join("gateway.log");
+    let log_sink = capsem_foundation::telemetry::prepare_file_sink(&log_path)?;
 
     // Companion guards: refuse to run without a live parent service, and
     // refuse if another gateway already holds the singleton lock for this
     // run_dir. Both conditions are expected (stale launch, double-spawn race)
     // and resolved by exiting 0 -- standalone launches become no-ops.
     let lock_path = args.lock_path.clone().unwrap_or_else(|| run_dir.join("gateway.lock"));
-    match capsem_guard::install(args.parent_pid, &lock_path) {
-        Ok(Some(guards)) => {
-            // Keep the guards alive for the process's lifetime.
-            Box::leak(Box::new(guards));
-        }
-        Ok(None) => {
-            tracing::info!(
-                lock = %lock_path.display(),
-                "another capsem-gateway is already running; exiting 0"
-            );
-            return Ok(());
-        }
-        Err(e) => {
-            tracing::info!(
-                error = %e,
-                "gateway refusing to run without a live capsem-service; exiting 0"
-            );
-            return Ok(());
-        }
-    }
+    let Some(parent_pid) = args
+        .parent_pid
+        .filter(|parent_pid| capsem_guard::parent_is_expected(*parent_pid))
+    else {
+        return Ok(());
+    };
+    let Some(_singleton) = capsem_guard::Singleton::try_acquire(&lock_path)? else {
+        return Ok(());
+    };
     let uds_path = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
-
-    // Check if service socket exists (warning only -- service may start later)
-    if !uds_path.exists() {
-        tracing::warn!(path = %uds_path.display(), "service socket not found -- requests will return 502 until service starts");
-    }
+    let service_socket_missing = !uds_path.exists();
 
     // Bind TCP listener first so the runtime file records the real bound port
     // (args.port may be 0 to request an OS-assigned port).
@@ -163,6 +134,24 @@ async fn run(args: Args) -> Result<()> {
     // SAFETY: the service gives this child sole ownership of stdin as its
     // descriptor grant socket. No standard-input owner has been created.
     let grant_socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(0) };
+
+    confine_gateway(&auth_state, &uds_path, listener.local_addr()?, &log_path)?;
+
+    let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
+        service: "capsem-gateway",
+        sink: log_sink,
+        // tower_http + hyper at debug so request-level and connection-level
+        // failures (parse errors, early RST, malformed headers) land in the
+        // gateway log; without these, auth-path flakes surface as curl "000"
+        // with nothing on the gateway side to explain it.
+        default_filter: "capsem_gateway=info,tower_http=debug,hyper=info",
+    })?;
+    capsem_foundation::telemetry::install_panic_logger("capsem-gateway");
+    capsem_guard::watch_parent_or_exit(Some(parent_pid))?;
+
+    if service_socket_missing {
+        tracing::warn!(path = %uds_path.display(), "service socket not found -- requests will return 502 until service starts");
+    }
     let service_client = ServiceClient::granted(service_grant::GatewayGrantClient::start(grant_socket)?);
     let state = Arc::new(AppState {
         token,
@@ -173,8 +162,6 @@ async fn run(args: Args) -> Result<()> {
         events_tx,
         previews: preview::PreviewState::new(preview_port),
     });
-
-    confine_gateway(&auth_state, &uds_path, listener.local_addr()?)?;
 
     let preview_state = state.clone();
     tokio::spawn(async move {
@@ -229,7 +216,12 @@ async fn run(args: Args) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn confine_gateway(_auth_state: &AuthState, uds_path: &std::path::Path, listener: SocketAddr) -> Result<()> {
+fn confine_gateway(
+    _auth_state: &AuthState,
+    uds_path: &std::path::Path,
+    listener: SocketAddr,
+    _log_path: &std::path::Path,
+) -> Result<()> {
     use capsem_foundation::unix::worker_sandbox::{Policy, Role};
     capsem_foundation::unix::worker_sandbox::confine(&Policy::new(Role::Gateway))
         .context("confine gateway before readiness")?;
@@ -237,13 +229,19 @@ fn confine_gateway(_auth_state: &AuthState, uds_path: &std::path::Path, listener
 }
 
 #[cfg(target_os = "macos")]
-fn confine_gateway(auth_state: &AuthState, uds_path: &std::path::Path, listener: SocketAddr) -> Result<()> {
+fn confine_gateway(
+    auth_state: &AuthState,
+    uds_path: &std::path::Path,
+    listener: SocketAddr,
+    log_path: &std::path::Path,
+) -> Result<()> {
     use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
     let policy = Policy::new(Role::Gateway)
         .allow(&auth_state.token_path, Access::ReadWrite)
         .allow(&auth_state.port_path, Access::ReadWrite)
         .allow(&auth_state.pid_path, Access::ReadWrite)
-        .allow(&auth_state.preview_port_path, Access::ReadWrite);
+        .allow(&auth_state.preview_port_path, Access::ReadWrite)
+        .allow(log_path, Access::ReadWrite);
     capsem_foundation::unix::worker_sandbox::confine(&policy).context("confine gateway before readiness")?;
     attest_gateway(uds_path, listener)
 }
@@ -261,7 +259,12 @@ fn attest_gateway(uds_path: &std::path::Path, listener: SocketAddr) -> Result<()
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn confine_gateway(_auth_state: &AuthState, _uds_path: &std::path::Path, _listener: SocketAddr) -> Result<()> {
+fn confine_gateway(
+    _auth_state: &AuthState,
+    _uds_path: &std::path::Path,
+    _listener: SocketAddr,
+    _log_path: &std::path::Path,
+) -> Result<()> {
     Ok(())
 }
 
