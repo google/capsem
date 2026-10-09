@@ -31,7 +31,8 @@ ALLOWED = {
     # The definition.
     "crates/capsem-core/src/lib.rs": 1,
     # The VirtioFS share root handed to the hypervisor and owner sandbox.
-    "crates/capsem-process/src/main.rs": 2,
+    "crates/capsem-process/src/main.rs": 1,
+    "crates/capsem-process/src/owner_sandbox.rs": 1,
 }
 BY_PATH = re.compile(r"guest_share_dir\(|join\(\s*\"guest\"\s*\)|\"guest/")
 

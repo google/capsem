@@ -36,7 +36,7 @@ ALLOWED_PROCESS_SOCKET_LINES = {
     "crates/capsem-process/src/cables.rs": {
         "let source = capsem_core::container::publish::Source(std::net::TcpStream::from("
     },
-    "crates/capsem-process/src/main.rs": {
+    "crates/capsem-process/src/owner_sandbox.rs": {
         "std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, 9)).map(|_| ()),",
     },
     "crates/capsem-proxy/src/main.rs": {

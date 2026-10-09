@@ -997,8 +997,7 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     for text in (docs, release_skill, asset_skill):
         assert "release-channel-staging.yaml" in text
         assert (
-            "without invoking `build-assets`" in text
-            or "without invoking VM asset builds" in text
+            "without invoking `build-assets`" in text or "without invoking VM asset builds" in text
         )
 
 
@@ -5779,7 +5778,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
 
     asset_pos = block.find("bash build_system/scripts/test/prepare-install-test-assets.sh")
     build_pos = block.find(
-            "cargo build -p capsem-process -p capsem-ledger -p capsem-proxy -p capsem-service -p capsem "
+        "cargo build -p capsem-process -p capsem-ledger -p capsem-proxy -p capsem-service -p capsem "
         "-p capsem-mock-server -p capsem-bench"
     )
     bench_package_pos = block.find("-p capsem-bench")
@@ -6348,16 +6347,18 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
 
 
 def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
-    """A running fork is cloned by its own process with the guest frozen.
+    """A running fork is coordinator-cloned while its owner holds the freeze.
 
     The fork used to run `sync; true` in the guest and copy the live ext4
-    overlay, which a slow sparse copy could tear. The freeze and the thaw must
-    live in one process, so no other process's failure can leave a guest
-    frozen, and the service must not fall back to an unfrozen copy.
+    overlay, which a slow sparse copy could tear. The VM owner holds the freeze
+    while the trusted coordinator owns host paths and asks the ledger owner for
+    a flushed snapshot. No component can substitute an unfrozen copy or regain
+    another owner's path.
     """
     service = PROJECT_ROOT / "crates" / "capsem-service" / "src"
     parent = (service / "vm_files.rs").read_text()
     fork = (service / "vm_files" / "fork.rs").read_text()
+    ledger = (PROJECT_ROOT / "crates" / "capsem-logger" / "src" / "ledger_server.rs").read_text()
     owner = (
         PROJECT_ROOT / "crates" / "capsem-process" / "src" / "vsock" / "clone_state.rs"
     ).read_text()
@@ -6366,13 +6367,18 @@ def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
     assert "ServiceToProcess::CloneState {" in fork
     assert "sync; true" not in fork
     assert "with_quiescence(" in owner
-    # The clone runs under the freeze, after the ledger flush (#243): a fork
-    # copies every row the source accepted, and a failed flush fails the fork.
-    assert "flush_then_clone(" in owner.split("with_quiescence(", 1)[1]
-    flush_then_clone = owner.split("async fn flush_then_clone(", 1)[1].split("\n}\n", 1)[0]
-    assert flush_then_clone.index("flush_checked()") < flush_then_clone.index(
-        "clone_sandbox_state("
-    )
+    assert "await_coordinator_copy(" in owner.split("with_quiescence(", 1)[1]
+    running = fork.split("async fn clone_guest_state(", 1)[1].split(
+        "async fn receive_clone_message(", 1
+    )[0]
+    coordinator_copy = "let copied = clone_coordinator_state("
+    assert running.index("ClonePhase::Ready") < running.index(coordinator_copy)
+    assert running.index(coordinator_copy) < running.index("ServiceToProcess::CloneStateComplete")
+    assert "client.snapshot(" in fork
+    snapshot = ledger.split("LedgerCommand::Snapshot {", 1)[1].split("LedgerCommand::Shutdown", 1)[
+        0
+    ]
+    assert snapshot.index("self.db.flush().await") < snapshot.index("snapshot_session_ledger(")
 
 
 def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
