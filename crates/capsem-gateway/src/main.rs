@@ -166,7 +166,7 @@ async fn run(args: Args) -> Result<()> {
     let service_client = ServiceClient::granted(service_grant::GatewayGrantClient::start(grant_socket)?);
     let state = Arc::new(AppState {
         token,
-        uds_path,
+        uds_path: uds_path.clone(),
         service_client,
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
@@ -174,7 +174,7 @@ async fn run(args: Args) -> Result<()> {
         previews: preview::PreviewState::new(preview_port),
     });
 
-    confine_linux_gateway()?;
+    confine_linux_gateway(&uds_path, listener.local_addr()?)?;
 
     let preview_state = state.clone();
     tokio::spawn(async move {
@@ -229,16 +229,35 @@ async fn run(args: Args) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn confine_linux_gateway() -> Result<()> {
+fn confine_linux_gateway(uds_path: &std::path::Path, listener: SocketAddr) -> Result<()> {
     use capsem_foundation::unix::worker_sandbox::{Policy, Role};
     capsem_foundation::unix::worker_sandbox::confine(&Policy::new(Role::Gateway))
         .context("confine gateway before readiness")?;
+    require_denied(std::fs::File::open("/etc/passwd"), "read ambient host files")?;
+    require_denied(std::net::TcpStream::connect(listener), "dial TCP directly")?;
+    require_denied(
+        std::os::unix::net::UnixStream::connect(uds_path),
+        "dial control sockets by path",
+    )?;
+    require_denied(
+        std::process::Command::new("/bin/true").status(),
+        "execute processes",
+    )?;
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-fn confine_linux_gateway() -> Result<()> {
+fn confine_linux_gateway(_uds_path: &std::path::Path, _listener: SocketAddr) -> Result<()> {
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn require_denied<T>(result: std::io::Result<T>, operation: &str) -> Result<()> {
+    match result {
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+        Err(error) => anyhow::bail!("gateway confinement did not prove it cannot {operation}: {error}"),
+        Ok(_) => anyhow::bail!("gateway confinement allowed it to {operation}"),
+    }
 }
 
 fn gateway_run_dir(args: &Args) -> PathBuf {
