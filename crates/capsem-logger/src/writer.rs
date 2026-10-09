@@ -293,10 +293,7 @@ struct WriteEnvelope {
 impl WriteEnvelope {
     #[cfg(test)]
     fn plain(op: WriteOp) -> Self {
-        Self {
-            op,
-            commitment: None,
-        }
+        Self { op, commitment: None }
     }
 }
 
@@ -314,7 +311,7 @@ fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessag
 mod barriers;
 mod batch;
 mod operation;
-pub(crate) use operation::commitment_event_hash;
+pub use operation::commitment_event_hash;
 mod recording;
 mod remote;
 #[cfg(test)]
