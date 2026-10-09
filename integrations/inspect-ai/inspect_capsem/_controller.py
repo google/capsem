@@ -71,14 +71,6 @@ class CapsemController(Protocol):
     async def close(self) -> None: ...
 
 
-def is_root_user_spec(user: str | None) -> bool:
-    """Return True when `user` is unset, empty, or resolves to root (`root`, `0`, `0:0`)."""
-    if user is None:
-        return True
-    u, _, g = user.strip().partition(":")
-    return u.strip().lower() in ("", "root", "0") and g.strip().lower() in ("", "root", "0")
-
-
 def _normalize_image_ref(image: str | None) -> str | None:
     if not image or not image.strip():
         return None

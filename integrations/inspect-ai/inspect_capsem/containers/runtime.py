@@ -206,6 +206,10 @@ async def prepare_oci_workload_container(
         await controller.exec_in_vm(
             vm_id, f"mkdir -p {q_wd} && (chmod a+rx {q_wd} 2>/dev/null || true)"
         )
+    if spec.build and spec.build.get("ca_pem_file"):
+        from .dockerfile_ca import _CA_NSS_SCRIPT
+
+        await controller.exec_in_vm(vm_id, _CA_NSS_SCRIPT, timeout=15)
     if spec.healthcheck:
         await _wait_for_oci_healthcheck(controller, vm_id, spec.healthcheck)
 

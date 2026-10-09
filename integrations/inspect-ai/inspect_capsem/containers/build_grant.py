@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from .build_ca import (
+    _is_resolved_build_spec,
+    _resolve_docker_config_dir,
+    resolve_build_ca_files,
+)
 from .build_context import (
     _is_within,
     prepare_compose_build_service,
@@ -18,10 +23,7 @@ from .compose_fields import CAPSEM_INSPECT_ALLOWED_HOST_PATHS_VAR, _realpath
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 _ALLOWED_BUILD_NETWORKS = frozenset({"none", "default"})
-_GRANT_FIELDS = frozenset({"enabled", "allowed_contexts", "network"})
-_RESOLVED_BUILD_KEYS = frozenset(
-    {"context", "dockerfile", "args", "target", "network", "docker_config_dir"}
-)
+_GRANT_FIELDS = frozenset({"enabled", "allowed_contexts", "network", "ca_pem"})
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,7 @@ class HostBuildGrant:
     enabled: bool = True
     allowed_contexts: tuple[str, ...] = ()
     network: Literal["none", "default"] | None = None
+    ca_pem: bool = True
 
     def __post_init__(self) -> None:
         clean_ctx = tuple(str(p).strip() for p in self.allowed_contexts if str(p).strip())
@@ -39,6 +42,8 @@ class HostBuildGrant:
             raise ValueError("Host build policy forbids network='host'; allowed: 'none', 'default'")
         if self.network is not None and self.network not in _ALLOWED_BUILD_NETWORKS:
             raise ValueError(f"Unsupported host build network {self.network!r}")
+        if not isinstance(self.ca_pem, bool):
+            raise TypeError(f"HostBuildGrant.ca_pem must be a bool; got {type(self.ca_pem)!r}")
 
     @classmethod
     def from_value(cls, value: Any) -> HostBuildGrant | None:
@@ -53,10 +58,14 @@ class HostBuildGrant:
             items = raw_ctx.split(",") if isinstance(raw_ctx, str) else raw_ctx
             raw_net = value.get("network")
             net: Any = str(raw_net).strip().lower() if raw_net is not None else None
+            raw_ca = value.get("ca_pem", True)
+            if not isinstance(raw_ca, bool):
+                raise TypeError(f"HostBuildGrant.ca_pem must be a bool; got {type(raw_ca)!r}")
             return cls(
                 enabled=bool(value.get("enabled", True)),
                 allowed_contexts=tuple(str(p).strip() for p in items if str(p).strip()),
                 network=net,
+                ca_pem=raw_ca,
             )
         raise TypeError(f"Expected HostBuildGrant, mapping, or bool; got {type(value)!r}")
 
@@ -65,6 +74,7 @@ class HostBuildGrant:
             "enabled": self.enabled,
             "allowed_contexts": list(self.allowed_contexts),
             "network": self.network,
+            "ca_pem": self.ca_pem,
         }
 
 
@@ -95,21 +105,6 @@ def _resolve_build_network(grant: HostBuildGrant | None) -> str:
             )
         return grant.network
     return env_net
-
-
-def _resolve_docker_config_dir(operator_roots: tuple[Path, ...]) -> str | None:
-    env_dcfg = os.environ.get("CAPSEM_INSPECT_BUILD_DOCKER_CONFIG", "").strip()
-    if not env_dcfg:
-        return None
-    env_real = _realpath(env_dcfg)
-    if not env_real.is_dir():
-        raise ValueError(f"CAPSEM_INSPECT_BUILD_DOCKER_CONFIG directory not found: {env_dcfg}")
-    if not any(_is_within(env_real, r) for r in operator_roots):
-        raise ValueError(
-            f"CAPSEM_INSPECT_BUILD_DOCKER_CONFIG {str(env_real)!r} is not within "
-            "CAPSEM_INSPECT_ALLOWED_HOST_PATHS"
-        )
-    return str(env_real)
 
 
 def _narrow_roots(
@@ -172,28 +167,18 @@ def resolve_effective_host_build(
     ctx_real, df_real = resolve_context_and_dockerfile(
         dockerfile, build_context, allowed_roots, stanza=stanza
     )
+    net = _resolve_build_network(grant)
+    ca_file, bundle_file = resolve_build_ca_files(grant, net, operator_roots)
     return {
         "context": str(ctx_real),
         "dockerfile": str(df_real),
         "args": {str(k): str(v) for k, v in (build_args or {}).items()},
         "target": build_target,
-        "network": _resolve_build_network(grant),
+        "network": net,
         "docker_config_dir": _resolve_docker_config_dir(operator_roots),
+        "ca_pem_file": ca_file,
+        "ca_bundle_file": bundle_file,
     }
-
-
-def _is_resolved_build_spec(val: Mapping[str, Any]) -> bool:
-    return (
-        set(val.keys()) == _RESOLVED_BUILD_KEYS
-        and isinstance(val.get("context"), str)
-        and isinstance(val.get("dockerfile"), str)
-        and isinstance(val.get("args"), Mapping)
-        and val.get("network") in _ALLOWED_BUILD_NETWORKS
-        and all(
-            val.get(k) is None or isinstance(val.get(k), str)
-            for k in ("target", "docker_config_dir")
-        )
-    )
 
 
 def resolve_direct_host_build(
@@ -203,7 +188,7 @@ def resolve_direct_host_build(
     allowed_host_env: Sequence[str] = (),
     host_build: Any = None,
 ) -> dict[str, Any] | None:
-    """Parse and validate direct `CapsemSandboxConfig(build=..., dockerfile=...)` via Compose service parser."""
+    """Parse and validate direct `CapsemSandboxConfig(build=..., dockerfile=...)`."""
     raw_build = svc.get("build")
     if isinstance(raw_build, Mapping) and _is_resolved_build_spec(raw_build):
         return resolve_effective_host_build(

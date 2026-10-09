@@ -214,7 +214,9 @@ def compute_build_cache_key(
     platform: str | None = None,
     ca_fingerprint: str | None = None,
 ) -> str:
-    """Compute a deterministic SHA-256 cache key over the build spec and all context files."""
+    """Compute a deterministic SHA-256 cache key over the build spec, CA bundle, and context."""
+    from .build_ca import compute_ca_fingerprint
+
     eff_platform = (platform or default_linux_platform()).strip()
     ctx_dir = Path(str(spec["context"]))
     df_str = spec.get("dockerfile")
@@ -224,6 +226,7 @@ def compute_build_cache_key(
     if not df_path.is_file():
         raise FileNotFoundError(f"Dockerfile not found: {df_path}")
     df_bytes = df_path.read_bytes()
+    eff_ca_fp = ca_fingerprint if ca_fingerprint is not None else compute_ca_fingerprint(spec)
 
     h = hashlib.sha256()
     header = {
@@ -233,7 +236,7 @@ def compute_build_cache_key(
         "target": spec.get("target"),
         "args": sorted((str(k), str(v)) for k, v in (spec.get("args") or {}).items()),
         "network": spec.get("network", "none"),
-        "ca_sha256": ca_fingerprint or "",
+        "ca_sha256": eff_ca_fp or "",
     }
     h.update(json.dumps(header, sort_keys=True, separators=(",", ":")).encode())
     for rel_posix, fpath in iter_context_files(ctx_dir, include_ignored_regular=True):

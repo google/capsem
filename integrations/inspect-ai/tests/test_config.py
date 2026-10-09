@@ -11,8 +11,9 @@ import pytest
 from inspect_ai.util._sandbox.registry import registry_find_sandboxenv
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
 from inspect_capsem._compose import coerce_config
-from inspect_capsem._controller import SdkCapsemController, is_root_user_spec
+from inspect_capsem._controller import SdkCapsemController
 from inspect_capsem._exec import _format_exec_command
+from inspect_capsem._users import is_root_user_spec
 from inspect_capsem.containers.compose_fields import (
     _is_host_path_allowed,
     extract_capsem_compose_fields,
