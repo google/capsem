@@ -174,6 +174,26 @@ mod against_the_service {
         service.route("POST", "/run", 503, json!({"error": "VM assets are not ready"}));
         let error = run(&service.client, &args(&["true"])).await.unwrap_err();
         assert!(format!("{error:#}").contains("VM assets are not ready"), "{error:#}");
+
+        service
+            .route(
+                "POST",
+                "/vms/create",
+                200,
+                json!({"id": "vm-9", "name": "vm-9", "status": "Running", "available_actions": []}),
+            )
+            .route(
+                "GET",
+                "/vms/vm-9/container",
+                200,
+                json!({"state": "failed", "image": "docker://redis:7", "error": "pull failed"}),
+            )
+            .route("DELETE", "/vms/vm-9/delete", 200, json!({"success": true}));
+        let error = run(&service.client, &args(&["--image", "docker://redis:7"]))
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("pull failed"), "{error:#}");
+        assert_eq!(service.find("DELETE", "/vms/vm-9/delete").len(), 1);
     }
 }
 

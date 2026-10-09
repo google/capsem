@@ -17,6 +17,7 @@ fn running_fork_source(state: &Arc<ServiceState>, dir: &tempfile::TempDir, refus
             name: "fork-src".into(),
             uds_path: uds_path.clone(),
             session_dir: session_dir.clone(),
+            labels: Some(HashMap::from([("suite".into(), "eval".into())])),
             ..test_instance()
         },
     );
@@ -34,6 +35,7 @@ async fn handle_fork_creates_persistent_sandbox() {
         Json(ForkRequest {
             name: "my-fork".into(),
             description: Some("test".into()),
+            labels: None,
         }),
     )
     .await
@@ -50,6 +52,11 @@ async fn handle_fork_creates_persistent_sandbox() {
     assert_eq!(entry.asset_pins, test_asset_pins());
     assert_eq!(entry.forked_from, Some("fork-src".into()));
     assert_eq!(entry.description, Some("test".into()));
+    assert_eq!(
+        entry.labels,
+        Some(HashMap::from([("suite".into(), "eval".into())])),
+        "forked VM must inherit source labels by default"
+    );
     assert_eq!(entry.base_version, "0.0.0");
     // The owner cloned into the directory the service registered.
     assert_eq!(
@@ -72,6 +79,7 @@ async fn a_fork_whose_guest_will_not_freeze_fails_and_leaves_nothing() {
         Json(ForkRequest {
             name: "my-fork".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
@@ -98,6 +106,7 @@ async fn handle_fork_not_found() {
         Json(ForkRequest {
             name: "img".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
@@ -132,6 +141,7 @@ async fn handle_fork_duplicate_returns_conflict() {
         Json(ForkRequest {
             name: "same-name".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
@@ -143,6 +153,7 @@ async fn handle_fork_duplicate_returns_conflict() {
         Json(ForkRequest {
             name: "same-name".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
@@ -166,6 +177,7 @@ async fn handle_fork_from_persistent_registry() {
             PersistentVmEntry {
                 id: vm_id.clone(),
                 created_at: "2026-01-01T00:00:00Z".into(),
+                labels: Some(HashMap::from([("suite".into(), "eval".into())])),
                 ..test_persistent_entry("pers-vm", session_dir.clone())
             },
         );
@@ -173,10 +185,11 @@ async fn handle_fork_from_persistent_registry() {
     // state is already Arc<ServiceState> from make_test_state*
     let result = handle_fork(
         State(state.clone()),
-        Path(vm_id),
+        Path(vm_id.clone()),
         Json(ForkRequest {
             name: "from-pers".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
@@ -189,7 +202,72 @@ async fn handle_fork_from_persistent_registry() {
     assert_eq!(entry.asset_pins, test_asset_pins());
     assert!(entry.legacy_profile_id.is_none());
     assert_eq!(entry.asset_pins, test_asset_pins());
+    assert_eq!(
+        entry.labels,
+        Some(HashMap::from([("suite".into(), "eval".into())])),
+        "forked persistent VM must inherit source labels by default"
+    );
     drop(registry);
+
+    // Overriding labels on fork replaces source labels; empty map `{}` clears them to `None`.
+    let overridden = HashMap::from([("suite".into(), "override".into())]);
+    let _ = handle_fork(
+        State(state.clone()),
+        Path(vm_id.clone()),
+        Json(ForkRequest {
+            name: "from-pers-override".into(),
+            description: None,
+            labels: Some(overridden.clone()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("from-pers-override")
+            .unwrap()
+            .labels,
+        Some(overridden)
+    );
+
+    let _ = handle_fork(
+        State(state.clone()),
+        Path(vm_id.clone()),
+        Json(ForkRequest {
+            name: "from-pers-cleared".into(),
+            description: None,
+            labels: Some(HashMap::new()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("from-pers-cleared")
+            .unwrap()
+            .labels,
+        None,
+        "empty labels map on fork must clear inherited labels to None"
+    );
+
+    let bad = handle_fork(
+        State(state.clone()),
+        Path(vm_id),
+        Json(ForkRequest {
+            name: "from-pers-bad".into(),
+            description: None,
+            labels: Some(HashMap::from([("dot.key".into(), "v".into())])),
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(bad.0, StatusCode::BAD_REQUEST, "{}", bad.1);
 }
 
 /// A VM from before profiles were removed is refused, not laundered into a
@@ -219,6 +297,7 @@ async fn handle_fork_refuses_a_profile_era_vm() {
         Json(ForkRequest {
             name: "blocked-fork".into(),
             description: None,
+            labels: None,
         }),
     )
     .await

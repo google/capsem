@@ -118,9 +118,22 @@ class VM(Client):
     async def delete(self) -> models.VmActionResponse:
         return await api.delete_vm(self._transport, id=await self._resolve())
 
-    async def fork(self, name: str, *, description: str | None = None) -> VM:
+    async def fork(
+        self,
+        name: str,
+        *,
+        description: str | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> VM:
+        """Fork this VM into a new persistent VM.
+
+        Args:
+            name: Persistent name for the forked VM.
+            description: Optional description for the forked VM.
+            labels: Optional labels overriding the source VM's labels (`{}` clears).
+        """
         response = await api.fork_vm(self._transport, id=await self._resolve(), body=models.ForkRequest(
-            name=name, description=description,
+            name=name, description=description, labels=labels,
         ))
         return VM._bind(
             self._transport, id=response.id, name=response.name, container=self._has_container,

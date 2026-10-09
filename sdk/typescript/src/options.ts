@@ -7,7 +7,7 @@ export interface ImageListOptions extends CallOptions {refresh?: boolean}
 export interface ImagePullOptions extends CallOptions {registry?: Registry}
 export interface CreateOptions extends CallOptions {
   name?: string; cpus?: number; memory?: number;
-  env?: Record<string, string>; networks?: readonly NetworkInfo[];
+  env?: Record<string, string>; labels?: Record<string, string>; networks?: readonly NetworkInfo[];
   image?: string; command?: readonly string[]; registry?: Registry;
 }
 export interface RunOptions extends CallOptions {

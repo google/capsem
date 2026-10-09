@@ -316,6 +316,7 @@ fn provision_request_serde() {
         cpus: Some(4),
         persistent: true,
         env: None,
+        labels: None,
         from: None,
         networks: Vec::new(),
         container: None,
@@ -338,6 +339,7 @@ fn provision_request_with_env() {
         cpus: Some(2),
         persistent: true,
         env: Some(env),
+        labels: None,
         from: None,
         networks: Vec::new(),
         container: None,
@@ -356,6 +358,7 @@ fn provision_request_env_omitted_when_none() {
         cpus: Some(2),
         persistent: false,
         env: None,
+        labels: None,
         from: None,
         networks: Vec::new(),
         container: None,
@@ -373,6 +376,7 @@ fn provision_request_omits_unset_resources_for_the_service_defaults() {
         cpus: None,
         persistent: false,
         env: None,
+        labels: None,
         from: None,
         networks: Vec::new(),
         container: None,
@@ -389,6 +393,7 @@ fn provision_request_with_from() {
         cpus: Some(2),
         persistent: false,
         env: None,
+        labels: None,
         from: Some("my-sandbox".into()),
         networks: Vec::new(),
         container: None,
@@ -407,6 +412,7 @@ fn provision_request_from_omitted_when_none() {
         cpus: Some(2),
         persistent: false,
         env: None,
+        labels: None,
         from: None,
         networks: Vec::new(),
         container: None,
@@ -581,11 +587,13 @@ fn fork_request_serde() {
     let req = ForkRequest {
         name: "my-img".into(),
         description: Some("test image".into()),
+        labels: Some(HashMap::from([("suite".into(), "eval".into())])),
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: ForkRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(req2.name, "my-img");
     assert_eq!(req2.description, Some("test image".into()));
+    assert_eq!(req2.labels, Some(HashMap::from([("suite".into(), "eval".into())])));
 }
 
 #[test]
@@ -593,9 +601,11 @@ fn fork_request_description_omitted_when_none() {
     let req = ForkRequest {
         name: "img".into(),
         description: None,
+        labels: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("description"));
+    assert!(!json.contains("labels"));
 }
 
 #[test]

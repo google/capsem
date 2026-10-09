@@ -23,7 +23,7 @@ where
     format!("{base}-{}", rand::thread_rng().gen_range(10_000..99_999))
 }
 
-/// Validate that a persistent VM name is safe for use as a directory name.
+/// Validate that a persistent VM name (or VM label key) is safe for use as an identifier.
 ///
 /// Rules:
 /// - non-empty
@@ -46,6 +46,39 @@ pub fn validate_vm_name(name: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Validate user-supplied advisory VM labels before persisting or registering a VM.
+///
+/// Rules:
+/// - at most 64 entries
+/// - keys: reuse the VM-name rule (`validate_vm_name`: `1..=64` ASCII chars starting with
+///   `[A-Za-z0-9]` and containing only `[A-Za-z0-9_-]`)
+/// - values: `<= 255` UTF-8 bytes with no control characters (`char::is_control`)
+pub fn validate_vm_labels(labels: Option<&std::collections::HashMap<String, String>>) -> Result<()> {
+    let Some(labels) = labels else {
+        return Ok(());
+    };
+    if labels.len() > 64 {
+        anyhow::bail!("too many VM labels (max 64)");
+    }
+    for (key, value) in labels {
+        validate_vm_name(key).map_err(|reason| anyhow::anyhow!("invalid VM label key {key:?}: {reason}"))?;
+        if value.len() > 255 {
+            anyhow::bail!("VM label value for {key:?} too long (max 255 bytes)");
+        }
+        if value.chars().any(char::is_control) {
+            anyhow::bail!("VM label value for {key:?} must not contain control characters");
+        }
+    }
+    Ok(())
+}
+
+/// Normalize an optional label map so an empty map `{}` is treated identically to `None`.
+pub fn non_empty_labels(
+    labels: Option<std::collections::HashMap<String, String>>,
+) -> Option<std::collections::HashMap<String, String>> {
+    labels.filter(|labels| !labels.is_empty())
 }
 
 #[cfg(test)]

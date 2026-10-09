@@ -142,6 +142,7 @@ pub(crate) fn test_instance() -> InstanceInfo {
         base_version: "0.0.0".into(),
         persistent: false,
         env: None,
+        labels: None,
         forked_from: None,
         owner_secret: String::new(),
     }
@@ -389,6 +390,23 @@ pub(crate) fn test_persistent_entry(name: &str, session_dir: PathBuf) -> Persist
         last_error: None,
         checkpoint_path: None,
         env: None,
+        labels: None,
+    }
+}
+
+pub(crate) fn test_provision_options<'a>(id: &'a str, name: &'a str) -> ProvisionOptions<'a> {
+    ProvisionOptions {
+        id,
+        name,
+        ram_mb: 2048,
+        cpus: 2,
+        scratch_disk_size_gb: 16,
+        version_override: None,
+        persistent: false,
+        env: None,
+        labels: None,
+        from: None,
+        description: None,
     }
 }
 

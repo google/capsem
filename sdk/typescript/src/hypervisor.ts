@@ -67,6 +67,7 @@ export class Hypervisor extends Client {
       name: options.name || null, persistent: Boolean(options.name),
       cpus: options.cpus ?? null, ram_mb,
       env: container === undefined ? options.env ?? null : null,
+      ...(options.labels === undefined ? {} : {labels: options.labels}),
       networks: (options.networks ?? []).map(network => network.name),
       ...(container === undefined ? {} : {container}),
     }}, {...options, timeoutMs: options.timeoutMs ?? createDeadlineMs(this.transport.timeoutMs)});

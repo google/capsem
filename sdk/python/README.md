@@ -84,14 +84,19 @@ async with VM("http://127.0.0.1:19222", token, name="workspace") as vm:
     info = await vm.info()  # includes AI/model/MCP, network and file information
 ```
 
-Named VMs are persistent; an omitted name creates an ephemeral VM. Omitting
-`cpus` or `memory` uses the service defaults (4 CPUs, 12 GiB). Memory is a
-positive integer in GiB.
+Named VMs are persistent; an omitted name creates an ephemeral VM. Pass
+`labels={"suite": "eval", ...}` to `create(...)` to attach advisory string
+labels (`<= 64` entries; keys `1..=64` ASCII matching the VM-name rule
+`[A-Za-z0-9][A-Za-z0-9_-]{0,63}`; values `<= 255` UTF-8 bytes without control
+characters). Omitting `cpus` or `memory` uses the service defaults (4 CPUs,
+12 GiB). Memory is a positive integer in GiB.
 
-`hv.list()` returns a typed VM inventory. `hv.update()` applies the configured
-update. VM lifecycle methods are `start`, `stop`, `pause`, `resume`, `delete`
-and `fork(name)`. A fork returns another `VM` handle. Stats has `summary()` and
-`details()`.
+`hv.list()` returns a typed VM inventory (including `labels` on each
+`SandboxInfo`). `hv.update()` applies the configured update. VM lifecycle
+methods are `start`, `stop`, `pause`, `resume`, `delete` and
+`fork(name, *, description=..., labels=...)` (inherits source labels by
+default; `labels={}` clears them). A fork returns another `VM` handle. Stats
+has `summary()` and `details()`.
 
 `vm.exec(command, target=models.ExecTarget.VM)` explicitly selects VM diagnostics;
 `target=models.ExecTarget.WORKLOAD` selects the OCI workload. Import `models`

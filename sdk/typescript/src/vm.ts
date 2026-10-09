@@ -110,9 +110,12 @@ export class VM extends Client {
     const {transport, id} = await this.context(options);
     return api.deleteVm(transport, {id}, options);
   }
-  async fork(name: string, options: CallOptions & {description?: string} = {}): Promise<VM> {
+  async fork(name: string, options: CallOptions & {description?: string; labels?: Record<string, string>} = {}): Promise<VM> {
     const {transport, id} = await this.context(options);
-    const response = await api.forkVm(transport, {id, body: {name, description: options.description ?? null}}, options);
+    const response = await api.forkVm(transport, {id, body: {
+      name, description: options.description ?? null,
+      ...(options.labels === undefined ? {} : {labels: options.labels}),
+    }}, options);
     return VM.bind(transport, response.id, response.name, this.#hasContainer);
   }
   async log(options: LogOptions = {}): Promise<models.LogsResponse> {

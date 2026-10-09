@@ -43,12 +43,14 @@ fn provision_request_env_omitted() {
         cpus: Some(2),
         persistent: false,
         env: None,
+        labels: None,
         from: None,
         networks: Vec::new(),
         container: None,
     };
     let json = serde_json::to_string(&r).unwrap();
     assert!(!json.contains("env"));
+    assert!(!json.contains("labels"));
     assert!(!json.contains("from"));
 }
 
@@ -354,5 +356,35 @@ fn network_logs_query_reads_type_and_defaults_the_rest() {
     assert_eq!(
         serde_json::from_value::<NetworkLogsQuery>(json!({})).unwrap(),
         NetworkLogsQuery::default()
+    );
+}
+
+#[test]
+fn provision_request_and_sandbox_info_labels_roundtrip() {
+    let req: ProvisionRequest = serde_json::from_value(json!({
+        "labels": {"suite": "eval", "sample": "1"}
+    }))
+    .unwrap();
+    assert_eq!(
+        req.labels.as_ref().and_then(|l| l.get("suite")).map(String::as_str),
+        Some("eval")
+    );
+    let mut info = SandboxInfo::new("vm-1".into(), 1234, VmLifecycleState::Running, false);
+    assert!(!serde_json::to_value(&info)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("labels"));
+    info.labels = req.labels;
+    let encoded = serde_json::to_value(&info).unwrap();
+    assert_eq!(encoded["labels"]["suite"], "eval");
+    let decoded: SandboxInfo = serde_json::from_value(encoded).unwrap();
+    assert_eq!(
+        decoded
+            .labels
+            .as_ref()
+            .and_then(|l| l.get("sample"))
+            .map(String::as_str),
+        Some("1")
     );
 }

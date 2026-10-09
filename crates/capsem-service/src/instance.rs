@@ -23,6 +23,8 @@ pub(crate) struct InstanceInfo {
     pub(crate) env: Option<std::collections::HashMap<String, String>>,
     /// Sandbox this VM was cloned from, if any
     pub(crate) forked_from: Option<String>,
+    /// Key-value metadata labels attached at creation
+    pub(crate) labels: Option<std::collections::HashMap<String, String>>,
     /// What the VM owner shows when it asks the service about private names
     /// on the VM's behalf: minted at spawn, written to the session directory
     /// for the owner alone, matched here. Never reaches the guest.

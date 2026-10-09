@@ -39,6 +39,7 @@ fn container_spec_debug_never_prints_credentials_args_or_env_values() {
         cpus: None,
         persistent: false,
         env: None,
+        labels: None,
         from: None,
         networks: Vec::new(),
         container: Some(private_spec()),

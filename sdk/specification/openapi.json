@@ -4067,6 +4067,19 @@
               "null"
             ]
           },
+          "labels": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Key-value metadata labels for the forked sandbox. If absent, inherits the source's labels.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "name": {
             "type": "string"
           }
@@ -5713,6 +5726,19 @@
             ],
             "description": "Sandbox to clone state from. If provided, the new sandbox's session will\nbe cloned from this existing persistent sandbox."
           },
+          "labels": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Key-value metadata labels attached to the sandbox at creation.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "name": {
             "type": [
               "string",
@@ -6068,6 +6094,19 @@
           },
           "id": {
             "type": "string"
+          },
+          "labels": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Key-value metadata labels attached when the sandbox was created.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "last_error": {
             "type": [

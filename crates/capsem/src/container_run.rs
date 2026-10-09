@@ -143,6 +143,7 @@ async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) 
         cpus: args.cpu,
         persistent: false,
         env: None,
+        labels: None,
         from: None,
         networks: args.network.clone(),
         container: Some(workload.spec(true).await?),

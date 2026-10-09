@@ -45,9 +45,8 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 use client::UpdateTrackState;
 use client::{
-    ApiResponse, AssetStatus, ForkRequest, ForkResponse, HistoryResponse, ListResponse, LogsResponse, PersistRequest,
-    ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse, SessionInfo, UdsClient, UpdateStatusResponse,
-    VmLifecycleState,
+    ApiResponse, AssetStatus, HistoryResponse, ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
+    ProvisionResponse, PurgeRequest, PurgeResponse, SessionInfo, UdsClient, UpdateStatusResponse, VmLifecycleState,
 };
 
 const DOCTOR_MOCK_SERVER_ADDR: &str = "127.0.0.1:3713";
@@ -410,6 +409,9 @@ enum SessionCommands {
         /// Optional description
         #[arg(short, long)]
         description: Option<String>,
+        /// Override metadata labels on the fork (repeatable: -l KEY=VALUE)
+        #[arg(short = 'l', long = "label")]
+        label: Vec<String>,
     },
     /// Promote an ephemeral session to persistent
     Persist {
@@ -1358,18 +1360,8 @@ async fn main() -> Result<()> {
             session,
             name,
             description,
-        }) => {
-            client::validate_id(session)?;
-            let session_id = resolve_session_route_id(&client, session).await?;
-            let req = ForkRequest {
-                name: name.clone(),
-                description: description.clone(),
-            };
-            let resp: ApiResponse<ForkResponse> = client.post(&format!("/vms/{}/fork", session_id), &req).await?;
-            let info = resp.into_result()?;
-            let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
-            println!("Forked session '{}' from '{}' ({:.1} MB)", info.name, session, size_mb);
-        }
+            label,
+        }) => create_command::fork(&client, session, name, description.as_deref(), label).await?,
         Commands::Session(SessionCommands::Resume { name }) => {
             client::validate_id(name)?;
             let session_id = resolve_session_route_id(&client, name).await?;

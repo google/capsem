@@ -42,6 +42,9 @@ pub struct ProvisionRequest {
     /// OCI image the service pulls, stages and starts as this VM's workload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container: Option<crate::ContainerSpec>,
+    /// Key-value metadata labels attached to the sandbox at creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -49,6 +52,9 @@ pub struct ForkRequest {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Key-value metadata labels for the forked sandbox. If absent, inherits the source's labels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -163,6 +169,9 @@ pub struct SandboxInfo {
     pub forked_from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Key-value metadata labels attached when the sandbox was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<HashMap<String, String>>,
     /// On-disk size of the session dir in bytes. Populated for /info on
     /// persistent VMs; useful for verifying that fork produced a compact
     /// overlay and not a bloated sparse file.
@@ -239,6 +248,7 @@ impl SandboxInfo {
             version: None,
             forked_from: None,
             description: None,
+            labels: None,
             size_bytes: None,
             storage: None,
             session_db: None,

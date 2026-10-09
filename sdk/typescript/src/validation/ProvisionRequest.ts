@@ -9,6 +9,7 @@ export const ProvisionRequestSchema: z.ZodType<ProvisionRequest> = z.strictObjec
   "cpus": z.int().min(0).nullable().exactOptional(),
   "env": z.record(z.string(), z.string()).nullable().exactOptional(),
   "from": z.string().nullable().exactOptional(),
+  "labels": z.record(z.string(), z.string()).nullable().exactOptional(),
   "name": z.string().nullable().exactOptional(),
   "networks": z.array(z.string()).exactOptional(),
   "persistent": z.boolean().exactOptional(),
