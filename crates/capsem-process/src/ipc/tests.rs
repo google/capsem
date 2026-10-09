@@ -871,10 +871,7 @@ fn classify_stop_terminal_stream() {
 #[test]
 fn classify_clone_state_is_a_job() {
     assert_eq!(
-        classify_ipc_message(&ServiceToProcess::CloneState {
-            id: 1,
-            destination: "/tmp/fork".into(),
-        }),
+        classify_ipc_message(&ServiceToProcess::CloneState { id: 1 }),
         IpcAction::Job
     );
 }

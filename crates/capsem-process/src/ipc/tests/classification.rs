@@ -30,7 +30,8 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
         | ServiceToProcess::McpListTools { .. }
         | ServiceToProcess::McpRefreshTools { .. }
         | ServiceToProcess::McpCallTool { .. }
-        | ServiceToProcess::CloneState { .. } => IpcAction::Job,
+        | ServiceToProcess::CloneState { .. }
+        | ServiceToProcess::CloneStateComplete { .. } => IpcAction::Job,
         ServiceToProcess::ConnectPort { .. }
         | ServiceToProcess::AbortPorts { .. }
         | ServiceToProcess::PlugCable { .. }
