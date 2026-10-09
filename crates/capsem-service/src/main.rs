@@ -210,10 +210,6 @@ pub struct ServiceState {
     connections: connection_routes::Runtime,
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
     proxy_workers: Mutex<HashMap<String, (uuid::Uuid, proxy_worker::ProxyWorker)>>,
-    #[expect(
-        dead_code,
-        reason = "S09-004 connects the VM and proxy producers through this lifecycle table"
-    )]
     ledger_workers: Arc<ledger_worker::LedgerWorkers>,
     retirements: instance_reaper::Retirements,
     /// Logger-owned DB handles keyed by session/VM id. Logged-data routes

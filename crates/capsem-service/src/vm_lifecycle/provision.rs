@@ -160,6 +160,7 @@ impl ServiceState {
             active_policy.broker_policy(),
             session_dir.clone(),
         )?;
+        let upstream_broker = upstream_broker.with_vm_ledger(Arc::clone(&self.ledger_workers), id, &session_dir);
         let upstream_stdio = upstream_broker.worker_stdio()?;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");

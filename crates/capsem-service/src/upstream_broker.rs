@@ -21,6 +21,7 @@ use capsem_core::net::policy_config::CompiledActivePolicy;
 use capsem_core::net::upstream_address::UpstreamResolver;
 use capsem_foundation::unix::fd::{self, SocketShutdown};
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
+use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::upstream_grant::{
     decode_upstream_grant_request, encode_upstream_grant_response, UpstreamDescriptorKind, UpstreamGrantDenial,
     UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
@@ -29,6 +30,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 use crate::instance::WorkerGrant;
+use crate::ledger_worker::{LedgerClient, LedgerWorkers};
 
 const MAX_SELECTIONS: usize = 64;
 const MAX_ACTIVE_GRANTS: usize = 256;
@@ -53,6 +55,7 @@ pub(crate) struct PendingBroker {
     initial_policy: Arc<BrokerPolicy>,
     updates: mpsc::Receiver<PolicyUpdate>,
     session_dir: Option<PathBuf>,
+    ledger: Option<LedgerSource>,
 }
 
 struct PolicyUpdate {
@@ -69,6 +72,54 @@ struct ActiveGrant {
     descriptor: OwnedFd,
     kind: UpstreamDescriptorKind,
     adopted: bool,
+}
+
+enum LedgerSource {
+    #[cfg(test)]
+    Ready(LedgerClient),
+    VmOwner {
+        workers: Arc<LedgerWorkers>,
+        session_id: String,
+        database: PathBuf,
+        log_path: PathBuf,
+    },
+}
+
+impl LedgerSource {
+    async fn acquire(self) -> Result<LedgerClient, String> {
+        match self {
+            #[cfg(test)]
+            Self::Ready(client) => Ok(client),
+            Self::VmOwner {
+                workers,
+                session_id,
+                database,
+                log_path,
+            } => workers
+                .acquire(
+                    &session_id,
+                    &database,
+                    &log_path,
+                    capsem_proto::ledger::LedgerClientRole::VmOwner,
+                )
+                .await
+                .map_err(|error| format!("acquire VM ledger channel: {error:#}")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AwaitingAdoption {
+    Upstream(u64),
+    Ledger(u64),
+}
+
+impl AwaitingAdoption {
+    const fn grant_id(self) -> u64 {
+        match self {
+            Self::Upstream(grant_id) | Self::Ledger(grant_id) => grant_id,
+        }
+    }
 }
 
 impl BrokerPolicy {
@@ -104,11 +155,28 @@ impl PendingBroker {
                 initial_policy,
                 updates,
                 session_dir: None,
+                ledger: None,
             },
             PolicyPublisher {
                 updates: Some(updates_tx),
             },
         ))
+    }
+
+    pub(crate) fn with_vm_ledger(mut self, workers: Arc<LedgerWorkers>, session_id: &str, session_dir: &Path) -> Self {
+        self.ledger = Some(LedgerSource::VmOwner {
+            workers,
+            session_id: session_id.to_string(),
+            database: session_dir.join("session.db"),
+            log_path: session_dir.join("ledger.log"),
+        });
+        self
+    }
+
+    #[cfg(test)]
+    fn with_ledger(mut self, ledger: LedgerClient) -> Self {
+        self.ledger = Some(LedgerSource::Ready(ledger));
+        self
     }
 
     pub(crate) fn pair_for_session(
@@ -133,6 +201,7 @@ impl PendingBroker {
                 self.updates,
                 authority,
                 self.session_dir,
+                self.ledger,
             )
             .await
             {
@@ -148,6 +217,7 @@ async fn run(
     mut updates: mpsc::Receiver<PolicyUpdate>,
     authority: WorkerGrant,
     session_dir: Option<PathBuf>,
+    mut ledger: Option<LedgerSource>,
 ) -> Result<(), String> {
     let requests =
         WireReceiver::new(socket.try_clone().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
@@ -166,6 +236,8 @@ async fn run(
     let mut active = HashMap::new();
     let mut next_resource_id = 1_u64;
     let mut awaiting_adoption = None;
+    let ledger_configured = ledger.is_some();
+    let mut pending_ledger: Option<(LedgerChannelGrant, OwnedFd)> = None;
     let result = async {
         'requests: loop {
             let frame = tokio::select! {
@@ -191,9 +263,14 @@ async fn run(
             let request = decode_upstream_grant_request(&frame.bytes)
                 .map_err(|error| format!("decode upstream grant request: {error:#}"))?;
             if let Some(expected) = awaiting_adoption {
-                if request != (UpstreamGrantRequest::Adopted { grant_id: expected }) {
+                if request
+                    != (UpstreamGrantRequest::Adopted {
+                        grant_id: expected.grant_id(),
+                    })
+                {
                     break Err(format!(
-                        "descriptor grant {expected} was not adopted before the next request"
+                        "descriptor grant {} was not adopted before the next request",
+                        expected.grant_id()
                     ));
                 }
             }
@@ -333,7 +410,7 @@ async fn run(
                         &current_digest,
                     )
                     .await?;
-                    awaiting_adoption = Some(grant_id);
+                    awaiting_adoption = Some(AwaitingAdoption::Upstream(grant_id));
                 }
                 UpstreamGrantRequest::OpenDns {
                     request_id,
@@ -407,13 +484,24 @@ async fn run(
                         &current.digest,
                     )
                     .await?;
-                    awaiting_adoption = Some(grant_id);
+                    awaiting_adoption = Some(AwaitingAdoption::Upstream(grant_id));
                 }
                 UpstreamGrantRequest::Adopted { grant_id } => {
+                    if awaiting_adoption == Some(AwaitingAdoption::Ledger(grant_id)) {
+                        let Some((grant, descriptor)) = pending_ledger.take() else {
+                            break Err(format!("ledger grant {grant_id} disappeared before adoption"));
+                        };
+                        if grant.client_id() != grant_id {
+                            break Err(format!("ledger grant {grant_id} changed before adoption"));
+                        }
+                        drop(descriptor);
+                        awaiting_adoption = None;
+                        continue;
+                    }
                     let Some(grant) = active.get_mut(&grant_id) else {
                         break Err(format!("adopted unknown descriptor grant {grant_id}"));
                     };
-                    if grant.adopted || awaiting_adoption != Some(grant_id) {
+                    if grant.adopted || awaiting_adoption != Some(AwaitingAdoption::Upstream(grant_id)) {
                         break Err(format!("invalid descriptor adoption {grant_id}"));
                     }
                     grant.adopted = true;
@@ -449,6 +537,28 @@ async fn run(
                             send_denied(&responses, request_id, UpstreamGrantDenial::NotAllowed).await?;
                         }
                     }
+                }
+                UpstreamGrantRequest::OpenLedger { request_id } => {
+                    let Some(source) = ledger.take() else {
+                        let reason = if ledger_configured {
+                            UpstreamGrantDenial::InvalidResource
+                        } else {
+                            UpstreamGrantDenial::NotConfigured
+                        };
+                        send_denied(&responses, request_id, reason).await?;
+                        continue;
+                    };
+                    let client = source.acquire().await?;
+                    let (stream, grant) = client.into_parts();
+                    let descriptor = OwnedFd::from(stream);
+                    send_response(
+                        &responses,
+                        &UpstreamGrantResponse::LedgerGranted { request_id, grant },
+                        Some(&descriptor),
+                    )
+                    .await?;
+                    pending_ledger = Some((grant, descriptor));
+                    awaiting_adoption = Some(AwaitingAdoption::Ledger(grant.client_id()));
                 }
             }
         }
@@ -526,12 +636,14 @@ fn apply_policy_update(
     current: &mut Arc<BrokerPolicy>,
     selections: &mut HashMap<u64, Selection>,
     active: &mut HashMap<u64, ActiveGrant>,
-    awaiting_adoption: &mut Option<u64>,
+    awaiting_adoption: &mut Option<AwaitingAdoption>,
 ) -> Result<(), String> {
     *current = update.policy;
     selections.clear();
     let result = revoke_active(std::mem::take(active));
-    *awaiting_adoption = None;
+    if matches!(awaiting_adoption, Some(AwaitingAdoption::Upstream(_))) {
+        *awaiting_adoption = None;
+    }
     let _ = update.applied.send(result.clone());
     result
 }

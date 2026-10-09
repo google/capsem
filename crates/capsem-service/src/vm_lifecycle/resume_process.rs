@@ -71,6 +71,8 @@ impl ServiceState {
             active_policy.broker_policy(),
             entry.session_dir.clone(),
         )?;
+        let upstream_broker =
+            upstream_broker.with_vm_ledger(Arc::clone(&self.ledger_workers), &vm_id, &entry.session_dir);
         let upstream_stdio = upstream_broker.worker_stdio()?;
         let scratch_disk_size_gb = session_rootfs_size_gb(&entry)?;
         let resolved = self.resolve_pinned_asset_paths(&entry.asset_pins)?;
