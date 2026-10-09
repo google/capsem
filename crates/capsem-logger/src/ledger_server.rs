@@ -1,0 +1,310 @@
+//! Storage-owning dispatch for one session ledger process.
+
+use std::io;
+use std::os::unix::net::UnixStream;
+use std::path::Path;
+use std::sync::Arc;
+
+use capsem_foundation::ipc_channel;
+use capsem_proto::ledger::{
+    LedgerChannelGrant, LedgerFailure, LedgerFailureCode, LedgerRequest, LedgerResponse, LedgerWelcome,
+};
+
+use crate::ledger_protocol::{
+    LedgerBodyMetadata, LedgerClientMessage, LedgerCommand, LedgerExportSummary, LedgerReply, LedgerServerMessage,
+    MAX_LEDGER_STREAM_CHUNK_BYTES,
+};
+use crate::{DbHandle, StoredBody};
+
+mod queries;
+
+type ServerSender = ipc_channel::Sender<LedgerServerMessage>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LedgerClientExit {
+    Disconnected,
+    ShutdownRequested,
+}
+
+#[derive(Default)]
+struct AdmissionState {
+    last_accepted: u64,
+}
+
+/// One process-owned session database shared by its authenticated clients.
+pub struct LedgerServer {
+    db: Arc<DbHandle>,
+    admission: tokio::sync::Mutex<AdmissionState>,
+}
+
+impl LedgerServer {
+    pub fn open(path: &Path) -> rusqlite::Result<Self> {
+        Ok(Self {
+            db: Arc::new(DbHandle::open(path)?),
+            admission: tokio::sync::Mutex::new(AdmissionState::default()),
+        })
+    }
+
+    /// Serve one descriptor whose expected authority came from the trusted
+    /// coordinator. Other clients may call this concurrently on the same
+    /// server; SQLite and archive ownership remain in this process.
+    pub async fn serve_client(
+        &self,
+        stream: UnixStream,
+        grant: LedgerChannelGrant,
+    ) -> Result<LedgerClientExit, String> {
+        let (sender, receiver) =
+            ipc_channel::channel_from_std::<LedgerServerMessage, LedgerClientMessage>(stream).map_err(io_string)?;
+        let first = receiver.recv().await.map_err(io_string)?;
+        let LedgerClientMessage::Hello { hello } = first else {
+            return Err("ledger client sent an operation before hello".into());
+        };
+        grant.validate_hello(&hello).map_err(|error| error.to_string())?;
+        sender
+            .send(LedgerServerMessage::Welcome {
+                welcome: LedgerWelcome::for_grant(&grant),
+            })
+            .await
+            .map_err(io_string)?;
+
+        loop {
+            let message = match receiver.recv().await {
+                Ok(message) => message,
+                Err(error) if disconnected(&error) => return Ok(LedgerClientExit::Disconnected),
+                Err(error) => return Err(error.to_string()),
+            };
+            let LedgerClientMessage::Request { request } = message else {
+                return Err("ledger client repeated hello".into());
+            };
+            let request_id = request.request_id();
+            if let Err(error) = request.authorize(&grant) {
+                let code = if matches!(error, capsem_proto::ledger::LedgerProtocolError::Unauthorized { .. }) {
+                    LedgerFailureCode::UnauthorizedOperation
+                } else {
+                    LedgerFailureCode::InvalidRequest
+                };
+                send_failure(&sender, request_id, code, error.to_string()).await?;
+                continue;
+            }
+            if self.dispatch(&sender, request).await? {
+                return Ok(LedgerClientExit::ShutdownRequested);
+            }
+        }
+    }
+
+    async fn dispatch(&self, sender: &ServerSender, request: LedgerRequest<LedgerCommand>) -> Result<bool, String> {
+        let request_id = request.request_id();
+        let result = match request.into_operation() {
+            LedgerCommand::Admit { event } => {
+                let admission_id = {
+                    let mut admission = self.admission.lock().await;
+                    match self.db.write(*event).await {
+                        Ok(()) => {
+                            admission.last_accepted = admission
+                                .last_accepted
+                                .checked_add(1)
+                                .ok_or_else(|| "ledger admission id exhausted".to_string())?;
+                            Ok(admission.last_accepted)
+                        }
+                        Err(error) => Err(storage(error)),
+                    }
+                };
+                match admission_id {
+                    Ok(admission_id) => send_success(sender, request_id, LedgerReply::Accepted { admission_id }).await,
+                    Err(error) => Err(error),
+                }
+            }
+            LedgerCommand::Flush => {
+                // The lock orders the writer enqueue and this barrier against
+                // every client, so the returned id cannot name a later write.
+                let through_admission_id = {
+                    let admission = self.admission.lock().await;
+                    match self.db.flush().await {
+                        Ok(()) => Ok(admission.last_accepted),
+                        Err(error) => Err(storage(error)),
+                    }
+                };
+                match through_admission_id {
+                    Ok(through_admission_id) => {
+                        send_success(sender, request_id, LedgerReply::Durable { through_admission_id }).await
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            LedgerCommand::Query { query } => match queries::execute(&self.db, query).await {
+                Ok(sets) => send_success(sender, request_id, LedgerReply::Query { sets }).await,
+                Err(error) => Err(storage(error)),
+            },
+            LedgerCommand::ReadBodies { event_id } => match self.db.read_bodies(&event_id).await {
+                Ok(bodies) => self.send_bodies(sender, request_id, bodies).await,
+                Err(error) => Err(storage(error)),
+            },
+            LedgerCommand::Counters => match self.db.ledger_counters().await {
+                Ok(counters) => {
+                    send_success(
+                        sender,
+                        request_id,
+                        LedgerReply::Counters {
+                            counters: Box::new((*counters).clone()),
+                        },
+                    )
+                    .await
+                }
+                Err(error) => Err(storage(error)),
+            },
+            LedgerCommand::Retain { cutoff } => match self.db.retain_bodies_since(&cutoff).await {
+                Ok(outcome) => send_success(sender, request_id, LedgerReply::Retained { outcome }).await,
+                Err(error) => Err(storage(error)),
+            },
+            LedgerCommand::ExportWarc => self.send_warc(sender, request_id).await,
+            LedgerCommand::Shutdown => {
+                send_success(sender, request_id, LedgerReply::ShuttingDown).await?;
+                return Ok(true);
+            }
+        };
+        if let Err(error) = result {
+            send_failure(sender, request_id, LedgerFailureCode::Storage, &error).await?;
+        }
+        Ok(false)
+    }
+
+    async fn send_bodies(&self, sender: &ServerSender, request_id: u64, bodies: Vec<StoredBody>) -> Result<(), String> {
+        for (index, body) in bodies.into_iter().enumerate() {
+            let body_id = u32::try_from(index + 1).map_err(|_| "too many bodies in one ledger reply")?;
+            let metadata = LedgerBodyMetadata {
+                event_id: body.event_id,
+                source_table: body.source_table,
+                direction: body.direction,
+                content_type: body.content_type,
+                original_bytes: body.original_bytes,
+                stored_bytes: body.bytes.len() as u64,
+                truncated: body.truncated,
+                body_hash: body.body_hash,
+            };
+            send_success(sender, request_id, LedgerReply::BodyStart { body_id, metadata }).await?;
+            let mut offset = 0_u64;
+            for bytes in body.bytes.chunks(MAX_LEDGER_STREAM_CHUNK_BYTES) {
+                send_success(
+                    sender,
+                    request_id,
+                    LedgerReply::BodyChunk {
+                        body_id,
+                        offset,
+                        bytes: bytes.to_vec(),
+                    },
+                )
+                .await?;
+                offset += bytes.len() as u64;
+            }
+        }
+        send_success(sender, request_id, LedgerReply::BodiesComplete).await
+    }
+
+    async fn send_warc(&self, sender: &ServerSender, request_id: u64) -> Result<(), String> {
+        let (chunks, mut receiver) = tokio::sync::mpsc::channel(4);
+        let db = Arc::clone(&self.db);
+        let export = tokio::spawn(async move { db.export_warc(WarcChunkWriter { chunks }).await });
+        let mut offset = 0_u64;
+        while let Some(bytes) = receiver.recv().await {
+            let chunk_len = bytes.len() as u64;
+            if let Err(error) = send_success(sender, request_id, LedgerReply::WarcChunk { offset, bytes }).await {
+                drop(receiver);
+                let _ = export.await;
+                return Err(error);
+            }
+            offset += chunk_len;
+        }
+        let summary = export
+            .await
+            .map_err(|error| format!("WARC export task failed: {error}"))?
+            .map_err(storage)?;
+        let skipped_by_reason = summary
+            .counts_by_reason()
+            .into_iter()
+            .map(|(reason, count)| (reason.to_string(), count))
+            .collect();
+        send_success(
+            sender,
+            request_id,
+            LedgerReply::WarcComplete {
+                summary: LedgerExportSummary {
+                    records: summary.records,
+                    bytes_written: summary.bytes_written,
+                    skipped_count: summary.skipped_count,
+                    skipped_by_reason,
+                },
+            },
+        )
+        .await
+    }
+}
+
+struct WarcChunkWriter {
+    chunks: tokio::sync::mpsc::Sender<Vec<u8>>,
+}
+
+impl io::Write for WarcChunkWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        for chunk in buffer.chunks(MAX_LEDGER_STREAM_CHUNK_BYTES) {
+            self.chunks
+                .blocking_send(chunk.to_vec())
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "ledger WARC client disconnected"))?;
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+async fn send_success(sender: &ServerSender, request_id: u64, reply: LedgerReply) -> Result<(), String> {
+    reply.validate().map_err(|error| error.to_string())?;
+    let response = LedgerResponse::success(request_id, reply).map_err(|error| error.to_string())?;
+    sender
+        .send(LedgerServerMessage::Response { response })
+        .await
+        .map_err(io_string)
+}
+
+async fn send_failure(
+    sender: &ServerSender,
+    request_id: u64,
+    code: LedgerFailureCode,
+    message: impl AsRef<str>,
+) -> Result<(), String> {
+    let message = message.as_ref();
+    let bounded = &message[..floor_char_boundary(message, capsem_proto::ledger::MAX_LEDGER_ERROR_BYTES)];
+    let failure = LedgerFailure::new(code, bounded).map_err(|error| error.to_string())?;
+    let response = LedgerResponse::failure(request_id, failure).map_err(|error| error.to_string())?;
+    sender
+        .send(LedgerServerMessage::Response { response })
+        .await
+        .map_err(io_string)
+}
+
+fn floor_char_boundary(value: &str, at: usize) -> usize {
+    let mut at = at.min(value.len());
+    while !value.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
+fn disconnected(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+    )
+}
+
+fn io_string(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
+
+fn storage(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
+
+#[cfg(test)]
+mod tests;
