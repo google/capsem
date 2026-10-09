@@ -5,7 +5,7 @@ use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneratio
 
 use super::*;
 use crate::events::{Decision, NetEvent};
-use crate::ledger_protocol::LedgerQuery;
+use crate::ledger_protocol::{LedgerHistoryLayer, LedgerQuery};
 use crate::{ledger_server::LedgerServer, WriteOp};
 
 const GENERATION: LedgerGeneration = LedgerGeneration::new([0x51; 16]);
@@ -165,5 +165,23 @@ async fn server_refusal_is_reported_and_closes_the_failed_client_actor() {
     assert!(error.contains("UnauthorizedOperation"), "{error}");
     let stopped = fixture.client.counters().await.unwrap_err();
     assert!(stopped.contains("stopped") || stopped.contains("closed"), "{stopped}");
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn history_offset_beyond_sqlite_integer_range_is_an_empty_page() {
+    let fixture = Fixture::start(LedgerClientRole::Reader).await;
+    let sets = fixture
+        .client
+        .query(LedgerQuery::History {
+            layers: vec![LedgerHistoryLayer::Exec],
+            search: None,
+            limit: 1,
+            offset: u64::MAX,
+        })
+        .await
+        .unwrap();
+    assert_eq!(sets.len(), 1);
+    assert!(sets[0].rows.is_empty());
     fixture.stop().await;
 }
