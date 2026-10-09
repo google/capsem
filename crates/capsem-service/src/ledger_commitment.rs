@@ -10,12 +10,12 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use capsem_foundation::ipc_channel;
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerWelcome};
+#[cfg(test)]
+use capsem_proto::ledger_commitment::ZERO_COMMITMENT_HASH;
 use capsem_proto::ledger_commitment::{
     CommitmentClientMessage, CommitmentCommand, CommitmentReply, CommitmentServerMessage, LedgerCommitment,
     MAX_COMMITMENTS_PER_CHECKPOINT,
 };
-#[cfg(test)]
-use capsem_proto::ledger_commitment::ZERO_COMMITMENT_HASH;
 use serde::{Deserialize, Serialize};
 
 use capsem_logger::ledger_protocol::{LedgerQuery, LedgerValue};
@@ -264,10 +264,7 @@ impl CommitmentAuthority {
                     "ledger commitment {} was substituted or altered",
                     commitment.global_sequence()
                 ),
-                None => bail!(
-                    "ledger omitted anchored commitment {}",
-                    commitment.global_sequence()
-                ),
+                None => bail!("ledger omitted anchored commitment {}", commitment.global_sequence()),
             }
         }
         Ok(())
@@ -275,17 +272,8 @@ impl CommitmentAuthority {
 }
 
 fn decode_commitment_row(row: &[LedgerValue]) -> Result<LedgerCommitment> {
-    let [
-        LedgerValue::Integer(global_sequence),
-        LedgerValue::Text(generation),
-        LedgerValue::Integer(client_id),
-        LedgerValue::Text(role),
-        LedgerValue::Integer(producer_sequence),
-        LedgerValue::Text(event_kind),
-        LedgerValue::Text(event_hash),
-        LedgerValue::Text(previous_hash),
-        LedgerValue::Text(commitment_hash),
-    ] = row
+    let [LedgerValue::Integer(global_sequence), LedgerValue::Text(generation), LedgerValue::Integer(client_id), LedgerValue::Text(role), LedgerValue::Integer(producer_sequence), LedgerValue::Text(event_kind), LedgerValue::Text(event_hash), LedgerValue::Text(previous_hash), LedgerValue::Text(commitment_hash)] =
+        row
     else {
         bail!("ledger commitment query returned an invalid typed row");
     };
