@@ -1131,6 +1131,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-proxy"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "capsem-foundation",
+ "capsem-guard",
+ "capsem-proto",
+ "clap",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "capsem-router"
 version = "0.7.0"
 dependencies = [

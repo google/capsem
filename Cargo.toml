@@ -15,6 +15,7 @@ members = [
     "crates/capsem-agent",
     "crates/capsem-logger",
     "crates/capsem-ledger",
+    "crates/capsem-proxy",
     "crates/capsem-process",
     "crates/capsem-service",
     "crates/capsem-admin",
