@@ -765,8 +765,6 @@ async fn run_async_main_loop(
     info!(restored, "restored published ports");
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
-    // Start host file monitor to record fs_events.
-    // Opened once, by descriptor: the guest can swap its workspace for a host link.
     match capsem_core::session::open_workspace(&session_dir)
         .map_err(anyhow::Error::from)
         .and_then(|workspace| {
@@ -791,7 +789,6 @@ async fn run_async_main_loop(
         Arc::clone(&db),
         runtime_config.network.clone(),
     )?);
-    // Locate the builtin MCP server binary next to our own binary.
     let builtin_bin = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
@@ -802,17 +799,13 @@ async fn run_async_main_loop(
         runtime_config.active_policy_path.to_string_lossy().to_string(),
     );
     let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
-    // Spawn the isolated MCP aggregator subprocess.
     let aggregator_client = spawn_mcp_aggregator(&mcp_servers, &session_dir, &args.id, &trace_id).await?;
 
-    // Persist the aggregator's discovered tool catalog to the cache file
-    // so the service's GET /mcp/tools endpoint can serve it.
     if let Ok(tools) = aggregator_client.list_tools().await {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs().to_string())
             .unwrap_or_default();
-        // Merge with existing cache to preserve approval state.
         let existing = capsem_core::mcp::load_tool_cache();
         let cache_entries: Vec<capsem_core::mcp::ToolCacheEntry> = tools
             .iter()
