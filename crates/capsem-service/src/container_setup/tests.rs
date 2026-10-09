@@ -139,7 +139,7 @@ fn fixture(images: FixtureImages) -> Fixture {
     std::fs::create_dir_all(&workspace).unwrap();
     insert_fake_instance_with_session_dir(&state, "box", std::process::id(), session_dir);
     let uds_path = state.instances.lock().unwrap()["box"].uds_path.clone();
-    std::fs::write(uds_path.with_extension("ready"), b"1\n").unwrap();
+    std::fs::write(uds_path.with_extension("ready"), b"ready\n").unwrap();
     Fixture {
         state,
         workspace,
@@ -182,7 +182,7 @@ async fn pull_admission_waits_for_the_vm_owner_launch_barrier() {
         "the registry was contacted before owner readiness"
     );
 
-    std::fs::write(fx.uds_path.with_extension("launched"), b"1\n").unwrap();
+    std::fs::write(fx.uds_path.with_extension("launched"), b"launched\n").unwrap();
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Failed).await;
     owner.await.unwrap();
     assert!(status.error.as_deref().unwrap().contains("blocked after readiness"));
@@ -230,7 +230,7 @@ async fn admitted_pull_progresses_while_the_guest_is_still_booting() {
         })
     });
     std::fs::remove_file(fx.uds_path.with_extension("ready")).unwrap();
-    std::fs::write(fx.uds_path.with_extension("launched"), b"1\n").unwrap();
+    std::fs::write(fx.uds_path.with_extension("launched"), b"launched\n").unwrap();
     start(&fx.state, "box".into(), spec(None));
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         while access.lock().unwrap().is_none() {
@@ -251,7 +251,7 @@ async fn staged_workload_waits_for_guest_readiness_before_launching() {
     let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
     let ready = fx.uds_path.with_extension("ready");
     std::fs::remove_file(&ready).unwrap();
-    std::fs::write(fx.uds_path.with_extension("launched"), b"1\n").unwrap();
+    std::fs::write(fx.uds_path.with_extension("launched"), b"launched\n").unwrap();
     start(&fx.state, "box".into(), spec(None));
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         while !fx.workspace.join(".capsem-image/launch.py").exists() {
@@ -266,7 +266,7 @@ async fn staged_workload_waits_for_guest_readiness_before_launching() {
         fx.state.containers.status("box").unwrap().state,
         ContainerState::Staging
     );
-    std::fs::write(ready, b"1\n").unwrap();
+    std::fs::write(ready, b"ready\n").unwrap();
     owner.await.unwrap();
     wait_for(&fx.state, "box", |status| status.state == ContainerState::Starting).await;
 }
@@ -292,7 +292,7 @@ async fn an_import_refused_during_boot_writes_no_staged_control_bytes() {
         Box::pin(async move { Some(reply) })
     });
     std::fs::remove_file(fx.uds_path.with_extension("ready")).unwrap();
-    std::fs::write(fx.uds_path.with_extension("launched"), b"1\n").unwrap();
+    std::fs::write(fx.uds_path.with_extension("launched"), b"launched\n").unwrap();
     start(&fx.state, "box".into(), spec(None));
     let status = wait_for(&fx.state, "box", |status| status.state == ContainerState::Failed).await;
     owner.await.unwrap();
