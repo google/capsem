@@ -1292,6 +1292,7 @@ dependencies = [
  "opentelemetry-http",
  "opentelemetry_sdk",
  "reqwest 0.12.28",
+ "rmp-serde",
  "rusqlite",
  "serde",
  "serde_json",

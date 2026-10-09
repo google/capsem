@@ -48,18 +48,21 @@ type ControlFrame = capsem_foundation::unix::router_channel::DescriptorFrame<LED
 struct LedgerSlot {
     database: PathBuf,
     worker: LedgerWorker,
+    commitments: Arc<crate::ledger_commitment::CommitmentAuthority>,
 }
 
 /// Service-owned table that serializes each session's ledger lifetime.
 pub(crate) struct LedgerWorkers {
     binary: PathBuf,
+    commitment_root: PathBuf,
     slots: tokio::sync::Mutex<std::collections::HashMap<String, LedgerSlot>>,
 }
 
 impl LedgerWorkers {
-    pub(crate) fn new(binary: PathBuf) -> Self {
+    pub(crate) fn new(binary: PathBuf, commitment_root: PathBuf) -> Self {
         Self {
             binary,
+            commitment_root,
             slots: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -74,7 +77,7 @@ impl LedgerWorkers {
         log_path: &Path,
         role: LedgerClientRole,
     ) -> Result<LedgerClient> {
-        let worker = {
+        let (worker, commitments) = {
             let mut slots = self.slots.lock().await;
             let mut watcher = None;
             if slots
@@ -83,7 +86,7 @@ impl LedgerWorkers {
             {
                 slots.remove(session_id);
             }
-            let worker = if let Some(slot) = slots.get(session_id) {
+            let selected = if let Some(slot) = slots.get(session_id) {
                 if slot.database != database {
                     bail!(
                         "ledger worker slot for {session_id} owns {}, not {}",
@@ -91,18 +94,26 @@ impl LedgerWorkers {
                         database.display()
                     );
                 }
-                slot.worker.clone()
+                (slot.worker.clone(), Arc::clone(&slot.commitments))
             } else {
                 let worker = self.spawn(database, log_path).await?;
+                let commitments =
+                    crate::ledger_commitment::CommitmentAuthority::open(&self.commitment_root, session_id).await?;
+                #[cfg(not(test))]
+                if let Err(error) = verify_commitments(&worker, database, &commitments).await {
+                    let _ = worker.clone().shutdown().await;
+                    return Err(error);
+                }
                 slots.insert(
                     session_id.to_string(),
                     LedgerSlot {
                         database: database.to_path_buf(),
                         worker: worker.clone(),
+                        commitments: Arc::clone(&commitments),
                     },
                 );
                 watcher = Some((worker.generation(), worker.stop_receiver()));
-                worker
+                (worker, commitments)
             };
             drop(slots);
             if let Some((generation, mut stopped)) = watcher {
@@ -121,9 +132,20 @@ impl LedgerWorkers {
                     }
                 });
             }
-            worker
+            selected
         };
-        worker.connect(role).await
+        let mut client = worker.connect(role).await?;
+        if role.producer_name().is_some() {
+            let (producer, coordinator) = UnixStream::pair().context("create ledger commitment channel")?;
+            let grant = client.grant;
+            tokio::spawn(async move {
+                if let Err(error) = crate::ledger_commitment::serve(commitments, coordinator, grant).await {
+                    tracing::warn!(client_id = grant.client_id(), %error, "ledger commitment channel stopped");
+                }
+            });
+            client.commitment = Some(producer);
+        }
+        Ok(client)
     }
 
     /// Stop and reap the current generation before vacating its slot.
@@ -165,9 +187,30 @@ impl LedgerWorkers {
     }
 }
 
+#[cfg(not(test))]
+async fn verify_commitments(
+    worker: &LedgerWorker,
+    database: &Path,
+    commitments: &crate::ledger_commitment::CommitmentAuthority,
+) -> Result<()> {
+    let channel = worker.connect(LedgerClientRole::Reader).await?;
+    let (stream, commitment, grant) = channel.into_parts();
+    if commitment.is_some() {
+        bail!("reader received a producer commitment channel");
+    }
+    let client = capsem_logger::ledger_client::LedgerClient::connect(stream, grant, database.to_path_buf())
+        .await
+        .map_err(anyhow::Error::msg)?;
+    commitments
+        .verify_ledger(&client)
+        .await
+        .context("verify session ledger against trusted producer checkpoints")
+}
+
 #[derive(Debug)]
 pub(crate) struct LedgerClient {
     stream: UnixStream,
+    commitment: Option<UnixStream>,
     grant: LedgerChannelGrant,
 }
 
@@ -176,14 +219,23 @@ impl LedgerClient {
         self.grant
     }
 
-    pub(crate) fn into_parts(self) -> (UnixStream, LedgerChannelGrant) {
-        (self.stream, self.grant)
+    pub(crate) fn into_parts(self) -> (UnixStream, Option<UnixStream>, LedgerChannelGrant) {
+        (self.stream, self.commitment, self.grant)
     }
 
     #[cfg(test)]
-    pub(crate) fn test_pair(grant: LedgerChannelGrant) -> io::Result<(Self, UnixStream)> {
+    pub(crate) fn test_pair(grant: LedgerChannelGrant) -> io::Result<(Self, UnixStream, UnixStream)> {
         let (stream, worker) = UnixStream::pair()?;
-        Ok((Self { stream, grant }, worker))
+        let (commitment, commitment_worker) = UnixStream::pair()?;
+        Ok((
+            Self {
+                stream,
+                commitment: Some(commitment),
+                grant,
+            },
+            worker,
+            commitment_worker,
+        ))
     }
 }
 
@@ -359,7 +411,11 @@ impl WorkerProcess {
                     generation,
                     client_id: adopted,
                 } if generation == self.generation && adopted == client_id => {
-                    return Ok(LedgerClient { stream: client, grant });
+                    return Ok(LedgerClient {
+                        stream: client,
+                        commitment: None,
+                        grant,
+                    });
                 }
                 LedgerControlEvent::Rejected {
                     generation,

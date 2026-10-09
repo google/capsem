@@ -275,7 +275,8 @@ async fn clone_ledger(
         )
         .await
         .map_err(|error| format!("acquire source ledger owner: {error:#}"))?;
-    let (stream, grant) = channel.into_parts();
+    let (stream, commitment, grant) = channel.into_parts();
+    debug_assert!(commitment.is_none());
     let client = capsem_logger::ledger_client::LedgerClient::connect(stream, grant, database).await?;
     let snapshot = client.snapshot(*uuid::Uuid::new_v4().as_bytes()).await?;
     let snapshot_copy = snapshot.clone();

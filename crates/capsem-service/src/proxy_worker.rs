@@ -94,21 +94,26 @@ impl ProxyWorker {
     }
 
     pub(crate) async fn grant(&self, capability: ProxyCapability, descriptor: OwnedFd) -> Result<()> {
-        self.grant_capability(GrantedCapability::Ordinary(capability), descriptor)
+        self.grant_capability(GrantedCapability::Ordinary(capability), vec![descriptor])
             .await
     }
 
-    pub(crate) async fn grant_ledger(&self, stream: UnixStream, grant: LedgerChannelGrant) -> Result<()> {
-        self.grant_capability(GrantedCapability::Ledger(grant), stream.into())
+    pub(crate) async fn grant_ledger(
+        &self,
+        stream: UnixStream,
+        commitment: UnixStream,
+        grant: LedgerChannelGrant,
+    ) -> Result<()> {
+        self.grant_capability(GrantedCapability::Ledger(grant), vec![stream.into(), commitment.into()])
             .await
     }
 
-    async fn grant_capability(&self, capability: GrantedCapability, descriptor: OwnedFd) -> Result<()> {
+    async fn grant_capability(&self, capability: GrantedCapability, descriptors: Vec<OwnedFd>) -> Result<()> {
         let (completed, result) = oneshot::channel();
         self.commands
             .send(CommandRequest::Grant {
                 capability,
-                descriptor,
+                descriptors,
                 completed,
             })
             .await
@@ -210,7 +215,7 @@ pub(crate) fn spawn_for_session(binary: &Path, active_policy: Vec<u8>, log_path:
 enum CommandRequest {
     Grant {
         capability: GrantedCapability,
-        descriptor: OwnedFd,
+        descriptors: Vec<OwnedFd>,
         completed: oneshot::Sender<Result<()>>,
     },
     ApplyPolicy {
@@ -384,17 +389,21 @@ impl WorkerProcess {
         Ok(process)
     }
 
-    async fn grant(&mut self, capability: GrantedCapability, descriptor: OwnedFd) -> Result<()> {
+    async fn grant(&mut self, capability: GrantedCapability, descriptors: Vec<OwnedFd>) -> Result<()> {
         let grant_id = self.allocate_grant_id()?;
         let grant = capability.channel_grant(self.generation, grant_id)?;
+        if descriptors.len() != grant.expected_descriptor_count() {
+            bail!("proxy capability descriptor count does not match its grant");
+        }
+        let raw = descriptors
+            .iter()
+            .map(|descriptor| descriptor.as_raw_fd())
+            .collect::<Vec<_>>();
         self.control_tx
-            .send(
-                &encode_proxy_control_request(ProxyControlRequest::Attach(grant)),
-                &[descriptor.as_raw_fd()],
-            )
+            .send(&encode_proxy_control_request(ProxyControlRequest::Attach(grant)), &raw)
             .await
             .context("send proxy descriptor grant")?;
-        drop(descriptor);
+        drop(descriptors);
         match self.recv_event().await? {
             ProxyControlEvent::Adopted {
                 generation,
@@ -643,10 +652,10 @@ async fn supervise(
                 match request {
                     CommandRequest::Grant {
                         capability,
-                        descriptor,
+                        descriptors,
                         completed,
                     } => {
-                        let result = process.grant(capability, descriptor).await;
+                        let result = process.grant(capability, descriptors).await;
                         let failed = result.is_err();
                         let diagnostic = result.as_ref().err().map(|error| format!("{error:#}"));
                         let _ = completed.send(result);
@@ -784,9 +793,10 @@ impl ServiceState {
             )
             .await
             .context("acquire proxy ledger channel")?;
-        let (stream, grant) = client.into_parts();
+        let (stream, commitment, grant) = client.into_parts();
+        let commitment = commitment.context("proxy ledger grant omitted its commitment channel")?;
         worker
-            .grant_ledger(stream, grant)
+            .grant_ledger(stream, commitment, grant)
             .await
             .context("grant proxy ledger channel")
     }

@@ -120,7 +120,7 @@ async fn fake_proxy_worker_child() {
                             assert_eq!(grant.capability(), ProxyCapability::Ledger);
                             assert_eq!(grant.ledger_grant(), Some(proxy_ledger_grant()));
                         }
-                        held.push(UnixStream::from(frame.fds.into_iter().next().unwrap()));
+                        held.extend(frame.fds.into_iter().map(UnixStream::from));
                         control_tx.send(
                             &encode_proxy_control_event(ProxyControlEvent::Adopted {
                                 generation,
@@ -219,8 +219,13 @@ async fn ordinary_traffic_disconnect_does_not_terminate_the_proxy_generation() {
 async fn ledger_descriptor_carries_its_exact_proxy_authority() {
     let worker = fake("ledger").await.unwrap();
     let (peer, granted) = UnixStream::pair().unwrap();
-    worker.grant_ledger(granted, proxy_ledger_grant()).await.unwrap();
+    let (commitment_peer, commitment) = UnixStream::pair().unwrap();
+    worker
+        .grant_ledger(granted, commitment, proxy_ledger_grant())
+        .await
+        .unwrap();
     drop(peer);
+    drop(commitment_peer);
     worker.shutdown().await.unwrap();
 }
 
