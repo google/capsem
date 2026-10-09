@@ -35,7 +35,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-use capsem_archive::{ArchiveError, ArchiveId, BodyLogWriter, BodyRef, FileHeader, GenerationId, SegmentWritten};
+use capsem_archive::{
+    ArchiveCodecs, ArchiveError, ArchiveId, BodyLogWriter, BodyRef, FileHeader, GenerationId, SegmentWritten,
+};
 use capsem_foundation::unix::contained::{ContainedDir, EntryKind};
 use capsem_foundation::unix::fs::{durable_sync_directory, ensure_private_dir};
 use capsem_foundation::unix::lock::{self, FileLock, LockAttempt, LockMode};
@@ -119,6 +121,7 @@ pub(super) struct BodyArchive {
     /// unprovable. Both stage nothing rather than writing an index nobody can
     /// resolve.
     writer: Option<BodyLogWriter>,
+    codecs: ArchiveCodecs,
     /// What `created_at`, `sealed_at` and a block's age are read from. Every
     /// other column in the index is content, so this is the only value in it
     /// that a replay of the same session cannot reproduce -- and the only
@@ -221,7 +224,11 @@ fn archive_contract_error(message: impl Into<String>) -> rusqlite::Error {
 impl BodyArchive {
     /// Prepare a fresh generation and stable acquisition lock before the
     /// schema transaction publishes their identities.
-    pub(super) fn prepare_new(db_path: &Path, now: LedgerClock) -> rusqlite::Result<(Self, FileLock, FileHeader)> {
+    pub(super) fn prepare_new(
+        db_path: &Path,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<(Self, FileLock, FileHeader)> {
         let path = archive_path_for_db(db_path);
         match std::fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -272,8 +279,13 @@ impl BodyArchive {
             archive_id: ArchiveId::generate(),
             generation_id: GenerationId::generate(),
         };
-        let mut writer = BodyLogWriter::create_generation(&directory, header.archive_id, header.generation_id)
-            .map_err(|error| archive_contract_error(format!("create generation: {error}")))?;
+        let mut writer = BodyLogWriter::create_generation_with_codecs(
+            &directory,
+            header.archive_id,
+            header.generation_id,
+            codecs.clone(),
+        )
+        .map_err(|error| archive_contract_error(format!("create generation: {error}")))?;
         writer
             .sync()
             .map_err(|error| archive_contract_error(format!("sync generation: {error}")))?;
@@ -281,7 +293,7 @@ impl BodyArchive {
             .sync()
             .map_err(|error| archive_contract_error(format!("sync {}: {error}", path.display())))?;
         Ok((
-            Self::with_writer(db_path.to_path_buf(), directory, writer, now),
+            Self::with_writer(db_path.to_path_buf(), directory, writer, now, codecs),
             archive_lock,
             header,
         ))
@@ -290,7 +302,12 @@ impl BodyArchive {
     /// Recover and reopen the exact generation selected by SQLite. The
     /// archive lock stays exclusive through the real revision durability
     /// fence; no path scan can elect another file.
-    pub(super) fn open_existing(db_path: &Path, now: LedgerClock, conn: &Connection) -> rusqlite::Result<Self> {
+    pub(super) fn open_existing(
+        db_path: &Path,
+        now: LedgerClock,
+        conn: &Connection,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<Self> {
         let path = archive_path_for_db(db_path);
         let metadata = std::fs::symlink_metadata(&path)
             .map_err(|error| archive_contract_error(format!("inspect {}: {error}", path.display())))?;
@@ -311,8 +328,9 @@ impl BodyArchive {
             lock::acquire_existing_until(&lock_path, LockMode::Exclusive, Instant::now() + Duration::from_secs(5))
                 .map_err(|error| archive_contract_error(format!("lock {}: {error}", lock_path.display())))?;
         let state = crate::schema::archive_state(conn)?;
-        let writer = BodyLogWriter::open_generation(&directory, state.header, state.committed_end)
-            .map_err(|error| archive_contract_error(format!("open active generation: {error}")))?;
+        let writer =
+            BodyLogWriter::open_generation_with_codecs(&directory, state.header, state.committed_end, codecs.clone())
+                .map_err(|error| archive_contract_error(format!("open active generation: {error}")))?;
         let next_revision = state
             .revision
             .checked_add(1)
@@ -326,7 +344,7 @@ impl BodyArchive {
             return Err(archive_contract_error("archive_state changed during writer recovery"));
         }
         Self::gc_unreferenced_generations(&directory, state.header.generation_id);
-        Ok(Self::with_writer(db_path.to_path_buf(), directory, writer, now))
+        Ok(Self::with_writer(db_path.to_path_buf(), directory, writer, now, codecs))
     }
 
     /// Retry deletion of exact managed generation names after the elected
@@ -370,7 +388,7 @@ impl BodyArchive {
     }
 
     pub(super) fn disabled(now: LedgerClock) -> Self {
-        Self::new(None, None, None, now)
+        Self::new(None, None, None, now, ArchiveCodecs::default())
     }
 
     #[cfg(test)]
@@ -380,7 +398,7 @@ impl BodyArchive {
         };
         let path = archive_path_for_db(db_path);
         let opened = if path.exists() {
-            Self::open_existing(db_path, now, conn)
+            Self::open_existing(db_path, now, conn, ArchiveCodecs::default())
         } else {
             let state = crate::schema::archive_state(conn);
             state.and_then(|state| {
@@ -403,17 +421,29 @@ impl BodyArchive {
                 directory
                     .sync()
                     .map_err(|error| archive_contract_error(error.to_string()))?;
-                Ok(Self::with_writer(db_path.to_path_buf(), directory, writer, now))
+                Ok(Self::with_writer(
+                    db_path.to_path_buf(),
+                    directory,
+                    writer,
+                    now,
+                    ArchiveCodecs::default(),
+                ))
             })
         };
         opened.unwrap_or_else(|error| {
             warn!(error = %error, "test archive could not be opened");
-            Self::new(Some(db_path.to_path_buf()), None, None, now)
+            Self::new(Some(db_path.to_path_buf()), None, None, now, ArchiveCodecs::default())
         })
     }
 
-    fn with_writer(db_path: PathBuf, directory: ContainedDir, writer: BodyLogWriter, now: LedgerClock) -> Self {
-        Self::new(Some(db_path), Some(directory), Some(writer), now)
+    fn with_writer(
+        db_path: PathBuf,
+        directory: ContainedDir,
+        writer: BodyLogWriter,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> Self {
+        Self::new(Some(db_path), Some(directory), Some(writer), now, codecs)
     }
 
     fn new(
@@ -421,11 +451,13 @@ impl BodyArchive {
         directory: Option<ContainedDir>,
         writer: Option<BodyLogWriter>,
         now: LedgerClock,
+        codecs: ArchiveCodecs,
     ) -> Self {
         Self {
             db_path,
             directory,
             writer,
+            codecs,
             now,
             block_opened_at: None,
             staged: Vec::new(),
@@ -438,6 +470,10 @@ impl BodyArchive {
             #[cfg(test)]
             steps: Vec::new(),
         }
+    }
+
+    pub(super) fn codecs(&self) -> ArchiveCodecs {
+        self.codecs.clone()
     }
 
     /// Stage one body: its bytes into the open block, its index row beside

@@ -5,6 +5,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use capsem_archive::ArchiveCodecs;
 use capsem_foundation::ipc_channel;
 use capsem_proto::ledger::{
     LedgerChannelGrant, LedgerFailure, LedgerFailureCode, LedgerRequest, LedgerResponse, LedgerWelcome,
@@ -40,8 +41,12 @@ pub struct LedgerServer {
 
 impl LedgerServer {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
+        Self::open_with_codecs(path, ArchiveCodecs::default())
+    }
+
+    pub fn open_with_codecs(path: &Path, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
         Ok(Self {
-            db: Arc::new(DbHandle::open(path)?),
+            db: Arc::new(DbHandle::open_with_codecs(path, codecs)?),
             session_dir: path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
             admission: tokio::sync::Mutex::new(AdmissionState::default()),
         })
