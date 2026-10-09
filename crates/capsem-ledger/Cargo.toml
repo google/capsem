@@ -1,0 +1,26 @@
+[package]
+name = "capsem-ledger"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Dedicated per-session Capsem ledger owner."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+capsem-foundation = { path = "../capsem-foundation" }
+capsem-guard = { path = "../capsem-guard" }
+capsem-logger = { path = "../capsem-logger" }
+capsem-proto = { path = "../capsem-proto" }
+clap = { workspace = true, features = ["derive"] }
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
