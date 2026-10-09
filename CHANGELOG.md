@@ -1267,6 +1267,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bodies previously only ever grew. Ephemeral sessions are deleted whole and
   are unaffected.
 
+- `integrations/inspect-ai` (`inspect-capsem-sandbox`) provides a standalone
+  [Inspect AI](https://inspect.aisi.org.uk/) `SandboxEnvironment` registered
+  under `capsem`, supporting direct VM execution
+  backed by the Capsem Python gateway SDK (`capsem>=0.7.0`).
+
 - The profile catalog names its own defaults, one per runtime: the binary
   compiles them from `config/profile-catalog.toml` (a runtime's default
   counts only when that profile is installed), `GET /status`

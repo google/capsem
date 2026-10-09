@@ -34,5 +34,5 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
             needs=frozenset({Needs.DISK, Needs.NETWORK}),
             speed=Speed.SLOW,
         ),
-        after=(*after, sdkchecks.python_environment(plan, config)),
+        after=(*after, sdkchecks.python_environment(plan, config, project=config.sdk_python.project)),
     )

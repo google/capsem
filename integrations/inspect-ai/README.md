@@ -1,19 +1,15 @@
-# Inspect AI integration
+# Inspect AI integration (`inspect-capsem-sandbox`)
 
-This integration is being carried from Pierre Tholoniat's original implementation
-in [#291](https://github.com/google/capsem/pull/291), commit
-`bb61fc82d44bc42c978c4acf5435a1975600c75e`. It is not installed or published yet.
+`inspect-capsem-sandbox` (`inspect_capsem`) registers the `capsem` [`SandboxEnvironment`](https://inspect.aisi.org.uk/sandboxing.html) for [Inspect AI](https://inspect.aisi.org.uk/), running evaluations inside isolated Capsem micro-VMs via the Python [`capsem`](../../sdk/python/README.md) SDK. It is carried from Pierre Tholoniat's original implementation in [#291](https://github.com/google/capsem/pull/291) (commit `bb61fc82d44bc42c978c4acf5435a1975600c75e`) and is not published to PyPI yet.
 
-Pierre owns the remaining integration and qualification in
-[#342](https://github.com/google/capsem/issues/342). The handoff records the
-current shared `0.7` base, SDK/service capabilities, complete feature parity,
-cleanup and build authority requirements, and focused local verification.
-Reconcile the existing VM integration
-[#338](https://github.com/google/capsem/pull/338), OCI/Compose integration
-[#339](https://github.com/google/capsem/pull/339), and host-build candidate
-[#340](https://github.com/google/capsem/pull/340) in that order against `0.7`.
-The completed components below remain available for reuse; Inspect work has
-been removed from the current agent's active sprint.
+From a repository checkout (or via `pip install inspect-capsem-sandbox` once published):
+
+```bash
+uv sync --project integrations/inspect-ai --frozen
+uv run --project integrations/inspect-ai inspect eval task.py --sandbox capsem
+```
+
+See the [Inspect AI Sandbox documentation](https://docs.capsem.org/usage/inspect-ai/) (`web/docs/src/content/docs/usage/inspect-ai.md`) for configuration (`CapsemSandboxConfig`), environment variables, and lifecycle behavior.
 
 The current source provides the original pure Dockerfile instruction scanner,
 heredoc transformations, multistage CA patcher and final-stage USER/WORKDIR
@@ -37,10 +33,10 @@ and intermediate fragments. Interpolation/YAML diagnostics avoid echoing
 variable values or malformed dotenv lines.
 
 Classic-frontend heredoc lowering is an optional transform. It does not select
-a build engine or replace full Dockerfile execution. Native frontend execution,
-build context transfer, evaluator-controlled host inputs, VM/workload
-ownership, full Inspect registration and package acceptance remain in progress
-under [#310](https://github.com/google/capsem/issues/310) and
+a build engine or replace full Dockerfile execution. Full unification onto the
+evaluator-controlled `ComposeInputs` snapshot, native builder acceptance, and
+standalone wheel/sdist package qualification remain in progress under
+[#310](https://github.com/google/capsem/issues/310) and
 [#311](https://github.com/google/capsem/issues/311). Preserve the original
 integration's complete behavior when carrying those components.
 
