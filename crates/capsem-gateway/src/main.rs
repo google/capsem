@@ -174,7 +174,7 @@ async fn run(args: Args) -> Result<()> {
         previews: preview::PreviewState::new(preview_port),
     });
 
-    confine_linux_gateway(&uds_path, listener.local_addr()?)?;
+    confine_gateway(&auth_state, &uds_path, listener.local_addr()?)?;
 
     let preview_state = state.clone();
     tokio::spawn(async move {
@@ -229,29 +229,43 @@ async fn run(args: Args) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn confine_linux_gateway(uds_path: &std::path::Path, listener: SocketAddr) -> Result<()> {
+fn confine_gateway(_auth_state: &AuthState, uds_path: &std::path::Path, listener: SocketAddr) -> Result<()> {
     use capsem_foundation::unix::worker_sandbox::{Policy, Role};
     capsem_foundation::unix::worker_sandbox::confine(&Policy::new(Role::Gateway))
         .context("confine gateway before readiness")?;
+    attest_gateway(uds_path, listener)
+}
+
+#[cfg(target_os = "macos")]
+fn confine_gateway(auth_state: &AuthState, uds_path: &std::path::Path, listener: SocketAddr) -> Result<()> {
+    use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
+    let policy = Policy::new(Role::Gateway)
+        .allow(&auth_state.token_path, Access::ReadWrite)
+        .allow(&auth_state.port_path, Access::ReadWrite)
+        .allow(&auth_state.pid_path, Access::ReadWrite)
+        .allow(&auth_state.preview_port_path, Access::ReadWrite);
+    capsem_foundation::unix::worker_sandbox::confine(&policy).context("confine gateway before readiness")?;
+    attest_gateway(uds_path, listener)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn attest_gateway(uds_path: &std::path::Path, listener: SocketAddr) -> Result<()> {
     require_denied(std::fs::File::open("/etc/passwd"), "read ambient host files")?;
     require_denied(std::net::TcpStream::connect(listener), "dial TCP directly")?;
     require_denied(
         std::os::unix::net::UnixStream::connect(uds_path),
         "dial control sockets by path",
     )?;
-    require_denied(
-        std::process::Command::new("/bin/true").status(),
-        "execute processes",
-    )?;
+    require_denied(std::process::Command::new("/bin/true").status(), "execute processes")?;
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
-fn confine_linux_gateway(_uds_path: &std::path::Path, _listener: SocketAddr) -> Result<()> {
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn confine_gateway(_auth_state: &AuthState, _uds_path: &std::path::Path, _listener: SocketAddr) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn require_denied<T>(result: std::io::Result<T>, operation: &str) -> Result<()> {
     match result {
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
