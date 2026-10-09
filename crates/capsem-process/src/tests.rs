@@ -14,6 +14,22 @@ fn entry_closes_ambient_descriptors_before_runtime_initialization() {
 }
 
 #[test]
+fn platform_confinement_and_attestation_precede_owner_readiness() {
+    let source = include_str!("main.rs");
+    let run = source.split_once("async fn run_async_main_loop(").unwrap().1;
+    let prepare = run.find("prepare_owner_sandbox_attestation").unwrap();
+    let confine = run
+        .find("confine_owner(&args")
+        .expect("all supported platforms install the VM-owner policy");
+    let attest = run
+        .find("attest_owner(")
+        .expect("all supported platforms attest the installed policy");
+    let seats = run.find("seats.start()").unwrap();
+    let launched = run.find("launched.write_all").unwrap();
+    assert!(prepare < confine && confine < attest && attest < seats && seats < launched);
+}
+
+#[test]
 fn private_name_broker_carries_no_session_bearer() {
     for source in [include_str!("private_names.rs"), include_str!("private_seats.rs")] {
         assert!(!source.contains("owner_secret"));
