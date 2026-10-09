@@ -5,6 +5,9 @@ use serde::Deserialize;
 use super::{validate_security_event_field, DetectionLevel, SecurityRule, SecurityRuleAction, SecurityRulePriority};
 use crate::validation::validate_identifier;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SigmaRule {
@@ -102,8 +105,8 @@ impl SigmaRule {
                     .ok_or_else(|| format!("Sigma selection '{name}' has a non-string field"))?;
                 validate_security_event_field(field)?;
                 let clause = sigma_field_clause(field, expected)?;
-                positive.push(clause.positive);
-                negative.push(clause.negative);
+                positive.push(format!("({})", clause.positive));
+                negative.push(format!("({})", clause.negative));
             }
             if positive.is_empty() {
                 return Err(format!("Sigma selection '{name}' must not be empty"));
@@ -151,10 +154,10 @@ fn sigma_condition_to_security_event_match(
                     .get(name)
                     .ok_or_else(|| format!("Sigma condition references unknown selection '{name}'"))?;
                 if negate_next {
-                    output.push(clause.negative.clone());
+                    output.push(format!("({})", clause.negative));
                     negate_next = false;
                 } else {
-                    output.push(clause.positive.clone());
+                    output.push(format!("({})", clause.positive));
                 }
             }
         }

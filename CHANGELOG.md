@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Sigma translation preserves field-list and selection grouping, so alternatives
+  and negated selections cannot bypass another condition in an access rule.
+
 - OAuth disconnect joins an in-flight refresh and retires the latest rotated
   token under denial, including material whose durable publication failed.
 
