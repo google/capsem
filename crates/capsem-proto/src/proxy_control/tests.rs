@@ -5,7 +5,8 @@ const GENERATION: ProxyGeneration = ProxyGeneration::new([7; 16]);
 #[test]
 fn grants_round_trip_without_session_path_or_destination_authority() {
     for capability in [
-        ProxyCapability::Traffic,
+        ProxyCapability::HttpTraffic,
+        ProxyCapability::DnsTraffic,
         ProxyCapability::Upstream,
         ProxyCapability::Credential,
         ProxyCapability::Ledger,

@@ -4,7 +4,7 @@ use thiserror::Error;
 
 pub const PROXY_CONTROL_FRAME_SIZE: usize = 32;
 pub const PROXY_CONTROL_MAX_FDS: usize = 1;
-pub const PROXY_CONTROL_VERSION: u16 = 1;
+pub const PROXY_CONTROL_VERSION: u16 = 2;
 
 const MAGIC: [u8; 2] = *b"PX";
 const VERSION_RANGE: std::ops::Range<usize> = 2..4;
@@ -51,14 +51,15 @@ impl ProxyGeneration {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ProxyCapability {
-    Traffic = 1,
-    Upstream = 2,
-    Credential = 3,
-    Ledger = 4,
-    PrivateNames = 5,
-    Mcp = 6,
-    Telemetry = 7,
-    Policy = 8,
+    HttpTraffic = 1,
+    DnsTraffic = 2,
+    Upstream = 3,
+    Credential = 4,
+    Ledger = 5,
+    PrivateNames = 6,
+    Mcp = 7,
+    Telemetry = 8,
+    Policy = 9,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,14 +292,15 @@ fn validate_generation(generation: ProxyGeneration) -> Result<(), ProxyControlEr
 
 fn decode_capability(value: u8) -> Result<ProxyCapability, ProxyControlError> {
     match value {
-        1 => Ok(ProxyCapability::Traffic),
-        2 => Ok(ProxyCapability::Upstream),
-        3 => Ok(ProxyCapability::Credential),
-        4 => Ok(ProxyCapability::Ledger),
-        5 => Ok(ProxyCapability::PrivateNames),
-        6 => Ok(ProxyCapability::Mcp),
-        7 => Ok(ProxyCapability::Telemetry),
-        8 => Ok(ProxyCapability::Policy),
+        1 => Ok(ProxyCapability::HttpTraffic),
+        2 => Ok(ProxyCapability::DnsTraffic),
+        3 => Ok(ProxyCapability::Upstream),
+        4 => Ok(ProxyCapability::Credential),
+        5 => Ok(ProxyCapability::Ledger),
+        6 => Ok(ProxyCapability::PrivateNames),
+        7 => Ok(ProxyCapability::Mcp),
+        8 => Ok(ProxyCapability::Telemetry),
+        9 => Ok(ProxyCapability::Policy),
         value => Err(ProxyControlError::InvalidCapability(value)),
     }
 }
