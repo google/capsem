@@ -94,10 +94,9 @@ async fn suspending_owner_child() {
     .await
     .unwrap();
     let (tx, rx) = channel_from_std::<ProcessToService, ServiceToProcess>(socket).unwrap();
-    let ServiceToProcess::Suspend { checkpoint_path } = rx.recv().await.unwrap() else {
+    let ServiceToProcess::Suspend = rx.recv().await.unwrap() else {
         panic!("expected suspend")
     };
-    assert_eq!(checkpoint_path, RESUME_CHECKPOINT_NAME);
     tx.send(ProcessToService::StateChanged {
         id: "owner".into(),
         state: "Suspended".into(),
