@@ -1,4 +1,4 @@
-//! Resolve a `BodyRef` to bytes, inflating a block segment by segment.
+//! Resolve a `BodyRef` to bytes, decoding a block segment by segment.
 //!
 //! The SQLite index is the only source of truth for what exists: a reader
 //! never scans the file. It seeks to the block an index row names and walks
@@ -24,17 +24,14 @@ use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
-use capsem_foundation::unix::fs as unix_fs;
-use miniz_oxide::inflate::stream::{inflate, InflateState};
-use miniz_oxide::{DataFormat, MZFlush, MZStatus};
-
 use super::format::{
     self, BodyRef, FileHeader, SegmentHeader, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES,
-    SEGMENT_HEADER_BYTES, SYNC_FLUSH_TAIL,
+    SEGMENT_HEADER_BYTES,
 };
 use crate::writer::refuse_symlink;
-use crate::{ArchiveError, Result};
+use crate::{ArchiveCodecs, ArchiveError, BlockDecoder, Result};
+use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
+use capsem_foundation::unix::fs as unix_fs;
 
 /// Reads bodies back out of one `session.bodies`.
 ///
@@ -49,7 +46,8 @@ pub struct BodyLogReader {
     identity: Option<FileIdentity>,
     header: FileHeader,
     committed_end: u64,
-    /// How far into one block this reader has inflated. Bodies of one
+    codecs: ArchiveCodecs,
+    /// How far into one block this reader has decoded. Bodies of one
     /// exchange land in one block, and a UI walks rows in order, so the next
     /// read usually continues this cursor rather than starting over.
     cursor: RefCell<Option<Cursor>>,
@@ -57,15 +55,15 @@ pub struct BodyLogReader {
     segments: Cell<u64>,
 }
 
-/// One block, inflated up to the end of some segment.
+/// One block, decoded up to the end of some segment.
 struct Cursor {
     block_offset: u64,
     block_end: u64,
     raw_limit: u32,
-    /// The block's inflater, carrying the dictionary the next segment was
+    /// The block's decoder, carrying the dictionary the next segment was
     /// compressed against. Boxed: it is about 40 KiB.
-    inflater: Box<InflateState>,
-    /// Every raw byte of the block inflated so far.
+    decoder: Box<dyn BlockDecoder>,
+    /// Every raw byte of the block decoded so far.
     raw: Vec<u8>,
     /// File offset of the next segment header.
     next_segment_at: u64,
@@ -99,11 +97,15 @@ impl FileIdentity {
 
 impl BodyLogReader {
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_codecs(path, ArchiveCodecs::default())
+    }
+
+    pub fn open_with_codecs(path: &Path, codecs: ArchiveCodecs) -> Result<Self> {
         refuse_symlink(path)?;
         let file = unix_fs::open_regular_file_no_follow(path)?;
         let identity = FileIdentity::of(&file.metadata()?);
         let committed_end = file.metadata()?.len();
-        let mut reader = Self::from_descriptor_unchecked(file, committed_end)?;
+        let mut reader = Self::from_descriptor_unchecked(file, committed_end, codecs)?;
         reader.path = Some(path.to_path_buf());
         reader.identity = Some(identity);
         // Transitional path-based callers follow an append-only live file.
@@ -116,10 +118,19 @@ impl BodyLogReader {
     /// Open the exact generation selected by a SQLite snapshot beneath an
     /// already-open private directory.
     pub fn open_generation(directory: &ContainedDir, expected: FileHeader, committed_end: u64) -> Result<Self> {
+        Self::open_generation_with_codecs(directory, expected, committed_end, ArchiveCodecs::default())
+    }
+
+    pub fn open_generation_with_codecs(
+        directory: &ContainedDir,
+        expected: FileHeader,
+        committed_end: u64,
+        codecs: ArchiveCodecs,
+    ) -> Result<Self> {
         directory.validate_private()?;
         let name = expected.generation_id.file_name();
         let file = directory.open_file(OsStr::new(&name), ContainedOpenOptions::read_only())?;
-        let reader = Self::from_descriptor(file, expected, committed_end)?;
+        let reader = Self::from_descriptor_with_codecs(file, expected, committed_end, codecs)?;
         reader
             .header
             .validate(expected.archive_id, expected.generation_id, &name)?;
@@ -129,14 +140,23 @@ impl BodyLogReader {
     /// Adopt an independently-owned descriptor and validate it against the
     /// selected ledger identity and committed extent.
     pub fn from_descriptor(file: File, expected: FileHeader, committed_end: u64) -> Result<Self> {
-        let reader = Self::from_descriptor_unchecked(file, committed_end)?;
+        Self::from_descriptor_with_codecs(file, expected, committed_end, ArchiveCodecs::default())
+    }
+
+    pub fn from_descriptor_with_codecs(
+        file: File,
+        expected: FileHeader,
+        committed_end: u64,
+        codecs: ArchiveCodecs,
+    ) -> Result<Self> {
+        let reader = Self::from_descriptor_unchecked(file, committed_end, codecs)?;
         if reader.header != expected {
             return Err(ArchiveError::ArchiveIdentityMismatch);
         }
         Ok(reader)
     }
 
-    fn from_descriptor_unchecked(mut file: File, committed_end: u64) -> Result<Self> {
+    fn from_descriptor_unchecked(mut file: File, committed_end: u64, codecs: ArchiveCodecs) -> Result<Self> {
         if committed_end < FILE_HEADER_BYTES as u64 {
             return Err(ArchiveError::BadFileHeader);
         }
@@ -153,6 +173,7 @@ impl BodyLogReader {
             identity: None,
             header,
             committed_end,
+            codecs,
             cursor: RefCell::new(None),
             blocks: Cell::new(0),
             segments: Cell::new(0),
@@ -228,13 +249,14 @@ impl BodyLogReader {
             file.read_exact(&mut head)
                 .map_err(|_| ArchiveError::BadBlockHeader(block_offset))?;
         }
-        format::parse_block_header(&head, block_offset)?;
+        let codec = format::parse_block_header(&head, block_offset)?;
+        let decoder = self.codecs.decoder(codec, block_offset)?;
         self.blocks.set(self.blocks.get() + 1);
         Ok(Cursor {
             block_offset,
             block_end,
             raw_limit,
-            inflater: InflateState::new_boxed(DataFormat::Raw),
+            decoder,
             raw: Vec::new(),
             next_segment_at: block_offset + BLOCK_HEADER_BYTES as u64,
             finished: false,
@@ -334,45 +356,17 @@ impl BodyLogReader {
 /// to the header's. A non-final segment must also end on a sync flush, or the
 /// next one would not decode after it.
 fn inflate_segment(cursor: &mut Cursor, header: &SegmentHeader, comp: &[u8], at: u64) -> Result<()> {
-    let bad = |reason: &str| ArchiveError::Inflate(at, reason.to_string());
-    if !header.last && !comp.ends_with(&SYNC_FLUSH_TAIL) {
-        return Err(ArchiveError::BadSegment(at));
-    }
     let start = cursor.raw.len();
     let want = header.raw_len as usize;
-    cursor.raw.resize(start + want + 1, 0);
-    let (mut consumed, mut written) = (0, 0);
-    let mut ended = false;
-    loop {
-        let result = inflate(
-            &mut cursor.inflater,
-            &comp[consumed..],
-            &mut cursor.raw[start + written..],
-            MZFlush::None,
-        );
-        consumed += result.bytes_consumed;
-        written += result.bytes_written;
-        match result.status {
-            Ok(MZStatus::StreamEnd) => {
-                ended = true;
-                break;
-            }
-            // All input taken, or no progress possible (the slack byte is
-            // spent, or the stream wants input the segment does not have):
-            // the checks below say which.
-            Ok(_) if consumed == comp.len() || (result.bytes_consumed == 0 && result.bytes_written == 0) => break,
-            Ok(_) => {}
-            Err(miniz_oxide::MZError::Buf) => break,
-            Err(error) => return Err(bad(&format!("{error:?}"))),
-        }
-    }
-    cursor.raw.truncate(start + written.min(want));
-    if consumed != comp.len() || written != want || ended != header.last {
+    let raw = cursor.decoder.decode_segment(comp, want, header.last, at)?;
+    if raw.len() != want {
         return Err(ArchiveError::Integrity(at));
     }
-    if blake3::hash(&cursor.raw[start..]).as_bytes() != &header.hash {
+    if blake3::hash(&raw).as_bytes() != &header.hash {
         return Err(ArchiveError::Integrity(at));
     }
+    cursor.raw.extend_from_slice(&raw);
+    debug_assert_eq!(cursor.raw.len(), start + want);
     Ok(())
 }
 

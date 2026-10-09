@@ -1,7 +1,7 @@
 //! Stage bodies into an open block; flush a segment when asked, close the
 //! block when it is full.
 //!
-//! A block is one deflate stream. `stage` feeds a body to the compressor and
+//! A block is one compression stream. `stage` feeds a body to the compressor and
 //! hands back a reference naming the block's real offset; `flush_segment`
 //! sync-flushes the compressor and appends everything it produced since the
 //! last flush, behind a segment header, in one write. The block stays open,
@@ -27,15 +27,13 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Instant;
 
+use super::format::{
+    self, ArchiveId, BodyRef, FileHeader, GenerationId, SegmentHeader, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES,
+    MAX_BLOCK_RAW_BYTES, SEGMENT_HEADER_BYTES, TARGET_BLOCK_BYTES,
+};
+use crate::{ArchiveCodecs, ArchiveError, BlockEncoder, BodyLogReader, Result};
 use capsem_foundation::unix::contained::ContainedDir;
 use capsem_foundation::unix::fs as unix_fs;
-use flate2::{Compress, Compression, FlushCompress, Status};
-
-use super::format::{
-    self, ArchiveId, BodyRef, FileHeader, GenerationId, SegmentHeader, BLOCK_HEADER_BYTES, CODEC_DEFLATE,
-    DEFLATE_LEVEL, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES, SEGMENT_HEADER_BYTES, TARGET_BLOCK_BYTES,
-};
-use crate::{ArchiveError, BodyLogReader, Result};
 
 /// What one flush or close put on disk. The owner records `raw_len` and
 /// `disk_len` against `block_offset` in the same transaction as the index
@@ -54,7 +52,8 @@ pub struct SegmentWritten {
 /// The block being written: one compressor, and the segment in progress.
 struct OpenBlock {
     offset: u64,
-    compressor: Compress,
+    codec: u8,
+    encoder: Box<dyn BlockEncoder>,
     /// Raw bytes staged into the block, flushed or not.
     raw_len: u32,
     /// Raw bytes already inside a written segment.
@@ -80,6 +79,7 @@ pub struct BodyLogWriter {
     header: FileHeader,
     end: u64,
     block: Option<OpenBlock>,
+    codecs: ArchiveCodecs,
     /// Set by a write that failed part-way through. See
     /// [`ArchiveError::Poisoned`].
     poisoned: bool,
@@ -114,6 +114,10 @@ impl BodyLogWriter {
     /// A reopened file must carry this version's header. It is appended after
     /// its current end, torn tail included: no index row points there.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_codecs(path, ArchiveCodecs::default())
+    }
+
+    pub fn open_with_codecs(path: &Path, codecs: ArchiveCodecs) -> Result<Self> {
         refuse_symlink(path)?;
         let mut file = unix_fs::open_private_append_no_follow(path)?;
         let end = file.metadata()?.len();
@@ -123,14 +127,14 @@ impl BodyLogWriter {
                 generation_id: GenerationId::new_v4(),
             };
             file.write_all(&format::encode_file_header(header.archive_id, header.generation_id))?;
-            return Ok(Self::at(file, header, FILE_HEADER_BYTES as u64));
+            return Ok(Self::at(file, header, FILE_HEADER_BYTES as u64, codecs));
         }
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         let mut header = [0u8; FILE_HEADER_BYTES];
         file.seek(SeekFrom::Start(0))?;
         file.read_exact(&mut header).map_err(|_| ArchiveError::BadFileHeader)?;
         let header = format::decode_file_header(&header)?;
-        Ok(Self::at(file, header, end))
+        Ok(Self::at(file, header, end, codecs))
     }
 
     /// Exclusively create a generation beneath an already-open private
@@ -141,6 +145,15 @@ impl BodyLogWriter {
         archive_id: ArchiveId,
         generation_id: GenerationId,
     ) -> Result<Self> {
+        Self::create_generation_with_codecs(directory, archive_id, generation_id, ArchiveCodecs::default())
+    }
+
+    pub fn create_generation_with_codecs(
+        directory: &ContainedDir,
+        archive_id: ArchiveId,
+        generation_id: GenerationId,
+        codecs: ArchiveCodecs,
+    ) -> Result<Self> {
         directory.validate_private()?;
         let name = generation_id.file_name();
         let mut file = directory.create_new_private_file(OsStr::new(&name))?;
@@ -149,13 +162,22 @@ impl BodyLogWriter {
             generation_id,
         };
         file.write_all(&format::encode_file_header(archive_id, generation_id))?;
-        Ok(Self::at(file, header, FILE_HEADER_BYTES as u64))
+        Ok(Self::at(file, header, FILE_HEADER_BYTES as u64, codecs))
     }
 
     /// Reopen the exact generation selected by the authoritative SQLite row.
     /// Unreferenced bytes past `committed_end` are retained and a new block
     /// starts at actual EOF; an old compressor stream is never resumed.
     pub fn open_generation(directory: &ContainedDir, expected: FileHeader, committed_end: u64) -> Result<Self> {
+        Self::open_generation_with_codecs(directory, expected, committed_end, ArchiveCodecs::default())
+    }
+
+    pub fn open_generation_with_codecs(
+        directory: &ContainedDir,
+        expected: FileHeader,
+        committed_end: u64,
+        codecs: ArchiveCodecs,
+    ) -> Result<Self> {
         directory.validate_private()?;
         let name = expected.generation_id.file_name();
         let mut file = directory.open_existing_private_append(OsStr::new(&name))?;
@@ -168,7 +190,7 @@ impl BodyLogWriter {
         file.read_exact(&mut encoded).map_err(|_| ArchiveError::BadFileHeader)?;
         let header = format::decode_file_header(&encoded)?;
         header.validate(expected.archive_id, expected.generation_id, &name)?;
-        Ok(Self::at(file, header, end))
+        Ok(Self::at(file, header, end, codecs))
     }
 
     /// Copy one already-validated committed block extent verbatim into a new
@@ -222,12 +244,13 @@ impl BodyLogWriter {
         Ok(())
     }
 
-    fn at(file: File, header: FileHeader, end: u64) -> Self {
+    fn at(file: File, header: FileHeader, end: u64, codecs: ArchiveCodecs) -> Self {
         Self {
             file,
             header,
             end,
             block: None,
+            codecs,
             poisoned: false,
             #[cfg(test)]
             fail_write_after: None,
@@ -271,17 +294,21 @@ impl BodyLogWriter {
         {
             return Err(ArchiveError::BlockFull);
         }
-        let end = self.end;
-        let block = self.block.get_or_insert_with(|| OpenBlock {
-            offset: end,
-            compressor: Compress::new(Compression::new(DEFLATE_LEVEL), false),
-            raw_len: 0,
-            flushed_raw: 0,
-            disk_len: 0,
-            hasher: blake3::Hasher::new(),
-            out: Vec::new(),
-        });
-        if let Err(error) = deflate_into(&mut block.compressor, body, &mut block.out, FlushCompress::None) {
+        if self.block.is_none() {
+            let (codec, encoder) = self.codecs.encoder()?;
+            self.block = Some(OpenBlock {
+                offset: self.end,
+                codec,
+                encoder,
+                raw_len: 0,
+                flushed_raw: 0,
+                disk_len: 0,
+                hasher: blake3::Hasher::new(),
+                out: Vec::new(),
+            });
+        }
+        let block = self.block.as_mut().expect("created above");
+        if let Err(error) = block.encoder.write(body, &mut block.out) {
             // The compressor may have taken part of the body; nothing it
             // produces from here on can be vouched for.
             self.poisoned = true;
@@ -366,12 +393,7 @@ impl BodyLogWriter {
         #[cfg(not(test))]
         let fail_after = None;
         let block = self.block.as_mut().expect("callers check a block is open");
-        let flush = if last {
-            FlushCompress::Finish
-        } else {
-            FlushCompress::Sync
-        };
-        if let Err(error) = deflate_into(&mut block.compressor, &[], &mut block.out, flush) {
+        if let Err(error) = block.encoder.flush(&mut block.out, last) {
             // The compressor's state is unknown; nothing it produces next can
             // be vouched for.
             self.poisoned = true;
@@ -387,7 +409,7 @@ impl BodyLogWriter {
         });
         let mut bytes = Vec::with_capacity(BLOCK_HEADER_BYTES + SEGMENT_HEADER_BYTES + block.out.len());
         if block.disk_len == 0 {
-            bytes.extend_from_slice(&format::encode_block_header(CODEC_DEFLATE));
+            bytes.extend_from_slice(&format::encode_block_header(block.codec));
         }
         bytes.extend_from_slice(&header);
         bytes.extend_from_slice(&block.out);
@@ -458,30 +480,6 @@ fn write_all(file: &mut File, bytes: &[u8], fail_after: Option<usize>) -> io::Re
         return Err(io::Error::other("injected short write"));
     }
     file.write_all(bytes)
-}
-
-/// Run `input` through the compressor with `flush`, growing `out` until the
-/// compressor has taken all of it and emitted everything the flush owes.
-fn deflate_into(compressor: &mut Compress, input: &[u8], out: &mut Vec<u8>, flush: FlushCompress) -> Result<()> {
-    let mut consumed = 0;
-    loop {
-        // Room for the input at worst-case expansion plus the flush's own
-        // bytes, so a sync flush almost always completes in one call.
-        out.reserve((input.len() - consumed) + (input.len() - consumed) / 1000 + 64 * 1024);
-        let before = compressor.total_in();
-        let status = compressor
-            .compress_vec(&input[consumed..], out, flush)
-            .map_err(|error| ArchiveError::Io(io::Error::other(error)))?;
-        consumed += usize::try_from(compressor.total_in() - before).expect("bounded by the input");
-        let done = match flush {
-            FlushCompress::Finish => status == Status::StreamEnd,
-            // Output stopped short of the buffer's end: the flush is complete.
-            _ => consumed == input.len() && out.len() < out.capacity(),
-        };
-        if done {
-            return Ok(());
-        }
-    }
 }
 
 #[cfg(test)]

@@ -225,7 +225,7 @@ pub fn parse_block_header(bytes: &[u8; BLOCK_HEADER_BYTES], block_offset: u64) -
         return Err(ArchiveError::BadBlockHeader(block_offset));
     }
     let codec = bytes[4];
-    if codec != CODEC_DEFLATE || bytes[5] != 0 || bytes[6..8] != [0, 0] {
+    if bytes[5] != 0 || bytes[6..8] != [0, 0] {
         return Err(ArchiveError::UnsupportedCodec { block_offset, codec });
     }
     Ok(codec)

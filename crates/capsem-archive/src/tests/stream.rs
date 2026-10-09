@@ -12,7 +12,87 @@ use flate2::{Compress, Compression, FlushCompress};
 
 use super::{archive, file_len, XorShift};
 use crate::format::{BodyRef, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES};
-use crate::{BodyLogReader, BodyLogWriter};
+use std::sync::Arc;
+
+use crate::{ArchiveCodecs, BlockCodec, BlockDecoder, BlockEncoder, BodyLogReader, BodyLogWriter, Result};
+
+const CHAIN_CODEC: u8 = 2;
+
+struct ChainCodec;
+
+struct ChainEncoder {
+    offset: usize,
+}
+
+struct ChainDecoder {
+    offset: usize,
+}
+
+impl BlockCodec for ChainCodec {
+    fn id(&self) -> u8 {
+        CHAIN_CODEC
+    }
+
+    fn encoder(&self) -> Result<Box<dyn BlockEncoder>> {
+        Ok(Box::new(ChainEncoder { offset: 0 }))
+    }
+
+    fn decoder(&self) -> Result<Box<dyn BlockDecoder>> {
+        Ok(Box::new(ChainDecoder { offset: 0 }))
+    }
+}
+
+impl BlockEncoder for ChainEncoder {
+    fn write(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
+        output.extend(
+            input
+                .iter()
+                .enumerate()
+                .map(|(index, byte)| byte ^ ((self.offset + index) as u8)),
+        );
+        self.offset += input.len();
+        Ok(())
+    }
+
+    fn flush(&mut self, _output: &mut Vec<u8>, _finish: bool) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl BlockDecoder for ChainDecoder {
+    fn decode_segment(&mut self, input: &[u8], raw_len: usize, _finish: bool, at: u64) -> Result<Vec<u8>> {
+        if input.len() != raw_len {
+            return Err(crate::ArchiveError::Integrity(at));
+        }
+        let decoded = input
+            .iter()
+            .enumerate()
+            .map(|(index, byte)| byte ^ ((self.offset + index) as u8))
+            .collect();
+        self.offset += raw_len;
+        Ok(decoded)
+    }
+}
+
+#[test]
+fn a_registered_codec_keeps_stream_state_across_durable_segments() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let codecs = ArchiveCodecs::with_write_codec(Arc::new(ChainCodec)).unwrap();
+    let mut writer = BodyLogWriter::open_with_codecs(&path, codecs.clone()).unwrap();
+    let first_body = b"first body with durable visibility";
+    let second_body = b"second body depends on the prior stream position";
+    let first = writer.stage(first_body).unwrap();
+    writer.flush_segment().unwrap();
+    let second = writer.stage(second_body).unwrap();
+    writer.close_block().unwrap();
+
+    let reader = BodyLogReader::open_with_codecs(&path, codecs).unwrap();
+    assert_eq!(reader.read(first).unwrap(), first_body);
+    assert_eq!(reader.read(second).unwrap(), second_body);
+    let encoded = std::fs::read(&path).unwrap();
+    assert_eq!(encoded[FILE_HEADER_BYTES + 4], CHAIN_CODEC);
+}
 
 /// Random bodies -- text, incompressible, empty -- with random flushes and
 /// closes. After every flush, a copy of the file cut at the writer's end must
