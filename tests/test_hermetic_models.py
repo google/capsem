@@ -1,6 +1,7 @@
 """Shipped-agent startup connections stay inside the hermetic upstream."""
 
 import tomllib
+
 from helpers.hermetic_models import model_corp_config
 
 
