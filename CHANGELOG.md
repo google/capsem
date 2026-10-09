@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Coordinate live forks through a path-free freeze/copy/thaw handshake and
+  copy coherent database state only from the session ledger worker's
+  maintainer-scoped snapshot, keeping both VM owners and the service from
+  opening session SQLite storage.
+
 - Export confined proxy metrics through a bounded, generation-bound broker
   capability that fixes session attribution and keeps collector destinations,
   credentials and environment state in the trusted service.

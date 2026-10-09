@@ -224,32 +224,65 @@ pub(crate) fn only_reloads(received: &[ServiceToProcess], count: usize) -> bool 
             .all(|message| matches!(message, ServiceToProcess::ReloadConfig { .. }))
 }
 
-/// A VM owner that answers `CloneState` the way the real one does once the
-/// guest is frozen -- by cloning `source` -- or refuses with `refusal`.
+/// A VM owner that freezes, lets the service clone, and then reports thaw.
 pub(crate) fn spawn_fake_fork_owner(
     uds_path: &StdPath,
-    source: PathBuf,
+    _source: PathBuf,
     refusal: Option<&'static str>,
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    spawn_fake_process(uds_path, 1, move |message| {
-        let reply = match message {
-            ServiceToProcess::CloneState { id, destination } => {
-                let (size_bytes, error) = match refusal {
-                    None => (
-                        Some(capsem_core::session::clone_sandbox_state(&source, StdPath::new(destination)).unwrap()),
-                        None,
-                    ),
-                    Some(reason) => (None, Some(reason.to_string())),
-                };
-                Some(ProcessToService::CloneStateResult {
-                    id: *id,
-                    size_bytes,
-                    error,
-                })
-            }
-            other => panic!("fork sent an unexpected owner message: {other:?}"),
+    let _ = std::fs::remove_file(uds_path);
+    let listener = tokio::net::UnixListener::bind(uds_path).unwrap();
+    std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let std_stream = stream.into_std().unwrap();
+        let std_stream = tokio::task::spawn_blocking(move || {
+            let mut std_stream = std_stream;
+            capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
+            Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let (tx, rx): (
+            capsem_foundation::ipc_channel::Sender<ProcessToService>,
+            capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
+        ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
+        let request = rx.recv().await.unwrap();
+        let ServiceToProcess::CloneState { id } = request else {
+            panic!("fork sent an unexpected owner message: {request:?}")
         };
-        Box::pin(async move { reply })
+        let mut messages = vec![request];
+        if let Some(reason) = refusal {
+            tx.send(ProcessToService::CloneStateResult {
+                id,
+                size_bytes: None,
+                error: Some(reason.to_string()),
+            })
+            .await
+            .unwrap();
+            return messages;
+        }
+        tx.send(ProcessToService::CloneStateReady { id }).await.unwrap();
+        let completion = rx.recv().await.unwrap();
+        let ServiceToProcess::CloneStateComplete {
+            id: completed_id,
+            size_bytes,
+            error,
+        } = &completion
+        else {
+            panic!("fork sent an unexpected completion: {completion:?}")
+        };
+        assert_eq!(*completed_id, id);
+        tx.send(ProcessToService::CloneStateResult {
+            id,
+            size_bytes: *size_bytes,
+            error: error.clone(),
+        })
+        .await
+        .unwrap();
+        messages.push(completion);
+        messages
     })
 }
 

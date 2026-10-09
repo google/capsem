@@ -61,3 +61,16 @@ fn provision_never_opens_the_ledger_its_child_is_creating() {
          2026-09-24). Routes register the reader lazily once the ledger is ready."
     );
 }
+
+#[test]
+fn fork_coordinates_ledger_snapshot_without_opening_storage() {
+    let fork = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm_files/fork.rs"))
+        .expect("fork source must be readable");
+    assert!(!fork.contains("clone_sandbox_state"));
+    assert!(!fork.contains("snapshot_session_ledger"));
+    assert!(!fork.contains("rusqlite"));
+    assert!(fork.contains("LedgerClientRole::Maintainer"));
+    assert!(fork.contains("client.snapshot("));
+    assert!(fork.contains("CloneStateReady"));
+    assert!(fork.contains("CloneStateComplete"));
+}
