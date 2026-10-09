@@ -20,3 +20,4 @@ class ContainerSpec:
     mem_limit: str | None = None
     user: str | None = None
     allowed_host_paths: tuple[str, ...] = ()
+    build: dict[str, Any] | None = None

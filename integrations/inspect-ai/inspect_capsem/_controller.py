@@ -182,6 +182,18 @@ class SdkCapsemController:
         except CreateTimeoutError as exc:
             await self._cleanup_failed_create(exc)
             raise
+        except HttpError as exc:
+            if registry_ca_pem and exc.status in (400, 403):
+                auth = (norm_image or "").removeprefix("docker://").partition("/")[
+                    0
+                ] or "127.0.0.1:5055"
+                raise RuntimeError(
+                    f"capsem-service rejected loopback build registry image {norm_image!r} "
+                    f"({exc}). To enable Compose 'build:' / Dockerfile sandboxes, add "
+                    f'sources = ["{auth}"] and admit = ["{auth}/inspect-capsem/build"] '
+                    "under [images] in settings.toml."
+                ) from exc
+            raise
         vm_id = str(session.id)
         self._sessions[vm_id] = session
         if norm_image:
