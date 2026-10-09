@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -191,6 +192,25 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     let reason = serve_policy(stream, state).await;
                                     (capability, grant_id, reason)
                                 });
+                            } else if capability == ProxyCapability::Ledger {
+                                let ledger_grant = grant
+                                    .ledger_grant()
+                                    .expect("ledger capability was decoded with exact authority");
+                                let writer = tokio::task::spawn_blocking(move || {
+                                    capsem_logger::DbWriter::from_ledger_channel(
+                                        stream,
+                                        ledger_grant,
+                                        Path::new("capability:session-ledger"),
+                                        1024,
+                                    )
+                                })
+                                .await
+                                .map_err(|error| anyhow::anyhow!("join proxy ledger handshake: {error}"))?
+                                .context("authenticate proxy ledger capability")?;
+                                state
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .attach_ledger(Arc::new(writer));
                             } else {
                                 descriptors.insert(grant_id, stream);
                             }
@@ -246,11 +266,24 @@ fn remove_grant(
     }
 }
 
-#[derive(Default)]
 struct ProxyRuntimeState {
     engine: Option<ProxyEngine>,
+    ledger: Arc<dyn ProxyLedger>,
+    credentials: Arc<dyn ProxyCredentials>,
     dns_upstreams: Vec<std::net::SocketAddr>,
     mcp: capsem_core::mcp::policy::McpConfig,
+}
+
+impl Default for ProxyRuntimeState {
+    fn default() -> Self {
+        Self {
+            engine: None,
+            ledger: Arc::new(UnavailableLedger),
+            credentials: Arc::new(UnavailableCredentials),
+            dns_upstreams: Vec::new(),
+            mcp: capsem_core::mcp::policy::McpConfig::default(),
+        }
+    }
 }
 
 impl ProxyRuntimeState {
@@ -263,13 +296,24 @@ impl ProxyRuntimeState {
         } else {
             self.engine = Some(ProxyEngine::new(
                 ProxyPolicyHandle::new(snapshot),
-                Arc::new(UnavailableLedger),
-                Arc::new(UnavailableCredentials),
+                Arc::clone(&self.ledger),
+                Arc::clone(&self.credentials),
             ));
         }
         self.dns_upstreams = dns_upstreams;
         self.mcp = mcp;
         Ok(digest)
+    }
+
+    fn attach_ledger(&mut self, ledger: Arc<capsem_logger::DbWriter>) {
+        self.ledger = ledger;
+        if let Some(engine) = self.engine.take() {
+            self.engine = Some(ProxyEngine::new(
+                engine.policy().clone(),
+                Arc::clone(&self.ledger),
+                Arc::clone(&self.credentials),
+            ));
+        }
     }
 }
 

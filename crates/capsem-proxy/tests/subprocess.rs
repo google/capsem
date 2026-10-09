@@ -4,6 +4,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
+use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use capsem_proto::proxy_control::{
     decode_proxy_control_event, encode_proxy_control_request, ProxyCapability, ProxyChannelGrant, ProxyControlEvent,
     ProxyControlRejection, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
@@ -81,7 +82,6 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         ProxyCapability::DnsTraffic,
         ProxyCapability::Upstream,
         ProxyCapability::Credential,
-        ProxyCapability::Ledger,
         ProxyCapability::PrivateNames,
         ProxyCapability::Mcp,
         ProxyCapability::Telemetry,
@@ -112,7 +112,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
     }
 
     let (duplicate_peer, duplicate) = UnixStream::pair().unwrap();
-    let duplicate_grant = ProxyChannelGrant::new(GENERATION, 10, ProxyCapability::Ledger).unwrap();
+    let duplicate_grant = ProxyChannelGrant::new(GENERATION, 10, ProxyCapability::Telemetry).unwrap();
     requests
         .send(
             &encode_proxy_control_request(ProxyControlRequest::Attach(duplicate_grant)),
@@ -144,6 +144,92 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
     );
     drop(peers);
 
+    let child = child.take();
+    let output = tokio::task::spawn_blocking(move || child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "proxy worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn ledger_grant_is_authenticated_before_adoption() {
+    let (mut child, requests, events) = spawn();
+    assert_eq!(
+        event(&events).await,
+        ProxyControlEvent::Ready { generation: GENERATION }
+    );
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(4);
+    let event_pump = tokio::spawn(async move {
+        while let Ok(frame) = events.recv().await {
+            let event = decode_proxy_control_event(&frame.bytes).unwrap();
+            if event_tx.send(event).await.is_err() {
+                return;
+            }
+        }
+    });
+    let (server_stream, granted) = UnixStream::pair().unwrap();
+    let ledger_grant = LedgerChannelGrant::new(LedgerGeneration::new([4; 16]), 17, LedgerClientRole::Proxy).unwrap();
+    let grant = ProxyChannelGrant::with_ledger(GENERATION, 1, ledger_grant).unwrap();
+    requests
+        .send(
+            &encode_proxy_control_request(ProxyControlRequest::Attach(grant)),
+            &[granted.as_raw_fd()],
+        )
+        .await
+        .unwrap();
+    drop(granted);
+
+    assert!(tokio::time::timeout(Duration::from_millis(100), event_rx.recv())
+        .await
+        .is_err());
+    let ledger_dir = tempfile::tempdir().unwrap();
+    let ledger = std::sync::Arc::new(
+        capsem_logger::ledger_server::LedgerServer::open(&ledger_dir.path().join("session.db")).unwrap(),
+    );
+    let serving = tokio::spawn(async move { ledger.serve_client(server_stream, ledger_grant).await });
+    let adopted = match tokio::time::timeout(Duration::from_secs(5), event_rx.recv()).await {
+        Ok(Some(event)) => event,
+        _ => {
+            let child = child.take();
+            let output = tokio::task::spawn_blocking(move || child.wait_with_output())
+                .await
+                .unwrap()
+                .unwrap();
+            panic!(
+                "proxy ledger adoption failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    };
+    assert_eq!(
+        adopted,
+        ProxyControlEvent::Adopted {
+            generation: GENERATION,
+            grant_id: 1,
+        }
+    );
+
+    requests
+        .send(
+            &encode_proxy_control_request(ProxyControlRequest::Shutdown { generation: GENERATION }),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        ProxyControlEvent::Stopped { generation: GENERATION }
+    );
+    event_pump.await.unwrap();
+    assert!(serving.await.unwrap().is_ok());
     let child = child.take();
     let output = tokio::task::spawn_blocking(move || child.wait_with_output())
         .await
