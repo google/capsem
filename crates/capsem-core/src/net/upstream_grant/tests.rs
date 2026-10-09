@@ -24,15 +24,16 @@ async fn ledger_channel_preserves_grant_and_is_adopted_before_use() {
     let client = UpstreamGrantClient::start(worker).unwrap();
     let (requests, responses) = channels(broker);
     let (ledger, mut ledger_peer) = UnixStream::pair().unwrap();
+    let (commitment, mut commitment_peer) = UnixStream::pair().unwrap();
     let broker_task = tokio::spawn(async move {
         assert_eq!(
             receive_request(&requests).await,
             UpstreamGrantRequest::OpenLedger { request_id: 1 }
         );
-        send_response(
+        send_response_many(
             &responses,
             &UpstreamGrantResponse::LedgerGranted { request_id: 1, grant },
-            Some(ledger.as_raw_fd()),
+            &[ledger.as_raw_fd(), commitment.as_raw_fd()],
         )
         .await;
         assert_eq!(
@@ -43,12 +44,15 @@ async fn ledger_channel_preserves_grant_and_is_adopted_before_use() {
         );
     });
 
-    let (mut stream, received) = client.open_ledger().await.unwrap();
+    let (mut stream, mut commitment_stream, received) = client.open_ledger().await.unwrap();
     assert_eq!(received, grant);
     stream.write_all(b"hello").unwrap();
     let mut message = [0_u8; 5];
     ledger_peer.read_exact(&mut message).unwrap();
     assert_eq!(&message, b"hello");
+    commitment_stream.write_all(b"proof").unwrap();
+    commitment_peer.read_exact(&mut message).unwrap();
+    assert_eq!(&message, b"proof");
     broker_task.await.unwrap();
 }
 
@@ -183,9 +187,13 @@ async fn receive_request(receiver: &WireReceiver) -> UpstreamGrantRequest {
 }
 
 async fn send_response(sender: &WireSender, response: &UpstreamGrantResponse, descriptor: Option<RawFd>) {
-    let bytes = encode_upstream_grant_response(response).unwrap();
     let fds = descriptor.map_or_else(Vec::new, |descriptor| vec![descriptor]);
-    sender.send(&bytes, &fds).await.unwrap();
+    send_response_many(sender, response, &fds).await;
+}
+
+async fn send_response_many(sender: &WireSender, response: &UpstreamGrantResponse, fds: &[RawFd]) {
+    let bytes = encode_upstream_grant_response(response).unwrap();
+    sender.send(&bytes, fds).await.unwrap();
 }
 
 fn query() -> Vec<u8> {
