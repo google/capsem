@@ -13,6 +13,7 @@
 pub mod credential_reference;
 mod exec_stream;
 pub mod forensic;
+pub mod gateway_grant;
 pub mod handshake;
 pub mod host_session;
 pub mod ipc;
