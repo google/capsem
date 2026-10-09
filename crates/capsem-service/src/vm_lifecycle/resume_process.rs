@@ -67,8 +67,10 @@ impl ServiceState {
         self.validate_persistent_entry(&entry)?;
         let active_policy = self.materialize_active_policy(&entry.session_dir)?;
         let active_policy_path = active_policy.path.clone();
-        let (upstream_broker, upstream_policy) =
-            crate::upstream_broker::PendingBroker::pair(active_policy.broker_policy())?;
+        let (upstream_broker, upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(
+            active_policy.broker_policy(),
+            entry.session_dir.clone(),
+        )?;
         let upstream_stdio = upstream_broker.worker_stdio()?;
         let scratch_disk_size_gb = session_rootfs_size_gb(&entry)?;
         let resolved = self.resolve_pinned_asset_paths(&entry.asset_pins)?;

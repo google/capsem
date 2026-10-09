@@ -9,7 +9,9 @@
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::{AsFd as _, AsRawFd as _, OwnedFd};
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,6 +52,7 @@ pub(crate) struct PendingBroker {
     worker: UnixStream,
     initial_policy: Arc<BrokerPolicy>,
     updates: mpsc::Receiver<PolicyUpdate>,
+    session_dir: Option<PathBuf>,
 }
 
 struct PolicyUpdate {
@@ -100,11 +103,21 @@ impl PendingBroker {
                 worker,
                 initial_policy,
                 updates,
+                session_dir: None,
             },
             PolicyPublisher {
                 updates: Some(updates_tx),
             },
         ))
+    }
+
+    pub(crate) fn pair_for_session(
+        initial_policy: Arc<BrokerPolicy>,
+        session_dir: PathBuf,
+    ) -> io::Result<(Self, PolicyPublisher)> {
+        let (mut pending, publisher) = Self::pair(initial_policy)?;
+        pending.session_dir = Some(session_dir);
+        Ok((pending, publisher))
     }
 
     pub(crate) fn worker_stdio(&self) -> io::Result<std::process::Stdio> {
@@ -114,7 +127,15 @@ impl PendingBroker {
 
     pub(crate) fn start(self, authority: WorkerGrant) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            if let Err(error) = run(self.coordinator, self.initial_policy, self.updates, authority).await {
+            if let Err(error) = run(
+                self.coordinator,
+                self.initial_policy,
+                self.updates,
+                authority,
+                self.session_dir,
+            )
+            .await
+            {
                 debug!(%error, "upstream broker stopped");
             }
         })
@@ -126,6 +147,7 @@ async fn run(
     mut policy: Arc<BrokerPolicy>,
     mut updates: mpsc::Receiver<PolicyUpdate>,
     authority: WorkerGrant,
+    session_dir: Option<PathBuf>,
 ) -> Result<(), String> {
     let requests =
         WireReceiver::new(socket.try_clone().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
@@ -408,6 +430,26 @@ async fn run(
                         revoke_grant(resource_id, grant)?;
                     }
                 }
+                UpstreamGrantRequest::SetGuestMode {
+                    request_id,
+                    relative_path,
+                    mode,
+                } => {
+                    let Some(session_dir) = session_dir.as_deref() else {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
+                        continue;
+                    };
+                    match set_guest_mode(session_dir, &relative_path, mode) {
+                        Ok(()) => {
+                            send_response(&responses, &UpstreamGrantResponse::GuestModeSet { request_id }, None)
+                                .await?;
+                        }
+                        Err(error) => {
+                            warn!(%error, "guest mode broker refused metadata change");
+                            send_denied(&responses, request_id, UpstreamGrantDenial::NotAllowed).await?;
+                        }
+                    }
+                }
             }
         }
     }
@@ -420,6 +462,13 @@ async fn run(
         (Err(error), Ok(())) => Err(error),
         (Err(error), Err(cleanup)) => Err(format!("{error}; {cleanup}")),
     }
+}
+
+fn set_guest_mode(session_dir: &Path, relative_path: &[u8], mode: u16) -> io::Result<()> {
+    let root = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?
+        .descend(std::ffi::OsStr::new(capsem_core::GUEST_SHARE_DIR))?;
+    let path = Path::new(std::ffi::OsStr::from_bytes(relative_path));
+    root.set_relative_mode(path, u32::from(mode))
 }
 
 async fn send_active_grant(

@@ -156,8 +156,10 @@ impl ServiceState {
 
         let active_policy = self.materialize_active_policy(&session_dir)?;
         let active_policy_path = active_policy.path.clone();
-        let (upstream_broker, upstream_policy) =
-            crate::upstream_broker::PendingBroker::pair(active_policy.broker_policy())?;
+        let (upstream_broker, upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(
+            active_policy.broker_policy(),
+            session_dir.clone(),
+        )?;
         let upstream_stdio = upstream_broker.worker_stdio()?;
 
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
