@@ -1135,13 +1135,17 @@ name = "capsem-proxy"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "bytes",
  "capsem-core",
  "capsem-foundation",
  "capsem-guard",
  "capsem-logger",
  "capsem-proto",
+ "capsem-telemetry",
  "clap",
  "http",
+ "opentelemetry-http",
  "tempfile",
  "tokio",
  "tracing",

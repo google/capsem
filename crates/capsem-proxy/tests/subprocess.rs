@@ -10,6 +10,7 @@ use capsem_proto::proxy_control::{
     decode_proxy_control_event, encode_proxy_control_request, ProxyCapability, ProxyChannelGrant, ProxyControlEvent,
     ProxyControlRejection, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
 };
+use capsem_proto::proxy_metrics::{ProxyMetricBrokerMessage, ProxyMetricRequest};
 use capsem_proto::proxy_policy::{ProxyPolicyRequest, ProxyPolicyResponse};
 
 type ControlSender = DescriptorSender<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
@@ -138,6 +139,19 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
     {
         let grant_id = index as u64 + 1;
         let (peer, granted) = UnixStream::pair().unwrap();
+        if capability == ProxyCapability::Telemetry {
+            let (messages, _requests) =
+                capsem_foundation::ipc_channel::channel_from_std::<ProxyMetricBrokerMessage, ProxyMetricRequest>(peer)
+                    .unwrap();
+            messages
+                .send(ProxyMetricBrokerMessage::Hello {
+                    session_id: "subprocess-vm".into(),
+                })
+                .await
+                .unwrap();
+        } else {
+            peers.push(peer);
+        }
         let grant = ProxyChannelGrant::new(GENERATION, grant_id, capability).unwrap();
         requests
             .send(
@@ -154,7 +168,6 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
                 grant_id,
             }
         );
-        peers.push(peer);
     }
 
     let (duplicate_peer, duplicate) = UnixStream::pair().unwrap();
