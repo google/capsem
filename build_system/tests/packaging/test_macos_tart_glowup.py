@@ -373,6 +373,8 @@ def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
         "capsem",
         "capsem-service",
         "capsem-process",
+        "capsem-ledger",
+        "capsem-proxy",
         "capsem-tui",
 
         "capsem-mcp-aggregator",

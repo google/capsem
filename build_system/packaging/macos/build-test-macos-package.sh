@@ -63,6 +63,8 @@ cargo build --release \
     -p capsem \
     -p capsem-service \
     -p capsem-process \
+    -p capsem-ledger \
+    -p capsem-proxy \
     -p capsem-tui \
     \
     -p capsem-router \
@@ -93,7 +95,7 @@ import sys
 expected = {
     "capsem", "capsem-admin", "capsem-app", "capsem-gateway",
     "capsem-router", "capsem-mcp-aggregator", "capsem-mcp-builtin",
-    "capsem-process", "capsem-service", "capsem-tray", "capsem-tui",
+    "capsem-process", "capsem-ledger", "capsem-proxy", "capsem-service", "capsem-tray", "capsem-tui",
     "capsem-mock-server", "capsem-bench-rs",
 }
 document = json.loads(pathlib.Path(sys.argv[1]).read_text())

@@ -131,6 +131,8 @@ def test_real_workspace_inventory_matches_cargo_members() -> None:
         "capsem-mock-server",
         "capsem-network",
         "capsem-process",
+        "capsem-ledger",
+        "capsem-proxy",
         "capsem-router",
         "capsem-sdk",
         "capsem-proto",

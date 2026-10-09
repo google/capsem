@@ -2016,7 +2016,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'test -d "/Applications/Capsem.app"' in macos
     assert 'test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"' in macos
     assert (
-        "for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
+        "for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-ledger capsem-proxy capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in macos
     )
     assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in macos
@@ -2043,7 +2043,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
         "install-manifest-request.sh write"
     )
     assert (
-        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
+        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-ledger capsem-proxy capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in linux
     )
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$VERSION\"" in linux
@@ -4819,6 +4819,8 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         "capsem",
         "capsem-service",
         "capsem-process",
+        "capsem-ledger",
+        "capsem-proxy",
         "capsem-tui",
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
@@ -4832,6 +4834,8 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         "capsem-gateway",
         "capsem-tray",
         "capsem-process",
+        "capsem-ledger",
+        "capsem-proxy",
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
     ]
@@ -5775,7 +5779,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
 
     asset_pos = block.find("bash build_system/scripts/test/prepare-install-test-assets.sh")
     build_pos = block.find(
-        "cargo build -p capsem-process -p capsem-service -p capsem "
+            "cargo build -p capsem-process -p capsem-ledger -p capsem-proxy -p capsem-service -p capsem "
         "-p capsem-mock-server -p capsem-bench"
     )
     bench_package_pos = block.find("-p capsem-bench")

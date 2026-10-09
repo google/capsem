@@ -116,6 +116,7 @@ component_management:
         - crates/capsem-core/src/net/mitm_proxy/**
         - crates/capsem-core/src/net/parsers/**
         - crates/capsem-core/src/net/policy.rs
+        - crates/capsem-core/src/net/proxy_engine.rs
         - crates/capsem-core/src/net/address_pool.rs
         - crates/capsem-core/src/net/network_registry.rs
         - crates/capsem-core/src/net/network_registry/**
@@ -159,6 +160,8 @@ component_management:
         - crates/capsem-core/src/host_state.rs
         - crates/capsem-core/src/container.rs
         - crates/capsem-core/src/container/**
+        - crates/capsem-core/src/managed_sessions.rs
+        - crates/capsem-core/src/managed_sessions/**
 
     - component_id: port-router
       name: Confined Port Router
@@ -253,6 +256,18 @@ component_management:
       name: Process
       paths:
         - crates/capsem-process/src/**
+
+    # Per-session network policy enforcement and capability handling.
+    - component_id: proxy
+      name: Proxy
+      paths:
+        - crates/capsem-proxy/src/**
+
+    # Per-session database ownership and descriptor-only ledger RPC.
+    - component_id: ledger
+      name: Ledger
+      paths:
+        - crates/capsem-ledger/src/**
 
     # Admin tooling: manifest generation, image build orchestration, and
     # release asset validation.

@@ -649,6 +649,8 @@ binaries = [
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
     "capsem-process",
+    "capsem-ledger",
+    "capsem-proxy",
     "capsem-service",
     "capsem-tray",
     "capsem-tui",
@@ -1674,7 +1676,7 @@ binaries = [
 # `initrd.guest-agents` cross-compiles.
 built = [
     "capsem", "capsem-admin", "capsem-bench-rs", "capsem-gateway",
-    "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mock-server", "capsem-process", "capsem-router",
+    "capsem-ledger", "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mock-server", "capsem-process", "capsem-proxy", "capsem-router",
     "capsem-service", "capsem-tray", "capsem-tui",
 ]
 # Host binaries this list deliberately omits, each built by a step that owns
@@ -2415,7 +2417,7 @@ rust_coverage_crate_minimum = 40.0
 # Raise to about measured minus 2.5, not minus 3: a floor on the band's edge
 # is refused by the next run's +0.04 jitter.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-archive = 97.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-telemetry = 97.0, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-archive = 97.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-ledger = 40.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-proxy = 40.0, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-telemetry = 97.0, capsem-tray = 54.0, capsem-tui = 70.0 }
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
@@ -2724,8 +2726,8 @@ network_reason = "No mid-run fetch. This is the rule the whole profile exists fo
 # sandboxed cargo. `just doctor` runs the same probe and owns the fetch.
 cargo_offline_probe = ["cargo", "fetch", "--locked", "--offline"]
 socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explicitly."
-self_confinement_reason = "Seatbelt cannot be nested. These trusted children replace the inherited gate profile with their stricter router profile before handling data; ordinary test children retain the gate network denial."
-self_confined_executables = ["capsem-router", "capsem-router-confinement-test"]
+self_confinement_reason = "Seatbelt cannot be nested. These trusted children replace the inherited gate profile with their stricter worker profile before handling data; ordinary test children retain the gate network denial."
+self_confined_executables = ["capsem-ledger", "capsem-proxy", "capsem-router", "capsem-router-confinement-test"]
 
 # Absolute or `~`-relative. Denying the Docker socket makes a running daemon
 # look absent -- `permission denied ... docker.sock` -- which is how the first

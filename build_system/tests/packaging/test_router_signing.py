@@ -10,7 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_router_is_signed_without_virtualization_authority(tmp_path):
+def test_confined_workers_are_signed_without_virtualization_authority(tmp_path):
     tools = tmp_path / "tools"
     tools.mkdir()
     calls = tmp_path / "calls.jsonl"
@@ -40,12 +40,16 @@ def test_router_is_signed_without_virtualization_authority(tmp_path):
     signed = [json.loads(line) for line in calls.read_text().splitlines()]
     router = [args for args in signed if args[-1].endswith("/capsem-router")]
     assert len(router) == 1 and "--entitlements" not in router[0]
+    proxy = [args for args in signed if args[-1].endswith("/capsem-proxy")]
+    assert len(proxy) == 1 and "--entitlements" not in proxy[0]
+    ledger = [args for args in signed if args[-1].endswith("/capsem-ledger")]
+    assert len(ledger) == 1 and "--entitlements" not in ledger[0]
     assert any(args[-1].endswith("/capsem-process") and "--entitlements" in args for args in signed)
 
     calls.unlink()
     installed = tmp_path / "installed"
     (installed / "bin").mkdir(parents=True)
-    for name in ("capsem-process", "capsem-router"):
+    for name in ("capsem-process", "capsem-ledger", "capsem-router", "capsem-proxy"):
         (installed / "bin" / name).touch()
     entitlements = ROOT / "build_system/packaging/macos/entitlements.plist"
     (tmp_path / entitlements.name).write_bytes(entitlements.read_bytes())
@@ -67,3 +71,9 @@ def test_router_is_signed_without_virtualization_authority(tmp_path):
     router = [args for args in signed if args[-1].endswith("/capsem-router")]
     assert len(router) == 1 and "--entitlements" not in router[0]
     assert "org.capsem.router" in router[0]
+    proxy = [args for args in signed if args[-1].endswith("/capsem-proxy")]
+    assert len(proxy) == 1 and "--entitlements" not in proxy[0]
+    assert "org.capsem.proxy" in proxy[0]
+    ledger = [args for args in signed if args[-1].endswith("/capsem-ledger")]
+    assert len(ledger) == 1 and "--entitlements" not in ledger[0]
+    assert "org.capsem.ledger" in ledger[0]

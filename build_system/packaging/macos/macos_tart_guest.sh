@@ -43,6 +43,8 @@ BINARIES=(
     capsem
     capsem-service
     capsem-process
+    capsem-ledger
+    capsem-proxy
     capsem-tui
     capsem-router capsem-mcp-aggregator
     capsem-mcp-builtin
