@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::Command;
@@ -170,6 +170,13 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                 Some(ProxyControlRejection::Capacity)
                             } else if !is_traffic(capability) && current != 0 {
                                 Some(ProxyControlRejection::DuplicateCapability)
+                            } else if is_traffic(capability)
+                                && !state
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .traffic_ready(capability)?
+                            {
+                                Some(ProxyControlRejection::NotReady)
                             } else {
                                 None
                             };
@@ -233,7 +240,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                 );
                                 let mut stopped = grants.stop_receiver();
                                 let mut runtime = state.lock().unwrap_or_else(|error| error.into_inner());
-                                runtime.upstream_grants = Some(grants);
+                                runtime.attach_upstream(grants);
                                 tracing::debug!(
                                     upstream_capability = runtime.upstream_grants.is_some(),
                                     "proxy upstream authority attached"
@@ -258,6 +265,17 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     while closed.borrow().is_none() && closed.changed().await.is_ok() {}
                                     let reason = closed.borrow().unwrap_or(ProxyChannelCloseReason::Disconnected);
                                     (capability, grant_id, reason)
+                                });
+                            } else if capability == ProxyCapability::HttpTraffic {
+                                let config = state
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .http_config()?
+                                    .context("proxy HTTP runtime became unavailable after readiness check")?;
+                                tasks.spawn(async move {
+                                    capsem_core::net::mitm_proxy::handle_connection(OwnedFd::from(stream), config)
+                                        .await;
+                                    (capability, grant_id, ProxyChannelCloseReason::Disconnected)
                                 });
                             } else {
                                 descriptors.insert(grant_id, stream);
@@ -315,13 +333,16 @@ fn remove_grant(
 }
 
 struct ProxyRuntimeState {
-    engine: Option<ProxyEngine>,
+    engine: Option<Arc<ProxyEngine>>,
     ledger: Arc<dyn ProxyLedger>,
+    db: Option<Arc<capsem_logger::DbWriter>>,
     credentials: Arc<dyn ProxyCredentials>,
+    credentials_attached: bool,
     upstream_grants: Option<Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>>,
     private_names: Option<Arc<dyn capsem_core::net::dns::private::PrivateNames>>,
     dns_upstreams: Vec<std::net::SocketAddr>,
     mcp: capsem_core::mcp::policy::McpConfig,
+    http_config: Option<Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>>,
 }
 
 impl Default for ProxyRuntimeState {
@@ -329,11 +350,14 @@ impl Default for ProxyRuntimeState {
         Self {
             engine: None,
             ledger: Arc::new(UnavailableLedger),
+            db: None,
             credentials: Arc::new(UnavailableCredentials),
+            credentials_attached: false,
             upstream_grants: None,
             private_names: None,
             dns_upstreams: Vec::new(),
             mcp: capsem_core::mcp::policy::McpConfig::default(),
+            http_config: None,
         }
     }
 }
@@ -346,11 +370,11 @@ impl ProxyRuntimeState {
         if let Some(engine) = &self.engine {
             engine.policy().replace(snapshot);
         } else {
-            self.engine = Some(ProxyEngine::new(
+            self.engine = Some(Arc::new(ProxyEngine::new(
                 ProxyPolicyHandle::new(snapshot),
                 Arc::clone(&self.ledger),
                 Arc::clone(&self.credentials),
-            ));
+            )));
         }
         self.dns_upstreams = dns_upstreams;
         self.mcp = mcp;
@@ -358,25 +382,80 @@ impl ProxyRuntimeState {
     }
 
     fn attach_ledger(&mut self, ledger: Arc<capsem_logger::DbWriter>) {
-        self.ledger = ledger;
+        self.ledger = ledger.clone();
+        self.db = Some(ledger);
         if let Some(engine) = self.engine.take() {
-            self.engine = Some(ProxyEngine::new(
+            self.engine = Some(Arc::new(ProxyEngine::new(
                 engine.policy().clone(),
                 Arc::clone(&self.ledger),
                 Arc::clone(&self.credentials),
-            ));
+            )));
         }
+        self.http_config = None;
     }
 
     fn attach_credentials(&mut self, credentials: Arc<dyn ProxyCredentials>) {
         self.credentials = credentials;
+        self.credentials_attached = true;
         if let Some(engine) = self.engine.take() {
-            self.engine = Some(ProxyEngine::new(
+            self.engine = Some(Arc::new(ProxyEngine::new(
                 engine.policy().clone(),
                 Arc::clone(&self.ledger),
                 Arc::clone(&self.credentials),
-            ));
+            )));
         }
+        self.http_config = None;
+    }
+
+    fn attach_upstream(&mut self, upstream: Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>) {
+        self.upstream_grants = Some(upstream);
+        self.http_config = None;
+    }
+
+    fn traffic_ready(&mut self, capability: ProxyCapability) -> Result<bool> {
+        match capability {
+            ProxyCapability::HttpTraffic => Ok(self.http_config()?.is_some()),
+            ProxyCapability::DnsTraffic => Ok(false),
+            _ => Ok(true),
+        }
+    }
+
+    fn http_config(&mut self) -> Result<Option<Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>>> {
+        if let Some(config) = &self.http_config {
+            return Ok(Some(Arc::clone(config)));
+        }
+        let (Some(engine), Some(db), Some(upstream_grants)) = (&self.engine, &self.db, &self.upstream_grants) else {
+            return Ok(None);
+        };
+        if !self.credentials_attached {
+            return Ok(None);
+        }
+        let ca = Arc::new(capsem_core::net::cert_authority::CertAuthority::load(
+            capsem_core::vm::boot::CA_KEY_PEM,
+            capsem_core::vm::boot::CA_CERT_PEM,
+        )?);
+        let telemetry = Arc::new(capsem_core::net::mitm_proxy::telemetry_hook::TelemetryDeps {
+            db: Arc::clone(db),
+            credentials: engine.credentials(),
+            pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
+            trace_state: Arc::new(Mutex::new(capsem_core::net::ai_traffic::TraceState::new())),
+        });
+        let pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(Arc::clone(&telemetry));
+        let upstream_grants: Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants> = upstream_grants.clone();
+        let config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
+            ca: Arc::clone(&ca),
+            server_tls: capsem_core::net::mitm_proxy::make_server_tls_config(&ca),
+            engine: Arc::clone(engine),
+            db: Arc::clone(db),
+            upstream_tls: capsem_core::net::mitm_proxy::make_upstream_tls_config(),
+            telemetry,
+            pipeline,
+            mcp_endpoint: None,
+            upstream_resolver: capsem_core::net::upstream_address::UpstreamResolver::disabled(),
+            upstream_grants: Some(upstream_grants),
+        });
+        self.http_config = Some(Arc::clone(&config));
+        Ok(Some(config))
     }
 }
 

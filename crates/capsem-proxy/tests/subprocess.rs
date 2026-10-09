@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
@@ -61,6 +62,54 @@ fn spawn() -> (ChildGuard, ControlSender, ControlReceiver) {
 }
 
 #[tokio::test]
+async fn worker_rejects_http_traffic_until_runtime_is_ready() {
+    let (mut child, requests, events) = spawn();
+    assert_eq!(
+        event(&events).await,
+        ProxyControlEvent::Ready { generation: GENERATION }
+    );
+    let (mut peer, granted) = UnixStream::pair().unwrap();
+    let grant = ProxyChannelGrant::new(GENERATION, 1, ProxyCapability::HttpTraffic).unwrap();
+    requests
+        .send(
+            &encode_proxy_control_request(ProxyControlRequest::Attach(grant)),
+            &[granted.as_raw_fd()],
+        )
+        .await
+        .unwrap();
+    drop(granted);
+    assert_eq!(
+        event(&events).await,
+        ProxyControlEvent::Rejected {
+            generation: GENERATION,
+            grant_id: 1,
+            reason: ProxyControlRejection::NotReady,
+        }
+    );
+    peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    assert_eq!(peer.read(&mut [0; 1]).unwrap(), 0);
+
+    requests
+        .send(
+            &encode_proxy_control_request(ProxyControlRequest::Shutdown { generation: GENERATION }),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        event(&events).await,
+        ProxyControlEvent::Stopped { generation: GENERATION }
+    );
+    let child = child.take();
+    assert!(tokio::task::spawn_blocking(move || child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap()
+        .status
+        .success());
+}
+
+#[tokio::test]
 async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
     let (mut child, requests, events) = spawn();
     assert_eq!(
@@ -78,8 +127,6 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
 
     let mut peers = Vec::new();
     for (index, capability) in [
-        ProxyCapability::HttpTraffic,
-        ProxyCapability::DnsTraffic,
         ProxyCapability::Upstream,
         ProxyCapability::Credential,
         ProxyCapability::PrivateNames,
