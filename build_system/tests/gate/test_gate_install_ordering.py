@@ -41,6 +41,28 @@ PREINSTALL_ADMIN = INSTALL.preinstall_admin
 SOURCE_COMMIT = SourceCommit("0" * 40)
 
 
+@pytest.mark.parametrize("channel", [INSTALL.channel, *CONFIG.package.channels])
+def test_exact_package_graph_uses_the_requested_channel_through_handoff(channel: str) -> None:
+    runner = RecordingRunner(PROJECT_ROOT)
+    graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
+    graph.author_exact_package(
+        package="/src/cache/target/packages/Capsem_9.9.9_amd64.deb",
+        version="9.9.9",
+        assets_manifest=f"{LAYOUT.assets}/{INSTALL.manifest_name}",
+        candidate_base=f"{INSTALL.mount}/{LAYOUT.packages}",
+        assets_dir=LAYOUT.assets,
+        channel=channel,
+        manifest_version=INSTALL.manifest_version,
+        out_dir=LAYOUT.channel,
+    )
+
+    expected = f"{LAYOUT.channel}/assets/{channel}/{INSTALL.manifest_name}"
+    record = runner.matching(r"assets channel record-binary")[0]
+    assert f"--manifest-path {expected}" in record
+    assert graph.handed_off == f"file://{INSTALL.mount}/{expected}"
+    assert all(f"--channel {channel}" in command for command in runner.matching(r"channel build"))
+
+
 def test_every_binary_authoring_path_builds_a_graph_before_recording_provenance() -> None:
     """Legacy runtime manifests cannot carry per-package source identity."""
     legacy = Path("legacy-manifest.json")
@@ -116,7 +138,7 @@ members = ["crates/capsem"]
 version = "{VERSION}"
 """
 
-AUTHORITATIVE = f"{LAYOUT.channel}/{INSTALL.graph_manifest}"
+AUTHORITATIVE = f"{LAYOUT.channel}/{INSTALL.graph_manifest.format(channel=INSTALL.channel)}"
 
 
 def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
@@ -398,7 +420,7 @@ def test_the_legacy_runtime_projection_is_refused(tmp_path: Path) -> None:
     graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
 
     with pytest.raises(GateError, match="not the legacy runtime projection"):
-        graph.hand_off(f"{LAYOUT.assets}/manifest.json")
+        graph.hand_off(f"{LAYOUT.assets}/manifest.json", channel=INSTALL.channel)
 
     assert not runner.ran(r"install-manifest-request"), (
         "the refusal must happen before anything is written"
@@ -413,7 +435,7 @@ def test_a_handoff_target_that_does_not_exist_is_refused(tmp_path: Path) -> None
     graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
 
     with pytest.raises(GateError, match="would find no request"):
-        graph.hand_off(AUTHORITATIVE)
+        graph.hand_off(AUTHORITATIVE, channel=INSTALL.channel)
 
 
 def test_clearing_a_handoff_that_was_never_written_does_nothing(tmp_path: Path) -> None:

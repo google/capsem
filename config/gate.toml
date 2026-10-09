@@ -275,7 +275,7 @@ request_script = "build_system/packaging/shared/install-manifest-request.sh"
 # The authoritative release graph, and the legacy runtime projection an
 # operator can mistake for it. Handing the installer the second produces an
 # install that looks fine and carries the wrong manifest.
-graph_manifest = "assets/local/manifest.json"
+graph_manifest = "assets/{channel}/manifest.json"
 legacy_projection = "manifest.json"
 # Manifest-selected release inputs are retained beneath the content root so
 # every rewritten file:// URL remains available inside the sealed install
