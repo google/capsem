@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io;
-use std::os::fd::{AsFd, OwnedFd};
+use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::Command;
@@ -49,6 +49,9 @@ struct Args {
     /// Sixteen-byte worker generation as 32 lowercase hexadecimal digits.
     #[arg(long, value_parser = parse_generation)]
     generation: ProxyGeneration,
+    /// Trusted configured provider selected by the service for standalone mode.
+    #[arg(long)]
+    standalone_provider: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -75,7 +78,7 @@ fn main() -> Result<()> {
     capsem_foundation::unix::worker_sandbox::confine(&Policy::new(Role::Proxy))
         .context("confine proxy worker before readiness")?;
     attest_confinement(&denied_file, args.parent_pid)?;
-    runtime.block_on(run_control(control, args.generation))
+    runtime.block_on(run_control(control, args.generation, args.standalone_provider))
 }
 
 fn attest_confinement(denied_file: &std::path::Path, parent_pid: u32) -> Result<()> {
@@ -109,7 +112,11 @@ fn require_denied<T>(result: io::Result<T>, operation: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result<()> {
+async fn run_control(
+    control: UnixStream,
+    generation: ProxyGeneration,
+    standalone_provider: Option<String>,
+) -> Result<()> {
     let shutdown = control.try_clone()?;
     let sender = ControlSender::new(control.try_clone()?)?;
     let receiver = ControlReceiver::new(control)?;
@@ -118,7 +125,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
 
     let outcome = async {
         send_event(&sender, ProxyControlEvent::Ready { generation }).await?;
-        let state = Arc::new(Mutex::new(ProxyRuntimeState::default()));
+        let state = Arc::new(Mutex::new(ProxyRuntimeState::new(standalone_provider)));
         let mut grants = BTreeMap::<ProxyCapability, Vec<u64>>::new();
         let mut grant_ids = HashSet::new();
         let mut tasks = JoinSet::<CapabilityResult>::new();
@@ -194,16 +201,17 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                 continue;
                             }
                             let descriptor = frame.fds.into_iter().next().expect("one checked descriptor");
-                            let stream = UnixStream::from(descriptor);
                             grants.entry(capability).or_default().push(grant_id);
                             grant_ids.insert(grant_id);
                             if capability == ProxyCapability::Policy {
+                                let stream = UnixStream::from(descriptor);
                                 let state = Arc::clone(&state);
                                 tasks.spawn(async move {
                                     let reason = serve_policy(stream, state).await;
                                     (capability, grant_id, reason)
                                 });
                             } else if capability == ProxyCapability::Ledger {
+                                let stream = UnixStream::from(descriptor);
                                 let ledger_grant = grant
                                     .ledger_grant()
                                     .expect("ledger capability was decoded with exact authority");
@@ -223,6 +231,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     .unwrap_or_else(|error| error.into_inner())
                                     .attach_ledger(Arc::new(writer));
                             } else if capability == ProxyCapability::Credential {
+                                let stream = UnixStream::from(descriptor);
                                 let (credentials, mut closed) = credential_client::CredentialClient::start(stream)
                                     .context("open proxy credential capability")?;
                                 state
@@ -235,6 +244,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     (capability, grant_id, reason)
                                 });
                             } else if capability == ProxyCapability::Upstream {
+                                let stream = UnixStream::from(descriptor);
                                 let grants = Arc::new(
                                     capsem_core::net::upstream_grant::UpstreamGrantClient::start(stream)
                                         .context("open proxy upstream capability")?,
@@ -252,6 +262,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     (capability, grant_id, ProxyChannelCloseReason::Disconnected)
                                 });
                             } else if capability == ProxyCapability::PrivateNames {
+                                let stream = UnixStream::from(descriptor);
                                 let (private_names, mut closed) =
                                     private_names_client::PrivateNameClient::start(stream)
                                         .context("open proxy private-name capability")?;
@@ -268,6 +279,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     (capability, grant_id, reason)
                                 });
                             } else if capability == ProxyCapability::Mcp {
+                                let stream = UnixStream::from(descriptor);
                                 let (client, hello, mut closed) =
                                     mcp_client::start(stream).await.context("open proxy MCP capability")?;
                                 state
@@ -279,6 +291,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     (capability, grant_id, ProxyChannelCloseReason::Disconnected)
                                 });
                             } else if capability == ProxyCapability::Telemetry {
+                                let stream = UnixStream::from(descriptor);
                                 let (client, session_id) = metric_client::start(stream)
                                     .await
                                     .context("open proxy metric capability")?;
@@ -293,14 +306,23 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     .unwrap_or_else(|error| error.into_inner())
                                     .attach_metric_exporter(exporter);
                             } else if capability == ProxyCapability::HttpTraffic {
-                                let config = state
+                                let runtime = state
                                     .lock()
                                     .unwrap_or_else(|error| error.into_inner())
-                                    .http_config()?
+                                    .http_runtime()?
                                     .context("proxy HTTP runtime became unavailable after readiness check")?;
                                 tasks.spawn(async move {
-                                    capsem_core::net::mitm_proxy::handle_connection(OwnedFd::from(stream), config)
+                                    if let Some(target) = runtime.target {
+                                        capsem_core::net::mitm_proxy::handle_standalone_connection(
+                                            descriptor,
+                                            runtime.config,
+                                            target,
+                                        )
                                         .await;
+                                    } else {
+                                        capsem_core::net::mitm_proxy::handle_connection(descriptor, runtime.config)
+                                            .await;
+                                    }
                                     (capability, grant_id, ProxyChannelCloseReason::Disconnected)
                                 });
                             } else if capability == ProxyCapability::DnsTraffic {
@@ -311,7 +333,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     .context("proxy DNS runtime became unavailable after readiness check")?;
                                 tasks.spawn(async move {
                                     capsem_core::net::dns::session::serve_dns_session(
-                                        OwnedFd::from(stream),
+                                        descriptor,
                                         Arc::clone(&runtime.handler),
                                         Arc::clone(&runtime.db),
                                         runtime.policy.clone(),
@@ -374,6 +396,7 @@ fn remove_grant(
 }
 
 struct ProxyRuntimeState {
+    standalone_provider: Option<String>,
     engine: Option<Arc<ProxyEngine>>,
     ledger: Arc<dyn ProxyLedger>,
     db: Option<Arc<capsem_logger::DbWriter>>,
@@ -394,7 +417,19 @@ struct ProxyRuntimeState {
 
 impl Default for ProxyRuntimeState {
     fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+struct HttpRuntime {
+    config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
+    target: Option<capsem_core::net::mitm_proxy::StandaloneModelTarget>,
+}
+
+impl ProxyRuntimeState {
+    fn new(standalone_provider: Option<String>) -> Self {
         Self {
+            standalone_provider,
             engine: None,
             ledger: Arc::new(UnavailableLedger),
             db: None,
@@ -410,9 +445,11 @@ impl Default for ProxyRuntimeState {
             metric_exporter: None,
         }
     }
-}
 
-impl ProxyRuntimeState {
+    #[cfg(test)]
+    fn standalone(provider: String) -> Self {
+        Self::new(Some(provider))
+    }
     fn apply(&mut self, active_policy: &[u8]) -> Result<String> {
         let runtime = ProxyRuntimePolicy::compile(active_policy).map_err(anyhow::Error::msg)?;
         let digest = runtime.snapshot().digest().to_string();
@@ -485,7 +522,7 @@ impl ProxyRuntimeState {
 
     fn traffic_ready(&mut self, capability: ProxyCapability) -> Result<bool> {
         match capability {
-            ProxyCapability::HttpTraffic => Ok(self.http_config()?.is_some()),
+            ProxyCapability::HttpTraffic => Ok(self.http_runtime()?.is_some()),
             ProxyCapability::DnsTraffic => Ok(self.dns_runtime().is_some()),
             _ => Ok(true),
         }
@@ -495,9 +532,7 @@ impl ProxyRuntimeState {
         if let Some(config) = &self.http_config {
             return Ok(Some(Arc::clone(config)));
         }
-        let (Some(engine), Some(db), Some(upstream_grants), Some((mcp_client, mcp_hello))) =
-            (&self.engine, &self.db, &self.upstream_grants, &self.mcp_client)
-        else {
+        let (Some(engine), Some(db), Some(upstream_grants)) = (&self.engine, &self.db, &self.upstream_grants) else {
             return Ok(None);
         };
         if !self.credentials_attached {
@@ -515,19 +550,23 @@ impl ProxyRuntimeState {
         });
         let pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(Arc::clone(&telemetry));
         let upstream_grants: Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants> = upstream_grants.clone();
-        let mcp_endpoint = Arc::new(
-            capsem_core::net::mitm_proxy::McpEndpointState::with_proxy_policy(
-                mcp_client.clone(),
-                engine.policy().clone(),
-                Arc::new(tokio::sync::Semaphore::new(usize::from(mcp_hello.inflight_cap))),
-                capsem_core::net::mitm_proxy::McpTimeouts {
-                    default_timeout: Duration::from_millis(mcp_hello.default_timeout_ms),
-                    tool_call_default: Duration::from_millis(mcp_hello.tool_call_default_ms),
-                    tool_call_ceiling: Duration::from_millis(mcp_hello.tool_call_ceiling_ms),
-                },
-            )
-            .with_builtin_ledger(Arc::clone(db), mcp_hello.builtin_servers.iter().cloned().collect()),
-        );
+        let mcp_endpoint = match &self.mcp_client {
+            Some((mcp_client, mcp_hello)) => Some(Arc::new(
+                capsem_core::net::mitm_proxy::McpEndpointState::with_proxy_policy(
+                    mcp_client.clone(),
+                    engine.policy().clone(),
+                    Arc::new(tokio::sync::Semaphore::new(usize::from(mcp_hello.inflight_cap))),
+                    capsem_core::net::mitm_proxy::McpTimeouts {
+                        default_timeout: Duration::from_millis(mcp_hello.default_timeout_ms),
+                        tool_call_default: Duration::from_millis(mcp_hello.tool_call_default_ms),
+                        tool_call_ceiling: Duration::from_millis(mcp_hello.tool_call_ceiling_ms),
+                    },
+                )
+                .with_builtin_ledger(Arc::clone(db), mcp_hello.builtin_servers.iter().cloned().collect()),
+            )),
+            None if self.standalone_provider.is_some() => None,
+            None => return Ok(None),
+        };
         let config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
             ca: Arc::clone(&ca),
             server_tls: capsem_core::net::mitm_proxy::make_server_tls_config(&ca),
@@ -536,12 +575,30 @@ impl ProxyRuntimeState {
             upstream_tls: capsem_core::net::mitm_proxy::make_upstream_tls_config(),
             telemetry,
             pipeline,
-            mcp_endpoint: Some(mcp_endpoint),
+            mcp_endpoint,
             upstream_resolver: capsem_core::net::upstream_address::UpstreamResolver::disabled(),
             upstream_grants: Some(upstream_grants),
         });
         self.http_config = Some(Arc::clone(&config));
         Ok(Some(config))
+    }
+
+    fn http_runtime(&mut self) -> Result<Option<HttpRuntime>> {
+        let Some(config) = self.http_config()? else {
+            return Ok(None);
+        };
+        let target = self
+            .standalone_provider
+            .as_deref()
+            .map(|provider| {
+                capsem_core::net::mitm_proxy::StandaloneModelTarget::from_registry(
+                    config.engine.policy().snapshot().model_endpoints(),
+                    provider,
+                )
+                .map_err(anyhow::Error::msg)
+            })
+            .transpose()?;
+        Ok(Some(HttpRuntime { config, target }))
     }
 
     fn dns_runtime(&mut self) -> Option<Arc<DnsRuntime>> {
