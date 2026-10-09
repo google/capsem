@@ -658,10 +658,6 @@ async fn run_async_main_loop(
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.security_rules.clone())));
     let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.plugins.clone())));
     let proxy_policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(runtime_config.proxy_policy_snapshot());
-    let proxy_engine = Arc::new(capsem_core::net::proxy_engine::ProxyEngine::local(
-        proxy_policy.clone(),
-        Arc::clone(&db),
-    ));
     let job_store = Arc::new(JobStore {
         publisher: Arc::new(
             capsem_core::container::publish::Publisher::for_session(
@@ -838,26 +834,6 @@ async fn run_async_main_loop(
     }
     shutdown.lock().await.proxy_mcp = Some(proxy_mcp_task);
 
-    let telemetry_deps = Arc::new(capsem_core::net::mitm_proxy::telemetry_hook::TelemetryDeps {
-        db: Arc::clone(&db),
-        credentials: proxy_engine.credentials(),
-        pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
-        trace_state: Arc::clone(&model_trace_state),
-    });
-    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(Arc::clone(&telemetry_deps));
-    let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
-        ca: Arc::clone(&net_state.ca),
-        server_tls: capsem_core::net::mitm_proxy::make_server_tls_config(&net_state.ca),
-        engine: proxy_engine,
-        db: Arc::clone(&db),
-        upstream_tls: Arc::clone(&net_state.upstream_tls),
-        telemetry: telemetry_deps,
-        pipeline: mitm_pipeline,
-        mcp_endpoint: Some(mcp_endpoint),
-        upstream_resolver: capsem_core::net::upstream_address::UpstreamResolver::disabled(),
-        upstream_grants: Some(Arc::clone(&upstream_grants) as Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants>),
-    });
-
     let ipc_tx_clone = ipc_tx.clone();
     let job_store_clone = Arc::clone(&job_store);
     let terminal_output_clone = Arc::clone(&terminal_output);
@@ -868,7 +844,6 @@ async fn run_async_main_loop(
     // the first ~100ms of post-resume output.
 
     let net_state_clone = Arc::clone(&net_state);
-    let mitm_config_clone = Arc::clone(&mitm_config);
     let upstream_grants_for_vsock = Arc::clone(&upstream_grants);
 
     // Parse --env KEY=VALUE pairs for guest injection
@@ -937,7 +912,6 @@ async fn run_async_main_loop(
             session_dir: session_dir.clone(),
             cli_env,
             guest_config,
-            mitm_config: mitm_config_clone,
             upstream_grants: upstream_grants_for_vsock,
             security_rules: Arc::clone(&security_rules),
             plugin_policy: Arc::clone(&plugin_policy),
