@@ -11,8 +11,8 @@ use thiserror::Error;
 
 /// Version of the ledger handshake, request envelopes and logger-owned
 /// operation/reply enums. Bump it when any of those wire shapes changes.
-/// Version 2 adds the fixed coordinator-to-worker descriptor handoff record.
-pub const LEDGER_PROTOCOL_VERSION: u16 = 2;
+/// Version 3 adds maintainer-only coherent snapshot authority.
+pub const LEDGER_PROTOCOL_VERSION: u16 = 3;
 /// Hash of ledger wire declarations, separate from the guest protocol hash.
 pub const LEDGER_SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/ledger_schema_hash.txt"));
 /// Largest diagnostic admitted into a response.
@@ -64,6 +64,7 @@ pub enum LedgerCapability {
     Read,
     Retain,
     Export,
+    Snapshot,
     Shutdown,
 }
 
@@ -76,7 +77,10 @@ impl LedgerClientRole {
             Self::Reader => matches!(capability, LedgerCapability::Read | LedgerCapability::Export),
             Self::Maintainer => matches!(
                 capability,
-                LedgerCapability::Read | LedgerCapability::Retain | LedgerCapability::Export
+                LedgerCapability::Read
+                    | LedgerCapability::Retain
+                    | LedgerCapability::Export
+                    | LedgerCapability::Snapshot
             ),
             Self::Supervisor => matches!(capability, LedgerCapability::Shutdown),
         }
