@@ -29,6 +29,10 @@ type WireSender = DescriptorSender<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX
 type WireReceiver = DescriptorReceiver<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
 
 enum Command {
+    AttachProxyMcp {
+        descriptor: OwnedFd,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     AttachProxyTraffic {
         service: ProxyTrafficService,
         descriptor: OwnedFd,
@@ -116,6 +120,18 @@ impl UpstreamGrantClient {
                 descriptor,
                 reply,
             })
+            .await
+            .map_err(|_| anyhow!("upstream grant channel is closed"))?;
+        result
+            .await
+            .map_err(|_| anyhow!("upstream grant channel stopped"))?
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub async fn attach_proxy_mcp(&self, descriptor: OwnedFd) -> Result<()> {
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .send(Command::AttachProxyMcp { descriptor, reply })
             .await
             .map_err(|_| anyhow!("upstream grant channel is closed"))?;
         result
@@ -246,6 +262,9 @@ async fn dispatch(
     command: Command,
 ) -> Result<(), String> {
     match command {
+        Command::AttachProxyMcp { descriptor, reply } => {
+            finish(reply, attach_proxy_mcp(sender, receiver, request_id, descriptor).await)
+        }
         Command::AttachProxyTraffic {
             service,
             descriptor,
@@ -299,6 +318,35 @@ async fn dispatch(
             reply,
             connect_tcp(sender, receiver, releases, request_id, selection_id, &policy_digest).await,
         ),
+    }
+}
+
+async fn attach_proxy_mcp(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    request_id: u64,
+    descriptor: OwnedFd,
+) -> Result<Result<(), String>, String> {
+    let bytes = encode_upstream_grant_request(&UpstreamGrantRequest::AttachProxyMcp { request_id })
+        .map_err(|error| format!("encode proxy MCP handoff: {error:#}"))?;
+    tokio::time::timeout(WIRE_TIMEOUT, sender.send(&bytes, &[descriptor.as_raw_fd()]))
+        .await
+        .map_err(|_| "send proxy MCP handoff timed out".to_string())?
+        .map_err(|error| format!("send proxy MCP handoff: {error}"))?;
+    drop(descriptor);
+    let (response, fds) = receive_response(receiver).await?;
+    debug_assert!(fds.is_empty());
+    match response {
+        UpstreamGrantResponse::ProxyMcpAdopted {
+            request_id: response_id,
+        } if response_id == request_id => Ok(Ok(())),
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("proxy MCP handoff denied: {reason:?}"))),
+        response => Err(format!(
+            "unexpected proxy MCP response for request {request_id}: {response:?}"
+        )),
     }
 }
 
