@@ -30,7 +30,10 @@ fn main() {
         "credential_injection.rs",
     ];
     write_hash("schema_hash.txt", &files);
-    write_hash("ledger_schema_hash.txt", &["ledger.rs", "ledger_control.rs"]);
+    write_hash(
+        "ledger_schema_hash.txt",
+        &["ledger.rs", "ledger_commitment.rs", "ledger_control.rs"],
+    );
     write_hash("proxy_schema_hash.txt", &["proxy_control.rs", "proxy_policy.rs"]);
 }
 
