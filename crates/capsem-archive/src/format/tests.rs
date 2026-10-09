@@ -126,15 +126,9 @@ fn block_header_round_trips_its_codec() {
 }
 
 #[test]
-fn an_unknown_codec_is_refused_by_name() {
+fn a_structurally_valid_codec_id_is_left_for_the_codec_registry() {
     let header = encode_block_header(2);
-    assert!(matches!(
-        parse_block_header(&header, AT),
-        Err(ArchiveError::UnsupportedCodec {
-            block_offset: AT,
-            codec: 2
-        })
-    ));
+    assert_eq!(parse_block_header(&header, AT).unwrap(), 2);
 }
 
 #[test]
