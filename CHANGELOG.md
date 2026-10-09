@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Ship the confined ledger and proxy workers in every supported package and
+  sign them without macOS virtualization authority, so clean installs cannot
+  fall back to privileged in-process execution or grant VM capabilities to
+  data-plane helpers.
+
 - Start one fresh-generation confined proxy worker with every live VM, apply
   exact active-policy bytes before registration, revoke it with the VM owner,
   and terminate only the matching owner generation if its proxy dies.

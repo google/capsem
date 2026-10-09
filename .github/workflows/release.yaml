@@ -381,6 +381,8 @@ jobs:
             -p capsem \
             -p capsem-service \
             -p capsem-process \
+            -p capsem-ledger \
+            -p capsem-proxy \
             -p capsem-tui \
             -p capsem-router \
             -p capsem-mcp-aggregator \
@@ -396,9 +398,9 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          for bin in capsem capsem-service capsem-process capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
+          for bin in capsem capsem-service capsem-process capsem-ledger capsem-proxy capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
             entitlement_args=()
-            if [[ "$bin" != capsem-router ]]; then
+            if [[ "$bin" != capsem-router && "$bin" != capsem-ledger && "$bin" != capsem-proxy ]]; then
               entitlement_args=(--entitlements build_system/packaging/macos/entitlements.plist)
             fi
             codesign --sign "$APPLE_SIGNING_IDENTITY" \
@@ -734,7 +736,7 @@ jobs:
           pkgutil --pkg-info com.capsem.pkg | grep -F "version: $VERSION"
           test -d "/Applications/Capsem.app"
           test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
-          for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+          for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-ledger capsem-proxy capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             test -x "$HOME/.capsem/bin/$bin"
             "$HOME/.capsem/bin/$bin" --version | grep -F "$VERSION"
           done
@@ -819,7 +821,7 @@ jobs:
           sudo dpkg -i "$package"
           test ! -e /var/run/capsem/install-manifest
           dpkg-query -W -f='${Version}' capsem | grep -Fx "$VERSION"
-          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-ledger capsem-proxy capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             test -x "/usr/bin/$bin"
             if [ "$bin" != "capsem-app" ]; then
               "/usr/bin/$bin" --version | grep -F "$VERSION"

@@ -56,7 +56,7 @@ PERSISTENT_RESUME_EVIDENCE="$WORK_ROOT/persistent-resume.json"
 stop_isolated_processes() {
     local name
     for name in \
-        capsem-service capsem-tray capsem-gateway capsem-process \
+        capsem-service capsem-tray capsem-gateway capsem-process capsem-ledger capsem-proxy \
         capsem-router capsem-mcp-aggregator capsem-mcp-builtin
     do
         pkill -9 -f "$CAPSEM_HOME_DIR/bin/$name" 2>/dev/null || true
