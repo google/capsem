@@ -68,7 +68,6 @@ impl ProxyWorker {
         self.generation
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "S10-003 attaches the traffic capabilities"))]
     pub(crate) async fn grant(&self, capability: ProxyCapability, stream: UnixStream) -> Result<()> {
         let (completed, result) = oneshot::channel();
         self.commands

@@ -9,7 +9,7 @@ use capsem_core::net::policy::{UpstreamOverride, UpstreamOverrideProtocol};
 use capsem_core::net::policy_config::{ActivePolicyFile, SettingsFile};
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use capsem_proto::upstream_grant::{
-    decode_upstream_grant_response, encode_upstream_grant_request, UpstreamGrantResponse,
+    decode_upstream_grant_response, encode_upstream_grant_request, ProxyTrafficService, UpstreamGrantResponse,
 };
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
@@ -35,6 +35,18 @@ impl TestClient {
         self.requests.send(&bytes, &[]).await.unwrap();
     }
 
+    async fn request_with_descriptor(
+        &self,
+        request: &UpstreamGrantRequest,
+        descriptor: &impl std::os::fd::AsRawFd,
+    ) -> UpstreamGrantResponse {
+        let bytes = encode_upstream_grant_request(request).unwrap();
+        self.requests.send(&bytes, &[descriptor.as_raw_fd()]).await.unwrap();
+        let frame = self.responses.recv().await.unwrap();
+        assert!(frame.fds.is_empty());
+        decode_upstream_grant_response(&frame.bytes).unwrap()
+    }
+
     async fn request(&self, request: &UpstreamGrantRequest) -> (UpstreamGrantResponse, Vec<OwnedFd>) {
         self.send(request).await;
         let frame = self.responses.recv().await.unwrap();
@@ -42,6 +54,39 @@ impl TestClient {
         assert_eq!(frame.fds.len(), response.expected_descriptor_count());
         (response, frame.fds)
     }
+}
+
+#[tokio::test]
+async fn typed_guest_traffic_is_adopted_by_the_registered_proxy_generation() {
+    let policy = test_policy("policy-a", None, vec![]);
+    let (pending, _publisher) = PendingBroker::pair(policy).unwrap();
+    let pending = pending.with_proxy(crate::proxy_worker::ProxyWorker::test_stub());
+    let client = TestClient::new(pending.worker);
+    let authority = WorkerAuthority::default();
+    let task = tokio::spawn(run(
+        pending.coordinator,
+        pending.initial_policy,
+        pending.updates,
+        authority.grant(),
+        pending.session_dir,
+        pending.ledger,
+        pending.proxy,
+    ));
+    let (traffic, _peer) = UnixStream::pair().unwrap();
+
+    let response = client
+        .request_with_descriptor(
+            &UpstreamGrantRequest::AttachProxyTraffic {
+                request_id: 1,
+                service: ProxyTrafficService::Http,
+            },
+            &traffic,
+        )
+        .await;
+    assert_eq!(response, UpstreamGrantResponse::ProxyTrafficAdopted { request_id: 1 });
+
+    authority.revoke();
+    assert!(task.await.unwrap().unwrap_err().contains("revoked"));
 }
 
 fn test_policy(digest: &str, tcp_override: Option<SocketAddr>, dns_upstreams: Vec<SocketAddr>) -> Arc<BrokerPolicy> {
@@ -82,6 +127,7 @@ fn start_broker(
         authority.grant(),
         pending.session_dir,
         pending.ledger,
+        pending.proxy,
     ));
     (client, publisher, authority, task)
 }
@@ -106,6 +152,7 @@ fn start_broker_with_ledger(
         authority.grant(),
         pending.session_dir,
         pending.ledger,
+        pending.proxy,
     ));
     (client, publisher, authority, task)
 }
@@ -129,6 +176,7 @@ fn start_broker_for_session(
         authority.grant(),
         pending.session_dir,
         pending.ledger,
+        pending.proxy,
     ));
     (client, publisher, authority, task)
 }

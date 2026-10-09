@@ -23,8 +23,9 @@ use capsem_foundation::unix::fd::{self, SocketShutdown};
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::upstream_grant::{
-    decode_upstream_grant_request, encode_upstream_grant_response, UpstreamDescriptorKind, UpstreamGrantDenial,
-    UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
+    decode_upstream_grant_request, encode_upstream_grant_response, ProxyTrafficService, UpstreamDescriptorKind,
+    UpstreamGrantDenial, UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE,
+    UPSTREAM_GRANT_MAX_FDS,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
@@ -56,6 +57,7 @@ pub(crate) struct PendingBroker {
     updates: mpsc::Receiver<PolicyUpdate>,
     session_dir: Option<PathBuf>,
     ledger: Option<LedgerSource>,
+    proxy: Option<crate::proxy_worker::ProxyWorker>,
 }
 
 struct PolicyUpdate {
@@ -156,6 +158,7 @@ impl PendingBroker {
                 updates,
                 session_dir: None,
                 ledger: None,
+                proxy: None,
             },
             PolicyPublisher {
                 updates: Some(updates_tx),
@@ -170,6 +173,11 @@ impl PendingBroker {
             database: session_dir.join("session.db"),
             log_path: session_dir.join("ledger.log"),
         });
+        self
+    }
+
+    pub(crate) fn with_proxy(mut self, proxy: crate::proxy_worker::ProxyWorker) -> Self {
+        self.proxy = Some(proxy);
         self
     }
 
@@ -202,6 +210,7 @@ impl PendingBroker {
                 authority,
                 self.session_dir,
                 self.ledger,
+                self.proxy,
             )
             .await
             {
@@ -218,6 +227,7 @@ async fn run(
     authority: WorkerGrant,
     session_dir: Option<PathBuf>,
     mut ledger: Option<LedgerSource>,
+    proxy: Option<crate::proxy_worker::ProxyWorker>,
 ) -> Result<(), String> {
     let requests =
         WireReceiver::new(socket.try_clone().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
@@ -257,11 +267,15 @@ async fn run(
                     .ok_or_else(|| "upstream grant request pump stopped".to_string())?
                     .map_err(|error| format!("receive upstream grant request: {error}"))?,
             };
-            if !frame.fds.is_empty() {
-                break Err("worker sent an upstream descriptor".into());
-            }
             let request = decode_upstream_grant_request(&frame.bytes)
                 .map_err(|error| format!("decode upstream grant request: {error:#}"))?;
+            if frame.fds.len() != request.expected_descriptor_count() {
+                break Err(format!(
+                    "worker upstream request carried {} descriptors, expected {}",
+                    frame.fds.len(),
+                    request.expected_descriptor_count()
+                ));
+            }
             if let Some(expected) = awaiting_adoption {
                 if request
                     != (UpstreamGrantRequest::Adopted {
@@ -559,6 +573,31 @@ async fn run(
                     .await?;
                     pending_ledger = Some((grant, descriptor));
                     awaiting_adoption = Some(AwaitingAdoption::Ledger(grant.client_id()));
+                }
+                UpstreamGrantRequest::AttachProxyTraffic { request_id, service } => {
+                    let Some(proxy) = proxy.as_ref() else {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
+                        continue;
+                    };
+                    let descriptor = frame.fds.into_iter().next().expect("one validated traffic descriptor");
+                    let capability = match service {
+                        ProxyTrafficService::Http => capsem_proto::proxy_control::ProxyCapability::HttpTraffic,
+                        ProxyTrafficService::Dns => capsem_proto::proxy_control::ProxyCapability::DnsTraffic,
+                    };
+                    match proxy.grant(capability, UnixStream::from(descriptor)).await {
+                        Ok(()) => {
+                            send_response(
+                                &responses,
+                                &UpstreamGrantResponse::ProxyTrafficAdopted { request_id },
+                                None,
+                            )
+                            .await?;
+                        }
+                        Err(error) => {
+                            warn!(%error, ?service, "proxy worker refused traffic descriptor");
+                            send_denied(&responses, request_id, UpstreamGrantDenial::Revoked).await?;
+                        }
+                    }
                 }
             }
         }
