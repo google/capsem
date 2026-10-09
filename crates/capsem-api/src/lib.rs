@@ -39,6 +39,8 @@ mod updates;
 pub use updates::*;
 mod restart;
 pub use restart::*;
+mod proxy;
+pub use proxy::*;
 mod networks;
 pub use networks::*;
 mod diagnostics;

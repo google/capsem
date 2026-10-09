@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "3.0.0"
+    "version": "3.1.0"
   },
   "paths": {
     "/assets/status": {
@@ -874,6 +874,152 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PanicsResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proxies": {
+      "post": {
+        "operationId": "createProxy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProxyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateProxyResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proxies/{id}/heartbeat": {
+      "post": {
+        "operationId": "heartbeatProxy",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProxyLeaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxyHeartbeatResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proxies/{id}/stop": {
+      "post": {
+        "operationId": "stopProxy",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProxyLeaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopProxyResponse"
                 }
               }
             }
@@ -3299,6 +3445,72 @@
           }
         }
       },
+      "CreateProxyRequest": {
+        "type": "object",
+        "description": "Start one VM-free, OpenAI-compatible model proxy lease.",
+        "required": [
+          "provider",
+          "bind",
+          "port"
+        ],
+        "properties": {
+          "bind": {
+            "type": "string",
+            "description": "Local address on which the unauthenticated data listener binds."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requested data-listener port. Zero asks the OS to select one.",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string",
+            "description": "Provider key from the effective built-in/settings/corp policy."
+          }
+        }
+      },
+      "CreateProxyResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "provider",
+          "bind",
+          "port",
+          "base_url",
+          "lease_token",
+          "lease_expires_unix_ms"
+        ],
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "SDK-compatible URL, including the configured provider path prefix."
+          },
+          "bind": {
+            "type": "string"
+          },
+          "lease_expires_unix_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "lease_token": {
+            "type": "string",
+            "description": "Opaque proof required to renew or stop this lease."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        }
+      },
       "CredentialEvent": {
         "type": "object",
         "required": [
@@ -5679,6 +5891,34 @@
           }
         }
       },
+      "ProxyHeartbeatResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "lease_expires_unix_ms"
+        ],
+        "properties": {
+          "lease_expires_unix_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "session_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ProxyLeaseRequest": {
+        "type": "object",
+        "required": [
+          "lease_token"
+        ],
+        "properties": {
+          "lease_token": {
+            "type": "string"
+          }
+        }
+      },
       "PurgeRequest": {
         "type": "object",
         "properties": {
@@ -6184,6 +6424,21 @@
           },
           "ts": {
             "type": "string"
+          }
+        }
+      },
+      "StopProxyResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "stopped"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "stopped": {
+            "type": "boolean"
           }
         }
       },

@@ -232,6 +232,20 @@ fn openapi_describes_binary_copy_and_required_vm_identity() {
 }
 
 #[test]
+fn openapi_describes_standalone_proxy_leases() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let paths = &document["paths"];
+
+    assert_eq!(paths["/proxies"]["post"]["operationId"], "createProxy");
+    assert_eq!(
+        paths["/proxies/{id}/heartbeat"]["post"]["operationId"],
+        "heartbeatProxy"
+    );
+    assert_eq!(paths["/proxies/{id}/stop"]["post"]["operationId"], "stopProxy");
+    assert_eq!(crate::CONTRACT_VERSION, "3.1.0");
+}
+
+#[test]
 fn openapi_exec_output_is_byte_safe_and_retires_ambiguous_file_json() {
     let document = serde_json::to_value(crate::openapi()).unwrap();
     let paths = &document["paths"];
