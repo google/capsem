@@ -126,6 +126,12 @@ jobs:
         timeout-minutes: 45
         run: just test-linux-rust
 
+      # These integration targets execute the real self-confined worker
+      # binaries. The unit coverage command uses --lib/--bins and therefore
+      # cannot prove Landlock/seccomp took effect before readiness.
+      - name: Confined worker subprocess tests
+        run: cargo test --locked -p capsem-ledger -p capsem-proxy --test subprocess
+
       # cargo check still runs BLAKE3's native SIMD build. Both guest targets
       # belong on their native Linux C toolchain, already provisioned above.
       # Build and link the production feature set, not a pure-Rust substitute.
@@ -283,6 +289,11 @@ jobs:
           set -o pipefail
           cargo llvm-cov nextest --no-cfg-coverage --lib --bins --profile ci-unit --codecov --output-path cache/target/coverage/rust/unit.json -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-ledger -p capsem-proxy -p capsem-network -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
           cargo llvm-cov report --summary-only -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-ledger -p capsem-proxy -p capsem-network -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee cache/target/coverage/rust/summary.txt
+
+      # Run the production executables under the host's real Seatbelt policy.
+      # --lib/--bins above compiles but does not execute integration targets.
+      - name: Confined worker subprocess tests
+        run: cargo test --locked -p capsem-ledger -p capsem-proxy --test subprocess
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
