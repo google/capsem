@@ -70,7 +70,6 @@ pub(crate) struct VsockOptions {
     pub(crate) session_dir: PathBuf,
     pub(crate) cli_env: Vec<(String, String)>,
     pub(crate) guest_config: capsem_core::net::policy_config::GuestConfig,
-    pub(crate) mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
     pub(crate) upstream_grants: Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
     pub(crate) security_rules: SecurityRulesHandle,
     pub(crate) plugin_policy: PluginPolicyHandle,
@@ -97,7 +96,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         session_dir,
         cli_env,
         guest_config,
-        mitm_config,
         upstream_grants,
         security_rules,
         plugin_policy,
@@ -719,7 +717,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     // -----------------------------------------------------------------------
     // 4. Central Dispatcher Loop (Vsock -> Hub)
     // -----------------------------------------------------------------------
-    let mitm_config_loop = Arc::clone(&mitm_config);
     let upstream_grants_loop = Arc::clone(&upstream_grants);
     let security_rules_loop = Arc::clone(&security_rules);
     let db_for_audit = Arc::clone(&db);
@@ -738,7 +735,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         for conn in pending_aux.drain(..) {
             dispatch_aux_connection(
                 conn,
-                &mitm_config_loop,
                 &upstream_grants_loop,
                 &security_rules_loop,
                 &job_store_vsock,
@@ -775,7 +771,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             for aux_conn in pending_aux.drain(..) {
                                 dispatch_aux_connection(
                                     aux_conn,
-                                    &mitm_config_loop,
                                     &upstream_grants_loop,
                                     &security_rules_loop,
                                     &job_store_vsock,
@@ -815,7 +810,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         // only thing that requires a successful handshake lock-step.
                         dispatch_aux_connection(
                             conn,
-                            &mitm_config_loop,
                             &upstream_grants_loop,
                             &security_rules_loop,
                             &job_store_vsock,
@@ -839,7 +833,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 fn dispatch_aux_connection(
     conn: VsockConnection,
-    mitm_config: &Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
     upstream_grants: &Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
     security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
     job_store: &Arc<JobStore>,
@@ -851,21 +844,18 @@ fn dispatch_aux_connection(
     match HostVsockService::from_port(conn.port) {
         Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
         Some(HostVsockService::Network) => streams::serve_network(conn, job_store, vm_id),
-        Some(HostVsockService::SniProxy) => streams::serve_mitm(conn, Arc::clone(mitm_config)),
-        Some(HostVsockService::DnsProxy) => match conn.try_clone_fd() {
-            Ok(descriptor) => {
-                let grants = Arc::clone(upstream_grants);
-                tokio::spawn(async move {
-                    if let Err(error) = grants
-                        .attach_proxy_traffic(capsem_proto::upstream_grant::ProxyTrafficService::Dns, descriptor)
-                        .await
-                    {
-                        warn!(%error, "DNS port: proxy worker refused the session descriptor");
-                    }
-                });
-            }
-            Err(error) => warn!(%error, "DNS port: cannot duplicate the session descriptor"),
-        },
+        Some(HostVsockService::SniProxy) => surrender_proxy_traffic(
+            conn,
+            capsem_proto::upstream_grant::ProxyTrafficService::Http,
+            "HTTP",
+            upstream_grants,
+        ),
+        Some(HostVsockService::DnsProxy) => surrender_proxy_traffic(
+            conn,
+            capsem_proto::upstream_grant::ProxyTrafficService::Dns,
+            "DNS",
+            upstream_grants,
+        ),
         Some(HostVsockService::Exec) => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {
@@ -976,6 +966,25 @@ fn dispatch_aux_connection(
                 "vsock dispatch: unknown port; auxiliary connection ignored"
             );
         }
+    }
+}
+
+fn surrender_proxy_traffic(
+    conn: VsockConnection,
+    service: capsem_proto::upstream_grant::ProxyTrafficService,
+    label: &'static str,
+    upstream_grants: &Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
+) {
+    match conn.try_clone_fd() {
+        Ok(descriptor) => {
+            let grants = Arc::clone(upstream_grants);
+            tokio::spawn(async move {
+                if let Err(error) = grants.attach_proxy_traffic(service, descriptor).await {
+                    warn!(%error, "{label} port: proxy worker refused the session descriptor");
+                }
+            });
+        }
+        Err(error) => warn!(%error, "{label} port: cannot duplicate the session descriptor"),
     }
 }
 
