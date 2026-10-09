@@ -245,6 +245,8 @@ class DebProof:
                 f"{guest.home}/{self._install.capsem_home}",
                 "--manifest-url",
                 manifest,
+                "--metadata-manifest-url",
+                self.manifest_url,
                 "--channel",
                 self.channel,
                 "--package-version",

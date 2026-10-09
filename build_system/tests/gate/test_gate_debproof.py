@@ -360,6 +360,19 @@ def test_the_release_and_shell_proofs_run_as_the_unprivileged_user(
         assert f"-u {CONFIG.install.guest_user.name}" in matched[0]
 
 
+def test_installed_bytes_and_metadata_polling_url_are_verified_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    verifier = runner.matching(PROOF.verify_script.replace(".", r"\."))[0]
+    graph = CONFIG.install.graph_manifest.format(channel="nightly")
+    assert f"--manifest-url file:///src/{CONFIG.install.layout.channel}/{graph}" in verifier
+    assert "--metadata-manifest-url file:///src/m.json" in verifier
+
+
 def test_vm_devices_are_granted_and_probed_as_the_runtime_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
