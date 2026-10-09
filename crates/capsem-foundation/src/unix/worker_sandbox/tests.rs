@@ -212,6 +212,9 @@ fn macos_policy_preserves_grants_and_denies_ambient_authority() {
     std::fs::create_dir_all(&allowed).unwrap();
     std::fs::create_dir_all(&readonly).unwrap();
     std::fs::create_dir_all(&denied).unwrap();
+    let allowed = allowed.canonicalize().unwrap();
+    let readonly = readonly.canonicalize().unwrap();
+    let denied = denied.canonicalize().unwrap();
     std::fs::write(readonly.join("value"), b"readable").unwrap();
     std::fs::write(denied.join("secret"), b"secret").unwrap();
     let control = denied.join("control.sock");
@@ -283,7 +286,10 @@ fn macos_sandbox_child() {
             assert!(std::fs::set_permissions(&allowed, std::fs::Permissions::from_mode(0o777)).is_err());
             assert!(std::fs::read(denied.join("secret")).is_err());
             assert!(UnixStream::connect(control).is_err());
-            assert!(UnixStream::pair().is_err());
+            // Seatbelt denies access to ambient endpoints. A private
+            // AF_UNIX socketpair carries no external authority and remains
+            // available for worker-internal communication.
+            let _private_pair = UnixStream::pair().unwrap();
             assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err());
             assert!(Command::new("/usr/bin/true").status().is_err());
             let parent = unsafe { libc::getppid() };

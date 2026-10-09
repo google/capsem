@@ -603,8 +603,16 @@ fn relative_mode_changes_refuse_links_and_traversal() {
     std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
     symlink(&secret, tree.root_path.join("link")).unwrap();
     symlink(&tree.outside, tree.root_path.join("dir-link")).unwrap();
+    let _socket = std::os::unix::net::UnixListener::bind(tree.root_path.join("socket")).unwrap();
 
-    for path in ["link", "dir-link/secret", "../outside/secret", "/tmp/file", "a/../b"] {
+    for path in [
+        "link",
+        "dir-link/secret",
+        "socket",
+        "../outside/secret",
+        "/tmp/file",
+        "a/../b",
+    ] {
         assert!(
             tree.root.set_relative_mode(Path::new(path), 0o777).is_err(),
             "accepted {path}"
