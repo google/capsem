@@ -35,13 +35,6 @@ pub(crate) async fn handle_timeline(
         })
         .transpose()?
         .unwrap_or_default();
-    // A tool call that never recorded its time reads as the epoch, and the
-    // filter has always compared that displayed time: an epoch cutoff keeps it.
-    let tool_cutoff = if cutoff.as_str() <= UNDATED_TOOL_CALL {
-        String::new()
-    } else {
-        cutoff.clone()
-    };
     let limit = params.limit.unwrap_or(200).min(2000);
     let session_dir = resolve_session_dir(&state, &id)?;
     let db_path = session_dir.join("session.db");
@@ -52,15 +45,22 @@ pub(crate) async fn handle_timeline(
         "events",
         &db_path,
         &db,
-        &timeline_sql(&layers),
-        &[
-            json!(limit),
-            json!(cutoff),
-            json!(tool_cutoff),
-            params
-                .trace_id
-                .map_or(serde_json::Value::Null, serde_json::Value::String),
-        ],
+        capsem_logger::ledger_protocol::LedgerQuery::Timeline {
+            layers: layers
+                .iter()
+                .map(|layer| match layer {
+                    TimelineLayer::Exec => capsem_logger::ledger_protocol::LedgerTimelineLayer::Exec,
+                    TimelineLayer::Tool => capsem_logger::ledger_protocol::LedgerTimelineLayer::Tool,
+                    TimelineLayer::Net => capsem_logger::ledger_protocol::LedgerTimelineLayer::Net,
+                    TimelineLayer::Fs => capsem_logger::ledger_protocol::LedgerTimelineLayer::File,
+                    TimelineLayer::Model => capsem_logger::ledger_protocol::LedgerTimelineLayer::Model,
+                })
+                .collect(),
+            cutoff,
+            trace_id: params.trace_id,
+            limit: u16::try_from(limit).unwrap_or(2000),
+        },
+        0,
     )
     .await?;
     Ok(Json(api::TimelineResponse { events }))
@@ -74,11 +74,9 @@ const LAYERS: [TimelineLayer; 5] = [
     TimelineLayer::Model,
 ];
 
-/// How a tool call without a recorded time is displayed and ordered.
-const UNDATED_TOOL_CALL: &str = "1970-01-01T00:00:00Z";
-
 /// Rows a layer keeps: at or after the cutoff, and in the requested trace or
 /// in none. The cutoff is `''` without `since`, which every timestamp passes.
+#[cfg(test)]
 const EXEC_WINDOW: &str = "SELECT timestamp, 'exec' AS layer, exec_id AS ref, command AS summary, \
      exit_code AS status, duration_ms, trace_id FROM exec_events \
      WHERE timestamp >= ?2 AND (?4 IS NULL OR trace_id = ?4 OR trace_id IS NULL) \
@@ -88,6 +86,7 @@ const EXEC_WINDOW: &str = "SELECT timestamp, 'exec' AS layer, exec_id AS ref, co
 /// serves; an empty one sorts first, where the epoch it displays as would.
 /// `+tc.origin` keeps the planner on the timestamp index: nearly every call
 /// has one of these origins, so the origin index would only add a sort.
+#[cfg(test)]
 const TOOL_WINDOW: &str = "SELECT COALESCE(NULLIF(tc.timestamp, ''), '1970-01-01T00:00:00Z') AS timestamp, \
      'tool' AS layer, tc.event_id AS ref, \
      COALESCE(tc.server_name, tc.origin) || '/' || tc.tool_name || COALESCE(' (call_id=' || tc.call_id || ')', '') AS summary, \
@@ -97,17 +96,20 @@ const TOOL_WINDOW: &str = "SELECT COALESCE(NULLIF(tc.timestamp, ''), '1970-01-01
      AND tc.timestamp >= ?3 AND (?4 IS NULL OR tc.trace_id = ?4 OR tc.trace_id IS NULL) \
      ORDER BY tc.timestamp ASC LIMIT ?1";
 
+#[cfg(test)]
 const NET_WINDOW: &str = "SELECT timestamp, 'net' AS layer, id AS ref, \
      COALESCE(method, 'GET') || ' ' || domain || COALESCE(path, '') AS summary, \
      status_code AS status, duration_ms, trace_id FROM net_events \
      WHERE timestamp >= ?2 AND (?4 IS NULL OR trace_id = ?4 OR trace_id IS NULL) \
      ORDER BY timestamp ASC LIMIT ?1";
 
+#[cfg(test)]
 const FS_WINDOW: &str = "SELECT timestamp, 'fs' AS layer, id AS ref, action || ' ' || path AS summary, \
      NULL AS status, NULL AS duration_ms, trace_id FROM fs_events \
      WHERE timestamp >= ?2 AND (?4 IS NULL OR trace_id = ?4 OR trace_id IS NULL) \
      ORDER BY timestamp ASC LIMIT ?1";
 
+#[cfg(test)]
 const MODEL_WINDOW: &str = "SELECT timestamp, 'model' AS layer, id AS ref, \
      provider || '/' || COALESCE(model, '?') AS summary, \
      status_code AS status, duration_ms, trace_id FROM model_calls \
@@ -117,6 +119,7 @@ const MODEL_WINDOW: &str = "SELECT timestamp, 'model' AS layer, id AS ref, \
 /// The requested layers' windows, merged oldest first. Parameters: `?1`
 /// limit, `?2` cutoff, `?3` tool cutoff, `?4` trace id or NULL. Every window
 /// names `?4`, so the statement always takes all four.
+#[cfg(test)]
 pub(crate) fn timeline_sql(layers: &[TimelineLayer]) -> String {
     let windows = layers
         .iter()

@@ -14,12 +14,12 @@ async fn stale_shutdown_binding_leaves_replacement_socket_and_ledger_intact() {
     instance.uds_path = socket.clone();
     let generation = instance.generation;
     state.instances.lock().unwrap().insert("replacement".into(), instance);
-    let ledger = Arc::clone(&state.host_ledger);
-    state
-        .session_db_handles
-        .lock()
-        .unwrap()
-        .insert("replacement".into(), Arc::clone(&ledger));
+    let ledger_dir = tempfile::tempdir().unwrap();
+    let writer = capsem_logger::DbWriter::open(&ledger_dir.path().join("session.db"), 16).unwrap();
+    writer.shutdown_blocking();
+    let ledger = state
+        .register_session_db_handle("replacement", ledger_dir.path())
+        .unwrap();
     let result = shutdown_vm_process(&state, "replacement", ShutdownMode::Discard, Some(uuid::Uuid::new_v4())).await;
     assert_eq!(result.unwrap_err().0, StatusCode::CONFLICT);
     assert_eq!(

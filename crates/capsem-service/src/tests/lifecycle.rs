@@ -1304,7 +1304,7 @@ async fn service_rehydrates_session_db_handles() {
         state.session_db_handle(&vm_id).is_none(),
         "test must prove startup hydration installs the handle"
     );
-    state.hydrate_session_db_handles();
+    state.hydrate_session_db_handles().await;
 
     let handle = state
         .session_db_handle(&vm_id)

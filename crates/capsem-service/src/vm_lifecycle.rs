@@ -349,6 +349,12 @@ pub(super) async fn shutdown_vm_process(
             "VM was killed before it finished flushing; writes made just before              stop may be lost"
         );
     }
+    state.ledger_workers.shutdown(id).await.map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to stop session ledger worker for {id}: {error}"),
+        )
+    })?;
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
     state
@@ -559,6 +565,13 @@ pub(super) async fn handle_delete(
     // success until the directory is actually gone. Failed VM exits use the
     // separate `preserve_failed_session_dir` path; a clean delete must never
     // be relabelled as a failure.
+    state.unregister_session_db_handle(&id);
+    state.ledger_workers.shutdown(&id).await.map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to stop session ledger worker for {id}: {error}"),
+        )
+    })?;
     let state_clone = Arc::clone(&state);
     tokio::task::spawn_blocking(move || state_clone.delete_session_dir(&session_dir))
         .await

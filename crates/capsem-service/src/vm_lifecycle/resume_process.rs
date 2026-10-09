@@ -226,19 +226,12 @@ impl ServiceState {
             }
         };
 
-        if session_db_path_for_session_dir(&entry.session_dir).exists() {
-            if let Err(error) = self.register_session_db_handle(&vm_id, &entry.session_dir) {
-                instance_reaper::kill_and_reap(child);
-                return Err(error);
-            }
-        } else {
-            info!(
-                vm_id = vm_id,
-                operation = "defer_session_db_handle_registration",
-                session_dir = %entry.session_dir.display(),
-                "session DB not present yet; route will register the external reader lazily"
-            );
-        }
+        info!(
+            vm_id,
+            operation = "defer_session_db_handle_registration",
+            session_dir = %entry.session_dir.display(),
+            "session ledger reader will be granted lazily to the first route"
+        );
 
         let authority = crate::instance::WorkerAuthority::default();
         let upstream_grant = authority.grant();

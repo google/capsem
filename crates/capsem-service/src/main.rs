@@ -210,10 +210,9 @@ pub struct ServiceState {
     proxy_workers: Mutex<HashMap<String, (uuid::Uuid, proxy_worker::ProxyWorker)>>,
     ledger_workers: Arc<ledger_worker::LedgerWorkers>,
     retirements: instance_reaper::Retirements,
-    /// Logger-owned DB handles keyed by session/VM id. Logged-data routes
-    /// resolve a handle here and call `ready/query`; they do not open SQLite
-    /// readers or create per-route projection caches.
-    session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
+    /// Authenticated ledger channels keyed by session/VM id. Logged-data
+    /// routes use named operations; only the supervised worker opens SQLite.
+    session_db_handles: Mutex<HashMap<String, Arc<session_db_handles::SessionLedger>>>,
     persistent_registry: SharedRegistry,
     /// Named networks as groups of VMs, durable in each network's database.
     networks: tokio::sync::Mutex<capsem_core::net::network_registry::NetworkRegistry>,

@@ -39,6 +39,12 @@ fn test_host_ledger(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
     host_ledger::open_host_ledger(&run_dir.parent().unwrap().join("sessions")).unwrap()
 }
 
+pub(crate) fn test_session_ledger(db_path: PathBuf) -> Result<session_db_handles::SessionLedger, String> {
+    capsem_logger::DbHandle::open_external_reader(&db_path)
+        .map(|db| session_db_handles::SessionLedger::embedded(db_path, db))
+        .map_err(|error| error.to_string())
+}
+
 /// The one test `ServiceState` constructor. The manifest is whatever
 /// `assets_dir` holds, as at service startup.
 fn test_state(run_dir: PathBuf, assets_dir: PathBuf, test_tempdir: Option<tempfile::TempDir>) -> ServiceState {

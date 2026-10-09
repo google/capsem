@@ -283,7 +283,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         _test_tempdir: None,
     });
 
-    state.hydrate_session_db_handles();
+    state.hydrate_session_db_handles().await;
     state.hydrate_host_stats().await?;
     state
         .record_service_event(capsem_logger::HostEventKind::ServiceStarted)
