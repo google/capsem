@@ -5,6 +5,7 @@ mod job_store;
 mod mcp_runtime;
 mod metric_export;
 mod private_seats;
+mod proxy_mcp;
 mod runtime_config;
 mod terminal;
 mod vsock;
@@ -37,6 +38,7 @@ pub(crate) struct Shutdown {
     publisher: Option<Arc<capsem_core::container::publish::Publisher>>,
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
+    proxy_mcp: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Shutdown {
@@ -58,6 +60,10 @@ pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
     // stop the run loop while the first caller is still draining its owners.
     let mut guard = shutdown.lock().await;
     let mut owned = std::mem::take(&mut *guard);
+    if let Some(proxy_mcp) = owned.proxy_mcp.take() {
+        proxy_mcp.abort();
+        let _ = proxy_mcp.await;
+    }
     if let Some(publisher) = owned.publisher.take() {
         publisher.shutdown().await;
     }
@@ -785,28 +791,52 @@ async fn run_async_main_loop(
     let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
+    let mcp_timeouts = capsem_core::net::mitm_proxy::McpTimeouts::from_env();
+    let builtin_servers = capsem_core::mcp::builtin_server_names(&mcp_servers);
+    let scoped_tools: Arc<dyn capsem_core::net::mitm_proxy::ScopedMcpTools> = Arc::new(GuestExposureTools::new(
+        Arc::clone(&job_store.publisher),
+        ctrl_tx.clone(),
+    ));
     let mcp_endpoint = Arc::new(
         capsem_core::net::mitm_proxy::McpEndpointState::new(
             aggregator_client.clone(),
             Arc::clone(&security_rules),
             Arc::clone(&plugin_policy),
             Arc::clone(&mcp_inflight),
-            capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
+            mcp_timeouts.clone(),
         )
-        .with_builtin_ledger(Arc::clone(&db), capsem_core::mcp::builtin_server_names(&mcp_servers))
-        .with_scoped_tools(Arc::new(GuestExposureTools::new(
-            Arc::clone(&job_store.publisher),
-            ctrl_tx.clone(),
-        ))),
+        .with_builtin_ledger(Arc::clone(&db), builtin_servers.clone())
+        .with_scoped_tools(Arc::clone(&scoped_tools)),
     );
     let mcp_runtime = Arc::new(McpRuntime {
-        aggregator: aggregator_client,
+        aggregator: aggregator_client.clone(),
         endpoint: Arc::clone(&mcp_endpoint),
         db: Arc::clone(&db),
         security_rules: Arc::clone(&security_rules),
         plugin_policy: Arc::clone(&plugin_policy),
         proxy_policy: proxy_policy.clone(),
     });
+    let (proxy_mcp, owner_mcp) = std::os::unix::net::UnixStream::pair()?;
+    let proxy_mcp_task = tokio::spawn(async move {
+        if let Err(error) = proxy_mcp::serve(
+            owner_mcp,
+            aggregator_client,
+            scoped_tools,
+            builtin_servers,
+            inflight_cap,
+            mcp_timeouts,
+        )
+        .await
+        {
+            tracing::warn!(%error, "proxy MCP capability stopped");
+        }
+    });
+    if let Err(error) = upstream_grants.attach_proxy_mcp(proxy_mcp.into()).await {
+        proxy_mcp_task.abort();
+        let _ = proxy_mcp_task.await;
+        return Err(error.context("grant proxy MCP capability"));
+    }
+    shutdown.lock().await.proxy_mcp = Some(proxy_mcp_task);
 
     let telemetry_deps = Arc::new(capsem_core::net::mitm_proxy::telemetry_hook::TelemetryDeps {
         db: Arc::clone(&db),
