@@ -6,7 +6,7 @@ use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration, Ledg
 
 pub const PROXY_CONTROL_FRAME_SIZE: usize = 56;
 pub const PROXY_CONTROL_MAX_FDS: usize = 1;
-pub const PROXY_CONTROL_VERSION: u16 = 3;
+pub const PROXY_CONTROL_VERSION: u16 = 4;
 
 const MAGIC: [u8; 2] = *b"PX";
 const VERSION_RANGE: std::ops::Range<usize> = 2..4;
@@ -158,6 +158,7 @@ pub enum ProxyControlRejection {
     DuplicateCapability = 2,
     DuplicateGrant = 3,
     ShuttingDown = 4,
+    NotReady = 5,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -402,6 +403,7 @@ fn decode_rejection(value: u16) -> Result<ProxyControlRejection, ProxyControlErr
         2 => Ok(ProxyControlRejection::DuplicateCapability),
         3 => Ok(ProxyControlRejection::DuplicateGrant),
         4 => Ok(ProxyControlRejection::ShuttingDown),
+        5 => Ok(ProxyControlRejection::NotReady),
         value => Err(ProxyControlError::InvalidRejection(value)),
     }
 }
