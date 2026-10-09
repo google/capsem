@@ -92,11 +92,11 @@ grants fail closed.
 
 | Process | Permitted after readiness | Denied or absent |
 |---|---|---|
-| `capsem-service` | Global lifecycle, settings and corp policy, credential store, session registry, resource creation and capability grants; producer ordering and external commitment checkpoints | It is part of the trusted computing base; clients reach it through the local UDS or authenticated gateway routes |
+| `capsem-service` | Global lifecycle, settings and corp policy, credential store, MCP discovery catalog, session registry, resource creation and capability grants; producer ordering and external commitment checkpoints | It is part of the trusted computing base; clients reach it through the local UDS or authenticated gateway routes |
 | `capsem-gateway` | Accept on listeners bound before confinement; use coordinator-granted service/owner channels; update its private readiness files | Ambient file reads, path-based UDS connects, outbound TCP, new binds, process execution |
-| `capsem-process` | One VM and its exact session runtime paths; read exact boot assets and active policy; use coordinator-granted upstream and ledger channels; execute only the installed router helper | Other sessions, direct `session.db` access, ambient outbound connects/binds, unrelated host files and processes |
-| `capsem-proxy` | Consume granted HTTP, DNS, MCP, upstream, credential, ledger, metrics, private-name, and policy channels | All filesystem access, socket creation, arbitrary dial/bind/listen, process execution, signals to the coordinator |
-| `capsem-ledger` | Read and write one session directory; serve authenticated operations over granted connected channels | Other paths, all network, new Unix sockets, process execution, signals to the coordinator |
+| `capsem-process` | One VM and its exact session runtime paths; read exact boot assets and active policy; use coordinator-granted upstream and ledger channels; execute only the installed router helper | Other sessions, the global MCP discovery catalog, direct `session.db` access, ambient outbound connects/binds, unrelated host files and processes |
+| `capsem-proxy` | Consume granted HTTP, DNS, MCP, upstream, credential, ledger, metrics, private-name, and policy channels | All filesystem access, arbitrary dial/bind/listen and control-socket access, process execution, signals to the coordinator |
+| `capsem-ledger` | Read and write one session directory; serve authenticated operations over granted connected channels | Other paths, ambient network and control-socket access, process execution, signals to the coordinator |
 | `capsem-router --expose` | Copy bytes between connected host TCP and guest VSOCK descriptors | Listener ownership, destination selection, filesystem, arbitrary network, VM control |
 | `capsem-router --network` | Switch frames among the descriptor-backed cables of one named network | Uplink, listener, outbound socket, another network's members, policy decisions |
 | `capsem-mcp-aggregator` | Connect to configured external MCP servers and return protocol results | VM control, session files, ledger storage, service API; requests arrive only after the session policy boundary |
@@ -115,13 +115,25 @@ network, execution, and cross-sandbox signal operations, then add their exact
 path grants. Only the gateway may accept inbound traffic on a listener it
 already owns.
 
-On Linux, workers install a Landlock ABI 6 ruleset across every existing thread
-and then a seccomp filter with thread synchronization. Landlock limits
-filesystem and network scope; seccomp denies direct connect, bind, listen,
-process inspection, namespace/mount operations, kernel attack surfaces, and
-permission/ownership changes. Proxy and ledger workers also cannot create
+On Linux, workers support Landlock ABI 6 and newer. ABI 8 adds synchronized
+restriction of existing threads. On ABI 6 and 7, startup remains
+single-threaded until Landlock is installed; every later runtime, hypervisor,
+database, monitor, logging, and parent-watch thread inherits that domain. A
+worker refuses startup if an older ABI already has a sibling thread. Seccomp
+is installed with thread synchronization after the Landlock ruleset. Landlock
+limits filesystem scope; seccomp denies direct connect, bind, listen, process
+inspection, namespace and mount operations, kernel attack surfaces, and
+permission or ownership changes. Proxy and ledger workers also cannot create
 sockets or send signals. Existing connected descriptors remain usable because
 they are the capability.
+
+The VM owner prepares only resources that cannot be acquired after the
+sandbox: its inherited coordinator channel, exact IPC listeners, readiness and
+log files, metric channel, and Linux AF_VSOCK listeners. It then installs and
+self-attests confinement before starting the parent watcher, hypervisor,
+Tokio or blocking worker threads, ledger client, filesystem monitor, metric
+exporter, or any VM worker. KVM consumes the prepared VSOCK descriptors after
+confinement; it does not regain `socket` or `bind` authority.
 
 Both platforms clear inherited environment state where secrets could otherwise
 leak and close descriptors that were not deliberately preserved. The sandbox
