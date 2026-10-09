@@ -4,22 +4,22 @@
 //! is gone from the next answer.
 use capsem_core::net::dns::private::{Lookup, PrivateNames};
 use std::net::Ipv4Addr;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 pub(crate) struct ServicePrivateNames {
-    service_socket: PathBuf,
+    service: Arc<capsem_core::service_uds::Client>,
     vm_id: String,
 }
 
 impl ServicePrivateNames {
-    pub(crate) fn new(service_socket: PathBuf, vm_id: String) -> Self {
-        Self { service_socket, vm_id }
+    pub(crate) fn new(service: Arc<capsem_core::service_uds::Client>, vm_id: String) -> Self {
+        Self { service, vm_id }
     }
 
     async fn ask(&self, question: serde_json::Value) -> Option<serde_json::Value> {
         let mut request = question;
         request["source_vm"] = serde_json::Value::String(self.vm_id.clone());
-        match capsem_core::service_uds::post_json(&self.service_socket, "/networks/private/resolve", &request).await {
+        match self.service.post_json("/networks/private/resolve", &request).await {
             Ok((200, answer)) => Some(answer),
             Ok((404, _)) => None,
             Ok((status, answer)) => {

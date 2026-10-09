@@ -1,4 +1,5 @@
 use super::*;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 /// The service's resolve route as a fake: answers from a table, records
@@ -41,7 +42,8 @@ async fn names_and_addresses_are_the_services_answers_and_misses_are_none() {
     let socket = dir.path().join("service.sock");
     let seen = Arc::new(Mutex::new(Vec::new()));
     fake_service(socket.clone(), Arc::clone(&seen)).await;
-    let names = ServicePrivateNames::new(socket, "vm-a".into());
+    let service = Arc::new(capsem_core::service_uds::Client::connect(&socket).await.unwrap());
+    let names = ServicePrivateNames::new(service, "vm-a".into());
     assert_eq!(names.address_of("beta.team").await, Some(Ipv4Addr::new(10, 128, 0, 3)));
     assert_eq!(names.address_of("nobody.team").await, None);
     assert_eq!(
@@ -58,7 +60,7 @@ async fn names_and_addresses_are_the_services_answers_and_misses_are_none() {
 }
 
 #[tokio::test]
-async fn a_refusal_or_an_absent_service_is_a_miss_not_a_failure() {
+async fn a_refusal_or_a_closed_service_is_a_miss_not_a_failure() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("service.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
@@ -69,8 +71,18 @@ async fn a_refusal_or_an_absent_service_is_a_miss_not_a_failure() {
         );
         let _ = axum::serve(listener, app).await;
     });
-    let refused = ServicePrivateNames::new(socket, "vm-a".into());
+    let service = Arc::new(capsem_core::service_uds::Client::connect(&socket).await.unwrap());
+    let refused = ServicePrivateNames::new(service, "vm-a".into());
     assert_eq!(refused.address_of("beta.team").await, None);
-    let absent = ServicePrivateNames::new(dir.path().join("nobody.sock"), "vm-a".into());
-    assert_eq!(absent.address_of("beta.team").await, None);
+
+    let closed_socket = dir.path().join("closed.sock");
+    let listener = tokio::net::UnixListener::bind(&closed_socket).unwrap();
+    let closer = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        drop(stream);
+    });
+    let closed = Arc::new(capsem_core::service_uds::Client::connect(&closed_socket).await.unwrap());
+    closer.await.unwrap();
+    let closed = ServicePrivateNames::new(closed, "vm-a".into());
+    assert_eq!(closed.address_of("beta.team").await, None);
 }

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Confine Linux VM-owner runtime threads before readiness to their session,
+  read-only boot assets, prepared service channels and inherited network
+  grants; deny sibling files, path-based control connections and direct
+  network dialing after startup.
+
 - Restrict registered VM-owner service connections to private-name lookup and
   that owner's metrics route, preventing a compromised worker from invoking
   the coordinator's public API over its same-user control socket.

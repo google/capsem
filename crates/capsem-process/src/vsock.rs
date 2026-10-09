@@ -81,7 +81,7 @@ pub(crate) struct VsockOptions {
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(crate) is_restore: bool,
     pub(crate) vm_ready: Arc<AtomicBool>,
-    pub(crate) uds_path: PathBuf,
+    pub(crate) ready: std::fs::File,
     pub(crate) db: Arc<capsem_logger::DbWriter>,
     pub(crate) pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
     pub(crate) shutdown: Arc<tokio::sync::Mutex<crate::Shutdown>>,
@@ -107,7 +107,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         plugin_policy,
         is_restore,
         vm_ready,
-        uds_path,
+        mut ready,
         db,
         pty_log,
         shutdown,
@@ -184,8 +184,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         })
     );
     vm_ready.store(true, Ordering::Release);
-    let ready_path = uds_path.with_extension("ready");
-    if let Err(e) = std::fs::write(&ready_path, b"ready\n") {
+    let ready_for_reader = ready.try_clone().context("clone ready sentinel")?;
+    if let Err(e) = ready.write_all(b"ready\n").and_then(|()| ready.sync_data()) {
         warn!(error = %e, "failed to create ready sentinel");
     }
 
@@ -300,7 +300,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
     let js_for_teardown = Arc::clone(&job_store);
     let vm_ready_for_reader = Arc::clone(&vm_ready);
-    let ready_path_for_reader = ready_path;
+    let ready_for_reader = ready_for_reader;
 
     // Pending-ack map lives on `JobStore` (see job_store.rs::pending_acks)
     // and the bridge end here can replay-on-rekey. See the field doc on
@@ -318,7 +318,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     None => {
                         js_for_teardown.fail_all("control channel closed");
                         vm_ready_for_reader.store(false, Ordering::Release);
-                        let _ = std::fs::remove_file(&ready_path_for_reader);
+                        let _ = ready_for_reader.set_len(0).and_then(|()| ready_for_reader.sync_data());
                         break;
                     }
                 },

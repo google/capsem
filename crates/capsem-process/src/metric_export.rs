@@ -6,13 +6,13 @@
 //! a collector address or credential. Without a broker grant, export is off.
 
 use capsem_telemetry::export::{Exporter, KeyValue};
-use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{info, warn};
 
 /// OTLP transport that can reach only this process's fixed service route.
 struct ServiceMetricClient {
-    service_socket: PathBuf,
+    service_socket: Mutex<Option<std::os::unix::net::UnixStream>>,
+    service: Mutex<Option<capsem_core::service_uds::Client>>,
     path: String,
     runtime: Mutex<tokio::runtime::Runtime>,
 }
@@ -21,20 +21,23 @@ impl std::fmt::Debug for ServiceMetricClient {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ServiceMetricClient")
-            .field("service_socket", &self.service_socket)
             .field("path", &self.path)
             .finish_non_exhaustive()
     }
 }
 
 impl ServiceMetricClient {
-    fn new(service_socket: PathBuf, vm_id: &str) -> Result<Self, String> {
+    fn new(service_socket: std::os::unix::net::UnixStream, vm_id: &str) -> Result<Self, String> {
+        service_socket
+            .set_nonblocking(true)
+            .map_err(|error| format!("prepare metric broker socket: {error}"))?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|error| format!("build metric broker runtime: {error}"))?;
         Ok(Self {
-            service_socket,
+            service_socket: Mutex::new(Some(service_socket)),
+            service: Mutex::new(None),
             path: format!("/internal/vms/{vm_id}/metrics"),
             runtime: Mutex::new(runtime),
         })
@@ -47,23 +50,41 @@ impl opentelemetry_http::HttpClient for ServiceMetricClient {
         &self,
         request: http::Request<bytes::Bytes>,
     ) -> Result<http::Response<bytes::Bytes>, opentelemetry_http::HttpError> {
-        let response = self
-            .runtime
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .block_on(capsem_core::service_uds::post_bytes(
-                &self.service_socket,
-                &self.path,
-                http::HeaderValue::from_static("application/x-protobuf"),
-                request.into_body(),
-            ));
+        let runtime = self.runtime.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut service = self.service.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if service.is_none() {
+            let socket = self
+                .service_socket
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+                .ok_or_else(|| std::io::Error::other("metric broker socket unavailable"))?;
+            let client = runtime
+                .block_on(async move {
+                    let stream = tokio::net::UnixStream::from_std(socket)?;
+                    capsem_core::service_uds::Client::from_stream(stream).await
+                })
+                .map_err(|error| std::io::Error::other(format!("prepare metric broker HTTP channel: {error:#}")))?;
+            *service = Some(client);
+        }
+        let response = runtime.block_on(service.as_ref().unwrap().post_bytes(
+            &self.path,
+            http::HeaderValue::from_static("application/x-protobuf"),
+            request.into_body(),
+        ));
+        drop(service);
+        drop(runtime);
         response.map_err(|error| Box::new(std::io::Error::other(format!("metric broker request: {error:#}"))) as _)
     }
 }
 
 /// Install export when the service granted its broker. Failure is logged and
 /// leaves export off; metrics never prevent a VM from booting.
-pub(crate) fn install(vm_id: &str, service_socket: Option<&Path>, broker: bool) -> Option<Exporter> {
+pub(crate) fn install(
+    vm_id: &str,
+    service_socket: Option<std::os::unix::net::UnixStream>,
+    broker: bool,
+) -> Option<Exporter> {
     if !broker {
         return None;
     }
@@ -75,7 +96,7 @@ pub(crate) fn install(vm_id: &str, service_socket: Option<&Path>, broker: bool) 
             return None;
         }
     };
-    let client = match ServiceMetricClient::new(socket.to_path_buf(), vm_id) {
+    let client = match ServiceMetricClient::new(socket, vm_id) {
         Ok(client) => client,
         Err(error) => {
             warn!(%error, "metric export not installed");
