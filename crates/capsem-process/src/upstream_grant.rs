@@ -3,7 +3,6 @@
 use std::io;
 use std::os::fd::{AsFd as _, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -57,11 +56,10 @@ enum Command {
 #[derive(Clone)]
 pub(crate) struct UpstreamGrantClient {
     commands: mpsc::Sender<Command>,
-    policy_digest: Arc<RwLock<String>>,
 }
 
 impl UpstreamGrantClient {
-    pub(crate) fn start(socket: UnixStream, policy_digest: String) -> io::Result<Self> {
+    pub(crate) fn start(socket: UnixStream) -> io::Result<Self> {
         let sender = WireSender::new(socket.try_clone()?)?;
         let receiver = WireReceiver::new(socket.try_clone()?)?;
         let (commands_tx, commands) = mpsc::channel(COMMAND_CAPACITY);
@@ -75,28 +73,7 @@ impl UpstreamGrantClient {
                 tracing::debug!(%error, "failed to shut down upstream grant channel");
             }
         });
-        Ok(Self {
-            commands: commands_tx,
-            policy_digest: Arc::new(RwLock::new(policy_digest)),
-        })
-    }
-
-    pub(crate) fn replace_policy_digest(&self, policy_digest: String) {
-        *self.policy_digest.write().unwrap() = policy_digest;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn policy_digest(&self) -> String {
-        self.policy_digest.read().unwrap().clone()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_handle(policy_digest: String) -> Self {
-        let (commands, _requests) = mpsc::channel(COMMAND_CAPACITY);
-        Self {
-            commands,
-            policy_digest: Arc::new(RwLock::new(policy_digest)),
-        }
+        Ok(Self { commands: commands_tx })
     }
 }
 
@@ -118,9 +95,9 @@ impl capsem_core::GuestMetadataAuthority for UpstreamGrantClient {
 }
 
 impl DnsUpstreamGrants for UpstreamGrantClient {
-    fn open(&self, upstream_index: u16) -> DnsGrantFuture<'_> {
+    fn open(&self, upstream_index: u16, policy_digest: &str) -> DnsGrantFuture<'_> {
+        let policy_digest = policy_digest.to_owned();
         Box::pin(async move {
-            let policy_digest = self.policy_digest.read().unwrap().clone();
             let (reply, result) = oneshot::channel();
             self.commands
                 .send(Command::OpenDns {
@@ -139,10 +116,10 @@ impl DnsUpstreamGrants for UpstreamGrantClient {
 }
 
 impl TcpUpstreamGrants for UpstreamGrantClient {
-    fn resolve(&self, protocol: Protocol, host: &str, port: u16) -> TcpResolveGrantFuture<'_> {
+    fn resolve(&self, protocol: Protocol, host: &str, port: u16, policy_digest: &str) -> TcpResolveGrantFuture<'_> {
         let host = host.to_owned();
+        let policy_digest = policy_digest.to_owned();
         Box::pin(async move {
-            let policy_digest = self.policy_digest.read().unwrap().clone();
             let (reply, result) = oneshot::channel();
             self.commands
                 .send(Command::ResolveTcp {
@@ -161,9 +138,9 @@ impl TcpUpstreamGrants for UpstreamGrantClient {
         })
     }
 
-    fn connect(&self, selection_id: u64) -> TcpConnectGrantFuture<'_> {
+    fn connect(&self, selection_id: u64, policy_digest: &str) -> TcpConnectGrantFuture<'_> {
+        let policy_digest = policy_digest.to_owned();
         Box::pin(async move {
-            let policy_digest = self.policy_digest.read().unwrap().clone();
             let (reply, result) = oneshot::channel();
             self.commands
                 .send(Command::ConnectTcp {

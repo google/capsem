@@ -437,10 +437,7 @@ fn main() -> Result<()> {
     let runtime_config = runtime_source.load()?;
     let upstream_grants = {
         let _runtime = rt.enter();
-        Arc::new(upstream_grant::UpstreamGrantClient::start(
-            upstream_socket,
-            runtime_config.active_policy_digest.clone(),
-        )?)
+        Arc::new(upstream_grant::UpstreamGrantClient::start(upstream_socket)?)
     };
 
     info!(id = %args.id, "capsem-sandbox-process starting");
@@ -644,6 +641,7 @@ async fn run_async_main_loop(
     let guest_config = capsem_core::net::policy_config::GuestConfig::default();
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.security_rules.clone())));
     let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.plugins.clone())));
+    let proxy_policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(runtime_config.proxy_policy_snapshot());
     let job_store = Arc::new(JobStore {
         publisher: Arc::new(
             capsem_core::container::publish::Publisher::for_session(
@@ -779,7 +777,6 @@ async fn run_async_main_loop(
 
     let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
-    let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.model_endpoints.clone())));
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
     let mcp_endpoint = Arc::new(
         capsem_core::net::mitm_proxy::McpEndpointState::new(
@@ -801,25 +798,19 @@ async fn run_async_main_loop(
         db: Arc::clone(&db),
         security_rules: Arc::clone(&security_rules),
         plugin_policy: Arc::clone(&plugin_policy),
-        model_endpoints: Arc::clone(&model_endpoints),
+        proxy_policy: proxy_policy.clone(),
     });
 
     let telemetry_deps = Arc::new(capsem_core::net::mitm_proxy::telemetry_hook::TelemetryDeps {
         db: Arc::clone(&db),
         pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
         trace_state: Arc::clone(&model_trace_state),
-        security_rules: Arc::clone(&security_rules),
-        plugin_policy: Arc::clone(&plugin_policy),
     });
-    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(
-        Arc::clone(&net_state.policy),
-        Arc::clone(&telemetry_deps),
-    );
+    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(Arc::clone(&telemetry_deps));
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
         ca: Arc::clone(&net_state.ca),
         server_tls: capsem_core::net::mitm_proxy::make_server_tls_config(&net_state.ca),
-        policy: Arc::clone(&net_state.policy),
-        model_endpoints,
+        policy: proxy_policy.clone(),
         db: Arc::clone(&db),
         upstream_tls: Arc::clone(&net_state.upstream_tls),
         telemetry: telemetry_deps,
@@ -829,8 +820,7 @@ async fn run_async_main_loop(
         upstream_grants: Some(Arc::clone(&upstream_grants) as Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants>),
     });
 
-    // DNS handler shares the same security rule/plugin handles as MITM
-    // so admin enforcement edits take effect across protocols at once.
+    // DNS and HTTP clone the same immutable revision once per request.
     let dns_resolver = Arc::new(DnsResolver::with_grants(
         runtime_config.dns_upstreams.clone(),
         Arc::clone(&upstream_grants) as Arc<dyn capsem_core::net::dns::DnsUpstreamGrants>,
@@ -842,9 +832,7 @@ async fn run_async_main_loop(
     ));
     let dns_handler = Arc::new(
         capsem_core::net::dns::DnsHandler::with_cache(
-            Arc::clone(&net_state.policy),
-            Arc::clone(&security_rules),
-            Arc::clone(&plugin_policy),
+            proxy_policy,
             Arc::clone(&dns_resolver),
             Arc::new(DnsAnswerCache::default()),
         )
@@ -981,7 +969,6 @@ async fn run_async_main_loop(
         let builtin_env_c = builtin_env.clone();
         let ready_c = Arc::clone(&vm_ready);
         let dns_resolver_c = Arc::clone(&dns_resolver);
-        let upstream_grants_c = Arc::clone(&upstream_grants);
 
         tokio::spawn(async move {
             if let Err(e) = ipc::handle_ipc_connection(
@@ -998,7 +985,6 @@ async fn run_async_main_loop(
                 builtin_env_c,
                 ready_c,
                 dns_resolver_c,
-                upstream_grants_c,
             )
             .await
             {

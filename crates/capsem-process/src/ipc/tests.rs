@@ -101,7 +101,6 @@ pub(in crate::ipc) struct Dispatcher {
     runtime_source: RuntimePolicySource,
     pub(in crate::ipc) ready: Arc<AtomicBool>,
     dns_resolver: Arc<capsem_core::net::dns::DnsResolver>,
-    upstream_grants: Arc<crate::upstream_grant::UpstreamGrantClient>,
 }
 
 impl Dispatcher {
@@ -115,6 +114,8 @@ impl Dispatcher {
     ) -> (Self, mpsc::Receiver<ServiceToProcess>) {
         let active_policy = temp.join("active_policy.toml");
         std::fs::write(&active_policy, "[user_rules]\n[corp_rules]\n[network]\n").unwrap();
+        let initial_digest =
+            capsem_core::net::policy_config::active_policy_digest(&std::fs::read(&active_policy).unwrap());
         let net_state = Arc::new(
             capsem_core::create_net_state_with_policy(
                 "ipc-dispatch-test",
@@ -123,13 +124,20 @@ impl Dispatcher {
             )
             .unwrap(),
         );
-        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
-            capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
-        )));
-        let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(BTreeMap::new())));
-        let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(
-            capsem_core::net::policy_config::ModelEndpointRegistry::default(),
-        )));
+        let rule_set = capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new());
+        let plugins = BTreeMap::new();
+        let model_endpoints = capsem_core::net::policy_config::ModelEndpointRegistry::default();
+        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rule_set.clone())));
+        let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(plugins.clone())));
+        let proxy_policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(
+            capsem_core::net::proxy_engine::ProxyPolicySnapshot::new(
+                initial_digest,
+                capsem_core::net::policy::NetworkMechanics::default(),
+                rule_set,
+                plugins,
+                model_endpoints,
+            ),
+        );
         let (aggregator, mut aggregator_rx) = AggregatorClient::channel(8);
         tokio::spawn(async move {
             while let Some((request, response_tx)) = aggregator_rx.recv().await {
@@ -187,16 +195,13 @@ impl Dispatcher {
             db: Arc::clone(&db),
             security_rules,
             plugin_policy,
-            model_endpoints,
+            proxy_policy,
         });
         let term_relay = TerminalRelay::new(8);
         let job_store = Arc::new(JobStore::new());
         let (ctrl_tx, ctrl_rx) = mpsc::channel(16);
         let (events_tx, _) = broadcast::channel(16);
-        let initial_digest =
-            capsem_core::net::policy_config::active_policy_digest(&std::fs::read(&active_policy).unwrap());
         let dns_resolver = Arc::new(capsem_core::net::dns::DnsResolver::with_upstreams(Vec::new()));
-        let upstream_grants = Arc::new(crate::upstream_grant::UpstreamGrantClient::test_handle(initial_digest));
         (
             Self {
                 job_store,
@@ -208,7 +213,6 @@ impl Dispatcher {
                 runtime_source: RuntimePolicySource::new(active_policy),
                 ready: Arc::new(AtomicBool::new(true)),
                 dns_resolver,
-                upstream_grants,
             },
             ctrl_rx,
         )
@@ -230,7 +234,6 @@ impl Dispatcher {
             HashMap::new(),
             Arc::clone(&self.ready),
             Arc::clone(&self.dns_resolver),
-            Arc::clone(&self.upstream_grants),
         ))
     }
 }
@@ -586,7 +589,7 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         ProcessToService::ConfigReloadResult { id: 30, active_policy_digest: Some(digest), error: None }
             if digest == applied
     ));
-    assert_eq!(dispatcher.upstream_grants.policy_digest(), applied);
+    assert_eq!(dispatcher.mcp_runtime.proxy_policy.snapshot().digest(), applied);
     assert_eq!(
         dispatcher.dns_resolver.upstreams(),
         vec!["127.0.0.1:5353".parse().unwrap()]

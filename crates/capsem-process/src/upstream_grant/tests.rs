@@ -1,5 +1,6 @@
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _, RawFd};
+use std::sync::Arc;
 
 use capsem_core::net::dns::{DnsResolver, DnsUpstreamGrants};
 use capsem_core::net::mitm_proxy::{TcpUpstreamGrants, UpstreamTarget};
@@ -16,7 +17,7 @@ const POLICY_A: &str = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const POLICY_B: &str = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 async fn open_error(client: &UpstreamGrantClient) -> String {
-    match client.open(0).await {
+    match client.open(0, POLICY_A).await {
         Ok(_) => panic!("unexpected DNS grant"),
         Err(error) => error.to_string(),
     }
@@ -50,7 +51,7 @@ fn query() -> Vec<u8> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn guest_mode_changes_use_the_serialized_coordinator_channel() {
     let (broker, worker) = UnixStream::pair().unwrap();
-    let client = Arc::new(UpstreamGrantClient::start(worker, POLICY_A.into()).unwrap());
+    let client = Arc::new(UpstreamGrantClient::start(worker).unwrap());
     let (requests, responses) = channels(broker);
     let broker_task = tokio::spawn(async move {
         assert_eq!(
@@ -79,7 +80,7 @@ async fn dns_query_uses_connected_coordinator_descriptor_and_releases_it() {
     let upstream = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let upstream_address = upstream.local_addr().unwrap();
     let (broker, worker) = UnixStream::pair().unwrap();
-    let client = Arc::new(UpstreamGrantClient::start(worker, POLICY_A.into()).unwrap());
+    let client = Arc::new(UpstreamGrantClient::start(worker).unwrap());
     let (requests, responses) = channels(broker);
     let expected_query = query();
     let broker_task = tokio::spawn(async move {
@@ -121,7 +122,7 @@ async fn dns_query_uses_connected_coordinator_descriptor_and_releases_it() {
     });
 
     let resolver = DnsResolver::with_grants(vec![upstream_address], client);
-    let (answer, _) = resolver.resolve(&query()).await.unwrap();
+    let (answer, _) = resolver.resolve_for_policy(&query(), POLICY_A).await.unwrap();
     assert_eq!(&answer[..2], &[0x12, 0x34]);
     assert_eq!(&answer[2..4], &[0x81, 0x80]);
     broker_task.await.unwrap();
@@ -130,7 +131,7 @@ async fn dns_query_uses_connected_coordinator_descriptor_and_releases_it() {
 #[tokio::test]
 async fn stale_policy_grant_is_adopted_released_and_channel_remains_usable() {
     let (broker, worker) = UnixStream::pair().unwrap();
-    let client = UpstreamGrantClient::start(worker, POLICY_A.into()).unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
     let (requests, responses) = channels(broker);
     let broker_task = tokio::spawn(async move {
         assert!(matches!(
@@ -184,7 +185,7 @@ async fn stale_policy_grant_is_adopted_released_and_channel_remains_usable() {
 #[tokio::test]
 async fn malformed_or_revoked_grant_channel_fails_closed() {
     let (broker, worker) = UnixStream::pair().unwrap();
-    let client = UpstreamGrantClient::start(worker, POLICY_A.into()).unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
     let (requests, responses) = channels(broker);
     let broker_task = tokio::spawn(async move {
         assert!(matches!(
@@ -210,7 +211,7 @@ async fn malformed_or_revoked_grant_channel_fails_closed() {
     assert!(error.contains("closed") || error.contains("stopped"), "{error}");
 
     let (broker, worker) = UnixStream::pair().unwrap();
-    let revoked = UpstreamGrantClient::start(worker, POLICY_A.into()).unwrap();
+    let revoked = UpstreamGrantClient::start(worker).unwrap();
     drop(broker);
     assert!(!open_error(&revoked).await.is_empty());
 }
@@ -220,7 +221,7 @@ async fn tcp_selection_and_connected_stream_are_brokered_and_released() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream_address = listener.local_addr().unwrap();
     let (broker, worker) = UnixStream::pair().unwrap();
-    let client = UpstreamGrantClient::start(worker, POLICY_A.into()).unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
     let (requests, responses) = channels(broker);
     let broker_task = tokio::spawn(async move {
         assert_eq!(
@@ -282,7 +283,10 @@ async fn tcp_selection_and_connected_stream_are_brokered_and_released() {
         );
     });
 
-    let selection = client.resolve(Protocol::Tls, "api.example", 443).await.unwrap();
+    let selection = client
+        .resolve(Protocol::Tls, "api.example", 443, POLICY_A)
+        .await
+        .unwrap();
     assert_eq!(selection.protocol, Protocol::Http);
     assert_eq!(selection.judged_ip, Some("127.0.0.1".parse().unwrap()));
     let target = UpstreamTarget::Granted {
@@ -293,7 +297,7 @@ async fn tcp_selection_and_connected_stream_are_brokered_and_released() {
         judged_ip: selection.judged_ip,
         selection: Some(selection),
     };
-    let (mut stream, pinned) = target.connect_with_grants(Some(&client)).await.unwrap();
+    let (mut stream, pinned) = target.connect_with_grants(Some(&client), POLICY_A).await.unwrap();
     assert!(matches!(pinned, UpstreamTarget::Granted { selection: None, .. }));
     stream.write_all(b"ping").await.unwrap();
     let mut response = [0_u8; 4];
@@ -306,7 +310,7 @@ async fn tcp_selection_and_connected_stream_are_brokered_and_released() {
 #[tokio::test]
 async fn unused_or_stale_tcp_selections_are_released_without_connecting() {
     let (broker, worker) = UnixStream::pair().unwrap();
-    let client = UpstreamGrantClient::start(worker, POLICY_A.into()).unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
     let (requests, responses) = channels(broker);
     let broker_task = tokio::spawn(async move {
         for (request_id, selection_id, digest) in [(1, 81, POLICY_A), (2, 82, POLICY_B)] {
@@ -338,9 +342,15 @@ async fn unused_or_stale_tcp_selections_are_released_without_connecting() {
         }
     });
 
-    let unused = client.resolve(Protocol::Tls, "unused.example", 443).await.unwrap();
+    let unused = client
+        .resolve(Protocol::Tls, "unused.example", 443, POLICY_A)
+        .await
+        .unwrap();
     drop(unused);
-    let error = client.resolve(Protocol::Tls, "stale.example", 443).await.unwrap_err();
+    let error = client
+        .resolve(Protocol::Tls, "stale.example", 443, POLICY_A)
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("policy mismatch"), "{error}");
     broker_task.await.unwrap();
 }

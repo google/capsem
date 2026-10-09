@@ -82,16 +82,26 @@ impl RuntimePolicyConfig {
             .iter()
             .map(|rule| rule.rule_id.clone())
             .collect::<Vec<_>>();
+        mcp_runtime.proxy_policy.replace(self.proxy_policy_snapshot());
         *net_state.policy.write().unwrap() = std::sync::Arc::new(self.network);
         *mcp_runtime.security_rules.write().unwrap() = std::sync::Arc::new(self.security_rules);
         *mcp_runtime.plugin_policy.write().unwrap() = std::sync::Arc::new(self.plugins);
-        *mcp_runtime.model_endpoints.write().unwrap() = std::sync::Arc::new(self.model_endpoints);
         tracing::info!(
             active_policy_digest = %self.active_policy_digest,
             security_rule_count = security_rule_ids.len(),
             security_rule_ids = ?security_rule_ids,
             "Reloaded runtime policy"
         );
+    }
+
+    pub(crate) fn proxy_policy_snapshot(&self) -> capsem_core::net::proxy_engine::ProxyPolicySnapshot {
+        capsem_core::net::proxy_engine::ProxyPolicySnapshot::new(
+            self.active_policy_digest.clone(),
+            self.network.clone(),
+            self.security_rules.clone(),
+            self.plugins.clone(),
+            self.model_endpoints.clone(),
+        )
     }
 
     pub(crate) fn mcp_servers(
