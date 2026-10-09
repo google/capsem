@@ -5,11 +5,13 @@ mod preview;
 mod proxy;
 mod schema;
 mod service_client;
+mod service_grant;
 mod status;
 mod stream;
 mod surface;
 
 use std::net::SocketAddr;
+use std::os::fd::FromRawFd;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -57,6 +59,10 @@ struct Args {
     /// Path for the singleton lockfile (overrides default under run_dir).
     #[arg(long)]
     lock_path: Option<PathBuf>,
+
+    /// Receive coordinator-minted service and owner connections over stdin.
+    #[arg(long, default_value_t = false)]
+    service_grant_stdin: bool,
 }
 
 pub struct AppState {
@@ -71,15 +77,15 @@ pub struct AppState {
 }
 
 fn main() -> Result<()> {
-    // SAFETY: process entry precedes argument parsing, telemetry, descriptor
-    // owners and runtime threads. Broker grants will be named here explicitly.
+    let args = Args::parse();
+    // SAFETY: argument parsing has opened no descriptors or threads; process
+    // entry still precedes telemetry, descriptor owners and runtime threads.
     unsafe { capsem_foundation::unix::fd::close_inherited_descriptors()? };
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    runtime.block_on(run())
+    runtime.block_on(run(args))
 }
 
-async fn run() -> Result<()> {
-    let args = Args::parse();
+async fn run(args: Args) -> Result<()> {
     let run_dir = gateway_run_dir(&args);
     let _ = std::fs::create_dir_all(&run_dir);
     let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
@@ -150,7 +156,14 @@ async fn run() -> Result<()> {
     let auth_state = AuthState::new(&run_dir, &token, bound_port, preview_port)?;
 
     let (events_tx, _) = tokio::sync::broadcast::channel::<String>(64);
-    let service_client = ServiceClient::new(&uds_path);
+    let service_client = if args.service_grant_stdin {
+        // SAFETY: the service gives this child sole ownership of stdin as its
+        // descriptor grant socket. No standard-input owner has been created.
+        let grant_socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(0) };
+        ServiceClient::granted(service_grant::GatewayGrantClient::start(grant_socket)?)
+    } else {
+        ServiceClient::new(&uds_path)
+    };
     let state = Arc::new(AppState {
         token,
         uds_path,

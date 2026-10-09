@@ -27,7 +27,8 @@ async fn a_wrong_process_at_the_granted_path_receives_no_seat_or_browser_descrip
         owner_uid: capsem_foundation::unix::process::current_uid(),
     };
 
-    let attempted = tokio::spawn(handoff(browser, admission));
+    let service = crate::service_client::ServiceClient::new(dir.path().join("service.sock").as_path());
+    let attempted = tokio::spawn(async move { handoff(browser, "box", admission, &service).await });
     let (seat, _) = listener.accept().await.unwrap();
     let receiver = Receiver::new(seat.into_std().unwrap()).unwrap();
     let error = match receiver.recv().await {
@@ -67,6 +68,7 @@ async fn the_authenticated_owner_receives_the_exact_browser_descriptor() {
     client.write_all(b"x").await.unwrap();
     handoff(
         browser,
+        "box",
         PreviewConnectionAdmissionResponse {
             handoff_socket: path.to_string_lossy().into_owned(),
             handoff_token: 78,
@@ -74,6 +76,7 @@ async fn the_authenticated_owner_receives_the_exact_browser_descriptor() {
             owner_pid: std::process::id(),
             owner_uid: capsem_foundation::unix::process::current_uid(),
         },
+        &crate::service_client::ServiceClient::new(dir.path().join("service.sock").as_path()),
     )
     .await
     .unwrap();

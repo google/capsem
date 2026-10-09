@@ -79,7 +79,7 @@ pub async fn handle_stream_tunnel(
     };
     let client_upgrade = hyper::upgrade::on(&mut request);
 
-    let socket = match tokio::net::UnixStream::connect(state.uds_path.as_path()).await {
+    let socket = match state.service_client.connect().await {
         Ok(socket) => socket,
         Err(error) => {
             tracing::warn!(%id, %error, "stream tunnel: service unavailable");
