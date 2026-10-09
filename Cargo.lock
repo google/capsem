@@ -965,6 +965,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-ledger"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "capsem-foundation",
+ "capsem-guard",
+ "capsem-logger",
+ "capsem-proto",
+ "clap",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "capsem-logger"
 version = "0.7.0"
 dependencies = [
