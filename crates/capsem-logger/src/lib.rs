@@ -1,6 +1,7 @@
 pub mod counters;
 pub mod db;
 pub mod events;
+pub mod ledger_client;
 pub mod ledger_protocol;
 pub mod ledger_server;
 pub mod network_db;
