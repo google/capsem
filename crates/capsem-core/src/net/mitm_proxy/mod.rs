@@ -150,6 +150,103 @@ struct ModelTrafficIdentity {
     protocol: Option<ModelProtocol>,
 }
 
+/// One configured model endpoint exposed through the standalone HTTP adapter.
+///
+/// The trusted policy snapshot supplies every upstream routing field. Client
+/// headers never participate in selecting a host, port, transport, provider,
+/// or wire protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandaloneModelTarget {
+    provider_id: String,
+    domain: String,
+    port: u16,
+    upstream_protocol: Protocol,
+    base_path: String,
+    provider: ProviderKind,
+    model_protocol: ModelProtocol,
+}
+
+impl StandaloneModelTarget {
+    pub fn from_registry(
+        registry: &crate::net::policy_config::ModelEndpointRegistry,
+        provider_id: &str,
+    ) -> Result<Self, String> {
+        let endpoint = registry
+            .get(provider_id)
+            .ok_or_else(|| format!("model provider {provider_id:?} is not configured"))?;
+        let parsed = reqwest::Url::parse(&endpoint.upstream_url)
+            .map_err(|error| format!("model provider {provider_id:?} has an invalid upstream URL: {error}"))?;
+        let upstream_protocol = match parsed.scheme() {
+            "http" => Protocol::Http,
+            "https" => Protocol::Tls,
+            scheme => {
+                return Err(format!(
+                    "model provider {provider_id:?} uses unsupported upstream URL scheme {scheme:?}"
+                ));
+            }
+        };
+        if !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(format!(
+                "model provider {provider_id:?} upstream URL must not contain credentials, query, or fragment"
+            ));
+        }
+        let domain = parsed
+            .host_str()
+            .filter(|host| !host.is_empty())
+            .ok_or_else(|| format!("model provider {provider_id:?} upstream URL has no host"))?
+            .to_string();
+        let port = parsed
+            .port_or_known_default()
+            .ok_or_else(|| format!("model provider {provider_id:?} upstream URL has no port"))?;
+        let base_path = parsed.path().trim_end_matches('/');
+        Ok(Self {
+            provider_id: endpoint.provider_id.clone(),
+            domain,
+            port,
+            upstream_protocol,
+            base_path: if base_path.is_empty() {
+                String::new()
+            } else {
+                base_path.to_string()
+            },
+            provider: endpoint.provider_kind,
+            model_protocol: endpoint.protocol,
+        })
+    }
+
+    pub fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub const fn upstream_protocol(&self) -> Protocol {
+        self.upstream_protocol
+    }
+
+    pub fn base_path(&self) -> &str {
+        &self.base_path
+    }
+
+    pub const fn provider(&self) -> ProviderKind {
+        self.provider
+    }
+
+    pub const fn model_protocol(&self) -> ModelProtocol {
+        self.model_protocol
+    }
+}
+
 fn ai_identity_for_target_or_path(
     registry: &crate::net::policy_config::ModelEndpointRegistry,
     domain: &str,
@@ -394,6 +491,37 @@ pub async fn handle_connection(vsock_fd: OwnedFd, config: Arc<MitmProxyConfig>) 
     }
 }
 
+/// Serve one plaintext OpenAI-compatible client connection while pinning all
+/// upstream routing to a provider selected from the trusted policy snapshot.
+pub async fn handle_standalone_connection(
+    client_fd: OwnedFd,
+    config: Arc<MitmProxyConfig>,
+    target: StandaloneModelTarget,
+) {
+    ::metrics::gauge!(m::ACTIVE_CONNECTIONS).increment(1.0);
+    let _gauge_guard = ConnectionGauge;
+
+    let std_fd = std::fs::File::from(client_fd);
+    if let Err(error) = capsem_foundation::unix::fd::set_nonblocking(std_fd.as_fd(), true) {
+        warn!(%error, "standalone proxy could not configure client socket");
+        return;
+    }
+    let async_fd = match tokio::io::unix::AsyncFd::new(std_fd) {
+        Ok(fd) => fd,
+        Err(error) => {
+            warn!(%error, "standalone proxy could not adopt client socket");
+            return;
+        }
+    };
+    serve_pipeline(
+        TokioIo::new(AsyncFdStream(async_fd)),
+        PipelineTarget::Standalone(target),
+        &config,
+        Arc::new(None),
+    )
+    .await;
+}
+
 /// Inner handler. Returns Ok(domain) on success, Err((domain, decision, reason))
 /// on connection-level failure. Per-request telemetry is emitted by `TelemetryHook`.
 /// Deadline for each pre-classification read from a freshly-accepted guest
@@ -607,7 +735,16 @@ async fn serve_tls(
         .ok_or_else(|| (String::new(), Decision::Denied, "no SNI in ClientHello".into()))?;
 
     let io = TokioIo::new(tls_stream);
-    serve_pipeline(io, domain.clone(), Protocol::Tls, config, process_name).await;
+    serve_pipeline(
+        io,
+        PipelineTarget::Dynamic {
+            connection_domain: domain.clone(),
+            protocol: Protocol::Tls,
+        },
+        config,
+        process_name,
+    )
+    .await;
     Ok(domain)
 }
 
@@ -624,7 +761,16 @@ async fn serve_plain_http(
 ) -> Result<String, (String, Decision, String)> {
     let replay = ReplayReader::new(initial_buf, vsock_stream);
     let io = TokioIo::new(replay);
-    serve_pipeline(io, String::new(), Protocol::Http, config, process_name).await;
+    serve_pipeline(
+        io,
+        PipelineTarget::Dynamic {
+            connection_domain: String::new(),
+            protocol: Protocol::Http,
+        },
+        config,
+        process_name,
+    )
+    .await;
     // Per-request telemetry is emitted by `TelemetryHook`. The
     // connection-level `NetEvent` `handle_connection` would write on
     // an Err-return is intentionally skipped on this path -- there
@@ -639,10 +785,18 @@ async fn serve_plain_http(
 /// * HTTP: parsed from the inbound `Host` header per request; falls
 ///   back to `("", 80)` when the header is missing or malformed,
 ///   producing a 502 downstream once `handle_request` runs.
+#[derive(Clone)]
+enum PipelineTarget {
+    Dynamic {
+        connection_domain: String,
+        protocol: Protocol,
+    },
+    Standalone(StandaloneModelTarget),
+}
+
 async fn serve_pipeline<IO>(
     io: IO,
-    connection_domain: String,
-    protocol: Protocol,
+    target: PipelineTarget,
     config: &Arc<MitmProxyConfig>,
     process_name: Arc<Option<String>>,
 ) where
@@ -659,38 +813,62 @@ async fn serve_pipeline<IO>(
 
     let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
         let upstream_tls = Arc::clone(&upstream_tls);
-        let connection_domain = connection_domain.clone();
+        let target = target.clone();
         let config_arc = Arc::clone(&config_arc);
         let process_name = Arc::clone(&process_name);
         let cached_upstream = Arc::clone(&cached_upstream);
 
         async move {
-            // Resolve the per-request `(domain, upstream_port)`. TLS
-            // already knows from SNI; HTTP must read the Host header.
-            let (request_domain, upstream_port) = match protocol {
-                Protocol::Tls => (connection_domain, 443u16),
-                Protocol::Http => {
-                    parse_http_host_target(req.headers().get("host")).unwrap_or_else(|| (String::new(), 80))
+            let (request_domain, upstream_port, protocol, upstream_protocol, authoritative_host, fixed_identity) =
+                match target {
+                    PipelineTarget::Dynamic {
+                        connection_domain,
+                        protocol,
+                    } => {
+                        let (domain, port) = match protocol {
+                            Protocol::Tls => (connection_domain, 443u16),
+                            Protocol::Http => {
+                                parse_http_host_target(req.headers().get("host")).unwrap_or_else(|| (String::new(), 80))
+                            }
+                            Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP pipeline"),
+                            Protocol::Unknown => (String::new(), 0),
+                        };
+                        (domain, port, protocol, protocol, protocol == Protocol::Tls, None)
+                    }
+                    PipelineTarget::Standalone(target) => (
+                        target.domain().to_string(),
+                        target.port(),
+                        Protocol::Http,
+                        target.upstream_protocol(),
+                        true,
+                        Some(ModelTrafficIdentity {
+                            provider: Some(target.provider()),
+                            protocol: Some(target.model_protocol()),
+                        }),
+                    ),
+                };
+            if fixed_identity.is_none() {
+                // Capsem's own zone is answered here, before any HTTP policy, body sniff or dial.
+                if let Some(route) = mcp_http::internal_route(&request_domain, upstream_port, protocol) {
+                    let (domain, port) = (&request_domain, upstream_port);
+                    return Ok(mcp_http::serve(req, route, domain, port, protocol, &config_arc, &process_name).await);
                 }
-                Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP pipeline"),
-                Protocol::Unknown => (String::new(), 0),
             };
-            // Capsem's own zone is answered here, before any HTTP policy, body sniff or dial.
-            if let Some(route) = mcp_http::internal_route(&request_domain, upstream_port, protocol) {
-                let (domain, port) = (&request_domain, upstream_port);
-                return Ok(mcp_http::serve(req, route, domain, port, protocol, &config_arc, &process_name).await);
-            }
             let policy_snapshot = config_arc.engine.policy().snapshot();
-            let ai_identity = ai_identity_for_target_or_path(
-                policy_snapshot.model_endpoints(),
-                &request_domain,
-                upstream_port,
-                req.uri().path(),
-            );
+            let ai_identity = fixed_identity.unwrap_or_else(|| {
+                ai_identity_for_target_or_path(
+                    policy_snapshot.model_endpoints(),
+                    &request_domain,
+                    upstream_port,
+                    req.uri().path(),
+                )
+            });
             handle_request(
                 req,
                 &request_domain,
                 protocol,
+                upstream_protocol,
+                authoritative_host,
                 upstream_port,
                 &upstream_tls,
                 &config_arc,
@@ -797,6 +975,8 @@ async fn handle_request(
     mut req: hyper::Request<hyper::body::Incoming>,
     domain: &str,
     protocol: Protocol,
+    upstream_protocol: Protocol,
+    authoritative_host: bool,
     upstream_port: u16,
     upstream_tls: &Arc<rustls::ClientConfig>,
     config: &Arc<MitmProxyConfig>,
@@ -826,7 +1006,7 @@ async fn handle_request(
     let target = UpstreamTarget::select(
         resolver,
         UpstreamPolicy::from(policy_snapshot.as_ref()),
-        protocol,
+        upstream_protocol,
         domain,
         upstream_port,
         cached_upstream,
@@ -909,7 +1089,7 @@ async fn handle_request(
                 domain: domain.to_string(),
                 process_name: process_name.clone(),
                 port: upstream_port,
-                protocol,
+                protocol: upstream_protocol,
                 ai_provider: conn_ai_provider,
                 ai_protocol: conn_ai_protocol,
             },
@@ -928,7 +1108,7 @@ async fn handle_request(
                 client_upgrade: client_upgrade.expect("websocket upgrade captured before split"),
                 domain,
                 target: &target,
-                protocol,
+                protocol: upstream_protocol,
                 upstream_port,
                 upstream_tls,
                 config,
@@ -1218,7 +1398,7 @@ async fn handle_request(
     // Host-side plain-HTTP port allowlist. The port came from the guest's Host
     // header; enforce it before any upstream dial so a guest reaching the proxy
     // directly cannot make the host connect to an arbitrary port.
-    if !http_upstream_port_allowed(policy, protocol, upstream_port) {
+    if !http_upstream_port_allowed(policy, upstream_protocol, upstream_port) {
         actions_span.record("decision", "deny");
         actions_span.record("status", "ok");
         let matched = "security.web.http_upstream_ports";
@@ -1674,7 +1854,7 @@ async fn handle_request(
     let mut tcp_us = 0u64;
     let mut tls_us = 0u64;
     let mut handshake_us = 0u64;
-    let upstream_protocol = target.protocol(protocol);
+    let upstream_protocol = target.protocol(upstream_protocol);
     // What the sender reaches, pinned to the peer once connected: the cache key.
     let mut connected = target.clone();
 
@@ -1869,13 +2049,13 @@ async fn handle_request(
             // HTTP: preserve inbound `host` -- the guest sent it,
             //       and parse_http_host_target already drove our
             //       upstream selection from it.
-            let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
+            let drop_host = authoritative_host && name == "host";
             if drop_host || name == "accept-encoding" {
                 continue;
             }
             builder = builder.header(name.clone(), value.clone());
         }
-        if matches!(protocol, Protocol::Tls) {
+        if authoritative_host {
             builder = builder.header("host", domain);
         }
         // Only accept gzip -- we can decompress it; brotli/zstd we cannot.
