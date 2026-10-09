@@ -68,6 +68,8 @@ records, and identify observation-only events that cannot prevent an operation.
 Link to the owning process-boundary explanation instead of repeating it.
 Explain an unfamiliar pipeline through one concrete operation and what each
 stage does to it; stage names alone do not explain how components work together.
+Architecture prose explains the system, not the drawing. Keep visual notation
+in a compact legend when necessary; do not mix box/color commentary with runtime behavior.
 Show configuration files as explicit inputs with their formats and compilation
 destination. Distinguish detection evidence from enforcement actions; use the
 same component name in diagrams and tables, including the network analysis engine.

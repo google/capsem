@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Security engine prose describes request and response handling directly,
+  without mixing diagram notation into the explanation.
+
 - Security engine architecture names the network analysis engine and shows
   TOML rule files and Sigma detection files as inputs to the shared rule set.
 

@@ -18,7 +18,7 @@ The security engine is a host subprocess assigned to one VM. It is responsible f
 - **Audit records:** remove observed secrets from the recorded data and send the
   request, decision, and detections to the log writer.
 
-It sits inside the per-VM process group, outside the VM's hardware boundary.
+It sits inside the [per-VM process group](/architecture/security/), outside the VM's hardware boundary.
 
 ## Event flow
 
@@ -58,11 +58,6 @@ flowchart TB
   style engine fill:#fef9c3,stroke:#b59b00,stroke-width:3px,color:#172033
 ```
 
-Boxes inside the engine are processing stages, not separate processes. Yellow
-means access to assigned files, credentials, and upstreams; see the
-[process boundaries and permission legend](/architecture/security/).
-Responses and model messages also produce events before returning data to the caller.
-
 For an HTTPS request, the network analysis engine terminates TLS and extracts
 facts such as the hostname, method, and URL. Preprocess plugins prepare those
 facts for rule evaluation, including identifying credentials. Rules match the
@@ -70,6 +65,7 @@ facts; postprocess plugins can tighten the decision. An allowed request gets
 its assigned credentials and is forwarded. A separate sanitized copy goes to
 the log writer, so restoring a secret for the upstream does not put that secret
 in the stored record.
+Responses and model messages are also evaluated before being forwarded to the caller.
 
 ## Responsibilities
 
