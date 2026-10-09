@@ -215,50 +215,95 @@ fn prepare_sentinel(path: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn grant_owner_path(
+    policy: capsem_foundation::unix::worker_sandbox::Policy,
+    path: &Path,
+    access: capsem_foundation::unix::worker_sandbox::Access,
+) -> Result<capsem_foundation::unix::worker_sandbox::Policy> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("resolve sandbox grant {}", path.display()))?;
+    Ok(policy.allow(canonical, access))
+}
+
 #[cfg(target_os = "linux")]
-fn confine_linux_owner(args: &Args, session_dir: &Path) -> Result<()> {
+fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
     use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
 
-    let grant = |policy: Policy, path: &Path, access| -> Result<Policy> {
-        let canonical = path
-            .canonicalize()
-            .with_context(|| format!("resolve sandbox grant {}", path.display()))?;
-        Ok(policy.allow(canonical, access))
-    };
     let mut policy = Policy::new(Role::VmOwner);
-    policy = grant(policy, session_dir, Access::ReadWrite)?;
-    policy = grant(policy, &args.assets_dir, Access::ReadOnly)?;
-    policy = grant(policy, &args.rootfs, Access::ReadOnly)?;
-    policy = grant(policy, &args.active_policy, Access::ReadOnly)?;
+    policy = grant_owner_path(policy, session_dir, Access::ReadWrite)?;
+    policy = grant_owner_path(policy, &args.assets_dir, Access::ReadOnly)?;
+    policy = grant_owner_path(policy, &args.rootfs, Access::ReadOnly)?;
+    policy = grant_owner_path(policy, &args.active_policy, Access::ReadOnly)?;
     for path in args.kernel.iter().chain(args.initrd.iter()) {
-        policy = grant(policy, path, Access::ReadOnly)?;
+        policy = grant_owner_path(policy, path, Access::ReadOnly)?;
     }
     let executable = std::env::current_exe().context("locate VM-owner executable")?;
     let router = executable.with_file_name("capsem-router");
     if router.exists() {
-        policy = grant(policy, &router, Access::Executable)?;
+        policy = grant_owner_path(policy, &router, Access::Executable)?;
     }
     for path in ["/lib", "/lib64", "/usr/lib", "/usr/lib64"] {
         let path = Path::new(path);
         if path.exists() {
-            policy = grant(policy, path, Access::ReadOnly)?;
+            policy = grant_owner_path(policy, path, Access::ReadOnly)?;
         }
     }
     let linker_cache = Path::new("/etc/ld.so.cache");
     if linker_cache.exists() {
-        policy = grant(policy, linker_cache, Access::ReadOnly)?;
+        policy = grant_owner_path(policy, linker_cache, Access::ReadOnly)?;
     }
     for path in ["/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-aarch64.so.1"] {
         let path = Path::new(path);
         if path.exists() {
-            policy = grant(policy, path, Access::Executable)?;
+            policy = grant_owner_path(policy, path, Access::Executable)?;
         }
     }
     capsem_foundation::unix::worker_sandbox::confine(&policy)?;
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "macos")]
+fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
+    use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
+
+    let mut policy = Policy::new(Role::VmOwner);
+    policy = grant_owner_path(policy, session_dir, Access::ReadWrite)?;
+    policy = grant_owner_path(policy, &args.assets_dir, Access::ReadOnly)?;
+    policy = grant_owner_path(policy, &args.rootfs, Access::ReadOnly)?;
+    policy = grant_owner_path(policy, &args.active_policy, Access::ReadOnly)?;
+    for path in args.kernel.iter().chain(args.initrd.iter()) {
+        policy = grant_owner_path(policy, path, Access::ReadOnly)?;
+    }
+    let router = std::env::current_exe()
+        .context("locate VM-owner executable")?
+        .with_file_name("capsem-router");
+    if router.exists() {
+        policy = grant_owner_path(policy, &router, Access::Executable)?;
+    }
+    for path in [
+        "/System/Library",
+        "/usr/lib",
+        "/private/var/db/dyld",
+        "/private/var/db/timezone",
+        "/etc/localtime",
+        "/dev/urandom",
+    ] {
+        let path = Path::new(path);
+        if path.exists() {
+            policy = grant_owner_path(policy, path, Access::ReadOnly)?;
+        }
+    }
+    let null = Path::new("/dev/null");
+    if null.exists() {
+        policy = grant_owner_path(policy, null, Access::ReadWrite)?;
+    }
+    capsem_foundation::unix::worker_sandbox::confine(&policy)?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct OwnerSandboxAttestation {
     direct_path: PathBuf,
     direct_file: std::fs::File,
@@ -266,7 +311,7 @@ struct OwnerSandboxAttestation {
     guest_relative: Vec<u8>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn prepare_owner_sandbox_attestation(session_dir: &Path) -> Result<OwnerSandboxAttestation> {
     use std::os::unix::ffi::OsStrExt as _;
     use std::os::unix::fs::OpenOptionsExt as _;
@@ -302,8 +347,8 @@ fn prepare_owner_sandbox_attestation(session_dir: &Path) -> Result<OwnerSandboxA
     })
 }
 
-#[cfg(target_os = "linux")]
-async fn attest_linux_owner(
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn attest_owner(
     attestation: OwnerSandboxAttestation,
     service_socket: PathBuf,
     upstream_grants: Arc<upstream_grant::UpstreamGrantClient>,
@@ -334,6 +379,10 @@ async fn attest_linux_owner(
             .direct_file
             .set_permissions(std::fs::Permissions::from_mode(0o777)),
         "change host modes directly",
+    )?;
+    require_denied(
+        std::process::Command::new("/bin/true").status().map(|_| ()),
+        "execute arbitrary processes",
     )?;
 
     tokio::task::spawn_blocking(move || {
@@ -853,13 +902,13 @@ async fn run_async_main_loop(
     let mut launched = prepare_sentinel(&launched_path)?;
     let ready = prepare_sentinel(&uds_path.with_extension("ready"))?;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let attestation = prepare_owner_sandbox_attestation(&session_dir)?;
-        confine_linux_owner(&args, &session_dir).context("install Linux VM-owner confinement")?;
-        attest_linux_owner(attestation, seats.service_socket.clone(), Arc::clone(&upstream_grants))
+        confine_owner(&args, &session_dir).context("install VM-owner confinement")?;
+        attest_owner(attestation, seats.service_socket.clone(), Arc::clone(&upstream_grants))
             .await
-            .context("attest Linux VM-owner confinement")?;
+            .context("attest VM-owner confinement")?;
     }
 
     seats.start();
