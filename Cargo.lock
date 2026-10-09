@@ -1135,10 +1135,13 @@ name = "capsem-proxy"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "capsem-core",
  "capsem-foundation",
  "capsem-guard",
+ "capsem-logger",
  "capsem-proto",
  "clap",
+ "http",
  "tempfile",
  "tokio",
  "tracing",

@@ -11,10 +11,13 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+capsem-core = { path = "../capsem-core" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-guard = { path = "../capsem-guard" }
+capsem-logger = { path = "../capsem-logger" }
 capsem-proto = { path = "../capsem-proto" }
 clap = { workspace = true, features = ["derive"] }
+http.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
