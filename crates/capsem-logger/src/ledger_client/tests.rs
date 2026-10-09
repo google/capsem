@@ -178,6 +178,25 @@ async fn counters_advance_the_cache_epoch_only_when_the_snapshot_changes() {
 }
 
 #[tokio::test]
+async fn maintainer_snapshot_is_coherent_and_staged_beside_the_owned_ledger() {
+    let fixture = Fixture::start(LedgerClientRole::Maintainer).await;
+    fixture.write_network_body().await;
+
+    let snapshot_id = [0x2a; 16];
+    let snapshot = fixture.client.snapshot(snapshot_id).await.unwrap();
+    assert_eq!(
+        snapshot.file_name().unwrap().to_str().unwrap(),
+        crate::ledger_server::snapshot_directory_name(snapshot_id)
+    );
+    let copy = crate::DbHandle::open_external_reader(&snapshot.join("session.db")).unwrap();
+    copy.ready().await.unwrap();
+    assert_eq!(copy.ledger_counters().await.unwrap().net.total, 1);
+    assert!(snapshot.join("session.bodies").is_dir());
+
+    fixture.stop().await;
+}
+
+#[tokio::test]
 async fn server_refusal_is_reported_and_closes_the_failed_client_actor() {
     let fixture = Fixture::start(LedgerClientRole::Reader).await;
     let error = fixture

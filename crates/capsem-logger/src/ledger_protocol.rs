@@ -23,6 +23,7 @@ const MAX_LEDGER_CELL_BYTES: usize = 1024 * 1024;
 const MAX_LEDGER_RESULT_SETS: usize = 16;
 const MAX_EVENT_ID_BYTES: usize = 12;
 const MAX_TIMESTAMP_BYTES: usize = 64;
+const SNAPSHOT_ID_BYTES: usize = 16;
 
 pub type LedgerResponse = capsem_proto::ledger::LedgerResponse<LedgerReply>;
 
@@ -62,6 +63,10 @@ pub enum LedgerCommand {
     },
     /// Stream a WARC as bounded `WarcChunk` replies followed by `WarcComplete`.
     ExportWarc,
+    /// Create a coherent ledger copy in a worker-owned staging directory.
+    Snapshot {
+        snapshot_id: [u8; SNAPSHOT_ID_BYTES],
+    },
     Shutdown,
 }
 
@@ -73,6 +78,7 @@ impl LedgerOperation for LedgerCommand {
             Self::Query { .. } | Self::ReadBodies { .. } | Self::Counters => LedgerCapability::Read,
             Self::Retain { .. } => LedgerCapability::Retain,
             Self::ExportWarc => LedgerCapability::Export,
+            Self::Snapshot { .. } => LedgerCapability::Snapshot,
             Self::Shutdown => LedgerCapability::Shutdown,
         }
     }
@@ -86,6 +92,9 @@ impl LedgerOperation for LedgerCommand {
             Self::Retain { cutoff }
                 if cutoff.is_empty() || cutoff.len() > MAX_TIMESTAMP_BYTES || cutoff.chars().any(char::is_control) =>
             {
+                return Err(LedgerProtocolError::InvalidOperation)
+            }
+            Self::Snapshot { snapshot_id } if snapshot_id.iter().all(|byte| *byte == 0) => {
                 return Err(LedgerProtocolError::InvalidOperation)
             }
             _ => {}
@@ -281,6 +290,7 @@ pub enum LedgerReply {
     WarcComplete {
         summary: LedgerExportSummary,
     },
+    Snapshotted,
     ShuttingDown,
 }
 
@@ -314,7 +324,7 @@ impl LedgerReply {
                         .keys()
                         .all(|reason| !reason.is_empty() && reason.len() <= MAX_LEDGER_COLUMN_BYTES)
             }
-            Self::ShuttingDown => true,
+            Self::Snapshotted | Self::ShuttingDown => true,
         };
         if valid {
             Ok(())
