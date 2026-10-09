@@ -45,6 +45,7 @@ fn every_request_round_trips_exactly() {
             request_id: 7,
             service: ProxyTrafficService::Dns,
         },
+        UpstreamGrantRequest::AttachProxyMcp { request_id: 8 },
         UpstreamGrantRequest::Adopted { grant_id: 51 },
         UpstreamGrantRequest::Release { resource_id: 61 },
         UpstreamGrantRequest::SetGuestMode {
@@ -103,6 +104,7 @@ fn every_response_round_trips_exactly() {
             grant: LedgerChannelGrant::new(LedgerGeneration::new([0x5a; 16]), 16, LedgerClientRole::VmOwner).unwrap(),
         },
         UpstreamGrantResponse::ProxyTrafficAdopted { request_id: 9 },
+        UpstreamGrantResponse::ProxyMcpAdopted { request_id: 10 },
     ] {
         response_roundtrip(response);
     }
@@ -161,7 +163,15 @@ fn descriptor_expectations_are_explicit() {
         1
     );
     assert_eq!(
+        UpstreamGrantRequest::AttachProxyMcp { request_id: 10 }.expected_descriptor_count(),
+        1
+    );
+    assert_eq!(
         UpstreamGrantResponse::ProxyTrafficAdopted { request_id: 9 }.expected_descriptor_count(),
+        0
+    );
+    assert_eq!(
+        UpstreamGrantResponse::ProxyMcpAdopted { request_id: 10 }.expected_descriptor_count(),
         0
     );
     assert_eq!(
