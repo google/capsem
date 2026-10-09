@@ -1,7 +1,10 @@
 //! Host-only listener intent; guest workspace and fork snapshots carry no ports.
 use super::*;
 use capsem_proto::{ipc::PublicationInfo, PublicationTarget};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+
+const SAVED_PUBLICATIONS_FILE: &str = "published-ports.json";
 
 /// One declared listener. Records written before targets existed are the
 /// container's, which is all a publication could reach then.
@@ -52,9 +55,20 @@ fn forget(path: &Path, host: u16) -> Result<bool> {
 
 impl Publisher {
     pub fn for_session(session_dir: &Path, budgets: capsem_config::router::RouterConfig) -> Result<Self> {
+        let state_dir = crate::session::prepare_owner_state_dir(session_dir)?;
+        let root = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?;
+        let state = root.descend(OsStr::new(crate::session::OWNER_STATE_DIR))?;
+        let legacy = OsStr::new(SAVED_PUBLICATIONS_FILE);
+        if root.entry_kind(legacy)?.is_some() {
+            ensure!(
+                state.entry_kind(legacy)?.is_none(),
+                "both legacy and owner-state saved publication records exist"
+            );
+            root.rename_to(legacy, &state, legacy)?;
+        }
         let mut publisher = Self::configured(budgets)?;
         publisher.saved = Some(Mappings {
-            path: session_dir.join("published-ports.json"),
+            path: state_dir.join(SAVED_PUBLICATIONS_FILE),
             lock: tokio::sync::Mutex::new(()),
         });
         Ok(publisher)

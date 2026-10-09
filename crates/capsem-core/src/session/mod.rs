@@ -24,6 +24,17 @@ pub use overlay::{
 pub use spawn_identity::{read_spawn_identity, write_spawn_identity};
 pub use workspace::{open_workspace, WORKSPACE_DIR};
 
+/// Host-only mutable state retained by the VM owner after confinement.
+pub const OWNER_STATE_DIR: &str = "owner";
+
+pub fn prepare_owner_state_dir(session_dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    use std::ffi::OsStr;
+
+    let root = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?;
+    root.descend_or_create(OsStr::new(OWNER_STATE_DIR), 0o700)?;
+    Ok(session_dir.join(OWNER_STATE_DIR))
+}
+
 /// Distil a captured `process.log`/`serial.log` tail down to the one line
 /// worth putting in front of a human.
 ///
