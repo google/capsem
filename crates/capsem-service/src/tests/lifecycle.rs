@@ -1139,7 +1139,16 @@ async fn resume_sandbox_passes_the_session_scratch_disk_size_to_process() {
         .vms
         .insert("resume-size".to_string(), entry);
 
-    assert_eq!(state.resume_sandbox(&vm_id, None, None).unwrap(), vm_id);
+    let resume_id = vm_id.clone();
+    let error = state
+        .off_worker(move |state| state.resume_sandbox(&resume_id, None, None))
+        .await
+        .unwrap()
+        .expect_err("the focused argv fixture has no confined helper binaries");
+    assert!(
+        error.to_string().contains("acquire proxy ledger channel"),
+        "resume reached an unexpected failure after process spawn: {error:#}"
+    );
     for _ in 0..50 {
         if argv_path.exists() {
             break;

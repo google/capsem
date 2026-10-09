@@ -115,6 +115,7 @@ async fn removing_or_replacing_an_instance_revokes_its_grants() {
     let grant = original.authority.grant();
     let disposable = original.authority.grant();
     drop(disposable);
+    assert!(!grant.is_revoked());
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(1), grant.revoked())
             .await
@@ -126,6 +127,7 @@ async fn removing_or_replacing_an_instance_revokes_its_grants() {
     tokio::time::timeout(std::time::Duration::from_millis(100), grant.revoked())
         .await
         .expect("registry removal revokes the generation");
+    assert!(grant.is_revoked());
 
     let replacement_target = test_instance();
     let replaced = replacement_target.authority.grant();

@@ -314,9 +314,10 @@ impl ServiceState {
             instance_reaper::kill_and_reap(child);
             return Err(error);
         }
-        if let Err(error) = tokio::runtime::Handle::current()
-            .block_on(proxy.grant(capsem_proto::proxy_control::ProxyCapability::Upstream, proxy_upstream))
-        {
+        if let Err(error) = tokio::runtime::Handle::current().block_on(proxy.grant(
+            capsem_proto::proxy_control::ProxyCapability::Upstream,
+            proxy_upstream.into(),
+        )) {
             instance_reaper::kill_and_reap(child);
             return Err(error.context("grant proxy upstream broker"));
         }

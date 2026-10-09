@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bind each standalone model-proxy lease to one service-selected provider and
+  one revocable worker generation; client traffic receives only connected
+  descriptors and cannot choose an upstream with `Host` or proxy semantics.
+
 - Restrict VM owners to the guest share, system overlay, read-only image share,
   and a dedicated mutable owner-state directory; attest after confinement that
   the owner cannot open `session.db`, and fix suspend checkpoints to that
@@ -128,6 +132,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser connection descriptor.
 
 ### Fixed
+
+- Keep a confined proxy generation alive when an ordinary HTTP or DNS client
+  disconnects, while still terminating it for unknown, stale or required
+  capability closure events.
 
 - Keep SQLite writer scratch state in memory so a confined VM owner can flush
   high-volume session-ledger bursts without ambient temporary-directory access.

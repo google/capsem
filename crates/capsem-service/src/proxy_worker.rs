@@ -1,5 +1,6 @@
 //! Trusted lifecycle and capability coordinator for one confined proxy worker.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io;
 use std::os::fd::{AsRawFd as _, OwnedFd};
@@ -13,8 +14,8 @@ use capsem_foundation::ipc_channel;
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::proxy_control::{
-    decode_proxy_control_event, encode_proxy_control_request, ProxyCapability, ProxyControlEvent, ProxyControlRequest,
-    ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
+    decode_proxy_control_event, encode_proxy_control_request, ProxyCapability, ProxyChannelCloseReason,
+    ProxyControlEvent, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
 };
 use capsem_proto::proxy_policy::{ProxyPolicyRequest, ProxyPolicyResponse};
 use tokio::process::{Child, Command};
@@ -52,15 +53,38 @@ impl ProxyWorker {
     /// Spawn the production worker with an empty environment and no inherited
     /// descriptors other than its coordinator socket on stdin.
     pub(crate) async fn spawn(binary: &Path, active_policy: Vec<u8>, stdout: Stdio, stderr: Stdio) -> Result<Self> {
+        Self::spawn_mode(binary, active_policy, stdout, stderr, ProxyWorkerMode::Vm).await
+    }
+
+    pub(crate) async fn spawn_standalone(
+        binary: &Path,
+        active_policy: Vec<u8>,
+        stdout: Stdio,
+        stderr: Stdio,
+        provider_id: String,
+    ) -> Result<Self> {
+        Self::spawn_mode(
+            binary,
+            active_policy,
+            stdout,
+            stderr,
+            ProxyWorkerMode::Standalone(provider_id),
+        )
+        .await
+    }
+
+    async fn spawn_mode(
+        binary: &Path,
+        active_policy: Vec<u8>,
+        stdout: Stdio,
+        stderr: Stdio,
+        mode: ProxyWorkerMode,
+    ) -> Result<Self> {
         let generation = fresh_generation();
         let mut command = Command::new(binary);
         command.env_clear().stdout(stdout).stderr(stderr).kill_on_drop(true);
-        launch(command, generation, active_policy, |command, generation| {
-            command
-                .arg("--parent-pid")
-                .arg(std::process::id().to_string())
-                .arg("--generation")
-                .arg(generation_hex(generation));
+        launch(command, generation, active_policy, move |command, generation| {
+            configure_worker_command(command, generation, &mode);
         })
         .await
     }
@@ -69,21 +93,22 @@ impl ProxyWorker {
         self.generation
     }
 
-    pub(crate) async fn grant(&self, capability: ProxyCapability, stream: UnixStream) -> Result<()> {
-        self.grant_capability(GrantedCapability::Ordinary(capability), stream)
+    pub(crate) async fn grant(&self, capability: ProxyCapability, descriptor: OwnedFd) -> Result<()> {
+        self.grant_capability(GrantedCapability::Ordinary(capability), descriptor)
             .await
     }
 
     pub(crate) async fn grant_ledger(&self, stream: UnixStream, grant: LedgerChannelGrant) -> Result<()> {
-        self.grant_capability(GrantedCapability::Ledger(grant), stream).await
+        self.grant_capability(GrantedCapability::Ledger(grant), stream.into())
+            .await
     }
 
-    async fn grant_capability(&self, capability: GrantedCapability, stream: UnixStream) -> Result<()> {
+    async fn grant_capability(&self, capability: GrantedCapability, descriptor: OwnedFd) -> Result<()> {
         let (completed, result) = oneshot::channel();
         self.commands
             .send(CommandRequest::Grant {
                 capability,
-                stream,
+                descriptor,
                 completed,
             })
             .await
@@ -107,10 +132,6 @@ impl ProxyWorker {
             .map_err(|_| anyhow!(self.stop_reason("proxy worker supervisor stopped with policy pending")))?
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "session ownership normally shuts down by dropping the handle")
-    )]
     pub(crate) async fn shutdown(self) -> Result<()> {
         let (completed, result) = oneshot::channel();
         self.commands
@@ -189,7 +210,7 @@ pub(crate) fn spawn_for_session(binary: &Path, active_policy: Vec<u8>, log_path:
 enum CommandRequest {
     Grant {
         capability: GrantedCapability,
-        stream: UnixStream,
+        descriptor: OwnedFd,
         completed: oneshot::Sender<Result<()>>,
     },
     ApplyPolicy {
@@ -199,6 +220,22 @@ enum CommandRequest {
     Shutdown {
         completed: oneshot::Sender<Result<()>>,
     },
+}
+
+enum ProxyWorkerMode {
+    Vm,
+    Standalone(String),
+}
+
+fn configure_worker_command(command: &mut Command, generation: ProxyGeneration, mode: &ProxyWorkerMode) {
+    command
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string())
+        .arg("--generation")
+        .arg(generation_hex(generation));
+    if let ProxyWorkerMode::Standalone(provider_id) = mode {
+        command.arg("--standalone-provider").arg(provider_id);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -241,6 +278,7 @@ struct WorkerProcess {
     policy_rx: ipc_channel::Receiver<ProxyPolicyResponse>,
     next_grant_id: u64,
     next_request_id: u64,
+    active_grants: HashMap<u64, ProxyCapability>,
 }
 
 enum PolicyApply {
@@ -325,6 +363,7 @@ impl WorkerProcess {
             policy_rx,
             next_grant_id,
             next_request_id: 1,
+            active_grants: HashMap::new(),
         };
         let expected = capsem_core::net::policy_config::active_policy_digest(&active_policy);
         let applied = match process.apply_policy(active_policy).await {
@@ -345,22 +384,25 @@ impl WorkerProcess {
         Ok(process)
     }
 
-    async fn grant(&mut self, capability: GrantedCapability, stream: UnixStream) -> Result<()> {
+    async fn grant(&mut self, capability: GrantedCapability, descriptor: OwnedFd) -> Result<()> {
         let grant_id = self.allocate_grant_id()?;
         let grant = capability.channel_grant(self.generation, grant_id)?;
         self.control_tx
             .send(
                 &encode_proxy_control_request(ProxyControlRequest::Attach(grant)),
-                &[stream.as_raw_fd()],
+                &[descriptor.as_raw_fd()],
             )
             .await
             .context("send proxy descriptor grant")?;
-        drop(stream);
+        drop(descriptor);
         match self.recv_event().await? {
             ProxyControlEvent::Adopted {
                 generation,
                 grant_id: adopted,
-            } if generation == self.generation && adopted == grant_id => Ok(()),
+            } if generation == self.generation && adopted == grant_id => {
+                self.active_grants.insert(grant_id, capability.kind());
+                Ok(())
+            }
             ProxyControlEvent::Rejected {
                 generation,
                 grant_id: rejected,
@@ -429,22 +471,51 @@ impl WorkerProcess {
 
     async fn recv_event(&mut self) -> Result<ProxyControlEvent> {
         tokio::time::timeout(OPERATION_TIMEOUT, async {
-            tokio::select! {
-                status = self.child.wait() => {
-                    let status = status.context("reap proxy worker")?;
-                    bail!("proxy worker exited: {status}")
-                }
-                frame = self.control_events.recv() => {
-                    let frame = frame.context("proxy control event pump stopped")??;
-                    if !frame.fds.is_empty() {
-                        bail!("proxy worker returned a descriptor on its control channel");
+            loop {
+                let event = tokio::select! {
+                    status = self.child.wait() => {
+                        let status = status.context("reap proxy worker")?;
+                        bail!("proxy worker exited: {status}")
                     }
-                    decode_proxy_control_event(&frame.bytes).map_err(anyhow::Error::from)
+                    frame = self.control_events.recv() => {
+                        let frame = frame.context("proxy control event pump stopped")??;
+                        if !frame.fds.is_empty() {
+                            bail!("proxy worker returned a descriptor on its control channel");
+                        }
+                        decode_proxy_control_event(&frame.bytes).map_err(anyhow::Error::from)?
+                    }
+                };
+                if !self.absorb_traffic_close(event)? {
+                    break Ok(event);
                 }
             }
         })
         .await
         .map_err(|_| anyhow!("proxy worker control operation timed out"))?
+    }
+
+    fn absorb_traffic_close(&mut self, event: ProxyControlEvent) -> Result<bool> {
+        let ProxyControlEvent::Closed {
+            generation,
+            grant_id,
+            reason,
+        } = event
+        else {
+            return Ok(false);
+        };
+        if generation != self.generation {
+            bail!("proxy worker closed a grant for a stale generation");
+        }
+        let capability = self
+            .active_grants
+            .remove(&grant_id)
+            .with_context(|| format!("proxy worker closed unknown grant {grant_id}"))?;
+        if !matches!(capability, ProxyCapability::HttpTraffic | ProxyCapability::DnsTraffic)
+            || reason != ProxyChannelCloseReason::Disconnected
+        {
+            bail!("proxy worker closed required {capability:?} grant {grant_id}: {reason:?}");
+        }
+        Ok(true)
     }
 
     async fn recv_policy(&mut self) -> Result<ProxyPolicyResponse> {
@@ -547,15 +618,20 @@ async fn supervise(
                 };
             }
             event = process.control_events.recv() => {
-                break match event {
+                let event = match event {
                     Some(Ok(frame)) if frame.fds.is_empty() => match decode_proxy_control_event(&frame.bytes) {
-                        Ok(event) => format!("proxy worker sent unsolicited control event {event:?}"),
-                        Err(error) => format!("proxy worker sent invalid control event: {error}"),
+                        Ok(event) => event,
+                        Err(error) => break format!("proxy worker sent invalid control event: {error}"),
                     },
-                    Some(Ok(_)) => "proxy worker sent an unsolicited descriptor".to_string(),
-                    Some(Err(error)) => format!("proxy worker control channel failed: {error}"),
-                    None => "proxy worker control event pump stopped".to_string(),
+                    Some(Ok(_)) => break "proxy worker sent an unsolicited descriptor".to_string(),
+                    Some(Err(error)) => break format!("proxy worker control channel failed: {error}"),
+                    None => break "proxy worker control event pump stopped".to_string(),
                 };
+                match process.absorb_traffic_close(event) {
+                    Ok(true) => continue,
+                    Ok(false) => break format!("proxy worker sent unsolicited control event {event:?}"),
+                    Err(error) => break format!("proxy worker sent invalid control event: {error:#}"),
+                }
             }
             request = requests.recv() => {
                 let Some(request) = request else {
@@ -565,8 +641,12 @@ async fn supervise(
                     };
                 };
                 match request {
-                    CommandRequest::Grant { capability, stream, completed } => {
-                        let result = process.grant(capability, stream).await;
+                    CommandRequest::Grant {
+                        capability,
+                        descriptor,
+                        completed,
+                    } => {
+                        let result = process.grant(capability, descriptor).await;
                         let failed = result.is_err();
                         let diagnostic = result.as_ref().err().map(|error| format!("{error:#}"));
                         let _ = completed.send(result);
@@ -655,7 +735,7 @@ impl ServiceState {
             vm_id.to_string(),
             service,
         ));
-        if let Err(error) = worker.grant(ProxyCapability::PrivateNames, proxy).await {
+        if let Err(error) = worker.grant(ProxyCapability::PrivateNames, proxy.into()).await {
             serving.abort();
             let _ = serving.await;
             return Err(error.context("grant proxy private-name capability"));
@@ -673,7 +753,7 @@ impl ServiceState {
     pub(crate) async fn grant_proxy_credentials(&self, worker: &ProxyWorker) -> Result<()> {
         let (service, proxy) = UnixStream::pair().context("create proxy credential capability")?;
         let serving = tokio::spawn(crate::proxy_credentials::serve(service));
-        if let Err(error) = worker.grant(ProxyCapability::Credential, proxy).await {
+        if let Err(error) = worker.grant(ProxyCapability::Credential, proxy.into()).await {
             serving.abort();
             let _ = serving.await;
             return Err(error.context("grant proxy credential capability"));

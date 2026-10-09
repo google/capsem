@@ -13,7 +13,7 @@ pub(crate) struct PublishedActivePolicy {
     pub(crate) path: PathBuf,
     pub(crate) digest: String,
     pub(crate) bytes: Vec<u8>,
-    runtime: Arc<capsem_core::net::policy_config::CompiledActivePolicy>,
+    pub(crate) runtime: Arc<capsem_core::net::policy_config::CompiledActivePolicy>,
 }
 
 impl PublishedActivePolicy {
@@ -90,7 +90,7 @@ pub(crate) async fn push_policy_to_running_instances(
     _mutation: &PolicyMutation<'_>,
 ) -> Result<usize, AppError> {
     let published = state.off_worker(|state| state.refresh_active_policies()).await?;
-    let total = published.len();
+    let mut total = published.len();
 
     let mut failures = Vec::new();
     let targets = {
@@ -165,14 +165,22 @@ pub(crate) async fn push_policy_to_running_instances(
     }))
     .await;
     failures.extend(results.into_iter().flatten());
+    let (standalone_total, standalone_failures) = crate::standalone_proxy::refresh_policies(state).await?;
+    total += standalone_total;
+    failures.extend(standalone_failures);
 
     if failures.is_empty() {
         Ok(total)
     } else {
+        let subjects = if standalone_total == 0 {
+            "VMs"
+        } else {
+            "VMs and proxy sessions"
+        };
         Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
-                "policy applied to {} of {total} running VMs; not applied: {}",
+                "policy applied to {} of {total} running {subjects}; not applied: {}",
                 total - failures.len(),
                 failures.join(", ")
             ),

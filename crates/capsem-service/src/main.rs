@@ -54,6 +54,7 @@ mod proxy_worker;
 mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
+mod standalone_proxy;
 mod switches;
 use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
@@ -210,6 +211,7 @@ const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 pub struct ServiceState {
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
     proxy_workers: Mutex<HashMap<String, (uuid::Uuid, proxy_worker::ProxyWorker)>>,
+    standalone_proxies: tokio::sync::Mutex<HashMap<String, standalone_proxy::StandaloneProxy>>,
     ledger_workers: Arc<ledger_worker::LedgerWorkers>,
     retirements: instance_reaper::Retirements,
     /// Authenticated ledger channels keyed by session/VM id. Logged-data

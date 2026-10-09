@@ -246,6 +246,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         proxy_workers: Mutex::new(HashMap::new()),
+        standalone_proxies: tokio::sync::Mutex::new(HashMap::new()),
         ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(ledger_binary)),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
@@ -441,6 +442,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         }
         info!("service shutting down, stopping VM processes and draining replies");
         kill_all_vm_processes(&shutdown_state);
+        shutdown_state.stop_all_standalone_proxies().await;
     })
     .await;
 
