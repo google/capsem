@@ -3,6 +3,8 @@ use super::*;
 mod provision;
 mod resume;
 mod resume_process;
+#[cfg(test)]
+pub(crate) use resume_process::configure_resume_storage;
 mod session_dirs;
 pub(crate) use resume::handle_resume;
 #[cfg(test)]

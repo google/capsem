@@ -43,7 +43,10 @@ async fn generation_changed_during_hello_cannot_receive_a_request() {
                 .get_mut("owner")
                 .unwrap()
                 .generation = uuid::Uuid::new_v4();
-            capsem_foundation::ipc_handshake::negotiate_responder(&mut socket, "capsem-process", "").unwrap();
+            // The initiator may observe the replaced generation and close
+            // before completing the hello. Either outcome must leave the
+            // rejected connection with no request authority.
+            let _ = capsem_foundation::ipc_handshake::negotiate_responder(&mut socket, "capsem-process", "");
             socket
         })
         .await
@@ -53,10 +56,7 @@ async fn generation_changed_during_hello_cannot_receive_a_request() {
     let mut socket = server.await.unwrap();
     tokio::task::spawn_blocking(move || {
         use std::io::Read;
-        socket.set_nonblocking(false).unwrap();
-        socket
-            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-            .unwrap();
+        assert!(capsem_foundation::unix::fd::wait_readable(socket.as_fd(), std::time::Duration::from_secs(5)).unwrap());
         assert_eq!(socket.read(&mut [0; 1]).unwrap(), 0);
     })
     .await

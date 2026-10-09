@@ -1,5 +1,12 @@
 use super::*;
 
+pub(crate) fn configure_resume_storage(command: &mut tokio::process::Command, entry: &PersistentVmEntry) -> Result<()> {
+    command
+        .arg("--scratch-disk-size-gb")
+        .arg(session_rootfs_size_gb(entry)?.to_string());
+    Ok(())
+}
+
 impl ServiceState {
     /// Resume a stopped persistent VM by re-spawning capsem-process against its
     /// existing session directory.
@@ -78,7 +85,6 @@ impl ServiceState {
             crate::upstream_broker::PendingBroker::pair(active_policy.broker_policy())?;
         let proxy_upstream = proxy_upstream_broker.worker_stream()?;
         let upstream_policy = owner_upstream_policy.merge(proxy_upstream_policy);
-        let scratch_disk_size_gb = session_rootfs_size_gb(&entry)?;
         let resolved = self.resolve_pinned_asset_paths(&entry.asset_pins)?;
         self.validate_pinned_asset_files(&resolved, &entry.asset_pins)?;
 
@@ -93,6 +99,7 @@ impl ServiceState {
         if !self.process_binary.exists() {
             child_cmd = tokio::process::Command::new("cache/target/cargo/debug/capsem-process");
         }
+        configure_resume_storage(&mut child_cmd, &entry)?;
 
         // Inject VM identity so the guest knows its own name/ID.
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
@@ -190,8 +197,6 @@ impl ServiceState {
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
                 .arg(ram_mb.to_string())
-                .arg("--scratch-disk-size-gb")
-                .arg(scratch_disk_size_gb.to_string())
                 .arg("--uds-path")
                 .arg(&uds_path)
                 // Explicitly, because `uds_path` may have been shortened out
