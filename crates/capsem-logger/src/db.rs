@@ -10,7 +10,7 @@ use capsem_telemetry::db::{
 };
 
 use crate::reader::DbReader;
-use crate::writer::{DbWriter, WriteOp};
+use crate::writer::{DbWriter, PreparedDbWriter, WriteOp};
 
 /// Public DB-boundary contract for Capsem session ledgers.
 ///
@@ -235,6 +235,12 @@ struct DbHandleInner {
     query_many_pause: Mutex<Option<QueryManyPause>>,
 }
 
+pub(crate) struct PreparedDbHandle {
+    path: PathBuf,
+    writer: PreparedDbWriter,
+    codecs: ArchiveCodecs,
+}
+
 /// Signals "the lookup is done" and waits for "go on".
 #[cfg(test)]
 type QueryManyPause = (tokio::sync::oneshot::Sender<()>, tokio::sync::oneshot::Receiver<()>);
@@ -259,22 +265,29 @@ impl DbHandle {
     }
 
     pub fn open_with_codecs(path: &Path, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
+        Self::prepare_with_codecs(path, codecs).map(PreparedDbHandle::start)
+    }
+
+    pub(crate) fn prepare_with_codecs(path: &Path, codecs: ArchiveCodecs) -> rusqlite::Result<PreparedDbHandle> {
         let started = Instant::now();
-        let writer = Arc::new(DbWriter::open_with_codecs(path, 1024, codecs.clone())?);
+        let writer = DbWriter::prepare_with_codecs(path, 1024, codecs.clone())?;
         // Reads go to the file, like every other handle's: the writer's
         // memory holds only rows it has not flushed, and SQLite's
         // `data_version` tells the reader when a flush landed.
         DbReader::open(path)?;
-        let handle = Self::open_with_writer(path.to_path_buf(), writer, codecs)?;
 
         tracing::debug!(
             db_path = %path.display(),
-            operation = "open",
+            operation = "prepare",
             duration_ms = elapsed_ms(started),
-            "session db handle opened"
+            "session db handle prepared"
         );
 
-        Ok(handle)
+        Ok(PreparedDbHandle {
+            path: path.to_path_buf(),
+            writer,
+            codecs,
+        })
     }
 
     /// Open a DB handle for a session DB written by another process.
@@ -822,6 +835,13 @@ impl DbHandle {
             .writer
             .as_ref()
             .map_or(0, |writer| writer.pending_body_bytes())
+    }
+}
+
+impl PreparedDbHandle {
+    pub(crate) fn start(self) -> DbHandle {
+        DbHandle::open_with_writer(self.path, Arc::new(self.writer.start()), self.codecs)
+            .expect("prepared database reader must start")
     }
 }
 
