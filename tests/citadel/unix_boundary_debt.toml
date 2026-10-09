@@ -76,6 +76,10 @@ fingerprint = "003d8fd29845c26d97ce2f3c5f7d4a3ee00a3e84c0fe122c71385f8b0d650fde"
 reason = "Linux AF_VSOCK buffer bounds (SO_VM_SOCKETS_BUFFER_* 0/1/2) set before credit can grow"
 nix_gap = "nix::sys::socket::sockopt defines no AF_VSOCK buffer options, so there is no SetSockOpt type"
 
+[foundation.raw_calls."crates/capsem-foundation/src/unix/fd.rs::syscall"]
+fingerprint = "484b5c9efe57fe349ba09a8c628eeabe3c6cd0cfd9b60e592cf28fc8cf4e9662"
+reason = "Linux close_range avoids procfs after a parent Landlock domain is inherited across exec"
+
 [foundation.raw_calls."crates/capsem-foundation/src/unix/fs/extents.rs::fclonefileat"]
 fingerprint = "1382b8391823c31f4fbdbf23e319493504ee03a024fcd02c45f543e466af0d2d"
 reason = "macOS APFS clone from an open descriptor into a directory descriptor; no nix wrapper"
