@@ -2,9 +2,11 @@
 
 use thiserror::Error;
 
-pub const PROXY_CONTROL_FRAME_SIZE: usize = 32;
+use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration, LedgerProtocolError};
+
+pub const PROXY_CONTROL_FRAME_SIZE: usize = 56;
 pub const PROXY_CONTROL_MAX_FDS: usize = 1;
-pub const PROXY_CONTROL_VERSION: u16 = 2;
+pub const PROXY_CONTROL_VERSION: u16 = 3;
 
 const MAGIC: [u8; 2] = *b"PX";
 const VERSION_RANGE: std::ops::Range<usize> = 2..4;
@@ -13,6 +15,8 @@ const CAPABILITY_OFFSET: usize = 5;
 const DETAIL_RANGE: std::ops::Range<usize> = 6..8;
 const GENERATION_RANGE: std::ops::Range<usize> = 8..24;
 const GRANT_ID_RANGE: std::ops::Range<usize> = 24..32;
+const LEDGER_GENERATION_RANGE: std::ops::Range<usize> = 32..48;
+const LEDGER_CLIENT_ID_RANGE: std::ops::Range<usize> = 48..56;
 
 const ATTACH: u8 = 1;
 const SHUTDOWN: u8 = 2;
@@ -67,6 +71,7 @@ pub struct ProxyChannelGrant {
     generation: ProxyGeneration,
     grant_id: u64,
     capability: ProxyCapability,
+    ledger_grant: Option<LedgerChannelGrant>,
 }
 
 impl ProxyChannelGrant {
@@ -81,10 +86,36 @@ impl ProxyChannelGrant {
         if grant_id == 0 {
             return Err(ProxyControlError::ZeroGrantId);
         }
+        if capability == ProxyCapability::Ledger {
+            return Err(ProxyControlError::MissingLedgerAuthority);
+        }
         Ok(Self {
             generation,
             grant_id,
             capability,
+            ledger_grant: None,
+        })
+    }
+
+    pub fn with_ledger(
+        generation: ProxyGeneration,
+        grant_id: u64,
+        ledger_grant: LedgerChannelGrant,
+    ) -> Result<Self, ProxyControlError> {
+        if ledger_grant.role() != LedgerClientRole::Proxy {
+            return Err(ProxyControlError::InvalidLedgerRole(ledger_grant.role()));
+        }
+        if generation.is_zero() {
+            return Err(ProxyControlError::ZeroGeneration);
+        }
+        if grant_id == 0 {
+            return Err(ProxyControlError::ZeroGrantId);
+        }
+        Ok(Self {
+            generation,
+            grant_id,
+            capability: ProxyCapability::Ledger,
+            ledger_grant: Some(ledger_grant),
         })
     }
 
@@ -98,6 +129,10 @@ impl ProxyChannelGrant {
 
     pub const fn capability(self) -> ProxyCapability {
         self.capability
+    }
+
+    pub const fn ledger_grant(self) -> Option<LedgerChannelGrant> {
+        self.ledger_grant
     }
 }
 
@@ -171,13 +206,20 @@ impl ProxyControlEvent {
 
 pub fn encode_proxy_control_request(request: ProxyControlRequest) -> [u8; PROXY_CONTROL_FRAME_SIZE] {
     match request {
-        ProxyControlRequest::Attach(grant) => encode(
-            ATTACH,
-            grant.capability() as u8,
-            0,
-            grant.generation(),
-            grant.grant_id(),
-        ),
+        ProxyControlRequest::Attach(grant) => {
+            let mut frame = encode(
+                ATTACH,
+                grant.capability() as u8,
+                grant.ledger_grant().map_or(0, |ledger| ledger_role_code(ledger.role())),
+                grant.generation(),
+                grant.grant_id(),
+            );
+            if let Some(ledger) = grant.ledger_grant() {
+                frame[LEDGER_GENERATION_RANGE].copy_from_slice(&ledger.generation().as_bytes());
+                frame[LEDGER_CLIENT_ID_RANGE].copy_from_slice(&ledger.client_id().to_be_bytes());
+            }
+            frame
+        }
         ProxyControlRequest::Shutdown { generation } => encode(SHUTDOWN, 0, 0, generation, 0),
     }
 }
@@ -190,12 +232,35 @@ pub fn decode_proxy_control_request(
     let grant_id = decode_u64(frame, GRANT_ID_RANGE);
     let detail = decode_u16(frame, DETAIL_RANGE);
     match frame[KIND_OFFSET] {
-        ATTACH if detail == 0 => Ok(ProxyControlRequest::Attach(ProxyChannelGrant::new(
-            generation,
-            grant_id,
-            decode_capability(frame[CAPABILITY_OFFSET])?,
-        )?)),
-        SHUTDOWN if frame[CAPABILITY_OFFSET] == 0 && detail == 0 && grant_id == 0 => {
+        ATTACH => {
+            let capability = decode_capability(frame[CAPABILITY_OFFSET])?;
+            let grant = if capability == ProxyCapability::Ledger {
+                let ledger_generation = LedgerGeneration::new(
+                    frame[LEDGER_GENERATION_RANGE]
+                        .try_into()
+                        .expect("fixed ledger generation range"),
+                );
+                let ledger_client_id = decode_u64(frame, LEDGER_CLIENT_ID_RANGE);
+                let ledger = LedgerChannelGrant::new(ledger_generation, ledger_client_id, decode_ledger_role(detail)?)?;
+                ProxyChannelGrant::with_ledger(generation, grant_id, ledger)?
+            } else {
+                if detail != 0
+                    || frame[LEDGER_GENERATION_RANGE].iter().any(|byte| *byte != 0)
+                    || decode_u64(frame, LEDGER_CLIENT_ID_RANGE) != 0
+                {
+                    return Err(ProxyControlError::ReservedBytes);
+                }
+                ProxyChannelGrant::new(generation, grant_id, capability)?
+            };
+            Ok(ProxyControlRequest::Attach(grant))
+        }
+        SHUTDOWN
+            if frame[CAPABILITY_OFFSET] == 0
+                && detail == 0
+                && grant_id == 0
+                && frame[LEDGER_GENERATION_RANGE].iter().all(|byte| *byte == 0)
+                && decode_u64(frame, LEDGER_CLIENT_ID_RANGE) == 0 =>
+        {
             validate_generation(generation)?;
             Ok(ProxyControlRequest::Shutdown { generation })
         }
@@ -226,6 +291,9 @@ pub fn decode_proxy_control_event(
 ) -> Result<ProxyControlEvent, ProxyControlError> {
     validate_header(frame)?;
     if frame[CAPABILITY_OFFSET] != 0 {
+        return Err(ProxyControlError::ReservedBytes);
+    }
+    if frame[LEDGER_GENERATION_RANGE].iter().any(|byte| *byte != 0) || decode_u64(frame, LEDGER_CLIENT_ID_RANGE) != 0 {
         return Err(ProxyControlError::ReservedBytes);
     }
     let generation = decode_generation(frame);
@@ -305,6 +373,29 @@ fn decode_capability(value: u8) -> Result<ProxyCapability, ProxyControlError> {
     }
 }
 
+const fn ledger_role_code(role: LedgerClientRole) -> u16 {
+    match role {
+        LedgerClientRole::VmOwner => 1,
+        LedgerClientRole::Proxy => 2,
+        LedgerClientRole::Coordinator => 3,
+        LedgerClientRole::Reader => 4,
+        LedgerClientRole::Maintainer => 5,
+        LedgerClientRole::Supervisor => 6,
+    }
+}
+
+fn decode_ledger_role(value: u16) -> Result<LedgerClientRole, ProxyControlError> {
+    match value {
+        1 => Ok(LedgerClientRole::VmOwner),
+        2 => Ok(LedgerClientRole::Proxy),
+        3 => Ok(LedgerClientRole::Coordinator),
+        4 => Ok(LedgerClientRole::Reader),
+        5 => Ok(LedgerClientRole::Maintainer),
+        6 => Ok(LedgerClientRole::Supervisor),
+        value => Err(ProxyControlError::InvalidLedgerRoleCode(value)),
+    }
+}
+
 fn decode_rejection(value: u16) -> Result<ProxyControlRejection, ProxyControlError> {
     match value {
         1 => Ok(ProxyControlRejection::Capacity),
@@ -352,6 +443,14 @@ pub enum ProxyControlError {
     InvalidEvent(u8),
     #[error("proxy capability {0} is invalid")]
     InvalidCapability(u8),
+    #[error("proxy ledger capability is missing its exact ledger authority")]
+    MissingLedgerAuthority,
+    #[error("proxy ledger capability must carry the proxy role, got {0:?}")]
+    InvalidLedgerRole(LedgerClientRole),
+    #[error("proxy ledger role code {0} is invalid")]
+    InvalidLedgerRoleCode(u16),
+    #[error("proxy ledger authority is invalid: {0}")]
+    LedgerAuthority(#[from] LedgerProtocolError),
     #[error("proxy control rejection {0} is invalid")]
     InvalidRejection(u16),
     #[error("proxy channel close reason {0} is invalid")]
