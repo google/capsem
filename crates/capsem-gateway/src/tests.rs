@@ -20,6 +20,18 @@ fn entry_closes_ambient_descriptors_before_runtime_construction() {
     assert!(close < runtime && runtime < run);
 }
 
+#[test]
+fn platform_confinement_precedes_gateway_readiness() {
+    let source = include_str!("main.rs");
+    let run = source.split_once("async fn run(args: Args) -> Result<()> {").unwrap().1;
+    let prepare = run.find("AuthState::prepare").unwrap();
+    let confine = run
+        .find("confine_gateway(&auth_state")
+        .expect("all supported platforms install the worker policy");
+    let publish = run.find("auth_state.publish").unwrap();
+    assert!(prepare < confine && confine < publish);
+}
+
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,
