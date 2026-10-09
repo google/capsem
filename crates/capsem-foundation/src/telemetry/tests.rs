@@ -107,6 +107,20 @@ fn rolling_parts_survives_a_path_with_no_extension_or_parent() {
 }
 
 #[test]
+fn prepared_file_sink_opens_one_private_unrotated_log() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("worker.log");
+    let LogSink::PreparedFile { file } = prepare_file_sink(&path).unwrap() else {
+        panic!("prepared sink returned the wrong variant")
+    };
+    assert!(file.metadata().unwrap().is_file());
+    assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(path.is_file());
+}
+
+#[test]
 fn rolling_appender_writes_a_dated_file_beside_the_requested_path() {
     use std::io::Write;
 

@@ -41,6 +41,18 @@ pub enum LogSink {
     /// File (json) + stderr (pretty). Used by capsem-app so the file
     /// feeds the support bundle and stderr feeds `pnpm tauri dev` output.
     FileAndPretty { path: PathBuf },
+    /// Write JSON-per-line to an already-open private file. A worker that must
+    /// confine before creating the non-blocking writer thread prepares this
+    /// descriptor while it still has startup filesystem authority.
+    PreparedFile { file: std::fs::File },
+}
+
+/// Open a private append-only log before a worker installs filesystem
+/// confinement. Passing the returned sink to [`init`] starts the writer thread
+/// later, so that thread inherits the worker sandbox.
+pub fn prepare_file_sink(path: &std::path::Path) -> std::io::Result<LogSink> {
+    let file = crate::unix::fs::open_private_append_no_follow(path)?;
+    Ok(LogSink::PreparedFile { file })
 }
 
 /// Static per-binary telemetry config. `service` is the binary name (also
@@ -424,6 +436,11 @@ pub fn init(cfg: TelemetryConfig) -> std::io::Result<TelemetryGuard> {
                 .with(fmt::layer().json().with_writer(nb).boxed())
                 .with(stderr_pretty_layer())
                 .init();
+        }
+        LogSink::PreparedFile { file } => {
+            let (nb, guard) = tracing_appender::non_blocking(file);
+            file_guard = Some(guard);
+            registry.with(fmt::layer().json().with_writer(nb).boxed()).init();
         }
     }
 
