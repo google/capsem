@@ -9,7 +9,7 @@ pub(super) struct Compiled {
 }
 
 pub(super) fn compile(policy: &Policy) -> io::Result<Compiled> {
-    let mut source = if policy.role() == Role::Ledger {
+    let mut source = if matches!(policy.role(), Role::Ledger | Role::Proxy) {
         String::from("(version 1)\n(deny default)\n")
     } else {
         String::from(
