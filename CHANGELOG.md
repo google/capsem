@@ -100,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grants; deny sibling files, path-based control connections and direct
   network dialing after startup.
 
+- Keep the global MCP discovery cache under coordinator ownership. VM owners
+  return complete tool schemas over authenticated IPC without receiving a
+  cross-session cache-file grant.
+
 - Broker guest VirtioFS permission changes through the coordinator beneath
   the session's guest share, keeping direct host permission syscalls denied
   and attesting that authority before the VM owner publishes readiness.

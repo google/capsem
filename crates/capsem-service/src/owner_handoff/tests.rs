@@ -5,6 +5,8 @@ use crate::tests::{insert_fake_instance_with_session_dir, make_test_state_owned}
 async fn handoffs_use_the_trusted_identity_with_short_and_hashed_paths() {
     for long in [false, true] {
         let mut owned = make_test_state_owned();
+        let short_root = tempfile::tempdir_in("/tmp").unwrap();
+        owned.run_dir = short_root.path().join("r");
         if long {
             owned.run_dir = owned.run_dir.join("long-runtime-root-".repeat(8));
         }
