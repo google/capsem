@@ -10,16 +10,10 @@
 //! reverse order would leave index rows pointing past EOF, which is a ledger
 //! that lies.
 //!
-//! The block stays open across flushes: a segment is sync-flushed, not
-//! sealed, so the next one compresses against the same dictionary. Before
-//! this, every five-second flush sealed its block, real blocks averaged about
-//! 85 KiB, and the flush timer rather than the data capped the compression
-//! ratio. A block closes when it reaches the archive's target size, when it
-//! has been open for `MAX_BLOCK_AGE` -- so retention, which drops blocks
-//! whole, stays precise on a quiet session -- and at shutdown and retention.
-//!
-//! Compression runs on this thread, synchronously: each body is fed to the
-//! compressor as it is staged, and a flush costs only the sync point.
+//! A sync-flushed segment leaves the block open, so later bodies reuse its
+//! dictionary. A block closes at its target size, `MAX_BLOCK_AGE`, shutdown,
+//! or retention. Compression runs synchronously on this writer thread; each
+//! flush costs only the sync point.
 //!
 //! Identical bytes within the open block are stored once. An event that
 //! matches three rules archives its payload three times over, and the
@@ -35,6 +29,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
+use super::{blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
 use capsem_archive::{
     ArchiveCodecs, ArchiveError, ArchiveId, BodyLogWriter, BodyRef, FileHeader, GenerationId, SegmentWritten,
 };
@@ -44,8 +39,6 @@ use capsem_foundation::unix::lock::{self, FileLock, LockAttempt, LockMode};
 use capsem_telemetry::db::{DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL, DB_ARCHIVE_BODIES_DROPPED_TOTAL};
 use rusqlite::{params, Connection, OptionalExtension};
 use tracing::warn;
-
-use super::{blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
 
 /// How long a block may stay open before the next body starts a new one.
 ///

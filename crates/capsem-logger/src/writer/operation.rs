@@ -74,7 +74,7 @@ impl WriteOp {
 }
 
 pub fn commitment_event_hash(op: &WriteOp) -> Result<[u8; 32], String> {
-    let encoded = rmp_serde::to_vec_named(op).map_err(|error| format!("encode ledger event commitment: {error}"))?;
+    let encoded = serde_json::to_vec(op).map_err(|error| format!("encode ledger event commitment: {error}"))?;
     let mut hash = blake3::Hasher::new();
     hash.update(b"capsem-ledger-event-v1\0");
     hash.update(&encoded);

@@ -113,7 +113,10 @@ impl LedgerOperation for LedgerCommand {
             }
             _ => {}
         }
-        let encoded = rmp_serde::to_vec_named(self).map_err(|_| LedgerProtocolError::InvalidOperation)?;
+        // Named JSON is larger than the MessagePack channel frame for these
+        // typed records, so this is a conservative preflight bound without
+        // owning a second transport encoder here.
+        let encoded = serde_json::to_vec(self).map_err(|_| LedgerProtocolError::InvalidOperation)?;
         if encoded.len() > MAX_LEDGER_OPERATION_BYTES {
             return Err(LedgerProtocolError::OperationTooLarge);
         }

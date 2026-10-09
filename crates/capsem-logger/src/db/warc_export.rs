@@ -46,10 +46,6 @@
 //! record list is not the session -- which is the one thing a reader cannot
 //! work out from the records themselves.
 //!
-//! Every body goes out through the same hash-verified read path a route uses.
-//! An export is evidence, and evidence that skipped the check the interactive
-//! path performs would be the one copy nobody verified.
-
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs::File;
