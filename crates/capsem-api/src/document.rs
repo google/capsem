@@ -20,10 +20,7 @@ pub fn openapi() -> OpenApi {
     doc.post::<RunRequest, ExecResponse>("/run", "runVm");
     doc.post::<PurgeRequest, PurgeResponse>("/purge", "purgeVms");
     doc.post::<CreateProxyRequest, CreateProxyResponse>("/proxies", "createProxy");
-    doc.post::<ProxyLeaseRequest, ProxyHeartbeatResponse>(
-        "/proxies/{id}/heartbeat",
-        "heartbeatProxy",
-    );
+    doc.post::<ProxyLeaseRequest, ProxyHeartbeatResponse>("/proxies/{id}/heartbeat", "heartbeatProxy");
     doc.post::<ProxyLeaseRequest, StopProxyResponse>("/proxies/{id}/stop", "stopProxy");
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
