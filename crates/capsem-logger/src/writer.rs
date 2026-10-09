@@ -272,6 +272,7 @@ mod barriers;
 mod batch;
 mod operation;
 mod recording;
+mod remote;
 mod retention;
 mod retention_faults;
 mod writer_lock;
@@ -307,6 +308,7 @@ pub struct DbWriter {
     /// Published by the writer thread after every batch so a test can prove
     /// the bound without a second view of the thread's state.
     pending_body_bytes: Arc<AtomicU64>,
+    remote: Option<remote::RemoteWriter>,
 }
 
 impl DbWriter {
@@ -414,6 +416,7 @@ impl DbWriter {
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path,
             pending_body_bytes,
+            remote: None,
         })
     }
 
@@ -454,6 +457,25 @@ impl DbWriter {
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
             pending_body_bytes,
+            remote: None,
+        })
+    }
+
+    /// Construct the familiar producer facade over a coordinator-minted
+    /// channel. This process retains no SQLite connection or writer lock; the
+    /// dedicated ledger worker owns both.
+    pub fn from_ledger_channel(
+        stream: std::os::unix::net::UnixStream,
+        grant: capsem_proto::ledger::LedgerChannelGrant,
+        logical_path: &Path,
+        capacity: usize,
+    ) -> std::io::Result<Self> {
+        Ok(Self {
+            tx: std::sync::Mutex::new(None),
+            join_handle: std::sync::Mutex::new(None),
+            db_path: logical_path.to_path_buf(),
+            pending_body_bytes: Arc::new(AtomicU64::new(0)),
+            remote: Some(remote::RemoteWriter::start(stream, grant, capacity)?),
         })
     }
 
@@ -470,6 +492,9 @@ impl DbWriter {
     /// Every reader reads the file, so an `Err` means no reader will see the
     /// rows yet, and the caller must not claim otherwise.
     pub async fn flush_checked(&self) -> Result<(), String> {
+        if let Some(remote) = &self.remote {
+            return remote.flush().await;
+        }
         let Some(tx) = self.clone_sender() else {
             return Ok(());
         };
@@ -492,6 +517,9 @@ impl DbWriter {
     /// halves of the ledger. A caller that holds no writer holds no right to
     /// rewrite either one.
     pub async fn retain_bodies_since(&self, cutoff: &str) -> Result<RetainOutcome, String> {
+        if let Some(remote) = &self.remote {
+            return remote.retain(cutoff).await;
+        }
         let Some(tx) = self.clone_sender() else {
             return Err("db writer is shut down; nothing was retained".to_string());
         };
@@ -527,6 +555,10 @@ impl DbWriter {
     /// and runs the final `PRAGMA wal_checkpoint(TRUNCATE)`. Call from a
     /// blocking thread (e.g. via `tokio::task::spawn_blocking`).
     pub fn shutdown_blocking(&self) {
+        if let Some(remote) = &self.remote {
+            remote.shutdown();
+            return;
+        }
         let _ = self.tx.lock().unwrap().take();
         let handle = self.join_handle.lock().unwrap().take();
         if let Some(handle) = handle {
@@ -538,6 +570,9 @@ impl DbWriter {
     /// It sees what the writer has flushed, not what it has only accepted.
     /// Returns Err for in-memory writers (no file to share between connections).
     pub fn reader(&self) -> rusqlite::Result<crate::reader::DbReader> {
+        if self.remote.is_some() {
+            return Err(rusqlite::Error::InvalidPath(self.db_path.clone()));
+        }
         if self.db_path.to_str() == Some(":memory:") {
             return Err(rusqlite::Error::InvalidPath(self.db_path.clone()));
         }
@@ -553,6 +588,9 @@ impl DbWriter {
     /// block but not yet written. They reach `session.bodies` at the next
     /// disk flush or when the block closes, so this is the backlog a crash would lose.
     pub fn pending_body_bytes(&self) -> u64 {
+        if self.remote.is_some() {
+            return 0;
+        }
         self.pending_body_bytes.load(Ordering::Acquire)
     }
 }
