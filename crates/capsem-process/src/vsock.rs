@@ -71,10 +71,7 @@ pub(crate) struct VsockOptions {
     pub(crate) cli_env: Vec<(String, String)>,
     pub(crate) guest_config: capsem_core::net::policy_config::GuestConfig,
     pub(crate) mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
-    /// Handler for DNS queries forwarded over vsock port 5007. DNS
-    /// NXDOMAIN decisions come from the shared security rules; the network
-    /// policy handle remains for resolver mechanics such as redirects/cache.
-    pub(crate) dns_handler: Arc<capsem_core::net::dns::DnsHandler>,
+    pub(crate) upstream_grants: Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
     pub(crate) security_rules: SecurityRulesHandle,
     pub(crate) plugin_policy: PluginPolicyHandle,
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
@@ -101,7 +98,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         cli_env,
         guest_config,
         mitm_config,
-        dns_handler,
+        upstream_grants,
         security_rules,
         plugin_policy,
         is_restore,
@@ -723,7 +720,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     // 4. Central Dispatcher Loop (Vsock -> Hub)
     // -----------------------------------------------------------------------
     let mitm_config_loop = Arc::clone(&mitm_config);
-    let dns_handler_loop = Arc::clone(&dns_handler);
+    let upstream_grants_loop = Arc::clone(&upstream_grants);
     let security_rules_loop = Arc::clone(&security_rules);
     let db_for_audit = Arc::clone(&db);
     let ipc_tx_lifecycle = ipc_tx.clone();
@@ -742,7 +739,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             dispatch_aux_connection(
                 conn,
                 &mitm_config_loop,
-                &dns_handler_loop,
+                &upstream_grants_loop,
                 &security_rules_loop,
                 &job_store_vsock,
                 &db_for_audit,
@@ -779,7 +776,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 dispatch_aux_connection(
                                     aux_conn,
                                     &mitm_config_loop,
-                                    &dns_handler_loop,
+                                    &upstream_grants_loop,
                                     &security_rules_loop,
                                     &job_store_vsock,
                                     &db_for_audit,
@@ -819,7 +816,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         dispatch_aux_connection(
                             conn,
                             &mitm_config_loop,
-                            &dns_handler_loop,
+                            &upstream_grants_loop,
                             &security_rules_loop,
                             &job_store_vsock,
                             &db_for_audit,
@@ -843,7 +840,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 fn dispatch_aux_connection(
     conn: VsockConnection,
     mitm_config: &Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
-    dns_handler: &Arc<capsem_core::net::dns::DnsHandler>,
+    upstream_grants: &Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
     security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
     job_store: &Arc<JobStore>,
     db: &Arc<capsem_logger::DbWriter>,
@@ -857,11 +854,14 @@ fn dispatch_aux_connection(
         Some(HostVsockService::SniProxy) => streams::serve_mitm(conn, Arc::clone(mitm_config)),
         Some(HostVsockService::DnsProxy) => match conn.try_clone_fd() {
             Ok(descriptor) => {
-                let handler = Arc::clone(dns_handler);
-                let db = Arc::clone(db);
-                let policy = mitm_config.engine.policy().clone();
+                let grants = Arc::clone(upstream_grants);
                 tokio::spawn(async move {
-                    capsem_core::net::dns::session::serve_dns_session(descriptor, handler, db, policy).await;
+                    if let Err(error) = grants
+                        .attach_proxy_traffic(capsem_proto::upstream_grant::ProxyTrafficService::Dns, descriptor)
+                        .await
+                    {
+                        warn!(%error, "DNS port: proxy worker refused the session descriptor");
+                    }
                 });
             }
             Err(error) => warn!(%error, "DNS port: cannot duplicate the session descriptor"),

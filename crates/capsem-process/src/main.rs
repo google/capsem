@@ -5,7 +5,6 @@ mod ipc;
 mod job_store;
 mod mcp_runtime;
 mod metric_export;
-mod private_names;
 mod private_seats;
 mod runtime_config;
 mod terminal;
@@ -13,7 +12,6 @@ mod vsock;
 
 use anyhow::{Context, Result};
 use capsem_core::fs_monitor::FsMonitor;
-use capsem_core::net::dns::{DnsAnswerCache, DnsResolver};
 use capsem_core::net::upstream_grant::{adopt_inherited, UpstreamGrantClient};
 use capsem_core::{boot_vm, BootOptions, VirtioFsShare, VsockConnection};
 use capsem_logger::DbWriter;
@@ -690,11 +688,6 @@ async fn run_async_main_loop(
         &job_store,
         ctrl_tx.clone(),
     )?;
-    let private_service = Arc::new(
-        capsem_core::service_uds::Client::connect(&seats.service_socket)
-            .await
-            .context("prepare private-name service channel")?,
-    );
     let metric_service = if args.metric_broker {
         Some(
             tokio::net::UnixStream::connect(&seats.service_socket)
@@ -836,25 +829,6 @@ async fn run_async_main_loop(
         upstream_grants: Some(Arc::clone(&upstream_grants) as Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants>),
     });
 
-    // DNS and HTTP clone the same immutable revision once per request.
-    let dns_resolver = Arc::new(DnsResolver::with_grants(
-        runtime_config.dns_upstreams.clone(),
-        Arc::clone(&upstream_grants) as Arc<dyn capsem_core::net::dns::DnsUpstreamGrants>,
-    ));
-    // The private zone is the service's to answer, for this VM's networks.
-    let private_names = Arc::new(private_names::ServicePrivateNames::new(
-        private_service,
-        args.id.clone(),
-    ));
-    let dns_handler = Arc::new(
-        capsem_core::net::dns::DnsHandler::with_cache(
-            proxy_policy,
-            Arc::clone(&dns_resolver),
-            Arc::new(DnsAnswerCache::default()),
-        )
-        .with_private_names(private_names),
-    );
-
     let ipc_tx_clone = ipc_tx.clone();
     let job_store_clone = Arc::clone(&job_store);
     let terminal_output_clone = Arc::clone(&terminal_output);
@@ -866,7 +840,7 @@ async fn run_async_main_loop(
 
     let net_state_clone = Arc::clone(&net_state);
     let mitm_config_clone = Arc::clone(&mitm_config);
-    let dns_handler_clone = Arc::clone(&dns_handler);
+    let upstream_grants_for_vsock = Arc::clone(&upstream_grants);
 
     // Parse --env KEY=VALUE pairs for guest injection
     let cli_env: Vec<(String, String)> = args
@@ -935,7 +909,7 @@ async fn run_async_main_loop(
             cli_env,
             guest_config,
             mitm_config: mitm_config_clone,
-            dns_handler: dns_handler_clone,
+            upstream_grants: upstream_grants_for_vsock,
             security_rules: Arc::clone(&security_rules),
             plugin_policy: Arc::clone(&plugin_policy),
             _net_state: net_state_clone,
@@ -984,7 +958,6 @@ async fn run_async_main_loop(
         let builtin_bin_c = builtin_bin.clone();
         let builtin_env_c = builtin_env.clone();
         let ready_c = Arc::clone(&vm_ready);
-        let dns_resolver_c = Arc::clone(&dns_resolver);
 
         tokio::spawn(async move {
             if let Err(e) = ipc::handle_ipc_connection(
@@ -1000,7 +973,6 @@ async fn run_async_main_loop(
                 builtin_bin_c,
                 builtin_env_c,
                 ready_c,
-                dns_resolver_c,
             )
             .await
             {

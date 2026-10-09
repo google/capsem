@@ -100,7 +100,6 @@ pub(in crate::ipc) struct Dispatcher {
     pub(in crate::ipc) mcp_runtime: Arc<McpRuntime>,
     runtime_source: RuntimePolicySource,
     pub(in crate::ipc) ready: Arc<AtomicBool>,
-    dns_resolver: Arc<capsem_core::net::dns::DnsResolver>,
 }
 
 impl Dispatcher {
@@ -201,7 +200,6 @@ impl Dispatcher {
         let job_store = Arc::new(JobStore::new());
         let (ctrl_tx, ctrl_rx) = mpsc::channel(16);
         let (events_tx, _) = broadcast::channel(16);
-        let dns_resolver = Arc::new(capsem_core::net::dns::DnsResolver::with_upstreams(Vec::new()));
         (
             Self {
                 job_store,
@@ -212,7 +210,6 @@ impl Dispatcher {
                 mcp_runtime,
                 runtime_source: RuntimePolicySource::new(active_policy),
                 ready: Arc::new(AtomicBool::new(true)),
-                dns_resolver,
             },
             ctrl_rx,
         )
@@ -233,7 +230,6 @@ impl Dispatcher {
             None,
             HashMap::new(),
             Arc::clone(&self.ready),
-            Arc::clone(&self.dns_resolver),
         ))
     }
 }
@@ -590,10 +586,6 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
             if digest == applied
     ));
     assert_eq!(dispatcher.mcp_runtime.proxy_policy.snapshot().digest(), applied);
-    assert_eq!(
-        dispatcher.dns_resolver.upstreams(),
-        vec!["127.0.0.1:5353".parse().unwrap()]
-    );
 
     service_tx
         .send(ServiceToProcess::McpListServers { id: 15 })

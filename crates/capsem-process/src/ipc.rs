@@ -141,7 +141,6 @@ pub(crate) async fn handle_ipc_connection(
     mcp_builtin_binary: Option<PathBuf>,
     mcp_builtin_env: HashMap<String, String>,
     vm_ready: Arc<AtomicBool>,
-    dns_resolver: Arc<capsem_core::net::dns::DnsResolver>,
 ) -> Result<()> {
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
@@ -677,7 +676,6 @@ pub(crate) async fn handle_ipc_connection(
                 let reply = match runtime_source.load() {
                     Ok(runtime_config) => {
                         let digest = runtime_config.active_policy_digest.clone();
-                        dns_resolver.replace_upstreams(runtime_config.dns_upstreams.clone());
                         runtime_config.apply(&net_state, &mcp_runtime);
                         ProcessToService::ConfigReloadResult {
                             id,
