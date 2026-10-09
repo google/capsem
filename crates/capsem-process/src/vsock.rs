@@ -17,7 +17,6 @@ mod clone_state;
 #[cfg(test)]
 use audit::handle_audit_frame;
 use audit::serve_audit_records;
-mod dns;
 mod handshake;
 mod streams;
 use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
@@ -856,7 +855,17 @@ fn dispatch_aux_connection(
         Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
         Some(HostVsockService::Network) => streams::serve_network(conn, job_store, vm_id),
         Some(HostVsockService::SniProxy) => streams::serve_mitm(conn, Arc::clone(mitm_config)),
-        Some(HostVsockService::DnsProxy) => dns::serve(conn, dns_handler, db, security_rules),
+        Some(HostVsockService::DnsProxy) => match conn.try_clone_fd() {
+            Ok(descriptor) => {
+                let handler = Arc::clone(dns_handler);
+                let db = Arc::clone(db);
+                let policy = mitm_config.engine.policy().clone();
+                tokio::spawn(async move {
+                    capsem_core::net::dns::session::serve_dns_session(descriptor, handler, db, policy).await;
+                });
+            }
+            Err(error) => warn!(%error, "DNS port: cannot duplicate the session descriptor"),
+        },
         Some(HostVsockService::Exec) => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {
