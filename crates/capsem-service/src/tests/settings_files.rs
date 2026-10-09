@@ -518,7 +518,7 @@ async fn wait_for_vm_ready_uses_tight_poll_contract_and_detects_ready() {
     let ready_clone = ready_path.clone();
     let creator = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        std::fs::write(&ready_clone, b"").unwrap();
+        std::fs::write(&ready_clone, b"ready\n").unwrap();
     });
 
     wait_for_vm_ready(&uds_path, 30, None, None)
