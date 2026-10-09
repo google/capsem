@@ -65,6 +65,11 @@ fn events_round_trip_generation_and_grant_identity() {
             grant_id: 43,
             reason: ProxyControlRejection::DuplicateCapability,
         },
+        ProxyControlEvent::Rejected {
+            generation: GENERATION,
+            grant_id: 45,
+            reason: ProxyControlRejection::NotReady,
+        },
         ProxyControlEvent::Closed {
             generation: GENERATION,
             grant_id: 44,
