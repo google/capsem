@@ -242,6 +242,25 @@ async fn spawn_proxy(config: Arc<MitmProxyConfig>) -> (tokio::task::JoinHandle<(
 
     (handle, addr)
 }
+
+/// Spawn the standalone model adapter for exactly one accepted connection.
+async fn spawn_standalone_proxy(
+    config: Arc<MitmProxyConfig>,
+    provider_id: &str,
+) -> (tokio::task::JoinHandle<()>, std::net::SocketAddr) {
+    let target = mitm_proxy::StandaloneModelTarget::from_registry(
+        config.engine.policy().snapshot().model_endpoints(),
+        provider_id,
+    )
+    .expect("configured standalone provider");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        mitm_proxy::handle_standalone_connection(stream.into_std().unwrap().into(), config, target).await;
+    });
+    (handle, addr)
+}
 #[tokio::test]
 async fn mitm_proxy_allows_hermetic_upstream() {
     let (upstream_port, upstream_task) = spawn_fake_upstream(|mut sock| {
@@ -1178,6 +1197,52 @@ async fn mitm_proxy_plain_http_preserves_host_header_to_upstream() {
         host_line_present,
         "upstream did not receive the inbound Host header verbatim. Saw:\n{head}"
     );
+}
+
+#[tokio::test]
+async fn standalone_proxy_ignores_client_host_and_pins_configured_provider() {
+    let received: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received_for_serve = Arc::clone(&received);
+    let (upstream_port, upstream_task) = spawn_fake_upstream(move |mut sock| {
+        Box::pin(async move {
+            let bytes = read_http11_request(&mut sock).await;
+            *received_for_serve.lock().unwrap() = bytes.clone();
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await
+                .unwrap();
+            bytes
+        })
+    })
+    .await;
+    let (config, db) = make_proxy_config_with_local_http_upstream("api.openai.com", upstream_port);
+    let (proxy_task, proxy_addr) = spawn_standalone_proxy(config, "openai").await;
+
+    let mut client = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
+    client
+        .write_all(b"POST /v1/responses HTTP/1.1\r\nHost: attacker.invalid:22\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+        .await
+        .unwrap();
+    let mut response = Vec::new();
+    client.read_to_end(&mut response).await.unwrap();
+
+    upstream_task.await.unwrap();
+    proxy_task.await.unwrap();
+    db.flush().await;
+
+    assert!(String::from_utf8_lossy(&response).contains("200 OK"));
+    let request = String::from_utf8_lossy(&received.lock().unwrap()).to_ascii_lowercase();
+    assert!(
+        request.contains("host: api.openai.com"),
+        "configured Host missing: {request}"
+    );
+    assert!(
+        !request.contains("attacker.invalid"),
+        "client Host reached upstream: {request}"
+    );
+    let events = db.reader().unwrap().recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].domain, "api.openai.com");
+    assert_eq!(events[0].port, 443);
 }
 
 /// T2.2: a request to a plain-HTTP upstream that fails to dial

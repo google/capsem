@@ -3,6 +3,90 @@ use crate::net::policy::NetworkMechanics;
 use crate::net::policy_config::{SecurityRuleAction, SecurityRuleProfile, SecurityRuleSet};
 
 #[test]
+fn standalone_target_uses_only_the_configured_provider_authority() {
+    let profile = crate::net::policy_config::ProviderRuleProfile::parse_toml(
+        r#"
+[ai.openai]
+name = "OpenAI"
+protocol = "openai"
+url = "https://api.openai.com/v1"
+listen_ports = [443]
+
+[ai.openai.rules.allow]
+name = "allow"
+action = "allow"
+match = 'http.host == "api.openai.com"'
+"#,
+    )
+    .expect("provider profile parses");
+    let registry = profile.endpoint_registry().expect("registry builds");
+
+    let target = StandaloneModelTarget::from_registry(&registry, "openai").expect("target builds");
+
+    assert_eq!(target.provider_id(), "openai");
+    assert_eq!(target.domain(), "api.openai.com");
+    assert_eq!(target.port(), 443);
+    assert_eq!(target.upstream_protocol(), Protocol::Tls);
+    assert_eq!(target.base_path(), "/v1");
+    assert_eq!(target.provider(), ProviderKind::OpenAi);
+    assert_eq!(target.model_protocol(), ModelProtocol::OpenAi);
+}
+
+#[test]
+fn standalone_target_supports_configured_plain_http_and_explicit_port() {
+    let profile = crate::net::policy_config::ProviderRuleProfile::parse_toml(
+        r#"
+[ai.local]
+name = "Local"
+protocol = "openai"
+url = "http://model.internal:8080/openai/v1/"
+listen_ports = [8080]
+
+[ai.local.rules.allow]
+name = "allow"
+action = "allow"
+match = 'http.host == "model.internal"'
+"#,
+    )
+    .expect("provider profile parses");
+    let registry = profile.endpoint_registry().expect("registry builds");
+
+    let target = StandaloneModelTarget::from_registry(&registry, "local").expect("target builds");
+
+    assert_eq!(target.domain(), "model.internal");
+    assert_eq!(target.port(), 8080);
+    assert_eq!(target.upstream_protocol(), Protocol::Http);
+    assert_eq!(target.base_path(), "/openai/v1");
+}
+
+#[test]
+fn standalone_target_rejects_missing_or_unsafe_provider_urls() {
+    let profile = crate::net::policy_config::ProviderRuleProfile::parse_toml(
+        r#"
+[ai.unsafe]
+name = "Unsafe"
+protocol = "openai"
+url = "https://user:secret@example.com/v1?redirect=other"
+listen_ports = [443]
+
+[ai.unsafe.rules.allow]
+name = "allow"
+action = "allow"
+match = 'http.host == "example.com"'
+"#,
+    )
+    .expect("provider profile parses");
+    let registry = profile.endpoint_registry().expect("registry builds");
+
+    assert!(StandaloneModelTarget::from_registry(&registry, "missing")
+        .unwrap_err()
+        .contains("not configured"));
+    assert!(StandaloneModelTarget::from_registry(&registry, "unsafe")
+        .unwrap_err()
+        .contains("credentials, query, or fragment"));
+}
+
+#[test]
 fn collected_gzip_chunked_response_headers_are_materialized() {
     let mut headers = http::HeaderMap::new();
     headers.insert(http::header::CONTENT_ENCODING, http::HeaderValue::from_static("gzip"));
