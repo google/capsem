@@ -634,7 +634,7 @@ pub(crate) async fn handle_ipc_connection(
             message @ ServiceToProcess::LogFileBoundary { .. } => {
                 file_boundary::spawn(&net_state, &mcp_runtime, &ipc_tx_out, message);
             }
-            ServiceToProcess::CloneState { id, destination } => {
+            ServiceToProcess::CloneState { id } => {
                 let job_store = job_store.clone();
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
@@ -643,7 +643,7 @@ pub(crate) async fn handle_ipc_connection(
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(
                         "ctrl_clone_state",
-                        ctrl_tx.send(ServiceToProcess::CloneState { id, destination }).await
+                        ctrl_tx.send(ServiceToProcess::CloneState { id }).await
                     );
                     let result = match tokio::time::timeout(CLONE_STATE_TIMEOUT, j_rx).await {
                         Ok(Ok(JobResult::CloneState { result })) => result,
@@ -665,6 +665,16 @@ pub(crate) async fn handle_ipc_connection(
                             .await
                     );
                 });
+            }
+            ServiceToProcess::CloneStateComplete { id, size_bytes, error } => {
+                let result = match (size_bytes, error) {
+                    (Some(size), None) => Ok(size),
+                    (None, Some(error)) => Err(error),
+                    _ => Err("coordinator returned an invalid clone completion".to_string()),
+                };
+                if let Err(error) = job_store.complete_clone(id, result) {
+                    warn!(id, %error, "clone completion refused");
+                }
             }
             ServiceToProcess::ReloadConfig { id } => {
                 info!(

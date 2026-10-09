@@ -479,7 +479,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let ipc_tx_for_cmd = ipc_tx.clone();
     let vm_id_for_cmd = vm_id_original;
     let vm_handle_for_cmd = vm_handle_original;
-    let db_for_cmd = Arc::clone(&db);
     let pty_log_for_cmd = pty_log.clone();
     let shutdown_for_cmd = Arc::clone(&shutdown);
     let exec_dispatch = exec_dispatch::ExecDispatch {
@@ -563,8 +562,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         .insert(id, ActiveFileOp::Read { path: path.clone() });
                     capsem_core::try_send!("hub_file_read", hub_tx.send(HostToGuest::FileRead { id, path }).await);
                 }
-                ServiceToProcess::CloneState { id, destination } => {
-                    clone_state::spawn(&hub_tx, &js_for_cmd, &db_for_cmd, &session_dir, id, destination);
+                ServiceToProcess::CloneState { id } => {
+                    clone_state::spawn(&hub_tx, &js_for_cmd, &ipc_tx_for_cmd, id);
                 }
                 ServiceToProcess::Suspend { checkpoint_path } => {
                     let full_path = session_dir.join(checkpoint_path);
