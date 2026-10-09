@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use capsem_core::net::policy::{UpstreamOverride, UpstreamOverrideProtocol};
 use capsem_core::net::policy_config::{ActivePolicyFile, SettingsFile};
+use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use capsem_proto::upstream_grant::{
     decode_upstream_grant_response, encode_upstream_grant_request, UpstreamGrantResponse,
 };
@@ -14,6 +15,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use super::*;
 use crate::instance::WorkerAuthority;
+use crate::ledger_worker::LedgerClient;
 
 struct TestClient {
     requests: WireSender,
@@ -79,6 +81,31 @@ fn start_broker(
         pending.updates,
         authority.grant(),
         pending.session_dir,
+        pending.ledger,
+    ));
+    (client, publisher, authority, task)
+}
+
+fn start_broker_with_ledger(
+    policy: Arc<BrokerPolicy>,
+    ledger: LedgerClient,
+) -> (
+    TestClient,
+    PolicyPublisher,
+    WorkerAuthority,
+    tokio::task::JoinHandle<Result<(), String>>,
+) {
+    let (pending, publisher) = PendingBroker::pair(policy).unwrap();
+    let pending = pending.with_ledger(ledger);
+    let client = TestClient::new(pending.worker);
+    let authority = WorkerAuthority::default();
+    let task = tokio::spawn(run(
+        pending.coordinator,
+        pending.initial_policy,
+        pending.updates,
+        authority.grant(),
+        pending.session_dir,
+        pending.ledger,
     ));
     (client, publisher, authority, task)
 }
@@ -101,8 +128,100 @@ fn start_broker_for_session(
         pending.updates,
         authority.grant(),
         pending.session_dir,
+        pending.ledger,
     ));
     (client, publisher, authority, task)
+}
+
+#[tokio::test]
+async fn ledger_grant_is_exact_single_use_and_releases_the_broker_copy_after_adoption() {
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([0x4d; 16]), 77, LedgerClientRole::VmOwner).unwrap();
+    let (ledger, worker_peer) = LedgerClient::test_pair(grant).unwrap();
+    let (client, _publisher, authority, task) = start_broker_with_ledger(test_policy("policy-a", None, vec![]), ledger);
+
+    let (response, mut fds) = client
+        .request(&UpstreamGrantRequest::OpenLedger { request_id: 1 })
+        .await;
+    assert_eq!(response, UpstreamGrantResponse::LedgerGranted { request_id: 1, grant });
+    let granted = UnixStream::from(fds.pop().unwrap());
+    client
+        .send(&UpstreamGrantRequest::Adopted {
+            grant_id: grant.client_id(),
+        })
+        .await;
+
+    let (response, fds) = client
+        .request(&UpstreamGrantRequest::OpenLedger { request_id: 2 })
+        .await;
+    assert!(fds.is_empty());
+    assert_eq!(
+        response,
+        UpstreamGrantResponse::Denied {
+            request_id: 2,
+            reason: UpstreamGrantDenial::InvalidResource,
+        }
+    );
+
+    drop(granted);
+    worker_peer.set_nonblocking(true).unwrap();
+    let mut worker_peer = tokio::net::UnixStream::from_std(worker_peer).unwrap();
+    let mut byte = [0_u8; 1];
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), worker_peer.read(&mut byte))
+            .await
+            .expect("ledger peer observes descriptor close")
+            .unwrap(),
+        0
+    );
+    stop_broker(authority, task).await;
+}
+
+#[tokio::test]
+async fn ledger_request_without_a_coordinator_grant_is_denied() {
+    let (client, _publisher, authority, task) = start_broker(test_policy("policy-a", None, vec![]));
+    let (response, fds) = client
+        .request(&UpstreamGrantRequest::OpenLedger { request_id: 1 })
+        .await;
+    assert!(fds.is_empty());
+    assert_eq!(
+        response,
+        UpstreamGrantResponse::Denied {
+            request_id: 1,
+            reason: UpstreamGrantDenial::NotConfigured,
+        }
+    );
+    stop_broker(authority, task).await;
+}
+
+#[tokio::test]
+async fn policy_updates_do_not_revoke_a_pending_ledger_grant() {
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([0x37; 16]), 91, LedgerClientRole::VmOwner).unwrap();
+    let (ledger, worker_peer) = LedgerClient::test_pair(grant).unwrap();
+    let (client, publisher, authority, task) = start_broker_with_ledger(test_policy("policy-a", None, vec![]), ledger);
+    let (response, mut fds) = client
+        .request(&UpstreamGrantRequest::OpenLedger { request_id: 1 })
+        .await;
+    assert_eq!(response, UpstreamGrantResponse::LedgerGranted { request_id: 1, grant });
+
+    publisher.publish(test_policy("policy-b", None, vec![])).await.unwrap();
+    client
+        .send(&UpstreamGrantRequest::Adopted {
+            grant_id: grant.client_id(),
+        })
+        .await;
+
+    drop(fds.pop().unwrap());
+    worker_peer.set_nonblocking(true).unwrap();
+    let mut worker_peer = tokio::net::UnixStream::from_std(worker_peer).unwrap();
+    let mut byte = [0_u8; 1];
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), worker_peer.read(&mut byte))
+            .await
+            .expect("ledger peer observes descriptor close after policy update")
+            .unwrap(),
+        0
+    );
+    stop_broker(authority, task).await;
 }
 
 #[tokio::test]

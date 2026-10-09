@@ -179,6 +179,12 @@ impl LedgerClient {
     pub(crate) fn into_parts(self) -> (UnixStream, LedgerChannelGrant) {
         (self.stream, self.grant)
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_pair(grant: LedgerChannelGrant) -> io::Result<(Self, UnixStream)> {
+        let (stream, worker) = UnixStream::pair()?;
+        Ok((Self { stream, grant }, worker))
+    }
 }
 
 #[derive(Clone)]
