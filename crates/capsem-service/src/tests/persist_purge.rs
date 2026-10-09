@@ -100,7 +100,7 @@ async fn persist_refuses_a_duplicate_id_and_leaves_the_instance_ephemeral() {
     let error = persist(&state, "persist-src", "fresh-name")
         .await
         .expect_err("duplicate id must be refused");
-    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR, "{}", error.1);
+    assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", error.body.error);
 
     assert_still_ephemeral(&state, "persist-src", &session_dir);
     let (claimed, entries) = {
@@ -130,10 +130,10 @@ async fn racing_persists_on_one_name_leave_one_entry_and_no_orphan() {
             Ok(_) => winners.push(id),
             Err(error) => {
                 assert_eq!(
-                    error.0,
+                    error.status,
                     StatusCode::CONFLICT,
                     "loser must see a name conflict: {}",
-                    error.1
+                    error.body.error
                 );
                 losers.push(id);
             }

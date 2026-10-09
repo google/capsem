@@ -16,7 +16,7 @@ async fn restart_acknowledges_acceptance_and_requires_new_gateway_credentials() 
     assert_eq!(
         accept_restart(&state, Some(api::ServiceManager::Launchd))
             .unwrap_err()
-            .0,
+            .status,
         StatusCode::CONFLICT
     );
 }
@@ -25,14 +25,14 @@ async fn restart_acknowledges_acceptance_and_requires_new_gateway_credentials() 
 async fn restart_refuses_unmanaged_service_or_active_launch_without_notifying_shutdown() {
     let state = make_test_state();
     assert_eq!(
-        accept_restart(&state, None).unwrap_err().0,
+        accept_restart(&state, None).unwrap_err().status,
         StatusCode::SERVICE_UNAVAILABLE
     );
     let launch = state.lifecycle.admit().unwrap();
     assert_eq!(
         accept_restart(&state, Some(api::ServiceManager::Systemd))
             .unwrap_err()
-            .0,
+            .status,
         StatusCode::CONFLICT
     );
     drop(launch);
@@ -57,7 +57,7 @@ async fn restart_refuses_active_vms_without_changing_their_registry() {
     assert_eq!(
         accept_restart(&state, Some(api::ServiceManager::Systemd))
             .unwrap_err()
-            .0,
+            .status,
         StatusCode::CONFLICT
     );
     assert_eq!(state.instances.lock().unwrap()["active"].pid, before);

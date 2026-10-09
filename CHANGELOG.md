@@ -1126,6 +1126,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ErrorResponse` adds an optional typed `code: ErrorCode` (`"create_timeout"`,
+  `"exec_timeout"`, `"vm_not_found"`), `vm_id`, and `timeout_secs` on the HTTP
+  error wire contract, with service-side exec timeouts returning HTTP 504
+  (`StatusCode::GATEWAY_TIMEOUT`). The Python SDK adds host gateway discovery
+  (`discover_gateway`, `capsem_run_dir`, `GatewayEndpoint`,
+  `Hypervisor.connect`, and optional `url`/`token`/`run_dir` on `Hypervisor`
+  and `VM` resolving `CAPSEM_GATEWAY_URL`, `CAPSEM_GATEWAY_TOKEN`, and
+  `<run_dir>/gateway.{port,token}`) and structured exceptions
+  (`CapsemError`, `CapsemTimeoutError`, `CreateTimeoutError`,
+  `ExecTimeoutError`, and `VmNotFoundError`) dispatched from
+  `HttpError.code` (`models.ErrorCode`). The Python and TypeScript SDKs also
+  export `MAX_REQUEST_BODY_BYTES` and `CREATE_READY_SECS` guarded by Citadel
+  against the service and API constants.
 - `POST /vms/create` (`ProvisionRequest`) and `POST /vms/{id}/fork` (`ForkRequest`)
   accept optional advisory `labels` (`<= 64` entries, ASCII keys `1..=64`
   matching the VM-name rule `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`, values `<= 255`

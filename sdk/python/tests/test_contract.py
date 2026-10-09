@@ -12,6 +12,12 @@ from typing import Any
 import pytest
 from capsem import _operations, models
 from capsem._transport import Transport
+from capsem.execution import (
+    CREATE_READY_SECS,
+    EXEC_TIMEOUT_CEILING_SECS,
+    GATEWAY_REQUEST_BUDGET_SECS,
+    MAX_REQUEST_BODY_BYTES,
+)
 from pydantic import TypeAdapter, ValidationError
 
 from .test_transport import gateway
@@ -19,6 +25,13 @@ from .test_transport import gateway
 SPEC = json.loads((Path(__file__).resolve().parents[2] / "specification/openapi.json").read_text())
 SCHEMAS = SPEC["components"]["schemas"]
 OPERATIONS = [operation for methods in SPEC["paths"].values() for operation in methods.values()]
+
+
+def test_execution_mirrors_gateway_and_service_limits() -> None:
+    assert EXEC_TIMEOUT_CEILING_SECS == 60 * 60
+    assert GATEWAY_REQUEST_BUDGET_SECS == 120
+    assert CREATE_READY_SECS == 110
+    assert MAX_REQUEST_BODY_BYTES == 10 * 1024 * 1024
 
 
 def sample(schema: dict[str, Any]) -> object:

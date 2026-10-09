@@ -51,7 +51,7 @@ pub(super) fn route_query_objects(
             error = %error,
             "session ledger route DB query returned invalid JSON"
         );
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("{ledger} ledger query {query_name} returned invalid json for {vm_id}: {error}"),
         )
@@ -89,7 +89,7 @@ pub(super) async fn query_route_objects(
             error = %error,
             "session ledger route DB query failed"
         );
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("{ledger} ledger query {query_name} failed for {vm_id}: {error}"),
         )
@@ -123,7 +123,7 @@ where
                     error = %error,
                     "session ledger route DB query mapping failed"
                 );
-                AppError(
+                AppError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("{ledger} ledger query {query_name} mapping failed for {vm_id}: {error}"),
                 )

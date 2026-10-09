@@ -34,6 +34,7 @@ from .credential_inject_response import (
 from .credential_outcome import CredentialOutcome as CredentialOutcome
 from .credential_storage import CredentialStorage as CredentialStorage
 from .dns_event import DnsEvent as DnsEvent
+from .error_code import ErrorCode as ErrorCode
 from .error_event import ErrorEvent as ErrorEvent
 from .error_response import ErrorResponse as ErrorResponse
 from .event_bodies_response import EventBodiesResponse as EventBodiesResponse

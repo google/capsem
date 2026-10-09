@@ -269,10 +269,16 @@ fn logs_response_roundtrip() {
 fn error_response_roundtrip() {
     let r = ErrorResponse {
         error: "sandbox not found".into(),
+        code: Some(ErrorCode::VmNotFound),
+        vm_id: Some("vm-1".into()),
+        timeout_secs: None,
     };
     let json = serde_json::to_string(&r).unwrap();
+    assert!(!json.contains("timeout_secs"));
     let r2: ErrorResponse = serde_json::from_str(&json).unwrap();
     assert!(r2.error.contains("not found"));
+    assert_eq!(r2.code, Some(ErrorCode::VmNotFound));
+    assert_eq!(r2.vm_id.as_deref(), Some("vm-1"));
 }
 
 #[test]

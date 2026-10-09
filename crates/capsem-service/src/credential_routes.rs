@@ -9,7 +9,7 @@ pub(crate) async fn inject(
     payload: Result<Json<api::CredentialInjectRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<api::CredentialInjectResponse>, AppError> {
     let Json(request) =
-        payload.map_err(|_| AppError(StatusCode::BAD_REQUEST, "invalid credential injection request".into()))?;
+        payload.map_err(|_| AppError::new(StatusCode::BAD_REQUEST, "invalid credential injection request".into()))?;
     let storage = request.storage;
     let reference = state
         .off_worker(move |_| {
@@ -25,7 +25,7 @@ pub(crate) async fn inject(
             CredentialStore::global().inject(provider, &request.value, persistence)
         })
         .await?
-        .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
+        .map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error))?;
     if storage == api::CredentialStorage::Memory {
         let paths: Vec<_> = state
             .instances
@@ -36,7 +36,7 @@ pub(crate) async fn inject(
             .collect();
         for path in paths {
             sync_memory(&state, &path).await.map_err(|_| {
-                AppError(
+                AppError::new(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "credential stored in service memory; a VM owner has not acknowledged injection; retry explicitly"
                         .into(),

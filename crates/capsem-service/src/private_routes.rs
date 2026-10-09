@@ -49,7 +49,7 @@ fn owner_of(state: &ServiceState, vm: &str, secret: &str) -> Result<(), AppError
         .map(|instance| instance.owner_secret.clone());
     match expected {
         Some(minted) if secrets_match(secret, &minted) => Ok(()),
-        _ => Err(AppError(
+        _ => Err(AppError::new(
             StatusCode::FORBIDDEN,
             format!("VM {vm} has no running owner presenting this secret"),
         )),
@@ -137,13 +137,13 @@ pub(super) async fn handle_private_resolve(
         }
         (None, Some(address)) => visible.iter().find(|member| member.address == address),
         _ => {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::BAD_REQUEST,
                 "resolve names exactly one of a name or an address".into(),
             ))
         }
     };
-    let member = found.ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no such member".into()))?;
+    let member = found.ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, "no such member".into()))?;
     Ok(Json(PrivateResolveResponse {
         name: member.full_name(),
         address: member.address,

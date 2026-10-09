@@ -450,7 +450,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     {
         return Ok(());
     }
-    let uds_path = running_uds_path(state, id).map_err(|e| e.1)?;
+    let uds_path = running_uds_path(state, id).map_err(AppError::into_message)?;
     let reply = send_ipc_command(
         &uds_path,
         ServiceToProcess::Exec {
@@ -532,7 +532,10 @@ pub(crate) async fn grant_surface(state: &Arc<ServiceState>, id: &str, generatio
     }
     let exposure = match crate::router_runtime::exposures::create_exposure(state, id, request).await {
         Ok(exposure) => exposure,
-        Err(AppError(status, error)) => {
+        Err(AppError {
+            status,
+            body: ErrorResponse { error, .. },
+        }) => {
             warn!(vm_id = id, %status, %error, "container surface exposure refused");
             return;
         }
@@ -550,7 +553,11 @@ pub(crate) async fn grant_surface(state: &Arc<ServiceState>, id: &str, generatio
             Path((id.to_owned(), exposure.id.clone())),
         )
         .await;
-        if let Err(AppError(status, error)) = revoked {
+        if let Err(AppError {
+            status,
+            body: ErrorResponse { error, .. },
+        }) = revoked
+        {
             if status != StatusCode::NOT_FOUND {
                 warn!(vm_id = id, exposure_id = exposure.id.as_str(), %status, %error, "late container exposure could not be revoked");
             }
@@ -650,18 +657,12 @@ pub(crate) async fn wait_for_create(
 /// Create, resume and carried-image clones share the same workload barrier.
 /// A timeout leaves setup with its service owner; terminal failures are errors.
 pub(crate) async fn require_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
-    let status = wait_for_create(state, id).await.map_err(|timed_out| {
-        warn!(vm_id = id, attempts = timed_out.attempts, "container workload readiness timed out");
-        AppError(
-            StatusCode::GATEWAY_TIMEOUT,
-            format!(
-                "container workload for VM {id} did not become ready before the HTTP deadline; setup continues under service ownership"
-            ),
-        )
-    })?;
+    let status = wait_for_create(state, id)
+        .await
+        .map_err(|t| AppError::create_timeout(id, t.attempts))?;
     match status.state {
         ContainerState::Running | ContainerState::Staged => Ok(()),
-        ContainerState::Exited | ContainerState::Failed => Err(AppError(
+        ContainerState::Exited | ContainerState::Failed => Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
                 "container workload for VM {id} reached {:?}: {}",
@@ -700,7 +701,7 @@ async fn wait_observed(
 }
 
 pub(crate) fn record_launched(state: &ServiceState, id: &str) -> Result<(), String> {
-    let session_dir = resolve_session_dir(state, id).map_err(|e| e.1)?;
+    let session_dir = resolve_session_dir(state, id).map_err(AppError::into_message)?;
     let Some(record) = state.containers.launch_record(id) else {
         return Ok(());
     };
@@ -744,7 +745,7 @@ pub(crate) async fn handle_container_status(
         .off_worker(move |state| observe(&state, &id, live))
         .await??
         .map(Json)
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "VM has no container workload".into()))
+        .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, "VM has no container workload".into()))
 }
 
 fn observe(
@@ -820,7 +821,7 @@ async fn share_image(
         .containers
         .work_lease(id, generation)
         .ok_or("container share cancelled")?;
-    let session_dir = resolve_session_dir(state, id).map_err(|e| e.1)?;
+    let session_dir = resolve_session_dir(state, id).map_err(AppError::into_message)?;
     let (root, files) = (image.root.clone(), image.files.clone());
     tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
         let _lease = lease;
@@ -878,14 +879,14 @@ async fn stage_file(
             Ok::<_, AppError>((parent, name, lease))
         })
         .await
-        .map_err(|e| e.1)?
-        .map_err(|e| e.1)?;
+        .map_err(AppError::into_message)?
+        .map_err(AppError::into_message)?;
     let preview = file_security_preview_bytes(&file.bytes);
     let size = file.bytes.len() as u64;
-    let uds_path = running_uds_path(state, id).map_err(|e| e.1)?;
+    let uds_path = running_uds_path(state, id).map_err(AppError::into_message)?;
     if log_file_boundary_on_owner(state, &uds_path, FileBoundaryAction::Import, path, preview, size, None)
         .await
-        .map_err(|e| e.1)?
+        .map_err(AppError::into_message)?
         .is_some()
     {
         return Err(format!("file import policy rewrote staged image file {}", file.name));

@@ -40,15 +40,16 @@ python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 90 -- \
 Focused source tests do not need this package build. Clean-install checks use
 the prewarmed offline dependency cache and remove their runtime environments.
 
-An async client for the Capsem HTTP gateway. It takes an explicit gateway URL
-and bearer token; it does not discover services, open local service sockets,
-or run host commands.
+An async client for the Capsem HTTP gateway. Pass an explicit gateway URL and
+bearer token, or omit either to resolve them via `discover_gateway()` from
+`CAPSEM_GATEWAY_URL`, `CAPSEM_GATEWAY_TOKEN`, and `<run_dir>/gateway.{port,token}`
+(`CAPSEM_RUN_DIR`, `CAPSEM_HOME/run`, or `~/.capsem/run`).
 
 ```python
 from capsem import Hypervisor, VM
 from capsem.models import HostLogSource, TimelineLayer
 
-async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
+async with Hypervisor.connect(timeout=120) as hv:
     overview = await hv.info()  # health, versions, assets, updates
     network = await hv.networks.create("private")
     vm = await hv.create(
@@ -104,17 +105,23 @@ from `capsem`. Omitted or `None` target keeps the service default: workload
 when present, otherwise VM. A refused workload target is returned as an error;
 the SDK does not switch targets or replay the command.
 
-Objects and enums live in `capsem.models`. `HttpError` exposes the gateway's
-HTTP `status` and response `body`; invalid typed responses raise Pydantic
-`ValidationError`. HTTP `timeout` is the client deadline, while `exec`'s
-`timeout_secs` is the command deadline sent to the gateway. Choose an HTTP
-deadline long enough for the command. Mutations are never automatically retried.
-Create, `start`, and `resume` use at least 230 seconds for workload readiness
-and the gateway budget, retaining a larger configured client deadline.
-Cancelling their coroutine cancels the request without replaying the mutation.
-Printing an execution result prints its decoded stdout. `stdout_bytes` and
-`stderr_bytes` preserve exact bytes regardless of whether the wire value uses
-UTF-8 or base64; the exit code and typed wire fields remain available.
+Objects and enums live in `capsem.models`. `CapsemError` is the base SDK
+exception. `HttpError` exposes the gateway's HTTP `status`, response `body`,
+parsed `response` (`ErrorResponse | None`), and `code` (`ErrorCode | None`);
+`CapsemTimeoutError` (`CreateTimeoutError`, `ExecTimeoutError`) and
+`VmNotFoundError` provide structured fields (`vm_id`, `vm_name`, `vm`,
+`deadline_secs`, `command`, `timeout_secs`, `status`, `body`) while remaining
+subclasses of `TimeoutError`/`LookupError`. Invalid typed
+responses raise Pydantic `ValidationError`. HTTP `timeout` is the client
+deadline, while `exec`'s `timeout_secs` is the command deadline sent to the
+gateway. Choose an HTTP deadline long enough for the command. Mutations are
+never automatically retried. Create, `start`, and `resume` use at least 230
+seconds for workload readiness and the gateway budget, retaining a larger
+configured client deadline. Cancelling their coroutine cancels the request
+without replaying the mutation. Printing an execution result prints its decoded
+stdout. `stdout_bytes` and `stderr_bytes` preserve exact bytes regardless of
+whether the wire value uses UTF-8 or base64; the exit code and typed wire
+fields remain available.
 
 A VM selected by name resolves once, then retains its canonical ID. Handles
 returned by `create` and `fork` share their parent's connection. Close the

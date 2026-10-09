@@ -63,7 +63,21 @@ pub struct LogsResponse {
     pub process_logs: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    VmNotFound,
+    CreateTimeout,
+    ExecTimeout,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<ErrorCode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
 }

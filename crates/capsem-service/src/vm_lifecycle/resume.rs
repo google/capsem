@@ -10,7 +10,7 @@ pub(crate) async fn handle_resume(
     let _launch = state
         .lifecycle
         .admit()
-        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::CONFLICT, e.to_string()))?;
     // See handle_suspend: same lock, same reason. Restore happens in the
     // freshly spawned capsem-process's boot, so the lock must bridge the
     // spawn and the readiness sentinel for a sibling save_state not to
@@ -30,7 +30,7 @@ pub(crate) async fn handle_resume(
         Ok(resumed_id) => {
             let uds_path = state
                 .instance_socket_path(&resumed_id)
-                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await {
                 error!(id, error = %e, "resume ready-wait failed");
                 if attempted_checkpoint {
@@ -50,12 +50,12 @@ pub(crate) async fn handle_resume(
                         Ok(cold_id) => {
                             let cold_uds_path = state
                                 .instance_socket_path(&cold_id)
-                                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                                .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
                             if let Err(cold_e) =
                                 wait_for_vm_ready(&cold_uds_path, 30, Some(&state), Some(&cold_id)).await
                             {
                                 error!(id, "cold resume fallback failed after warm restore failure: {cold_e}");
-                                return Err(AppError(
+                                return Err(AppError::new(
                                     StatusCode::INTERNAL_SERVER_ERROR,
                                     format!(
                                         "resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"
@@ -74,14 +74,14 @@ pub(crate) async fn handle_resume(
                                 id,
                                 "cold resume fallback spawn failed after warm restore failure: {cold_e}"
                             );
-                            return Err(AppError(
+                            return Err(AppError::new(
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 format!("resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"),
                             ));
                         }
                     }
                 }
-                return Err(AppError(
+                return Err(AppError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("resume failed: {e}"),
                 ));
@@ -95,7 +95,11 @@ pub(crate) async fn handle_resume(
         }
         Err(e) => {
             error!(id, error = %e, "resume failed");
-            Err(AppError(StatusCode::NOT_FOUND, format!("resume failed: {e}")))
+            let mut err = AppError::new(StatusCode::NOT_FOUND, format!("resume failed: {e}"));
+            if find_persistent_entry_by_route_id(&state, &id).is_none() {
+                err = err.with_code(ErrorCode::VmNotFound).with_vm_id(&id);
+            }
+            Err(err)
         }
     }
 }

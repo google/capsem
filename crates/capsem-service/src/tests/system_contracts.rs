@@ -45,8 +45,8 @@ fn system_status_rejects_noncanonical_manifest_metadata_schema() {
 
     let error = read_manifest_metadata_status_document(&path).unwrap_err();
 
-    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(error.1.contains("capsem.manifest_metadata.v1"));
+    assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(error.body.error.contains("capsem.manifest_metadata.v1"));
 }
 
 #[tokio::test]

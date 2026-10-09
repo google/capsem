@@ -236,6 +236,9 @@ fn managed_adapter_refuses_named_or_persistent_requests_before_any_effect() {
         assert!(ManagedLifecycle::new(Arc::clone(&state), request, Arc::new(RefuseGrants)).is_err());
     }
     assert!(state.instances.lock().unwrap().is_empty());
+    assert!(super::app_error(AppError::new(StatusCode::CONFLICT, "busy".into()))
+        .to_string()
+        .contains("409"));
 }
 
 #[tokio::test]

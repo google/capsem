@@ -52,7 +52,7 @@ async fn session_counters(
     }
     let counters = match session_db(state, &info.id, "session status", db_path).await {
         Ok(db) => db.ledger_counters().await,
-        Err(error) => Err(error.1),
+        Err(error) => Err(error.body.error),
     };
     match counters {
         Ok(counters) => {

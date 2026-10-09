@@ -384,7 +384,7 @@ impl Effects for ManagedLifecycle {
 }
 
 fn app_error(error: AppError) -> anyhow::Error {
-    anyhow::anyhow!("service lifecycle operation failed ({})", error.0)
+    anyhow::anyhow!("service lifecycle operation failed ({})", error.status)
 }
 
 #[cfg(test)]

@@ -33,7 +33,7 @@ pub(crate) async fn handle_stream(
 ) -> Result<axum::response::Response, AppError> {
     let upgrade = upgrade.protocols([stream::STREAM_SUBPROTOCOL]);
     if upgrade.selected_protocol().is_none() {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
             format!(
                 "stream requires the {} WebSocket subprotocol",

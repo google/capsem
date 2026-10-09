@@ -15,7 +15,7 @@ pub(super) async fn preserve_failed_run_shutdown_result(
         return Ok(None);
     };
     if persistent {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("one-shot session {id} unexpectedly used persistent storage"),
         ));
@@ -23,7 +23,7 @@ pub(super) async fn preserve_failed_run_shutdown_result(
     tokio::task::spawn_blocking(move || state.preserve_failed_session_dir(&session_dir, &id))
         .await
         .map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("failed session preservation task: {error}"),
             )
@@ -53,7 +53,7 @@ async fn ensure_failed_session_preserved(
     })
     .await
     .map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed session preservation task: {error}"),
         )
@@ -78,13 +78,13 @@ pub(super) async fn finalize_one_shot_session(
     tokio::task::spawn_blocking(move || state.delete_session_dir(&session_dir))
         .await
         .map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("one-shot cleanup task failed: {error}"),
             )
         })?
         .map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("one-shot cleanup failed: {error:#}"),
             )
@@ -99,6 +99,6 @@ pub(super) async fn handle_preserve_failure(
     let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
     let _preserved = ensure_failed_session_preserved(Arc::clone(&state), id.clone(), shutdown_result)
         .await?
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        .ok_or_else(|| AppError::vm_not_found(&id))?;
     Ok(Json(json!({ "success": true })))
 }
