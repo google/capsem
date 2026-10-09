@@ -147,6 +147,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The authenticated gateway forwards standalone proxy create, heartbeat and
+  stop operations instead of returning 404 for documented SDK endpoints.
+
+- The authenticated gateway forwards host credential injection, so desktop
+  settings and TCP SDK clients can use file and memory storage.
+
+- Settings error text and negative badges remain readable on light and dark
+  surfaces without changing solid-button foregrounds.
+
+- Credential file-lock waits stop after five seconds instead of indefinitely
+  delaying startup or an explicit injection behind another writer.
+
+- Model tool records label observed WebSocket exchanges with their actual
+  transport while preserving HTTP and SSE labels.
+
+- Codex code-mode calls retain their tool namespace, input and linked results
+  in model telemetry. Text-array outputs preserve request metadata, and
+  Responses tool turns report tool-use completion.
+
+- WebSocket upgrade handshakes retain network telemetry without inflating
+  model call counts with an empty inference record.
+
 - Keep a confined proxy generation alive when an ordinary HTTP or DNS client
   disconnects, while still terminating it for unknown, stale or required
   capability closure events.

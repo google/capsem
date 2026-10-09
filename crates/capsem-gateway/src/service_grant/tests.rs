@@ -8,11 +8,13 @@ use tokio::io::AsyncReadExt;
 async fn grants_service_and_registry_named_owner_connections() {
     let (client, server) = UnixStream::pair().unwrap();
     let grants = GatewayGrantClient::start(client).unwrap();
+    let (release, released) = tokio::sync::oneshot::channel();
     let broker = tokio::spawn(async move {
         let requests =
             DescriptorReceiver::<GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_MAX_FDS>::new(server.try_clone().unwrap())
                 .unwrap();
         let responses = DescriptorSender::<GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_MAX_FDS>::new(server).unwrap();
+        let mut peers = Vec::new();
         for expected in [GatewayGrantKind::Service, GatewayGrantKind::OwnerHandoff] {
             let request = requests.recv().await.unwrap();
             let request = decode_gateway_grant_request(&request.bytes).unwrap();
@@ -29,7 +31,9 @@ async fn grants_service_and_registry_named_owner_connections() {
             });
             responses.send(&response, &[granted.as_raw_fd()]).await.unwrap();
             std::io::Write::write_all(&mut peer, &[kind_code(expected)]).unwrap();
+            peers.push(peer);
         }
+        let _ = released.await;
     });
 
     let mut service = grants.open_service().await.unwrap();
@@ -39,6 +43,7 @@ async fn grants_service_and_registry_named_owner_connections() {
     let mut owner = grants.open_owner("box".into()).await.unwrap();
     owner.read_exact(&mut byte).await.unwrap();
     assert_eq!(byte, [2]);
+    release.send(()).unwrap();
     broker.await.unwrap();
 }
 
