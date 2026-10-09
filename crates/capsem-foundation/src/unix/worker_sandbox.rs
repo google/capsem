@@ -78,7 +78,15 @@ pub fn confine(policy: &Policy) -> io::Result<()> {
 #[path = "worker_sandbox/linux.rs"]
 mod platform;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+#[path = "worker_sandbox/macos.rs"]
+mod platform;
+
+#[cfg(any(target_os = "macos", test))]
+#[path = "worker_sandbox/seatbelt.rs"]
+mod seatbelt;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 mod platform {
     use super::*;
 
