@@ -85,9 +85,9 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// credentials and descriptor handoff admission. Version 10 omits default
 /// fields from named MessagePack maps while decoding their absence as defaults.
 /// Version 11 removes the workspace snapshot status query and the unused
-/// service-to-owner freeze messages, and adds the owner-run `CloneState` for
-/// forks.
-/// Version 12 adds host-only memory credential injection and acknowledgement.
+/// service-to-owner freeze messages, and adds `CloneState` for forks.
+/// Version 12 makes cloning a coordinator operation bracketed by the owner's
+/// guest freeze, so no destination path crosses into the VM owner.
 pub const PROTOCOL_VERSION: u16 = 12;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).

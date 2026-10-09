@@ -60,9 +60,11 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
         ServiceToProcess::Suspend {
             checkpoint_path: "/tmp/checkpoint".into(),
         },
-        ServiceToProcess::CloneState {
+        ServiceToProcess::CloneState { id: 11 },
+        ServiceToProcess::CloneStateComplete {
             id: 11,
-            destination: "/tmp/fork".into(),
+            size_bytes: Some(4),
+            error: None,
         },
         ServiceToProcess::McpListServers { id: 5 },
         ServiceToProcess::McpListTools { id: 6 },
@@ -96,6 +98,7 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
         "StopTerminalStream",
         "Suspend",
         "CloneState",
+        "CloneStateComplete",
         "McpListServers",
         "McpListTools",
         "McpRefreshTools",
@@ -151,6 +154,7 @@ fn process_to_service_variant_names_and_roundtrips_are_stable() {
             size_bytes: None,
             error: Some("frozen".into()),
         },
+        ProcessToService::CloneStateReady { id: 11 },
         ProcessToService::McpServersResult { id: 5, servers: vec![] },
         ProcessToService::McpToolsResult { id: 6, tools: vec![] },
         ProcessToService::McpRefreshResult {
@@ -186,6 +190,7 @@ fn process_to_service_variant_names_and_roundtrips_are_stable() {
         "ShutdownRequested",
         "SuspendRequested",
         "CloneStateResult",
+        "CloneStateReady",
         "McpServersResult",
         "McpToolsResult",
         "McpRefreshResult",
