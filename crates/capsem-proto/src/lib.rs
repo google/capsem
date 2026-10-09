@@ -27,6 +27,7 @@ pub mod poll;
 pub mod privatelink;
 pub mod proxy_control;
 pub mod proxy_credentials;
+pub mod proxy_mcp;
 pub mod proxy_policy;
 pub mod proxy_private_names;
 pub mod repeated;
