@@ -30,6 +30,14 @@ fn bound(path: std::path::PathBuf, what: &str) -> Result<(std::path::PathBuf, Un
 /// the service on its VM's behalf.
 pub(crate) struct Bound {
     pub service_socket: std::path::PathBuf,
+    cables: Arc<crate::cables::Cables>,
+    seat_listener: UnixListener,
+}
+
+impl Bound {
+    pub(crate) fn start(self) {
+        tokio::spawn(self.cables.serve_seat(self.seat_listener));
+    }
 }
 
 pub(crate) fn bind(
@@ -58,6 +66,9 @@ pub(crate) fn bind(
         "cable seat",
     )?;
     let _ = job_store.cable_seat.set(seat_path);
-    tokio::spawn(cables.serve_seat(seat_listener));
-    Ok(Bound { service_socket })
+    Ok(Bound {
+        service_socket,
+        cables,
+        seat_listener,
+    })
 }
