@@ -40,17 +40,27 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
         assert not work.resolve().is_relative_to(root)
         prefix = work / "runtime"
         python = prefix / "bin/python"
+        # Carry the prewarmed runtime artifacts by their locked URLs and hashes.
+        runtime_lock = work / "pylock.toml"
         commands = [
+            [
+                "uv", "export", "--project", str(root / config["project"]),
+                "--frozen", "--offline", "--no-dev", "--no-emit-project",
+                "--format", "pylock.toml", "--output-file", str(runtime_lock),
+            ],
             ["uv", "venv", "--offline", "--python", sys.executable, str(prefix)],
+            ["uv", "pip", "sync", "--offline", "--python", str(python), str(runtime_lock)],
             [
                 "uv",
                 "pip",
                 "install",
                 "--offline",
+                "--no-deps",
                 "--python",
                 str(python),
                 str(archive),
             ],
+            ["uv", "pip", "check", "--python", str(python)],
         ]
         for command in commands:
             result = subprocess.run(
