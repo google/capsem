@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grants; deny sibling files, path-based control connections and direct
   network dialing after startup.
 
+- Broker guest VirtioFS permission changes through the coordinator beneath
+  the session's guest share, keeping direct host permission syscalls denied
+  and attesting that authority before the VM owner publishes readiness.
+
 - Restrict registered VM-owner service connections to private-name lookup and
   that owner's metrics route, preventing a compromised worker from invoking
   the coordinator's public API over its same-user control socket.
@@ -64,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser connection descriptor.
 
 ### Fixed
+
+- Keep SQLite writer scratch state in memory so a confined VM owner can flush
+  high-volume session-ledger bursts without ambient temporary-directory access.
 
 - Launch OCI workloads without mutating the guest-owned staging file, so the
   Linux VM-owner sandbox can keep host permission syscalls denied.
