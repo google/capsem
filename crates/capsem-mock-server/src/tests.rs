@@ -533,6 +533,37 @@ async fn provider_stream_routes_emit_protocol_terminators() {
 }
 
 #[tokio::test]
+async fn openai_sdk_controls_expose_cancel_and_upstream_error_fixtures() {
+    let delayed = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        routed(
+            Method::POST,
+            "/v1/responses",
+            None,
+            HeaderMap::new(),
+            json!({"model": "capsem-sdk-cancel"}),
+        ),
+    )
+    .await;
+    assert!(
+        delayed.is_err(),
+        "cancel fixture answered before the client could abort"
+    );
+
+    let (status, _, body) = routed(
+        Method::POST,
+        "/v1/chat/completions",
+        None,
+        HeaderMap::new(),
+        json!({"model": "capsem-sdk-upstream-error"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"]["code"], "fixture_unavailable");
+}
+
+#[tokio::test]
 async fn auxiliary_post_routes_cover_openai_google_ollama_and_oauth_shapes() {
     for (path, marker) in [
         ("/v1/embeddings", "embedding"),

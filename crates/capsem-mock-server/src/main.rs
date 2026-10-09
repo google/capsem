@@ -428,6 +428,9 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         }
         (&Method::POST, "/v1/chat/completions") => {
             let payload = parse_json(&request_body);
+            if let Some(response) = openai_sdk_control(&payload).await {
+                return response;
+            }
             if payload.get("stream").and_then(Value::as_bool) == Some(true) {
                 response(StatusCode::OK, openai_chat_stream(), "text/event-stream")
             } else {
@@ -447,6 +450,9 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         })),
         (&Method::POST, "/v1/responses") => {
             let payload = parse_json(&request_body);
+            if let Some(response) = openai_sdk_control(&payload).await {
+                return response;
+            }
             if payload.get("stream").and_then(Value::as_bool) == Some(true) {
                 response(
                     StatusCode::OK,
@@ -587,6 +593,26 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
     }
 }
 
+async fn openai_sdk_control(payload: &Value) -> Option<Response<RespBody>> {
+    match payload.get("model").and_then(Value::as_str) {
+        Some("capsem-sdk-cancel") => {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            None
+        }
+        Some("capsem-sdk-upstream-error") => Some(json_response_with_status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({
+                "error": {
+                    "message": "hermetic upstream unavailable",
+                    "type": "server_error",
+                    "code": "fixture_unavailable"
+                }
+            }),
+        )),
+        _ => None,
+    }
+}
+
 fn parse_json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).unwrap_or_else(|_| json!({}))
 }
@@ -615,8 +641,12 @@ fn echo_response(query: Option<&str>, headers: &HeaderMap, body_size: usize) -> 
 }
 
 fn json_response(value: Value) -> Response<RespBody> {
+    json_response_with_status(StatusCode::OK, value)
+}
+
+fn json_response_with_status(status: StatusCode, value: Value) -> Response<RespBody> {
     response(
-        StatusCode::OK,
+        status,
         Bytes::from(serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec())),
         "application/json",
     )
