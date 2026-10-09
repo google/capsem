@@ -27,6 +27,7 @@ use clap::Parser;
 use tokio::task::{JoinError, JoinSet};
 
 mod credential_client;
+mod mcp_client;
 mod private_names_client;
 
 const CONTROL_QUEUE_CAPACITY: usize = 16;
@@ -266,6 +267,17 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     let reason = closed.borrow().unwrap_or(ProxyChannelCloseReason::Disconnected);
                                     (capability, grant_id, reason)
                                 });
+                            } else if capability == ProxyCapability::Mcp {
+                                let (client, hello, mut closed) =
+                                    mcp_client::start(stream).await.context("open proxy MCP capability")?;
+                                state
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .attach_mcp(client, hello);
+                                tasks.spawn(async move {
+                                    while !*closed.borrow() && closed.changed().await.is_ok() {}
+                                    (capability, grant_id, ProxyChannelCloseReason::Disconnected)
+                                });
                             } else if capability == ProxyCapability::HttpTraffic {
                                 let config = state
                                     .lock()
@@ -358,6 +370,10 @@ struct ProxyRuntimeState {
     private_names: Option<Arc<dyn capsem_core::net::dns::private::PrivateNames>>,
     dns_upstreams: Vec<std::net::SocketAddr>,
     mcp: capsem_core::mcp::policy::McpConfig,
+    mcp_client: Option<(
+        capsem_proto::mcp_aggregator::AggregatorClient,
+        capsem_proto::proxy_mcp::ProxyMcpHello,
+    )>,
     http_config: Option<Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>>,
     dns_runtime: Option<Arc<DnsRuntime>>,
 }
@@ -374,6 +390,7 @@ impl Default for ProxyRuntimeState {
             private_names: None,
             dns_upstreams: Vec::new(),
             mcp: capsem_core::mcp::policy::McpConfig::default(),
+            mcp_client: None,
             http_config: None,
             dns_runtime: None,
         }
@@ -438,6 +455,15 @@ impl ProxyRuntimeState {
         self.dns_runtime = None;
     }
 
+    fn attach_mcp(
+        &mut self,
+        client: capsem_proto::mcp_aggregator::AggregatorClient,
+        hello: capsem_proto::proxy_mcp::ProxyMcpHello,
+    ) {
+        self.mcp_client = Some((client, hello));
+        self.http_config = None;
+    }
+
     fn traffic_ready(&mut self, capability: ProxyCapability) -> Result<bool> {
         match capability {
             ProxyCapability::HttpTraffic => Ok(self.http_config()?.is_some()),
@@ -450,7 +476,9 @@ impl ProxyRuntimeState {
         if let Some(config) = &self.http_config {
             return Ok(Some(Arc::clone(config)));
         }
-        let (Some(engine), Some(db), Some(upstream_grants)) = (&self.engine, &self.db, &self.upstream_grants) else {
+        let (Some(engine), Some(db), Some(upstream_grants), Some((mcp_client, mcp_hello))) =
+            (&self.engine, &self.db, &self.upstream_grants, &self.mcp_client)
+        else {
             return Ok(None);
         };
         if !self.credentials_attached {
@@ -468,6 +496,19 @@ impl ProxyRuntimeState {
         });
         let pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(Arc::clone(&telemetry));
         let upstream_grants: Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants> = upstream_grants.clone();
+        let mcp_endpoint = Arc::new(
+            capsem_core::net::mitm_proxy::McpEndpointState::with_proxy_policy(
+                mcp_client.clone(),
+                engine.policy().clone(),
+                Arc::new(tokio::sync::Semaphore::new(usize::from(mcp_hello.inflight_cap))),
+                capsem_core::net::mitm_proxy::McpTimeouts {
+                    default_timeout: Duration::from_millis(mcp_hello.default_timeout_ms),
+                    tool_call_default: Duration::from_millis(mcp_hello.tool_call_default_ms),
+                    tool_call_ceiling: Duration::from_millis(mcp_hello.tool_call_ceiling_ms),
+                },
+            )
+            .with_builtin_ledger(Arc::clone(db), mcp_hello.builtin_servers.iter().cloned().collect()),
+        );
         let config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
             ca: Arc::clone(&ca),
             server_tls: capsem_core::net::mitm_proxy::make_server_tls_config(&ca),
@@ -476,7 +517,7 @@ impl ProxyRuntimeState {
             upstream_tls: capsem_core::net::mitm_proxy::make_upstream_tls_config(),
             telemetry,
             pipeline,
-            mcp_endpoint: None,
+            mcp_endpoint: Some(mcp_endpoint),
             upstream_resolver: capsem_core::net::upstream_address::UpstreamResolver::disabled(),
             upstream_grants: Some(upstream_grants),
         });

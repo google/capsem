@@ -130,7 +130,6 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         ProxyCapability::Upstream,
         ProxyCapability::Credential,
         ProxyCapability::PrivateNames,
-        ProxyCapability::Mcp,
         ProxyCapability::Telemetry,
         ProxyCapability::Policy,
     ]
