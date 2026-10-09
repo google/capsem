@@ -642,6 +642,10 @@ async fn run_async_main_loop(
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.security_rules.clone())));
     let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.plugins.clone())));
     let proxy_policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(runtime_config.proxy_policy_snapshot());
+    let proxy_engine = Arc::new(capsem_core::net::proxy_engine::ProxyEngine::local(
+        proxy_policy.clone(),
+        Arc::clone(&db),
+    ));
     let job_store = Arc::new(JobStore {
         publisher: Arc::new(
             capsem_core::container::publish::Publisher::for_session(
@@ -803,6 +807,7 @@ async fn run_async_main_loop(
 
     let telemetry_deps = Arc::new(capsem_core::net::mitm_proxy::telemetry_hook::TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: proxy_engine.credentials(),
         pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
         trace_state: Arc::clone(&model_trace_state),
     });
@@ -810,7 +815,7 @@ async fn run_async_main_loop(
     let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
         ca: Arc::clone(&net_state.ca),
         server_tls: capsem_core::net::mitm_proxy::make_server_tls_config(&net_state.ca),
-        policy: proxy_policy.clone(),
+        engine: proxy_engine,
         db: Arc::clone(&db),
         upstream_tls: Arc::clone(&net_state.upstream_tls),
         telemetry: telemetry_deps,
