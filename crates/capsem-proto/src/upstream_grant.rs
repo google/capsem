@@ -22,7 +22,7 @@ pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 pub const MAX_GUEST_SHARE_PATH_BYTES: usize = 4096;
 
 const MAGIC: [u8; 2] = *b"UG";
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 const MAGIC_RANGE: std::ops::Range<usize> = 0..2;
 const VERSION_OFFSET: usize = 2;
 const KIND_OFFSET: usize = 3;
@@ -45,11 +45,13 @@ const ADOPTED: u8 = 4;
 const RELEASE: u8 = 5;
 const SET_GUEST_MODE: u8 = 6;
 const OPEN_LEDGER: u8 = 7;
+const ATTACH_PROXY_TRAFFIC: u8 = 8;
 const TCP_RESOLVED: u8 = 101;
 const DESCRIPTOR_GRANTED: u8 = 102;
 const DENIED: u8 = 103;
 const GUEST_MODE_SET: u8 = 104;
 const LEDGER_GRANTED: u8 = 105;
+const PROXY_TRAFFIC_ADOPTED: u8 = 106;
 
 /// Application protocol spoken over a granted TCP stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +82,30 @@ impl UpstreamProtocol {
 pub enum UpstreamDescriptorKind {
     Tcp,
     DnsUdp,
+}
+
+/// Guest-facing service selected by a surrendered traffic descriptor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProxyTrafficService {
+    Http,
+    Dns,
+}
+
+impl ProxyTrafficService {
+    const fn code(self) -> u16 {
+        match self {
+            Self::Http => 1,
+            Self::Dns => 2,
+        }
+    }
+
+    fn decode(code: u16) -> Result<Self> {
+        match code {
+            1 => Ok(Self::Http),
+            2 => Ok(Self::Dns),
+            _ => bail!("invalid proxy traffic service {code}"),
+        }
+    }
 }
 
 impl UpstreamDescriptorKind {
@@ -170,6 +196,10 @@ pub enum UpstreamGrantRequest {
     OpenLedger {
         request_id: u64,
     },
+    AttachProxyTraffic {
+        request_id: u64,
+        service: ProxyTrafficService,
+    },
 }
 
 /// Coordinator-to-worker record. Successful descriptor grants carry one fd.
@@ -199,12 +229,18 @@ pub enum UpstreamGrantResponse {
         request_id: u64,
         grant: LedgerChannelGrant,
     },
+    ProxyTrafficAdopted {
+        request_id: u64,
+    },
 }
 
 impl UpstreamGrantRequest {
     /// Requests never carry descriptors from the untrusted worker.
     pub const fn expected_descriptor_count(&self) -> usize {
-        0
+        match self {
+            Self::AttachProxyTraffic { .. } => 1,
+            _ => 0,
+        }
     }
 }
 
@@ -213,7 +249,10 @@ impl UpstreamGrantResponse {
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
             Self::DescriptorGranted { .. } | Self::LedgerGranted { .. } => 1,
-            Self::TcpResolved { .. } | Self::Denied { .. } | Self::GuestModeSet { .. } => 0,
+            Self::TcpResolved { .. }
+            | Self::Denied { .. }
+            | Self::GuestModeSet { .. }
+            | Self::ProxyTrafficAdopted { .. } => 0,
         }
     }
 }
@@ -287,6 +326,12 @@ pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[
             require_nonzero("request id", *request_id)?;
             frame[KIND_OFFSET] = OPEN_LEDGER;
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
+        UpstreamGrantRequest::AttachProxyTraffic { request_id, service } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = ATTACH_PROXY_TRAFFIC;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+            put_u16(&mut frame, DETAIL_RANGE, service.code());
         }
     }
     Ok(frame)
@@ -378,6 +423,17 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
             require_empty_path(&relative_path)?;
             Ok(UpstreamGrantRequest::OpenLedger { request_id })
         }
+        ATTACH_PROXY_TRAFFIC => {
+            require_nonzero("request id", request_id)?;
+            if resource_id != 0 || port != 0 || !name.is_empty() {
+                bail!("proxy traffic request carries unrelated fields");
+            }
+            require_empty_path(&relative_path)?;
+            Ok(UpstreamGrantRequest::AttachProxyTraffic {
+                request_id,
+                service: ProxyTrafficService::decode(detail)?,
+            })
+        }
         kind => bail!("invalid upstream request kind {kind}"),
     }
 }
@@ -436,6 +492,11 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
             put_u64(&mut frame, RESOURCE_ID_RANGE, grant.client_id());
             put_u16(&mut frame, DETAIL_RANGE, ledger_role_code(grant.role()));
             put_name(&mut frame, &encode_ledger_generation(grant.generation()))?;
+        }
+        UpstreamGrantResponse::ProxyTrafficAdopted { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = PROXY_TRAFFIC_ADOPTED;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
         }
     }
     Ok(frame)
@@ -515,6 +576,12 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
             let role = decode_ledger_role(detail)?;
             let grant = LedgerChannelGrant::new(generation, resource_id, role)?;
             Ok(UpstreamGrantResponse::LedgerGranted { request_id, grant })
+        }
+        PROXY_TRAFFIC_ADOPTED => {
+            if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {
+                bail!("proxy traffic adoption carries unrelated fields");
+            }
+            Ok(UpstreamGrantResponse::ProxyTrafficAdopted { request_id })
         }
         kind => bail!("invalid upstream response kind {kind}"),
     }
