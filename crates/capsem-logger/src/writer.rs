@@ -284,8 +284,9 @@ impl WriteEnvelope {
 const _: () = assert!(std::mem::size_of::<WriterMessage>() <= 1024);
 
 type WriterSender = mpsc::SyncSender<WriterMessage>;
+type WriterReceiver = mpsc::Receiver<WriterMessage>;
 
-fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessage>) {
+fn writer_channel(capacity: usize) -> (WriterSender, WriterReceiver) {
     mpsc::sync_channel(capacity.max(1))
 }
 
@@ -335,6 +336,18 @@ pub struct DbWriter {
     remote: Option<remote::RemoteWriter>,
 }
 
+pub(crate) struct PreparedDbWriter {
+    tx: WriterSender,
+    rx: WriterReceiver,
+    held: capsem_foundation::unix::lock::FileLock,
+    conn: Connection,
+    db_path: PathBuf,
+    batch_capacity: usize,
+    pending_body_bytes: Arc<AtomicU64>,
+    bodies: BodyArchive,
+    tally: LedgerTally,
+}
+
 impl DbWriter {
     /// Spawn a dedicated writer thread that owns the DB connection.
     /// `capacity` controls the mpsc channel size (backpressure).
@@ -343,7 +356,7 @@ impl DbWriter {
     }
 
     pub fn open_with_codecs(path: &Path, capacity: usize, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
-        Self::open_with_clock_and_codecs(path, capacity, SystemTime::now, codecs)
+        Self::prepare_with_clock_and_codecs(path, capacity, SystemTime::now, codecs).map(PreparedDbWriter::start)
     }
 
     /// `open`, with the archive index's timestamps read from `now`.
@@ -351,23 +364,31 @@ impl DbWriter {
     /// Only a replay of an existing ledger has any business supplying one; see
     /// `LedgerClock`.
     pub fn open_with_clock(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
-        Self::open_with_clock_and_codecs(path, capacity, now, ArchiveCodecs::default())
+        Self::prepare_with_clock_and_codecs(path, capacity, now, ArchiveCodecs::default()).map(PreparedDbWriter::start)
     }
 
-    fn open_with_clock_and_codecs(
+    pub(crate) fn prepare_with_codecs(
+        path: &Path,
+        capacity: usize,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
+        Self::prepare_with_clock_and_codecs(path, capacity, SystemTime::now, codecs)
+    }
+
+    fn prepare_with_clock_and_codecs(
         path: &Path,
         capacity: usize,
         now: LedgerClock,
         codecs: ArchiveCodecs,
-    ) -> rusqlite::Result<Self> {
+    ) -> rusqlite::Result<PreparedDbWriter> {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
 
         let mut last_busy = None;
         for _ in 0..50 {
-            match Self::open_once(path, capacity, now, codecs.clone()) {
-                Ok(writer) => return Ok(writer),
+            match Self::prepare_once(path, capacity, now, codecs.clone()) {
+                Ok(prepared) => return Ok(prepared),
                 Err(error) if is_sqlite_busy(&error) => {
                     last_busy = Some(error);
                     std::thread::sleep(Duration::from_millis(20));
@@ -381,7 +402,12 @@ impl DbWriter {
         )))
     }
 
-    fn open_once(path: &Path, capacity: usize, now: LedgerClock, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
+    fn prepare_once(
+        path: &Path,
+        capacity: usize,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
         let held = writer_lock::acquire(path)?;
         legacy::set_aside_pre_archive_ledger(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -428,32 +454,17 @@ impl DbWriter {
         };
         let (tx, rx) = writer_channel(batch_capacity);
         let db_path = path.to_path_buf();
-        let writer_loop_db_path = Some(db_path.clone());
         let pending_body_bytes = Arc::new(AtomicU64::new(0));
-        let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
-
-        let join_handle = std::thread::Builder::new()
-            .name("capsem-db-writer".into())
-            .spawn(move || {
-                let _held = held;
-                writer_loop(
-                    conn,
-                    rx,
-                    writer_loop_db_path,
-                    batch_capacity,
-                    &loop_pending_body_bytes,
-                    bodies,
-                    tally,
-                )
-            })
-            .expect("failed to spawn db writer thread");
-
-        Ok(Self {
-            tx: std::sync::Mutex::new(Some(tx)),
-            join_handle: std::sync::Mutex::new(Some(join_handle)),
+        Ok(PreparedDbWriter {
+            tx,
+            rx,
+            held,
+            conn,
             db_path,
+            batch_capacity,
             pending_body_bytes,
-            remote: None,
+            bodies,
+            tally,
         })
     }
 
@@ -630,6 +641,46 @@ impl DbWriter {
             return 0;
         }
         self.pending_body_bytes.load(Ordering::Acquire)
+    }
+}
+
+impl PreparedDbWriter {
+    pub(crate) fn start(self) -> DbWriter {
+        let Self {
+            tx,
+            rx,
+            held,
+            conn,
+            db_path,
+            batch_capacity,
+            pending_body_bytes,
+            bodies,
+            tally,
+        } = self;
+        let writer_loop_db_path = Some(db_path.clone());
+        let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
+        let join_handle = std::thread::Builder::new()
+            .name("capsem-db-writer".into())
+            .spawn(move || {
+                let _held = held;
+                writer_loop(
+                    conn,
+                    rx,
+                    writer_loop_db_path,
+                    batch_capacity,
+                    &loop_pending_body_bytes,
+                    bodies,
+                    tally,
+                )
+            })
+            .expect("failed to spawn db writer thread");
+        DbWriter {
+            tx: std::sync::Mutex::new(Some(tx)),
+            join_handle: std::sync::Mutex::new(Some(join_handle)),
+            db_path,
+            pending_body_bytes,
+            remote: None,
+        }
     }
 }
 

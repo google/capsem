@@ -11,6 +11,7 @@ use capsem_proto::ledger::{
     LedgerChannelGrant, LedgerFailure, LedgerFailureCode, LedgerRequest, LedgerResponse, LedgerWelcome,
 };
 
+use crate::db::PreparedDbHandle;
 use crate::ledger_protocol::{
     LedgerBodyMetadata, LedgerClientMessage, LedgerCommand, LedgerExportSummary, LedgerReply, LedgerServerMessage,
     MAX_LEDGER_STREAM_CHUNK_BYTES,
@@ -39,16 +40,28 @@ pub struct LedgerServer {
     admission: tokio::sync::Mutex<AdmissionState>,
 }
 
+/// A ledger whose files, schema and exclusive writer authority are prepared,
+/// but whose database workers have not started yet. Confining worker processes
+/// between [`LedgerServer::prepare_with_codecs`] and [`Self::start`] ensures
+/// every database thread inherits the process sandbox.
+pub struct PreparedLedgerServer {
+    db: PreparedDbHandle,
+    session_dir: PathBuf,
+}
+
 impl LedgerServer {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         Self::open_with_codecs(path, ArchiveCodecs::default())
     }
 
     pub fn open_with_codecs(path: &Path, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
-        Ok(Self {
-            db: Arc::new(DbHandle::open_with_codecs(path, codecs)?),
+        Self::prepare_with_codecs(path, codecs).map(PreparedLedgerServer::start)
+    }
+
+    pub fn prepare_with_codecs(path: &Path, codecs: ArchiveCodecs) -> rusqlite::Result<PreparedLedgerServer> {
+        Ok(PreparedLedgerServer {
+            db: DbHandle::prepare_with_codecs(path, codecs)?,
             session_dir: path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
-            admission: tokio::sync::Mutex::new(AdmissionState::default()),
         })
     }
 
@@ -272,6 +285,16 @@ impl LedgerServer {
             },
         )
         .await
+    }
+}
+
+impl PreparedLedgerServer {
+    pub fn start(self) -> LedgerServer {
+        LedgerServer {
+            db: Arc::new(self.db.start()),
+            session_dir: self.session_dir,
+            admission: tokio::sync::Mutex::new(AdmissionState::default()),
+        }
     }
 }
 

@@ -92,6 +92,17 @@ fn body_event(body: Vec<u8>) -> WriteOp {
     })
 }
 
+#[test]
+fn prepared_server_holds_writer_authority_until_workers_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("session.db");
+    let prepared = LedgerServer::prepare_with_codecs(&database, capsem_archive::ArchiveCodecs::default()).unwrap();
+    assert!(LedgerServer::prepare_with_codecs(&database, capsem_archive::ArchiveCodecs::default()).is_err());
+    let server = prepared.start();
+    drop(server);
+    drop(LedgerServer::prepare_with_codecs(&database, capsem_archive::ArchiveCodecs::default()).unwrap());
+}
+
 #[tokio::test]
 async fn accepted_durable_query_body_retention_and_warc_run_through_one_owner() {
     let dir = tempfile::tempdir().unwrap();
