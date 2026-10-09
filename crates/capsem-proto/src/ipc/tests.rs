@@ -611,6 +611,7 @@ fn mcp_tools_result_roundtrip() {
             namespaced_name: "github__search".into(),
             original_name: "search".into(),
             description: Some("Search repos".into()),
+            input_schema: serde_json::json!({"type": "object"}),
             server_name: "github".into(),
             annotations: None,
         }],
