@@ -891,7 +891,6 @@ async fn overflow_defers_events_to_the_next_scan_and_records_a_marker() {
 /// workspace wherever the guest moved it.
 #[tokio::test]
 async fn a_workspace_swapped_for_a_host_link_is_never_walked_or_read() {
-    let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let share = dir.path().join("guest");
     let workspace = share.join("workspace");
