@@ -12,13 +12,15 @@ use capsem_archive::{ArchiveError, BlockExtent, BodyLogReader, BodyRef};
 use capsem_foundation::unix::contained::ContainedDir;
 use capsem_foundation::unix::lock::{self, LockMode};
 use rusqlite::{Connection, Row};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{DbHandle, DbResult};
 use crate::writer::RetainOutcome;
 
 /// Which side of an exchange a stored body is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BodyDirection {
     Request,
     Response,

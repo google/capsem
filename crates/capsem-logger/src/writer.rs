@@ -6,6 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use capsem_telemetry::db::{DB_MEMORY_UNFLUSHED_OPS, DB_SHUTDOWN_FLUSH_MS};
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 use uuid::Uuid;
 
@@ -188,7 +189,7 @@ fn blake3_bytes_ref(value: &[u8]) -> String {
 }
 
 /// Typed write operations sent to the writer thread.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WriteOp {
     TransportEvent(TransportEvent),
     NetEvent(NetEvent),

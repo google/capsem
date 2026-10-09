@@ -1,10 +1,12 @@
 pub mod counters;
 pub mod db;
 pub mod events;
+pub mod ledger_protocol;
 pub mod network_db;
 pub mod reader;
 pub mod schema;
 pub mod session_types;
+mod wire_bytes;
 pub mod writer;
 
 pub use db::{

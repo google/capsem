@@ -20,7 +20,9 @@ humantime = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
+serde_bytes = { workspace = true }
 serde_json = { workspace = true }
+rmp-serde = { workspace = true }
 blake3 = "1"
 uuid = { version = "1", features = ["v4"] }
 metrics = "0.24"
