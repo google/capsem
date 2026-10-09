@@ -48,7 +48,7 @@ pub(crate) struct BrokerPolicy {
 
 #[derive(Clone)]
 pub(crate) struct PolicyPublisher {
-    updates: Option<mpsc::Sender<PolicyUpdate>>,
+    updates: Vec<mpsc::Sender<PolicyUpdate>>,
 }
 pub(crate) struct PendingBroker {
     coordinator: UnixStream,
@@ -132,17 +132,29 @@ impl BrokerPolicy {
 
 impl PolicyPublisher {
     pub(crate) async fn publish(&self, policy: Arc<BrokerPolicy>) -> Result<(), String> {
-        let Some(updates) = &self.updates else {
-            return Ok(());
-        };
-        let (applied, confirmation) = oneshot::channel();
-        updates
-            .send(PolicyUpdate { policy, applied })
-            .await
-            .map_err(|_| "upstream policy broker stopped".to_string())?;
-        confirmation
-            .await
-            .map_err(|_| "upstream policy broker stopped before applying the policy".to_string())?
+        let mut confirmations = Vec::with_capacity(self.updates.len());
+        for updates in &self.updates {
+            let (applied, confirmation) = oneshot::channel();
+            updates
+                .send(PolicyUpdate {
+                    policy: Arc::clone(&policy),
+                    applied,
+                })
+                .await
+                .map_err(|_| "upstream policy broker stopped".to_string())?;
+            confirmations.push(confirmation);
+        }
+        for confirmation in confirmations {
+            confirmation
+                .await
+                .map_err(|_| "upstream policy broker stopped before applying the policy".to_string())??;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn merge(mut self, mut other: Self) -> Self {
+        self.updates.append(&mut other.updates);
+        self
     }
 }
 
@@ -161,7 +173,7 @@ impl PendingBroker {
                 proxy: None,
             },
             PolicyPublisher {
-                updates: Some(updates_tx),
+                updates: vec![updates_tx],
             },
         ))
     }
@@ -199,6 +211,10 @@ impl PendingBroker {
     pub(crate) fn worker_stdio(&self) -> io::Result<std::process::Stdio> {
         let descriptor: OwnedFd = self.worker.try_clone()?.into();
         Ok(std::process::Stdio::from(descriptor))
+    }
+
+    pub(crate) fn worker_stream(&self) -> io::Result<UnixStream> {
+        self.worker.try_clone()
     }
 
     pub(crate) fn start(self, authority: WorkerGrant) -> tokio::task::JoinHandle<()> {
@@ -726,7 +742,7 @@ fn revoke_grant(grant_id: u64, grant: ActiveGrant) -> Result<(), String> {
 
 #[cfg(test)]
 pub(crate) fn test_policy_publisher() -> PolicyPublisher {
-    PolicyPublisher { updates: None }
+    PolicyPublisher { updates: Vec::new() }
 }
 
 #[cfg(test)]
