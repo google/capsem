@@ -224,7 +224,7 @@ struct Head {
 async fn handle_connection(mut stream: tokio::net::TcpStream, state: Arc<AppState>) -> anyhow::Result<()> {
     match admit(&mut stream, &state).await {
         Ok(None) => Ok(()),
-        Ok(Some(admitted)) => handoff(stream, admitted).await,
+        Ok(Some((vm_id, admitted))) => handoff(stream, &vm_id, admitted, &state.service_client).await,
         Err(refusal) => {
             write_refusal(&mut stream, &refusal).await;
             Err(refusal.error)
@@ -237,7 +237,7 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, state: Arc<AppStat
 async fn admit(
     stream: &mut tokio::net::TcpStream,
     state: &Arc<AppState>,
-) -> Result<Option<PreviewConnectionAdmissionResponse>, Refusal> {
+) -> Result<Option<(String, PreviewConnectionAdmissionResponse)>, Refusal> {
     const MALFORMED: &str = "This is a Capsem preview origin and did not receive a valid HTTP request.";
     const UNKNOWN: &str = "This preview is no longer available. Reopen it from Capsem.";
     const EXPIRED: &str = "This preview session has expired. Reopen the preview from Capsem.";
@@ -307,7 +307,7 @@ async fn admit(
             anyhow::anyhow!("preview owner generation changed"),
         ));
     }
-    Ok(Some(admitted))
+    Ok(Some((scope.vm_id, admitted)))
 }
 
 async fn exchange_bootstrap(
@@ -407,9 +407,15 @@ fn validate_bootstrap_head(head: &Head) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handoff(stream: tokio::net::TcpStream, admitted: PreviewConnectionAdmissionResponse) -> anyhow::Result<()> {
+async fn handoff(
+    stream: tokio::net::TcpStream,
+    vm_id: &str,
+    admitted: PreviewConnectionAdmissionResponse,
+    service: &crate::service_client::ServiceClient,
+) -> anyhow::Result<()> {
     let source = stream.into_std()?;
-    let seat = tokio::net::UnixStream::connect(&admitted.handoff_socket)
+    let seat = service
+        .connect_owner(vm_id, &admitted.handoff_socket)
         .await?
         .into_std()?;
     let owner = capsem_foundation::unix::peer::PeerIdentity {
