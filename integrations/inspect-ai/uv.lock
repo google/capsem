@@ -982,6 +982,7 @@ dependencies = [
     { name = "capsem" },
     { name = "inspect-ai" },
     { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -1001,6 +1002,7 @@ requires-dist = [
     { name = "capsem", editable = "../../sdk/python" },
     { name = "inspect-ai", specifier = ">=0.3.263" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [package.metadata.requires-dev]

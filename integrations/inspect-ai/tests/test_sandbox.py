@@ -13,7 +13,7 @@ import pytest
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
 from inspect_capsem._controller import CommandResult
 
-from .helpers import LocalFakeCapsemController, Scripted, env_for, init_env
+from .helpers import LocalFakeCapsemController, Scripted, init_env
 
 
 async def test_environment_properties_and_connection() -> None:
@@ -21,23 +21,41 @@ async def test_environment_properties_and_connection() -> None:
     original = sb.SdkCapsemController
     cast(Any, sb).SdkCapsemController = lambda: ctrl
     try:
-        default = CapsemSandboxEnvironment("vm-2")
+        default = CapsemSandboxEnvironment("vm-2", execution_mode="vm")
         assert default.vm_id == "vm-2" and default._controller is ctrl
+        assert default.execution_mode == "vm"
     finally:
         cast(Any, sb).SdkCapsemController = original
-    assert CapsemSandboxEnvironment.config_files() == []
-    assert not CapsemSandboxEnvironment.is_docker_compatible()
+    assert "Dockerfile" in CapsemSandboxEnvironment.config_files()
+    assert "capsem.yaml" not in CapsemSandboxEnvironment.config_files()
+    assert CapsemSandboxEnvironment.is_docker_compatible()
     assert CapsemSandboxEnvironment.default_concurrency() == 4
-    conn = await env_for(ctrl).connection()
+    container = CapsemSandboxEnvironment("vm-1", ctrl, execution_mode="container")
+    conn = await container.connection(user="bob")
     assert conn.type == "capsem"
-    assert conn.command == "capsem shell vm-s"
+    assert conn.command == "capsem shell vm-1"
     assert conn.container is None
 
 
-async def test_sample_init_vm_mode() -> None:
+async def test_sample_init_container_and_vm_modes() -> None:
+    ctrl = Scripted()
+    env = await init_env(
+        ctrl,
+        CapsemSandboxConfig(
+            execution_mode="container",
+            image="ubuntu:24.04",
+            healthcheck={"test": ["CMD-SHELL", "true"], "retries": 1, "interval": "10ms"},
+        ),
+    )
+    assert (env.vm_id, env.execution_mode) == ("vm-s", "container")
+    assert any("sh -c true" in c for c in ctrl.commands)
+    await env.cleanup()
+    assert ctrl.stopped == ["vm-s"]
+
     ctrl = Scripted()
     env = await init_env(ctrl, CapsemSandboxConfig(environment={"FOO": "bar"}))
     assert env.vm_id == "vm-s"
+    assert env.execution_mode == "vm"
     assert ctrl.started[0]["env"] == {"FOO": "bar"}
     assert ctrl.started[0]["labels"]["managed-by"] == "inspect-capsem"
     assert ctrl.started[0]["labels"]["inspect-capsem-task"] == "t"
