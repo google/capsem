@@ -406,9 +406,11 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let gateway_binary = args.gateway_binary;
     let gateway_port = args.gateway_port;
     let tray_binary = args.tray_binary;
+    let state_for_spawn = Arc::clone(&state);
 
     let spawn_task = tokio::spawn(async move {
         let spawned = spawn_companions(
+            state_for_spawn,
             &service_sock_for_spawn,
             &run_dir_for_spawn,
             gateway_binary,
@@ -673,6 +675,7 @@ pub(super) fn companion_stdio(log_path: &std::path::Path) -> (std::process::Stdi
 
 /// Spawn the gateway and tray as child processes of the service.
 pub(super) async fn spawn_companions(
+    state: Arc<ServiceState>,
     service_sock: &std::path::Path,
     run_dir: &std::path::Path,
     gateway_bin: Option<PathBuf>,
@@ -718,7 +721,16 @@ pub(super) async fn spawn_companions(
     info!(binary = %gateway_bin.display(), "spawning capsem-gateway");
 
     let mut gw_cmd = tokio::process::Command::new(&gateway_bin);
+    let (grant_server, grant_client) = match std::os::unix::net::UnixStream::pair() {
+        Ok(pair) => pair,
+        Err(error) => {
+            warn!(%error, "failed to create gateway descriptor grant channel");
+            return children;
+        }
+    };
     gw_cmd.arg("--uds-path").arg(service_sock);
+    gw_cmd.arg("--service-grant-stdin");
+    gw_cmd.stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(grant_client)));
     // Pin the gateway to the service's run_dir so gateway.{token,port,pid} land
     // in the same place we poll for them below and the same place clients read.
     gw_cmd.arg("--run-dir").arg(run_dir);
@@ -738,6 +750,11 @@ pub(super) async fn spawn_companions(
         Ok(child) => {
             info!(pid = child.id(), "capsem-gateway spawned");
             children.push(child);
+            tokio::spawn(async move {
+                if let Err(error) = crate::gateway_grant::serve(grant_server, state).await {
+                    tracing::debug!(%error, "gateway descriptor grant channel closed");
+                }
+            });
 
             // Wait for gateway to write token + port files (up to 5s)
             let token_path = run_dir.join("gateway.token");

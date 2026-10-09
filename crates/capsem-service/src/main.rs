@@ -32,6 +32,7 @@ mod asset_background;
 mod asset_routes;
 mod blocking;
 mod container_setup;
+mod gateway_grant;
 mod host_ledger;
 mod instance;
 mod instance_reaper;
