@@ -1,4 +1,5 @@
 use std::os::fd::AsFd as _;
+use std::os::unix::fs::PermissionsExt as _;
 use std::sync::Arc;
 
 use capsem_proto::ledger::LedgerClientRole;
@@ -121,6 +122,37 @@ async fn fake(mode: &'static str) -> Result<LedgerWorker> {
     .await
 }
 
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn fake_binary(directory: &Path, mode: &str) -> PathBuf {
+    let binary = directory.join(format!("capsem-ledger-{mode}"));
+    write_fake_binary(&binary, mode);
+    binary
+}
+
+fn write_fake_binary(binary: &Path, mode: &str) {
+    let test_executable = std::env::current_exe().unwrap();
+    let generations = binary.with_extension("generations");
+    let script = format!(
+        "#!/bin/sh\ngeneration=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--generation\" ]; then\n    shift\n    generation=$1\n  fi\n  shift\ndone\nprintf '%s\\n' \"$generation\" >> {}\nCAPSEM_FAKE_LEDGER_WORKER={} CAPSEM_FAKE_LEDGER_GENERATION=\"$generation\" exec {} --exact ledger_worker::tests::fake_ledger_worker_child --nocapture\n",
+        shell_quote(&generations.to_string_lossy()),
+        shell_quote(mode),
+        shell_quote(&test_executable.to_string_lossy()),
+    );
+    std::fs::write(binary, script).unwrap();
+    let mut permissions = std::fs::metadata(binary).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(binary, permissions).unwrap();
+}
+
+fn session_paths(root: &Path, name: &str) -> (PathBuf, PathBuf) {
+    let directory = root.join(name);
+    std::fs::create_dir(&directory).unwrap();
+    (directory.join("session.db"), directory.join("ledger.log"))
+}
+
 #[tokio::test]
 async fn supervisor_mints_unique_role_bound_channels_and_reaps() {
     let worker = fake("normal").await.unwrap();
@@ -191,4 +223,104 @@ async fn stalled_shutdown_is_killed_and_reaped_within_the_bound() {
     let error = worker.shutdown().await.unwrap_err();
     assert!(format!("{error:#}").contains("bounded shutdown timed out"), "{error:#}");
     assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[tokio::test]
+async fn lifecycle_slot_serializes_concurrent_leases_and_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let binary = fake_binary(directory.path(), "normal");
+    let workers = Arc::new(LedgerWorkers::new(binary));
+    let (database, log) = session_paths(directory.path(), "session-a");
+
+    let (reader, maintainer) = tokio::join!(
+        workers.acquire("a", &database, &log, LedgerClientRole::Reader),
+        workers.acquire("a", &database, &log, LedgerClientRole::Maintainer),
+    );
+    let reader = reader.unwrap();
+    let maintainer = maintainer.unwrap();
+    assert_eq!(reader.grant().generation(), maintainer.grant().generation());
+    assert_ne!(reader.grant().client_id(), maintainer.grant().client_id());
+    let first_generation = reader.grant().generation();
+
+    let (other_database, other_log) = session_paths(directory.path(), "rebound");
+    let error = workers
+        .acquire("a", &other_database, &other_log, LedgerClientRole::Reader)
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("owns"), "{error:#}");
+
+    drop(reader);
+    drop(maintainer);
+    workers.shutdown("a").await.unwrap();
+    assert_eq!(workers.generation("a").await, None);
+    let replacement = workers
+        .acquire("a", &database, &log, LedgerClientRole::Reader)
+        .await
+        .unwrap();
+    assert_ne!(replacement.grant().generation(), first_generation);
+    drop(replacement);
+    workers.shutdown("a").await.unwrap();
+}
+
+#[tokio::test]
+async fn stopping_one_session_leaves_an_unrelated_session_generation_alive() {
+    let directory = tempfile::tempdir().unwrap();
+    let binary = fake_binary(directory.path(), "normal");
+    let workers = Arc::new(LedgerWorkers::new(binary));
+    let (database_a, log_a) = session_paths(directory.path(), "session-a");
+    let (database_b, log_b) = session_paths(directory.path(), "session-b");
+    let client_a = workers
+        .acquire("a", &database_a, &log_a, LedgerClientRole::Reader)
+        .await
+        .unwrap();
+    let client_b = workers
+        .acquire("b", &database_b, &log_b, LedgerClientRole::Reader)
+        .await
+        .unwrap();
+    let generation_b = client_b.grant().generation();
+
+    drop(client_a);
+    workers.shutdown("a").await.unwrap();
+    let second_b = workers
+        .acquire("b", &database_b, &log_b, LedgerClientRole::Maintainer)
+        .await
+        .unwrap();
+    assert_eq!(second_b.grant().generation(), generation_b);
+
+    drop(client_b);
+    drop(second_b);
+    workers.shutdown("b").await.unwrap();
+}
+
+#[tokio::test]
+async fn crashed_slot_restarts_only_after_reap_with_a_fresh_generation() {
+    let directory = tempfile::tempdir().unwrap();
+    let binary = fake_binary(directory.path(), "die_with_attach_pending");
+    let workers = Arc::new(LedgerWorkers::new(binary.clone()));
+    let (database, log) = session_paths(directory.path(), "stopped-session");
+
+    let error = workers
+        .acquire("stopped", &database, &log, LedgerClientRole::Reader)
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("ledger worker"), "{error:#}");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while workers.generation("stopped").await.is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("crashed generation was not reaped and removed");
+
+    write_fake_binary(&binary, "normal");
+    let reader = workers
+        .acquire("stopped", &database, &log, LedgerClientRole::Reader)
+        .await
+        .unwrap();
+    let generations = std::fs::read_to_string(binary.with_extension("generations")).unwrap();
+    let generations: Vec<_> = generations.lines().collect();
+    assert_eq!(generations.len(), 2);
+    assert_ne!(generations[0], generations[1]);
+    drop(reader);
+    workers.shutdown("stopped").await.unwrap();
 }
