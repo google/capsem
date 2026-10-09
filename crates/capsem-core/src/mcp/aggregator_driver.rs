@@ -48,19 +48,27 @@ impl Pending {
 }
 
 /// The callers parked between writing their request and reading its response.
-pub struct Inflight(Arc<Mutex<Pending>>);
+pub struct Inflight {
+    pending: Arc<Mutex<Pending>>,
+    stopped: tokio::sync::watch::Sender<bool>,
+}
 
 impl Inflight {
     /// Fail every parked caller and refuse new ones. The reader does this on
     /// EOF; the child monitor does it on exit, for the case where a grandchild
     /// inherited the stdout pipe and EOF never comes.
     pub fn close(&self) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).close();
+        self.pending.lock().unwrap_or_else(|e| e.into_inner()).close();
+        self.stopped.send_replace(true);
+    }
+
+    pub fn stop_receiver(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.stopped.subscribe()
     }
 
     #[cfg(test)]
     pub(crate) fn count(&self) -> usize {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).waiters.len()
+        self.pending.lock().unwrap_or_else(|e| e.into_inner()).waiters.len()
     }
 }
 
@@ -71,8 +79,10 @@ where
     R: AsyncRead + Unpin + Send + 'static,
 {
     let pending = Arc::new(Mutex::new(Pending::default()));
+    let (stopped, _) = tokio::sync::watch::channel(false);
 
     let pending_reader = Arc::clone(&pending);
+    let stopped_reader = stopped.clone();
     tokio::spawn(async move {
         info!("aggregator reader task started");
         loop {
@@ -98,10 +108,12 @@ where
             }
         }
         pending_reader.lock().unwrap_or_else(|e| e.into_inner()).close();
+        stopped_reader.send_replace(true);
         info!("aggregator reader task ending; in-flight callers failed");
     });
 
     let pending_writer = Arc::clone(&pending);
+    let stopped_writer = stopped.clone();
     tokio::spawn(async move {
         info!("aggregator writer task started");
         while let Some((req, resp_tx)) = rx.recv().await {
@@ -118,10 +130,11 @@ where
                 break;
             }
         }
+        stopped_writer.send_replace(true);
         info!("aggregator writer task ending");
     });
 
-    Inflight(pending)
+    Inflight { pending, stopped }
 }
 
 #[cfg(test)]
