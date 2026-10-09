@@ -12,11 +12,13 @@ interface Report {ok: boolean; sha256: string; version: string; httpPaths: strin
 const source = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(source, '../..');
 const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
+const usableHome = (): string => process.env.HOME && existsSync(process.env.HOME) ? process.env.HOME : tmpdir();
+const npmCache = (): string => process.env.NPM_CONFIG_CACHE ?? join(usableHome(), '.npm');
 
 it('prewarms offline without forwarding unsupported pnpm settings to npm', () => {
   const prewarm = spawnSync(process.execPath, [join(source, 'tools/prewarm-package.mjs')], {
     cwd: source, encoding: 'utf8', stdio: 'pipe', timeout: 60_000,
-    env: {...process.env, NPM_CONFIG_OFFLINE: 'true',
+    env: {...process.env, HOME: usableHome(), NPM_CONFIG_OFFLINE: 'true',
       npm_config_store_dir: '/unused/pnpm-store', npm_config_verify_deps_before_run: 'false',
       npm_config_overrides: '{}'},
   });
@@ -26,7 +28,7 @@ it('prewarms offline without forwarding unsupported pnpm settings to npm', () =>
   try {
     const cold = spawnSync(process.execPath, [join(source, 'tools/prewarm-package.mjs')], {
       cwd: source, encoding: 'utf8', stdio: 'pipe', timeout: 60_000,
-      env: {...process.env, NPM_CONFIG_OFFLINE: 'true', NPM_CONFIG_CACHE: emptyCache,
+      env: {...process.env, HOME: usableHome(), NPM_CONFIG_OFFLINE: 'true', NPM_CONFIG_CACHE: emptyCache,
         npm_config_store_dir: '/unused/pnpm-store'},
     });
     expect(cold.status).not.toBe(0);
@@ -63,7 +65,7 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
   try {
     if (selectedArchive) copyFileSync(selectedArchive, join(archiveDirectory, 'selected-sdk.tgz'));
     else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', archiveDirectory], {
-      cwd: source, stdio: 'pipe', timeout: 15_000,
+      cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: usableHome()},
     });
     const archives = readdirSync(archiveDirectory).filter(name => name.endsWith('.tgz'));
     expect(archives).toHaveLength(1);
@@ -83,6 +85,7 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
     const install = spawnSync('npm', ['install', '--offline', '--omit=dev', '--ignore-scripts',
       '--no-audit', '--no-fund', archive], {
       cwd: fixture, encoding: 'utf8', stdio: 'pipe', timeout: 60_000,
+      env: {...process.env, HOME: fixture, NPM_CONFIG_CACHE: npmCache()},
     });
     expect(install.status, install.stdout + install.stderr).toBe(0);
     const modules = join(fixture, 'node_modules');
@@ -95,7 +98,7 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
     copyFileSync(join(source, 'tools/image-package-acceptance.mjs'), probe);
     const runProbe = (): string => execFileSync(consumerNode, [probe, root, archive, output, receipt], {
       cwd: fixture, encoding: 'utf8', stdio: 'pipe', timeout: 15_000,
-      env: {PATH: process.env.PATH ?? ''},
+      env: {HOME: fixture, PATH: process.env.PATH ?? ''},
     });
     const result = runProbe();
     expect(result).toContain('SDK_IMAGE_PACKAGE_ACCEPTANCE_OK');
@@ -135,6 +138,7 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
     execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund',
       `typescript@${manifest.devDependencies.typescript}`], {
       cwd: fixture, stdio: 'pipe', timeout: 30_000,
+      env: {...process.env, HOME: fixture, NPM_CONFIG_CACHE: npmCache()},
     });
     expect(existsSync(join(modules, 'typescript/package.json'))).toBe(true);
     expect(runProbe).toThrow(/development dependency/);
