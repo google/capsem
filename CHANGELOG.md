@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Python and TypeScript SDK getting-started documentation uses package Markdown
+  READMEs shared with the docs preview through symlinks, with installation,
+  usage, and links to guides and reference.
+
 - Host MCP packages identify as 0.7.0 and depend on the matching TypeScript SDK.
 
 - TypeScript SDK packages use the 0.7.0 client version.

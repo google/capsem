@@ -21,7 +21,14 @@ export default defineConfig({
         { label: 'Architecture', items: [{ slug: 'architecture/security' }] },
         { slug: 'guides' },
         { slug: 'reference' },
-        { slug: 'sdk' },
+        {
+          label: 'SDK',
+          items: [
+            { slug: 'sdk' },
+            { slug: 'sdk/python' },
+            { slug: 'sdk/typescript' },
+          ],
+        },
       ],
     }),
   ],

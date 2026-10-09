@@ -283,6 +283,23 @@ A minor release does not authorize a new release page. Use `CHANGELOG.md`
 for release history and update the approved manual where behavior changed.
 Create a separate release page only when the user requests and approves it.
 
+## SDK package documentation
+
+Keep each package's hand-written getting-started document as its `README.md`,
+with **About**, **Installation**, and **Usage** sections. State what the reader
+can do, required versions and service access, then give a small complete example
+and explain its result. Link to guides for tasks and reference for exact API
+details using absolute documentation URLs that also work on npm and PyPI.
+
+Symlink the corresponding docs page to the package README rather than copying
+the prose. Keep the real file inside the package so packaging includes it;
+add site-only title and question-description metadata in the content loader.
+Verify both the docs rendering and registry/package Markdown requirements.
+Generate API reference separately from public SDK interfaces, types, and
+docstrings/comments, including hand-written facades as well as generated
+operations. Do not generate or overwrite the getting-started README, and do
+not claim a reference exists before it is generated and accessible.
+
 ## Mermaid diagrams
 
 The site uses `astro-mermaid` for rendering. Use fenced code blocks:
