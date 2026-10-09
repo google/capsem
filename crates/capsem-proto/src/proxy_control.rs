@@ -5,8 +5,8 @@ use thiserror::Error;
 use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration, LedgerProtocolError};
 
 pub const PROXY_CONTROL_FRAME_SIZE: usize = 56;
-pub const PROXY_CONTROL_MAX_FDS: usize = 1;
-pub const PROXY_CONTROL_VERSION: u16 = 4;
+pub const PROXY_CONTROL_MAX_FDS: usize = 2;
+pub const PROXY_CONTROL_VERSION: u16 = 5;
 
 const MAGIC: [u8; 2] = *b"PX";
 const VERSION_RANGE: std::ops::Range<usize> = 2..4;
@@ -133,6 +133,16 @@ impl ProxyChannelGrant {
 
     pub const fn ledger_grant(self) -> Option<LedgerChannelGrant> {
         self.ledger_grant
+    }
+
+    /// Ledger writers receive the storage channel and its independent trusted
+    /// checkpoint channel. Every other capability owns one descriptor.
+    pub const fn expected_descriptor_count(self) -> usize {
+        if matches!(self.capability, ProxyCapability::Ledger) {
+            2
+        } else {
+            1
+        }
     }
 }
 

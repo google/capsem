@@ -14,8 +14,8 @@ use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 
 /// Exact record size carried by the bounded SCM_RIGHTS channel.
 pub const UPSTREAM_GRANT_FRAME_SIZE: usize = 4480;
-/// A response grants at most one connected upstream or ledger descriptor.
-pub const UPSTREAM_GRANT_MAX_FDS: usize = 1;
+/// A ledger response grants its storage and trusted-checkpoint channels.
+pub const UPSTREAM_GRANT_MAX_FDS: usize = 2;
 /// DNS names are at most 253 wire-text bytes without a root dot.
 pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 /// Maximum relative path carried by a guest-share metadata request.
@@ -207,7 +207,7 @@ pub enum UpstreamGrantRequest {
     },
 }
 
-/// Coordinator-to-worker record. Successful descriptor grants carry one fd.
+/// Coordinator-to-worker record. Ledger grants carry two independent fds.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UpstreamGrantResponse {
     TcpResolved {
@@ -253,10 +253,12 @@ impl UpstreamGrantRequest {
 }
 
 impl UpstreamGrantResponse {
-    /// Successful connected-socket and ledger grants carry one descriptor.
+    /// Successful connected sockets carry one descriptor; ledger grants carry
+    /// the direct worker channel and the trusted checkpoint channel.
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
-            Self::DescriptorGranted { .. } | Self::LedgerGranted { .. } => 1,
+            Self::DescriptorGranted { .. } => 1,
+            Self::LedgerGranted { .. } => 2,
             Self::TcpResolved { .. }
             | Self::Denied { .. }
             | Self::GuestModeSet { .. }

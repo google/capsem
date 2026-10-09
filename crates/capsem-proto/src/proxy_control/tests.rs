@@ -45,6 +45,23 @@ fn ledger_grants_round_trip_exact_worker_authority() {
 }
 
 #[test]
+fn only_ledger_grants_require_two_descriptors() {
+    let ledger = LedgerChannelGrant::new(LedgerGeneration::new([3; 16]), 9, LedgerClientRole::Proxy).unwrap();
+    assert_eq!(
+        ProxyChannelGrant::with_ledger(GENERATION, 7, ledger)
+            .unwrap()
+            .expected_descriptor_count(),
+        2
+    );
+    assert_eq!(
+        ProxyChannelGrant::new(GENERATION, 8, ProxyCapability::Credential)
+            .unwrap()
+            .expected_descriptor_count(),
+        1
+    );
+}
+
+#[test]
 fn ledger_capability_without_exact_authority_is_rejected() {
     assert_eq!(
         ProxyChannelGrant::new(GENERATION, 41, ProxyCapability::Ledger).unwrap_err(),
