@@ -10,9 +10,11 @@ use std::net::IpAddr;
 
 use anyhow::{bail, Result};
 
+use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
+
 /// Exact record size carried by the bounded SCM_RIGHTS channel.
 pub const UPSTREAM_GRANT_FRAME_SIZE: usize = 4480;
-/// A response grants at most one connected TCP or UDP descriptor.
+/// A response grants at most one connected upstream or ledger descriptor.
 pub const UPSTREAM_GRANT_MAX_FDS: usize = 1;
 /// DNS names are at most 253 wire-text bytes without a root dot.
 pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
@@ -20,7 +22,7 @@ pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 pub const MAX_GUEST_SHARE_PATH_BYTES: usize = 4096;
 
 const MAGIC: [u8; 2] = *b"UG";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 const MAGIC_RANGE: std::ops::Range<usize> = 0..2;
 const VERSION_OFFSET: usize = 2;
 const KIND_OFFSET: usize = 3;
@@ -42,10 +44,12 @@ const OPEN_DNS: u8 = 3;
 const ADOPTED: u8 = 4;
 const RELEASE: u8 = 5;
 const SET_GUEST_MODE: u8 = 6;
+const OPEN_LEDGER: u8 = 7;
 const TCP_RESOLVED: u8 = 101;
 const DESCRIPTOR_GRANTED: u8 = 102;
 const DENIED: u8 = 103;
 const GUEST_MODE_SET: u8 = 104;
+const LEDGER_GRANTED: u8 = 105;
 
 /// Application protocol spoken over a granted TCP stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,9 +167,12 @@ pub enum UpstreamGrantRequest {
         relative_path: Vec<u8>,
         mode: u16,
     },
+    OpenLedger {
+        request_id: u64,
+    },
 }
 
-/// Coordinator-to-worker record. Only `DescriptorGranted` carries one fd.
+/// Coordinator-to-worker record. Successful descriptor grants carry one fd.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UpstreamGrantResponse {
     TcpResolved {
@@ -188,6 +195,10 @@ pub enum UpstreamGrantResponse {
     GuestModeSet {
         request_id: u64,
     },
+    LedgerGranted {
+        request_id: u64,
+        grant: LedgerChannelGrant,
+    },
 }
 
 impl UpstreamGrantRequest {
@@ -198,10 +209,10 @@ impl UpstreamGrantRequest {
 }
 
 impl UpstreamGrantResponse {
-    /// Only a successful connected-socket grant carries a descriptor.
+    /// Successful connected-socket and ledger grants carry one descriptor.
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
-            Self::DescriptorGranted { .. } => 1,
+            Self::DescriptorGranted { .. } | Self::LedgerGranted { .. } => 1,
             Self::TcpResolved { .. } | Self::Denied { .. } | Self::GuestModeSet { .. } => 0,
         }
     }
@@ -271,6 +282,11 @@ pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
             put_u16(&mut frame, DETAIL_RANGE, *mode);
             put_path(&mut frame, relative_path)?;
+        }
+        UpstreamGrantRequest::OpenLedger { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = OPEN_LEDGER;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
         }
     }
     Ok(frame)
@@ -353,6 +369,15 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
                 mode: detail,
             })
         }
+        OPEN_LEDGER => {
+            require_nonzero("request id", request_id)?;
+            if resource_id != 0 {
+                bail!("ledger request cannot carry a resource");
+            }
+            require_empty_fields(port, detail, &name)?;
+            require_empty_path(&relative_path)?;
+            Ok(UpstreamGrantRequest::OpenLedger { request_id })
+        }
         kind => bail!("invalid upstream request kind {kind}"),
     }
 }
@@ -403,6 +428,14 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
             require_nonzero("request id", *request_id)?;
             frame[KIND_OFFSET] = GUEST_MODE_SET;
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
+        UpstreamGrantResponse::LedgerGranted { request_id, grant } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = LEDGER_GRANTED;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+            put_u64(&mut frame, RESOURCE_ID_RANGE, grant.client_id());
+            put_u16(&mut frame, DETAIL_RANGE, ledger_role_code(grant.role()));
+            put_name(&mut frame, &encode_ledger_generation(grant.generation()))?;
         }
     }
     Ok(frame)
@@ -473,6 +506,15 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
                 bail!("guest mode response carries unrelated fields");
             }
             Ok(UpstreamGrantResponse::GuestModeSet { request_id })
+        }
+        LEDGER_GRANTED => {
+            if policy_digest.is_some() {
+                bail!("ledger grant cannot carry a policy digest");
+            }
+            let generation = decode_ledger_generation(&name)?;
+            let role = decode_ledger_role(detail)?;
+            let grant = LedgerChannelGrant::new(generation, resource_id, role)?;
+            Ok(UpstreamGrantResponse::LedgerGranted { request_id, grant })
         }
         kind => bail!("invalid upstream response kind {kind}"),
     }
@@ -616,6 +658,62 @@ fn require_empty_policy_digest(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Resul
         bail!("upstream request cannot carry a policy digest");
     }
     Ok(())
+}
+
+fn ledger_role_code(role: LedgerClientRole) -> u16 {
+    match role {
+        LedgerClientRole::VmOwner => 1,
+        LedgerClientRole::Proxy => 2,
+        LedgerClientRole::Coordinator => 3,
+        LedgerClientRole::Reader => 4,
+        LedgerClientRole::Maintainer => 5,
+        LedgerClientRole::Supervisor => 6,
+    }
+}
+
+fn decode_ledger_role(code: u16) -> Result<LedgerClientRole> {
+    match code {
+        1 => Ok(LedgerClientRole::VmOwner),
+        2 => Ok(LedgerClientRole::Proxy),
+        3 => Ok(LedgerClientRole::Coordinator),
+        4 => Ok(LedgerClientRole::Reader),
+        5 => Ok(LedgerClientRole::Maintainer),
+        6 => Ok(LedgerClientRole::Supervisor),
+        _ => bail!("invalid ledger client role {code}"),
+    }
+}
+
+fn encode_ledger_generation(generation: LedgerGeneration) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(32);
+    for byte in generation.as_bytes() {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn decode_ledger_generation(encoded: &str) -> Result<LedgerGeneration> {
+    if encoded.len() != 32
+        || !encoded
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        bail!("ledger generation must contain 32 lowercase hexadecimal bytes");
+    }
+    let mut bytes = [0_u8; 16];
+    for (index, pair) in encoded.as_bytes().chunks_exact(2).enumerate() {
+        bytes[index] = (decode_hex_nibble(pair[0])? << 4) | decode_hex_nibble(pair[1])?;
+    }
+    Ok(LedgerGeneration::new(bytes))
+}
+
+fn decode_hex_nibble(byte: u8) -> Result<u8> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        _ => bail!("invalid lowercase hexadecimal byte"),
+    }
 }
 
 fn validate_policy_digest(digest: &str) -> Result<()> {
