@@ -9,12 +9,12 @@ mod private_names;
 mod private_seats;
 mod runtime_config;
 mod terminal;
-mod upstream_grant;
 mod vsock;
 
 use anyhow::{Context, Result};
 use capsem_core::fs_monitor::FsMonitor;
 use capsem_core::net::dns::{DnsAnswerCache, DnsResolver};
+use capsem_core::net::upstream_grant::{adopt_inherited, UpstreamGrantClient};
 use capsem_core::{boot_vm, BootOptions, VirtioFsShare, VsockConnection};
 use capsem_logger::DbWriter;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
@@ -351,7 +351,7 @@ fn prepare_owner_sandbox_attestation(session_dir: &Path) -> Result<OwnerSandboxA
 async fn attest_owner(
     attestation: OwnerSandboxAttestation,
     service_socket: PathBuf,
-    upstream_grants: Arc<upstream_grant::UpstreamGrantClient>,
+    upstream_grants: Arc<UpstreamGrantClient>,
 ) -> Result<()> {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -401,8 +401,7 @@ fn main() -> Result<()> {
     // SAFETY: process entry precedes argument parsing, telemetry, descriptor
     // owners and runtime threads. Broker grants will be named here explicitly.
     unsafe { capsem_foundation::unix::fd::close_inherited_descriptors()? };
-    let upstream_socket =
-        upstream_grant::adopt_inherited(std::io::stdin().as_fd()).context("adopt inherited upstream grant channel")?;
+    let upstream_socket = adopt_inherited(std::io::stdin().as_fd()).context("adopt inherited upstream grant channel")?;
     let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-process",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
@@ -437,7 +436,7 @@ fn main() -> Result<()> {
     let runtime_config = runtime_source.load()?;
     let upstream_grants = {
         let _runtime = rt.enter();
-        Arc::new(upstream_grant::UpstreamGrantClient::start(upstream_socket)?)
+        Arc::new(UpstreamGrantClient::start(upstream_socket)?)
     };
 
     info!(id = %args.id, "capsem-sandbox-process starting");
@@ -611,7 +610,7 @@ async fn run_async_main_loop(
     shutdown: Arc<Mutex<Shutdown>>,
     runtime_source: runtime_config::RuntimePolicySource,
     runtime_config: runtime_config::RuntimePolicyConfig,
-    upstream_grants: Arc<upstream_grant::UpstreamGrantClient>,
+    upstream_grants: Arc<UpstreamGrantClient>,
 ) -> Result<()> {
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
