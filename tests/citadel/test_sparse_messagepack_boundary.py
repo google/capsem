@@ -22,6 +22,8 @@ ENCODER_OWNERS = {
     Path("crates/capsem-proto/src/host_session.rs"),
     Path("crates/capsem-foundation/src/ipc_channel.rs"),
     Path("crates/capsem-foundation/src/ipc_handshake.rs"),
+    # Checksummed, append-only external ledger commitment checkpoint framing.
+    Path("crates/capsem-service/src/ledger_commitment.rs"),
 }
 TYPE_START = re.compile(r"\b(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+\w+[^;]*\{")
 FIELD = re.compile(r"\b(?:pub\s+)?\w+\s*:\s*Option<")

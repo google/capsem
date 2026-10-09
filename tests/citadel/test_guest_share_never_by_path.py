@@ -19,8 +19,8 @@ RATIONALE = """\
 Reach the share through descriptors from the host-owned session directory:
 capsem_core::session::open_workspace for the workspace, and
 ContainedDir::open_root(session_dir) then descend/open_file for anything else.
-The only path use allowed is handing the share to the hypervisor as the
-VirtioFS root (capsem-process's session layout).
+The only path uses allowed are handing the share to the hypervisor as the
+VirtioFS root and naming that same root in the VM owner's OS sandbox policy.
 """
 
 # The runtime crates that touch a live session. Image building in
@@ -30,8 +30,8 @@ SCANNED = ("crates/capsem-core/src", "crates/capsem-process/src", "crates/capsem
 ALLOWED = {
     # The definition.
     "crates/capsem-core/src/lib.rs": 1,
-    # The VirtioFS share root handed to the hypervisor.
-    "crates/capsem-process/src/main.rs": 1,
+    # The VirtioFS share root handed to the hypervisor and owner sandbox.
+    "crates/capsem-process/src/main.rs": 2,
 }
 BY_PATH = re.compile(r"guest_share_dir\(|join\(\s*\"guest\"\s*\)|\"guest/")
 

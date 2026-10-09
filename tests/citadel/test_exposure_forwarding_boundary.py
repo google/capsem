@@ -53,6 +53,9 @@ GATEWAY_LISTENER = (
     "crates/capsem-gateway/src/main.rs",
     "crates/capsem-gateway/src/preview.rs",
 )
+GATEWAY_NEGATIVE_ATTESTATION = {
+    'require_denied(std::net::TcpStream::connect(listener), "dial TCP directly")?;'
+}
 
 
 def _code(path: Path) -> list[tuple[int, str]]:
@@ -84,7 +87,7 @@ def forwarding_in_gateway(root: Path = PROJECT_ROOT) -> list[str]:
             continue
         for number, code in _code(path):
             outbound_tcp = TCP.search(code) and relative not in GATEWAY_LISTENER
-            connect = re.search(r"\bTcpStream::connect\b", code)
+            connect = re.search(r"\bTcpStream::connect\b", code) and code not in GATEWAY_NEGATIVE_ATTESTATION
             copy = BYTE_COPY.search(code) and relative != GATEWAY_TUNNEL
             if outbound_tcp or connect or copy:
                 found.append(f"{relative}:{number}: {code}")
@@ -103,7 +106,7 @@ def test_gateway_forwards_only_the_stream_tunnel() -> None:
 
 def test_the_gateway_tunnel_is_the_stream_upgrade_to_the_service_socket() -> None:
     tunnel = (PROJECT_ROOT / GATEWAY_TUNNEL).read_text(encoding="utf-8")
-    assert "UnixStream::connect(state.uds_path" in tunnel, RATIONALE
+    assert "state.service_client.connect().await" in tunnel, RATIONALE
     assert "SWITCHING_PROTOCOLS" in tunnel and "hyper::upgrade::on" in tunnel, RATIONALE
 
 

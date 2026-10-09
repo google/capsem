@@ -16,10 +16,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RATIONALE = """\
 Confined VM owners obtain upstream access only through generation-bound grants.
 
-capsem-process may adopt connected TCP and DNS descriptors, but it must not
-resolve hosts, bind an outbound socket, or dial an address.  The trusted service
-selects the peer from its active policy, opens the socket, and passes the file
-descriptor.  MITM request, retry and WebSocket paths must consume those grants.
+capsem-process may pass its generation-bound grant channel to capsem-proxy, but
+neither worker may resolve hosts, bind an outbound socket, or dial an address.
+The trusted service selects the peer from its active policy, opens the socket,
+and passes the descriptor. MITM request, retry and WebSocket paths consume it.
 Payload bytes stay on the connected descriptor and never cross the coordinator
 control channel.  This prevents arbitrary egress, stale-generation reuse and a
 high-bandwidth workload relay through the trusted service.
@@ -36,23 +36,22 @@ ALLOWED_PROCESS_SOCKET_LINES = {
     "crates/capsem-process/src/cables.rs": {
         "let source = capsem_core::container::publish::Source(std::net::TcpStream::from("
     },
-    "crates/capsem-process/src/upstream_grant.rs": {
-        "fn datagram_from_descriptor(descriptor: OwnedFd) -> Result<tokio::net::UdpSocket, String> {",
-        "let socket = std::net::UdpSocket::from(descriptor);",
-        'tokio::net::UdpSocket::from_std(socket).map_err(|error| format!("adopt granted DNS socket: {error}"))',
-        "fn stream_from_descriptor(descriptor: OwnedFd) -> Result<tokio::net::TcpStream, String> {",
-        "let stream = std::net::TcpStream::from(descriptor);",
-        'tokio::net::TcpStream::from_std(stream).map_err(|error| format!("adopt granted TCP stream: {error}"))',
+    "crates/capsem-process/src/main.rs": {
+        "std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, 9)).map(|_| ()),",
+    },
+    "crates/capsem-proxy/src/main.rs": {
+        "std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, 9)),",
     },
 }
 
 
 def _production_rust(root: Path) -> list[Path]:
-    source = root / "crates" / "capsem-process" / "src"
     return [
         path
-        for path in sorted(source.rglob("*.rs"))
-        if "tests" not in path.relative_to(source).parts and path.name != "tests.rs"
+        for crate in ("capsem-process", "capsem-proxy")
+        for path in sorted((root / "crates" / crate / "src").rglob("*.rs"))
+        if "tests" not in path.relative_to(root / "crates" / crate / "src").parts
+        and path.name != "tests.rs"
     ]
 
 
@@ -76,24 +75,26 @@ def process_direct_upstream_references(root: Path = PROJECT_ROOT) -> list[str]:
     return found
 
 
-def test_process_can_only_adopt_upstream_descriptors() -> None:
+def test_workers_can_only_adopt_upstream_descriptors() -> None:
     found = process_direct_upstream_references()
     assert not found, RATIONALE + "\n" + "\n".join(found)
 
 
-def test_process_installs_grants_for_dns_and_mitm() -> None:
-    main = (PROJECT_ROOT / "crates/capsem-process/src/main.rs").read_text(encoding="utf-8")
-    assert "DnsResolver::with_grants(" in main, RATIONALE
-    assert "upstream_grants: Some(" in main, RATIONALE
-    assert "Arc<dyn capsem_core::net::dns::DnsUpstreamGrants>" in main, RATIONALE
-    assert "Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants>" in main, RATIONALE
+def test_proxy_installs_grants_for_dns_and_mitm() -> None:
+    source = (PROJECT_ROOT / "crates/capsem-proxy/src/main.rs").read_text(encoding="utf-8")
+    assert "DnsResolver::with_grants(" in source, RATIONALE
+    assert "upstream_grants: Some(" in source, RATIONALE
+    assert "Arc<dyn capsem_core::net::dns::DnsUpstreamGrants>" in source, RATIONALE
+    assert "Arc<dyn capsem_core::net::mitm_proxy::TcpUpstreamGrants>" in source, RATIONALE
 
 
 def test_every_mitm_dial_path_consumes_a_grant() -> None:
     mitm = PROJECT_ROOT / "crates/capsem-core/src/net/mitm_proxy"
     paths = [mitm / "mod.rs", mitm / "upgrade.rs"]
     source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
-    assert source.count(".connect_with_grants(config.upstream_grants.as_deref())") == 3, RATIONALE
+    assert source.count(
+        ".connect_with_grants(config.upstream_grants.as_deref(), policy_snapshot.digest())"
+    ) == 3, RATIONALE
     assert not re.search(r"\btarget\s*\.\s*connect\s*\(", source), RATIONALE
 
 
