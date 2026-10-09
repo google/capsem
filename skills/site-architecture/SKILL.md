@@ -17,6 +17,11 @@ traffic, audit storage, private networks, and published ports. Distinguish these
 paths visually; split dense diagrams into readable views when needed. A list
 of process boxes does not explain their interactions. Use privilege colors
 with a legend, and distinguish assignment groups from OS sandbox boundaries.
+Show an OCI container inside each VM's hardware boundary. Place host processes
+outside that boundary: the private-network process connects the VMs' guest
+networking over separate cables, and the published-port relay reaches only its
+granted VM port. Never collapse container, VM, and host-process boundaries or
+draw a container's direct host-control/vsock access when guest helpers mediate it.
 Honor a supplied diagram reference and inspect the rendered diagram in Astro.
 For each boundary, state permitted authority, denied access, and remaining
 trust assumptions without claiming more than the accepted final contract.

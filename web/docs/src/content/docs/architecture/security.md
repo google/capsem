@@ -23,22 +23,30 @@ flowchart TB
   service["capsem-service<br/>Trusted coordinator"]
   gateway -. "control API" .-> service
 
-  subgraph a["VM A and its dedicated host processes"]
+  subgraph a["VM A and dedicated host processes"]
     ownerA["capsem-process A<br/>VM control"]
-    vmA[["VM A<br/>Own Linux kernel<br/>Agent and tools"]]
+    subgraph vmA["VM A — hardware boundary<br/>Own Linux kernel"]
+      containerA["OCI container A<br/>Agent and tools from image"]
+      guestA["Guest networking<br/>Kernel and guest helpers"]
+      containerA --> guestA
+    end
     proxyA["Proxy worker A<br/>Policy and own credentials"]
     ledgerA["Ledger process A<br/>Own audit storage"]
     ownerA -. "boots and controls" .-> vmA
-    vmA -->|"HTTP / TLS / DNS over vsock"| proxyA
+    guestA -->|"HTTP / TLS / DNS<br/>over vsock"| proxyA
     proxyA -->|"traffic audit records"| ledgerA
   end
-  subgraph b["VM B and its dedicated host processes"]
+  subgraph b["VM B and dedicated host processes"]
     ownerB["capsem-process B<br/>VM control"]
-    vmB[["VM B<br/>Own Linux kernel<br/>Agent and tools"]]
+    subgraph vmB["VM B — hardware boundary<br/>Own Linux kernel"]
+      containerB["OCI container B<br/>Agent and tools from image"]
+      guestB["Guest networking<br/>Kernel and guest helpers"]
+      containerB --> guestB
+    end
     proxyB["Proxy worker B<br/>Policy and own credentials"]
     ledgerB["Ledger process B<br/>Own audit storage"]
     ownerB -. "boots and controls" .-> vmB
-    vmB -->|"HTTP / TLS / DNS over vsock"| proxyB
+    guestB -->|"HTTP / TLS / DNS<br/>over vsock"| proxyB
     proxyB -->|"traffic audit records"| ledgerB
   end
 
@@ -50,17 +58,22 @@ flowchart TB
   classDef scoped fill:#fef9c3,stroke:#a16207,color:#172033
   classDef minimal fill:#dcfce7,stroke:#15803d,color:#172033
   classDef hardware fill:#f1f5f9,stroke:#475569,color:#172033
+  classDef guest fill:#dbeafe,stroke:#2563eb,color:#172033
   class service trusted
   class ownerA,ownerB virtualization
   class gateway,proxyA,proxyB scoped
   class ledgerA,ledgerB minimal
-  class vmA,vmB hardware
+  class containerA,containerB guest
+  class guestA,guestB hardware
+  style vmA fill:#f1f5f9,stroke:#475569,stroke-width:2px
+  style vmB fill:#f1f5f9,stroke:#475569,stroke-width:2px
 ```
 
 **Privilege legend:** red is the trusted coordinator; orange is scoped VM
 control; yellow is scoped API or upstream access; green is storage-only or
-connection-only access. Each colored box except the trusted coordinator is a
-separate OS-sandboxed process. Grey boxes are separate hardware-isolated VMs.
+connection-only access. Each orange, yellow, or green box is a
+separate OS-sandboxed host process. Grey outlines mark VM hardware boundaries;
+blue boxes are the OCI containers sandboxed inside those VMs.
 
 Dashed arrows show VM control. Solid arrows show the path from VM traffic to
 its proxy and audit storage. The coordinator also grants each proxy its policy
@@ -74,8 +87,9 @@ resources.
 ## Process isolation
 
 Each VM runs its own Linux kernel using Apple's Virtualization.framework on
-macOS or KVM on Linux. The selected image runs inside a sandbox within that
-VM, rather than sharing your computer's kernel. Guest sandboxing restricts
+macOS or KVM on Linux. The selected image supplies an **OCI container inside
+the VM**, rather than sharing your computer's kernel. That container has its
+own guest sandbox, separate from the VM's hardware boundary. Guest sandboxing restricts
 privileges and system calls, including direct access to the host's vsock
 channels. The VM boundary remains separate from the image's sandbox.
 
@@ -137,32 +151,47 @@ from VM A. These are separate routes with different permissions:
 flowchart TB
   host["Host client"]
   relay["capsem-router A<br/>Published-port relay"]
-  a[["VM A"]]
-  b[["VM B"]]
-  switch["capsem-router --network<br/>Private-network switch"]
+  subgraph a["VM A — hardware boundary"]
+    direction TB
+    containerA["OCI container A<br/>Agent and tools"]
+    guestA["Guest networking"]
+    containerA <-->|"VM networking"| guestA
+  end
+  switch["capsem-router --network<br/>Host network process<br/>Private-network switch"]
+  subgraph b["VM B — hardware boundary"]
+    direction TB
+    guestB["Guest networking"]
+    containerB["OCI container B<br/>Agent and tools"]
+    guestB <-->|"VM networking"| containerB
+  end
   proxyA["Proxy worker A"]
   proxyB["Proxy worker B"]
   upstream["Permitted upstream services"]
 
   host -->|"published host port"| relay
-  relay -->|"only the granted VM port"| a
-  a <-->|"private network"| switch
-  switch <-->|"private network"| b
-  a -->|"outbound requests"| proxyA
-  b -->|"outbound requests"| proxyB
+  relay -->|"only the granted VM port"| guestA
+  guestA <-->|"private cable over vsock"| switch
+  switch <-->|"private cable over vsock"| guestB
+  guestA -->|"outbound requests"| proxyA
+  guestB -->|"outbound requests"| proxyB
   proxyA -->|"allowed requests only"| upstream
   proxyB -->|"allowed requests only"| upstream
 
   classDef scoped fill:#fef9c3,stroke:#a16207,color:#172033
   classDef minimal fill:#dcfce7,stroke:#15803d,color:#172033
   classDef hardware fill:#f1f5f9,stroke:#475569,color:#172033
+  classDef guest fill:#dbeafe,stroke:#2563eb,color:#172033
   class proxyA,proxyB scoped
   class relay,switch minimal
-  class a,b hardware
+  class containerA,containerB guest
+  class guestA,guestB hardware
+  style a fill:#f1f5f9,stroke:#475569,stroke-width:2px
+  style b fill:#f1f5f9,stroke:#475569,stroke-width:2px
 ```
 
-The published port reaches VM A through its relay. VM A and VM B exchange
-private traffic through their shared switch. Requests to outside services
+Each OCI container uses its VM's guest networking. The published port reaches
+VM A through its relay. The private-network switch is a separate host process
+between VM A and VM B, connected to each VM by a vsock cable. Requests to outside services
 take each VM's own proxy path; neither the switch nor the published port
 provides a direct internet route.
 
