@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Launch OCI workloads without mutating the guest-owned staging file, so the
+  Linux VM-owner sandbox can keep host permission syscalls denied.
+
 - KVM image workloads retain write access to their workspace after VM-root
   access by expiring caller-owned VirtioFS attributes across user namespaces.
 
