@@ -1,9 +1,10 @@
-"""Citadel guard: runtime crates link no native codec, and keep two write rails.
+"""Citadel guard: native codecs stay in the confined ledger, and keep two write rails.
 
-The one C library the runtime ships is SQLite through bundled rusqlite. The
-ledger is parsed from attacker-influenced bytes, so every additional native
-decoder is attack surface the Rust type system does not cover. Pure-Rust
-codecs (miniz_oxide, lz4_flex, ruzstd) are allowed; their *-sys twins are not.
+Privileged runtime processes link only SQLite through bundled rusqlite. The
+dedicated ledger worker may additionally link the reviewed zstd closure: it is
+confined to one session before it decodes bodies, and no service, VM owner,
+gateway or proxy reaches that native parser. Pure-Rust codecs remain allowed
+everywhere; other *-sys twins are not.
 
 The second rule here is about storage rather than parsing, and it catches what
 the first cannot: sled, redb and fjall are pure Rust, so nothing about them
@@ -23,9 +24,11 @@ LOCKFILE = PROJECT_ROOT / "Cargo.lock"
 WORKSPACE = PROJECT_ROOT / "Cargo.toml"
 
 NATIVE_DEPENDENCY_RATIONALE = """\
-Native compression/storage dependency in a runtime crate.
+Native compression/storage dependency outside the confined ledger exception.
 
-Runtime crates ship exactly one C library: SQLite via bundled rusqlite.
+Privileged runtime crates ship exactly one C library: SQLite via bundled
+rusqlite. The confined capsem-ledger worker alone may add the exact zstd,
+zstd-safe and zstd-sys closure.
 zstd-sys, lz4-sys, librocksdb-sys, libsqlite3-sys outside rusqlite, snappy,
 brotli-sys and friends add a native decoder in front of attacker-influenced
 ledger bytes. Use a pure-Rust codec (miniz_oxide is the house choice) or move
@@ -68,6 +71,9 @@ FORBIDDEN = {
     "lmdb-rkv-sys",
     "libdeflate-sys",
 }
+
+# The exact native codec closure reviewed for the session-confined ledger.
+CONFINED_NATIVE_CODECS = {"capsem-ledger": {"zstd", "zstd-safe", "zstd-sys"}}
 
 # Tooling crates that never ship in the runtime and may use native codecs.
 TOOLING_CRATES = {"capsem-admin", "capsem-bench", "capsem-mock-server"}
@@ -170,7 +176,8 @@ def offenders(lock_text: str, member_names: Iterable[str]) -> list[str]:
     for name in member_names:
         if name in TOOLING_CRATES:
             continue
-        hit = sorted(FORBIDDEN & _closure(packages, name))
+        allowed = CONFINED_NATIVE_CODECS.get(name, set())
+        hit = sorted((FORBIDDEN & _closure(packages, name)) - allowed)
         if hit:
             result.append(f"{name}: {', '.join(hit)}")
     return result
@@ -180,6 +187,12 @@ def test_runtime_crates_link_no_native_compression_or_storage() -> None:
     member_names = _member_package_names(WORKSPACE.read_text()).values()
     found = offenders(LOCKFILE.read_text(), member_names)
     assert not found, "\n".join(found) + "\n" + NATIVE_DEPENDENCY_RATIONALE
+
+
+def test_confined_ledger_owns_the_exact_reviewed_zstd_closure() -> None:
+    packages = _lock_packages(LOCKFILE.read_text())
+    native = FORBIDDEN & _closure(packages, "capsem-ledger")
+    assert native == CONFINED_NATIVE_CODECS["capsem-ledger"]
 
 
 def test_every_workspace_member_resolves_to_a_lockfile_package() -> None:
@@ -241,3 +254,8 @@ def test_offenders_flags_a_synthetic_native_dependency() -> None:
     injected = _inject_dependency(lock_text, "capsem-logger", "zstd 0.13.3")
     found = offenders(injected, ["capsem-logger"])
     assert any(item.startswith("capsem-logger:") for item in found), found
+
+
+def test_confined_ledger_exception_rejects_another_native_codec() -> None:
+    lock_text = _inject_dependency(LOCKFILE.read_text(), "capsem-ledger", "lz4-sys 1.11.1")
+    assert offenders(lock_text, ["capsem-ledger"]) == ["capsem-ledger: lz4-sys"]
