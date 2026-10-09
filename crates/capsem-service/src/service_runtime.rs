@@ -2,6 +2,8 @@ use super::*;
 
 mod shutdown;
 pub(crate) mod telemetry_export;
+#[cfg(test)]
+mod tests;
 
 pub(super) async fn run_service() -> Result<()> {
     let args = Args::parse();
@@ -771,7 +773,7 @@ pub(super) async fn spawn_companions(
                         let pp = pp.clone();
                         let ppp = ppp.clone();
                         async move {
-                            if tp.exists() && pp.exists() && ppp.exists() {
+                            if gateway_runtime_ready(&tp, &pp, &ppp) {
                                 Some(())
                             } else {
                                 None
@@ -782,7 +784,7 @@ pub(super) async fn spawn_companions(
                 .instrument(gateway_span.clone())
                 .await;
             }
-            if token_path.exists() && port_path.exists() && preview_port_path.exists() {
+            if gateway_runtime_ready(&token_path, &port_path, &preview_port_path) {
                 gateway_span.record("status", "ok");
             } else {
                 gateway_span.record("status", "error");
@@ -819,6 +821,25 @@ pub(super) async fn spawn_companions(
     }
 
     children
+}
+
+fn gateway_runtime_ready(
+    token_path: &std::path::Path,
+    port_path: &std::path::Path,
+    preview_path: &std::path::Path,
+) -> bool {
+    let Ok(token) = std::fs::read_to_string(token_path) else {
+        return false;
+    };
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return false;
+    }
+    [port_path, preview_path].into_iter().all(|path| {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|value| value.trim().parse::<u16>().ok())
+            .is_some_and(|port| port != 0)
+    })
 }
 
 /// Remove the sentinels capsem-process writes beside its socket: `.launched`
