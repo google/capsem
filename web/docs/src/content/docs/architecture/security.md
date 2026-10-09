@@ -1,247 +1,139 @@
 ---
 title: Security architecture
-description: How does Capsem isolate VMs, host processes, and network access?
+description: How are Capsem's processes, sandboxes, and network connections organized?
 ---
 
-<!-- Authoring target: Capsem 0.7 with #206 completed, including its #289
-configuration amendment. This draft is not proof that the current checkout
-implements every target boundary. Publish only after the final boundaries
-are implemented and verified. -->
+<!-- Authoring target: completed Capsem 0.7/#206, including #289.
+Worker boundaries below must be implemented and verified before publication. -->
 
-Capsem treats the code inside a VM, and the traffic it produces, as untrusted.
-Its security model combines three boundaries: a VM separates that code from
-your computer, OS sandboxes limit the host processes handling it, and network
-policy controls which outside services it can reach.
+Capsem runs OCI containers inside separate VMs. Host processes handle VM
+control, proxy traffic, MCP tools, network connections, and log storage.
 
-The aim is to contain a compromise: gaining control of one VM or its proxy
-must not grant access to another VM's files, credentials, or controls.
+## Processes and control
 
 ```mermaid
 %%{init: {"theme": "neutral"}}%%
 flowchart TB
-  gateway["capsem-gateway<br/>Authenticated API"]
-  service["capsem-service<br/>Trusted coordinator"]
-  gateway -. "control API" .-> service
+  app["capsem-app<br/>Capsem UI"]
+  hostMcp["@capsem/mcp"]
+  sdk["SDKs<br/>Python / TypeScript / Rust"]
+  cli["capsem CLI"]
+  gateway["capsem-gateway"]
+  service["capsem-service"]
 
-  subgraph a["VM A and dedicated host processes"]
-    ownerA["capsem-process A<br/>VM control"]
-    subgraph vmA["VM A — hardware boundary<br/>Own Linux kernel"]
-      containerA["OCI container A<br/>Agent and tools from image"]
-      guestA["Guest networking<br/>Kernel and guest helpers"]
-      containerA --> guestA
+  hostMcp --> sdk
+  app -->|API| gateway
+  sdk -->|API| gateway
+  cli -->|API| gateway
+  gateway -->|HTTP over UDS| service
+
+  subgraph perVM["Per-VM processes — VM A"]
+    owner["capsem-process"]
+    subgraph vm["VM — hardware boundary"]
+      container["OCI container"]
+      guest["Guest helpers"]
+      container <-->|traffic / MCP| guest
     end
-    proxyA["Proxy worker A<br/>Policy and own credentials"]
-    ledgerA["Ledger process A<br/>Own audit storage"]
-    ownerA -. "boots and controls" .-> vmA
-    guestA -->|"HTTP / TLS / DNS<br/>over vsock"| proxyA
-    proxyA -->|"traffic audit records"| ledgerA
-  end
-  subgraph b["VM B and dedicated host processes"]
-    ownerB["capsem-process B<br/>VM control"]
-    subgraph vmB["VM B — hardware boundary<br/>Own Linux kernel"]
-      containerB["OCI container B<br/>Agent and tools from image"]
-      guestB["Guest networking<br/>Kernel and guest helpers"]
-      containerB --> guestB
-    end
-    proxyB["Proxy worker B<br/>Policy and own credentials"]
-    ledgerB["Ledger process B<br/>Own audit storage"]
-    ownerB -. "boots and controls" .-> vmB
-    guestB -->|"HTTP / TLS / DNS<br/>over vsock"| proxyB
-    proxyB -->|"traffic audit records"| ledgerB
+    engine["Security engine"]
+    mcp["capsem-mcp-aggregator"]
+    writer["Log writer"]
+
+    owner -. control .-> vm
+    guest -->|vsock| engine
+    engine <-->|tool calls| mcp
+    engine -->|audit events| writer
+    owner -->|VM events| writer
   end
 
-  service -. "control IPC" .-> ownerA
-  service -. "control IPC" .-> ownerB
+  service -. control IPC .-> owner
+  mcp --> tools["MCP servers"]
 
   classDef trusted fill:#fee2e2,stroke:#b91c1c,color:#172033
-  classDef virtualization fill:#ffedd5,stroke:#c2410c,color:#172033
+  classDef owner fill:#ffedd5,stroke:#c2410c,color:#172033
   classDef scoped fill:#fef9c3,stroke:#a16207,color:#172033
   classDef minimal fill:#dcfce7,stroke:#15803d,color:#172033
-  classDef hardware fill:#f1f5f9,stroke:#475569,color:#172033
   classDef guest fill:#dbeafe,stroke:#2563eb,color:#172033
   class service trusted
-  class ownerA,ownerB virtualization
-  class gateway,proxyA,proxyB scoped
-  class ledgerA,ledgerB minimal
-  class containerA,containerB guest
-  class guestA,guestB hardware
-  style vmA fill:#f1f5f9,stroke:#475569,stroke-width:2px
-  style vmB fill:#f1f5f9,stroke:#475569,stroke-width:2px
+  class owner owner
+  class gateway,engine,mcp scoped
+  class writer minimal
+  class container guest
+  style perVM fill:#eeeeee,stroke:#777777,stroke-width:2px
+  style vm fill:#eff6ff,stroke:#2563eb,stroke-width:2px
 ```
 
-**Privilege legend:** red is the trusted coordinator; orange is scoped VM
-control; yellow is scoped API or upstream access; green is storage-only or
-connection-only access. Each orange, yellow, or green box is a
-separate OS-sandboxed host process. Grey outlines mark VM hardware boundaries;
-blue boxes are the OCI containers sandboxed inside those VMs.
+Grey group: one VM's processes. Blue outline: VM hardware boundary.
+Outside the grey group: shared components. Dashed arrows: control; solid: data.
 
-Dashed arrows show VM control. Solid arrows show the path from VM traffic to
-its proxy and audit storage. The coordinator also grants each proxy its policy
-and permitted connections; VM owners write their audit records to the same
-VM-specific ledger. The network routes are shown separately below.
-
-VM A and VM B have separate workers. The surrounding groups show assignment,
-not a shared sandbox; neither VM's workers receive authority over the other's
-resources.
-
-## Process isolation
-
-Each VM runs its own Linux kernel using Apple's Virtualization.framework on
-macOS or KVM on Linux. The selected image supplies an **OCI container inside
-the VM**, rather than sharing your computer's kernel. That container has its
-own guest sandbox, separate from the VM's hardware boundary. Guest sandboxing restricts
-privileges and system calls, including direct access to the host's vsock
-channels. The VM boundary remains separate from the image's sandbox.
-
-The host also separates responsibilities into processes. The VM owner manages
-virtualization; a proxy worker handles untrusted network traffic; a ledger
-process stores and queries audit records. Separating them keeps a network
-parser or database bug from automatically gaining VM-control authority.
-
-| Process | Permitted authority |
-| --- | --- |
-| `capsem-service` | Trusted coordinator for VM lifecycle, configuration, and scoped permissions. |
-| `capsem-gateway` | Authenticated API access and authorized control/terminal connections. |
-| `capsem-process` | One VM's virtualization resources, files, read-only runtime assets, and control channels. |
-| Proxy worker | One VM's traffic, policy, granted credentials, and approved upstream connections. |
-| Ledger process | One VM's audit storage and granted read/write connections; no network access or program execution. |
-| `capsem-router --network` | Only the connections belonging to one private network. |
-| `capsem-router` for a published port | Only the granted connections for that VM port. |
-
-The CLI, TUI, Capsem UI, SDKs, and host MCP reach VM controls through the
-service. They do not connect directly to a VM owner's private control socket.
-
-## Privilege separation and sandbox boundaries
-
-A separate process is not enough: processes running as the same user normally
-share that user's access to files and sockets. Private directory permissions
-and clearing environment variables help, but do not prevent sibling access.
-
-**Privilege separation** gives each process only the authority needed for its
-job. The VM owner can control its VM but does not also parse its web traffic.
-The proxy can inspect and forward permitted requests but cannot control VMs.
-The ledger can store and query its VM's records but cannot make network
-connections or launch programs. The trusted coordinator grants these roles;
-workers cannot grant themselves more authority.
-
-OS sandboxes enforce the limits in the table. macOS uses Seatbelt policies;
-Linux uses Landlock for filesystem restrictions and seccomp for permitted
-system calls. Descriptor-only switches and relays use existing granted
-connections instead of permission to open arbitrary paths or connections.
-Each policy allows only the operations that process needs for its role.
-
-Confinement is installed before untrusted input is accepted. If it cannot be
-installed, the worker does not become ready. The coordinator binds each grant
-to the assigned VM and the current worker lifetime; supplying another VM's
-name, ID, or path cannot expand a worker's access. Replacing a worker requires
-fresh grants, so an old connection cannot act for its replacement.
-
-Guest-writable files are separate from host-only runtime disks and audit
-storage. Host access to guest-writable files is contained and does not follow
-links outside the allowed directory. These file boundaries complement the
-OS sandbox rather than depending on the guest to respect them.
-
-## Network isolation
-
-This example joins VM A and VM B to one private network and publishes a port
-from VM A. These are separate routes with different permissions:
+## Network connections
 
 ```mermaid
 %%{init: {"theme": "neutral"}}%%
 flowchart TB
   host["Host client"]
-  relay["capsem-router A<br/>Published-port relay"]
-  subgraph a["VM A — hardware boundary"]
-    direction TB
-    containerA["OCI container A<br/>Agent and tools"]
-    guestA["Guest networking"]
-    containerA <-->|"VM networking"| guestA
-  end
-  switch["capsem-router --network<br/>Host network process<br/>Private-network switch"]
-  subgraph b["VM B — hardware boundary"]
-    direction TB
-    guestB["Guest networking"]
-    containerB["OCI container B<br/>Agent and tools"]
-    guestB <-->|"VM networking"| containerB
-  end
-  proxyA["Proxy worker A"]
-  proxyB["Proxy worker B"]
-  upstream["Permitted upstream services"]
 
-  host -->|"published host port"| relay
-  relay -->|"only the granted VM port"| guestA
-  guestA <-->|"private cable over vsock"| switch
-  switch <-->|"private cable over vsock"| guestB
-  guestA -->|"outbound requests"| proxyA
-  guestB -->|"outbound requests"| proxyB
-  proxyA -->|"allowed requests only"| upstream
-  proxyB -->|"allowed requests only"| upstream
+  subgraph perA["Per-VM processes — VM A"]
+    exposeA["capsem-router<br/>Expose · one per VM"]
+    subgraph vmA["VM A — hardware boundary"]
+      direction TB
+      containerA["OCI container A"]
+      guestA["Guest networking"]
+      containerA <-->|VM network| guestA
+    end
+    engineA["Security engine A"]
+    exposeA -->|one exposed VM port| guestA
+    guestA -->|HTTP / TLS / DNS| engineA
+  end
+
+  network["capsem-router --network<br/>One process per private network"]
+
+  subgraph perB["Per-VM processes — VM B"]
+    subgraph vmB["VM B — hardware boundary"]
+      direction TB
+      guestB["Guest networking"]
+      containerB["OCI container B"]
+      guestB <-->|VM network| containerB
+    end
+    engineB["Security engine B"]
+    guestB -->|HTTP / TLS / DNS| engineB
+  end
+
+  host -->|exposed host port| exposeA
+  guestA <-->|vsock cable| network
+  network <-->|vsock cable| guestB
+  engineA -->|allowed requests| upstream["Allowed upstream services"]
+  engineB -->|allowed requests| upstream
 
   classDef scoped fill:#fef9c3,stroke:#a16207,color:#172033
   classDef minimal fill:#dcfce7,stroke:#15803d,color:#172033
-  classDef hardware fill:#f1f5f9,stroke:#475569,color:#172033
   classDef guest fill:#dbeafe,stroke:#2563eb,color:#172033
-  class proxyA,proxyB scoped
-  class relay,switch minimal
+  class engineA,engineB scoped
+  class exposeA,network minimal
   class containerA,containerB guest
-  class guestA,guestB hardware
-  style a fill:#f1f5f9,stroke:#475569,stroke-width:2px
-  style b fill:#f1f5f9,stroke:#475569,stroke-width:2px
+  style perA fill:#eeeeee,stroke:#777777,stroke-width:2px
+  style perB fill:#eeeeee,stroke:#777777,stroke-width:2px
+  style vmA fill:#eff6ff,stroke:#2563eb,stroke-width:2px
+  style vmB fill:#eff6ff,stroke:#2563eb,stroke-width:2px
 ```
 
-Each OCI container uses its VM's guest networking. The published port reaches
-VM A through its relay. The private-network switch is a separate host process
-between VM A and VM B, connected to each VM by a vsock cable. Requests to outside services
-take each VM's own proxy path; neither the switch nor the published port
-provides a direct internet route.
+The expose router belongs to VM A. The private-network switch is shared by
+the VMs attached to that network; it is not a per-VM process.
 
-### Internet traffic is mediated
+## Roles and sandboxing rules
 
-A VM has no direct network connection to the internet or your computer's
-network. Guest helpers send supported outbound traffic over **vsock**, a
-host–VM transport, to that VM's proxy worker. DNS and HTTP/HTTPS processing,
-security policy, and credential handling live in that confined worker.
-
-For HTTPS inspection, TLS terminates at the proxy and a separate connection
-is made to an allowed upstream. Policy controls which requests proceed;
-unsupported traffic does not gain a direct route around the proxy. The
-worker receives only its assigned credentials and upstream authority, not
-permission to dial arbitrary destinations or use another VM's credentials.
-Secrets are redacted before traffic records enter the ledger.
-
-### Private networks are deliberate connections
-
-VMs start without connections to other VMs. Joining a private network grants
-communication with its members through a confined switch. The switch has no
-internet uplink and does not connect unrelated private networks.
-
-Membership is the permission to communicate: VMs on the same private network
-can exchange traffic using any protocol. That traffic is not routed through
-the internet proxy or subjected to its HTTP policy. A private network is a
-shared communication space, not an isolation boundary between its members.
-
-### Published ports are narrow grants
-
-Publishing a VM port creates an explicit host-side route to that port through
-a confined relay. The relay holds the connections it was granted; it cannot
-turn that route into arbitrary host access or access to another VM. Publishing
-a port does not give the VM a general internet connection.
-
-## Trust and failure boundaries
-
-The host OS, hypervisor, and `capsem-service` remain trusted. These boundaries
-limit a compromised guest or worker; they do not protect against a compromised
-host administrator or kernel. A compromised proxy can misuse authority granted
-to its own VM, so those grants must stay narrow.
-
-If a proxy or ledger fails, affected operations fail explicitly and their
-resources remain bounded. Security-sensitive actions that require an audit
-record are refused if that record cannot be accepted. Other VMs retain their
-separate workers and authority. An accepted record is not necessarily committed
-to durable storage, and audit records alone do not prove every action was seen.
-
-`capsem proxy` reuses the proxy engine in a separate proxy instance without
-booting a VM. It controls only model requests sent to its OpenAI-compatible
-endpoint; it does not sandbox its client or prevent other network access.
-That data endpoint is unauthenticated, so deployment/network controls must
-restrict access. It is separate from the authenticated SDK/control gateway.
+| Process | Role | Sandboxing rules |
+| --- | --- | --- |
+| `capsem-service` | Global VM coordinator. | Trusted; no worker sandbox. Clears worker environments and closes unrelated inherited handles. Grants carry VM identity and worker generation. |
+| `capsem-gateway` | Shared authenticated API for all clients. | Startup policy allows API listener/accept, service and terminal IPC, required runtime/log files. Denies arbitrary files, exec, unrelated process signals, and ungranted outbound connections. Exact Seatbelt/Linux allowlists: #206. |
+| `capsem-process` | One VM's boot and control. | Own VM directory read/write; runtime assets read-only; own IPC/vsock handles. macOS policy allows required Virtualization.framework operations and entitlement; Linux allows required KVM device operations. Other VM directories/sockets denied. Exact OS allowlists: #206. |
+| VM | Own Linux kernel. | Apple Virtualization.framework or KVM. No host-network NIC. Runtime assets and injected binaries read-only; own writable overlay/workspace. |
+| OCI container | Agent and tools inside the VM. | `runc` creates user/PID/mount/IPC/UTS/network namespaces; `noNewPrivileges=true`; cgroup CPU/memory/PID limits. Moby-based seccomp denies vsock sockets; no `CAP_SYS_ADMIN`. Terminal images cannot create namespaces; Xpra permits Chromium's user/PID/network namespaces. Container root is writable. |
+| Guest helpers | Guest-side terminal/network/MCP transport. | Outside the OCI container, inside the VM. Open assigned vsock channels; the container cannot open them directly. No host Seatbelt/Landlock profile. |
+| Security engine | One VM's proxy, TLS/DNS, rules, credentials, and MCP policy. | Install confinement before guest input. Grant only its policy, certificates, credentials, approved upstream connections, and log-writer connection. Deny database paths, VM control, sibling credentials, arbitrary dialing, exec, and unrelated signals. Exact Seatbelt/Linux allowlists: #206. |
+| Log writer | One VM's audit storage and queries. | Load libraries, then confine; temporary storage in memory. **macOS:** deny-default Seatbelt; allow only own `session.db`, WAL/SHM, archives, locks; deny network and `process-exec`. **Linux:** Landlock allows only that session directory; seccomp permits storage/runtime calls, denies socket creation and exec. Granted producer/reader connections only; no virtualization entitlement. |
+| `capsem-mcp-aggregator` | Per-VM MCP server connections and dispatch. | Needs configured server connections and stdio children. Separate OS profile not specified in #206; tool permissions do not establish filesystem/syscall confinement. |
+| `capsem-mcp-builtin` | Built-in HTTP MCP tools. | Requires outbound HTTP. Separate OS profile not specified in #206; tool policy is not an OS sandbox. |
+| `capsem-router` (expose) | One VM's published ports. | Close inherited handles above stdin/stdout/stderr; start runtime and parent watch; confine before first grant. **macOS:** `sandbox_init("(version 1)(deny default)")`. **Linux:** `no_new_privs` + seccomp `TSYNC` on all threads. Allow existing-handle I/O, polling, memory, shutdown; deny open/connect/accept/clone/exec/signals. Receive connected handle pairs; no listener acceptance or virtualization entitlement. |
+| `capsem-router --network` | One private network's VM cables. | Same startup and OS rules as expose. Only that network's cable handles; no file opens, listener, new connections, or internet uplink. Member traffic uses any protocol and bypasses HTTP inspection. |
+| `capsem` / `capsem-app` / `capsem-tui` / `capsem-tray` | CLI and UI clients. | Launching user's permissions; no worker-sandbox guarantee. Authenticated gateway API; no direct VM-owner IPC. |
+| SDKs / `@capsem/mcp` | Application and host-MCP clients. | SDKs inherit application permissions; install no OS sandbox. Host MCP uses the SDK under its launching user's permissions. |

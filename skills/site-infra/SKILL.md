@@ -173,6 +173,9 @@ manual VM asset releases, and the `release.capsem.org` asset-channel workflow.
 ## Writing and review
 
 Write for the intended reader with the structure of the chosen document type.
+Use BLUF: lead with the direct answer in one or two simple sentences. Avoid
+abstract framing and paragraphs that repeat a diagram or table. Architecture
+pages use concrete component relationships and a process/role/sandboxing table.
 Keep one canonical explanation or contract and link to it instead of repeating
 it. No filler, marketing pitches, or speculative features. Use tables for
 comparable facts and Mermaid diagrams when they clarify relationships.

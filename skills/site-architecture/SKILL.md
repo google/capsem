@@ -7,11 +7,34 @@ description: Capsem system architecture: service, per-VM processes, CLI, guest a
 
 ## Security explanations
 
+Use BLUF: start with one or two short sentences stating how the system is
+organized. Describe components directly; do not open with abstract threat
+statements or broad security promises. Prefer a compact table of **Process,
+Role, Sandboxing rules** over paragraphs repeating each component's job.
+Keep clients, libraries, and host/guest processes distinct. Include the SDKs,
+Capsem UI, host and guest MCP, proxy/security engine, log writer, expose relay,
+and inter-VM network in the relevant diagram and table; do not hide requested
+components behind generic labels. Remove prose already explained by the table
+or diagram. Keep only necessary legends, boundary rules, and trust limits.
+Use one VM for the process/control diagram; use multiple VMs in the separate
+network view. Grey groups mean per-VM ownership, not hardware or OS confinement.
+Keep expose routers and security engines inside those groups; shared clients,
+gateway, coordinator, and per-network switches stay outside. Give the actual VM
+hardware boundary a distinct outline. Label the processing worker **Security
+engine**, without an extra "proxy worker" label for the same component.
+For each sandbox row, specify startup order, OS mechanism, allowed files and
+operations, and denials. Do not summarize all workers as Seatbelt/Landlock/
+seccomp or imply clients install a sandbox. Flag undefined OS allowlists rather
+than inventing them. Distinguish read-only runtime assets from writable OCI roots.
+The agreed target routes CLI operations through the authenticated gateway;
+track remaining direct-service paths as implementation work.
+
 Use the completed 0.7/#206 model for the requested security explanation,
 while recording unverified target boundaries before publication. Show actual
 processes, privilege separation, and OS/hardware sandbox boundaries; file
 permissions and separate libraries are not substitutes for confinement.
-Show multiple VMs, separate per-VM workers, and shared/per-network processes.
+Show per-VM workers and shared/per-network processes, using multiple VMs when
+their relationship is the subject of the diagram.
 Use labeled arrows to explain how they work together: control IPC, VM control,
 traffic, audit storage, private networks, and published ports. Distinguish these
 paths visually; split dense diagrams into readable views when needed. A list
