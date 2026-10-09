@@ -632,9 +632,10 @@ async fn a_saved_exposure_the_rules_now_refuse_is_forgotten_on_restore() {
     let (control, _requests) = mpsc::channel(8);
     assert_eq!(owner.restore(control).await.unwrap(), 0);
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("published-ports.json")).unwrap(),
+        std::fs::read_to_string(dir.path().join("owner/published-ports.json")).unwrap(),
         "[]"
     );
+    assert!(!dir.path().join("published-ports.json").exists());
     let rows = lifecycle_rows(&engine, &path).await;
     assert!(rows.contains("restored"), "{rows}");
     std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("nothing listens for a refused restore");
