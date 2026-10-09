@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Add the Linux worker confinement primitive that restricts every runtime
+  thread to explicit filesystem grants, inherited network descriptors and its
+  signal domain while denying ambient control sockets and process execution.
+
 - Broker VM DNS and TCP upstream access through generation-bound connected
   descriptors selected from the service's trusted active-policy snapshot.
   Policy reload, worker replacement, release and malformed ownership attempts
