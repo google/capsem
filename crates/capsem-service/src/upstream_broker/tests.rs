@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::net::SocketAddr;
 use std::os::fd::{AsRawFd as _, OwnedFd};
+use std::os::unix::fs::{symlink, PermissionsExt as _};
+use std::path::PathBuf;
 
 use capsem_core::net::policy::{UpstreamOverride, UpstreamOverrideProtocol};
 use capsem_core::net::policy_config::{ActivePolicyFile, SettingsFile};
@@ -76,8 +78,82 @@ fn start_broker(
         pending.initial_policy,
         pending.updates,
         authority.grant(),
+        pending.session_dir,
     ));
     (client, publisher, authority, task)
+}
+
+fn start_broker_for_session(
+    policy: Arc<BrokerPolicy>,
+    session_dir: PathBuf,
+) -> (
+    TestClient,
+    PolicyPublisher,
+    WorkerAuthority,
+    tokio::task::JoinHandle<Result<(), String>>,
+) {
+    let (pending, publisher) = PendingBroker::pair_for_session(policy, session_dir).unwrap();
+    let client = TestClient::new(pending.worker);
+    let authority = WorkerAuthority::default();
+    let task = tokio::spawn(run(
+        pending.coordinator,
+        pending.initial_policy,
+        pending.updates,
+        authority.grant(),
+        pending.session_dir,
+    ));
+    (client, publisher, authority, task)
+}
+
+#[tokio::test]
+async fn guest_mode_requests_are_confined_to_the_session_share() {
+    let session = tempfile::tempdir().unwrap();
+    let guest = session.path().join(capsem_core::GUEST_SHARE_DIR);
+    std::fs::create_dir_all(guest.join("workspace/nested")).unwrap();
+    std::fs::write(guest.join("workspace/nested/tool"), b"tool").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret");
+    std::fs::write(&secret, b"secret").unwrap();
+    std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+    symlink(&secret, guest.join("workspace/link")).unwrap();
+
+    let (client, _publisher, authority, task) =
+        start_broker_for_session(test_policy("policy-a", None, Vec::new()), session.path().to_path_buf());
+    let (response, fds) = client
+        .request(&UpstreamGrantRequest::SetGuestMode {
+            request_id: 1,
+            relative_path: b"workspace/nested/tool".to_vec(),
+            mode: 0o751,
+        })
+        .await;
+    assert_eq!(response, UpstreamGrantResponse::GuestModeSet { request_id: 1 });
+    assert!(fds.is_empty());
+    assert_eq!(
+        std::fs::metadata(guest.join("workspace/nested/tool"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o751
+    );
+
+    let (response, fds) = client
+        .request(&UpstreamGrantRequest::SetGuestMode {
+            request_id: 2,
+            relative_path: b"workspace/link".to_vec(),
+            mode: 0o777,
+        })
+        .await;
+    assert_eq!(
+        response,
+        UpstreamGrantResponse::Denied {
+            request_id: 2,
+            reason: UpstreamGrantDenial::NotAllowed,
+        }
+    );
+    assert!(fds.is_empty());
+    assert_eq!(std::fs::metadata(secret).unwrap().permissions().mode() & 0o7777, 0o600);
+    stop_broker(authority, task).await;
 }
 
 async fn resolve_override(client: &TestClient, request_id: u64) -> u64 {
