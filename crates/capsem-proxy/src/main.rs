@@ -27,6 +27,7 @@ use clap::Parser;
 use tokio::task::{JoinError, JoinSet};
 
 mod credential_client;
+mod private_names_client;
 
 const CONTROL_QUEUE_CAPACITY: usize = 16;
 const GRANT_LIMIT: usize = 71;
@@ -242,6 +243,22 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     while stopped.borrow().is_none() && stopped.changed().await.is_ok() {}
                                     (capability, grant_id, ProxyChannelCloseReason::Disconnected)
                                 });
+                            } else if capability == ProxyCapability::PrivateNames {
+                                let (private_names, mut closed) =
+                                    private_names_client::PrivateNameClient::start(stream)
+                                        .context("open proxy private-name capability")?;
+                                let mut runtime = state.lock().unwrap_or_else(|error| error.into_inner());
+                                runtime.private_names = Some(Arc::new(private_names));
+                                tracing::debug!(
+                                    private_names_capability = runtime.private_names.is_some(),
+                                    "proxy private-name authority attached"
+                                );
+                                drop(runtime);
+                                tasks.spawn(async move {
+                                    while closed.borrow().is_none() && closed.changed().await.is_ok() {}
+                                    let reason = closed.borrow().unwrap_or(ProxyChannelCloseReason::Disconnected);
+                                    (capability, grant_id, reason)
+                                });
                             } else {
                                 descriptors.insert(grant_id, stream);
                             }
@@ -302,6 +319,7 @@ struct ProxyRuntimeState {
     ledger: Arc<dyn ProxyLedger>,
     credentials: Arc<dyn ProxyCredentials>,
     upstream_grants: Option<Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>>,
+    private_names: Option<Arc<dyn capsem_core::net::dns::private::PrivateNames>>,
     dns_upstreams: Vec<std::net::SocketAddr>,
     mcp: capsem_core::mcp::policy::McpConfig,
 }
@@ -313,6 +331,7 @@ impl Default for ProxyRuntimeState {
             ledger: Arc::new(UnavailableLedger),
             credentials: Arc::new(UnavailableCredentials),
             upstream_grants: None,
+            private_names: None,
             dns_upstreams: Vec::new(),
             mcp: capsem_core::mcp::policy::McpConfig::default(),
         }
