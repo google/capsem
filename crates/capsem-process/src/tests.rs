@@ -18,6 +18,10 @@ fn production_vm_owner_never_opens_the_session_database() {
     let source = include_str!("main.rs");
     assert!(!source.contains("DbWriter::open("));
     assert!(source.contains("DbWriter::from_ledger_channel("));
+    assert!(
+        !source.contains("CAPSEM_SESSION_DB"),
+        "VM owner must not delegate the ledger path to built-in MCP servers"
+    );
 }
 
 #[test]

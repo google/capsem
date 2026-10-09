@@ -748,8 +748,6 @@ async fn run_async_main_loop(
         .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
     let mut builtin_env = std::collections::HashMap::new();
     builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
-    let db_path = session_dir.join("session.db");
-    builtin_env.insert("CAPSEM_SESSION_DB".into(), db_path.to_string_lossy().to_string());
     builtin_env.insert(
         "CAPSEM_ACTIVE_POLICY".into(),
         runtime_config.active_policy_path.to_string_lossy().to_string(),
