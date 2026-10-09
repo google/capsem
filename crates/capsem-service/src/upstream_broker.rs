@@ -615,6 +615,29 @@ async fn run(
                         }
                     }
                 }
+                UpstreamGrantRequest::AttachProxyMcp { request_id } => {
+                    let Some(proxy) = proxy.as_ref() else {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
+                        continue;
+                    };
+                    let descriptor = frame.fds.into_iter().next().expect("one validated MCP descriptor");
+                    match proxy
+                        .grant(
+                            capsem_proto::proxy_control::ProxyCapability::Mcp,
+                            UnixStream::from(descriptor),
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            send_response(&responses, &UpstreamGrantResponse::ProxyMcpAdopted { request_id }, None)
+                                .await?;
+                        }
+                        Err(error) => {
+                            warn!(%error, "proxy worker refused MCP descriptor");
+                            send_denied(&responses, request_id, UpstreamGrantDenial::Revoked).await?;
+                        }
+                    }
+                }
             }
         }
     }

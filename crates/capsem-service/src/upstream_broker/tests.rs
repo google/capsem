@@ -85,6 +85,12 @@ async fn typed_guest_traffic_is_adopted_by_the_registered_proxy_generation() {
         .await;
     assert_eq!(response, UpstreamGrantResponse::ProxyTrafficAdopted { request_id: 1 });
 
+    let (mcp, _mcp_peer) = UnixStream::pair().unwrap();
+    let response = client
+        .request_with_descriptor(&UpstreamGrantRequest::AttachProxyMcp { request_id: 2 }, &mcp)
+        .await;
+    assert_eq!(response, UpstreamGrantResponse::ProxyMcpAdopted { request_id: 2 });
+
     authority.revoke();
     assert!(task.await.unwrap().unwrap_err().contains("revoked"));
 }
