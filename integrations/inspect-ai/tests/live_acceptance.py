@@ -8,7 +8,7 @@ import os
 import sqlite3
 import tempfile
 from pathlib import Path
-from typing import Any, cast
+from unittest.mock import patch
 
 import inspect_ai.util._sandbox.self_check as inspect_self_check
 import inspect_capsem.sandbox as sb_mod
@@ -19,25 +19,21 @@ from inspect_ai.scorer import includes
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import SandboxEnvironmentSpec, sandbox
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
-from inspect_capsem._controller import (
-    SdkCapsemController,
-    _is_managed_vm,
-    _managed_vm_labels,
-)
+from inspect_capsem._controller import SdkCapsemController, _is_managed_vm, _managed_vm_labels
 
 try:
+    from tests.host_build_acceptance import verify_host_build_workload_mode
     from tests.oci_workload_fixture import hermetic_oci_workload_image
 except ImportError:
-    import importlib.util
+    import importlib.util as _importlib_util
 
-    _spec = importlib.util.spec_from_file_location(
-        "oci_workload_fixture",
-        Path(__file__).resolve().with_name("oci_workload_fixture.py"),
-    )
-    assert _spec is not None and _spec.loader is not None
-    _mod = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_mod)
-    hermetic_oci_workload_image = _mod.hermetic_oci_workload_image
+    _hb_path = Path(__file__).resolve().with_name("host_build_acceptance.py")
+    _hb_spec = _importlib_util.spec_from_file_location("_capsem_hb_acceptance", _hb_path)
+    assert _hb_spec is not None and _hb_spec.loader is not None
+    _hb_mod = _importlib_util.module_from_spec(_hb_spec)
+    _hb_spec.loader.exec_module(_hb_mod)
+    verify_host_build_workload_mode = _hb_mod.verify_host_build_workload_mode
+    hermetic_oci_workload_image = _hb_mod._hb_fixture.hermetic_oci_workload_image
 
 
 def _capsem_home_dir() -> Path:
@@ -49,14 +45,13 @@ async def _verify_session_ledger(
     hyp: Hypervisor, vm_id: str, *, expected_target: str, marker: str
 ) -> None:
     history = await hyp.vm(id=vm_id).history(layer=models.HistoryLayerFilter.EXEC, limit=50)
-    assert history.total >= 1
-    assert any(marker in entry.command for entry in history.commands)
+    assert history.total >= 1 and any(marker in entry.command for entry in history.commands)
 
     home = _capsem_home_dir()
-    candidates = [
+    candidates = (
         home / "run" / "sessions" / vm_id / "session.db",
         home / "sessions" / vm_id / "session.db",
-    ]
+    )
     db_path = next((p for p in candidates if p.is_file()), candidates[0])
     assert db_path.is_file(), f"expected session ledger at {db_path}"
     with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
@@ -76,9 +71,8 @@ async def _run_inspect_self_check(
     for name in inspect_self_check.__all__:
         if skip and name in skip:
             continue
-        fn = getattr(inspect_self_check, name)
         try:
-            await fn(env)
+            await getattr(inspect_self_check, name)(env)
             results[name] = True
         except Exception as exc:
             results[name] = f"{type(exc).__name__}: {exc}"
@@ -113,52 +107,32 @@ async def _verify_eval_task(hyp: Hypervisor, config: CapsemSandboxConfig, marker
 
 
 async def _verify_container_workload_mode(hyp: Hypervisor, image_ref: str, ca_pem: str) -> None:
-    orig_ctrl = sb_mod.SdkCapsemController
-    cast(Any, sb_mod).SdkCapsemController = functools.partial(
-        SdkCapsemController, registry_ca_pem=ca_pem
-    )
-    try:
-        envs = await CapsemSandboxEnvironment.sample_init(
-            task_name="gate_container_acceptance",
-            config=CapsemSandboxConfig(
-                image=image_ref, cpu_count=2, ram_gb=2, working_dir="/workspace"
-            ),
-            metadata={},
-        )
+    ca_ctrl = functools.partial(SdkCapsemController, registry_ca_pem=ca_pem)
+    with patch.object(sb_mod, "SdkCapsemController", ca_ctrl):
+        cfg = CapsemSandboxConfig(image=image_ref, cpu_count=2, ram_gb=2, working_dir="/workspace")
+        envs = await CapsemSandboxEnvironment.sample_init("gate_container_acceptance", cfg, {})
         vm_id = ""
         try:
-            sb_env = envs["default"]
-            assert isinstance(sb_env, CapsemSandboxEnvironment)
-            sb, vm_id = sb_env, sb_env.vm_id
+            sb = envs["default"]
+            assert isinstance(sb, CapsemSandboxEnvironment)
+            vm_id = sb.vm_id
             marker_res = await sb.exec(["cat", "/etc/capsem-workload-fixture"])
-            assert marker_res.returncode == 0 and (
-                marker_res.stdout.strip() == "capsem-hermetic-oci-fixture"
-            )
-            exec_res = await sb.exec(["echo", "INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK"])
-            assert exec_res.returncode == 0 and (
-                exec_res.stdout.strip() == "INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK"
-            )
+            assert marker_res.returncode == 0
+            assert marker_res.stdout.strip() == "capsem-hermetic-oci-fixture"
+            ok_mark = "INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK"
+            exec_res = await sb.exec(["echo", ok_mark])
+            assert exec_res.returncode == 0 and exec_res.stdout.strip() == ok_mark
             await sb.write_file("/workspace/container_roundtrip.txt", "container-ok\n")
             assert await sb.read_file("/workspace/container_roundtrip.txt") == "container-ok\n"
             payload = bytes(range(32)) + b"\x00CONTAINER_BIN\xff"
             await sb.write_file("/workspace/container.bin", payload)
             assert await sb.read_file("/workspace/container.bin", text=False) == payload
-            await _verify_session_ledger(
-                hyp,
-                sb.vm_id,
-                expected_target="workload",
-                marker="INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK",
-            )
+            await _verify_session_ledger(hyp, vm_id, expected_target="workload", marker=ok_mark)
         finally:
             await CapsemSandboxEnvironment.sample_cleanup(
-                task_name="gate_container_acceptance",
-                config=None,
-                environments=envs,
-                interrupted=False,
+                "gate_container_acceptance", None, envs, False
             )
-            await CapsemSandboxEnvironment.task_cleanup(
-                task_name="gate_container_acceptance", config=None, cleanup=True
-            )
+            await CapsemSandboxEnvironment.task_cleanup("gate_container_acceptance", None, True)
         assert vm_id not in {m.id for m in (await hyp.list()).sandboxes}, (
             f"container sample_cleanup leaked VM {vm_id}"
         )
@@ -168,12 +142,10 @@ async def _verify_container_workload_mode(hyp: Hypervisor, image_ref: str, ca_pe
             "INSPECT_CAPSEM_CONTAINER_EVAL_OK",
         )
         print("INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK")
-    finally:
-        cast(Any, sb_mod).SdkCapsemController = orig_ctrl
 
 
 async def run_live_vm_sandbox_acceptance() -> None:
-    """VM and hermetic OCI container acceptance test for the gate VM lane."""
+    """VM, hermetic OCI container, and hermetic host-build acceptance test for the gate VM lane."""
     hyp = Hypervisor.connect()
     persistent_vm = await hyp.create(
         name=f"foreign-persistent-{os.getpid()}",
@@ -184,20 +156,12 @@ async def run_live_vm_sandbox_acceptance() -> None:
     orphan_ctrl = SdkCapsemController(hypervisor=hyp)
     orphan_id: str | None = None
     try:
-        envs = await CapsemSandboxEnvironment.sample_init(
-            task_name="gate_vm_acceptance",
-            config=CapsemSandboxConfig(
-                cpu_count=2,
-                ram_gb=2,
-                working_dir="/workspace",
-            ),
-            metadata={},
-        )
+        cfg = CapsemSandboxConfig(cpu_count=2, ram_gb=2, working_dir="/workspace")
+        envs = await CapsemSandboxEnvironment.sample_init("gate_vm_acceptance", cfg, {})
         vm_id = ""
         try:
-            sb_env = envs["default"]
-            assert isinstance(sb_env, CapsemSandboxEnvironment)
-            sb = sb_env
+            sb = envs["default"]
+            assert isinstance(sb, CapsemSandboxEnvironment)
             vm_id = sb.vm_id
             exec_res = await sb.exec(["echo", "INSPECT_CAPSEM_VM_ACCEPTANCE_OK"])
             assert exec_res.returncode == 0, exec_res.stderr
@@ -220,10 +184,7 @@ async def run_live_vm_sandbox_acceptance() -> None:
             await sb.write_file("/workspace/roundtrip.bin", payload)
             assert await sb.read_file("/workspace/roundtrip.bin", text=False) == payload
             await _verify_session_ledger(
-                hyp,
-                sb.vm_id,
-                expected_target="vm",
-                marker="INSPECT_CAPSEM_VM_ACCEPTANCE_OK",
+                hyp, vm_id, expected_target="vm", marker="INSPECT_CAPSEM_VM_ACCEPTANCE_OK"
             )
             # Skip test_read_and_write_large_file_binary (>100 MiB allocation/transfer) in live
             # gate runs; Capsem's regular-file byte cap and OutputLimitExceededError path are
@@ -235,17 +196,8 @@ async def run_live_vm_sandbox_acceptance() -> None:
             assert not failures, f"Live self_check (vm) failures: {failures}"
             await sb._controller.stop_vm("nonexistent-vm-404")
         finally:
-            await CapsemSandboxEnvironment.sample_cleanup(
-                task_name="gate_vm_acceptance",
-                config=None,
-                environments=envs,
-                interrupted=False,
-            )
-            await CapsemSandboxEnvironment.task_cleanup(
-                task_name="gate_vm_acceptance",
-                config=None,
-                cleanup=True,
-            )
+            await CapsemSandboxEnvironment.sample_cleanup("gate_vm_acceptance", None, envs, False)
+            await CapsemSandboxEnvironment.task_cleanup("gate_vm_acceptance", None, True)
         assert vm_id not in {m.id for m in (await hyp.list()).sandboxes}, (
             f"sample_cleanup leaked VM {vm_id}"
         )
@@ -258,6 +210,10 @@ async def run_live_vm_sandbox_acceptance() -> None:
 
         with hermetic_oci_workload_image(_capsem_home_dir()) as (image_ref, ca_pem):
             await _verify_container_workload_mode(hyp, image_ref, ca_pem)
+
+        await verify_host_build_workload_mode(
+            hyp, _capsem_home_dir(), _verify_session_ledger, _run_inspect_self_check
+        )
 
         orphan_id = await orphan_ctrl.start_vm(cpu_count=1, ram_gb=1)
         by_id = {m.id: m for m in (await hyp.list()).sandboxes}
