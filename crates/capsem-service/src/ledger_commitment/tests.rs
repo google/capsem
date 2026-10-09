@@ -46,14 +46,6 @@ fn event(domain: &str) -> WriteOp {
     })
 }
 
-fn event_hash(event: &WriteOp) -> [u8; 32] {
-    let encoded = rmp_serde::to_vec_named(event).unwrap();
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"capsem-ledger-event-v1\0");
-    hash.update(&encoded);
-    *hash.finalize().as_bytes()
-}
-
 async fn write_committed(
     server: Arc<capsem_logger::ledger_server::LedgerServer>,
     grant: LedgerChannelGrant,
@@ -62,11 +54,8 @@ async fn write_committed(
 ) {
     let (client, worker) = UnixStream::pair().unwrap();
     let task = tokio::spawn(async move { server.serve_client(worker, grant).await });
-    let (sender, receiver) = capsem_foundation::ipc_channel::channel_from_std::<
-        LedgerClientMessage,
-        LedgerServerMessage,
-    >(client)
-    .unwrap();
+    let (sender, receiver) =
+        capsem_foundation::ipc_channel::channel_from_std::<LedgerClientMessage, LedgerServerMessage>(client).unwrap();
     sender
         .send(LedgerClientMessage::Hello {
             hello: LedgerHello::for_grant(&grant),
@@ -186,9 +175,15 @@ async fn typed_verification_accepts_exact_rows_and_rejects_anchored_omission_and
         .unwrap();
     let producer = grant(4, 5);
     let expected_event = event("expected.example");
-    let expected_hash = event_hash(&expected_event);
+    let expected_hash = capsem_logger::commitment_event_hash(&expected_event).unwrap();
     let global = authority
-        .reserve(producer, 1, expected_event.kind().into(), expected_hash, ZERO_COMMITMENT_HASH)
+        .reserve(
+            producer,
+            1,
+            expected_event.kind().into(),
+            expected_hash,
+            ZERO_COMMITMENT_HASH,
+        )
         .await
         .unwrap();
     let expected = LedgerCommitment::new(
@@ -217,7 +212,7 @@ async fn typed_verification_accepts_exact_rows_and_rejects_anchored_omission_and
         1,
         global,
         substituted_event.kind(),
-        event_hash(&substituted_event),
+        capsem_logger::commitment_event_hash(&substituted_event).unwrap(),
         ZERO_COMMITMENT_HASH,
     )
     .unwrap();
@@ -239,7 +234,13 @@ async fn typed_verification_accepts_exact_rows_and_rejects_anchored_omission_and
         .await
         .unwrap();
     let reserved = exact_authority
-        .reserve(producer, 1, expected.event_kind().into(), expected.event_hash(), ZERO_COMMITMENT_HASH)
+        .reserve(
+            producer,
+            1,
+            expected.event_kind().into(),
+            expected.event_hash(),
+            ZERO_COMMITMENT_HASH,
+        )
         .await
         .unwrap();
     assert_eq!(reserved, expected.global_sequence());
