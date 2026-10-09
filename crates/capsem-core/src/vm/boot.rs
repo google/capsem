@@ -209,7 +209,7 @@ pub fn boot_vm(
                 share.tag,
                 share.host_path.display()
             );
-            builder = builder.virtio_fs_share(&share.tag, &share.host_path, share.read_only);
+            builder = builder.virtio_fs_share_config(share.clone());
         }
 
         info!("[boot-audit] calling VmConfig::build()");

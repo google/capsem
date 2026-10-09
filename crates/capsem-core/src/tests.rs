@@ -224,6 +224,7 @@ fn reexport_surface_compiles() {
         tag: "test".into(),
         host_path: PathBuf::from("/tmp"),
         read_only: false,
+        metadata_authority: None,
     };
 
     // VmState

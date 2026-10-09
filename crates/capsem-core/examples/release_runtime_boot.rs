@@ -106,6 +106,7 @@ fn run() -> Result<()> {
         tag: "capsem".to_string(),
         host_path: guest_dir,
         read_only: false,
+        metadata_authority: None,
     }];
 
     let result = (|| -> Result<()> {
