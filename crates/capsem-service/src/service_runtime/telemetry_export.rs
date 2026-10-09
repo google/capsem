@@ -255,11 +255,15 @@ pub(crate) async fn serve_proxy_metric_channel(
     owner: owner_connection::OwnerConnection,
     stream: std::os::unix::net::UnixStream,
 ) -> anyhow::Result<()> {
-    use capsem_proto::proxy_metrics::{ProxyMetricRequest, ProxyMetricResponse};
+    use capsem_proto::proxy_metrics::{ProxyMetricBrokerMessage, ProxyMetricRequest, ProxyMetricResponse};
 
     let (responses, requests) =
-        capsem_foundation::ipc_channel::channel_from_std::<ProxyMetricResponse, ProxyMetricRequest>(stream)
+        capsem_foundation::ipc_channel::channel_from_std::<ProxyMetricBrokerMessage, ProxyMetricRequest>(stream)
             .context("open proxy metric channel")?;
+    responses
+        .send(ProxyMetricBrokerMessage::Hello { session_id: id.clone() })
+        .await
+        .context("send proxy metric identity")?;
     loop {
         let request = match requests.recv().await {
             Ok(request) => request,
@@ -278,7 +282,10 @@ pub(crate) async fn serve_proxy_metric_channel(
             },
             Err(AppError(_, message)) => ProxyMetricResponse::Rejected { message },
         };
-        responses.send(response).await.context("send proxy metric response")?;
+        responses
+            .send(ProxyMetricBrokerMessage::Response(response))
+            .await
+            .context("send proxy metric response")?;
     }
 }
 

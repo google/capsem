@@ -250,7 +250,9 @@ async fn metric_collector(
 
 #[tokio::test]
 async fn proxy_metric_capability_is_bounded_fixed_and_generation_bound() {
-    use capsem_proto::proxy_metrics::{ProxyMetricRequest, ProxyMetricResponse, MAX_PROXY_METRIC_BODY_BYTES};
+    use capsem_proto::proxy_metrics::{
+        ProxyMetricBrokerMessage, ProxyMetricRequest, ProxyMetricResponse, MAX_PROXY_METRIC_BODY_BYTES,
+    };
 
     let _environment = SETTINGS_ENV_LOCK.lock().await;
     let settings_dir = tempfile::tempdir().unwrap();
@@ -292,7 +294,14 @@ async fn proxy_metric_capability_is_bounded_fixed_and_generation_bound() {
         service,
     ));
     let (requests, responses) =
-        capsem_foundation::ipc_channel::channel_from_std::<ProxyMetricRequest, ProxyMetricResponse>(proxy).unwrap();
+        capsem_foundation::ipc_channel::channel_from_std::<ProxyMetricRequest, ProxyMetricBrokerMessage>(proxy)
+            .unwrap();
+    assert_eq!(
+        responses.recv().await.unwrap(),
+        ProxyMetricBrokerMessage::Hello {
+            session_id: "proxy-vm".into()
+        }
+    );
 
     requests
         .send(ProxyMetricRequest {
@@ -302,7 +311,8 @@ async fn proxy_metric_capability_is_bounded_fixed_and_generation_bound() {
         .unwrap();
     assert!(matches!(
         responses.recv().await.unwrap(),
-        ProxyMetricResponse::Rejected { ref message } if message.contains("too large")
+        ProxyMetricBrokerMessage::Response(ProxyMetricResponse::Rejected { ref message })
+            if message.contains("too large")
     ));
     assert!(
         collected_rx.try_recv().is_err(),
@@ -317,11 +327,11 @@ async fn proxy_metric_capability_is_bounded_fixed_and_generation_bound() {
         .unwrap();
     assert_eq!(
         responses.recv().await.unwrap(),
-        ProxyMetricResponse::Relayed {
+        ProxyMetricBrokerMessage::Response(ProxyMetricResponse::Relayed {
             status: StatusCode::CREATED.as_u16(),
             content_type: Some("application/x-protobuf".into()),
             body: b"collector response".to_vec(),
-        }
+        })
     );
     let (headers, body) = collected_rx.recv().await.unwrap();
     assert_eq!(headers[axum::http::header::CONTENT_TYPE], "application/x-protobuf");
@@ -336,7 +346,8 @@ async fn proxy_metric_capability_is_bounded_fixed_and_generation_bound() {
         .unwrap();
     assert!(matches!(
         responses.recv().await.unwrap(),
-        ProxyMetricResponse::Rejected { ref message } if message.contains("changed")
+        ProxyMetricBrokerMessage::Response(ProxyMetricResponse::Rejected { ref message })
+            if message.contains("changed")
     ));
     assert!(
         collected_rx.try_recv().is_err(),
