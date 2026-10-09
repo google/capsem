@@ -9,6 +9,19 @@ Worker boundaries below must be implemented and verified before publication. -->
 Capsem runs OCI containers inside separate VMs. Host processes handle VM
 control, proxy traffic, MCP tools, network connections, and log storage.
 
+Colors show the host permissions available if a process is compromised:
+
+| Color | Host permissions |
+| --- | --- |
+| 🟢 Green — minimum | Granted connections only; no arbitrary host files or new connections. |
+| 🟡 Yellow — limited | Assigned files, credentials, or upstream connections. |
+| 🟠 Orange — elevated | VM control and virtualization resources. |
+| 🔴 Red — maximum | Full launching-user permissions or trusted coordinator authority. |
+
+Grey groups identify ownership by one VM. Blue outlines mark VM hardware
+boundaries. External systems are uncolored; client colors assume an ordinary
+user application without a Capsem-installed sandbox.
+
 ## Processes and control
 
 ```mermaid
@@ -48,22 +61,19 @@ flowchart TB
   service -. control IPC .-> owner
   mcp --> tools["MCP servers"]
 
-  classDef trusted fill:#fee2e2,stroke:#b91c1c,color:#172033
-  classDef owner fill:#ffedd5,stroke:#c2410c,color:#172033
-  classDef scoped fill:#fef9c3,stroke:#a16207,color:#172033
-  classDef minimal fill:#dcfce7,stroke:#15803d,color:#172033
-  classDef guest fill:#dbeafe,stroke:#2563eb,color:#172033
-  class service trusted
-  class owner owner
-  class gateway,engine,mcp scoped
-  class writer minimal
-  class container guest
+  classDef maximum fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#172033
+  classDef elevated fill:#ffedd5,stroke:#d97706,stroke-width:3px,color:#172033
+  classDef limited fill:#fef9c3,stroke:#b59b00,stroke-width:3px,color:#172033
+  classDef minimum fill:#dcfce7,stroke:#15803d,stroke-width:3px,color:#172033
+  class service,app,hostMcp,sdk,cli,mcp maximum
+  class owner elevated
+  class gateway,engine,writer limited
+  class container,guest minimum
   style perVM fill:#eeeeee,stroke:#777777,stroke-width:2px
   style vm fill:#eff6ff,stroke:#2563eb,stroke-width:2px
 ```
 
-Grey group: one VM's processes. Blue outline: VM hardware boundary.
-Outside the grey group: shared components. Dashed arrows: control; solid: data.
+Dashed arrows: control. Solid arrows: data.
 
 ## Network connections
 
@@ -73,7 +83,7 @@ flowchart TB
   host["Host client"]
 
   subgraph perA["Per-VM processes — VM A"]
-    exposeA["capsem-router<br/>Expose · one per VM"]
+    exposeA["capsem-router<br/>Expose"]
     subgraph vmA["VM A — hardware boundary"]
       direction TB
       containerA["OCI container A"]
@@ -104,20 +114,19 @@ flowchart TB
   engineA -->|allowed requests| upstream["Allowed upstream services"]
   engineB -->|allowed requests| upstream
 
-  classDef scoped fill:#fef9c3,stroke:#a16207,color:#172033
-  classDef minimal fill:#dcfce7,stroke:#15803d,color:#172033
-  classDef guest fill:#dbeafe,stroke:#2563eb,color:#172033
-  class engineA,engineB scoped
-  class exposeA,network minimal
-  class containerA,containerB guest
+  classDef maximum fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#172033
+  classDef limited fill:#fef9c3,stroke:#b59b00,stroke-width:3px,color:#172033
+  classDef minimum fill:#dcfce7,stroke:#15803d,stroke-width:3px,color:#172033
+  class host maximum
+  class engineA,engineB limited
+  class exposeA,network,containerA,containerB,guestA,guestB minimum
   style perA fill:#eeeeee,stroke:#777777,stroke-width:2px
   style perB fill:#eeeeee,stroke:#777777,stroke-width:2px
   style vmA fill:#eff6ff,stroke:#2563eb,stroke-width:2px
   style vmB fill:#eff6ff,stroke:#2563eb,stroke-width:2px
 ```
 
-The expose router belongs to VM A. The private-network switch is shared by
-the VMs attached to that network; it is not a per-VM process.
+The private-network switch is shared by the VMs attached to that network.
 
 ## Roles and sandboxing rules
 

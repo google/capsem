@@ -22,6 +22,16 @@ Keep expose routers and security engines inside those groups; shared clients,
 gateway, coordinator, and per-network switches stay outside. Give the actual VM
 hardware boundary a distinct outline. Label the processing worker **Security
 engine**, without an extra "proxy worker" label for the same component.
+Do not repeat "one per VM" on nodes inside the grey ownership group. Use node
+colors consistently for authority after compromise: green for granted-handle
+I/O only, yellow for scoped files/credentials/upstreams, orange for VM control
+and virtualization, red for full-user or coordinator authority. Explain the
+scale once with a legend. Color file-writing ledgers yellow, not descriptor-only
+green; do not color unconfined MCP/client processes as scoped workers. Guest
+colors describe host authority, while blue outlines identify VM confinement.
+Keep ownership, hardware boundaries, and permission colors separate; external
+systems remain uncolored. Colors express permission scope, not a vulnerability
+probability or a claim that all IPC-authorized operations are OS-confined.
 For each sandbox row, specify startup order, OS mechanism, allowed files and
 operations, and denials. Do not summarize all workers as Seatbelt/Landlock/
 seccomp or imply clients install a sandbox. Flag undefined OS allowlists rather

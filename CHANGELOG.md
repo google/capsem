@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Security diagrams use a shared permission-color legend and separate per-VM
+  ownership groups from hardware boundaries; redundant ownership labels are removed.
+
 - Security architecture uses a short introduction, component diagrams, and a
   process/role/sandboxing table covering clients, MCP, proxy/security engine,
   log writers, exposed ports, and private VM networks.
