@@ -898,7 +898,7 @@ unused-type-ignore-comment = 3
 # and no value may grow.
 [lint.suppression_budget]
 noqa = 214
-type_ignore = 22
+type_ignore = 21
 ty_ignore = 5
 ruff_global_ignore = 1
 ruff_per_file_ignore = 0
