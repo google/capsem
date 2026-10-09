@@ -2,8 +2,6 @@
 
 use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::fs::FileExt;
-use std::os::unix::fs::PermissionsExt;
-
 use std::os::unix::fs::OpenOptionsExt;
 
 use super::FuseProcessor;
@@ -167,20 +165,24 @@ impl FuseProcessor {
                 let flags = create_in.flags as i32;
                 let accmode = flags & libc::O_ACCMODE;
                 let readable = accmode == libc::O_RDONLY || accmode == libc::O_RDWR;
+                let mode = create_in.mode & !create_in.umask;
                 let file = match std::fs::OpenOptions::new()
                     .read(readable)
                     .write(true)
                     .append(flags & libc::O_APPEND != 0)
                     .create_new(true)
+                    .mode(mode)
                     .custom_flags(NO_FOLLOW_FLAGS)
                     .open(&child_path)
                 {
                     Ok(f) => f,
                     Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
                 };
-                let mode = create_in.mode & !create_in.umask;
-                let _ = std::fs::set_permissions(&child_path, std::fs::Permissions::from_mode(mode));
-
+                if let Err(error) = self.set_guest_mode(&child_path, mode) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&child_path);
+                    return fuse::error_response(header.unique, -fuse::io_error_to_errno(&error));
+                }
                 let ino = match self.inodes.lookup(header.nodeid, name) {
                     Some(i) => i,
                     None => return fuse::error_response(header.unique, -libc::EIO),

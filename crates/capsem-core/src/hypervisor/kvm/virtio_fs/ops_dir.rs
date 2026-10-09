@@ -1,7 +1,7 @@
 //! Directory and namespace FUSE operations: OPENDIR, READDIR, RELEASEDIR,
 //! MKDIR, RMDIR, UNLINK, RENAME, MKNOD, SYMLINK, READLINK, LINK.
 
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt as _, MetadataExt};
 
 use super::FuseProcessor;
 use crate::hypervisor::fuse::{self, *};
@@ -125,13 +125,16 @@ impl FuseProcessor {
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
 
-        if let Err(e) = std::fs::create_dir(&child_path) {
+        if let Err(e) = std::fs::DirBuilder::new()
+            .mode(mkdir_in.mode & !mkdir_in.umask)
+            .create(&child_path)
+        {
             return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
         }
-        let _ = std::fs::set_permissions(
-            &child_path,
-            std::fs::Permissions::from_mode(mkdir_in.mode & !mkdir_in.umask),
-        );
+        if let Err(error) = self.set_guest_mode(&child_path, mkdir_in.mode & !mkdir_in.umask) {
+            let _ = std::fs::remove_dir(&child_path);
+            return fuse::error_response(header.unique, -fuse::io_error_to_errno(&error));
+        }
 
         let ino = match self.inodes.lookup(header.nodeid, name) {
             Some(i) => i,

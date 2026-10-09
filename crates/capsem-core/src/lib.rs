@@ -24,7 +24,7 @@ pub use vm::boot::{
     boot_vm, create_net_state, create_net_state_with_policy, read_control_msg, send_boot_config, write_control_msg,
     BootOptions, ControlFrameTooLarge,
 };
-pub use vm::config::{VirtioFsShare, VmConfig};
+pub use vm::config::{GuestMetadataAuthority, VirtioFsShare, VmConfig};
 pub use vm::registry::{SandboxInstance, SandboxNetworkState};
 pub use vm::terminal::TerminalOutputQueue;
 pub use vm::vsock::{self, CoalesceBuffer};

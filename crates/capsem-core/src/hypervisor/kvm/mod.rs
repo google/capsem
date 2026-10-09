@@ -40,6 +40,17 @@ use crate::vm::VmState;
 
 const KVM_PAUSE_TIMEOUT: Duration = Duration::from_secs(5);
 
+fn require_metadata_authority(config: &VmConfig) -> Result<()> {
+    anyhow::ensure!(
+        config
+            .virtio_fs_shares
+            .iter()
+            .all(|share| share.read_only || share.metadata_authority.is_some()),
+        "writable KVM VirtioFS shares require a trusted metadata authority"
+    );
+    Ok(())
+}
+
 fn kvm_vsock_seed(config: &VmConfig) -> u32 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(config.kernel_path.to_string_lossy().as_bytes());
@@ -123,6 +134,7 @@ impl Hypervisor for KvmHypervisor {
         config: &VmConfig,
         vsock_ports: &[u32],
     ) -> Result<(Box<dyn VmHandle>, mpsc::UnboundedReceiver<VsockConnection>)> {
+        require_metadata_authority(config)?;
         #[cfg(not(target_arch = "x86_64"))]
         if config.checkpoint_path.is_some() {
             anyhow::bail!("KVM checkpoint restore is only implemented for x86_64; refusing to ignore checkpoint_path");
@@ -517,6 +529,7 @@ impl Hypervisor for KvmHypervisor {
                 &share.tag,
                 &share.host_path,
                 share.read_only,
+                share.metadata_authority.clone(),
                 fs_irq_fd.as_raw_fd(),
                 Arc::clone(&fs_interrupt_status),
             )?;
