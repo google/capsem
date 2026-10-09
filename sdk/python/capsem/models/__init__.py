@@ -32,10 +32,8 @@ from .container_status_response import (
 from .container_surface import ContainerSurface as ContainerSurface
 from .container_surface_kind import ContainerSurfaceKind as ContainerSurfaceKind
 from .create_network_request import CreateNetworkRequest as CreateNetworkRequest
-from .create_session_grant_request import (
-    CreateSessionGrantRequest as CreateSessionGrantRequest,
-)
-from .credential_error_code import CredentialErrorCode as CredentialErrorCode
+from .create_proxy_request import CreateProxyRequest as CreateProxyRequest
+from .create_proxy_response import CreateProxyResponse as CreateProxyResponse
 from .credential_event import CredentialEvent as CredentialEvent
 from .credential_event_type import CredentialEventType as CredentialEventType
 from .credential_inject_provider import (
@@ -179,6 +177,8 @@ from .provider_revocation_state import (
 )
 from .provision_request import ProvisionRequest as ProvisionRequest
 from .provision_response import ProvisionResponse as ProvisionResponse
+from .proxy_heartbeat_response import ProxyHeartbeatResponse as ProxyHeartbeatResponse
+from .proxy_lease_request import ProxyLeaseRequest as ProxyLeaseRequest
 from .purge_request import PurgeRequest as PurgeRequest
 from .purge_response import PurgeResponse as PurgeResponse
 from .raw_content import RawContent as RawContent
@@ -206,6 +206,7 @@ from .session_grant_list_response import (
 )
 from .session_grant_summary import SessionGrantSummary as SessionGrantSummary
 from .slow_op_event import SlowOpEvent as SlowOpEvent
+from .stop_proxy_response import StopProxyResponse as StopProxyResponse
 from .stop_response import StopResponse as StopResponse
 from .storage_diagnostics import StorageDiagnostics as StorageDiagnostics
 from .supply_chain_channel_evidence import (
