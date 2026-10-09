@@ -172,6 +172,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `capsem proxy` starts a leased, VM-free OpenAI-compatible endpoint for a
+  configured provider, prints its base URL, keeps it alive while the command
+  runs and tears down its confined worker and ledger on exit.
+
 - Rust SDK exposes the registry image catalog and prefetch through
   `Hypervisor.images()`, with typed disk states and per-call registry access.
 
