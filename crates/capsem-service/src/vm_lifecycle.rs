@@ -418,15 +418,12 @@ pub(super) async fn handle_suspend(
         .await
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let checkpoint_path = RESUME_CHECKPOINT_NAME.to_string();
-    tx.send(ServiceToProcess::Suspend { checkpoint_path })
-        .await
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to send suspend command: {e}"),
-            )
-        })?;
+    tx.send(ServiceToProcess::Suspend).await.map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to send suspend command: {e}"),
+        )
+    })?;
 
     // Wait for process exit (channel closed). The process sends StateChanged {"Suspended"}
     // right before exiting. We must wait for full exit to avoid a race condition where

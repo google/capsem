@@ -89,7 +89,7 @@ use vm_lifecycle::*;
 /// choice, not ours; every reader takes a bounded tail.
 const SESSION_LOG_TAIL_MAX_BYTES: usize = 5 * 1024 * 1024;
 
-const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
+const RESUME_CHECKPOINT_NAME: &str = "owner/checkpoint.vzsave";
 const SUSPEND_CONFIRM_TIMEOUT_SECS: u64 = 45;
 const AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60;
 const AUTOMATIC_UPDATE_POLL_SECS: u64 = 60 * 60;
