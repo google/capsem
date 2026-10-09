@@ -9,18 +9,22 @@ pub(super) struct Compiled {
 }
 
 pub(super) fn compile(policy: &Policy) -> io::Result<Compiled> {
-    let mut source = String::from(
-        "(version 1)\n\
-         (allow default)\n\
-         (deny file-read*)\n\
-         (deny file-write*)\n\
-         (deny network-outbound)\n\
-         (deny network-bind)\n\
-         (deny network-inbound)\n\
-         (deny process-exec)\n\
-         (deny signal)\n\
-         (allow signal (target same-sandbox))\n",
-    );
+    let mut source = if policy.role() == Role::Ledger {
+        String::from("(version 1)\n(deny default)\n")
+    } else {
+        String::from(
+            "(version 1)\n\
+             (allow default)\n\
+             (deny file-read*)\n\
+             (deny file-write*)\n\
+             (deny network-outbound)\n\
+             (deny network-bind)\n\
+             (deny network-inbound)\n\
+             (deny process-exec)\n\
+             (deny signal)\n\
+             (allow signal (target same-sandbox))\n",
+        )
+    };
     if policy.role() == Role::Gateway {
         source.push_str("(allow network-inbound (local ip \"*:*\"))\n");
     }

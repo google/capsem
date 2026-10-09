@@ -253,8 +253,19 @@ fn install_seccomp(role: Role) -> io::Result<()> {
         libc::SYS_futimesat,
         libc::SYS_utimensat,
     ];
-    if role == Role::Gateway {
+    if matches!(role, Role::Gateway | Role::Ledger) {
         denied.extend([libc::SYS_execve, libc::SYS_execveat]);
+    }
+    if role == Role::Ledger {
+        denied.extend([
+            libc::SYS_socket,
+            libc::SYS_socketpair,
+            libc::SYS_accept,
+            libc::SYS_accept4,
+            libc::SYS_kill,
+            libc::SYS_tkill,
+            libc::SYS_tgkill,
+        ]);
     }
     for syscall in denied {
         filter.push(instruction(0x15, 0, 1, syscall as u32));

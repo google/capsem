@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
     Gateway,
+    Ledger,
     VmOwner,
 }
 

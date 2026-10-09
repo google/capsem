@@ -29,6 +29,17 @@ fn probe_classifies_only_esrch_as_gone() {
 }
 
 #[test]
+fn signal_authority_probe_preserves_permission_denial() {
+    assert_eq!(classify_signal_probe(Ok(())).unwrap(), SignalProbe::Allowed);
+    assert_eq!(classify_signal_probe(Err(Errno::EPERM)).unwrap(), SignalProbe::Denied);
+    assert_eq!(classify_signal_probe(Err(Errno::ESRCH)).unwrap(), SignalProbe::Gone);
+    assert_eq!(
+        classify_signal_probe(Err(Errno::EINVAL)).unwrap_err().raw_os_error(),
+        Some(Errno::EINVAL as i32)
+    );
+}
+
+#[test]
 fn signal_classifies_disappearance_without_hiding_other_errno() {
     assert_eq!(classify_signal(Ok(())).unwrap(), SignalOutcome::Delivered);
     assert_eq!(classify_signal(Err(Errno::ESRCH)).unwrap(), SignalOutcome::Gone);
@@ -42,6 +53,38 @@ fn signal_classifies_disappearance_without_hiding_other_errno() {
 fn current_identity_is_numeric_and_has_a_parent() {
     let _uid: u32 = current_uid();
     assert!(parent_process_id().is_some());
+}
+
+#[test]
+fn inherited_environment_is_erased_in_an_isolated_process() {
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "unix::process::tests::clear_inherited_environment_child",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("CAPSEM_ENV_SECRET", "must-not-survive")
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn clear_inherited_environment_child() {
+    if std::env::var("CAPSEM_ENV_SECRET").is_err() {
+        return;
+    }
+    // SAFETY: isolated child entry before it starts any thread or library.
+    unsafe { clear_inherited_environment() };
+    assert!(std::env::vars_os().next().is_none());
+    #[cfg(target_os = "linux")]
+    {
+        let bytes = std::fs::read("/proc/self/environ").unwrap();
+        assert!(!bytes
+            .windows(b"must-not-survive".len())
+            .any(|value| value == b"must-not-survive"));
+    }
 }
 
 #[test]

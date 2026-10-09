@@ -45,6 +45,20 @@ fn seatbelt_gateway_accepts_only_prebound_inbound_network() {
     assert!(!source.contains("allow network-bind"));
 }
 
+#[test]
+fn seatbelt_ledger_is_deny_by_default_with_only_its_directory() {
+    let compiled =
+        super::seatbelt::compile(&Policy::new(Role::Ledger).allow("/sessions/one", Access::ReadWrite)).unwrap();
+    let source = compiled.source().to_str().unwrap();
+    assert!(source.starts_with("(version 1)\n(deny default)\n"));
+    assert!(!source.contains("allow network"));
+    assert!(!source.contains("allow process-exec"));
+    assert!(!source.contains("allow signal"));
+    assert!(!source.contains("allow mach-lookup"));
+    assert!(source.contains("(allow file-read* file-write*"));
+    assert_eq!(compiled.parameters(), [("PATH_0", "/sessions/one")]);
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_policy_preserves_grants_and_denies_ambient_authority() {
@@ -113,7 +127,7 @@ fn linux_sandbox_child() {
         .unwrap();
 
     confine(
-        &Policy::new(Role::Gateway)
+        &Policy::new(Role::Ledger)
             .allow(&allowed, Access::ReadWrite)
             .allow(&readonly, Access::ReadOnly)
             .allow(&exact, Access::ReadOnly),
@@ -128,6 +142,7 @@ fn linux_sandbox_child() {
             std::fs::write(allowed.join("created"), b"ok").unwrap();
             assert!(std::fs::read(denied.join("secret")).is_err());
             assert!(UnixStream::connect(control).is_err());
+            assert!(UnixStream::pair().is_err());
             assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err());
             assert!(Command::new("/usr/bin/true").status().is_err());
             let parent = unsafe { libc::getppid() };
@@ -211,7 +226,7 @@ fn macos_sandbox_child() {
         .unwrap();
 
     confine(
-        &Policy::new(Role::Gateway)
+        &Policy::new(Role::Ledger)
             .allow(&allowed, Access::ReadWrite)
             .allow(&readonly, Access::ReadOnly),
     )
@@ -225,6 +240,7 @@ fn macos_sandbox_child() {
             assert!(std::fs::set_permissions(&allowed, std::fs::Permissions::from_mode(0o777)).is_err());
             assert!(std::fs::read(denied.join("secret")).is_err());
             assert!(UnixStream::connect(control).is_err());
+            assert!(UnixStream::pair().is_err());
             assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err());
             assert!(Command::new("/usr/bin/true").status().is_err());
             let parent = unsafe { libc::getppid() };
