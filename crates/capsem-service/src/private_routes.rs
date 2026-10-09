@@ -74,7 +74,14 @@ pub(super) async fn handle_private_resolve(
     Json(request): Json<PrivateResolveRequest>,
 ) -> Result<Json<PrivateResolveResponse>, AppError> {
     owner_of(&state, &request.source_vm, peer)?;
-    let visible = visible_to(&state, &request.source_vm).await;
+    resolve_private(&state, request).await.map(Json)
+}
+
+pub(crate) async fn resolve_private(
+    state: &ServiceState,
+    request: PrivateResolveRequest,
+) -> Result<PrivateResolveResponse, AppError> {
+    let visible = visible_to(state, &request.source_vm).await;
     let found = match (&request.name, request.address) {
         (Some(name), None) => {
             let name = name.trim_matches('.').to_ascii_lowercase();
@@ -102,10 +109,10 @@ pub(super) async fn handle_private_resolve(
         }
     };
     let member = found.ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no such member".into()))?;
-    Ok(Json(PrivateResolveResponse {
+    Ok(PrivateResolveResponse {
         name: member.full_name(),
         address: member.address,
         vm: member.vm_id.clone(),
         network: member.network_name.clone(),
-    }))
+    })
 }
