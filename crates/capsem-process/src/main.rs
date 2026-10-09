@@ -4,6 +4,7 @@ mod ipc;
 mod job_store;
 mod mcp_runtime;
 mod metric_export;
+mod owner_sandbox;
 mod private_seats;
 mod proxy_mcp;
 mod runtime_config;
@@ -13,19 +14,20 @@ mod vsock;
 use anyhow::{Context, Result};
 use capsem_core::fs_monitor::FsMonitor;
 use capsem_core::net::upstream_grant::{adopt_inherited, UpstreamGrantClient};
-use capsem_core::{boot_vm, BootOptions, VirtioFsShare, VsockConnection};
+use capsem_core::{prepare_vm, BootOptions, VirtioFsShare, VsockConnection};
 use capsem_logger::DbWriter;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use clap::Parser;
 use std::os::fd::AsFd as _;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::net::UnixListener;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use job_store::JobStore;
 use mcp_runtime::{GuestExposureTools, McpRuntime};
+use owner_sandbox::{attest_owner, confine_owner, prepare_owner_sandbox_attestation};
 use vsock::VsockOptions;
 
 /// Owns the background-thread resources that MUST drain before the main
@@ -39,6 +41,19 @@ pub(crate) struct Shutdown {
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
     proxy_mcp: Option<tokio::task::JoinHandle<()>>,
+}
+
+struct PreparedOwnerResources {
+    seats: private_seats::Prepared,
+    metric_service: Option<std::os::unix::net::UnixStream>,
+    ipc_listener: std::os::unix::net::UnixListener,
+    launched: std::fs::File,
+    ready: std::fs::File,
+    pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
+    aggregator: capsem_proto::mcp_aggregator::AggregatorClient,
+    mcp_servers: Vec<capsem_proto::mcp_contracts::McpServerDef>,
+    builtin_bin: Option<PathBuf>,
+    builtin_env: std::collections::HashMap<String, String>,
 }
 
 impl Shutdown {
@@ -226,221 +241,6 @@ fn prepare_sentinel(path: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn grant_owner_path(
-    policy: capsem_foundation::unix::worker_sandbox::Policy,
-    path: &Path,
-    access: capsem_foundation::unix::worker_sandbox::Access,
-) -> Result<capsem_foundation::unix::worker_sandbox::Policy> {
-    let canonical = path
-        .canonicalize()
-        .with_context(|| format!("resolve sandbox grant {}", path.display()))?;
-    Ok(policy.allow(canonical, access))
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn grant_owner_session_paths(
-    mut policy: capsem_foundation::unix::worker_sandbox::Policy,
-    session_dir: &Path,
-) -> Result<capsem_foundation::unix::worker_sandbox::Policy> {
-    use capsem_foundation::unix::worker_sandbox::Access;
-
-    for (path, access) in [
-        (capsem_core::guest_share_dir(session_dir), Access::ReadWrite),
-        (
-            capsem_core::session::system_overlay_image_path(session_dir),
-            Access::ReadWrite,
-        ),
-        (capsem_core::session::image_share_path(session_dir), Access::ReadOnly),
-        (
-            session_dir.join(capsem_core::session::OWNER_STATE_DIR),
-            Access::ReadWrite,
-        ),
-        (session_dir.join("serial.log"), Access::ReadWrite),
-    ] {
-        policy = grant_owner_path(policy, &path, access)?;
-    }
-    Ok(policy)
-}
-
-#[cfg(target_os = "linux")]
-fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
-    use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
-
-    let mut policy = Policy::new(Role::VmOwner);
-    policy = grant_owner_session_paths(policy, session_dir)?;
-    policy = grant_owner_path(policy, &args.assets_dir, Access::ReadOnly)?;
-    policy = grant_owner_path(policy, &args.rootfs, Access::ReadOnly)?;
-    policy = grant_owner_path(policy, &args.active_policy, Access::ReadOnly)?;
-    for path in args.kernel.iter().chain(args.initrd.iter()) {
-        policy = grant_owner_path(policy, path, Access::ReadOnly)?;
-    }
-    let executable = std::env::current_exe().context("locate VM-owner executable")?;
-    let router = executable.with_file_name("capsem-router");
-    if router.exists() {
-        policy = grant_owner_path(policy, &router, Access::Executable)?;
-    }
-    for path in ["/lib", "/lib64", "/usr/lib", "/usr/lib64"] {
-        let path = Path::new(path);
-        if path.exists() {
-            policy = grant_owner_path(policy, path, Access::ReadOnly)?;
-        }
-    }
-    let linker_cache = Path::new("/etc/ld.so.cache");
-    if linker_cache.exists() {
-        policy = grant_owner_path(policy, linker_cache, Access::ReadOnly)?;
-    }
-    for path in ["/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-aarch64.so.1"] {
-        let path = Path::new(path);
-        if path.exists() {
-            policy = grant_owner_path(policy, path, Access::Executable)?;
-        }
-    }
-    capsem_foundation::unix::worker_sandbox::confine(&policy)?;
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
-    use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
-
-    let mut policy = Policy::new(Role::VmOwner);
-    policy = grant_owner_session_paths(policy, session_dir)?;
-    policy = grant_owner_path(policy, &args.assets_dir, Access::ReadOnly)?;
-    policy = grant_owner_path(policy, &args.rootfs, Access::ReadOnly)?;
-    policy = grant_owner_path(policy, &args.active_policy, Access::ReadOnly)?;
-    for path in args.kernel.iter().chain(args.initrd.iter()) {
-        policy = grant_owner_path(policy, path, Access::ReadOnly)?;
-    }
-    let router = std::env::current_exe()
-        .context("locate VM-owner executable")?
-        .with_file_name("capsem-router");
-    if router.exists() {
-        policy = grant_owner_path(policy, &router, Access::Executable)?;
-    }
-    for path in [
-        "/System/Library",
-        "/usr/lib",
-        "/private/var/db/dyld",
-        "/private/var/db/timezone",
-        "/etc/localtime",
-        "/dev/urandom",
-    ] {
-        let path = Path::new(path);
-        if path.exists() {
-            policy = grant_owner_path(policy, path, Access::ReadOnly)?;
-        }
-    }
-    let null = Path::new("/dev/null");
-    if null.exists() {
-        policy = grant_owner_path(policy, null, Access::ReadWrite)?;
-    }
-    capsem_foundation::unix::worker_sandbox::confine(&policy)?;
-    Ok(())
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-struct OwnerSandboxAttestation {
-    direct_path: PathBuf,
-    direct_file: std::fs::File,
-    guest_path: PathBuf,
-    guest_relative: Vec<u8>,
-    ledger_path: PathBuf,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn prepare_owner_sandbox_attestation(session_dir: &Path) -> Result<OwnerSandboxAttestation> {
-    use std::os::unix::ffi::OsStrExt as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-
-    let create = |path: &Path| {
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-            .with_context(|| format!("prepare owner sandbox attestation {}", path.display()))
-    };
-    let nonce = format!(
-        "{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    );
-    let direct_path = session_dir
-        .join(capsem_core::session::OWNER_STATE_DIR)
-        .join(format!(".owner-sandbox-attestation-{nonce}"));
-    let guest_relative = format!("workspace/.owner-metadata-attestation-{nonce}").into_bytes();
-    let guest_path = session_dir
-        .join(capsem_core::GUEST_SHARE_DIR)
-        .join(std::ffi::OsStr::from_bytes(&guest_relative));
-    let direct_file = create(&direct_path)?;
-    drop(create(&guest_path)?);
-    Ok(OwnerSandboxAttestation {
-        direct_path,
-        direct_file,
-        guest_path,
-        guest_relative,
-        ledger_path: session_dir.join("session.db"),
-    })
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn attest_owner(
-    attestation: OwnerSandboxAttestation,
-    service_socket: PathBuf,
-    upstream_grants: Arc<UpstreamGrantClient>,
-) -> Result<()> {
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-    let require_denied = |result: std::io::Result<()>, authority: &str| -> Result<()> {
-        match result {
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
-            Err(error) => anyhow::bail!("VM owner sandbox returned {error} while denying {authority}"),
-            Ok(()) => anyhow::bail!("VM owner sandbox retained authority to {authority}"),
-        }
-    };
-    require_denied(
-        std::fs::File::open("/etc/passwd").map(|_| ()),
-        "read unrelated host files",
-    )?;
-    require_denied(
-        std::fs::File::open(&attestation.ledger_path).map(|_| ()),
-        "open session ledger storage",
-    )?;
-    require_denied(
-        std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, 9)).map(|_| ()),
-        "dial TCP sockets directly",
-    )?;
-    require_denied(
-        std::os::unix::net::UnixStream::connect(service_socket).map(|_| ()),
-        "dial control sockets by path",
-    )?;
-    require_denied(
-        attestation
-            .direct_file
-            .set_permissions(std::fs::Permissions::from_mode(0o777)),
-        "change host modes directly",
-    )?;
-    require_denied(
-        std::process::Command::new("/bin/true").status().map(|_| ()),
-        "execute arbitrary processes",
-    )?;
-
-    tokio::task::spawn_blocking(move || {
-        capsem_core::GuestMetadataAuthority::set_mode(upstream_grants.as_ref(), &attestation.guest_relative, 0o701)
-    })
-    .await
-    .context("join brokered metadata attestation")??;
-    let mode = std::fs::metadata(&attestation.guest_path)?.mode() & 0o7777;
-    anyhow::ensure!(mode == 0o701, "brokered metadata attestation returned mode {mode:o}");
-    std::fs::remove_file(&attestation.guest_path)?;
-    std::fs::remove_file(&attestation.direct_path)?;
-    Ok(())
-}
-
 fn main() -> Result<()> {
     // SAFETY: process entry precedes argument parsing, telemetry, descriptor
     // owners and runtime threads. Broker grants will be named here explicitly.
@@ -470,13 +270,12 @@ fn main() -> Result<()> {
     if let Ok(resolved) = session_dir.canonicalize() {
         session_dir = resolved;
     }
-    // The kernel parent is the coordinator that launched this owner. Keep
-    // that identity for every IPC check and die if it changes, so an orphan
-    // cannot accept a later process that reuses the old parent's PID.
-    let _owner_guards = capsem_guard::install(Some(controller.pid.get()), &session_dir.join("process.lock"))?
+    let _owner_singleton = capsem_guard::Singleton::try_acquire(&session_dir.join("process.lock"))?
         .context("this session already has a running VM owner")?;
 
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    // A current-thread runtime creates no worker before confinement. Tasks
+    // queued during preparation start only after the sandbox is installed.
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let runtime_source = runtime_config::RuntimePolicySource::new(args.active_policy.clone());
     let runtime_config = runtime_source.load()?;
     let upstream_grants = {
@@ -515,16 +314,50 @@ fn main() -> Result<()> {
     // `system/` directory, outside the share, so the guest cannot swap it
     // for a link to a host file (`capsem_core::session::adopt_system_overlay`).
     let system_img = capsem_core::session::system_overlay_image_path(&session_dir);
-    let machine_identifier_path = session_dir.join("machine_identifier");
+    let owner_state = session_dir.join(capsem_core::session::OWNER_STATE_DIR);
+    let machine_identifier_path = owner_state.join("machine_identifier");
+    let legacy_machine_identifier = session_dir.join("machine_identifier");
+    if legacy_machine_identifier.exists() && !machine_identifier_path.exists() {
+        std::fs::rename(&legacy_machine_identifier, &machine_identifier_path)
+            .context("move machine identifier into owner state")?;
+    }
     let serial_log_path = session_dir.join("serial.log");
-    drop(
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&serial_log_path)
-            .with_context(|| format!("prepare serial log {}", serial_log_path.display()))?,
+    drop(capsem_foundation::unix::fs::open_private_append_no_follow(
+        &serial_log_path,
+    )?);
+    let pty_log = match capsem_core::pty_log::PtyLog::open(&session_dir.join("pty.log")) {
+        Ok(log) => Some(Arc::new(log)),
+        Err(error) => {
+            warn!(%error, "failed to prepare pty.log");
+            None
+        }
+    };
+    let executable = std::env::current_exe().context("locate VM-owner executable")?;
+    let aggregator_bin = resolve_mcp_aggregator_binary(&executable)?;
+    let aggregator_stderr =
+        capsem_foundation::unix::fs::open_private_append_no_follow(&aggregator_log_path(&session_dir))?;
+    let builtin_bin = executable
+        .parent()
+        .map(|directory| directory.join("capsem-mcp-builtin"));
+    let mut builtin_env = std::collections::HashMap::new();
+    builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
+    builtin_env.insert(
+        "CAPSEM_ACTIVE_POLICY".into(),
+        runtime_config.active_policy_path.to_string_lossy().to_string(),
     );
-    let (vm, vsock_rx, sm) = boot_vm(BootOptions {
+    let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
+    // The aggregator is a separately supervised process. Spawn it while the
+    // VM owner still has the one executable capability needed to create it;
+    // parent-side driver tasks remain queued on the current-thread runtime.
+    let aggregator = rt.block_on(spawn_mcp_aggregator(
+        &mcp_servers,
+        &session_dir,
+        &args.id,
+        &trace_id,
+        aggregator_bin,
+        aggregator_stderr,
+    ))?;
+    let prepared_vm = prepare_vm(BootOptions {
         assets: &args.assets_dir,
         kernel_override: args.kernel.as_deref(),
         initrd_override: args.initrd.as_deref(),
@@ -547,6 +380,44 @@ fn main() -> Result<()> {
         }),
     })?;
 
+    let prepared_seats = private_seats::prepare(private_seats::Seats {
+        id: &args.id,
+        service_socket: args.service_socket.as_deref(),
+        uds_path: &args.uds_path,
+        run_dir: args.run_dir.as_deref(),
+    })?;
+    let metric_service = if args.metric_broker {
+        Some(
+            std::os::unix::net::UnixStream::connect(&prepared_seats.service_socket)
+                .context("prepare metric service channel")?,
+        )
+    } else {
+        None
+    };
+    if args.uds_path.exists() {
+        std::fs::remove_file(&args.uds_path)?;
+    }
+    let ipc_listener = std::os::unix::net::UnixListener::bind(&args.uds_path)?;
+    ipc_listener.set_nonblocking(true)?;
+    std::fs::set_permissions(&args.uds_path, std::fs::Permissions::from_mode(0o600))?;
+    let launched_path = args.uds_path.with_extension("launched");
+    let launched = prepare_sentinel(&launched_path)?;
+    let ready = prepare_sentinel(&args.uds_path.with_extension("ready"))?;
+    let attestation = prepare_owner_sandbox_attestation(&session_dir)?;
+
+    confine_owner(&args, &session_dir).context("install VM-owner confinement")?;
+    rt.block_on(attest_owner(
+        attestation,
+        prepared_seats.service_socket.clone(),
+        Arc::clone(&upstream_grants),
+    ))
+    .context("attest VM-owner confinement")?;
+    // The parent watcher is the first worker thread and therefore inherits
+    // the installed Landlock/Seatbelt and seccomp policy.
+    capsem_guard::watch_parent_or_exit(Some(controller.pid.get()))?;
+
+    let (vm, vsock_rx, sm) = prepared_vm.boot()?;
+
     // Delete checkpoint file if we just restored from it, so we don't accidentally suspend on normal shutdown
     if let Some(cp) = &args.checkpoint_path {
         let full_path = if std::path::Path::new(cp).is_absolute() {
@@ -558,6 +429,19 @@ fn main() -> Result<()> {
     }
 
     let vm_arc = Arc::new(tokio::sync::Mutex::new(vm));
+
+    let prepared_resources = PreparedOwnerResources {
+        seats: prepared_seats,
+        metric_service,
+        ipc_listener,
+        launched,
+        ready,
+        pty_log,
+        aggregator,
+        mcp_servers,
+        builtin_bin,
+        builtin_env,
+    };
 
     // Emit boot timeline state transitions for process.log.
     for t in sm.history() {
@@ -572,7 +456,6 @@ fn main() -> Result<()> {
 
     let shutdown: Arc<Mutex<Shutdown>> = Arc::new(Mutex::new(Shutdown::default()));
 
-    let trace_id_for_loop = trace_id;
     let session_dir_for_loop = session_dir;
     let shutdown_for_loop = Arc::clone(&shutdown);
     let shutdown_for_loop_error = Arc::clone(&shutdown);
@@ -584,12 +467,12 @@ fn main() -> Result<()> {
             controller,
             vm_arc,
             vsock_rx,
-            trace_id_for_loop,
             session_dir_for_loop,
             shutdown_for_loop,
             runtime_source,
             runtime_config,
             upstream_grants,
+            prepared_resources,
         ))
         .await
         {
@@ -637,6 +520,10 @@ fn main() -> Result<()> {
     });
 
     #[cfg(target_os = "macos")]
+    let _runtime_thread = std::thread::Builder::new()
+        .name("capsem-process-runtime".into())
+        .spawn(move || rt.block_on(std::future::pending::<()>()))?;
+    #[cfg(target_os = "macos")]
     unsafe {
         core_foundation_sys::runloop::CFRunLoopRun();
     }
@@ -646,7 +533,11 @@ fn main() -> Result<()> {
     // A VM the hypervisor stopped on its own is not a clean exit: the
     // service keeps the session directory and reports the VM as exited
     // unexpectedly, which is what happened.
-    if let Some(reason) = rt.block_on(async { vm_for_exit.lock().await.stop_reason() }) {
+    #[cfg(target_os = "macos")]
+    let stop_reason = vm_for_exit.blocking_lock().stop_reason();
+    #[cfg(not(target_os = "macos"))]
+    let stop_reason = rt.block_on(async { vm_for_exit.lock().await.stop_reason() });
+    if let Some(reason) = stop_reason {
         anyhow::bail!("the hypervisor stopped the VM: {reason}");
     }
     Ok(())
@@ -658,13 +549,25 @@ async fn run_async_main_loop(
     controller: capsem_foundation::unix::peer::PeerIdentity,
     vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
-    trace_id: String,
     session_dir: std::path::PathBuf,
     shutdown: Arc<Mutex<Shutdown>>,
     runtime_source: runtime_config::RuntimePolicySource,
     runtime_config: runtime_config::RuntimePolicyConfig,
     upstream_grants: Arc<UpstreamGrantClient>,
+    prepared: PreparedOwnerResources,
 ) -> Result<()> {
+    let PreparedOwnerResources {
+        seats: prepared_seats,
+        metric_service,
+        ipc_listener,
+        mut launched,
+        ready,
+        pty_log,
+        aggregator: aggregator_client,
+        mcp_servers,
+        builtin_bin,
+        builtin_env,
+    } = prepared;
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
     let (ledger_stream, commitment_stream, ledger_grant) = upstream_grants
@@ -734,27 +637,7 @@ async fn run_async_main_loop(
     shutdown.lock().await.publisher = Some(job_store.publisher.clone());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
-    let seats = private_seats::bind(
-        private_seats::Seats {
-            id: &args.id,
-            service_socket: args.service_socket.as_deref(),
-            uds_path: &args.uds_path,
-            run_dir: args.run_dir.as_deref(),
-        },
-        &job_store,
-        ctrl_tx.clone(),
-    )?;
-    let metric_service = if args.metric_broker {
-        Some(
-            tokio::net::UnixStream::connect(&seats.service_socket)
-                .await
-                .context("prepare metric service channel")?
-                .into_std()
-                .context("adopt metric service channel")?,
-        )
-    } else {
-        None
-    };
+    let seats = prepared_seats.activate(&job_store, ctrl_tx.clone())?;
     // Held until the process exits: dropping it flushes the last measurements.
     let _metric_export = metric_export::install(&args.id, metric_service, args.metric_broker);
     let restored = job_store
@@ -789,49 +672,6 @@ async fn run_async_main_loop(
         Arc::clone(&db),
         runtime_config.network.clone(),
     )?);
-    let builtin_bin = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
-    let mut builtin_env = std::collections::HashMap::new();
-    builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
-    builtin_env.insert(
-        "CAPSEM_ACTIVE_POLICY".into(),
-        runtime_config.active_policy_path.to_string_lossy().to_string(),
-    );
-    let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
-    let aggregator_client = spawn_mcp_aggregator(&mcp_servers, &session_dir, &args.id, &trace_id).await?;
-
-    if let Ok(tools) = aggregator_client.list_tools().await {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs().to_string())
-            .unwrap_or_default();
-        let existing = capsem_core::mcp::load_tool_cache();
-        let cache_entries: Vec<capsem_core::mcp::ToolCacheEntry> = tools
-            .iter()
-            .map(|t| {
-                let pin_hash = capsem_core::mcp::compute_tool_hash(t);
-                let prev = existing.iter().find(|e| e.namespaced_name == t.namespaced_name);
-                capsem_core::mcp::ToolCacheEntry {
-                    namespaced_name: t.namespaced_name.clone(),
-                    original_name: t.original_name.clone(),
-                    description: t.description.clone(),
-                    server_name: t.server_name.clone(),
-                    annotations: t.annotations.clone(),
-                    pin_hash: pin_hash.clone(),
-                    first_seen: prev.map(|p| p.first_seen.clone()).unwrap_or_else(|| now.clone()),
-                    last_seen: now.clone(),
-                    approved: prev.map(|p| p.approved && p.pin_hash == pin_hash).unwrap_or(false),
-                }
-            })
-            .collect();
-        if let Err(e) = capsem_core::mcp::save_tool_cache(&cache_entries) {
-            warn!(error = %e, "failed to write tool cache");
-        } else {
-            info!(tools = cache_entries.len(), "wrote tool cache");
-        }
-    }
-
     let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
@@ -911,36 +751,7 @@ async fn run_async_main_loop(
     let db_for_vsock = Arc::clone(&db);
     let shutdown_for_vsock = Arc::clone(&shutdown);
     let shutdown_for_vsock_error = Arc::clone(&shutdown);
-    let pty_log = match capsem_core::pty_log::PtyLog::open(&session_dir.join("pty.log")) {
-        Ok(pl) => Some(Arc::new(pl)),
-        Err(e) => {
-            warn!(error = %e, "failed to open pty.log");
-            None
-        }
-    };
-
-    if uds_path.exists() {
-        std::fs::remove_file(&uds_path)?;
-    }
-    let listener = UnixListener::bind(&uds_path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&uds_path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    let launched_path = uds_path.with_extension("launched");
-    let mut launched = prepare_sentinel(&launched_path)?;
-    let ready = prepare_sentinel(&uds_path.with_extension("ready"))?;
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        let attestation = prepare_owner_sandbox_attestation(&session_dir)?;
-        confine_owner(&args, &session_dir).context("install VM-owner confinement")?;
-        attest_owner(attestation, seats.service_socket.clone(), Arc::clone(&upstream_grants))
-            .await
-            .context("attest VM-owner confinement")?;
-    }
-
+    let listener = tokio::net::UnixListener::from_std(ipc_listener)?;
     seats.start();
     use std::io::Write as _;
     launched.write_all(b"launched\n")?;
@@ -1044,39 +855,14 @@ async fn spawn_mcp_aggregator(
     session_dir: &Path,
     vm_id: &str,
     trace_id: &str,
+    aggregator_bin: PathBuf,
+    stderr_file: std::fs::File,
 ) -> Result<capsem_proto::mcp_aggregator::AggregatorClient> {
     use capsem_proto::mcp_aggregator::*;
 
     let (client, rx) = AggregatorClient::channel(64);
 
-    let exe_path = std::env::current_exe()?;
-    let aggregator_bin = resolve_mcp_aggregator_binary(&exe_path)?;
-
-    // Dedicated stderr log for the aggregator -- keeps its JSON tracing
-    // stream out of the parent's process.log. 0o600 to match the
-    // project's sensitive-log permissions policy (see
-    // /dev-rust-patterns lesson 14).
     let log_path = aggregator_log_path(session_dir);
-    let stderr_file = {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .mode(0o600)
-                .open(&log_path)
-                .with_context(|| format!("failed to open {}", log_path.display()))?
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-                .with_context(|| format!("failed to open {}", log_path.display()))?
-        }
-    };
 
     info!(
         bin = %aggregator_bin.display(),
