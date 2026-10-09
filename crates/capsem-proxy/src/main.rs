@@ -67,16 +67,16 @@ fn main() -> Result<()> {
         default_filter: "capsem_proxy=info,capsem_core=info,capsem_foundation=warn",
     })?;
     let args = Args::parse();
-    capsem_guard::watch_parent_or_exit(Some(args.parent_pid))?;
     let stdin = io::stdin();
     let control = UnixStream::from(fd::duplicate(stdin.as_fd())?);
     let denied_file = std::env::current_exe().context("resolve proxy executable before confinement")?;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()?;
+    // Prepare Tokio's internal descriptors without creating sibling threads.
+    // Tasks and blocking workers born after confinement inherit the policy on
+    // Linux kernels whose Landlock ABI predates thread synchronization.
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     capsem_foundation::unix::worker_sandbox::confine(&Policy::new(Role::Proxy))
         .context("confine proxy worker before readiness")?;
+    capsem_guard::watch_parent_or_exit(Some(args.parent_pid))?;
     attest_confinement(&denied_file, args.parent_pid)?;
     runtime.block_on(run_control(control, args.generation, args.standalone_provider))
 }
