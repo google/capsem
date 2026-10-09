@@ -5,6 +5,7 @@ use std::sync::Arc;
 use capsem_core::net::dns::{DnsResolver, DnsUpstreamGrants};
 use capsem_core::net::mitm_proxy::{TcpUpstreamGrants, UpstreamTarget};
 use capsem_core::GuestMetadataAuthority as _;
+use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use capsem_proto::upstream_grant::{
     decode_upstream_grant_request, encode_upstream_grant_response, UpstreamDescriptorKind, UpstreamGrantDenial,
     UpstreamGrantRequest, UpstreamGrantResponse,
@@ -15,6 +16,86 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 const POLICY_A: &str = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const POLICY_B: &str = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+#[tokio::test]
+async fn ledger_channel_preserves_grant_and_is_adopted_before_use() {
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([0x6c; 16]), 44, LedgerClientRole::VmOwner).unwrap();
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let (ledger, mut ledger_peer) = UnixStream::pair().unwrap();
+    let broker_task = tokio::spawn(async move {
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenLedger { request_id: 1 }
+        );
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::LedgerGranted { request_id: 1, grant },
+            Some(ledger.as_raw_fd()),
+        )
+        .await;
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::Adopted {
+                grant_id: grant.client_id(),
+            }
+        );
+    });
+
+    let (mut stream, received) = client.open_ledger().await.unwrap();
+    assert_eq!(received, grant);
+    stream.write_all(b"hello").unwrap();
+    let mut message = [0_u8; 5];
+    ledger_peer.read_exact(&mut message).unwrap();
+    assert_eq!(&message, b"hello");
+    broker_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn ledger_denial_and_missing_descriptor_fail_closed() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let denied = tokio::spawn(async move {
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenLedger { request_id: 1 }
+        );
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::Denied {
+                request_id: 1,
+                reason: UpstreamGrantDenial::NotConfigured,
+            },
+            None,
+        )
+        .await;
+    });
+    let error = client.open_ledger().await.unwrap_err().to_string();
+    assert!(error.contains("NotConfigured"), "{error}");
+    denied.await.unwrap();
+
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([0x7d; 16]), 45, LedgerClientRole::VmOwner).unwrap();
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let malformed = tokio::spawn(async move {
+        assert!(matches!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenLedger { request_id: 1 }
+        ));
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::LedgerGranted { request_id: 1, grant },
+            None,
+        )
+        .await;
+    });
+    let error = client.open_ledger().await.unwrap_err().to_string();
+    assert!(error.contains("carried 0 descriptors"), "{error}");
+    malformed.await.unwrap();
+}
 
 async fn open_error(client: &UpstreamGrantClient) -> String {
     match client.open(0, POLICY_A).await {

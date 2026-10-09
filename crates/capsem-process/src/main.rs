@@ -615,10 +615,23 @@ async fn run_async_main_loop(
 ) -> Result<()> {
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
+    let (ledger_stream, ledger_grant) = upstream_grants
+        .open_ledger()
+        .await
+        .context("acquire supervised session ledger")?;
+    let ledger_path = session_dir.join("session.db");
     // 1024 queued events: a guest resolving and fetching in parallel enqueues
     // several rows per request, and a full queue makes every producer sleep
     // in 5 ms steps on its reply path (see `DbWriter::send_with_backpressure`).
-    let db = Arc::new(capsem_logger::DbWriter::open(&session_dir.join("session.db"), 1024)?);
+    // The logical path is diagnostic identity only; the descriptor selects
+    // the worker that exclusively owns and opens the database.
+    let db = Arc::new(
+        tokio::task::spawn_blocking(move || {
+            capsem_logger::DbWriter::from_ledger_channel(ledger_stream, ledger_grant, &ledger_path, 1024)
+        })
+        .await
+        .context("join supervised session ledger handshake")??,
+    );
     // Register the DbWriter with the SIGTERM handler BEFORE any work that
     // produces writes. If the signal fires before the workspace monitor
     // starts, we still want a clean checkpoint.
