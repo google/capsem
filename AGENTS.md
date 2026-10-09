@@ -43,6 +43,7 @@ See `/dev-just` for the full recipe reference and dependency chains.
 ```
 crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
 crates/capsem-archive/  Block-compressed body archive for session ledgers (pure Rust)
+crates/capsem-ledger/           Confined session-ledger worker and archive codec executor
 crates/capsem-telemetry/       Every metrics-facade metric name, kind, unit, and description
 crates/capsem-assets/          Asset manifest compatibility, resolution, download, and verification
 crates/capsem-api/             Gateway wire types and OpenAPI contract shared by clients
@@ -52,6 +53,7 @@ crates/capsem-credentials/     Credential provider contracts and durable credent
 crates/capsem-core/            VM, hypervisor, security engine, and host network runtime
 crates/capsem-service/         Daemon service (axum HTTP over UDS, VM lifecycle)
 crates/capsem-process/         Per-VM process (boots VM, bridges vsock, job store)
+crates/capsem-proxy/           Confined HTTP/DNS proxy worker for VM and standalone traffic
 crates/capsem/                 CLI client (create, shell, exec, list, install, assets, update)
 crates/capsem-tui/             Terminal control UI (reads and drives state via the gateway)
 crates/capsem-admin/           Runtime image/asset/release administration (validate, materialize, publish)

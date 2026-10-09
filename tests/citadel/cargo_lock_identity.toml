@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "0508229c6d57c0dbd67ee97f5215e406d9daef8f9f555a0468a84289111ecada"
-reason = "Approved 0.7 security work combines confined worker authority and brokered metrics dependencies with broker OAuth and credential injection dependencies. Existing registry versions and workspace 0.7.0 remain unchanged; the merged host and sealed guest cohort will be rebuilt and qualified together."
+sha256 = "83921edc1c10e681e35bef79e78c9f4bdee6b6041a95bca3b93ebf42b881f3d6"
+reason = "Approved 0.7 security work adds the confined proxy and ledger workers, zstd body codec, broker authentication, and zeroized credential handling. Existing registry versions and workspace 0.7.0 remain unchanged; the host and sealed guest cohort will be rebuilt and qualified together."

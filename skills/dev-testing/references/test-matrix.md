@@ -14,6 +14,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 |-------|------|:--------:|:--------:|:-----------:|:----:|
 | `capsem-foundation` | Host primitives | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-archive` | Session body archive | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-ledger` | Confined ledger and archive codec worker | Yes | Subprocess | Clippy | Yes |
 | `capsem-telemetry` | Metric name/unit/description catalog | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-assets` | Asset lifecycle | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-api` | Gateway wire types and OpenAPI | Yes | Compile/no-run | Clippy | Yes |
@@ -26,6 +27,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | `capsem-guard` | Companion lifecycle | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-service` | Daemon API/orchestration | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-process` | Per-VM runtime | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-proxy` | Confined HTTP/DNS proxy worker | Yes | Subprocess | Clippy | Yes |
 | `capsem` | CLI | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-tui` | Terminal UI | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-admin` | Runtime image, asset, and release administration | Yes | Compile/no-run | Clippy | Yes |

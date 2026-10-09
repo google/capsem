@@ -125,10 +125,10 @@ def test_each_route_has_exactly_one_benchmark_classification() -> None:
 def test_internal_routes_carry_a_reason_and_are_a_tight_inventory() -> None:
     internal = _config()["internal"]
     assert all(reason.strip() for reason in internal.values())
-    # Six real exceptions: doctor failure preservation, private-network
-    # resolution, owner metric ingestion, and the three preview admission
-    # exchanges between the gateway and service over the local UDS.
-    assert len(internal) <= 6, (
+    # Nine real exceptions: doctor failure preservation, private-network
+    # resolution, owner metric ingestion, three preview admission exchanges,
+    # and three standalone proxy lifecycle exchanges over the local UDS.
+    assert len(internal) <= 9, (
         "the internal service-only route inventory grew; prefer a public, "
         "measured gateway route unless the control-plane exception is real"
     )
