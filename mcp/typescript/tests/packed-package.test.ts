@@ -3,7 +3,7 @@ import {copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSy
 import {createHash} from 'node:crypto';
 import {createServer as createHttpServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
-import {tmpdir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
@@ -58,8 +58,8 @@ describe('packed-package', () => {
     writeFileSync(join(fixture, 'package.json'), JSON.stringify({name: 'capsem-mcp-clean-consumer', private: true}));
     execFileSync('npm', ['install', '--offline', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...archives], {
       cwd: fixture, stdio: 'pipe', timeout: 60_000,
-      env: {PATH: process.env.PATH ?? '',
-        ...(process.env.NPM_CONFIG_CACHE ? {NPM_CONFIG_CACHE: process.env.NPM_CONFIG_CACHE} : {})},
+      env: {PATH: process.env.PATH ?? '', HOME: fixture,
+        NPM_CONFIG_CACHE: process.env.NPM_CONFIG_CACHE ?? join(homedir(), '.npm')},
     });
     const dependencies = join(fixture, 'node_modules');
     for (const [owner, source] of Object.entries(sources)) {

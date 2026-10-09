@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import process from 'node:process';
 import {fileURLToPath} from 'node:url';
@@ -26,8 +26,8 @@ try {
   writeFileSync(join(fixture, 'package.json'), JSON.stringify({name: 'capsem-mcp-prewarm', private: true}));
   execFileSync('npm', ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...archives], {
     cwd: fixture, stdio: 'inherit', timeout: 60_000,
-    env: {PATH: process.env.PATH ?? '',
-      ...(process.env.NPM_CONFIG_CACHE ? {NPM_CONFIG_CACHE: process.env.NPM_CONFIG_CACHE} : {})},
+    env: {PATH: process.env.PATH ?? '', HOME: fixture,
+      NPM_CONFIG_CACHE: process.env.NPM_CONFIG_CACHE ?? join(homedir(), '.npm')},
   });
 } finally {
   rmSync(fixture, {recursive: true, force: true});
