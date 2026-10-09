@@ -19,7 +19,10 @@ export default defineConfig({
             { slug: 'getting-started/how-to-use-capsem' },
           ],
         },
-        { label: 'Architecture', items: [{ slug: 'architecture/security' }] },
+        {
+          label: 'Architecture',
+          items: [{ slug: 'architecture/security' }, { slug: 'architecture/security-engine' }],
+        },
         {
           label: 'Guides',
           items: [{ slug: 'guides' }, { slug: 'guides/sdk' }],

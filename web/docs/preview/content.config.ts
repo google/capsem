@@ -9,6 +9,7 @@ export const collections = {
       pattern: [
         'getting-started/*.md',
         'architecture/security.md',
+        'architecture/security-engine.md',
         'guides/index.md',
         'guides/sdk/index.md',
         'reference/index.md',

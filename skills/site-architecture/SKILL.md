@@ -61,6 +61,11 @@ trust assumptions without claiming more than the accepted final contract.
 
 ## System overview
 
+For a component pipeline, distinguish internal stages from OS processes. Show
+where a decision is enforced, separate runtime bytes from sanitized ledger
+records, and identify observation-only events that cannot prevent an operation.
+Link to the owning process-boundary explanation instead of repeating it.
+
 Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework (with a KVM backend for Linux). It runs as a daemon service (like Docker). The system has these layers:
 
 **Host-side:**

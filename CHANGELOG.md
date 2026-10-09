@@ -86,6 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Security engine architecture explains event processing, plugins and rules,
+  credential handling, enforcement, and the separate sanitized ledger path.
+
 - Rust SDK exposes the matching credential injection resource with file or
   memory storage and opaque reference responses.
 

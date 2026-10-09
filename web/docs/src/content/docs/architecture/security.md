@@ -9,6 +9,9 @@ Worker boundaries below must be implemented and verified before publication. -->
 Capsem runs OCI containers inside separate VMs. Host processes handle VM
 control, proxy traffic, MCP tools, network connections, and log storage.
 
+See the [security engine](/architecture/security-engine/) for event processing,
+rule decisions, credentials, and logging.
+
 Colors show the host permissions available if a process is compromised:
 
 | Color | Host permissions |
