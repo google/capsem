@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Export confined proxy metrics through a bounded, generation-bound broker
+  capability that fixes session attribution and keeps collector destinations,
+  credentials and environment state in the trusted service.
+
 - Move guest HTTP interception, DNS framing, private-name resolution, policy
   enforcement and audit admission into the confined per-session proxy, with
   the VM owner surrendering each connection through its generation-bound

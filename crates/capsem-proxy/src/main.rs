@@ -28,6 +28,7 @@ use tokio::task::{JoinError, JoinSet};
 
 mod credential_client;
 mod mcp_client;
+mod metric_client;
 mod private_names_client;
 
 const CONTROL_QUEUE_CAPACITY: usize = 16;
@@ -119,7 +120,6 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
         send_event(&sender, ProxyControlEvent::Ready { generation }).await?;
         let state = Arc::new(Mutex::new(ProxyRuntimeState::default()));
         let mut grants = BTreeMap::<ProxyCapability, Vec<u64>>::new();
-        let mut descriptors = BTreeMap::<u64, UnixStream>::new();
         let mut grant_ids = HashSet::new();
         let mut tasks = JoinSet::<CapabilityResult>::new();
 
@@ -278,6 +278,20 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     while !*closed.borrow() && closed.changed().await.is_ok() {}
                                     (capability, grant_id, ProxyChannelCloseReason::Disconnected)
                                 });
+                            } else if capability == ProxyCapability::Telemetry {
+                                let (client, session_id) = metric_client::start(stream)
+                                    .await
+                                    .context("open proxy metric capability")?;
+                                let exporter = capsem_telemetry::export::install_with_http_client(
+                                    client,
+                                    "capsem-proxy",
+                                    vec![capsem_telemetry::export::KeyValue::new("session.id", session_id)],
+                                )
+                                .context("install proxy metric exporter")?;
+                                state
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .attach_metric_exporter(exporter);
                             } else if capability == ProxyCapability::HttpTraffic {
                                 let config = state
                                     .lock()
@@ -306,7 +320,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     (capability, grant_id, ProxyChannelCloseReason::Disconnected)
                                 });
                             } else {
-                                descriptors.insert(grant_id, stream);
+                                bail!("proxy capability {capability:?} has no consumer");
                             }
                             send_event(&sender, ProxyControlEvent::Adopted { generation, grant_id }).await?;
                         }
@@ -323,7 +337,6 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
 
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
-        drop(descriptors);
         drop(grants);
         send_event(&sender, ProxyControlEvent::Stopped { generation }).await
     }
@@ -376,6 +389,7 @@ struct ProxyRuntimeState {
     )>,
     http_config: Option<Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>>,
     dns_runtime: Option<Arc<DnsRuntime>>,
+    metric_exporter: Option<capsem_telemetry::export::Exporter>,
 }
 
 impl Default for ProxyRuntimeState {
@@ -393,6 +407,7 @@ impl Default for ProxyRuntimeState {
             mcp_client: None,
             http_config: None,
             dns_runtime: None,
+            metric_exporter: None,
         }
     }
 }
@@ -462,6 +477,10 @@ impl ProxyRuntimeState {
     ) {
         self.mcp_client = Some((client, hello));
         self.http_config = None;
+    }
+
+    fn attach_metric_exporter(&mut self, exporter: capsem_telemetry::export::Exporter) {
+        self.metric_exporter = Some(exporter);
     }
 
     fn traffic_ready(&mut self, capability: ProxyCapability) -> Result<bool> {
