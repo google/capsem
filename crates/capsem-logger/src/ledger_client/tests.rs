@@ -54,9 +54,13 @@ impl Fixture {
     }
 
     async fn write_network_body(&self) {
+        self.write_network_body_named(EVENT_ID, b"request".to_vec()).await;
+    }
+
+    async fn write_network_body_named(&self, event_id: &str, request_body: Vec<u8>) {
         self.writer
             .write_checked(WriteOp::NetEvent(NetEvent {
-                event_id: Some(EVENT_ID.into()),
+                event_id: Some(event_id.into()),
                 timestamp: SystemTime::now(),
                 domain: "example.test".into(),
                 port: 443,
@@ -73,7 +77,7 @@ impl Fixture {
                 matched_rule: None,
                 request_headers: None,
                 response_headers: None,
-                request_body: Some(b"request".to_vec()),
+                request_body: Some(request_body),
                 response_body: Some(b"response".to_vec()),
                 conn_type: Some("tls".into()),
                 policy_mode: None,
@@ -109,6 +113,25 @@ impl Fixture {
             crate::ledger_server::LedgerClientExit::Disconnected
         );
     }
+}
+
+#[tokio::test]
+async fn an_unread_warc_export_cannot_block_later_operations_forever() {
+    let fixture = Fixture::start(LedgerClientRole::Reader).await;
+    for index in 0..16 {
+        fixture
+            .write_network_body_named(&format!("{index:012x}"), vec![index as u8; 1024 * 1024])
+            .await;
+    }
+
+    let export = fixture.client.export_warc().await.unwrap();
+    let counters = tokio::time::timeout(Duration::from_secs(2), fixture.client.counters())
+        .await
+        .expect("an unread local export wedged the ledger client")
+        .unwrap();
+    assert_eq!(counters.net.total, 16);
+    drop(export);
+    fixture.stop().await;
 }
 
 #[tokio::test]

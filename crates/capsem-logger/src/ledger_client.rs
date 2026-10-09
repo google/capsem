@@ -24,7 +24,10 @@ const EXPORT_CHUNK_CAPACITY: usize = 4;
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(1);
+#[cfg(not(test))]
 const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const STREAM_TIMEOUT: Duration = Duration::from_millis(250);
 
 type ClientSender = ipc_channel::Sender<LedgerClientMessage>;
 type ClientReceiver = ipc_channel::Receiver<LedgerServerMessage>;
@@ -433,7 +436,7 @@ async fn export_warc(
             Ok(response) => response,
             Err(error) => {
                 if consumer_open {
-                    let _ = chunks.send(Err(error.clone())).await;
+                    let _ = forward_export_chunk(&chunks, Err(error.clone())).await;
                 }
                 let _ = completion.send(Err(error.clone()));
                 return Err(error);
@@ -444,13 +447,13 @@ async fn export_warc(
                 if actual != offset {
                     let error = "ledger WARC chunk offset is not contiguous".to_string();
                     if consumer_open {
-                        let _ = chunks.send(Err(error.clone())).await;
+                        let _ = forward_export_chunk(&chunks, Err(error.clone())).await;
                     }
                     let _ = completion.send(Err(error.clone()));
                     return Err(error);
                 }
                 offset += bytes.len() as u64;
-                if consumer_open && chunks.send(Ok(bytes)).await.is_err() {
+                if consumer_open && !forward_export_chunk(&chunks, Ok(bytes)).await {
                     consumer_open = false;
                 }
             }
@@ -471,6 +474,13 @@ async fn export_warc(
             }
         }
     }
+}
+
+async fn forward_export_chunk(chunks: &mpsc::Sender<Result<Vec<u8>, String>>, chunk: Result<Vec<u8>, String>) -> bool {
+    matches!(
+        tokio::time::timeout(STREAM_TIMEOUT, chunks.send(chunk)).await,
+        Ok(Ok(()))
+    )
 }
 
 fn unexpected(operation: &str, response: LedgerReply) -> String {
