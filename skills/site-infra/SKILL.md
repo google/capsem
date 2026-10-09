@@ -134,6 +134,10 @@ route while every source file remains checked in.
 
 ## Dev workflow
 
+Verify `/` and the header-logo link as well as changed document routes in the
+rendered preview. The preview root redirects to Installation while Intro is
+TODO; do not create an unapproved landing page to repair root navigation.
+
 ```bash
 uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds 120 -- pnpm --dir web/docs run dev
 uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- pnpm --dir web/docs run build

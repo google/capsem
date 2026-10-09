@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The documentation preview root opens Installation instead of returning 404,
+  including navigation through the header logo.
+
 - Credential file-lock waits stop after five seconds instead of indefinitely
   delaying startup or an explicit injection behind another writer.
 

@@ -5,6 +5,7 @@ import starlight from '@astrojs/starlight';
 export default defineConfig({
   site: 'https://docs.capsem.org',
   srcDir: './preview',
+  redirects: { '/': '/getting-started/installation/' },
   integrations: [
     mermaid(),
     starlight({
