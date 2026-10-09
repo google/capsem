@@ -99,7 +99,7 @@ it('rejects malformed image catalog responses without claiming cache readiness',
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toEqual({error: {kind: 'internal'}});
     expect(requests).toHaveLength(1);
-  }, {body: {images: [{...catalog.images[0], cached: 'ready'}]}});
+  }, {body: {images: [{...catalog.images[0], cached: 'available'}]}});
 });
 
 it('keeps gateway bearer ownership separate for each MCP server', async () => {
