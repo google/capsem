@@ -180,7 +180,7 @@ fn descriptor_expectations_are_explicit() {
             grant: LedgerChannelGrant::new(LedgerGeneration::new([1; 16]), 3, LedgerClientRole::VmOwner).unwrap(),
         }
         .expected_descriptor_count(),
-        1
+        2
     );
     assert_eq!(
         UpstreamGrantResponse::DescriptorGranted {
