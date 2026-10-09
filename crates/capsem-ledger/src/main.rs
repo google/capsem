@@ -1,11 +1,15 @@
 use std::collections::HashSet;
+use std::fmt::Write as FmtWrite;
 use std::io;
+use std::io::Write;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
+use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
 use capsem_foundation::unix::{fd, router_channel};
 use capsem_logger::ledger_server::{LedgerClientExit, LedgerServer};
 use capsem_proto::ledger::LedgerGeneration;
@@ -35,6 +39,12 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    // SAFETY: process entry, before telemetry, runtimes, database handles or
+    // parent-watch threads can observe environment state or own descriptors.
+    unsafe {
+        capsem_foundation::unix::process::clear_inherited_environment();
+        fd::close_inherited_descriptors()?;
+    }
     let _telemetry = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-ledger",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
@@ -44,12 +54,75 @@ fn main() -> Result<()> {
     capsem_guard::watch_parent_or_exit(Some(args.parent_pid))?;
     let stdin = io::stdin();
     let control = UnixStream::from(fd::duplicate(stdin.as_fd())?);
+    let session_dir = session_directory(&args.database)?;
+    let denied_file = std::env::current_exe().context("resolve ledger executable before confinement")?;
     let server = Arc::new(LedgerServer::open(&args.database).context("open session ledger")?);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()?;
+    capsem_foundation::unix::worker_sandbox::confine(&Policy::new(Role::Ledger).allow(&session_dir, Access::ReadWrite))
+        .context("confine ledger worker before readiness")?;
+    attest_confinement(&session_dir, &denied_file, args.parent_pid, args.generation)?;
     runtime.block_on(run_control(control, server, args.generation, CLIENT_LIMIT))
+}
+
+fn session_directory(database: &Path) -> Result<PathBuf> {
+    if !database.is_absolute() || database.file_name().and_then(|name| name.to_str()) != Some("session.db") {
+        bail!("ledger database must be an absolute session.db path");
+    }
+    let directory = database
+        .parent()
+        .filter(|directory| *directory != Path::new("/"))
+        .context("ledger database must have a session directory")?;
+    Ok(directory.to_path_buf())
+}
+
+fn attest_confinement(
+    session_dir: &Path,
+    denied_file: &Path,
+    parent_pid: u32,
+    generation: LedgerGeneration,
+) -> Result<()> {
+    let mut generation_hex = String::with_capacity(32);
+    for byte in generation.as_bytes() {
+        write!(&mut generation_hex, "{byte:02x}").expect("write to string");
+    }
+    let marker = session_dir.join(format!(".capsem-ledger-confinement-{generation_hex}"));
+    if std::env::vars_os().next().is_some() {
+        bail!("ledger worker retained inherited environment state");
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+        .context("ledger confinement denied its session directory")?;
+    file.write_all(b"confined\n")?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::remove_file(&marker)?;
+
+    require_denied(std::fs::read(denied_file), "read outside its session")?;
+    require_denied(UnixStream::pair(), "create a Unix socket")?;
+    require_denied(
+        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)),
+        "create a TCP listener",
+    )?;
+    require_denied(Command::new(denied_file).arg("--version").status(), "execute a process")?;
+    let parent = capsem_foundation::unix::process::ProcessId::try_from(parent_pid)?;
+    if capsem_foundation::unix::process::probe_signal_authority(parent)?
+        != capsem_foundation::unix::process::SignalProbe::Denied
+    {
+        bail!("ledger confinement allowed it to signal its parent");
+    }
+    Ok(())
+}
+
+fn require_denied<T>(result: io::Result<T>, operation: &str) -> Result<()> {
+    if result.is_ok() {
+        bail!("ledger confinement allowed it to {operation}");
+    }
+    Ok(())
 }
 
 async fn run_control(

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Confine each session-ledger owner before readiness to its one database and
+  inherited channels, denying sibling sessions, socket creation, execution,
+  signals and ambient files; erase inherited environment bytes and reject
+  symlinked session grants before serving clients.
+
 - Confine the Linux API gateway before readiness to its inherited listeners
   and coordinator-minted service and VM-owner channels, denying filesystem
   access, process execution and direct network or control-socket dialing.
