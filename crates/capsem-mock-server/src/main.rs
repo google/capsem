@@ -865,11 +865,12 @@ fn payload_has_function_call_output(payload: &Value) -> bool {
 fn responses_stream(payload: &Value, final_turn: bool) -> Bytes {
     if final_turn {
         let (token, _) = write_target(payload, "openai-responses");
+        let token_json = json_compact(json!(token));
         return Bytes::from(
             format!(
                 "event: response.reasoning_summary_text.delta\ndata: {{\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"ledger reasoning\"}}\n\n\
-event: response.output_text.delta\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{token}\"}}\n\n\
-event: response.output_text.done\ndata: {{\"type\":\"response.output_text.done\",\"text\":\"{token}\"}}\n\n\
+event: response.output_text.delta\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":{token_json}}}\n\n\
+event: response.output_text.done\ndata: {{\"type\":\"response.output_text.done\",\"text\":{token_json}}}\n\n\
 event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
             ),
         );
