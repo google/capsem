@@ -303,6 +303,8 @@ fn direct_spawn_service_args(
         paths.assets_dir.clone().into_os_string(),
         "--process-binary".into(),
         paths.process_bin.clone().into_os_string(),
+        "--ledger-binary".into(),
+        paths.ledger_bin.clone().into_os_string(),
         "--proxy-binary".into(),
         paths.proxy_bin.clone().into_os_string(),
     ];

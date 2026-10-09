@@ -50,25 +50,48 @@ pub struct ServiceStatus {
     pub unit_path: Option<PathBuf>,
 }
 
+#[derive(Clone, Copy)]
+pub struct ServiceBinaries<'a> {
+    service: &'a Path,
+    process: &'a Path,
+    ledger: &'a Path,
+    proxy: &'a Path,
+    gateway: &'a Path,
+    tray: &'a Path,
+}
+
+impl<'a> ServiceBinaries<'a> {
+    pub const fn new(
+        service: &'a Path,
+        process: &'a Path,
+        ledger: &'a Path,
+        proxy: &'a Path,
+        gateway: &'a Path,
+        tray: &'a Path,
+    ) -> Self {
+        Self {
+            service,
+            process,
+            ledger,
+            proxy,
+            gateway,
+            tray,
+        }
+    }
+}
+
 /// Generate a macOS LaunchAgent plist for capsem-service.
 ///
 /// All paths are absolute and XML-escaped for safe embedding.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn generate_plist(
-    service_bin: &Path,
-    process_bin: &Path,
-    proxy_bin: &Path,
-    gateway_bin: &Path,
-    tray_bin: &Path,
-    assets_dir: &Path,
-    home: &str,
-) -> String {
+pub fn generate_plist(binaries: ServiceBinaries<'_>, assets_dir: &Path, home: &str) -> String {
     let log_dir = xml_escape(&format!("{}/Library/Logs/capsem", home));
-    let service_bin = xml_escape(&service_bin.display().to_string());
-    let process_bin = xml_escape(&process_bin.display().to_string());
-    let proxy_bin = xml_escape(&proxy_bin.display().to_string());
-    let gateway_bin = xml_escape(&gateway_bin.display().to_string());
-    let tray_bin = xml_escape(&tray_bin.display().to_string());
+    let service_bin = xml_escape(&binaries.service.display().to_string());
+    let process_bin = xml_escape(&binaries.process.display().to_string());
+    let ledger_bin = xml_escape(&binaries.ledger.display().to_string());
+    let proxy_bin = xml_escape(&binaries.proxy.display().to_string());
+    let gateway_bin = xml_escape(&binaries.gateway.display().to_string());
+    let tray_bin = xml_escape(&binaries.tray.display().to_string());
     let assets_dir = xml_escape(&assets_dir.display().to_string());
     let credential_store_path = xml_escape(&format!("{}/.capsem/credentials/credential-store.json", home));
     format!(
@@ -91,6 +114,8 @@ pub fn generate_plist(
         <string>{assets_dir}</string>
         <string>--process-binary</string>
         <string>{process_bin}</string>
+        <string>--ledger-binary</string>
+        <string>{ledger_bin}</string>
         <string>--proxy-binary</string>
         <string>{proxy_bin}</string>
         <string>--gateway-binary</string>
@@ -116,26 +141,20 @@ pub fn generate_plist(
 ///
 /// All paths are absolute. Spaces are escaped with `\x20` per systemd syntax.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub fn generate_systemd_unit(
-    service_bin: &Path,
-    process_bin: &Path,
-    proxy_bin: &Path,
-    gateway_bin: &Path,
-    tray_bin: &Path,
-    assets_dir: &Path,
-) -> String {
-    let service_bin = systemd_escape_path(service_bin);
-    let process_bin = systemd_escape_path(process_bin);
-    let proxy_bin = systemd_escape_path(proxy_bin);
-    let gateway_bin = systemd_escape_path(gateway_bin);
-    let tray_bin = systemd_escape_path(tray_bin);
+pub fn generate_systemd_unit(binaries: ServiceBinaries<'_>, assets_dir: &Path) -> String {
+    let service_bin = systemd_escape_path(binaries.service);
+    let process_bin = systemd_escape_path(binaries.process);
+    let ledger_bin = systemd_escape_path(binaries.ledger);
+    let proxy_bin = systemd_escape_path(binaries.proxy);
+    let gateway_bin = systemd_escape_path(binaries.gateway);
+    let tray_bin = systemd_escape_path(binaries.tray);
     let assets_dir = systemd_escape_path(assets_dir);
     format!(
         r#"[Unit]
 Description=Capsem sandbox service
 
 [Service]
-ExecStart={service_bin} --foreground --assets-dir {assets_dir} --process-binary {process_bin} --proxy-binary {proxy_bin} --gateway-binary {gateway_bin} --tray-binary {tray_bin}
+ExecStart={service_bin} --foreground --assets-dir {assets_dir} --process-binary {process_bin} --ledger-binary {ledger_bin} --proxy-binary {proxy_bin} --gateway-binary {gateway_bin} --tray-binary {tray_bin}
 Restart=always
 RestartSec=2
 
@@ -580,11 +599,14 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
 
     // Install service plist
     let plist_content = generate_plist(
-        &capsem_paths.service_bin,
-        &capsem_paths.process_bin,
-        &capsem_paths.proxy_bin,
-        &capsem_paths.gateway_bin,
-        &capsem_paths.tray_bin,
+        ServiceBinaries::new(
+            &capsem_paths.service_bin,
+            &capsem_paths.process_bin,
+            &capsem_paths.ledger_bin,
+            &capsem_paths.proxy_bin,
+            &capsem_paths.gateway_bin,
+            &capsem_paths.tray_bin,
+        ),
         &capsem_paths.assets_dir,
         home,
     );
@@ -663,11 +685,14 @@ async fn install_systemd_unit(capsem_paths: &paths::CapsemPaths, home: &str) -> 
     std::fs::create_dir_all(&unit_dir).context("cannot create systemd user unit directory")?;
 
     let unit_content = generate_systemd_unit(
-        &capsem_paths.service_bin,
-        &capsem_paths.process_bin,
-        &capsem_paths.proxy_bin,
-        &capsem_paths.gateway_bin,
-        &capsem_paths.tray_bin,
+        ServiceBinaries::new(
+            &capsem_paths.service_bin,
+            &capsem_paths.process_bin,
+            &capsem_paths.ledger_bin,
+            &capsem_paths.proxy_bin,
+            &capsem_paths.gateway_bin,
+            &capsem_paths.tray_bin,
+        ),
         &capsem_paths.assets_dir,
     );
 
