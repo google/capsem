@@ -2,7 +2,6 @@
 
 use super::*;
 use capsem_logger::ledger_protocol::{LedgerQuery, LedgerRows};
-#[cfg(not(test))]
 use capsem_proto::ledger::LedgerClientRole;
 use capsem_proto::ledger_counters::LedgerCounters;
 
@@ -12,17 +11,38 @@ pub(super) fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf 
 
 pub(crate) struct SessionLedger {
     path: PathBuf,
-    client: Option<capsem_logger::ledger_client::LedgerClient>,
+    remote: Option<RemoteLedger>,
     #[cfg(test)]
     embedded: Option<capsem_logger::DbHandle>,
 }
 
+struct RemoteLedger {
+    vm_id: String,
+    session_dir: PathBuf,
+    workers: Arc<crate::ledger_worker::LedgerWorkers>,
+    client: tokio::sync::Mutex<capsem_logger::ledger_client::LedgerClient>,
+    counters: Mutex<Option<Arc<LedgerCounters>>>,
+    read_cache_epoch: AtomicU64,
+}
+
 impl SessionLedger {
     #[cfg(not(test))]
-    fn remote(path: PathBuf, client: capsem_logger::ledger_client::LedgerClient) -> Self {
+    fn remote(
+        vm_id: String,
+        session_dir: PathBuf,
+        workers: Arc<crate::ledger_worker::LedgerWorkers>,
+        client: capsem_logger::ledger_client::LedgerClient,
+    ) -> Self {
         Self {
-            path,
-            client: Some(client),
+            path: session_db_path_for_session_dir(&session_dir),
+            remote: Some(RemoteLedger {
+                vm_id,
+                session_dir,
+                workers,
+                client: tokio::sync::Mutex::new(client),
+                counters: Mutex::new(None),
+                read_cache_epoch: AtomicU64::new(0),
+            }),
             #[cfg(test)]
             embedded: None,
         }
@@ -32,7 +52,7 @@ impl SessionLedger {
     pub(crate) fn embedded(path: PathBuf, db: capsem_logger::DbHandle) -> Self {
         Self {
             path,
-            client: None,
+            remote: None,
             embedded: Some(db),
         }
     }
@@ -46,7 +66,10 @@ impl SessionLedger {
         if let Some(db) = &self.embedded {
             return db.ready().await;
         }
-        self.client().counters().await.map(|_| ())
+        self.remote_state()
+            .call(|client| async move { client.counters().await })
+            .await
+            .map(|_| ())
     }
 
     pub(crate) async fn query(&self, query: LedgerQuery) -> Result<Vec<LedgerRows>, String> {
@@ -54,7 +77,12 @@ impl SessionLedger {
         if let Some(db) = &self.embedded {
             return capsem_logger::ledger_server::execute_named_query(db, query).await;
         }
-        self.client().query(query).await
+        self.remote_state()
+            .call(|client| {
+                let query = query.clone();
+                async move { client.query(query).await }
+            })
+            .await
     }
 
     pub(crate) async fn ledger_counters(&self) -> Result<Arc<LedgerCounters>, String> {
@@ -62,7 +90,17 @@ impl SessionLedger {
         if let Some(db) = &self.embedded {
             return db.ledger_counters().await;
         }
-        self.client().counters().await
+        let current = self
+            .remote_state()
+            .call(|client| async move { client.counters().await })
+            .await?;
+        let mut previous = self.remote_state().counters.lock().unwrap();
+        if previous.as_deref() != Some(current.as_ref()) {
+            *previous = Some(Arc::clone(&current));
+            self.remote_state().read_cache_epoch.fetch_add(1, Ordering::AcqRel);
+        }
+        drop(previous);
+        Ok(current)
     }
 
     pub(crate) fn read_cache_epoch(&self, _domain: capsem_logger::ReadCacheDomain) -> u64 {
@@ -70,7 +108,7 @@ impl SessionLedger {
         if let Some(db) = &self.embedded {
             return db.read_cache_epoch(capsem_logger::ReadCacheDomain::All);
         }
-        self.client().read_cache_epoch()
+        self.remote_state().read_cache_epoch.load(Ordering::Acquire)
     }
 
     #[cfg(test)]
@@ -85,7 +123,13 @@ impl SessionLedger {
         if let Some(db) = &self.embedded {
             return db.read_bodies(event_id).await;
         }
-        self.client().read_bodies(event_id).await
+        let event_id = event_id.to_string();
+        self.remote_state()
+            .call(|client| {
+                let event_id = event_id.clone();
+                async move { client.read_bodies(&event_id).await }
+            })
+            .await
     }
 
     pub(crate) async fn export_warc(&self) -> Result<SessionWarcExport, String> {
@@ -109,11 +153,62 @@ impl SessionLedger {
                 },
             });
         }
-        Ok(SessionWarcExport::Remote(self.client().export_warc().await?))
+        Ok(SessionWarcExport::Remote(
+            self.remote_state()
+                .call(|client| async move { client.export_warc().await })
+                .await?,
+        ))
     }
 
-    fn client(&self) -> &capsem_logger::ledger_client::LedgerClient {
-        self.client.as_ref().expect("production session ledger has a client")
+    fn remote_state(&self) -> &RemoteLedger {
+        self.remote
+            .as_ref()
+            .expect("production session ledger has a remote client")
+    }
+}
+
+impl RemoteLedger {
+    async fn call<T, F, Fut>(&self, operation: F) -> Result<T, String>
+    where
+        F: Fn(capsem_logger::ledger_client::LedgerClient) -> Fut,
+        Fut: std::future::Future<Output = Result<T, String>>,
+    {
+        let mut client = self.client.lock().await;
+        let first = operation(client.clone()).await;
+        let Err(first_error) = first else {
+            drop(client);
+            return first;
+        };
+        let replacement = self
+            .reconnect()
+            .await
+            .map_err(|error| format!("ledger operation failed ({first_error}); reconnect failed: {error}"))?;
+        *client = replacement.clone();
+        drop(client);
+        operation(replacement).await
+    }
+
+    async fn reconnect(&self) -> Result<capsem_logger::ledger_client::LedgerClient, String> {
+        let database = session_db_path_for_session_dir(&self.session_dir);
+        let log = self.session_dir.join("ledger.log");
+        let mut last_error = String::new();
+        for _ in 0..2 {
+            match self
+                .workers
+                .acquire(&self.vm_id, &database, &log, LedgerClientRole::Reader)
+                .await
+            {
+                Ok(channel) => {
+                    let (stream, grant) = channel.into_parts();
+                    return capsem_logger::ledger_client::LedgerClient::connect(stream, grant, database).await;
+                }
+                Err(error) => {
+                    last_error = format!("{error:#}");
+                    tokio::task::yield_now().await;
+                }
+            }
+        }
+        Err(last_error)
     }
 }
 
@@ -210,7 +305,14 @@ impl ServiceState {
         let opened = match opened {
             Ok((stream, grant)) => capsem_logger::ledger_client::LedgerClient::connect(stream, grant, db_path.clone())
                 .await
-                .map(|client| SessionLedger::remote(db_path.clone(), client)),
+                .map(|client| {
+                    SessionLedger::remote(
+                        vm_id.to_string(),
+                        session_dir.to_path_buf(),
+                        Arc::clone(&self.ledger_workers),
+                        client,
+                    )
+                }),
             Err(error) => Err(error),
         };
         #[cfg(not(test))]

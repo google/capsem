@@ -28,6 +28,10 @@ fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
         "session registration must request reader authority and adopt the granted channel"
     );
     assert!(
+        source.contains("async fn reconnect(&self)") && source.contains("operation(replacement).await"),
+        "a cached reader must replace a failed generation and retry through a fresh grant"
+    );
+    assert!(
         source.contains("fn open_host_ledger("),
         "one DbHandle::open owner must be the host ledger"
     );
