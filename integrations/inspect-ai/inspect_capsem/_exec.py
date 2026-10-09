@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING
 from capsem.execution import EXEC_TIMEOUT_CEILING_SECS
 from inspect_ai.util import ExecResult, OutputLimitExceededError, SandboxEnvironmentLimits
 
-from inspect_capsem._controller import is_root_user_spec
 from inspect_capsem._files import _resolve_guest_path
+from inspect_capsem._users import is_root_user_spec
 
 if TYPE_CHECKING:
     from inspect_capsem._controller import CapsemController

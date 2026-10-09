@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from .build_ca import prepare_build_inputs
 from .build_context import (
     compute_build_cache_key,
     default_linux_platform,
@@ -50,6 +51,7 @@ def _read_valid_manifest_hex(key_file: Path, blobs_dir: Path) -> str | None:
         cand = str(cached.get("manifest_hex", ""))
         if verify_cached_manifest_blobs(blobs_dir, cand):
             return cand
+    key_file.unlink(missing_ok=True)
     return None
 
 
@@ -65,15 +67,17 @@ def run_host_build(
     cache_dir: Path | None = None,
     platform: str | None = None,
 ) -> str:
-    """Run `docker build` + `docker image save`, ingest into `blobs/sha256`, and return manifest hex."""
+    """Run `docker build` + `docker image save`, ingest into `blobs/sha256`, return manifest hex."""
     if not is_host_build_enabled():
         raise RuntimeError(
-            "Host-side image builds are disabled; set CAPSEM_INSPECT_HOST_BUILD=1 in the evaluator environment."
+            "Host-side image builds are disabled; "
+            "set CAPSEM_INSPECT_HOST_BUILD=1 in the evaluator environment."
         )
     docker_bin = shutil.which("docker")
     if docker_bin is None:
         raise RuntimeError(
-            "Docker CLI ('docker') is required on PATH to build Compose 'build:' / Dockerfile sandboxes"
+            "Docker CLI ('docker') is required on PATH to build "
+            "Compose 'build:' / Dockerfile sandboxes"
         )
     c_dir = (cache_dir or default_cache_dir()).resolve()
     eff_platform = (platform or default_linux_platform()).strip()
@@ -98,6 +102,7 @@ def run_host_build(
             cfg_dir.mkdir(parents=True, exist_ok=True)
             (cfg_dir / "config.json").write_text('{"auths":{}}', encoding="utf-8")
 
+        build_ctx, build_df = prepare_build_inputs(spec, tmp_root)
         cmd = [
             docker_bin,
             "--config",
@@ -110,13 +115,13 @@ def run_host_build(
             "-t",
             temp_tag,
             "-f",
-            str(df_path),
+            str(build_df),
         ]
         if spec.get("target"):
             cmd.extend(["--target", str(spec["target"])])
         for k, v in sorted((spec.get("args") or {}).items()):
             cmd.extend(["--build-arg", f"{k}={v}"])
-        cmd.append(str(ctx_dir))
+        cmd.append(str(build_ctx))
 
         try:
             proc = subprocess.run(
@@ -177,7 +182,8 @@ def build_and_stage_oci_image_sync(
     """Build or reuse a cached OCI image and return `(loopback_image_ref, ca_pem)`."""
     if not is_host_build_enabled():
         raise RuntimeError(
-            "Host-side image builds are disabled; set CAPSEM_INSPECT_HOST_BUILD=1 in the evaluator environment."
+            "Host-side image builds are disabled; "
+            "set CAPSEM_INSPECT_HOST_BUILD=1 in the evaluator environment."
         )
     c_dir = (cache_dir or default_cache_dir()).resolve()
     keys_dir = c_dir / "keys"

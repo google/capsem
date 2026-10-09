@@ -166,7 +166,12 @@ def _blob_valid(blobs_dir: Path, digest_or_hex: str) -> bool:
     if len(hex_digest) != 64:
         return False
     blob_file = blobs_dir / hex_digest
-    return blob_file.is_file() and hashlib.sha256(blob_file.read_bytes()).hexdigest() == hex_digest
+    if not blob_file.is_file():
+        return False
+    if hashlib.sha256(blob_file.read_bytes()).hexdigest() != hex_digest:
+        blob_file.unlink(missing_ok=True)
+        return False
+    return True
 
 
 def verify_cached_manifest_blobs(blobs_dir: Path, manifest_hex: str) -> bool:
@@ -179,6 +184,6 @@ def verify_cached_manifest_blobs(blobs_dir: Path, manifest_hex: str) -> bool:
         layer_digests = [str(layer["digest"]) for layer in (doc.get("layers") or [])]
     except Exception:
         return False
-    return _blob_valid(blobs_dir, cfg_digest) and all(
-        _blob_valid(blobs_dir, ld) for ld in layer_digests
-    )
+    cfg_ok = _blob_valid(blobs_dir, cfg_digest)
+    layers_ok = [_blob_valid(blobs_dir, ld) for ld in layer_digests]
+    return cfg_ok and all(layers_ok)
