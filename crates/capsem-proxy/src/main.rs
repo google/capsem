@@ -255,7 +255,7 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     private_names_client::PrivateNameClient::start(stream)
                                         .context("open proxy private-name capability")?;
                                 let mut runtime = state.lock().unwrap_or_else(|error| error.into_inner());
-                                runtime.private_names = Some(Arc::new(private_names));
+                                runtime.attach_private_names(Arc::new(private_names));
                                 tracing::debug!(
                                     private_names_capability = runtime.private_names.is_some(),
                                     "proxy private-name authority attached"
@@ -275,6 +275,22 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                 tasks.spawn(async move {
                                     capsem_core::net::mitm_proxy::handle_connection(OwnedFd::from(stream), config)
                                         .await;
+                                    (capability, grant_id, ProxyChannelCloseReason::Disconnected)
+                                });
+                            } else if capability == ProxyCapability::DnsTraffic {
+                                let runtime = state
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .dns_runtime()
+                                    .context("proxy DNS runtime became unavailable after readiness check")?;
+                                tasks.spawn(async move {
+                                    capsem_core::net::dns::session::serve_dns_session(
+                                        OwnedFd::from(stream),
+                                        Arc::clone(&runtime.handler),
+                                        Arc::clone(&runtime.db),
+                                        runtime.policy.clone(),
+                                    )
+                                    .await;
                                     (capability, grant_id, ProxyChannelCloseReason::Disconnected)
                                 });
                             } else {
@@ -343,6 +359,7 @@ struct ProxyRuntimeState {
     dns_upstreams: Vec<std::net::SocketAddr>,
     mcp: capsem_core::mcp::policy::McpConfig,
     http_config: Option<Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>>,
+    dns_runtime: Option<Arc<DnsRuntime>>,
 }
 
 impl Default for ProxyRuntimeState {
@@ -358,6 +375,7 @@ impl Default for ProxyRuntimeState {
             dns_upstreams: Vec::new(),
             mcp: capsem_core::mcp::policy::McpConfig::default(),
             http_config: None,
+            dns_runtime: None,
         }
     }
 }
@@ -378,6 +396,7 @@ impl ProxyRuntimeState {
         }
         self.dns_upstreams = dns_upstreams;
         self.mcp = mcp;
+        self.dns_runtime = None;
         Ok(digest)
     }
 
@@ -392,6 +411,7 @@ impl ProxyRuntimeState {
             )));
         }
         self.http_config = None;
+        self.dns_runtime = None;
     }
 
     fn attach_credentials(&mut self, credentials: Arc<dyn ProxyCredentials>) {
@@ -410,12 +430,18 @@ impl ProxyRuntimeState {
     fn attach_upstream(&mut self, upstream: Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>) {
         self.upstream_grants = Some(upstream);
         self.http_config = None;
+        self.dns_runtime = None;
+    }
+
+    fn attach_private_names(&mut self, private_names: Arc<dyn capsem_core::net::dns::private::PrivateNames>) {
+        self.private_names = Some(private_names);
+        self.dns_runtime = None;
     }
 
     fn traffic_ready(&mut self, capability: ProxyCapability) -> Result<bool> {
         match capability {
             ProxyCapability::HttpTraffic => Ok(self.http_config()?.is_some()),
-            ProxyCapability::DnsTraffic => Ok(false),
+            ProxyCapability::DnsTraffic => Ok(self.dns_runtime().is_some()),
             _ => Ok(true),
         }
     }
@@ -457,6 +483,44 @@ impl ProxyRuntimeState {
         self.http_config = Some(Arc::clone(&config));
         Ok(Some(config))
     }
+
+    fn dns_runtime(&mut self) -> Option<Arc<DnsRuntime>> {
+        if let Some(runtime) = &self.dns_runtime {
+            return Some(Arc::clone(runtime));
+        }
+        let (Some(engine), Some(db), Some(upstream_grants), Some(private_names)) =
+            (&self.engine, &self.db, &self.upstream_grants, &self.private_names)
+        else {
+            return None;
+        };
+        let grants: Arc<dyn capsem_core::net::dns::DnsUpstreamGrants> = upstream_grants.clone();
+        let resolver = Arc::new(capsem_core::net::dns::DnsResolver::with_grants(
+            self.dns_upstreams.clone(),
+            grants,
+        ));
+        let policy = engine.policy().clone();
+        let handler = Arc::new(
+            capsem_core::net::dns::DnsHandler::with_cache(
+                policy.clone(),
+                resolver,
+                Arc::new(capsem_core::net::dns::DnsAnswerCache::default()),
+            )
+            .with_private_names(Arc::clone(private_names)),
+        );
+        let runtime = Arc::new(DnsRuntime {
+            handler,
+            db: Arc::clone(db),
+            policy,
+        });
+        self.dns_runtime = Some(Arc::clone(&runtime));
+        Some(runtime)
+    }
+}
+
+struct DnsRuntime {
+    handler: Arc<capsem_core::net::dns::DnsHandler>,
+    db: Arc<capsem_logger::DbWriter>,
+    policy: ProxyPolicyHandle,
 }
 
 struct UnavailableLedger;
