@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 pub enum Role {
     Gateway,
     Ledger,
+    Proxy,
     VmOwner,
 }
 

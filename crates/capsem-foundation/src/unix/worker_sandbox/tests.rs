@@ -59,6 +59,19 @@ fn seatbelt_ledger_is_deny_by_default_with_only_its_directory() {
     assert_eq!(compiled.parameters(), [("PATH_0", "/sessions/one")]);
 }
 
+#[test]
+fn seatbelt_proxy_is_deny_by_default_and_descriptor_only() {
+    let compiled = super::seatbelt::compile(&Policy::new(Role::Proxy)).unwrap();
+    let source = compiled.source().to_str().unwrap();
+    assert!(source.starts_with("(version 1)\n(deny default)\n"));
+    assert!(!source.contains("allow file"));
+    assert!(!source.contains("allow network"));
+    assert!(!source.contains("allow process-exec"));
+    assert!(!source.contains("allow signal"));
+    assert!(!source.contains("allow mach-lookup"));
+    assert!(compiled.parameters().is_empty());
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_policy_preserves_grants_and_denies_ambient_authority() {
