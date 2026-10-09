@@ -773,6 +773,7 @@ pub(crate) async fn handle_ipc_connection(
                                     namespaced_name: t.namespaced_name,
                                     original_name: t.original_name,
                                     description: t.description,
+                                    input_schema: t.input_schema,
                                     server_name: t.server_name,
                                     annotations: t.annotations,
                                 })

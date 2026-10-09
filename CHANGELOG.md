@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Install VM-owner confinement before starting its runtime, hypervisor,
+  parent watcher, ledger client, filesystem monitor, or metric workers;
+  pre-bind only the exact IPC and VSOCK descriptors those workers inherit.
+
 - Keep host-worker confinement fail-closed across supported Linux Landlock
   ABIs, including single-threaded startup on ABI 6 and 7, and canonicalize
   macOS Seatbelt grants so system path aliases cannot silently deny or widen

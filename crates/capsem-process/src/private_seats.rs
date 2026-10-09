@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use capsem_proto::ipc::ServiceToProcess;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 
 pub(crate) struct Seats<'a> {
@@ -17,11 +16,12 @@ pub(crate) struct Seats<'a> {
     pub run_dir: Option<&'a Path>,
 }
 
-fn bound(path: std::path::PathBuf, what: &str) -> Result<(std::path::PathBuf, UnixListener)> {
+fn bound(path: std::path::PathBuf, what: &str) -> Result<(std::path::PathBuf, std::os::unix::net::UnixListener)> {
     if path.exists() {
         std::fs::remove_file(&path)?;
     }
-    let listener = UnixListener::bind(&path).with_context(|| format!("bind {what} socket"))?;
+    let listener = std::os::unix::net::UnixListener::bind(&path).with_context(|| format!("bind {what} socket"))?;
+    listener.set_nonblocking(true)?;
     std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     Ok((path, listener))
 }
@@ -29,9 +29,8 @@ fn bound(path: std::path::PathBuf, what: &str) -> Result<(std::path::PathBuf, Un
 /// What the seats were bound with, for the other things this owner asks
 /// the service on its VM's behalf.
 pub(crate) struct Bound {
-    pub service_socket: std::path::PathBuf,
     cables: Arc<crate::cables::Cables>,
-    seat_listener: UnixListener,
+    seat_listener: tokio::net::UnixListener,
 }
 
 impl Bound {
@@ -40,11 +39,25 @@ impl Bound {
     }
 }
 
-pub(crate) fn bind(
-    seats: Seats<'_>,
-    job_store: &Arc<JobStore>,
-    control: mpsc::Sender<ServiceToProcess>,
-) -> Result<Bound> {
+pub(crate) struct Prepared {
+    pub service_socket: std::path::PathBuf,
+    seat_path: std::path::PathBuf,
+    seat_listener: std::os::unix::net::UnixListener,
+}
+
+impl Prepared {
+    pub(crate) fn activate(self, job_store: &Arc<JobStore>, control: mpsc::Sender<ServiceToProcess>) -> Result<Bound> {
+        let cables = Arc::new(crate::cables::Cables::new(job_store.publisher.clone(), control));
+        let _ = job_store.cables.set(Arc::clone(&cables));
+        let _ = job_store.cable_seat.set(self.seat_path);
+        Ok(Bound {
+            cables,
+            seat_listener: tokio::net::UnixListener::from_std(self.seat_listener)?,
+        })
+    }
+}
+
+pub(crate) fn prepare(seats: Seats<'_>) -> Result<Prepared> {
     // The run directory the service named; otherwise where the service put
     // our IPC socket, walked up.
     let walked_up = seats
@@ -59,16 +72,13 @@ pub(crate) fn bind(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| run_dir.join("service.sock"));
 
-    let cables = Arc::new(crate::cables::Cables::new(job_store.publisher.clone(), control));
-    let _ = job_store.cables.set(Arc::clone(&cables));
     let (seat_path, seat_listener) = bound(
         capsem_foundation::uds::private_handoff_socket_path(&run_dir, seats.id)?,
         "cable seat",
     )?;
-    let _ = job_store.cable_seat.set(seat_path);
-    Ok(Bound {
+    Ok(Prepared {
         service_socket,
-        cables,
+        seat_path,
         seat_listener,
     })
 }

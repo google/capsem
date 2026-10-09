@@ -26,12 +26,12 @@ fn production_vm_owner_never_opens_the_session_database() {
 
 #[test]
 fn confinement_grants_exact_runtime_paths_and_attests_ledger_denial() {
-    let source = include_str!("main.rs");
-    assert!(!source.contains("grant_owner_path(policy, session_dir"));
-    assert!(source.contains("grant_owner_session_paths(policy, session_dir)"));
-    assert!(source.contains("session_dir.join(\"session.db\")"));
-    assert!(source.contains("std::fs::File::open(&attestation.ledger_path)"));
-    assert!(source.contains("open session ledger storage"));
+    let sandbox = include_str!("owner_sandbox.rs");
+    assert!(!sandbox.contains("grant_owner_path(policy, session_dir"));
+    assert!(sandbox.contains("grant_owner_session_paths(policy, session_dir)"));
+    assert!(sandbox.contains("session_dir.join(\"session.db\")"));
+    assert!(sandbox.contains("std::fs::File::open(&attestation.ledger_path)"));
+    assert!(sandbox.contains("open session ledger storage"));
 }
 
 #[test]
@@ -43,17 +43,21 @@ fn suspend_checkpoint_stays_in_owner_state() {
 #[test]
 fn platform_confinement_and_attestation_precede_owner_readiness() {
     let source = include_str!("main.rs");
-    let run = source.split_once("async fn run_async_main_loop(").unwrap().1;
-    let prepare = run.find("prepare_owner_sandbox_attestation").unwrap();
-    let confine = run
+    let entry = source.split_once("fn main() -> Result<()> {").unwrap().1;
+    let prepare = entry.find("prepare_owner_sandbox_attestation").unwrap();
+    let runtime = entry.find("Builder::new_current_thread()").unwrap();
+    let confine = entry
         .find("confine_owner(&args")
         .expect("all supported platforms install the VM-owner policy");
-    let attest = run
+    let attest = entry
         .find("attest_owner(")
         .expect("all supported platforms attest the installed policy");
-    let seats = run.find("seats.start()").unwrap();
-    let launched = run.find("launched.write_all").unwrap();
-    assert!(prepare < confine && confine < attest && attest < seats && seats < launched);
+    let watcher = entry.find("watch_parent_or_exit").unwrap();
+    let boot = entry.find("prepared_vm.boot()").unwrap();
+    let run = entry.find("run_async_main_loop(").unwrap();
+    assert!(!entry.contains("Builder::new_multi_thread()"));
+    assert!(runtime < prepare && prepare < confine && confine < attest && attest < watcher);
+    assert!(confine < boot && boot < run);
 }
 
 #[test]
