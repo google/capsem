@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CredentialInjectionForm from './CredentialInjectionForm.svelte';
   import { getCredentialBrokerInfo, listPlugins, reloadCredentialBrokerStore, updatePlugin } from '../../api';
   import type {
     CredentialBrokerInfo,
@@ -44,7 +45,7 @@
     block: {
       label: 'Block',
       icon: Prohibit,
-      tone: 'text-destructive-foreground border-destructive/30 bg-destructive/10',
+      tone: 'text-destructive-text border-destructive/30 bg-destructive/10',
     },
     rewrite: {
       label: 'Rewrite',
@@ -175,12 +176,12 @@
     <div class="animate-spin size-6 border-2 border-primary border-t-transparent rounded-full"></div>
   </div>
 {:else if error && !response}
-  <div class="border border-destructive/40 rounded-lg p-4 text-sm text-destructive-foreground">
+  <div class="border border-destructive/40 rounded-lg p-4 text-sm text-destructive-text">
     {error}
   </div>
 {:else if response}
   {#if error}
-    <div class="border border-destructive/40 rounded-lg p-3 text-sm text-destructive-foreground mb-4">
+    <div class="border border-destructive/40 rounded-lg p-3 text-sm text-destructive-text mb-4">
       {error}
     </div>
   {/if}
@@ -226,7 +227,7 @@
               runs {plugin.runtime.execution_count} · applied {plugin.runtime.applied_count} · latency max {formatMicros(plugin.runtime.max_duration_us)}
             </p>
             {#if plugin.runtime.last_error}
-              <p class="truncate text-destructive-foreground">{plugin.runtime.last_error}</p>
+              <p class="truncate text-destructive-text">{plugin.runtime.last_error}</p>
             {/if}
           </div>
 
@@ -261,7 +262,7 @@
               <div>
                 <p class="text-sm font-medium text-foreground">{plugin.name}</p>
                 <p class="text-xs text-muted-foreground-1 mt-0.5">
-                  {credentialBrokerInfo?.inventory.length ?? 0} credentials · {credentialBrokerInfo?.grants.enabled ? 'enabled' : 'disabled'}
+                  {credentialBrokerInfo?.inventory.length ?? 0} observed credentials · {credentialBrokerInfo?.grants.enabled ? 'enabled' : 'disabled'}
                 </p>
               </div>
               <button
@@ -283,7 +284,7 @@
             </div>
 
             {#if brokerError}
-              <p class="mt-3 text-xs text-destructive-foreground">{brokerError}</p>
+              <p class="mt-3 text-xs text-destructive-text">{brokerError}</p>
             {:else if brokerLoading && !credentialBrokerInfo}
               <p class="mt-3 text-xs text-muted-foreground-1">Loading broker details...</p>
             {:else if credentialBrokerInfo}
@@ -294,7 +295,7 @@
                     {credentialBrokerInfo.store.status} · {credentialBrokerInfo.store.backend} · {credentialBrokerInfo.store.cached_count} cached
                   </p>
                   {#if credentialBrokerInfo.store.last_error}
-                    <p class="mt-1 text-xs text-destructive-foreground">{credentialBrokerInfo.store.last_error}</p>
+                    <p class="mt-1 text-xs text-destructive-text">{credentialBrokerInfo.store.last_error}</p>
                   {/if}
                 </div>
                 <div class="rounded-md border border-line-2 p-3">
@@ -343,7 +344,7 @@
                   {/each}
                 </ul>
               {:else}
-                <p class="mt-4 text-xs text-muted-foreground-1">No brokered credentials recorded.</p>
+                <p class="mt-4 text-xs text-muted-foreground-1">No credential activity recorded.</p>
               {/if}
 
               {#if credentialBrokerInfo.corp_constraints.length > 0}
@@ -357,6 +358,7 @@
                 </ul>
               {/if}
             {/if}
+            <CredentialInjectionForm onadded={() => { void loadCredentialBrokerInfo(); }} />
           </div>
         {/if}
       </div>

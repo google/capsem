@@ -84,6 +84,64 @@ uses the TypeScript SDK to present these resources to AI agents over stdio. It
 requires an explicit gateway URL, bearer token, and HTTP transport timeout; the
 native Capsem installer does not install Node.js or download the npm package.
 
+## Credential injection
+
+Supply host credentials through `credentials.inject`; it returns an opaque
+reference suitable for a workload's environment. The host broker substitutes
+the real value only on the approved outbound provider request. Existing network,
+provider and corp policy remains in force. Injection does not start consent or
+automatically refresh supplied OAuth tokens.
+
+```python
+import os
+from capsem import Hypervisor
+
+async with Hypervisor(url, gateway_token) as hv:
+    credential = await hv.credentials.inject(
+        "openai", os.environ["OPENAI_API_KEY"], storage="memory"
+    )
+    vm = await hv.create(env={"OPENAI_API_KEY": credential.credential_ref})
+```
+
+TypeScript uses `hv.credentials.inject('openai', value, {storage: 'memory'})`;
+Rust uses `hv.credentials().inject(provider, value, storage)`. The authenticated
+HTTP operation is `POST /credentials/inject` with `provider`, `value` and
+`storage` (`file` by default, or `memory`). Responses contain only
+`credential_ref` and `storage`. Mutations are never replayed automatically.
+
+File mode writes the existing owner-only atomic credential store. Memory mode
+keeps injected values in the service and active VM owners' host memory, seeds
+new/resumed owners through host IPC, and loses them when the service lifetime
+ends. It creates no new credential-store file and does not delete a copy that
+was previously persisted. No keychain or unlock prompt is involved.
+
+For startup injection, explicitly select host variables with
+`CAPSEM_CREDENTIAL_INJECTION_ENV=OPENAI_API_KEY` (a comma-separated list).
+Supported names are `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+`GOOGLE_API_KEY`, `GITHUB_TOKEN` and `GH_TOKEN`; unselected variables are never
+imported. `CAPSEM_CREDENTIAL_INJECTION_STORAGE=memory` selects memory for
+these inputs; the default is `file`. Those variables are not passed to VM owner
+processes or guest environments. The startup log reports provider and opaque
+reference, which can be used in a subsequent create request.
+
+Alternatively set `CAPSEM_CREDENTIAL_INJECTION_FILE` to an owner-only (0600)
+regular JSON file. Symlinks and special files are refused. Its shape is:
+
+```json
+{"credentials":[{"provider":"openai","value":"HOST_SECRET","storage":"memory"}]}
+```
+
+Each file entry independently selects storage. Keep the input outside guest
+workspaces. Invalid startup inputs produce a redacted failure while the service
+continues starting. An unavailable active owner returns 503 from memory
+injection; material already accepted into service memory remains available for
+an explicit retry. This API registers credentials for the existing broker; the
+managed OAuth connection and per-session grant flow remains separate work.
+
+The long-term credential storage model remains open in
+[#343](https://github.com/google/capsem/issues/343), including Windows DPAPI,
+macOS encryption at rest and user/system service or injected deployments.
+
 ## Oversight
 
 Citadel inventories SDK source, including checked-in generated files. Python

@@ -32,6 +32,7 @@ pub use tls_server::make_server_tls_config;
 mod upgrade;
 mod upstream;
 mod util;
+mod websocket;
 
 use std::net::IpAddr;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
@@ -88,10 +89,7 @@ const CREDENTIAL_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 
 static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
 
-/// Build the default (empty) hook pipeline. T1 slices 2 + 3 will
-/// extend this to register the production hook set; until then the
-/// pipeline is wired through `MitmProxyConfig` but no dispatch
-/// happens from `handle_request`.
+/// Build an empty pipeline for callers that do not install production hooks.
 pub fn make_default_pipeline() -> Arc<pipeline::Pipeline> {
     Arc::new(pipeline::Pipeline::builder().build())
 }

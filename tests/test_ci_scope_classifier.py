@@ -17,6 +17,14 @@ def _classifier():
     return CLASSIFIER
 
 
+def test_carried_inspect_sources_have_python_ci_ownership() -> None:
+    for path in ("integrations/inspect-ai/inspect_capsem/containers/compose.py", "integrations/inspect-ai/tests/containers/test_compose_fields.py"):
+        assert _classifier().ci_scopes((path,)) == {"build_system"}
+        assert _classifier().ci_owners((path,)) == _classifier().PRODUCT_JOBS | {"fast-gate", "pr-gate"}
+    with pytest.raises(ValueError, match="unowned integrations subtree"):
+        _classifier().ci_scopes(("integrations/unknown/code.py",))
+
+
 @pytest.mark.parametrize(
     "paths",
     [

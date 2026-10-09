@@ -177,6 +177,17 @@ pub(crate) async fn complete_create(
     container: Option<api::ContainerSpec>,
 ) -> Result<ProvisionResponse, AppError> {
     let response = provision_response_for_running(state, id.to_owned())?;
+    let socket = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(id)
+        .map(|instance| instance.uds_path.clone());
+    if let Some(socket) = socket {
+        crate::credential_routes::sync_memory(state, &socket)
+            .await
+            .map_err(|error| AppError(StatusCode::SERVICE_UNAVAILABLE, error))?;
+    }
     network_routes::attach_provisioned(state, id, networks).await?;
     if container.is_none() {
         // A `--from` clone boots its source's staged image, if it had one.

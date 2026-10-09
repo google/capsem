@@ -24,7 +24,17 @@ from .create_proxy_request import CreateProxyRequest as CreateProxyRequest
 from .create_proxy_response import CreateProxyResponse as CreateProxyResponse
 from .credential_event import CredentialEvent as CredentialEvent
 from .credential_event_type import CredentialEventType as CredentialEventType
+from .credential_inject_provider import (
+    CredentialInjectProvider as CredentialInjectProvider,
+)
+from .credential_inject_request import (
+    CredentialInjectRequest as CredentialInjectRequest,
+)
+from .credential_inject_response import (
+    CredentialInjectResponse as CredentialInjectResponse,
+)
 from .credential_outcome import CredentialOutcome as CredentialOutcome
+from .credential_storage import CredentialStorage as CredentialStorage
 from .dns_event import DnsEvent as DnsEvent
 from .error_event import ErrorEvent as ErrorEvent
 from .error_response import ErrorResponse as ErrorResponse

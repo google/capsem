@@ -326,9 +326,14 @@ fn insert_model_items(
 }
 
 fn model_tool_transport(call: &ModelCall) -> &'static str {
-    if call.stream {
+    if call.method == "GET" && call.status_code == Some(101) {
+        "websocket"
+    } else if call.stream {
         "sse"
     } else {
         "http"
     }
 }
+
+#[cfg(test)]
+mod tests;

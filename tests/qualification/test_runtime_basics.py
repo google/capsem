@@ -9,18 +9,24 @@ whose exec lands in the VM, does not qualify.
 import pytest
 from helpers.image_session import DEFAULT_TARGET, WORKSPACE, workload_exec
 
+from tests.qualification.image_command import assert_image_command
+
 pytestmark = pytest.mark.integration
 
 
 def test_the_workload_runs_the_images_own_command(service, candidate, session):
-    result = workload_exec(service.client(), session, "tr '\\0' '\\n' < /proc/1/cmdline")
-    assert result.get("exit_code") == 0, result
-    assert result["stdout_text"].splitlines() == candidate.command, result
+    assert_image_command(service.client(), session, candidate)
 
 
-@pytest.mark.parametrize("target", ["workload", DEFAULT_TARGET], ids=["explicit", "omitted"])
-def test_an_exec_runs_as_the_images_user_in_its_working_directory(service, candidate, session, target):
-    result = workload_exec(service.client(), session, "id -u; id -un; pwd", target=target)
+@pytest.mark.parametrize(
+    "target", ["workload", DEFAULT_TARGET], ids=["explicit", "omitted"]
+)
+def test_an_exec_runs_as_the_images_user_in_its_working_directory(
+    service, candidate, session, target
+):
+    result = workload_exec(
+        service.client(), session, "id -u; id -un; pwd", target=target
+    )
     assert result.get("exit_code") == 0, result
     uid, name, cwd = result["stdout_text"].splitlines()
     user = candidate.user.split(":", 1)[0]

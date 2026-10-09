@@ -24,6 +24,7 @@ class Schema(BaseModel):
     ref: str | None = Field(default=None, alias="$ref", pattern=r"^#/components/schemas/\w+$")
     type: Primitive | list[Primitive] | None = None
     description: str | None = None
+    write_only: bool = Field(default=False, alias="writeOnly")
     format: Literal["int32", "int64", "double", "binary", "ipv4"] | None = None
     minimum: int | float | None = None
     enum: list[str] | None = None
@@ -74,7 +75,7 @@ class Schema(BaseModel):
             if self.items is None:
                 raise ValueError("array requires an item schema")
         elif kind == "string":
-            allowed |= {"enum", "format"}
+            allowed |= {"enum", "format", "write_only"}
             if self.enum is not None and (not self.enum or len(set(self.enum)) != len(self.enum)):
                 raise ValueError("enum must contain distinct values")
             if self.format not in (None, "binary", "ipv4"):

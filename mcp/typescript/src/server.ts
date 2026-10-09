@@ -12,7 +12,7 @@ export function createServer(config: Config): McpServer {
   // The SDK validates HTTP(S), bearer credentials and the transport deadline.
   // Tool closures added here share this one connection pool.
   const hypervisor = new Hypervisor(config.gatewayUrl, config.token, {timeoutMs: config.timeoutMs});
-  const server = new McpServer({name: 'capsem-mcp', version: '0.6.3'});
+  const server = new McpServer({name: 'capsem-mcp', version: '0.7.0'});
   server.registerTool('capsem_status', {
     description: 'Read gateway, VM asset, update, and service status.',
   }, extra => toolCall(() => hypervisor.info({signal: extra.signal})));

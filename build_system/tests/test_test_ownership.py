@@ -137,6 +137,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/sdkgen/test_typescript.py",
         "build_system/tests/sdkgen/test_typescript_operations.py",
         "build_system/tests/sdkgen/test_typescript_validation.py",
+        "build_system/tests/sdkgen/test_write_only.py",
         "build_system/tests/conftest.py",
         "build_system/tests/test_bootstrap.py",
         "build_system/tests/test_ownership.toml",

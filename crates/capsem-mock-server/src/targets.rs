@@ -51,5 +51,7 @@ pub(super) fn target_dir(path: &str) -> &str {
 }
 
 pub(super) fn shell_write_command(token: &str, path: &str) -> String {
-    format!("printf '%s\\n' {token} > {path}")
+    let token = token.replace('\'', "'\\''");
+    let path = path.replace('\'', "'\\''");
+    format!("printf '%s\\n' '{token}' > '{path}'")
 }

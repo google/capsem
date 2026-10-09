@@ -87,12 +87,22 @@ def declared_capabilities(name: str) -> frozenset[str]:
     return frozenset(declared(name).get("capabilities", ()))
 
 
-def resolve(image: PinnedImage = reference_image) -> Candidate:
-    """The candidate this run qualifies. Both variables or neither: a half-set
-    pair would qualify the reference image and report it as the candidate."""
+def _selection(image: PinnedImage) -> tuple[str, Path | None]:
     name, layout = os.environ.get(NAME_ENV), os.environ.get(LAYOUT_ENV)
     if (name is None) != (layout is None):
         raise RuntimeError(f"set both {NAME_ENV} and {LAYOUT_ENV}, or neither")
     if name is None or layout is None:
-        return read(image.settings().name, image.ready())
-    return read(name, Path(layout))
+        return image.settings().name, None
+    return name, Path(layout)
+
+
+def selected_capabilities(image: PinnedImage = reference_image) -> frozenset[str]:
+    """Selection reads source declarations; collection needs no built artifacts."""
+    name, _ = _selection(image)
+    return declared_capabilities(name)
+
+
+def resolve(image: PinnedImage = reference_image) -> Candidate:
+    """Read actual image bytes, refusing a half-set candidate selector."""
+    name, layout = _selection(image)
+    return read(name, image.ready() if layout is None else layout)

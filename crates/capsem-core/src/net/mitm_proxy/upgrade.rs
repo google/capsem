@@ -70,6 +70,7 @@ pub(super) async fn handle_upgrade(
 
     let original_headers = parts.headers.clone();
     let original_method = parts.method.clone();
+    let responses_websocket = ai_protocol == Some(ModelProtocol::OpenAi) && path.ends_with("/responses");
 
     let ws_span = tracing::debug_span!(
         target: "capsem.mitm",
@@ -272,7 +273,9 @@ pub(super) async fn handle_upgrade(
     let mut builder = hyper::Request::builder().method(original_method).uri(&full_path);
     for (name, value) in original_headers.iter() {
         let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
-        if drop_host {
+        // This message adapter has no negotiated compression extensions.
+        // Ordinary WebSocket tunnels retain their original negotiation.
+        if drop_host || (responses_websocket && name == http::header::SEC_WEBSOCKET_EXTENSIONS) {
             continue;
         }
         builder = builder.header(name.clone(), value.clone());
@@ -302,13 +305,40 @@ pub(super) async fn handle_upgrade(
         None
     };
     let (resp_parts, _resp_body) = upstream_resp.into_parts();
+    if responses_websocket && resp_parts.headers.contains_key(http::header::SEC_WEBSOCKET_EXTENSIONS) {
+        return Ok(make_ws_error(&"upstream returned an unnegotiated WebSocket extension"));
+    }
     if let Some(upstream_upgrade) = upstream_upgrade {
         let tunnel_span = ws_span.clone();
+        let model_context = responses_websocket.then(|| websocket::Context {
+            pipeline: Arc::clone(&config.pipeline),
+            engine: Arc::clone(&config.engine),
+            conn: hooks::ConnMeta {
+                domain: domain.to_string(),
+                process_name: process_name.clone(),
+                port: upstream_port,
+                protocol,
+                ai_provider,
+                ai_protocol,
+            },
+            ip: target.judged_ip(domain),
+            method: method.clone(),
+            path: path.clone(),
+            query: query.clone(),
+            request_headers: req_hdrs.clone(),
+            response_headers: format_headers(&resp_parts.headers),
+            credential_ref: credential_ref.clone(),
+            credential_observations: credential_observations.clone(),
+        });
         tokio::spawn(async move {
             let result = async move {
                 let mut client = TokioIo::new(client_upgrade.await?);
                 let mut upstream = TokioIo::new(upstream_upgrade.await?);
-                tokio::io::copy_bidirectional(&mut client, &mut upstream).await?;
+                if let Some(context) = model_context {
+                    websocket::bridge(client, upstream, context).await?;
+                } else {
+                    tokio::io::copy_bidirectional(&mut client, &mut upstream).await?;
+                }
                 Ok::<(), anyhow::Error>(())
             }
             .instrument(tunnel_span.clone())

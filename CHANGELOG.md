@@ -131,7 +131,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticate the preview owner's kernel identity before transferring a
   browser connection descriptor.
 
+- OAuth disconnect joins an in-flight refresh and retires the latest rotated
+  token under denial, including material whose durable publication failed.
+
+- Disconnect admission and reconnect publication share the credential owner's
+  state lock, so concurrent reauthorization cannot clear a pending denial.
+
+- Responses WebSocket messages cross the model security boundary before
+  forwarding requests or returning output, including changes to rules on an
+  open connection. Completed turns retain model, usage and caller telemetry.
+
 ### Fixed
+
+- The authenticated gateway forwards host credential injection, so desktop
+  settings and TCP SDK clients can use file and memory storage.
+
+- Settings error text and negative badges remain readable on light and dark
+  surfaces without changing solid-button foregrounds.
+
+- Credential file-lock waits stop after five seconds instead of indefinitely
+  delaying startup or an explicit injection behind another writer.
+
+- Model tool records label observed WebSocket exchanges with their actual
+  transport while preserving HTTP and SSE labels.
+
+- Codex code-mode calls retain their tool namespace, input and linked results
+  in model telemetry. Text-array outputs preserve request metadata, and
+  Responses tool turns report tool-use completion.
+
+- WebSocket upgrade handshakes retain network telemetry without inflating
+  model call counts with an empty inference record.
 
 - Keep a confined proxy generation alive when an ordinary HTTP or DNS client
   disconnects, while still terminating it for unknown, stale or required
@@ -170,11 +199,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of timing out at the ordinary 30-second request deadline, while
   preserving explicit deadlines and cancellation without replaying creation.
 
+### Changed
+
+- Host MCP packages identify as 0.7.0 and depend on the matching TypeScript SDK.
+
+- TypeScript SDK packages use the 0.7.0 client version.
+
+- Python SDK distributions use the 0.7.0 client version.
+
 ### Added
 
 - `capsem proxy` starts a leased, VM-free OpenAI-compatible endpoint for a
   configured provider, prints its base URL, keeps it alive while the command
   runs and tears down its confined worker and ledger on exit.
+
+- Desktop credential settings accept explicit API keys or tokens with file or
+  memory storage, clear submitted input, and return a copyable reference.
+
+- Rust SDK exposes the matching credential injection resource with file or
+  memory storage and opaque reference responses.
+
+- TypeScript SDK exposes credential injection with explicit storage, deadlines
+  and cancellation through the authenticated gateway.
+
+- Python SDK exposes credential injection with file or memory storage and
+  redacted request diagnostics.
+
+- Credential injection accepts explicitly selected host startup variables,
+  private file inputs, or an authenticated API. File and memory storage return
+  opaque references; memory material reaches VM owners only through host IPC.
+
+- The shared gateway contract describes credential injection with file or
+  memory storage and responses containing only opaque references.
 
 - Rust SDK exposes the registry image catalog and prefetch through
   `Hypervisor.images()`, with typed disk states and per-call registry access.

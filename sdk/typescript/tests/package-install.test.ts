@@ -1,13 +1,13 @@
 import {execFileSync, spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
+import {copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, relative, resolve, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {expect, it} from 'vitest';
 
 interface Manifest {name: string; version: string; dependencies: Record<string, string>; devDependencies: Record<string, string>}
-interface Report {ok: boolean; sha256: string; version: string; httpPaths: string[]}
+interface Report {ok: boolean; sha256: string; version: string; httpPaths: string[]; lifecyclePaths: string[]; credentialPaths: string[]; nodeVersion: string; nodeExecutable: string; nodeArgs: string[]}
 
 const source = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(source, '../..');
@@ -54,18 +54,22 @@ function inventory(directory: string, base = directory): Record<string, string> 
 
 it('installs and exercises the actual SDK tarball without checkout or development dependencies', () => {
   const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) as Manifest;
+  const consumerNode = process.env.CAPSEM_SDK_PACKAGE_NODE ?? process.execPath;
+  const selectedArchive = process.env.CAPSEM_SDK_PACKAGE_ARCHIVE;
   const fixture = mkdtempSync(join(tmpdir(), 'capsem-sdk-package-'));
   expect(relative(root, fixture).startsWith(`..${sep}`)).toBe(true);
   const archiveDirectory = join(fixture, 'archive');
   mkdirSync(archiveDirectory);
   try {
-    execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', archiveDirectory], {
+    if (selectedArchive) copyFileSync(selectedArchive, join(archiveDirectory, 'selected-sdk.tgz'));
+    else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', archiveDirectory], {
       cwd: source, stdio: 'pipe', timeout: 15_000,
     });
     const archives = readdirSync(archiveDirectory).filter(name => name.endsWith('.tgz'));
     expect(archives).toHaveLength(1);
     const archive = join(archiveDirectory, archives[0]!);
     const digest = sha(archive);
+    if (selectedArchive) expect(digest).toBe(sha(selectedArchive));
     execFileSync('tar', ['-xzf', archive, '-C', archiveDirectory], {timeout: 5000});
     const files = inventory(join(archiveDirectory, 'package'));
     const receipt = join(fixture, 'payload.json');
@@ -89,7 +93,7 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
     const probe = join(fixture, 'acceptance.mjs');
     const output = join(fixture, 'acceptance.json');
     copyFileSync(join(source, 'tools/image-package-acceptance.mjs'), probe);
-    const runProbe = (): string => execFileSync(process.execPath, [probe, root, archive, output, receipt], {
+    const runProbe = (): string => execFileSync(consumerNode, [probe, root, archive, output, receipt], {
       cwd: fixture, encoding: 'utf8', stdio: 'pipe', timeout: 15_000,
       env: {PATH: process.env.PATH ?? ''},
     });
@@ -99,8 +103,19 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
     expect(report.ok).toBe(true);
     expect(report.sha256).toBe(digest);
     expect(report.version).toBe(manifest.version);
+    expect(report.nodeVersion).toBe(execFileSync(consumerNode, ['-p', 'process.version'], {encoding: 'utf8', timeout: 5000}).trim());
+    expect(realpathSync(report.nodeExecutable)).toBe(realpathSync(consumerNode));
+    expect(report.nodeArgs).toEqual([]);
     expect(report.httpPaths).toEqual(['/images?refresh=true', '/images/pull', '/images/pull']);
+    expect(report.credentialPaths).toEqual(['/credentials/inject', '/credentials/inject']);
+    expect(report.lifecyclePaths).toEqual([
+      '/vms/restore-vm/start', '/vms/restore-vm/resume',
+      '/vms/restore-vm/start', '/vms/restore-vm/info',
+      '/vms/restore-vm/resume', '/vms/restore-vm/info', '/vms/slow/info',
+    ]);
     expect(sha(archive)).toBe(digest);
+    if (selectedArchive) expect(sha(selectedArchive)).toBe(digest);
+    if (process.env.CAPSEM_SDK_PACKAGE_RECEIPT) copyFileSync(output, process.env.CAPSEM_SDK_PACKAGE_RECEIPT);
 
     const entrypoint = join(modules, manifest.name, 'dist/index.js');
     const original = readFileSync(entrypoint);

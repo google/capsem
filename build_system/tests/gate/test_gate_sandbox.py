@@ -73,6 +73,8 @@ ONLINE_FAST = {
     # Exact lockfile dependency materialization. The paired install is
     # explicitly offline and stays inside the kernel boundary.
     "sdk.python.prewarm",
+    "fast.sdk.typescript.package-prewarm",
+    "fast.mcp.typescript.package-prewarm",
     "fast.toolchain.node",
     "fast.toolchain.rust",
 }

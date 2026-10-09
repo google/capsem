@@ -37,6 +37,48 @@
         }
       }
     },
+    "/credentials/inject": {
+      "post": {
+        "operationId": "injectCredential",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialInjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialInjectResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/host-logs/{name}": {
       "get": {
         "description": "Send Accept: application/json for the typed response. Without it the route returns plain text.",
@@ -3598,6 +3640,52 @@
           "security.ask"
         ]
       },
+      "CredentialInjectProvider": {
+        "type": "string",
+        "enum": [
+          "anthropic",
+          "google",
+          "openai",
+          "github",
+          "mcp"
+        ]
+      },
+      "CredentialInjectRequest": {
+        "type": "object",
+        "required": [
+          "provider",
+          "value"
+        ],
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/CredentialInjectProvider"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/CredentialStorage"
+          },
+          "value": {
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CredentialInjectResponse": {
+        "type": "object",
+        "required": [
+          "credential_ref",
+          "storage"
+        ],
+        "properties": {
+          "credential_ref": {
+            "type": "string"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/CredentialStorage"
+          }
+        },
+        "additionalProperties": false
+      },
       "CredentialOutcome": {
         "type": "string",
         "enum": [
@@ -3605,6 +3693,13 @@
           "brokered",
           "injected",
           "error"
+        ]
+      },
+      "CredentialStorage": {
+        "type": "string",
+        "enum": [
+          "file",
+          "memory"
         ]
       },
       "DnsEvent": {

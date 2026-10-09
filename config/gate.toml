@@ -275,7 +275,7 @@ request_script = "build_system/packaging/shared/install-manifest-request.sh"
 # The authoritative release graph, and the legacy runtime projection an
 # operator can mistake for it. Handing the installer the second produces an
 # install that looks fine and carries the wrong manifest.
-graph_manifest = "assets/local/manifest.json"
+graph_manifest = "assets/{channel}/manifest.json"
 legacy_projection = "manifest.json"
 # Manifest-selected release inputs are retained beneath the content root so
 # every rewritten file:// URL remains available inside the sealed install
@@ -843,14 +843,18 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "integrations"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "integrations/inspect-ai"]
 # Already passes every rule, and must keep doing so.
-strict_roots = ["build_system/builder", "build_system/sdist_command.py", "integrations"]
+strict_roots = ["build_system/builder", "build_system/sdist_command.py", "integrations/inspect-ai"]
+# Resolve the separate carried namespace without treating builder/ as a
+# top-level package root and shadowing its installed capsem_builder identity.
+strict_ty_search_paths = ["integrations/inspect-ai"]
 # Match the import roots exercised by the sole pytest project plus the guest
 # trees and script bootstrap paths that are materialized at runtime. Keeping
 # these explicit lets Ty inspect a conventional capsem-builder install without
 # depending on uv's editable finder.
 ty_search_paths = [
+    "integrations/inspect-ai",
     "build_system/tests/gate",
     "build_system/builder",
     "tests",
@@ -880,11 +884,11 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 55
+invalid-argument-type = 37
 invalid-assignment = 5
-invalid-return-type = 3
+invalid-return-type = 2
 no-matching-overload = 5
-not-subscriptable = 110
+not-subscriptable = 11
 unresolved-attribute = 71
 unresolved-import = 1
 unsupported-operator = 2
@@ -1094,24 +1098,27 @@ must_stay_below_lines = 3000
 "crates/capsem-admin/src/release_graph/tests.rs" = 1046
 "crates/capsem-agent/src/tests.rs" = 1115
 "crates/capsem-assets/src/asset_manager.rs" = 1210
-"crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1028
+"crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1041
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
-"crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 1997
-"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2410
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 2065
+"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2558
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1549
-"crates/capsem-core/src/security_engine/mod.rs" = 2073
-"crates/capsem-core/tests/mitm_integration.rs" = 2014
+"crates/capsem-core/src/security_engine/mod.rs" = 2114
+"crates/capsem-core/tests/mitm_integration.rs" = 2087
+"crates/capsem-logger/src/schema/tests.rs" = 1003
 "crates/capsem-logger/src/writer/tests.rs" = 1395
-"crates/capsem-mock-server/src/main.rs" = 1307
-"crates/capsem-process/src/vsock.rs" = 1227
+"crates/capsem-mock-server/src/main.rs" = 1171
+"crates/capsem-process/src/main.rs" = 1158
+"crates/capsem-process/src/vsock.rs" = 1239
+"crates/capsem-proto/src/lib.rs" = 1008
 "crates/capsem-proto/src/tests.rs" = 1446
 "crates/capsem-service/src/tests/assets_registry.rs" = 1111
-"crates/capsem-service/src/tests/lifecycle.rs" = 1443
-"crates/capsem-service/src/vm_files.rs" = 1106
-"crates/capsem/src/main.rs" = 2015
-"crates/capsem/src/tests.rs" = 1227
+"crates/capsem-service/src/tests/lifecycle.rs" = 1452
+"crates/capsem-service/src/vm_files.rs" = 1031
+"crates/capsem/src/main.rs" = 2025
+"crates/capsem/src/tests.rs" = 1259
 "crates/capsem/src/update.rs" = 2143
 "crates/capsem/src/update/asset_install.rs" = 1125
 "crates/capsem/src/update/tests.rs" = 2306
@@ -1134,7 +1141,7 @@ max_lines = 300
 "build_system/packaging/macos/build-pkg.sh" = 317
 "build_system/packaging/macos/macos_release_glowup.py" = 360
 "build_system/packaging/macos/macos_tart_glowup.py" = 519
-"build_system/packaging/macos/macos_tart_guest.sh" = 310
+"build_system/packaging/macos/macos_tart_guest.sh" = 312
 
 # ---------------------------------------------------------------------------
 # What may not run beside what
@@ -2026,6 +2033,7 @@ source_contract = [
     "integrations/inspect-ai/tests/containers/test_dockerfile_ca.py",
     "integrations/inspect-ai/tests/containers/test_dockerfile_heredoc.py",
     "integrations/inspect-ai/tests/containers/test_dockerfile_metadata.py",
+    "tests/qualification/test_candidate.py",
     "build_system/tests/gate/test_gate_observation.py",
     "build_system/tests/gate/test_gate_observation_startup.py",
     "build_system/tests/gate/test_gate_observation_propagation.py",
@@ -2341,7 +2349,7 @@ context = "images/capsem-debug"
 script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/capsem-debug"
 cache_stage = "test-images"
-digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6", "linux/amd64" = "sha256:3b0fd69477cfe0dccbad777608244664e72f828ba938db4a51ff7a2ac4635d95" }
+digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6", "linux/amd64" = "sha256:7e5df4cf8375e28939d710c221ac95ac823c961799638b18dfe64f8242763d53" }
 
 # The reference image: a pinned digest of the official `dev` image. Every
 # runtime test that boots a workload boots this one, so main development
@@ -3031,6 +3039,9 @@ unmeasured = [
     # Restart needs a disposable supervisor; the read-only route collector
     # cannot time accepted restarts. Its functional proof owns that lifecycle.
     "/restart",
+    # Secret-bearing mutation includes durable storage or VM-owner acknowledgement;
+    # the native injection acceptance owns it, not a read-only route benchmark.
+    "/credentials/inject",
     "/corp/edit",
     "/assets/ensure",
     "/plugins/list",

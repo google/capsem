@@ -221,6 +221,12 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         }
     }
 
+    match tokio::task::spawn_blocking(credential_routes::startup::import_host_inputs).await {
+        Ok(Ok(count)) => info!(count, "host credential startup import complete"),
+        Ok(Err(error)) => warn!(error = %error, "host credential startup import failed"),
+        Err(_) => warn!("host credential startup import worker unavailable"),
+    }
+
     // Clean up stale assets (legacy v*/ dirs, unreferenced hash-named files).
     // Preserve every filename a saved VM pins so cleanup cannot strand a
     // persistent VM on images the current manifest no longer names.

@@ -349,6 +349,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/assets/status", get(proxy::handle_proxy))
         .route("/assets/ensure", post(proxy::handle_proxy))
         .route("/plugins/list", get(proxy::handle_proxy))
+        .route("/credentials/inject", post(proxy::handle_proxy))
         .route("/plugins/credential_broker/credentials/info", get(proxy::handle_proxy))
         .route(
             "/plugins/credential_broker/credentials/reload",

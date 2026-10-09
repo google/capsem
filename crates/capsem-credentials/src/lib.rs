@@ -1,15 +1,27 @@
 //! Broker-owned credential storage without telemetry or policy dependencies.
 
 mod durable;
+mod grants;
+mod oauth;
 mod provider;
 mod store;
 
 pub use durable::STORE_PATH_ENV;
+pub use grants::{
+    GrantAuthority, GrantCapability, GrantError, GrantHandle, GrantLimits, GrantSession, GrantStopPolicy, GrantTarget,
+};
+pub use oauth::{
+    AuthorizationParameters, CallbackExchange, GoogleAccessLease, GoogleAuthorization, GoogleConnection,
+    GoogleConnectionError, GoogleConnectionState, GoogleConnectionStatus, GoogleIdentity, GoogleOAuthClient,
+    GoogleRegistration, GoogleRevocationOutcome, GoogleRevocationState, LoopbackRedirect, OAuthAttempt,
+    OAuthAuthorizationUrl, OAuthConnectionStorage, OAuthError, OAuthHttpPolicy, OAuthIdentityError, OAuthListener,
+    OAuthListenerError, OAuthListenerPolicy, OAuthPolicy, OAuthProviderError, OAuthState, OAuthTokenError, OAuthTokens,
+};
 pub use provider::CredentialProvider;
 pub use store::{
     broker_reference_replay_available, credential_store_account, credential_store_status,
-    hydrate_credential_runtime_cache_from_durable_store, resolve_broker_reference_for_provider, CredentialStore,
-    CredentialStoreStatus,
+    hydrate_credential_runtime_cache_from_durable_store, resolve_broker_reference_for_provider, CredentialPersistence,
+    CredentialStore, CredentialStoreStatus,
 };
 
 /// Return whether `value` is an opaque broker-owned credential reference.

@@ -63,6 +63,7 @@ filterwarnings = ["error"]
 tmp_path_retention_policy = "failed"
 pythonpath = ["..", "../tests", "../integrations/inspect-ai", "tests/gate", "tests/release", "tests/release_site"]
 markers = [
+    "capability(name): qualification group selected by the candidate's declared capabilities",
     "mcp: MCP black-box integration tests (require capsem-service + VM assets)",
     "integration: Service/CLI integration tests (require capsem-service + VM)",
     "session: Session.db telemetry tests (require capsem-service + VM + workload)",

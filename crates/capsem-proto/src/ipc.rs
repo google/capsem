@@ -96,6 +96,11 @@ pub enum ServiceToProcess {
     ReloadConfig {
         id: u64,
     },
+    /// Seed host broker memory. This material must never cross the guest bridge.
+    InjectCredentials {
+        id: u64,
+        credentials: Vec<crate::credential_injection::CredentialMaterial>,
+    },
     /// Start streaming terminal output to this IPC connection.
     StartTerminalStream,
     /// Stop streaming terminal output. Sent by `capsem shell` on exit so
@@ -445,6 +450,11 @@ pub enum ProcessToService {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    CredentialsInjected {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// Result of owner-side policy and primary-audit admission for an OCI pull.
     ContainerPullAdmission {
         id: u64,
@@ -482,7 +492,8 @@ impl ServiceToProcess {
             | Self::LinkAttach { id, .. }
             | Self::LinkDetach { id, .. }
             | Self::AdmitContainerPull { id, .. }
-            | Self::ReloadConfig { id } => Some(*id),
+            | Self::ReloadConfig { id }
+            | Self::InjectCredentials { id, .. } => Some(*id),
             _ => None,
         }
     }
@@ -515,7 +526,8 @@ impl ProcessToService {
             | Self::LinkAttachResult { id, .. }
             | Self::LinkDetachResult { id, .. }
             | Self::ContainerPullAdmission { id, .. }
-            | Self::ConfigReloadResult { id, .. } => Some(*id),
+            | Self::ConfigReloadResult { id, .. }
+            | Self::CredentialsInjected { id, .. } => Some(*id),
             _ => None,
         }
     }

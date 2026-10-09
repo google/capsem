@@ -37,6 +37,7 @@ from .get_vm_stats_summary import get_vm_stats_summary as get_vm_stats_summary
 from .get_vm_status import get_vm_status as get_vm_status
 from .get_vm_timeline import get_vm_timeline as get_vm_timeline
 from .heartbeat_proxy import heartbeat_proxy as heartbeat_proxy
+from .inject_credential import inject_credential as inject_credential
 from .list_images import list_images as list_images
 from .list_mcp_servers import list_mcp_servers as list_mcp_servers
 from .list_mcp_tools import list_mcp_tools as list_mcp_tools

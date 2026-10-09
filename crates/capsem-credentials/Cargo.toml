@@ -12,6 +12,22 @@ authors.workspace = true
 [dependencies]
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
+base64 = { workspace = true }
+getrandom = "0.3"
+sha2 = "0.10"
+subtle = "2"
+url = "2"
+zeroize = "1"
+tokio = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+jsonwebtoken = { version = "11.1", default-features = false }
+ring = "0.17"
+signature = "2.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

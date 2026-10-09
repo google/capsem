@@ -51,6 +51,7 @@ pub(super) const DNS_FIXTURES: &[&str] = &[
     "mcp.capsem.test",
     "api.openai.com",
     "api.anthropic.com",
+    "platform.claude.com",
     "daily-cloudcode-pa.googleapis.com",
     "generativelanguage.googleapis.com",
     "www.googleapis.com",

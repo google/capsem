@@ -147,6 +147,7 @@ impl PendingTelemetryCompletion {
             credential_injections,
         } = self;
 
+        let model_was_denied = net_event.decision == Decision::Denied;
         if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
             emit_evaluated_security_rules(
                 Arc::clone(&db),
@@ -161,7 +162,10 @@ impl PendingTelemetryCompletion {
             .await;
         }
         if let Some(model_call) = model_call {
-            let model_security_event = security_event_from_model_call(&model_call);
+            let mut model_security_event = security_event_from_model_call(&model_call);
+            if model_was_denied {
+                model_security_event.request_decision(crate::security_engine::SecurityDecisionKind::Block);
+            }
             if let Some(event_id) = emit_security_write(&db, WriteOp::ModelCall(model_call)).await {
                 emit_evaluated_security_rules(
                     Arc::clone(&db),
@@ -466,17 +470,22 @@ fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
 }
 
 fn security_event_from_model_call(call: &ModelCall) -> SecurityEvent {
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
-        provider: Some(call.provider.clone()),
-        name: call.model.clone(),
-        request_body: lossy_text(call.request_body.as_deref()),
-        response_body: call.text_content.clone(),
-        tool_calls: if call.tool_calls.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&call.tool_calls).unwrap_or_else(|_| "[]".to_string()))
-        },
-    });
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall)
+        .with_model(ModelSecurityEvent {
+            provider: Some(call.provider.clone()),
+            name: call.model.clone(),
+            request_body: lossy_text(call.request_body.as_deref()),
+            response_body: call.text_content.clone(),
+            tool_calls: if call.tool_calls.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&call.tool_calls).unwrap_or_else(|_| "[]".to_string()))
+            },
+        })
+        .with_process(crate::security_engine::ProcessSecurityEvent {
+            name: call.process_name.clone(),
+            ..Default::default()
+        });
     apply_security_event_trace(security_event, call.trace_id.clone())
 }
 
@@ -507,7 +516,10 @@ pub fn maybe_build_model_call(
 ) -> Option<ModelCall> {
     let provider = req_ctx.ai_provider?;
     let protocol = req_ctx.ai_protocol?;
-    if req_ctx.method == "HEAD" || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path)) {
+    if req_ctx.method == "HEAD"
+        || (req_ctx.status_code == Some(101) && !req_ctx.model_traffic)
+        || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path))
+    {
         return None;
     }
     let duration_ms = req_ctx.start_time.elapsed().as_millis() as u64;
@@ -531,7 +543,7 @@ pub fn maybe_build_model_call(
     };
 
     // Streaming detection: explicit body field OR URL path keyword.
-    let stream = req_meta.stream || req_ctx.path.contains("stream");
+    let stream = req_meta.stream || req_ctx.path.contains("stream") || !llm_events.is_empty();
 
     let stop_reason_str = summary
         .as_ref()

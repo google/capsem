@@ -188,7 +188,10 @@ def test_exact_package_graph_is_checked_and_handed_off_before_dpkg(
     handoff = transcript.index("install-manifest-request.sh write")
     install = transcript.index("dpkg -i")
     assert extract < first_build < record < second_build < check < handoff < install
-    authoritative = f"{CONFIG.install.layout.channel}/{CONFIG.install.graph_manifest}"
+    authoritative = (
+        f"{CONFIG.install.layout.channel}/"
+        f"{CONFIG.install.graph_manifest.format(channel='nightly')}"
+    )
     record_command = runner.matching(r"assets channel record-binary")[0]
     assert f"--manifest-path {authoritative}" in record_command
     assert f"--source-commit {SOURCE_COMMIT}" in transcript
@@ -205,13 +208,36 @@ def test_read_only_content_is_staged_before_record_binary_mutates_the_generated_
     started = runner.matching(r"docker run -d")[0]
     assert f":{CONFIG.install.proof_assets_mount}:ro" in started
     record = runner.matching(r"assets channel record-binary")[0]
-    authoritative = f"{CONFIG.install.layout.channel}/{CONFIG.install.graph_manifest}"
+    authoritative = (
+        f"{CONFIG.install.layout.channel}/"
+        f"{CONFIG.install.graph_manifest.format(channel='nightly')}"
+    )
     assert f"--manifest-path {authoritative}" in record
     assert (
         f"--manifest-path {CONFIG.install.proof_assets_mount}/{CONFIG.install.manifest_name}"
         not in record
     )
     assert not runner.ran(r"docker exec(?: [^ ]+)* capsem-install-test(?: |$)")
+
+
+def test_non_root_staging_claims_only_configured_scratch_before_copying_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    owned = CONFIG.install.layout.owned_paths(CONFIG.install.mount)
+    parents = CONFIG.install.layout.owned_parent_paths(CONFIG.install.mount)
+    container = PROOF.container
+    claim = f"docker exec {container} chown -R capsem:capsem " + " ".join(owned)
+    replace = f"docker exec {container} chown capsem:capsem " + " ".join(parents)
+    assert claim in runner.rendered
+    assert replace in runner.rendered
+    transcript = "\n".join(runner.rendered)
+    assert transcript.index(claim) < transcript.index(replace) < transcript.index("cp -R")
+    assert not runner.ran(r"chown -R capsem:capsem /src(?: |$)")
+    assert f":{CONFIG.install.proof_assets_mount}:ro" in runner.matching(r"docker run -d")[0]
 
 
 def test_runtime_dependency_authority_is_verified_before_dpkg(
@@ -332,6 +358,19 @@ def test_the_release_and_shell_proofs_run_as_the_unprivileged_user(
         matched = runner.matching(script.replace(".", r"\."))
         assert matched
         assert f"-u {CONFIG.install.guest_user.name}" in matched[0]
+
+
+def test_installed_bytes_and_metadata_polling_url_are_verified_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    verifier = runner.matching(PROOF.verify_script.replace(".", r"\."))[0]
+    graph = CONFIG.install.graph_manifest.format(channel="nightly")
+    assert f"--manifest-url file:///src/{CONFIG.install.layout.channel}/{graph}" in verifier
+    assert "--metadata-manifest-url file:///src/m.json" in verifier
 
 
 def test_vm_devices_are_granted_and_probed_as_the_runtime_user(

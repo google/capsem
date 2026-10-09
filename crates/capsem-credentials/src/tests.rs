@@ -77,3 +77,59 @@ fn hydration_restores_the_runtime_cache_from_disk() {
         Some("gh-secret".to_string())
     );
 }
+
+#[test]
+fn injected_file_credentials_survive_restart_and_memory_credentials_never_touch_disk() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credentials.json");
+    let _guard = StorePathGuard::redirect(&path);
+    let store = CredentialStore::default();
+    let memory_ref = store
+        .inject(
+            CredentialProvider::Google,
+            "memory-private-token",
+            CredentialPersistence::Memory,
+        )
+        .unwrap();
+    assert!(!path.exists());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    let file_ref = store
+        .inject(
+            CredentialProvider::Anthropic,
+            "file-private-token",
+            CredentialPersistence::File,
+        )
+        .unwrap();
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(contents.contains("file-private-token"));
+    assert!(!contents.contains("memory-private-token"));
+    assert_eq!(store.memory_credentials().unwrap().len(), 1);
+    store.clear_for_test();
+    assert_eq!(store.hydrate_from_durable_store().unwrap(), 1);
+    assert_eq!(
+        store
+            .resolve(CredentialProvider::Anthropic, &file_ref)
+            .unwrap()
+            .as_deref(),
+        Some("file-private-token")
+    );
+    assert!(!store.replay_available_in_memory(CredentialProvider::Google, &memory_ref));
+}
+
+#[test]
+fn failed_injection_persistence_does_not_publish_a_runtime_credential() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let _guard = StorePathGuard::redirect(dir.path());
+    let store = CredentialStore::default();
+    let error = store
+        .inject(
+            CredentialProvider::Mcp,
+            "private-failed-token",
+            CredentialPersistence::File,
+        )
+        .unwrap_err();
+    assert_eq!(error, "credential file persistence failed");
+    assert_eq!(store.status().cached_count, 0);
+}

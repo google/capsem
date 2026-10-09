@@ -20,26 +20,27 @@ def test_no_ambient_environment_or_filesystem_access(monkeypatch: pytest.MonkeyP
     def forbidden(*args, **kwargs):
         raise AssertionError("parser accessed host filesystem")
 
-    for name in ["read_text", "is_file", "is_dir", "exists", "resolve"]:
-        monkeypatch.setattr(Path, name, forbidden)
-    result = parse_compose_yaml(
-        "services:\n  app:\n    image: alpine\n    environment: [HOST_SECRET]\n",
-        limits=LIMITS,
-    )
-    assert extract_compose_fields(result)["environment"] == {"HOST_SECRET": ""}
-    with pytest.raises(PermissionError, match="not supplied"):
-        parse_compose_yaml_file(
-            Path("/ungranted/compose.yaml"), inputs=ComposeInputs(), limits=LIMITS
+    with monkeypatch.context() as isolated:
+        for name in ["read_text", "is_file", "is_dir", "exists", "resolve"]:
+            isolated.setattr(Path, name, forbidden)
+        result = parse_compose_yaml(
+            "services:\n  app:\n    image: alpine\n    environment: [HOST_SECRET]\n",
+            limits=LIMITS,
         )
-    supplied = ComposeInputs(
-        environment={"HOST_SECRET": "explicit-value"},
-        files={
-            "/project/compose.yaml": "services:\n  app:\n    image: ${IMAGE}\n",
-            "/project/.env": "IMAGE=alpine:3.20\n",
-        },
-    )
-    parsed = parse_compose_yaml_file(Path("/project/compose.yaml"), inputs=supplied, limits=LIMITS)
-    assert parsed["services"]["app"]["image"] == "alpine:3.20"
+        assert extract_compose_fields(result)["environment"] == {"HOST_SECRET": ""}
+        with pytest.raises(PermissionError, match="not supplied"):
+            parse_compose_yaml_file(
+                Path("/ungranted/compose.yaml"), inputs=ComposeInputs(), limits=LIMITS
+            )
+        supplied = ComposeInputs(
+            environment={"HOST_SECRET": "explicit-value"},
+            files={
+                "/project/compose.yaml": "services:\n  app:\n    image: ${IMAGE}\n",
+                "/project/.env": "IMAGE=alpine:3.20\n",
+            },
+        )
+        parsed = parse_compose_yaml_file(Path("/project/compose.yaml"), inputs=supplied, limits=LIMITS)
+        assert parsed["services"]["app"]["image"] == "alpine:3.20"
 
 
 def test_inputs_are_detached_from_mutable_caller_maps():

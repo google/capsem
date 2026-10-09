@@ -24,7 +24,8 @@ WORKLOAD_OLLAMA_URL = f"http://{WORKLOAD_OLLAMA_HOST}:{WORKLOAD_OLLAMA_PORT}"
 
 def model_corp_config(ready: dict) -> str:
     """The corp config routing every provider host to the started mock."""
-    return f'''
+    return (
+        f'''
 refresh_policy = "24h"
 
 [network.dns]
@@ -55,6 +56,10 @@ dial = {json.dumps(ready["http_addr"])}
 protocol = "http"
 
 [network.upstream_overrides."api.anthropic.com:443"]
+dial = {json.dumps(ready["http_addr"])}
+protocol = "http"
+
+[network.upstream_overrides."platform.claude.com:443"]
 dial = {json.dumps(ready["http_addr"])}
 protocol = "http"
 
@@ -120,7 +125,17 @@ priority = -100
 detection_level = "informational"
 reason = "Allow hermetic Anthropic API replay through the declared upstream override."
 match = 'tcp.port == "443" && http.host == "api.anthropic.com" && http.path.matches("^/v1/")'
-'''.strip() + "\n"
+
+[corp.rules.allow_ironbank_claude_connectivity]
+name = "allow_ironbank_claude_connectivity"
+action = "allow"
+priority = -100
+detection_level = "informational"
+reason = "Allow the shipped Claude connectivity probes through declared hermetic upstreams."
+match = 'tcp.port == "443" && ((http.host == "api.anthropic.com" && http.path == "/api/hello") || (http.host == "platform.claude.com" && http.path == "/v1/oauth/hello"))'
+'''.strip()
+        + "\n"
+    )
 
 
 @contextlib.contextmanager

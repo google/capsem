@@ -13,6 +13,7 @@ from .errors import GateError
 from .installcontainer import (
     VmDeviceRuntime,
     await_systemd,
+    claim_owned_paths,
     systemd_command,
     verify_vm_device_access,
     virtualisation_runtime,
@@ -154,6 +155,8 @@ class DebProof:
             interval=self._install.systemd_ready_interval_seconds,
             sleep=self._sleep,
         )
+        claim_owned_paths(self._docker, self._proof.container, self._install)
+
     def _prepare_handoff(self, package: str, version: str) -> None:
         """Author the exact local graph before the package's postinst runs."""
         layout = self._install.layout
@@ -242,6 +245,8 @@ class DebProof:
                 f"{guest.home}/{self._install.capsem_home}",
                 "--manifest-url",
                 manifest,
+                "--metadata-manifest-url",
+                self.manifest_url,
                 "--channel",
                 self.channel,
                 "--package-version",

@@ -10,6 +10,7 @@
 //! `HostToGuest`. This is enforced at the type level by having separate
 //! encode/decode function pairs.
 
+pub mod credential_injection;
 pub mod credential_reference;
 mod exec_stream;
 pub mod forensic;
@@ -88,7 +89,8 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// Version 12 makes cloning a coordinator operation bracketed by the owner's
 /// guest freeze, so no destination path crosses into the VM owner.
 /// Version 13 fixes suspend to the owner's confined checkpoint location.
-pub const PROTOCOL_VERSION: u16 = 13;
+/// Version 14 adds host-only memory credential injection and acknowledgement.
+pub const PROTOCOL_VERSION: u16 = 14;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;

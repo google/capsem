@@ -186,7 +186,8 @@ pub(crate) fn spawn_fake_process(
     std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
     tokio::spawn(async move {
         let mut messages = Vec::new();
-        for received in 0..expected {
+        while messages.len() < expected {
+            let received = messages.len();
             // A route that stops talking to its VM used to hang the whole
             // binary here: tests serialized on SETTINGS_ENV_LOCK stalled
             // behind the one waiting forever. Fail with what was missing.
@@ -208,6 +209,12 @@ pub(crate) fn spawn_fake_process(
                 capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
             ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
             let message = rx.recv().await.unwrap();
+            if let ServiceToProcess::InjectCredentials { id, .. } = &message {
+                tx.send(ProcessToService::CredentialsInjected { id: *id, error: None })
+                    .await
+                    .unwrap();
+                continue;
+            }
             if let Some(reply) = handler(&message).await {
                 tx.send(reply).await.unwrap();
             }
@@ -479,7 +486,6 @@ mod update_routes;
 mod vm_info;
 
 pub(crate) use assets_registry::make_state_in;
-use settings_files::{
-    ensure_test_builtin_mcp_binary, install_empty_settings_env, make_test_state_with_tempdir_at, EnvVarGuard,
-};
+pub(crate) use settings_files::EnvVarGuard;
+use settings_files::{ensure_test_builtin_mcp_binary, install_empty_settings_env, make_test_state_with_tempdir_at};
 use update_routes::decode_response_json;

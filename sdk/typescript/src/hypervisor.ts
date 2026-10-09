@@ -1,6 +1,7 @@
 import {Client} from './client.js';
 import {Debug} from './debug.js';
 import {Images} from './images.js';
+import {Credentials} from './credentials.js';
 import {registryAccess} from './registry.js';
 import {commandDeadlineMs, createDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
@@ -24,6 +25,7 @@ export class Hypervisor extends Client {
   readonly mcp: Mcp;
   readonly debug: Debug;
   readonly images: Images;
+  readonly credentials: Credentials;
   constructor(url: string, token: string, options: TransportOptions = {}) {
     const transport = new Transport(url, token, options);
     super(transport);
@@ -31,6 +33,7 @@ export class Hypervisor extends Client {
     this.mcp = new Mcp(transport);
     this.debug = new Debug(transport);
     this.images = new Images(transport);
+    this.credentials = new Credentials(transport);
   }
   async info(options: CallOptions = {}): Promise<models.HypervisorInfo> {
     return api.getHypervisorInfo(this.transport, options);

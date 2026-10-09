@@ -1,6 +1,6 @@
 {
   "name": "@capsem/sdk",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "Typed async client for the Capsem HTTP gateway",
   "type": "module",
   "engines": {"node": ">=20"},

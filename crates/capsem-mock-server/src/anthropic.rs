@@ -1,9 +1,25 @@
 //! Legacy Anthropic model turns used by hermetic clients.
-use super::{json_compact, shell_write_command, write_target};
+use super::{agent_mcp, json_compact, json_response, response, shell_write_command, write_target, RespBody};
 use bytes::Bytes;
+use hyper::{Response, StatusCode};
 use serde_json::{json, Value};
 
-pub(super) fn anthropic_response(payload: Value) -> Value {
+pub(super) fn reply(payload: Value) -> Response<RespBody> {
+    let streaming = payload.get("stream").and_then(Value::as_bool) == Some(true);
+    if let Some(proof) = agent_mcp::reply(&payload) {
+        match proof {
+            Err(error) => response(StatusCode::BAD_REQUEST, Bytes::from(error), "text/plain"),
+            Ok(message) if streaming => response(StatusCode::OK, agent_mcp::stream(message), "text/event-stream"),
+            Ok(message) => json_response(message),
+        }
+    } else if streaming {
+        response(StatusCode::OK, anthropic_stream(payload), "text/event-stream")
+    } else {
+        json_response(anthropic_response(payload))
+    }
+}
+
+fn anthropic_response(payload: Value) -> Value {
     let has_tool_result = serde_json::to_string(&payload)
         .map(|raw| raw.contains("\"type\":\"tool_result\""))
         .unwrap_or(false);
@@ -43,7 +59,7 @@ pub(super) fn anthropic_response(payload: Value) -> Value {
     })
 }
 
-pub(super) fn anthropic_stream(payload: Value) -> Bytes {
+fn anthropic_stream(payload: Value) -> Bytes {
     let has_tool_result = serde_json::to_string(&payload)
         .map(|raw| raw.contains("\"type\":\"tool_result\""))
         .unwrap_or(false);

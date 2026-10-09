@@ -1,5 +1,17 @@
 version = 1
 
+[[surface]]
+id = "inspect-extraction"
+state = "retained"
+current = ["integrations/inspect-ai/"]
+targets = ["integrations/inspect-ai/"]
+lint = ["python.ruff", "python.ty.strict", "fast.citadel"]
+tests = ["integrations/inspect-ai/tests/"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "Existing Python coverage sessions include integrations/inspect-ai/inspect_capsem and execute extraction tests in source contracts."
+debt = "none: pure extraction only; adapter, packaging and runtime acceptance belong to Pierre under issue #342"
+reason = "Preserve carried Dockerfile and Compose extraction with active source and CI owners, without claiming an installed Inspect adapter."
+
 # This is the transition join table. `current` classifies every tracked path;
 # `targets` is the approved final layout. Evidence names are deliberately
 # concrete so a move cannot erase its checker while keeping a vague owner.
@@ -183,18 +195,6 @@ ci = ["fast-gate", "test-linux", "pr-gate"]
 coverage = "not-applicable: image recipes and publication scripts are proved by tests/images and the image workflow's smoke and boot runs"
 debt = "none: images/ is a new root"
 reason = "The official OCI images and their publication scripts; only .github/workflows/images.yaml builds and publishes them."
-
-[[surface]]
-id = "external-integrations"
-state = "retained"
-current = ["integrations/"]
-targets = ["integrations/"]
-lint = ["python.ruff", "python.ty.strict", "fast.audit.source-syntax", "fast.citadel"]
-tests = ["integrations/inspect-ai/tests/containers/", "tests/citadel/test_repository_surface_ownership.py"]
-ci = ["fast-gate", "test-linux", "test", "test-install", "docs-build", "site-build", "release-site-build", "pr-gate"]
-coverage = "codecov unit flag; carried pure transforms join the Python coverage rail"
-debt = "none: carried sources pass strict types and source ceilings; full Inspect adapter/package acceptance remains in #342"
-reason = "Already-carried external integration source has one checker/test/CI owner without claiming an installed or published adapter."
 
 [[surface]]
 id = "developer-skills"

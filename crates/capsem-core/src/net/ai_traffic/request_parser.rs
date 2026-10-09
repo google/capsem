@@ -230,7 +230,7 @@ mod openai_wire {
         pub content: Option<MessageContent>,
         pub tool_call_id: Option<String>,
         pub call_id: Option<String>,
-        pub output: Option<String>,
+        pub output: Option<Box<serde_json::value::RawValue>>,
         pub name: Option<String>,
         pub arguments: Option<String>,
     }
@@ -253,6 +253,21 @@ mod openai_wire {
     pub struct Tool {
         #[serde(rename = "type")]
         pub tool_type: Option<String>,
+    }
+}
+
+fn openai_output_preview(output: Option<&serde_json::value::RawValue>) -> String {
+    let Some(output) = output else {
+        return String::new();
+    };
+    match serde_json::from_str::<openai_wire::MessageContent>(output.get()) {
+        Ok(openai_wire::MessageContent::Text(text)) => text,
+        Ok(openai_wire::MessageContent::Parts(parts)) => parts
+            .iter()
+            .filter_map(|part| part.text.as_deref())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Err(_) => output.get().to_owned(),
     }
 }
 
@@ -289,11 +304,14 @@ fn parse_openai(body: &[u8]) -> RequestMeta {
         // function_call_output can be followed by the user prompt for
         // convenience, so a trailing-only scan would miss the tool result.
         for msg in messages {
-            if msg.item_type.as_deref() == Some("function_call_output") {
+            if matches!(
+                msg.item_type.as_deref(),
+                Some("function_call_output" | "custom_tool_call_output")
+            ) {
                 if let Some(call_id) = msg.call_id.as_ref() {
                     tool_results.push(ToolResultMeta {
                         call_id: call_id.clone(),
-                        content_preview: msg.output.clone().unwrap_or_default(),
+                        content_preview: openai_output_preview(msg.output.as_deref()),
                         is_error: false,
                     });
                 }
@@ -314,7 +332,7 @@ fn parse_openai(body: &[u8]) -> RequestMeta {
                         .filter_map(|p| p.text.as_deref())
                         .collect::<Vec<_>>()
                         .join("\n"),
-                    None => msg.output.clone().unwrap_or_default(),
+                    None => openai_output_preview(msg.output.as_deref()),
                 };
                 tool_results.push(ToolResultMeta {
                     call_id: call_id.clone(),
