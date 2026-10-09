@@ -3,6 +3,7 @@
 from .attach_network_member import attach_network_member as attach_network_member
 from .call_mcp_tool import call_mcp_tool as call_mcp_tool
 from .create_network import create_network as create_network
+from .create_proxy import create_proxy as create_proxy
 from .create_vm import create_vm as create_vm
 from .create_vm_exposure import create_vm_exposure as create_vm_exposure
 from .create_vm_preview_session import (
@@ -35,6 +36,7 @@ from .get_vm_stats_detail import get_vm_stats_detail as get_vm_stats_detail
 from .get_vm_stats_summary import get_vm_stats_summary as get_vm_stats_summary
 from .get_vm_status import get_vm_status as get_vm_status
 from .get_vm_timeline import get_vm_timeline as get_vm_timeline
+from .heartbeat_proxy import heartbeat_proxy as heartbeat_proxy
 from .list_images import list_images as list_images
 from .list_mcp_servers import list_mcp_servers as list_mcp_servers
 from .list_mcp_tools import list_mcp_tools as list_mcp_tools
@@ -54,6 +56,7 @@ from .revoke_vm_preview_sessions import (
 )
 from .run_vm import run_vm as run_vm
 from .start_vm import start_vm as start_vm
+from .stop_proxy import stop_proxy as stop_proxy
 from .stop_vm import stop_vm as stop_vm
 from .update_hypervisor import update_hypervisor as update_hypervisor
 from .upload_vm_file import upload_vm_file as upload_vm_file
