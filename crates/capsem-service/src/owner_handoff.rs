@@ -1,6 +1,7 @@
 //! The coordinator's session and spawn, never a worker-reported path, select
 //! the endpoint to which a handoff may grant descriptors.
 use super::*;
+use std::os::fd::AsFd;
 
 pub(crate) struct OwnerHandoff {
     id: String,
@@ -50,6 +51,40 @@ impl OwnerHandoff {
                 "handoff endpoint does not belong to this VM owner".into(),
             ));
         }
+        self.validate_current(state)?;
+        Ok(self.endpoint.clone())
+    }
+
+    pub(crate) async fn connect(&self, state: &ServiceState) -> Result<std::os::unix::net::UnixStream, AppError> {
+        self.validate_current(state)?;
+        let socket = tokio::net::UnixStream::connect(&self.endpoint)
+            .await
+            .and_then(|socket| socket.into_std())
+            .map_err(|error| {
+                AppError(
+                    StatusCode::BAD_GATEWAY,
+                    format!("VM owner handoff unavailable: {error}"),
+                )
+            })?;
+        capsem_foundation::unix::peer::require(
+            socket.as_fd(),
+            capsem_foundation::unix::peer::PeerIdentity {
+                pid: capsem_foundation::unix::process::ProcessId::try_from(self.owner.pid())
+                    .map_err(|error| AppError(StatusCode::BAD_GATEWAY, error.to_string()))?,
+                uid: self.owner.uid(),
+            },
+        )
+        .map_err(|error| {
+            AppError(
+                StatusCode::BAD_GATEWAY,
+                format!("authenticate VM owner handoff: {error}"),
+            )
+        })?;
+        self.validate_current(state)?;
+        Ok(socket)
+    }
+
+    fn validate_current(&self, state: &ServiceState) -> Result<(), AppError> {
         if !state
             .instances
             .lock()
@@ -62,7 +97,7 @@ impl OwnerHandoff {
                 "VM owner changed during handoff admission".into(),
             ));
         }
-        Ok(self.endpoint.clone())
+        Ok(())
     }
 }
 
