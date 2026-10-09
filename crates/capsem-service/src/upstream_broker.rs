@@ -263,7 +263,7 @@ async fn run(
     let mut next_resource_id = 1_u64;
     let mut awaiting_adoption = None;
     let ledger_configured = ledger.is_some();
-    let mut pending_ledger: Option<(LedgerChannelGrant, OwnedFd)> = None;
+    let mut pending_ledger: Option<(LedgerChannelGrant, Vec<OwnedFd>)> = None;
     let result = async {
         'requests: loop {
             let frame = tokio::select! {
@@ -518,13 +518,13 @@ async fn run(
                 }
                 UpstreamGrantRequest::Adopted { grant_id } => {
                     if awaiting_adoption == Some(AwaitingAdoption::Ledger(grant_id)) {
-                        let Some((grant, descriptor)) = pending_ledger.take() else {
+                        let Some((grant, descriptors)) = pending_ledger.take() else {
                             break Err(format!("ledger grant {grant_id} disappeared before adoption"));
                         };
                         if grant.client_id() != grant_id {
                             break Err(format!("ledger grant {grant_id} changed before adoption"));
                         }
-                        drop(descriptor);
+                        drop(descriptors);
                         awaiting_adoption = None;
                         continue;
                     }
@@ -579,15 +579,18 @@ async fn run(
                         continue;
                     };
                     let client = source.acquire().await?;
-                    let (stream, grant) = client.into_parts();
-                    let descriptor = OwnedFd::from(stream);
-                    send_response(
+                    let (stream, commitment, grant) = client.into_parts();
+                    let commitment =
+                        commitment.ok_or_else(|| "ledger producer omitted commitment channel".to_string())?;
+                    let descriptors = vec![OwnedFd::from(stream), OwnedFd::from(commitment)];
+                    let descriptor_refs = descriptors.iter().collect::<Vec<_>>();
+                    send_response_descriptors(
                         &responses,
                         &UpstreamGrantResponse::LedgerGranted { request_id, grant },
-                        Some(&descriptor),
+                        &descriptor_refs,
                     )
                     .await?;
-                    pending_ledger = Some((grant, descriptor));
+                    pending_ledger = Some((grant, descriptors));
                     awaiting_adoption = Some(AwaitingAdoption::Ledger(grant.client_id()));
                 }
                 UpstreamGrantRequest::AttachProxyTraffic { request_id, service } => {
@@ -687,9 +690,18 @@ async fn send_response(
     response: &UpstreamGrantResponse,
     descriptor: Option<&OwnedFd>,
 ) -> Result<(), String> {
+    let descriptors = descriptor.into_iter().collect::<Vec<_>>();
+    send_response_descriptors(sender, response, &descriptors).await
+}
+
+async fn send_response_descriptors(
+    sender: &WireSender,
+    response: &UpstreamGrantResponse,
+    descriptors: &[&OwnedFd],
+) -> Result<(), String> {
     let bytes =
         encode_upstream_grant_response(response).map_err(|error| format!("encode grant response: {error:#}"))?;
-    let descriptors = descriptor.map_or_else(Vec::new, |fd| vec![fd.as_raw_fd()]);
+    let descriptors = descriptors.iter().map(|fd| fd.as_raw_fd()).collect::<Vec<_>>();
     tokio::time::timeout(RESPONSE_TIMEOUT, sender.send(&bytes, &descriptors))
         .await
         .map_err(|_| "send upstream grant response timed out".to_string())?

@@ -199,7 +199,8 @@ impl RemoteLedger {
                 .await
             {
                 Ok(channel) => {
-                    let (stream, grant) = channel.into_parts();
+                    let (stream, commitment, grant) = channel.into_parts();
+                    debug_assert!(commitment.is_none());
                     return capsem_logger::ledger_client::LedgerClient::connect(stream, grant, database).await;
                 }
                 Err(error) => {
@@ -298,7 +299,8 @@ impl ServiceState {
             .await
             .map_err(|error| error.to_string())
             .map(|channel| {
-                let (stream, grant) = channel.into_parts();
+                let (stream, commitment, grant) = channel.into_parts();
+                debug_assert!(commitment.is_none());
                 (stream, grant)
             });
         #[cfg(not(test))]

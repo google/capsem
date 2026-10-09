@@ -213,13 +213,15 @@ fn start_broker_for_session(
 #[tokio::test]
 async fn ledger_grant_is_exact_single_use_and_releases_the_broker_copy_after_adoption() {
     let grant = LedgerChannelGrant::new(LedgerGeneration::new([0x4d; 16]), 77, LedgerClientRole::VmOwner).unwrap();
-    let (ledger, worker_peer) = LedgerClient::test_pair(grant).unwrap();
+    let (ledger, worker_peer, commitment_peer) = LedgerClient::test_pair(grant).unwrap();
     let (client, _publisher, authority, task) = start_broker_with_ledger(test_policy("policy-a", None, vec![]), ledger);
 
     let (response, mut fds) = client
         .request(&UpstreamGrantRequest::OpenLedger { request_id: 1 })
         .await;
     assert_eq!(response, UpstreamGrantResponse::LedgerGranted { request_id: 1, grant });
+    assert_eq!(fds.len(), 2);
+    let granted_commitment = UnixStream::from(fds.pop().unwrap());
     let granted = UnixStream::from(fds.pop().unwrap());
     client
         .send(&UpstreamGrantRequest::Adopted {
@@ -240,6 +242,8 @@ async fn ledger_grant_is_exact_single_use_and_releases_the_broker_copy_after_ado
     );
 
     drop(granted);
+    drop(granted_commitment);
+    drop(commitment_peer);
     worker_peer.set_nonblocking(true).unwrap();
     let mut worker_peer = tokio::net::UnixStream::from_std(worker_peer).unwrap();
     let mut byte = [0_u8; 1];
@@ -273,7 +277,7 @@ async fn ledger_request_without_a_coordinator_grant_is_denied() {
 #[tokio::test]
 async fn policy_updates_do_not_revoke_a_pending_ledger_grant() {
     let grant = LedgerChannelGrant::new(LedgerGeneration::new([0x37; 16]), 91, LedgerClientRole::VmOwner).unwrap();
-    let (ledger, worker_peer) = LedgerClient::test_pair(grant).unwrap();
+    let (ledger, worker_peer, commitment_peer) = LedgerClient::test_pair(grant).unwrap();
     let (client, publisher, authority, task) = start_broker_with_ledger(test_policy("policy-a", None, vec![]), ledger);
     let (response, mut fds) = client
         .request(&UpstreamGrantRequest::OpenLedger { request_id: 1 })
@@ -287,7 +291,10 @@ async fn policy_updates_do_not_revoke_a_pending_ledger_grant() {
         })
         .await;
 
+    assert_eq!(fds.len(), 2);
     drop(fds.pop().unwrap());
+    drop(fds.pop().unwrap());
+    drop(commitment_peer);
     worker_peer.set_nonblocking(true).unwrap();
     let mut worker_peer = tokio::net::UnixStream::from_std(worker_peer).unwrap();
     let mut byte = [0_u8; 1];

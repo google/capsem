@@ -54,9 +54,10 @@ fn test_state(run_dir: PathBuf, assets_dir: PathBuf, test_tempdir: Option<tempfi
         instances: Mutex::new(HashMap::new()),
         proxy_workers: Mutex::new(HashMap::new()),
         standalone_proxies: tokio::sync::Mutex::new(HashMap::new()),
-        ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(PathBuf::from(
-            "/nonexistent/capsem-ledger",
-        ))),
+        ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(
+            PathBuf::from("/nonexistent/capsem-ledger"),
+            run_dir.join("ledger-commitments"),
+        )),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(

@@ -164,7 +164,8 @@ async fn supervisor_mints_unique_role_bound_channels_and_reaps() {
     assert_eq!(reader.grant().role(), LedgerClientRole::Reader);
     assert_eq!(producer.grant().role(), LedgerClientRole::VmOwner);
     assert_ne!(reader.grant().client_id(), producer.grant().client_id());
-    let (reader_stream, reader_grant) = reader.into_parts();
+    let (reader_stream, commitment, reader_grant) = reader.into_parts();
+    assert!(commitment.is_none());
     assert_eq!(reader_grant.role(), LedgerClientRole::Reader);
     drop(reader_stream);
     drop(producer);
@@ -229,7 +230,7 @@ async fn stalled_shutdown_is_killed_and_reaped_within_the_bound() {
 async fn lifecycle_slot_serializes_concurrent_leases_and_replacement() {
     let directory = tempfile::tempdir().unwrap();
     let binary = fake_binary(directory.path(), "normal");
-    let workers = Arc::new(LedgerWorkers::new(binary));
+    let workers = Arc::new(LedgerWorkers::new(binary, directory.path().join("commitments")));
     let (database, log) = session_paths(directory.path(), "session-a");
 
     let (reader, maintainer) = tokio::join!(
@@ -266,7 +267,7 @@ async fn lifecycle_slot_serializes_concurrent_leases_and_replacement() {
 async fn stopping_one_session_leaves_an_unrelated_session_generation_alive() {
     let directory = tempfile::tempdir().unwrap();
     let binary = fake_binary(directory.path(), "normal");
-    let workers = Arc::new(LedgerWorkers::new(binary));
+    let workers = Arc::new(LedgerWorkers::new(binary, directory.path().join("commitments")));
     let (database_a, log_a) = session_paths(directory.path(), "session-a");
     let (database_b, log_b) = session_paths(directory.path(), "session-b");
     let client_a = workers
@@ -296,7 +297,7 @@ async fn stopping_one_session_leaves_an_unrelated_session_generation_alive() {
 async fn crashed_slot_restarts_only_after_reap_with_a_fresh_generation() {
     let directory = tempfile::tempdir().unwrap();
     let binary = fake_binary(directory.path(), "die_with_attach_pending");
-    let workers = Arc::new(LedgerWorkers::new(binary.clone()));
+    let workers = Arc::new(LedgerWorkers::new(binary.clone(), directory.path().join("commitments")));
     let (database, log) = session_paths(directory.path(), "stopped-session");
 
     let error = workers
