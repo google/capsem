@@ -39,6 +39,7 @@ macro_rules! operation {
 operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
 operation!(get_asset_status, "getAssetStatus");
+operation!(inject_credential, "injectCredential", InjectCredentialParams);
 operation!(get_mcp_info, "getMcpInfo");
 operation!(list_mcp_servers, "listMcpServers");
 operation!(get_mcp_default, "getMcpDefault");
