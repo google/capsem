@@ -293,6 +293,21 @@ pub async fn broker_and_log_observations(
     rules: &SecurityRuleSet,
     observations: Vec<CredentialObservation>,
 ) -> Option<String> {
+    broker_and_log_observations_with_credentials(
+        db,
+        rules,
+        std::sync::Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
+        observations,
+    )
+    .await
+}
+
+pub async fn broker_and_log_observations_with_credentials(
+    db: &DbWriter,
+    rules: &SecurityRuleSet,
+    credentials: std::sync::Arc<dyn crate::net::proxy_engine::ProxyCredentials>,
+    observations: Vec<CredentialObservation>,
+) -> Option<String> {
     let mut first_ref = None;
     let mut seen = HashSet::new();
     for observation in observations {
@@ -313,7 +328,8 @@ pub async fn broker_and_log_observations(
         }
         let brokered = match tokio::task::spawn_blocking({
             let observation = observation.clone();
-            move || broker_observed_credential(&observation)
+            let credentials = std::sync::Arc::clone(&credentials);
+            move || credentials.capture(&observation)
         })
         .await
         {

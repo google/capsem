@@ -599,6 +599,7 @@ fn fake_deps() -> Arc<TelemetryDeps> {
     let db = Arc::new(DbWriter::open_in_memory(64).expect("in-memory db"));
     Arc::new(TelemetryDeps {
         db,
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     })
@@ -662,6 +663,7 @@ async fn hook_accepts_primary_net_event_before_completing_response() {
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     });
@@ -719,6 +721,7 @@ async fn bounded_logger_backpressure_keeps_every_completed_response_event() {
     let db = Arc::new(DbWriter::open(&db_path, 1).expect("test db"));
     let hook = TelemetryHook::new(Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
     }));

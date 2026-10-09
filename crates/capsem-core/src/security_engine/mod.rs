@@ -702,10 +702,36 @@ pub fn emit_security_decision_transition_blocking(
 pub fn evaluate_security_boundary(
     rules: &SecurityRuleSet,
     plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    event: SecurityEvent,
+) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
+    evaluate_security_boundary_with_registry(
+        rules,
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy),
+        event,
+    )
+}
+
+pub(crate) fn evaluate_security_boundary_with_credentials(
+    rules: &SecurityRuleSet,
+    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    credentials: Arc<dyn crate::net::proxy_engine::ProxyCredentials>,
+    event: SecurityEvent,
+) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
+    evaluate_security_boundary_with_registry(
+        rules,
+        SecurityActionRegistry::with_builtin_actions()
+            .with_proxy_credentials(credentials)
+            .with_plugin_policy(plugin_policy),
+        event,
+    )
+}
+
+fn evaluate_security_boundary_with_registry(
+    rules: &SecurityRuleSet,
+    action_registry: SecurityActionRegistry,
     mut event: SecurityEvent,
 ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
     event.validate_network(event.event_type)?;
-    let action_registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
 
     event = action_registry.apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
 
@@ -1676,6 +1702,13 @@ pub struct MaterializedHttpRequest {
 pub fn materialize_http_request_for_upstream(
     event: &SecurityEvent,
 ) -> Result<MaterializedHttpRequest, SecurityActionError> {
+    materialize_http_request_for_upstream_with_credentials(event, &crate::net::proxy_engine::LocalProxyCredentials)
+}
+
+pub(crate) fn materialize_http_request_for_upstream_with_credentials(
+    event: &SecurityEvent,
+    credentials: &dyn crate::net::proxy_engine::ProxyCredentials,
+) -> Result<MaterializedHttpRequest, SecurityActionError> {
     let Some(request) = event.http_request.as_ref() else {
         return Err(SecurityActionError::new(
             "security event does not carry an HTTP request",
@@ -1691,8 +1724,8 @@ pub fn materialize_http_request_for_upstream(
     }
 
     let mut headers = request.headers.clone();
-    let BrokeredUpstreamCredentials { credential_ref, query } =
-        crate::credential_broker::substitute_brokered_upstream_credentials(
+    let BrokeredUpstreamCredentials { credential_ref, query } = credentials
+        .substitute_upstream(
             &request.domain,
             request.ai_provider,
             &mut headers,
@@ -1816,6 +1849,14 @@ impl SecurityActionRegistry {
 
     pub fn with_plugin_policy(mut self, plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>) -> Self {
         self.plugin_policy = plugin_policy.into();
+        self
+    }
+
+    fn with_proxy_credentials(mut self, credentials: Arc<dyn crate::net::proxy_engine::ProxyCredentials>) -> Self {
+        Arc::make_mut(&mut self.plugins).insert(
+            "credential_broker".to_string(),
+            Arc::new(CredentialBrokerPlugin::new(credentials)),
+        );
         self
     }
 

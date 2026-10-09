@@ -86,8 +86,13 @@ fn proxy_config(upstream_port: u16) -> Arc<MitmProxyConfig> {
                 .expect("builtin provider endpoint registry"),
         ),
     );
+    let engine = Arc::new(capsem_core::net::proxy_engine::ProxyEngine::local(
+        policy,
+        Arc::clone(&db),
+    ));
     let telemetry = Arc::new(mitm_proxy::telemetry_hook::TelemetryDeps {
         db: db.clone(),
+        credentials: engine.credentials(),
         pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
         trace_state: Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new())),
     });
@@ -95,7 +100,7 @@ fn proxy_config(upstream_port: u16) -> Arc<MitmProxyConfig> {
     Arc::new(MitmProxyConfig {
         server_tls: mitm_proxy::make_server_tls_config(&ca),
         ca,
-        policy,
+        engine,
         db,
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
         telemetry,

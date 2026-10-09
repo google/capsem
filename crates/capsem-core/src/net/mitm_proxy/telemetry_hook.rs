@@ -29,9 +29,8 @@ use super::hooks::{ChunkCtx, ChunkEndFuture, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
 use super::util::is_llm_api_path;
 use crate::credential_broker::{
-    broker_and_log_observations, detect_http_body_credentials, log_brokered_injections,
-    redact_observed_credentials_in_bytes, redact_observed_credentials_in_text, CredentialInjection,
-    CredentialObservation,
+    broker_and_log_observations_with_credentials, detect_http_body_credentials, log_brokered_injections,
+    CredentialInjection, CredentialObservation,
 };
 use crate::net::ai_traffic::events::{
     collect_summary, parse_non_streaming_response_summary, parse_non_streaming_tool_calls, parse_non_streaming_usage,
@@ -41,7 +40,7 @@ use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ModelProtocol, ProviderKind};
 use crate::net::ai_traffic::{request_parser, TraceState};
 use crate::net::policy_config::{PluginPolicySnapshot, SecurityRuleSet};
-use crate::net::proxy_engine::ProxyPolicySnapshot;
+use crate::net::proxy_engine::{ProxyCredentials, ProxyPolicySnapshot};
 use crate::security_engine::{
     emit_evaluated_security_rules, emit_security_write, HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent,
     RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
@@ -110,6 +109,7 @@ pub struct TelemetryResponseStats {
 /// derivable from the per-request context.
 pub struct TelemetryDeps {
     pub db: Arc<DbWriter>,
+    pub credentials: Arc<dyn ProxyCredentials>,
     pub pricing: Arc<PricingTable>,
     pub trace_state: Arc<Mutex<TraceState>>,
 }
@@ -123,6 +123,7 @@ pub struct TelemetryHook {
 
 struct PendingTelemetryCompletion {
     db: Arc<DbWriter>,
+    credentials: Arc<dyn ProxyCredentials>,
     rules: Arc<SecurityRuleSet>,
     plugin_policy: PluginPolicySnapshot,
     net_event: NetEvent,
@@ -136,6 +137,7 @@ impl PendingTelemetryCompletion {
     async fn run(self) {
         let Self {
             db,
+            credentials,
             rules,
             plugin_policy,
             net_event,
@@ -177,7 +179,7 @@ impl PendingTelemetryCompletion {
 
         if !credential_observations.is_empty() || !credential_injections.is_empty() {
             log_brokered_injections(&db, &rules, credential_injections).await;
-            broker_and_log_observations(&db, &rules, credential_observations).await;
+            broker_and_log_observations_with_credentials(&db, &rules, credentials, credential_observations).await;
         }
     }
 }
@@ -268,15 +270,21 @@ impl ChunkHook for TelemetryHook {
         if !credential_observations.is_empty() {
             let redact = |text: &mut Option<String>| {
                 if let Some(text) = text {
-                    *text = redact_observed_credentials_in_text(text, &credential_observations);
+                    *text = self.deps.credentials.redact_text(text, &credential_observations);
                 }
             };
             redact(&mut req_ctx.request_headers);
             redact(&mut req_ctx.response_headers);
             let mut stats = req_ctx.request_body_stats.lock().expect("req body stats lock");
-            stats.preview = redact_observed_credentials_in_bytes(&stats.preview, &credential_observations);
+            stats.preview = self
+                .deps
+                .credentials
+                .redact_bytes(&stats.preview, &credential_observations);
             drop(stats);
-            resp_stats.preview = redact_observed_credentials_in_bytes(&resp_stats.preview, &credential_observations);
+            resp_stats.preview = self
+                .deps
+                .credentials
+                .redact_bytes(&resp_stats.preview, &credential_observations);
         }
         record_telemetry_stage(stage_started, "credential_detect_and_redact");
 
@@ -306,6 +314,7 @@ impl ChunkHook for TelemetryHook {
 
         let stage_started = Instant::now();
         let db = Arc::clone(&self.deps.db);
+        let credentials = Arc::clone(&self.deps.credentials);
         let rules = Arc::clone(req_ctx.policy_snapshot.security_rules());
         let plugin_policy = Arc::clone(req_ctx.policy_snapshot.plugins());
         let credential_injections = req_ctx.credential_injections;
@@ -321,6 +330,7 @@ impl ChunkHook for TelemetryHook {
         let has_model_call = model_call.is_some();
         *ctx.state::<Option<PendingTelemetryCompletion>>(|| None) = Some(PendingTelemetryCompletion {
             db,
+            credentials,
             rules,
             plugin_policy,
             net_event,

@@ -7,15 +7,15 @@ use super::pipeline;
 use super::telemetry_hook;
 use super::upstream::TcpUpstreamGrants;
 use crate::net::cert_authority::CertAuthority;
-use crate::net::proxy_engine::ProxyPolicyHandle;
+use crate::net::proxy_engine::ProxyEngine;
 
 /// Configuration for the MITM proxy.
 pub struct MitmProxyConfig {
     pub ca: Arc<CertAuthority>,
     /// Guest-facing TLS config, built once (`make_server_tls_config`): one session cache for all.
     pub server_tls: Arc<rustls::ServerConfig>,
-    /// One digest-keyed active-policy revision, snapshotted per request.
-    pub policy: ProxyPolicyHandle,
+    /// Transport-independent policy and scoped host capabilities.
+    pub engine: Arc<ProxyEngine>,
     pub db: Arc<DbWriter>,
     /// Cached upstream TLS config (shared across all connections).
     pub upstream_tls: Arc<rustls::ClientConfig>,

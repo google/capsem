@@ -187,12 +187,7 @@ pub(super) async fn handle_upgrade(
     if let Some(trace_id) = capsem_foundation::telemetry::ambient_capsem_trace_id() {
         upgrade_event = upgrade_event.with_trace_id(trace_id);
     }
-    let rules = Arc::clone(policy_snapshot.security_rules());
-    let upgrade_evaluation = crate::security_engine::evaluate_security_boundary(
-        &rules,
-        Arc::clone(policy_snapshot.plugins()),
-        upgrade_event,
-    );
+    let upgrade_evaluation = config.engine.evaluate(policy_snapshot, upgrade_event);
     let upgrade_decision = match upgrade_evaluation {
         Ok(evaluation) => evaluation,
         Err(error) => return Ok(make_ws_error(&error)),

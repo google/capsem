@@ -680,7 +680,7 @@ async fn serve_pipeline<IO>(
                 let (domain, port) = (&request_domain, upstream_port);
                 return Ok(mcp_http::serve(req, route, domain, port, protocol, &config_arc, &process_name).await);
             }
-            let policy_snapshot = config_arc.policy.snapshot();
+            let policy_snapshot = config_arc.engine.policy().snapshot();
             let ai_identity = ai_identity_for_target_or_path(
                 policy_snapshot.model_endpoints(),
                 &request_domain,
@@ -1142,13 +1142,8 @@ async fn handle_request(
         status = tracing::field::Empty,
         error_kind = tracing::field::Empty,
     );
-    let http_evaluation = match actions_span.in_scope(|| {
-        crate::security_engine::evaluate_security_boundary(
-            &rules,
-            Arc::clone(policy_snapshot.plugins()),
-            http_security_event,
-        )
-    }) {
+    let http_evaluation = match actions_span.in_scope(|| config.engine.evaluate(&policy_snapshot, http_security_event))
+    {
         Ok(evaluation) => evaluation,
         Err(error) => {
             actions_span.record("decision", "error");
@@ -1266,25 +1261,24 @@ async fn handle_request(
     }
     actions_span.record("decision", "allow");
     actions_span.record("status", "ok");
-    let upstream_materialized = match actions_span
-        .in_scope(|| crate::security_engine::materialize_http_request_for_upstream(&http_evaluation.event))
-    {
-        Ok(materialized) => materialized,
-        Err(error) => {
-            actions_span.record("decision", "error");
-            actions_span.record("status", "error");
-            actions_span.record("error_kind", "materialize_http_request");
-            return Ok(make_502(
-                &anyhow::anyhow!(error),
-                &method,
-                &path,
-                &query,
-                &req_hdrs,
-                start_time,
-                &request_security_decision,
-            ));
-        }
-    };
+    let upstream_materialized =
+        match actions_span.in_scope(|| config.engine.materialize_http_request(&http_evaluation.event)) {
+            Ok(materialized) => materialized,
+            Err(error) => {
+                actions_span.record("decision", "error");
+                actions_span.record("status", "error");
+                actions_span.record("error_kind", "materialize_http_request");
+                return Ok(make_502(
+                    &anyhow::anyhow!(error),
+                    &method,
+                    &path,
+                    &query,
+                    &req_hdrs,
+                    start_time,
+                    &request_security_decision,
+                ));
+            }
+        };
     original_headers = upstream_materialized.headers;
     let credential_ref = credential_ref
         .clone()
@@ -1314,9 +1308,7 @@ async fn handle_request(
             upstream_ip,
             upstream_port,
         );
-        let mcp_evaluation = match mcp_span.in_scope(|| {
-            crate::security_engine::evaluate_security_boundary(&rules, Arc::clone(policy_snapshot.plugins()), mcp_event)
-        }) {
+        let mcp_evaluation = match mcp_span.in_scope(|| config.engine.evaluate(&policy_snapshot, mcp_event)) {
             Ok(evaluation) => evaluation,
             Err(error) => {
                 mcp_span.record("decision", "error");
@@ -1530,11 +1522,7 @@ async fn handle_request(
                 body: Some(String::from_utf8_lossy(&body_bytes).to_string()),
             });
             let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
-            let model_evaluation = match crate::security_engine::evaluate_security_boundary(
-                &rules,
-                Arc::clone(policy_snapshot.plugins()),
-                model_event,
-            ) {
+            let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event) {
                 Ok(evaluation) => evaluation,
                 Err(error) => {
                     model_request_span.record("decision", "error");
@@ -2183,11 +2171,7 @@ async fn handle_request(
                 body: Some(String::from_utf8_lossy(&response_body).to_string()),
             });
             let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
-            let model_evaluation = match crate::security_engine::evaluate_security_boundary(
-                &rules,
-                Arc::clone(policy_snapshot.plugins()),
-                model_event,
-            ) {
+            let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event) {
                 Ok(evaluation) => evaluation,
                 Err(error) => {
                     model_response_span.record("decision", "error");
