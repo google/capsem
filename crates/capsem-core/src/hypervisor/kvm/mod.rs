@@ -14,6 +14,7 @@ mod memory;
 mod mmio;
 #[cfg(target_arch = "x86_64")]
 mod pio;
+mod prepared;
 mod serial;
 #[cfg(target_arch = "x86_64")]
 mod serial_pio;
@@ -34,9 +35,12 @@ use std::time::Duration;
 use anyhow::{ensure, Context, Result};
 use tokio::sync::mpsc;
 
-use super::{Hypervisor, SerialConsole, VmHandle, VsockConnection};
+#[cfg(test)]
+use super::Hypervisor;
+use super::{SerialConsole, VmHandle, VsockConnection};
 use crate::vm::config::VmConfig;
 use crate::vm::VmState;
+pub(crate) use prepared::PreparedVsock;
 
 const KVM_PAUSE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -51,7 +55,7 @@ fn require_metadata_authority(config: &VmConfig) -> Result<()> {
     Ok(())
 }
 
-fn kvm_vsock_seed(config: &VmConfig) -> u32 {
+pub(crate) fn kvm_vsock_seed(config: &VmConfig) -> u32 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(config.kernel_path.to_string_lossy().as_bytes());
     if let Some(path) = config.scratch_disk_path.as_ref().or(config.disk_path.as_ref()) {
@@ -128,12 +132,14 @@ fn virtio_mmio_device_count(config: &VmConfig, vsock_ports: &[u32]) -> u32 {
     }
 }
 
-impl Hypervisor for KvmHypervisor {
-    fn boot(
+impl KvmHypervisor {
+    pub(crate) fn boot_prepared(
         &self,
         config: &VmConfig,
         vsock_ports: &[u32],
+        prepared_vsock: PreparedVsock,
     ) -> Result<(Box<dyn VmHandle>, mpsc::UnboundedReceiver<VsockConnection>)> {
+        let PreparedVsock(vsock_bindings) = prepared_vsock;
         require_metadata_authority(config)?;
         #[cfg(not(target_arch = "x86_64"))]
         if config.checkpoint_path.is_some() {
@@ -160,14 +166,6 @@ impl Hypervisor for KvmHypervisor {
         #[cfg(target_arch = "x86_64")]
         let restoring = config.checkpoint_path.is_some();
 
-        let vsock_bindings = if vsock_ports.is_empty() {
-            None
-        } else {
-            Some(virtio_vsock::bind_vsock_listeners_for_vm(
-                vsock_ports,
-                kvm_vsock_seed(config),
-            )?)
-        };
         let kernel_cmdline = append_kvm_vsock_port_offset(
             &config.kernel_cmdline,
             vsock_bindings.as_ref().map_or(0, |b| b.offset()),

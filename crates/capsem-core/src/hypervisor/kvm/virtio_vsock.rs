@@ -763,7 +763,7 @@ pub(super) struct BoundVsockListener {
     sock: OwnedFd,
 }
 
-pub(super) struct BoundVsockListeners {
+pub(crate) struct BoundVsockListeners {
     offset: u32,
     guest_cid: u32,
     listeners: Vec<BoundVsockListener>,
@@ -779,7 +779,7 @@ impl BoundVsockListeners {
     }
 }
 
-pub(super) fn bind_vsock_listeners_for_vm(logical_ports: &[u32], seed: u32) -> Result<BoundVsockListeners> {
+pub(crate) fn bind_vsock_listeners_for_vm(logical_ports: &[u32], seed: u32) -> Result<BoundVsockListeners> {
     if logical_ports.is_empty() {
         return Ok(BoundVsockListeners {
             offset: 0,
