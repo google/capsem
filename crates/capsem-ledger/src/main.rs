@@ -53,19 +53,22 @@ fn main() -> Result<()> {
         default_filter: "capsem_ledger=info,capsem_logger=info,capsem_foundation=warn",
     })?;
     let args = Args::parse();
-    capsem_guard::watch_parent_or_exit(Some(args.parent_pid))?;
     let stdin = io::stdin();
     let control = UnixStream::from(fd::duplicate(stdin.as_fd())?);
     let session_dir = session_directory(&args.database)?;
+    validate_session_directory(&session_dir)?;
     let denied_file = std::env::current_exe().context("resolve ledger executable before confinement")?;
     let codecs = codec::archive_codecs().context("initialize confined archive codecs")?;
-    let server = Arc::new(LedgerServer::open_with_codecs(&args.database, codecs).context("open session ledger")?);
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()?;
+    let prepared = LedgerServer::prepare_with_codecs(&args.database, codecs).context("prepare session ledger")?;
+    // The current-thread runtime prepares Tokio's internal descriptors without
+    // creating sibling threads. This keeps Landlock ABI 6 and 7 safe while
+    // allowing tasks and blocking workers created after confinement to inherit
+    // the worker's authority.
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     capsem_foundation::unix::worker_sandbox::confine(&Policy::new(Role::Ledger).allow(&session_dir, Access::ReadWrite))
         .context("confine ledger worker before readiness")?;
+    capsem_guard::watch_parent_or_exit(Some(args.parent_pid))?;
+    let server = Arc::new(prepared.start());
     attest_confinement(&session_dir, &denied_file, args.parent_pid, args.generation)?;
     runtime.block_on(run_control(control, server, args.generation, CLIENT_LIMIT))
 }
@@ -79,6 +82,17 @@ fn session_directory(database: &Path) -> Result<PathBuf> {
         .filter(|directory| *directory != Path::new("/"))
         .context("ledger database must have a session directory")?;
     Ok(directory.to_path_buf())
+}
+
+fn validate_session_directory(directory: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(directory).context("inspect ledger session directory")?;
+    if metadata.file_type().is_symlink() {
+        bail!("sandbox grant is a symlink: {}", directory.display());
+    }
+    if !metadata.is_dir() {
+        bail!("ledger session path is not a directory: {}", directory.display());
+    }
+    Ok(())
 }
 
 fn attest_confinement(

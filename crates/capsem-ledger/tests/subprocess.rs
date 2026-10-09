@@ -247,7 +247,7 @@ async fn executable_refuses_a_symlinked_session_before_readiness() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("open session ledger") || stderr.contains("confine ledger worker before readiness"),
+        stderr.contains("sandbox grant is a symlink"),
         "unexpected refusal: {}",
         stderr
     );
