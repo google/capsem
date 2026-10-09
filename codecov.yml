@@ -26,6 +26,10 @@ coverage:
         target: 90%
         flags:
           - python-sdk
+      inspect-ai:
+        target: 90%
+        flags:
+          - inspect-ai
       typescript-sdk:
         target: 90%
         flags:
@@ -49,6 +53,10 @@ flags:
   python-sdk:
     paths:
       - sdk/python/capsem/**
+    carryforward: true
+  inspect-ai:
+    paths:
+      - integrations/inspect-ai/inspect_capsem/**
     carryforward: true
   mcp-server:
     paths:
@@ -97,6 +105,11 @@ component_management:
       name: Python SDK
       paths:
         - sdk/python/capsem/**
+
+    - component_id: inspect-ai
+      name: Inspect AI Extension
+      paths:
+        - integrations/inspect-ai/inspect_capsem/**
 
     # MITM HTTPS proxy, TLS, cert authority, domain/HTTP policy,
     # AI traffic parsing (SSE, providers, pricing). All of net/
