@@ -14,12 +14,13 @@ use capsem_archive::{format, BodyLogWriter, FileHeader, GenerationId, FILE_HEADE
 use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
 use capsem_foundation::unix::lock::{self, LockMode};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::bodies::{archive_lock_path_for_db, BodyArchive};
 use super::retention_faults::{take_retention_failure_for_tests, RetentionFault};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetainOutcome {
     pub blocks_dropped: u64,
     pub blocks_kept: u64,

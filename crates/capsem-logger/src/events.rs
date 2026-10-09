@@ -626,8 +626,10 @@ pub struct NetEvent {
     /// display preview from it at insert and stages the bytes into the
     /// session archive; nothing else carries a second copy.
     #[serde(default)]
+    #[serde(with = "crate::wire_bytes::option")]
     pub request_body: Option<Vec<u8>>,
     #[serde(default)]
+    #[serde(with = "crate::wire_bytes::option")]
     pub response_body: Option<Vec<u8>>,
     pub conn_type: Option<String>,
     #[serde(default)]
@@ -752,6 +754,7 @@ pub struct ModelCall {
     pub request_bytes: u64,
     /// The request body as it was captured, once; see `NetEvent::request_body`.
     #[serde(default)]
+    #[serde(with = "crate::wire_bytes::option")]
     pub request_body: Option<Vec<u8>>,
     // Response metadata
     pub message_id: Option<String>,
@@ -759,6 +762,7 @@ pub struct ModelCall {
     pub text_content: Option<String>,
     pub thinking_content: Option<String>,
     #[serde(default)]
+    #[serde(with = "crate::wire_bytes::option")]
     pub response_body: Option<Vec<u8>>,
     pub stop_reason: Option<String>,
     pub input_tokens: Option<u64>,
@@ -810,7 +814,9 @@ pub struct ExecEventComplete {
     pub duration_ms: u64,
     /// Each lane's leading bytes exactly as the guest wrote them, not
     /// necessarily UTF-8. The archive stores at most `MAX_BODY_BLOB_BYTES`.
+    #[serde(with = "serde_bytes")]
     pub stdout: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub stderr: Vec<u8>,
     /// What the guest wrote per lane. More than the lane's bytes means
     /// capture or storage cut it, and the archived body says so.
