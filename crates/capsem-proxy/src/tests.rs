@@ -66,3 +66,41 @@ match = 'http.host == "worker.example"'
         state.engine.as_ref().unwrap().policy().snapshot().digest()
     );
 }
+
+struct EmptyPrivateNames;
+
+impl capsem_core::net::dns::private::PrivateNames for EmptyPrivateNames {
+    fn address_of<'a>(&'a self, _name: &'a str) -> capsem_core::net::dns::private::Lookup<'a, std::net::Ipv4Addr> {
+        Box::pin(async { None })
+    }
+
+    fn name_of(&self, _address: std::net::Ipv4Addr) -> capsem_core::net::dns::private::Lookup<'_, String> {
+        Box::pin(async { None })
+    }
+}
+
+#[tokio::test]
+async fn dns_runtime_requires_ledger_upstream_and_private_names() {
+    let mut state = ProxyRuntimeState::default();
+    state
+        .apply(
+            br#"
+[network]
+[user_rules.profiles.rules.worker_dns]
+name = "worker_dns"
+action = "allow"
+match = 'dns.qname == "worker.example"'
+[corp_rules]
+"#,
+        )
+        .unwrap();
+    state.attach_ledger(Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()));
+    let (client, _broker) = UnixStream::pair().unwrap();
+    state.attach_upstream(Arc::new(
+        capsem_core::net::upstream_grant::UpstreamGrantClient::start(client).unwrap(),
+    ));
+    assert!(state.dns_runtime().is_none());
+
+    state.attach_private_names(Arc::new(EmptyPrivateNames));
+    assert!(state.dns_runtime().is_some());
+}
