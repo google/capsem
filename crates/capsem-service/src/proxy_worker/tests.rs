@@ -1,6 +1,7 @@
 use std::os::fd::AsFd as _;
 use std::sync::Arc;
 
+use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use capsem_proto::proxy_control::{decode_proxy_control_request, encode_proxy_control_event};
 
 use super::*;
@@ -88,6 +89,10 @@ async fn fake_proxy_worker_child() {
                 let frame = frame.unwrap().unwrap();
                 match decode_proxy_control_request(&frame.bytes).unwrap() {
                     ProxyControlRequest::Attach(grant) => {
+                        if mode == "ledger" {
+                            assert_eq!(grant.capability(), ProxyCapability::Ledger);
+                            assert_eq!(grant.ledger_grant(), Some(proxy_ledger_grant()));
+                        }
                         held.push(UnixStream::from(frame.fds.into_iter().next().unwrap()));
                         control_tx.send(
                             &encode_proxy_control_event(ProxyControlEvent::Adopted {
@@ -111,6 +116,10 @@ async fn fake_proxy_worker_child() {
             }
         }
     }
+}
+
+fn proxy_ledger_grant() -> LedgerChannelGrant {
+    LedgerChannelGrant::new(LedgerGeneration::new([3; 16]), 29, LedgerClientRole::Proxy).unwrap()
 }
 
 async fn fake(mode: &'static str) -> Result<ProxyWorker> {
@@ -145,6 +154,15 @@ async fn supervisor_applies_policy_grants_connected_descriptors_and_reaps() {
     );
     let (peer, granted) = UnixStream::pair().unwrap();
     worker.grant(ProxyCapability::Telemetry, granted).await.unwrap();
+    drop(peer);
+    worker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn ledger_descriptor_carries_its_exact_proxy_authority() {
+    let worker = fake("ledger").await.unwrap();
+    let (peer, granted) = UnixStream::pair().unwrap();
+    worker.grant_ledger(granted, proxy_ledger_grant()).await.unwrap();
     drop(peer);
     worker.shutdown().await.unwrap();
 }
