@@ -6,6 +6,8 @@ import re
 import socket
 import ssl
 import struct
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -30,6 +32,37 @@ def test_mock_server_freshness_tracks_the_shared_parent_guard() -> None:
 
     assert mock_server_launcher.MOCK_SERVER_CRATE / "src/main.rs" in sources
     assert mock_server_launcher.GUARD_CRATE / "src/lib.rs" in sources
+
+
+def test_address_lease_contends_across_different_process_temp_directories(tmp_path: Path) -> None:
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        host, port = holder.getsockname()
+    addr = f"{host}:{port}"
+    child_temp = tmp_path / "child-temp"
+    child_temp.mkdir()
+    code = """
+import sys
+sys.path.insert(0, "tests")
+from build_system.tests.helpers.mock_server import _acquire_lock
+try:
+    with _acquire_lock(sys.argv[1], timeout_s=0.2):
+        print("acquired")
+except TimeoutError:
+    print("contended")
+"""
+    with mock_server_launcher._acquire_lock(addr):
+        result = subprocess.run(
+            [sys.executable, "-c", code, addr],
+            cwd=mock_server_launcher.PROJECT_ROOT,
+            env={**os.environ, "TMPDIR": str(child_temp)},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    assert result.stdout.strip() == "contended", result.stdout
 
 
 def test_mock_server_launcher_waits_for_busy_address_then_starts() -> None:
