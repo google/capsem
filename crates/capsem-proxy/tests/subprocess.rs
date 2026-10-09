@@ -8,6 +8,7 @@ use capsem_proto::proxy_control::{
     decode_proxy_control_event, encode_proxy_control_request, ProxyCapability, ProxyChannelGrant, ProxyControlEvent,
     ProxyControlRejection, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
 };
+use capsem_proto::proxy_policy::{ProxyPolicyRequest, ProxyPolicyResponse};
 
 type ControlSender = DescriptorSender<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
 type ControlReceiver = DescriptorReceiver<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
@@ -83,6 +84,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         ProxyCapability::PrivateNames,
         ProxyCapability::Mcp,
         ProxyCapability::Telemetry,
+        ProxyCapability::Policy,
     ]
     .into_iter()
     .enumerate()
@@ -109,7 +111,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
     }
 
     let (duplicate_peer, duplicate) = UnixStream::pair().unwrap();
-    let duplicate_grant = ProxyChannelGrant::new(GENERATION, 8, ProxyCapability::Ledger).unwrap();
+    let duplicate_grant = ProxyChannelGrant::new(GENERATION, 9, ProxyCapability::Ledger).unwrap();
     requests
         .send(
             &encode_proxy_control_request(ProxyControlRequest::Attach(duplicate_grant)),
@@ -122,7 +124,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         event(&events).await,
         ProxyControlEvent::Rejected {
             generation: GENERATION,
-            grant_id: 8,
+            grant_id: 9,
             reason: ProxyControlRejection::DuplicateCapability,
         }
     );
@@ -184,4 +186,88 @@ async fn stale_generation_terminates_worker_and_releases_grants() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("stale generation"));
     drop(peer);
+}
+
+#[tokio::test]
+async fn policy_capability_compiles_exact_bytes_and_rejects_bad_revisions() {
+    let (mut child, requests, events) = spawn();
+    assert_eq!(
+        event(&events).await,
+        ProxyControlEvent::Ready { generation: GENERATION }
+    );
+    let (peer, granted) = UnixStream::pair().unwrap();
+    let grant = ProxyChannelGrant::new(GENERATION, 1, ProxyCapability::Policy).unwrap();
+    requests
+        .send(
+            &encode_proxy_control_request(ProxyControlRequest::Attach(grant)),
+            &[granted.as_raw_fd()],
+        )
+        .await
+        .unwrap();
+    drop(granted);
+    assert_eq!(
+        event(&events).await,
+        ProxyControlEvent::Adopted {
+            generation: GENERATION,
+            grant_id: 1,
+        }
+    );
+
+    let (policy_tx, policy_rx) =
+        capsem_foundation::ipc_channel::channel_from_std::<ProxyPolicyRequest, ProxyPolicyResponse>(peer).unwrap();
+    let active_policy = br#"
+[network]
+[network.dns]
+upstreams = ["127.0.0.1:5353"]
+[user_rules.profiles.rules.worker_http]
+name = "worker_http"
+action = "allow"
+match = 'http.host == "worker.example"'
+[corp_rules]
+[mcp.server_enabled]
+local = false
+"#;
+    policy_tx
+        .send(ProxyPolicyRequest::apply(1, active_policy.to_vec()))
+        .await
+        .unwrap();
+    assert_eq!(
+        policy_rx.recv().await.unwrap(),
+        ProxyPolicyResponse::Applied {
+            request_id: 1,
+            active_policy_digest: capsem_core::net::policy_config::active_policy_digest(active_policy),
+        }
+    );
+
+    policy_tx
+        .send(ProxyPolicyRequest::apply(2, b"[network]\nunknown = true".to_vec()))
+        .await
+        .unwrap();
+    let ProxyPolicyResponse::Rejected { request_id, error } = policy_rx.recv().await.unwrap() else {
+        panic!("invalid active policy was accepted")
+    };
+    assert_eq!(request_id, 2);
+    assert!(error.contains("parse active policy"), "{error}");
+
+    requests
+        .send(
+            &encode_proxy_control_request(ProxyControlRequest::Shutdown { generation: GENERATION }),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        event(&events).await,
+        ProxyControlEvent::Stopped { generation: GENERATION }
+    );
+    let child = child.take();
+    let output = tokio::task::spawn_blocking(move || child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "proxy worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

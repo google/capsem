@@ -3,25 +3,37 @@ use std::io;
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use capsem_core::credential_broker::{BrokeredCredential, BrokeredUpstreamCredentials, CredentialObservation};
+use capsem_core::net::ai_traffic::provider::ProviderKind;
+use capsem_core::net::proxy_engine::{
+    ProxyCapabilityFuture, ProxyCredentials, ProxyEngine, ProxyLedger, ProxyPolicyHandle, ProxyRuntimePolicy,
+};
+use capsem_foundation::ipc_channel;
 use capsem_foundation::unix::worker_sandbox::{Policy, Role};
 use capsem_foundation::unix::{fd, router_channel};
+use capsem_logger::WriteOp;
 use capsem_proto::proxy_control::{
-    decode_proxy_control_request, encode_proxy_control_event, ProxyCapability, ProxyControlEvent,
-    ProxyControlRejection, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
+    decode_proxy_control_request, encode_proxy_control_event, ProxyCapability, ProxyChannelCloseReason,
+    ProxyControlEvent, ProxyControlRejection, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE,
+    PROXY_CONTROL_MAX_FDS,
 };
+use capsem_proto::proxy_policy::{ProxyPolicyRequest, ProxyPolicyResponse};
 use clap::Parser;
+use tokio::task::{JoinError, JoinSet};
 
 const CONTROL_QUEUE_CAPACITY: usize = 16;
-const GRANT_LIMIT: usize = 70;
+const GRANT_LIMIT: usize = 71;
 const TRAFFIC_GRANT_LIMIT: usize = 64;
 const CONTROL_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 type ControlSender = router_channel::DescriptorSender<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
 type ControlReceiver = router_channel::DescriptorReceiver<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
 type ControlFrame = router_channel::DescriptorFrame<PROXY_CONTROL_FRAME_SIZE>;
+type CapabilityResult = (ProxyCapability, u64, ProxyChannelCloseReason);
 
 #[derive(Parser)]
 #[command(version, about = "Confined per-session Capsem proxy worker")]
@@ -100,62 +112,104 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
 
     let outcome = async {
         send_event(&sender, ProxyControlEvent::Ready { generation }).await?;
-        let mut grants = BTreeMap::<ProxyCapability, Vec<(u64, UnixStream)>>::new();
+        let state = Arc::new(Mutex::new(ProxyRuntimeState::default()));
+        let mut grants = BTreeMap::<ProxyCapability, Vec<u64>>::new();
+        let mut descriptors = BTreeMap::<u64, UnixStream>::new();
         let mut grant_ids = HashSet::new();
+        let mut tasks = JoinSet::<CapabilityResult>::new();
 
-        while let Some(frame) = frames.recv().await {
-            let request = decode_proxy_control_request(&frame.bytes)?;
-            if request.generation() != generation {
-                bail!("proxy control request names a stale generation");
-            }
-            match request {
-                ProxyControlRequest::Attach(grant) => {
-                    if frame.fds.len() != 1 {
-                        bail!("proxy capability attach requires exactly one descriptor");
+        loop {
+            let input = if tasks.is_empty() {
+                ControlInput::Frame(frames.recv().await.context("proxy control channel closed")?)
+            } else {
+                tokio::select! {
+                    frame = frames.recv() => {
+                        ControlInput::Frame(frame.context("proxy control channel closed")?)
                     }
-                    let capability = grant.capability();
-                    let grant_id = grant.grant_id();
-                    let current = grants.get(&capability).map_or(0, Vec::len);
-                    let rejection = if grant_ids.contains(&grant_id) {
-                        Some(ProxyControlRejection::DuplicateGrant)
-                    } else if grant_ids.len() >= GRANT_LIMIT
-                        || (capability == ProxyCapability::Traffic && current >= TRAFFIC_GRANT_LIMIT)
-                    {
-                        Some(ProxyControlRejection::Capacity)
-                    } else if capability != ProxyCapability::Traffic && current != 0 {
-                        Some(ProxyControlRejection::DuplicateCapability)
-                    } else {
-                        None
-                    };
-                    if let Some(reason) = rejection {
-                        send_event(
-                            &sender,
-                            ProxyControlEvent::Rejected {
-                                generation,
-                                grant_id,
-                                reason,
-                            },
-                        )
-                        .await?;
-                        continue;
+                    result = tasks.join_next() => {
+                        ControlInput::Capability(result.expect("nonempty proxy capability task set"))
                     }
-                    let descriptor = frame.fds.into_iter().next().expect("one checked descriptor");
-                    grants
-                        .entry(capability)
-                        .or_default()
-                        .push((grant_id, UnixStream::from(descriptor)));
-                    grant_ids.insert(grant_id);
-                    send_event(&sender, ProxyControlEvent::Adopted { generation, grant_id }).await?;
                 }
-                ProxyControlRequest::Shutdown { .. } => {
-                    if !frame.fds.is_empty() {
-                        bail!("proxy shutdown must not carry descriptors");
+            };
+            match input {
+                ControlInput::Capability(result) => {
+                    let (capability, grant_id, reason) = result.context("proxy capability task failed")?;
+                    remove_grant(&mut grants, &mut grant_ids, capability, grant_id);
+                    send_event(
+                        &sender,
+                        ProxyControlEvent::Closed {
+                            generation,
+                            grant_id,
+                            reason,
+                        },
+                    )
+                    .await?;
+                }
+                ControlInput::Frame(frame) => {
+                    let request = decode_proxy_control_request(&frame.bytes)?;
+                    if request.generation() != generation {
+                        bail!("proxy control request names a stale generation");
                     }
-                    break;
+                    match request {
+                        ProxyControlRequest::Attach(grant) => {
+                            if frame.fds.len() != 1 {
+                                bail!("proxy capability attach requires exactly one descriptor");
+                            }
+                            let capability = grant.capability();
+                            let grant_id = grant.grant_id();
+                            let current = grants.get(&capability).map_or(0, Vec::len);
+                            let rejection = if grant_ids.contains(&grant_id) {
+                                Some(ProxyControlRejection::DuplicateGrant)
+                            } else if grant_ids.len() >= GRANT_LIMIT
+                                || (capability == ProxyCapability::Traffic && current >= TRAFFIC_GRANT_LIMIT)
+                            {
+                                Some(ProxyControlRejection::Capacity)
+                            } else if capability != ProxyCapability::Traffic && current != 0 {
+                                Some(ProxyControlRejection::DuplicateCapability)
+                            } else {
+                                None
+                            };
+                            if let Some(reason) = rejection {
+                                send_event(
+                                    &sender,
+                                    ProxyControlEvent::Rejected {
+                                        generation,
+                                        grant_id,
+                                        reason,
+                                    },
+                                )
+                                .await?;
+                                continue;
+                            }
+                            let descriptor = frame.fds.into_iter().next().expect("one checked descriptor");
+                            let stream = UnixStream::from(descriptor);
+                            grants.entry(capability).or_default().push(grant_id);
+                            grant_ids.insert(grant_id);
+                            if capability == ProxyCapability::Policy {
+                                let state = Arc::clone(&state);
+                                tasks.spawn(async move {
+                                    let reason = serve_policy(stream, state).await;
+                                    (capability, grant_id, reason)
+                                });
+                            } else {
+                                descriptors.insert(grant_id, stream);
+                            }
+                            send_event(&sender, ProxyControlEvent::Adopted { generation, grant_id }).await?;
+                        }
+                        ProxyControlRequest::Shutdown { .. } => {
+                            if !frame.fds.is_empty() {
+                                bail!("proxy shutdown must not carry descriptors");
+                            }
+                            break;
+                        }
+                    }
                 }
             }
         }
 
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
+        drop(descriptors);
         drop(grants);
         send_event(&sender, ProxyControlEvent::Stopped { generation }).await
     }
@@ -166,6 +220,126 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
     outcome?;
     reader_outcome?;
     Ok(())
+}
+
+enum ControlInput {
+    Frame(ControlFrame),
+    Capability(std::result::Result<CapabilityResult, JoinError>),
+}
+
+fn remove_grant(
+    grants: &mut BTreeMap<ProxyCapability, Vec<u64>>,
+    grant_ids: &mut HashSet<u64>,
+    capability: ProxyCapability,
+    grant_id: u64,
+) {
+    grant_ids.remove(&grant_id);
+    if let Some(ids) = grants.get_mut(&capability) {
+        ids.retain(|candidate| *candidate != grant_id);
+        if ids.is_empty() {
+            grants.remove(&capability);
+        }
+    }
+}
+
+#[derive(Default)]
+struct ProxyRuntimeState {
+    engine: Option<ProxyEngine>,
+    dns_upstreams: Vec<std::net::SocketAddr>,
+    mcp: capsem_core::mcp::policy::McpConfig,
+}
+
+impl ProxyRuntimeState {
+    fn apply(&mut self, active_policy: &[u8]) -> Result<String> {
+        let runtime = ProxyRuntimePolicy::compile(active_policy).map_err(anyhow::Error::msg)?;
+        let digest = runtime.snapshot().digest().to_string();
+        let (snapshot, dns_upstreams, mcp) = runtime.into_parts();
+        if let Some(engine) = &self.engine {
+            engine.policy().replace(snapshot);
+        } else {
+            self.engine = Some(ProxyEngine::new(
+                ProxyPolicyHandle::new(snapshot),
+                Arc::new(UnavailableLedger),
+                Arc::new(UnavailableCredentials),
+            ));
+        }
+        self.dns_upstreams = dns_upstreams;
+        self.mcp = mcp;
+        Ok(digest)
+    }
+}
+
+struct UnavailableLedger;
+
+impl ProxyLedger for UnavailableLedger {
+    fn write(&self, _op: WriteOp) -> ProxyCapabilityFuture<'_, std::result::Result<(), String>> {
+        Box::pin(async { Err("proxy ledger capability is not attached".to_string()) })
+    }
+}
+
+struct UnavailableCredentials;
+
+impl ProxyCredentials for UnavailableCredentials {
+    fn capture(&self, _observation: &CredentialObservation) -> std::result::Result<BrokeredCredential, String> {
+        Err("proxy credential capability is not attached".to_string())
+    }
+
+    fn substitute_upstream(
+        &self,
+        _domain: &str,
+        _ai_provider: Option<ProviderKind>,
+        _headers: &mut http::HeaderMap,
+        _query: Option<&str>,
+    ) -> std::result::Result<BrokeredUpstreamCredentials, String> {
+        Err("proxy credential capability is not attached".to_string())
+    }
+}
+
+async fn serve_policy(stream: UnixStream, state: Arc<Mutex<ProxyRuntimeState>>) -> ProxyChannelCloseReason {
+    let Ok((sender, receiver)) = ipc_channel::channel_from_std::<ProxyPolicyResponse, ProxyPolicyRequest>(stream)
+    else {
+        return ProxyChannelCloseReason::ProtocolError;
+    };
+    loop {
+        let request = match receiver.recv().await {
+            Ok(request) => request,
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                return ProxyChannelCloseReason::Disconnected;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "proxy policy capability received an invalid frame");
+                return ProxyChannelCloseReason::ProtocolError;
+            }
+        };
+        let request_id = request.request_id();
+        let response = if let Err(error) = request.validate() {
+            ProxyPolicyResponse::rejected(request_id, error.to_string())
+        } else {
+            let ProxyPolicyRequest::Apply { active_policy, .. } = request;
+            match state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .apply(&active_policy)
+            {
+                Ok(active_policy_digest) => ProxyPolicyResponse::Applied {
+                    request_id,
+                    active_policy_digest,
+                },
+                Err(error) => ProxyPolicyResponse::rejected(request_id, format!("{error:#}")),
+            }
+        };
+        match tokio::time::timeout(CONTROL_SEND_TIMEOUT, sender.send(response)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) if error.kind() == io::ErrorKind::BrokenPipe => {
+                return ProxyChannelCloseReason::Disconnected;
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "proxy policy capability could not send a response");
+                return ProxyChannelCloseReason::ProtocolError;
+            }
+            Err(_) => return ProxyChannelCloseReason::ProtocolError,
+        }
+    }
 }
 
 async fn read_control(receiver: ControlReceiver, frames: tokio::sync::mpsc::Sender<ControlFrame>) -> io::Result<()> {
