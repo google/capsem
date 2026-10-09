@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- SDK onboarding uses one page with Python, TypeScript, and Rust language tabs,
+  shared package Markdown and SDK-specific guide TODOs. Simplified examples
+  track pending local connection and output ergonomics fixes.
+
 - Python and TypeScript SDK getting-started documentation uses package Markdown
   READMEs shared with the docs preview through symlinks, with installation,
   usage, and links to guides and reference.

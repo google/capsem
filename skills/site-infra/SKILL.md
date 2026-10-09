@@ -291,10 +291,24 @@ can do, required versions and service access, then give a small complete example
 and explain its result. Link to guides for tasks and reference for exact API
 details using absolute documentation URLs that also work on npm and PyPI.
 
-Symlink the corresponding docs page to the package README rather than copying
-the prose. Keep the real file inside the package so packaging includes it;
-add site-only title and question-description metadata in the content loader.
-Verify both the docs rendering and registry/package Markdown requirements.
+Use one SDK getting-started page for the shared task, with Python, TypeScript,
+and Rust examples in language tabs. Symlink package READMEs into the docs source
+and render them in those tabs rather than copying prose or creating a page per
+language. Keep real README files inside packages so packaging includes them;
+site-only title and question-description metadata belong on the shared page.
+Verify both docs rendering and registry/package Markdown requirements.
+
+Keep first-use examples linear with direct `await` statements. Avoid async
+function wrappers, runner boilerplate, and try/finally scaffolding in the lesson;
+state the execution context and retain necessary lifecycle actions. Detailed
+error handling and cleanup belong in reference or a task-specific guide.
+Local onboarding should not ask users to find gateway URLs or copy tokens.
+Track missing SDK ergonomics as bugs; flag dependent examples as drafts rather
+than claiming they work before those bugs are fixed.
+
+Link SDK workflows to `guides/sdk/`. The approved TODO topics are running a
+benchmark and setting up agents with API keys and inspecting their logs. Keep
+export behavior TODO until its format and contract are agreed.
 Generate API reference separately from public SDK interfaces, types, and
 docstrings/comments, including hand-written facades as well as generated
 operations. Do not generate or overwrite the getting-started README, and do
