@@ -4,7 +4,9 @@ use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 
 use super::*;
-use crate::service_runtime::telemetry_export::{collect, grant_metric_broker, register, SessionTable};
+use crate::service_runtime::telemetry_export::{
+    collect, grant_metric_broker, register, serve_proxy_metric_channel, SessionTable,
+};
 
 fn net(decision: capsem_logger::Decision, bytes_sent: u64) -> capsem_logger::WriteOp {
     capsem_logger::WriteOp::NetEvent(
@@ -244,6 +246,106 @@ async fn metric_collector(
         [("content-type", "application/x-protobuf")],
         axum::body::Bytes::from_static(b"collector response"),
     )
+}
+
+#[tokio::test]
+async fn proxy_metric_capability_is_bounded_fixed_and_generation_bound() {
+    use capsem_proto::proxy_metrics::{ProxyMetricRequest, ProxyMetricResponse, MAX_PROXY_METRIC_BODY_BYTES};
+
+    let _environment = SETTINGS_ENV_LOCK.lock().await;
+    let settings_dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, corp_path) = install_empty_settings_env(&settings_dir);
+    let collector_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let collector_base = format!("http://{}", collector_listener.local_addr().unwrap());
+    let (collected_tx, mut collected_rx) = tokio::sync::mpsc::unbounded_channel();
+    let collector = tokio::spawn(async move {
+        axum::serve(
+            collector_listener,
+            axum::Router::new()
+                .route("/v1/metrics", axum::routing::post(metric_collector))
+                .with_state(collected_tx),
+        )
+        .await
+        .unwrap();
+    });
+    let mut corp = capsem_core::net::policy_config::SettingsFile::default();
+    corp.corp_rule_files.open_telemetry = Some(collector_base);
+    capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
+
+    let (state, _directory) = make_test_state_with_tempdir();
+    insert_fake_instance(&state, "proxy-vm", std::process::id());
+    let (generation, owner) = {
+        let instances = state.instances.lock().unwrap();
+        let instance = &instances["proxy-vm"];
+        let captured = (
+            instance.generation,
+            crate::owner_connection::OwnerConnection::capture(instance).unwrap(),
+        );
+        drop(instances);
+        captured
+    };
+    let (service, proxy) = std::os::unix::net::UnixStream::pair().unwrap();
+    let serving = tokio::spawn(serve_proxy_metric_channel(
+        Arc::clone(&state),
+        "proxy-vm".into(),
+        owner,
+        service,
+    ));
+    let (requests, responses) =
+        capsem_foundation::ipc_channel::channel_from_std::<ProxyMetricRequest, ProxyMetricResponse>(proxy).unwrap();
+
+    requests
+        .send(ProxyMetricRequest {
+            body: vec![0; MAX_PROXY_METRIC_BODY_BYTES + 1],
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        responses.recv().await.unwrap(),
+        ProxyMetricResponse::Rejected { ref message } if message.contains("too large")
+    ));
+    assert!(
+        collected_rx.try_recv().is_err(),
+        "oversized proxy metrics reached the collector"
+    );
+
+    requests
+        .send(ProxyMetricRequest {
+            body: b"proxy otlp".to_vec(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        responses.recv().await.unwrap(),
+        ProxyMetricResponse::Relayed {
+            status: StatusCode::CREATED.as_u16(),
+            content_type: Some("application/x-protobuf".into()),
+            body: b"collector response".to_vec(),
+        }
+    );
+    let (headers, body) = collected_rx.recv().await.unwrap();
+    assert_eq!(headers[axum::http::header::CONTENT_TYPE], "application/x-protobuf");
+    assert_eq!(body, b"proxy otlp".as_slice());
+
+    assert!(state.evict_instance("proxy-vm", generation).is_some());
+    requests
+        .send(ProxyMetricRequest {
+            body: b"stale".to_vec(),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        responses.recv().await.unwrap(),
+        ProxyMetricResponse::Rejected { ref message } if message.contains("changed")
+    ));
+    assert!(
+        collected_rx.try_recv().is_err(),
+        "revoked proxy metrics reached the collector"
+    );
+
+    drop(requests);
+    serving.await.unwrap().unwrap();
+    collector.abort();
 }
 
 fn protobuf_contains(body: &[u8], expected: &str) -> bool {

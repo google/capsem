@@ -395,10 +395,17 @@ impl ServiceState {
             },
         );
         drop(instances);
-        if let Err(error) = self.register_proxy_worker(id, generation, proxy) {
+        if let Err(error) = self.register_proxy_worker(id, generation, proxy.clone()) {
             self.evict_instance(id, generation);
             instance_reaper::kill_and_reap(child);
             return Err(error.context("register proxy worker"));
+        }
+        if let Err(error) = tokio::runtime::Handle::current().block_on(
+            crate::service_runtime::telemetry_export::grant_proxy_metric_broker(self, id, generation, &proxy),
+        ) {
+            self.evict_instance(id, generation);
+            instance_reaper::kill_and_reap(child);
+            return Err(error);
         }
         let _upstream_broker = upstream_broker.start(upstream_grant);
         let _proxy_upstream_broker = proxy_upstream_broker.start(proxy_upstream_grant);
