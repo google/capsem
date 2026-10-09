@@ -59,8 +59,15 @@ match = 'http.host == "worker.example"'
     state.attach_upstream(Arc::new(
         capsem_core::net::upstream_grant::UpstreamGrantClient::start(client).unwrap(),
     ));
+    assert!(state.http_config().unwrap().is_none());
+    let (mcp, _requests) = capsem_proto::mcp_aggregator::AggregatorClient::channel(1);
+    state.attach_mcp(
+        mcp,
+        capsem_proto::proxy_mcp::ProxyMcpHello::new(Vec::new(), 1, 1, 1, 1).unwrap(),
+    );
     let config = state.http_config().unwrap().expect("complete capability set");
     assert!(config.upstream_grants.is_some());
+    assert!(config.mcp_endpoint.is_some());
     assert_eq!(
         config.engine.policy().snapshot().digest(),
         state.engine.as_ref().unwrap().policy().snapshot().digest()
