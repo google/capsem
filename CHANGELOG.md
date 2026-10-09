@@ -180,55 +180,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- TypeScript SDK connection and credential grant resources preserve explicit
-  consent, typed refusal codes, ownership checks, deadlines and cancellation.
-
-- Python SDK connection and credential grant resources support explicit consent,
-  typed refusal codes, ownership checks and deadlines during VM name resolution.
-
-- Service-owned connection metadata and explicit credential grant routes share
-  managed ownership fences and enforce the current broker policy. Native AGY
-  enrollment remains unavailable pending its supported handoff integration.
-
-- Connection authorization and generation-bound credential grant operations in
-  the authenticated API contract and generated Rust, Python and TypeScript SDKs.
-
-- Credential-owned coordination for finite enrollment, redacted connection
-  state and explicit session grants, including durable request records and
-  same-owner resume fencing. Service activation and the supported native AGY
-  adapter remain under integration.
-
-- Rust SDK connection and session credential-grant resources implement the
-  nine approved calls with explicit consent, ownership checks and no automatic
-  replay. Live service activation and native AGY handoff remain pending.
-
-- TypeScript SDK managed scopes renew finite ownership and await cleanup
-  through caller abort, lease failure and uncertain creation without replay.
-
-- Python SDK managed scopes renew finite ownership leases and await the
-  original session's cleanup on exit, failure and cancellation without replaying create.
-
-- Ephemeral managed-session creation, capability-authenticated claim/renewal,
-  and awaited close use a finite service-owned lease and durable replay protection.
-
-- Desktop credential settings accept explicit API keys or tokens with file or
-  memory storage, clear submitted input, and return a copyable reference.
-
-- Rust SDK exposes the matching credential injection resource with file or
-  memory storage and opaque reference responses.
-
-- TypeScript SDK exposes credential injection with explicit storage, deadlines
-  and cancellation through the authenticated gateway.
-
-- Python SDK exposes credential injection with file or memory storage and
-  redacted request diagnostics.
-
-- Credential injection accepts explicitly selected host startup variables,
-  private file inputs, or an authenticated API. File and memory storage return
-  opaque references; memory material reaches VM owners only through host IPC.
-
-- The shared gateway contract describes credential injection with file or
-  memory storage and responses containing only opaque references.
+- `capsem proxy` starts a leased, VM-free OpenAI-compatible endpoint for a
+  configured provider, prints its base URL, keeps it alive while the command
+  runs and tears down its confined worker and ledger on exit.
 
 - Rust SDK exposes the registry image catalog and prefetch through
   `Hypervisor.images()`, with typed disk states and per-call registry access.
