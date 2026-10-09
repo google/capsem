@@ -15,3 +15,4 @@ pub mod router_sandbox;
 pub mod router_stream;
 pub mod tcp;
 pub mod tree_clone;
+pub mod worker_sandbox;
