@@ -26,33 +26,76 @@ pub unsafe fn close_inherited_descriptors() -> io::Result<()> {
 /// or another thread can open and reuse them. Every descriptor in `preserved`
 /// must be an intentional grant whose ownership the caller establishes next.
 pub unsafe fn close_inherited_descriptors_except(preserved: &[RawFd]) -> io::Result<()> {
-    #[cfg(target_os = "macos")]
-    let directory = "/dev/fd";
-    #[cfg(not(target_os = "macos"))]
-    let directory = "/proc/self/fd";
-    let mut descriptors = Vec::new();
-    for entry in std::fs::read_dir(directory)? {
-        let name = entry?.file_name();
-        let fd: RawFd = name
-            .to_str()
-            .ok_or_else(|| io::Error::other("invalid descriptor name"))?
-            .parse()
-            .map_err(io::Error::other)?;
-        if should_close_inherited_descriptor(fd, preserved) {
-            descriptors.push(fd);
-        }
+    #[cfg(target_os = "linux")]
+    {
+        close_inherited_ranges(preserved)
     }
-    for fd in descriptors {
-        // The caller guarantees no live Rust owner or fd reuse. The directory
-        // iterator itself has closed; EBADF for that fd is expected.
-        match nix::unistd::close(fd) {
-            Ok(()) | Err(Errno::EBADF) => {}
-            Err(error) => return Err(errno::io(error)),
+    #[cfg(not(target_os = "linux"))]
+    {
+        #[cfg(target_os = "macos")]
+        let directory = "/dev/fd";
+        #[cfg(not(target_os = "macos"))]
+        let directory = "/proc/self/fd";
+        let mut descriptors = Vec::new();
+        for entry in std::fs::read_dir(directory)? {
+            let name = entry?.file_name();
+            let fd: RawFd = name
+                .to_str()
+                .ok_or_else(|| io::Error::other("invalid descriptor name"))?
+                .parse()
+                .map_err(io::Error::other)?;
+            if should_close_inherited_descriptor(fd, preserved) {
+                descriptors.push(fd);
+            }
         }
+        for fd in descriptors {
+            // The caller guarantees no live Rust owner or fd reuse. The directory
+            // iterator itself has closed; EBADF for that fd is expected.
+            match nix::unistd::close(fd) {
+                Ok(()) | Err(Errno::EBADF) => {}
+                Err(error) => return Err(errno::io(error)),
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn close_inherited_ranges(preserved: &[RawFd]) -> io::Result<()> {
+    let mut preserved: Vec<u32> = preserved
+        .iter()
+        .copied()
+        .filter(|descriptor| *descriptor > 2)
+        .map(|descriptor| descriptor as u32)
+        .collect();
+    preserved.sort_unstable();
+    preserved.dedup();
+    let mut first = 3u32;
+    for descriptor in preserved {
+        if first < descriptor {
+            close_range(first, descriptor - 1)?;
+        }
+        first = descriptor.saturating_add(1);
+    }
+    close_range(first, u32::MAX)
+}
+
+#[cfg(target_os = "linux")]
+fn close_range(first: u32, last: u32) -> io::Result<()> {
+    if first > last {
+        return Ok(());
+    }
+    // nix 0.29 has no close_range wrapper. The zero flags select the kernel's
+    // atomic close behavior and avoid opening /proc/self/fd, which remains
+    // usable after a parent installs Landlock before exec.
+    let result = unsafe { libc::syscall(libc::SYS_close_range, first, last, 0u32) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
     }
     Ok(())
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn should_close_inherited_descriptor(fd: RawFd, preserved: &[RawFd]) -> bool {
     fd > 2 && !preserved.contains(&fd)
 }
