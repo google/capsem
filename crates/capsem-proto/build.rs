@@ -22,6 +22,11 @@ impl VisitMut for StripDocs {
 
 fn main() {
     let files = ["lib.rs", "ipc.rs", "handshake.rs", "router.rs", "exec_stream.rs"];
+    write_hash("schema_hash.txt", &files);
+    write_hash("ledger_schema_hash.txt", &["ledger.rs"]);
+}
+
+fn write_hash(output: &str, files: &[&str]) {
     let mut hash = 0xcbf29ce484222325_u64;
 
     for f in files {
@@ -49,6 +54,5 @@ fn main() {
     }
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-    std::fs::write(format!("{out_dir}/schema_hash.txt"), format!("{hash}u64"))
-        .expect("schema hash: write generated constant");
+    std::fs::write(format!("{out_dir}/{output}"), format!("{hash}u64")).expect("schema hash: write generated constant");
 }
