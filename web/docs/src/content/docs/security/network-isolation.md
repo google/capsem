@@ -120,6 +120,22 @@ ordinary layer-2 switch, and joining it plugs a cable into that switch.
   because the transport can deliver a socket shutdown ahead of bytes still in
   flight.
 
+## Standalone model API
+
+`capsem proxy` creates a VM-free OpenAI-compatible endpoint. The service binds
+the requested listener, selects one configured provider, and grants accepted
+client sockets to the same confined `capsem-proxy` engine used for VM traffic.
+The standalone adapter pins every request to that provider's configured
+scheme, host, port, and base path. It rejects `CONNECT` and absolute-form
+forward-proxy requests before upstream dispatch.
+
+This mode applies Capsem model parsing, policy, credential brokering,
+redaction, telemetry, and a per-proxy session ledger to a cooperating host SDK.
+It does not intercept the host process's other traffic or isolate its files and
+syscalls. The listener is unauthenticated and binds to loopback by default.
+See [Host Process Isolation](/architecture/host-isolation/#standalone-openai-compatible-endpoint)
+for examples and the authority boundary.
+
 ## MITM proxy overview
 
 The host MITM proxy receives each connection on vsock:5002 and runs a full inspection pipeline:
@@ -215,7 +231,8 @@ See [Policy](/security/policy/) for the full rule reference.
 
 ## Telemetry
 
-Every proxied request is logged to the per-VM `session.db`:
+Every proxied request is logged to the session ledger (`session.db` for a VM
+or standalone proxy session):
 
 | Column | Content |
 |--------|---------|
