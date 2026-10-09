@@ -19,7 +19,7 @@ The native host binaries are installed to
 | Binary | Role | Communication |
 |--------|------|---------------|
 | **capsem** | CLI client | HTTP over UDS to service |
-| **capsem-service** | Background daemon | Axum HTTP over UDS (`~/.capsem/run/service.sock`) |
+| **capsem-service** | Background daemon and trusted producer-checkpoint authority | Axum HTTP over UDS (`~/.capsem/run/service.sock`) plus connected worker capabilities |
 | **capsem-process** | Per-VM process | Spawned by service, bounded MessagePack over UDS (after a MessagePack Hello) |
 | **capsem-proxy** | Per-session HTTP, DNS, model, and MCP policy worker | Generation-bound connected descriptor grants |
 | **capsem-ledger** | Sole owner of one session ledger | Role- and generation-bound connected ledger channels |
@@ -80,6 +80,8 @@ graph TD
     PROC -->|"HTTP/DNS/MCP descriptors"| PROXY
     PROC -->|"typed writer channel"| LEDGER
     PROXY -->|"typed writer channel"| LEDGER
+    PROC -->|"commitment channel"| SVC
+    PROXY -->|"commitment channel"| SVC
 
     subgraph "Linux VM (guest)"
         AGENT["capsem-pty-agent"]
@@ -162,6 +164,9 @@ of paths or destination names. The short summary is:
   socket authority.
 - **Ledger**: the only process that opens one session's `session.db` and body
   archive; no network or execution authority.
+- **Commitment authority**: the service globally orders producer commitments,
+  syncs their durable prefixes outside the ledger directory, and verifies them
+  through typed reads before a fresh ledger generation accepts producers.
 - **Minimal inheritance**: child environments are cleared where secrets could
   leak and unrelated descriptors are closed before readiness.
 - **OS confinement**: Seatbelt on macOS and Landlock plus seccomp on Linux.

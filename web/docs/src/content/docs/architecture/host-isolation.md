@@ -23,6 +23,7 @@ flowchart TB
     HostMCP["host MCP client"]
     Gateway["capsem-gateway<br/>global confined API worker"]
     Service["capsem-service<br/>trusted coordinator"]
+    Checkpoints["producer checkpoints<br/>outside session ledger directory"]
 
     subgraph Session["one VM session"]
         Owner["capsem-process<br/>VM owner"]
@@ -45,14 +46,17 @@ flowchart TB
     Service -->|"typed lifecycle control"| Owner
     Service -->|"generation-bound capabilities"| Proxy
     Service -->|"role-bound ledger channels"| Ledger
+    Service -->|"orders and syncs"| Checkpoints
     Owner -->|"virtio and VSOCK"| VM
     Owner -->|"connected stream pairs"| Relay
     Proxy -->|"MCP requests after policy"| MCPBridge
     Owner -->|"owns"| MCPBridge
     MCPBridge --> Aggregator
     Owner -->|"one cable per membership"| Switch
-    Proxy -->|"admit and flush only"| Ledger
-    Owner -->|"admit and flush only"| Ledger
+    Proxy -->|"committed admit and flush"| Ledger
+    Owner -->|"committed admit and flush"| Ledger
+    Proxy -->|"reserve and anchor"| Service
+    Owner -->|"reserve and anchor"| Service
     Service -->|"read, retain, export, snapshot"| Ledger
 ```
 
@@ -88,7 +92,7 @@ grants fail closed.
 
 | Process | Permitted after readiness | Denied or absent |
 |---|---|---|
-| `capsem-service` | Global lifecycle, settings and corp policy, credential store, session registry, resource creation and capability grants | It is part of the trusted computing base; clients reach it through the local UDS or authenticated gateway routes |
+| `capsem-service` | Global lifecycle, settings and corp policy, credential store, session registry, resource creation and capability grants; producer ordering and external commitment checkpoints | It is part of the trusted computing base; clients reach it through the local UDS or authenticated gateway routes |
 | `capsem-gateway` | Accept on listeners bound before confinement; use coordinator-granted service/owner channels; update its private readiness files | Ambient file reads, path-based UDS connects, outbound TCP, new binds, process execution |
 | `capsem-process` | One VM and its exact session runtime paths; read exact boot assets and active policy; use coordinator-granted upstream and ledger channels; execute only the installed router helper | Other sessions, direct `session.db` access, ambient outbound connects/binds, unrelated host files and processes |
 | `capsem-proxy` | Consume granted HTTP, DNS, MCP, upstream, credential, ledger, metrics, private-name, and policy channels | All filesystem access, socket creation, arbitrary dial/bind/listen, process execution, signals to the coordinator |
@@ -178,6 +182,21 @@ path in that object does not grant filesystem authority. Service routes also
 query through a ledger client, including after the VM stops. A missing table or
 column is a schema error, and a flush is the read-after-write barrier.
 
+Producers also receive a separate connected channel to the service's trusted
+commitment authority. Before admission, that authority assigns one global
+order across all producers. The producer commits its generation, client role,
+producer-local order, event kind and canonical content hash into a BLAKE3
+chain. `capsem-ledger` stores the record and commitment atomically. After its
+ledger flush succeeds, the service appends and syncs the matching prefix under
+`~/.capsem/ledger-commitments/`, which is outside the path available to the
+ledger worker. The producer sees flush success only after both durable writes.
+
+When the service starts a fresh ledger generation, it uses a typed reader
+channel to compare SQLite commitments with the external checkpoint before it
+grants producer channels. An altered or substituted row, anchored omission,
+stale generation, or reordered commitment prevents startup. Body retention
+preserves these rows and checkpoints.
+
 Raw observed credentials do not belong in ledger rows, body archives, worker
 logs, or metrics. The proxy sends credential observations over its broker
 capability and receives only the material needed for the selected upstream.
@@ -260,6 +279,10 @@ when untrusted code itself needs containment.
   not protect against a compromised coordinator or kernel.
 - Connected descriptors carry real authority until closed. The coordinator
   therefore grants them to one fresh generation and retains revocation.
+- External checkpoints prove exact anchored producer prefixes. An unanchored
+  tail can be lost or replayed after a crash, and a compromised producer can
+  commit a false observation. The service, checkpoint storage, and host kernel
+  remain trusted.
 - The standalone endpoint supports the OpenAI Chat Completions and Responses
   request shapes exercised by the official Python and TypeScript SDKs,
   including streams, tool payloads, cancellation, usage, and upstream errors.
