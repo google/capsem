@@ -10,6 +10,7 @@ use capsem_logger::{Decision, NetEvent, WriteOp};
 use capsem_proto::ledger::{
     LedgerChannelGrant, LedgerClientRole, LedgerGeneration, LedgerHello, LedgerOutcome, LedgerRequest,
 };
+use capsem_proto::ledger_commitment::{LedgerCommitment, ZERO_COMMITMENT_HASH};
 use capsem_proto::ledger_control::{
     decode_ledger_control_event, encode_ledger_control_request, LedgerControlEvent, LedgerControlRequest,
     LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_MAX_FDS,
@@ -77,6 +78,18 @@ fn body_event() -> WriteOp {
     })
 }
 
+fn commitment(grant: LedgerChannelGrant, event: &WriteOp) -> LedgerCommitment {
+    LedgerCommitment::new(
+        grant,
+        1,
+        1,
+        event.kind(),
+        capsem_logger::commitment_event_hash(event).unwrap(),
+        ZERO_COMMITMENT_HASH,
+    )
+    .unwrap()
+}
+
 #[tokio::test]
 async fn executable_opens_one_ledger_and_reports_durable_stop() {
     let dir = tempfile::tempdir().unwrap();
@@ -138,11 +151,13 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
         receiver.recv().await.unwrap(),
         LedgerServerMessage::Welcome { .. }
     ));
+    let admitted = body_event();
     for (request_id, operation) in [
         (
             1,
             LedgerCommand::Admit {
-                event: Box::new(body_event()),
+                commitment: commitment(grant, &admitted),
+                event: Box::new(admitted),
             },
         ),
         (2, LedgerCommand::Flush),
