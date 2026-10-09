@@ -139,7 +139,7 @@ impl LedgerServer {
                 Ok(bodies) => self.send_bodies(sender, request_id, bodies).await,
                 Err(error) => Err(storage(error)),
             },
-            LedgerCommand::Counters => match self.db.ledger_counters().await {
+            LedgerCommand::Counters => match self.current_counters().await {
                 Ok(counters) => {
                     send_success(
                         sender,
@@ -166,6 +166,11 @@ impl LedgerServer {
             send_failure(sender, request_id, LedgerFailureCode::Storage, &error).await?;
         }
         Ok(false)
+    }
+
+    async fn current_counters(&self) -> Result<Arc<capsem_proto::ledger_counters::LedgerCounters>, String> {
+        self.db.ready().await?;
+        self.db.ledger_counters().await
     }
 
     async fn send_bodies(&self, sender: &ServerSender, request_id: u64, bodies: Vec<StoredBody>) -> Result<(), String> {
