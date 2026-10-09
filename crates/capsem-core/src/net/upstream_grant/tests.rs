@@ -89,6 +89,36 @@ async fn proxy_traffic_descriptor_is_surrendered_before_adoption_returns() {
 }
 
 #[tokio::test]
+async fn proxy_mcp_descriptor_is_surrendered_before_adoption_returns() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let (capability, mut proxy) = UnixStream::pair().unwrap();
+    let broker_task = tokio::spawn(async move {
+        let frame = requests.recv().await.unwrap();
+        assert_eq!(frame.fds.len(), 1);
+        assert_eq!(
+            decode_upstream_grant_request(&frame.bytes).unwrap(),
+            UpstreamGrantRequest::AttachProxyMcp { request_id: 1 }
+        );
+        let mut adopted = UnixStream::from(frame.fds.into_iter().next().unwrap());
+        adopted.write_all(b"mcp").unwrap();
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::ProxyMcpAdopted { request_id: 1 },
+            None,
+        )
+        .await;
+    });
+
+    client.attach_proxy_mcp(capability.into()).await.unwrap();
+    let mut proof = [0; 3];
+    proxy.read_exact(&mut proof).unwrap();
+    assert_eq!(&proof, b"mcp");
+    broker_task.await.unwrap();
+}
+
+#[tokio::test]
 async fn ledger_denial_and_missing_descriptor_fail_closed() {
     let (broker, worker) = UnixStream::pair().unwrap();
     let client = UpstreamGrantClient::start(worker).unwrap();
