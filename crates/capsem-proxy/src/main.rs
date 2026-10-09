@@ -26,6 +26,8 @@ use capsem_proto::proxy_policy::{ProxyPolicyRequest, ProxyPolicyResponse};
 use clap::Parser;
 use tokio::task::{JoinError, JoinSet};
 
+mod credential_client;
+
 const CONTROL_QUEUE_CAPACITY: usize = 16;
 const GRANT_LIMIT: usize = 71;
 const TRAFFIC_GRANT_LIMIT: usize = 64;
@@ -211,6 +213,18 @@ async fn run_control(control: UnixStream, generation: ProxyGeneration) -> Result
                                     .lock()
                                     .unwrap_or_else(|error| error.into_inner())
                                     .attach_ledger(Arc::new(writer));
+                            } else if capability == ProxyCapability::Credential {
+                                let (credentials, mut closed) = credential_client::CredentialClient::start(stream)
+                                    .context("open proxy credential capability")?;
+                                state
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .attach_credentials(Arc::new(credentials));
+                                tasks.spawn(async move {
+                                    while closed.borrow().is_none() && closed.changed().await.is_ok() {}
+                                    let reason = closed.borrow().unwrap_or(ProxyChannelCloseReason::Disconnected);
+                                    (capability, grant_id, reason)
+                                });
                             } else {
                                 descriptors.insert(grant_id, stream);
                             }
@@ -307,6 +321,17 @@ impl ProxyRuntimeState {
 
     fn attach_ledger(&mut self, ledger: Arc<capsem_logger::DbWriter>) {
         self.ledger = ledger;
+        if let Some(engine) = self.engine.take() {
+            self.engine = Some(ProxyEngine::new(
+                engine.policy().clone(),
+                Arc::clone(&self.ledger),
+                Arc::clone(&self.credentials),
+            ));
+        }
+    }
+
+    fn attach_credentials(&mut self, credentials: Arc<dyn ProxyCredentials>) {
+        self.credentials = credentials;
         if let Some(engine) = self.engine.take() {
             self.engine = Some(ProxyEngine::new(
                 engine.policy().clone(),
