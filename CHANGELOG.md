@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Move guest DNS framing, private-name resolution, policy enforcement and
+  audit admission into the confined per-session proxy, with the VM owner
+  surrendering each connection through its generation-bound broker.
+
 - Serve live and stopped-session inspection through coordinator-granted,
   role-bound ledger channels and bounded named operations, eliminating the
   service's per-session SQLite readers and closing ledger workers before a

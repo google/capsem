@@ -42,10 +42,9 @@ fn platform_confinement_and_attestation_precede_owner_readiness() {
 
 #[test]
 fn private_name_broker_carries_no_session_bearer() {
-    for source in [include_str!("private_names.rs"), include_str!("private_seats.rs")] {
-        assert!(!source.contains("owner_secret"));
-        assert!(!source.contains("owner-secret"));
-    }
+    let source = include_str!("private_seats.rs");
+    assert!(!source.contains("owner_secret"));
+    assert!(!source.contains("owner-secret"));
 }
 
 #[test]
