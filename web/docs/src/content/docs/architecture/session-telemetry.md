@@ -5,7 +5,19 @@ sidebar:
   order: 20
 ---
 
-Every Capsem VM gets its own session ledger: a SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, and credential substitutions, and beside it a body archive (`session.bodies`) that holds the full request, response, tool, exec and security payloads those rows describe. The two files live in the session directory and follow the VM lifecycle; retained and forked VMs keep both for forensic review, and one without the other is not a ledger.
+Every Capsem VM and standalone proxy session gets its own session ledger: a
+SQLite database (`session.db`) that records network requests, DNS queries, AI
+model calls, MCP tool invocations, exec activity, kernel audit events, file
+changes, security rule matches, and credential substitutions, and beside it a
+body archive (`session.bodies`) that holds the full request, response, tool,
+exec and security payloads those rows describe. The two files live in the
+session directory and follow its lifecycle; retained and forked VMs keep both
+for forensic review, and one without the other is not a ledger.
+
+A supervised `capsem-ledger` process is the sole filesystem owner of those
+files. VM owners, proxy workers, and service readers use authenticated,
+generation-bound channels with role-specific operations. See
+[Host Process Isolation](/architecture/host-isolation/#ledger-ownership).
 
 The session ledger has no migrations. A ledger written by an older build fails to open, by name, instead of being upgraded in place.
 
@@ -635,25 +647,28 @@ graph LR
         FS["VirtioFS<br/>(file watcher)"]
     end
 
-    subgraph "Writer Pipeline"
-        CH["tokio mpsc channel"]
-        WT["Dedicated writer thread<br/>(capsem-db-writer)"]
+    subgraph "capsem-ledger (one confined process per session)"
+        IPC["authenticated ledger channel<br/>generation + client role"]
+        CH["bounded write queue"]
+        WT["dedicated SQLite owner thread"]
         DB["session.db<br/>(SQLite WAL)"]
         BODIES["session.bodies<br/>(block archive)"]
     end
 
-    MITM -->|"WriteOp::NetEvent<br/>WriteOp::ModelCall"| CH
-    MCP -->|"WriteOp::McpCall"| CH
-    DNS -->|"WriteOp::DnsEvent"| CH
-    EXEC -->|"WriteOp::ExecEvent<br/>WriteOp::ExecEventComplete"| CH
-    AUDIT -->|"WriteOp::AuditEvent"| CH
-    FS -->|"WriteOp::FileEvent"| CH
+    MITM -->|"WriteOp::NetEvent<br/>WriteOp::ModelCall"| IPC
+    MCP -->|"WriteOp::McpCall"| IPC
+    DNS -->|"WriteOp::DnsEvent"| IPC
+    EXEC -->|"WriteOp::ExecEvent<br/>WriteOp::ExecEventComplete"| IPC
+    AUDIT -->|"WriteOp::AuditEvent"| IPC
+    FS -->|"WriteOp::FileEvent"| IPC
+    IPC --> CH
     CH --> WT
     WT --> DB
     WT -->|"bodies, one segment per flush"| BODIES
 ```
 
-The writer thread owns both files. A body is fed to the open block's
+The ledger worker owns both files; its writer thread owns the SQLite
+connection and archive writer. A body is fed to the open block's
 compressor as its event is written; each disk flush appends what the block
 produced since the last one to `session.bodies` as a segment, syncs it, and
 only then commits the body's index row and the block's grown extent in
@@ -848,7 +863,9 @@ transport outcome at that boundary.
 
 ## Writer Architecture
 
-The `DbWriter` spawns a dedicated thread that owns the SQLite connection:
+Inside `capsem-ledger`, the ledger server gives `DbWriter` a dedicated thread
+that owns the SQLite connection. Callers see a typed remote handle and never a
+database file descriptor:
 
 1. Async callers send `WriteOp` via `tx.send()` (non-blocking)
 2. Writer thread blocks on `rx.blocking_recv()` for the first op
@@ -891,13 +908,11 @@ For AI provider traffic, the response body is parsed inline to extract:
 Session totals are not computed by scanning the ledger. The writer keeps a
 counter snapshot (`capsem_logger::counters::LedgerCounters`) and commits it in
 the same transaction as the rows it counts, so a count can never include a row
-that was rolled back or refused. Readers take it whole with
-`DbHandle::ledger_counters()`, from the handle's memory: the handle's reader
-thread reads the snapshot when SQLite's `data_version` says the writer
-committed -- on `ready()`, and on its own every 250 ms -- so a polled route
-(`/vms/list`, `/info`, `stats/summary`, the security status routes) never
-touches the file or the reader thread. `ready()` is the read-after-write
-barrier.
+that was rolled back or refused. Readers take it whole through the typed
+ledger API. The ledger-owned reader state observes SQLite's `data_version`
+after commits, so a polled route (`/vms/list`, `/info`, `stats/summary`, the
+security status routes) does not open or fingerprint the file. A flush request
+is the read-after-write barrier.
 
 | Counter group | Holds |
 |---------------|-------|
@@ -922,7 +937,9 @@ When a session stops, the host ledger (`~/.capsem/sessions/host.db`) records thi
 Capsem does not expose arbitrary SQL over HTTP, gateway, frontend, or MCP.
 `session.db` and `session.bodies` are the durable ledger and can be inspected
 directly by a developer when doing local forensics, but product routes use
-typed logger/database APIs.
+typed, role-authorized ledger operations. Stopped retained sessions use the
+same worker boundary: the service starts or reconnects the session's ledger
+worker rather than opening SQLite in a route handler.
 Any hot `mem`/disk split belongs inside the logger DB object, never in service
 route state.
 

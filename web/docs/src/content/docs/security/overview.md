@@ -5,13 +5,18 @@ sidebar:
   order: 10
 ---
 
-Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest as fully untrusted and the host as the trusted computing base.
+Capsem sandboxes AI agents inside Linux VMs and splits sensitive host work into
+confined processes. The guest is fully untrusted. The trusted computing base is
+the coordinator service, host kernel, hypervisor, and verified package/runtime
+artifacts; a parser worker running as the desktop user does not automatically
+receive the coordinator's authority.
 
 ## Threat Model
 
 | Party | Trust Level | Goal |
 |-------|------------|------|
-| Host (Capsem binary, macOS/Linux kernel) | Trusted | Contain guest escape, protect host resources |
+| Host kernel, hypervisor, and `capsem-service` coordinator | Trusted | Create resources, grant bounded authority, contain the guest and workers |
+| Gateway, VM owner, proxy, ledger, router, and MCP workers | Confined | Perform one role with explicit paths or connected descriptors |
 | Guest (AI agent, user code, guest kernel) | Untrusted | May attempt sandbox escape, resource exhaustion, data exfiltration |
 | Network (external services) | Controlled | DNS and HTTPS pass through host policy boundaries before upstream dispatch |
 
@@ -22,7 +27,8 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 - Unaudited data exfiltration via HTTPS
 
 **What Capsem does not defend against:**
-- Compromised host processes (they already have equivalent privileges)
+- A compromised coordinator service, host kernel, or hypervisor
+- Unrelated same-user host applications outside Capsem's sandbox and lifecycle
 - Hardware side-channel attacks (mitigated by OS/firmware, not Capsem)
 - Denial of service against the guest itself (the guest is disposable)
 
@@ -34,6 +40,7 @@ Capsem sandboxes AI agents inside Linux VMs. The security model treats the guest
 | **Kernel hardening** | No modules, no debugfs, no IPv6, no swap, read-only rootfs | Reduces guest kernel attack surface |
 | **Network isolation** | Air-gapped NIC, DNS proxy, iptables, MITM proxy | DNS and HTTPS are funneled through audited host policy handlers |
 | **Filesystem sandboxing** | VirtioFS with path validation, resource limits | Guest confined to workspace directory |
+| **Host worker confinement** | Seatbelt or Landlock + seccomp, descriptor grants, fresh generations | Parser/storage/relay compromise is limited to the worker's current capabilities |
 | **Build verification** | Code signing, notarization, SBOM, OBOM | Host binary and VM base-image integrity |
 
 ## Trust Boundaries
@@ -62,7 +69,17 @@ separate: upstream may need real protocol bytes, while session DB, structured
 logs, routes, and UI stats receive only the ledger-safe event output produced by
 logging plugins. Per-session telemetry records every request and DNS query.
 
-**Filesystem boundary (VirtioFS):** The host VirtioFS server validates all path components, canonicalizes symlinks, and rejects any path that resolves outside the shared workspace. Resource limits prevent guest-driven host exhaustion.
+**Filesystem boundary (VirtioFS):** The host VirtioFS server validates every
+component and performs guest-writable filesystem operations relative to an
+already-open workspace descriptor with no-follow semantics. Symlinks cannot
+redirect a later host open outside the share. Resource limits prevent
+guest-driven host exhaustion.
+
+**Host-process boundary:** The service opens resources and grants connected
+descriptors to generation-bound workers. The proxy has no filesystem or socket
+creation authority; the ledger can access one session directory and no
+network; the gateway and VM owner receive exact path and inherited-listener
+grants. See [Host Process Isolation](/architecture/host-isolation/).
 
 ## Per-Layer Documentation
 
