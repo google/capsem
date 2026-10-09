@@ -22,7 +22,7 @@ pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 pub const MAX_GUEST_SHARE_PATH_BYTES: usize = 4096;
 
 const MAGIC: [u8; 2] = *b"UG";
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 const MAGIC_RANGE: std::ops::Range<usize> = 0..2;
 const VERSION_OFFSET: usize = 2;
 const KIND_OFFSET: usize = 3;
@@ -46,12 +46,14 @@ const RELEASE: u8 = 5;
 const SET_GUEST_MODE: u8 = 6;
 const OPEN_LEDGER: u8 = 7;
 const ATTACH_PROXY_TRAFFIC: u8 = 8;
+const ATTACH_PROXY_MCP: u8 = 9;
 const TCP_RESOLVED: u8 = 101;
 const DESCRIPTOR_GRANTED: u8 = 102;
 const DENIED: u8 = 103;
 const GUEST_MODE_SET: u8 = 104;
 const LEDGER_GRANTED: u8 = 105;
 const PROXY_TRAFFIC_ADOPTED: u8 = 106;
+const PROXY_MCP_ADOPTED: u8 = 107;
 
 /// Application protocol spoken over a granted TCP stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -200,6 +202,9 @@ pub enum UpstreamGrantRequest {
         request_id: u64,
         service: ProxyTrafficService,
     },
+    AttachProxyMcp {
+        request_id: u64,
+    },
 }
 
 /// Coordinator-to-worker record. Successful descriptor grants carry one fd.
@@ -232,13 +237,16 @@ pub enum UpstreamGrantResponse {
     ProxyTrafficAdopted {
         request_id: u64,
     },
+    ProxyMcpAdopted {
+        request_id: u64,
+    },
 }
 
 impl UpstreamGrantRequest {
     /// Requests never carry descriptors from the untrusted worker.
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
-            Self::AttachProxyTraffic { .. } => 1,
+            Self::AttachProxyTraffic { .. } | Self::AttachProxyMcp { .. } => 1,
             _ => 0,
         }
     }
@@ -252,7 +260,8 @@ impl UpstreamGrantResponse {
             Self::TcpResolved { .. }
             | Self::Denied { .. }
             | Self::GuestModeSet { .. }
-            | Self::ProxyTrafficAdopted { .. } => 0,
+            | Self::ProxyTrafficAdopted { .. }
+            | Self::ProxyMcpAdopted { .. } => 0,
         }
     }
 }
@@ -332,6 +341,11 @@ pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[
             frame[KIND_OFFSET] = ATTACH_PROXY_TRAFFIC;
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
             put_u16(&mut frame, DETAIL_RANGE, service.code());
+        }
+        UpstreamGrantRequest::AttachProxyMcp { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = ATTACH_PROXY_MCP;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
         }
     }
     Ok(frame)
@@ -434,6 +448,15 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
                 service: ProxyTrafficService::decode(detail)?,
             })
         }
+        ATTACH_PROXY_MCP => {
+            require_nonzero("request id", request_id)?;
+            if resource_id != 0 {
+                bail!("proxy MCP request carries a resource");
+            }
+            require_empty_fields(port, detail, &name)?;
+            require_empty_path(&relative_path)?;
+            Ok(UpstreamGrantRequest::AttachProxyMcp { request_id })
+        }
         kind => bail!("invalid upstream request kind {kind}"),
     }
 }
@@ -496,6 +519,11 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
         UpstreamGrantResponse::ProxyTrafficAdopted { request_id } => {
             require_nonzero("request id", *request_id)?;
             frame[KIND_OFFSET] = PROXY_TRAFFIC_ADOPTED;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
+        UpstreamGrantResponse::ProxyMcpAdopted { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = PROXY_MCP_ADOPTED;
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
         }
     }
@@ -582,6 +610,12 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
                 bail!("proxy traffic adoption carries unrelated fields");
             }
             Ok(UpstreamGrantResponse::ProxyTrafficAdopted { request_id })
+        }
+        PROXY_MCP_ADOPTED => {
+            if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {
+                bail!("proxy MCP adoption carries unrelated fields");
+            }
+            Ok(UpstreamGrantResponse::ProxyMcpAdopted { request_id })
         }
         kind => bail!("invalid upstream response kind {kind}"),
     }
