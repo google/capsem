@@ -1,4 +1,5 @@
 use super::*;
+use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 
 const POLICY_DIGEST: &str = "blake3:0000000000000000000000000000000000000000000000000000000000000001";
 
@@ -35,6 +36,7 @@ fn every_request_round_trips_exactly() {
             request_id: 4,
             upstream_index: 0,
         },
+        UpstreamGrantRequest::OpenLedger { request_id: 5 },
         UpstreamGrantRequest::Adopted { grant_id: 51 },
         UpstreamGrantRequest::Release { resource_id: 61 },
         UpstreamGrantRequest::SetGuestMode {
@@ -88,6 +90,10 @@ fn every_response_round_trips_exactly() {
             reason: UpstreamGrantDenial::Revoked,
         },
         UpstreamGrantResponse::GuestModeSet { request_id: 7 },
+        UpstreamGrantResponse::LedgerGranted {
+            request_id: 8,
+            grant: LedgerChannelGrant::new(LedgerGeneration::new([0x5a; 16]), 16, LedgerClientRole::VmOwner).unwrap(),
+        },
     ] {
         response_roundtrip(response);
     }
@@ -138,6 +144,14 @@ fn descriptor_expectations_are_explicit() {
     };
     assert_eq!(request.expected_descriptor_count(), 0);
     assert_eq!(
+        UpstreamGrantResponse::LedgerGranted {
+            request_id: 2,
+            grant: LedgerChannelGrant::new(LedgerGeneration::new([1; 16]), 3, LedgerClientRole::VmOwner).unwrap(),
+        }
+        .expected_descriptor_count(),
+        1
+    );
+    assert_eq!(
         UpstreamGrantResponse::DescriptorGranted {
             request_id: 1,
             grant_id: 2,
@@ -155,6 +169,64 @@ fn descriptor_expectations_are_explicit() {
         .expected_descriptor_count(),
         0
     );
+}
+
+#[test]
+fn ledger_grants_preserve_every_authorized_role() {
+    for (index, role) in [
+        LedgerClientRole::VmOwner,
+        LedgerClientRole::Proxy,
+        LedgerClientRole::Coordinator,
+        LedgerClientRole::Reader,
+        LedgerClientRole::Maintainer,
+        LedgerClientRole::Supervisor,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        response_roundtrip(UpstreamGrantResponse::LedgerGranted {
+            request_id: 10 + index as u64,
+            grant: LedgerChannelGrant::new(
+                LedgerGeneration::new([u8::try_from(index + 1).unwrap(); 16]),
+                20 + index as u64,
+                role,
+            )
+            .unwrap(),
+        });
+    }
+}
+
+#[test]
+fn malformed_ledger_grant_authority_is_rejected() {
+    let response = UpstreamGrantResponse::LedgerGranted {
+        request_id: 1,
+        grant: LedgerChannelGrant::new(LedgerGeneration::new([0xab; 16]), 2, LedgerClientRole::VmOwner).unwrap(),
+    };
+    let valid = encode_upstream_grant_response(&response).unwrap();
+
+    let mut zero_generation = valid;
+    put_name(&mut zero_generation, "00000000000000000000000000000000").unwrap();
+    assert!(decode_upstream_grant_response(&zero_generation).is_err());
+
+    let mut uppercase_generation = valid;
+    put_name(&mut uppercase_generation, "ABABABABABABABABABABABABABABABAB").unwrap();
+    assert!(decode_upstream_grant_response(&uppercase_generation).is_err());
+
+    let mut short_generation = valid;
+    put_name(&mut short_generation, "abab").unwrap();
+    assert!(decode_upstream_grant_response(&short_generation).is_err());
+
+    let mut unknown_role = valid;
+    put_u16(&mut unknown_role, DETAIL_RANGE, 99);
+    assert!(decode_upstream_grant_response(&unknown_role).is_err());
+
+    let mut unrelated_policy = valid;
+    put_policy_digest(&mut unrelated_policy, POLICY_DIGEST).unwrap();
+    assert!(decode_upstream_grant_response(&unrelated_policy).is_err());
+
+    let mut generation_padding = valid;
+    generation_padding[NAME_RANGE.start + 32] = 1;
+    assert!(decode_upstream_grant_response(&generation_padding).is_err());
 }
 
 #[test]
