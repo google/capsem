@@ -428,17 +428,10 @@ fn reload_config_roundtrip() {
 
 #[test]
 fn suspend_roundtrip() {
-    let msg = ServiceToProcess::Suspend {
-        checkpoint_path: "/tmp/checkpoint.vzsave".into(),
-    };
+    let msg = ServiceToProcess::Suspend;
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    match msg2 {
-        ServiceToProcess::Suspend { checkpoint_path } => {
-            assert_eq!(checkpoint_path, "/tmp/checkpoint.vzsave");
-        }
-        _ => panic!("wrong variant"),
-    }
+    assert!(matches!(msg2, ServiceToProcess::Suspend));
 }
 
 #[test]
