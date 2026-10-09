@@ -422,3 +422,42 @@ fn exec_target_defaults_to_the_workload_only_where_there_is_one() {
     // An absent target stays absent on the wire, so older services decode it.
     assert_eq!(serde_json::to_value(&absent).unwrap(), json!({"command": "id -u"}));
 }
+
+#[test]
+fn validate_name_enforces_shared_vm_identifier_rule() {
+    for valid in [
+        "a",
+        "9lives",
+        "my-vm",
+        "project_alpha",
+        "vm-1712678400",
+        &"a".repeat(64),
+    ] {
+        assert_eq!(validate_name("VM name", valid), Ok(()), "{valid}");
+        assert_eq!(validate_name("VM id", valid), Ok(()), "{valid}");
+    }
+
+    assert_eq!(validate_name("VM name", ""), Err("VM name cannot be empty".to_string()));
+    assert_eq!(validate_name("VM id", ""), Err("VM id cannot be empty".to_string()));
+    assert_eq!(
+        validate_name("VM name", &"a".repeat(65)),
+        Err("VM name too long (max 64 characters)".to_string())
+    );
+    for bad_start in ["-bad", "_bad", ".bad"] {
+        assert_eq!(
+            validate_name("VM id", bad_start),
+            Err("VM id must start with a letter or digit".to_string()),
+            "{bad_start}"
+        );
+    }
+    for bad_body in ["my/vm", "../escape", "my vm", "my.vm", "vm\0id", "nai\u{00ef}ve"] {
+        assert!(
+            validate_name("VM name", bad_body).is_err(),
+            "{bad_body} should be rejected"
+        );
+    }
+    assert_eq!(
+        validate_name("VM name", "my.vm"),
+        Err("VM name must contain only letters, digits, hyphens, and underscores".to_string())
+    );
+}
