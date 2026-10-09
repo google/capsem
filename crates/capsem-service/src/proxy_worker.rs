@@ -644,6 +644,24 @@ fn generation_hex(generation: ProxyGeneration) -> String {
 }
 
 impl ServiceState {
+    pub(crate) async fn grant_proxy_credentials(&self, worker: &ProxyWorker) -> Result<()> {
+        let (service, proxy) = UnixStream::pair().context("create proxy credential capability")?;
+        let serving = tokio::spawn(crate::proxy_credentials::serve(service));
+        if let Err(error) = worker.grant(ProxyCapability::Credential, proxy).await {
+            serving.abort();
+            let _ = serving.await;
+            return Err(error.context("grant proxy credential capability"));
+        }
+        tokio::spawn(async move {
+            match serving.await {
+                Ok(Ok(())) => tracing::debug!("proxy credential capability disconnected"),
+                Ok(Err(error)) => tracing::warn!(%error, "proxy credential capability failed"),
+                Err(error) => tracing::warn!(%error, "proxy credential capability task failed"),
+            }
+        });
+        Ok(())
+    }
+
     pub(crate) async fn grant_proxy_ledger(
         &self,
         session_id: &str,

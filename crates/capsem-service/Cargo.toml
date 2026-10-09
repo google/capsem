@@ -18,6 +18,7 @@ capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-telemetry = { path = "../capsem-telemetry", features = ["export"] }
 capsem-proto = { path = "../capsem-proto" }
+http.workspace = true
 capsem-router = { path = "../capsem-router" }
 anyhow.workspace = true
 tokio.workspace = true
@@ -44,7 +45,6 @@ workspace = true
 [dev-dependencies]
 async-trait = "0.1"
 bytes.workspace = true
-http.workspace = true
 metrics = "0.24"
 opentelemetry = { version = "0.33", default-features = false, features = ["metrics"] }
 opentelemetry-http = { version = "0.33", default-features = false }

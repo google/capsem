@@ -301,6 +301,10 @@ impl ServiceState {
             instance_reaper::kill_and_reap(child);
             return Err(error);
         }
+        if let Err(error) = tokio::runtime::Handle::current().block_on(self.grant_proxy_credentials(&proxy)) {
+            instance_reaper::kill_and_reap(child);
+            return Err(error);
+        }
         let upstream_broker = upstream_broker.with_proxy(proxy.clone());
 
         // Provisioning runs on a blocking thread that keeps the runtime
