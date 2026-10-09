@@ -47,6 +47,9 @@ pub const SEGMENT_HEADER_BYTES: usize = 52;
 /// Raw deflate (RFC 1951), no zlib or gzip framing; every segment but the
 /// last ends in a sync flush, the last in the stream's end.
 pub const CODEC_DEFLATE: u8 = 1;
+/// Zstandard frame kept open across segments with `ZSTD_e_flush`; native
+/// implementation is supplied only by the confined ledger executable.
+pub const CODEC_ZSTD: u8 = 2;
 /// Flag bit 0 of a segment: this segment ends its block's stream.
 pub const SEGMENT_FINAL: u8 = 0x01;
 /// The four bytes a sync flush ends with: an empty stored block's length and

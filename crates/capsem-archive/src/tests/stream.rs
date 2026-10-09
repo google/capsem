@@ -11,12 +11,10 @@
 use flate2::{Compress, Compression, FlushCompress};
 
 use super::{archive, file_len, XorShift};
-use crate::format::{BodyRef, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES};
+use crate::format::{BodyRef, CODEC_ZSTD, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES};
 use std::sync::Arc;
 
 use crate::{ArchiveCodecs, BlockCodec, BlockDecoder, BlockEncoder, BodyLogReader, BodyLogWriter, Result};
-
-const CHAIN_CODEC: u8 = 2;
 
 struct ChainCodec;
 
@@ -30,7 +28,7 @@ struct ChainDecoder {
 
 impl BlockCodec for ChainCodec {
     fn id(&self) -> u8 {
-        CHAIN_CODEC
+        CODEC_ZSTD
     }
 
     fn encoder(&self) -> Result<Box<dyn BlockEncoder>> {
@@ -91,7 +89,7 @@ fn a_registered_codec_keeps_stream_state_across_durable_segments() {
     assert_eq!(reader.read(first).unwrap(), first_body);
     assert_eq!(reader.read(second).unwrap(), second_body);
     let encoded = std::fs::read(&path).unwrap();
-    assert_eq!(encoded[FILE_HEADER_BYTES + 4], CHAIN_CODEC);
+    assert_eq!(encoded[FILE_HEADER_BYTES + 4], CODEC_ZSTD);
 }
 
 /// Random bodies -- text, incompressible, empty -- with random flushes and
