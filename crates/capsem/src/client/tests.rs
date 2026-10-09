@@ -817,6 +817,11 @@ fn isolated_direct_spawn_uses_an_ephemeral_gateway_port() {
             .any(|pair| pair == ["--proxy-binary", "/opt/capsem/bin/capsem-proxy"]),
         "direct service must use its sibling confined proxy: {args:?}"
     );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--ledger-binary", "/opt/capsem/bin/capsem-ledger"]),
+        "direct service must use its sibling confined ledger: {args:?}"
+    );
 }
 
 #[test]

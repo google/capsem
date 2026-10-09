@@ -37,17 +37,22 @@ fn service_install_refuses_missing_confined_workers() {
 #[test]
 fn test_generate_plist_absolute_paths() {
     let plist = generate_plist(
-        Path::new("/Users/test/.capsem/bin/capsem-service"),
-        Path::new("/Users/test/.capsem/bin/capsem-process"),
-        Path::new("/Users/test/.capsem/bin/capsem-proxy"),
-        Path::new("/Users/test/.capsem/bin/capsem-gateway"),
-        Path::new("/Users/test/.capsem/bin/capsem-tray"),
+        ServiceBinaries::new(
+            Path::new("/Users/test/.capsem/bin/capsem-service"),
+            Path::new("/Users/test/.capsem/bin/capsem-process"),
+            Path::new("/Users/test/.capsem/bin/capsem-ledger"),
+            Path::new("/Users/test/.capsem/bin/capsem-proxy"),
+            Path::new("/Users/test/.capsem/bin/capsem-gateway"),
+            Path::new("/Users/test/.capsem/bin/capsem-tray"),
+        ),
         Path::new("/Users/test/.capsem/assets"),
         "/Users/test",
     );
     // ProgramArguments binary and path args must be absolute
     assert!(plist.contains("<string>/Users/test/.capsem/bin/capsem-service</string>"));
     assert!(plist.contains("<string>/Users/test/.capsem/bin/capsem-process</string>"));
+    assert!(plist.contains("<string>--ledger-binary</string>"));
+    assert!(plist.contains("<string>/Users/test/.capsem/bin/capsem-ledger</string>"));
     assert!(plist.contains("<string>--proxy-binary</string>"));
     assert!(plist.contains("<string>/Users/test/.capsem/bin/capsem-proxy</string>"));
     assert!(plist.contains("<string>/Users/test/.capsem/assets</string>"));
@@ -60,11 +65,14 @@ fn test_generate_plist_absolute_paths() {
 #[test]
 fn test_generate_plist_valid_xml() {
     let plist = generate_plist(
-        Path::new("/usr/local/bin/capsem-service"),
-        Path::new("/usr/local/bin/capsem-process"),
-        Path::new("/usr/local/bin/capsem-proxy"),
-        Path::new("/usr/local/bin/capsem-gateway"),
-        Path::new("/usr/local/bin/capsem-tray"),
+        ServiceBinaries::new(
+            Path::new("/usr/local/bin/capsem-service"),
+            Path::new("/usr/local/bin/capsem-process"),
+            Path::new("/usr/local/bin/capsem-ledger"),
+            Path::new("/usr/local/bin/capsem-proxy"),
+            Path::new("/usr/local/bin/capsem-gateway"),
+            Path::new("/usr/local/bin/capsem-tray"),
+        ),
         Path::new("/home/test/.capsem/assets"),
         "/home/test",
     );
@@ -80,11 +88,14 @@ fn test_generate_plist_valid_xml() {
 #[test]
 fn test_generate_plist_has_keep_alive() {
     let plist = generate_plist(
-        Path::new("/bin/capsem-service"),
-        Path::new("/bin/capsem-process"),
-        Path::new("/bin/capsem-proxy"),
-        Path::new("/bin/capsem-gateway"),
-        Path::new("/bin/capsem-tray"),
+        ServiceBinaries::new(
+            Path::new("/bin/capsem-service"),
+            Path::new("/bin/capsem-process"),
+            Path::new("/bin/capsem-ledger"),
+            Path::new("/bin/capsem-proxy"),
+            Path::new("/bin/capsem-gateway"),
+            Path::new("/bin/capsem-tray"),
+        ),
         Path::new("/assets"),
         "/home",
     );
@@ -96,11 +107,14 @@ fn test_generate_plist_has_keep_alive() {
 #[test]
 fn test_generate_plist_pins_file_backed_credential_store() {
     let plist = generate_plist(
-        Path::new("/Users/test/.capsem/bin/capsem-service"),
-        Path::new("/Users/test/.capsem/bin/capsem-process"),
-        Path::new("/Users/test/.capsem/bin/capsem-proxy"),
-        Path::new("/Users/test/.capsem/bin/capsem-gateway"),
-        Path::new("/Users/test/.capsem/bin/capsem-tray"),
+        ServiceBinaries::new(
+            Path::new("/Users/test/.capsem/bin/capsem-service"),
+            Path::new("/Users/test/.capsem/bin/capsem-process"),
+            Path::new("/Users/test/.capsem/bin/capsem-ledger"),
+            Path::new("/Users/test/.capsem/bin/capsem-proxy"),
+            Path::new("/Users/test/.capsem/bin/capsem-gateway"),
+            Path::new("/Users/test/.capsem/bin/capsem-tray"),
+        ),
         Path::new("/Users/test/.capsem/assets"),
         "/Users/test",
     );
@@ -154,11 +168,14 @@ fn macos_stop_uses_bootout_so_keepalive_does_not_restart_service() {
 #[test]
 fn test_generate_systemd_unit_absolute_paths() {
     let unit = generate_systemd_unit(
-        Path::new("/home/test/.capsem/bin/capsem-service"),
-        Path::new("/home/test/.capsem/bin/capsem-process"),
-        Path::new("/home/test/.capsem/bin/capsem-proxy"),
-        Path::new("/home/test/.capsem/bin/capsem-gateway"),
-        Path::new("/home/test/.capsem/bin/capsem-tray"),
+        ServiceBinaries::new(
+            Path::new("/home/test/.capsem/bin/capsem-service"),
+            Path::new("/home/test/.capsem/bin/capsem-process"),
+            Path::new("/home/test/.capsem/bin/capsem-ledger"),
+            Path::new("/home/test/.capsem/bin/capsem-proxy"),
+            Path::new("/home/test/.capsem/bin/capsem-gateway"),
+            Path::new("/home/test/.capsem/bin/capsem-tray"),
+        ),
         Path::new("/home/test/.capsem/assets"),
     );
     // ExecStart line should have absolute path
@@ -170,6 +187,7 @@ fn test_generate_systemd_unit_absolute_paths() {
     );
     // --process-binary value should be absolute
     assert!(exec_line.contains("--process-binary /"));
+    assert!(exec_line.contains("--ledger-binary /"));
     assert!(exec_line.contains("--proxy-binary /"));
     // --assets-dir value should be absolute
     assert!(exec_line.contains("--assets-dir /"));
@@ -178,11 +196,14 @@ fn test_generate_systemd_unit_absolute_paths() {
 #[test]
 fn test_generate_systemd_unit_restart_policy() {
     let unit = generate_systemd_unit(
-        Path::new("/bin/svc"),
-        Path::new("/bin/proc"),
-        Path::new("/bin/proxy"),
-        Path::new("/bin/gw"),
-        Path::new("/bin/tray"),
+        ServiceBinaries::new(
+            Path::new("/bin/svc"),
+            Path::new("/bin/proc"),
+            Path::new("/bin/ledger"),
+            Path::new("/bin/proxy"),
+            Path::new("/bin/gw"),
+            Path::new("/bin/tray"),
+        ),
         Path::new("/assets"),
     );
     assert!(unit.contains("Restart=always"));
@@ -192,11 +213,14 @@ fn test_generate_systemd_unit_restart_policy() {
 #[test]
 fn test_generate_systemd_unit_wanted_by() {
     let unit = generate_systemd_unit(
-        Path::new("/bin/svc"),
-        Path::new("/bin/proc"),
-        Path::new("/bin/proxy"),
-        Path::new("/bin/gw"),
-        Path::new("/bin/tray"),
+        ServiceBinaries::new(
+            Path::new("/bin/svc"),
+            Path::new("/bin/proc"),
+            Path::new("/bin/ledger"),
+            Path::new("/bin/proxy"),
+            Path::new("/bin/gw"),
+            Path::new("/bin/tray"),
+        ),
         Path::new("/assets"),
     );
     assert!(unit.contains("[Install]"));
@@ -223,11 +247,14 @@ fn test_xml_escape_angle_brackets() {
 #[test]
 fn test_plist_with_special_chars_in_path() {
     let plist = generate_plist(
-        Path::new("/Users/AT&T Corp/.capsem/bin/capsem-service"),
-        Path::new("/Users/AT&T Corp/.capsem/bin/capsem-process"),
-        Path::new("/Users/AT&T Corp/.capsem/bin/capsem-proxy"),
-        Path::new("/Users/AT&T Corp/.capsem/bin/capsem-gateway"),
-        Path::new("/Users/AT&T Corp/.capsem/bin/capsem-tray"),
+        ServiceBinaries::new(
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-service"),
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-process"),
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-ledger"),
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-proxy"),
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-gateway"),
+            Path::new("/Users/AT&T Corp/.capsem/bin/capsem-tray"),
+        ),
         Path::new("/Users/AT&T Corp/.capsem/assets"),
         "/Users/AT&T Corp",
     );
@@ -257,11 +284,14 @@ fn test_systemd_escape_path_with_spaces() {
 #[test]
 fn test_systemd_unit_with_spaces_in_path() {
     let unit = generate_systemd_unit(
-        Path::new("/home/John Doe/.capsem/bin/capsem-service"),
-        Path::new("/home/John Doe/.capsem/bin/capsem-process"),
-        Path::new("/home/John Doe/.capsem/bin/capsem-proxy"),
-        Path::new("/home/John Doe/.capsem/bin/capsem-gateway"),
-        Path::new("/home/John Doe/.capsem/bin/capsem-tray"),
+        ServiceBinaries::new(
+            Path::new("/home/John Doe/.capsem/bin/capsem-service"),
+            Path::new("/home/John Doe/.capsem/bin/capsem-process"),
+            Path::new("/home/John Doe/.capsem/bin/capsem-ledger"),
+            Path::new("/home/John Doe/.capsem/bin/capsem-proxy"),
+            Path::new("/home/John Doe/.capsem/bin/capsem-gateway"),
+            Path::new("/home/John Doe/.capsem/bin/capsem-tray"),
+        ),
         Path::new("/home/John Doe/.capsem/assets"),
     );
     let exec_line = unit.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
