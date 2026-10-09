@@ -29,8 +29,8 @@ pub mod writer;
 
 pub use codec::{ArchiveCodecs, BlockCodec, BlockDecoder, BlockEncoder};
 pub use format::{
-    ArchiveId, BodyRef, FileHeader, GenerationId, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES,
-    TARGET_BLOCK_BYTES,
+    ArchiveId, BodyRef, FileHeader, GenerationId, BLOCK_HEADER_BYTES, CODEC_ZSTD, FILE_HEADER_BYTES,
+    MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES,
 };
 pub use reader::{BlockExtent, BodyLogReader};
 pub use retain::{commit_retained, stage_retained_blocks, validate_block_extent, RetainedStaging};
