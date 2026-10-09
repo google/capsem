@@ -56,6 +56,10 @@ fn roles_admit_only_their_operation_classes() {
             },
         ),
         (LedgerClientRole::Reader, LedgerCommand::ExportWarc),
+        (
+            LedgerClientRole::Maintainer,
+            LedgerCommand::Snapshot { snapshot_id: [1; 16] },
+        ),
         (LedgerClientRole::Supervisor, LedgerCommand::Shutdown),
     ] {
         LedgerRequest::new(1, operation)
@@ -63,6 +67,15 @@ fn roles_admit_only_their_operation_classes() {
             .authorize(&grant(role))
             .unwrap();
     }
+}
+
+#[test]
+fn snapshot_ids_must_be_nonzero_fixed_width_values() {
+    assert_eq!(
+        LedgerCommand::Snapshot { snapshot_id: [0; 16] }.validate(),
+        Err(LedgerProtocolError::InvalidOperation)
+    );
+    LedgerCommand::Snapshot { snapshot_id: [1; 16] }.validate().unwrap();
 }
 
 #[test]

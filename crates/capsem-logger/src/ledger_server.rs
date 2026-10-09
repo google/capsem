@@ -2,7 +2,7 @@
 
 use std::io;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use capsem_foundation::ipc_channel;
@@ -34,6 +34,7 @@ struct AdmissionState {
 /// One process-owned session database shared by its authenticated clients.
 pub struct LedgerServer {
     db: Arc<DbHandle>,
+    session_dir: PathBuf,
     admission: tokio::sync::Mutex<AdmissionState>,
 }
 
@@ -41,6 +42,7 @@ impl LedgerServer {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         Ok(Self {
             db: Arc::new(DbHandle::open(path)?),
+            session_dir: path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
             admission: tokio::sync::Mutex::new(AdmissionState::default()),
         })
     }
@@ -157,6 +159,24 @@ impl LedgerServer {
                 Err(error) => Err(storage(error)),
             },
             LedgerCommand::ExportWarc => self.send_warc(sender, request_id).await,
+            LedgerCommand::Snapshot { snapshot_id } => {
+                let destination = self.session_dir.join(snapshot_directory_name(snapshot_id));
+                let source = self.session_dir.clone();
+                let admission = self.admission.lock().await;
+                let snapshot = match self.db.flush().await {
+                    Ok(()) => tokio::task::spawn_blocking(move || {
+                        crate::snapshot_session_ledger(&source, &destination).map_err(storage)
+                    })
+                    .await
+                    .map_err(|error| format!("ledger snapshot task failed: {error}"))?,
+                    Err(error) => Err(storage(error)),
+                };
+                drop(admission);
+                match snapshot {
+                    Ok(()) => send_success(sender, request_id, LedgerReply::Snapshotted).await,
+                    Err(error) => Err(error),
+                }
+            }
             LedgerCommand::Shutdown => {
                 send_success(sender, request_id, LedgerReply::ShuttingDown).await?;
                 return Ok(true);
@@ -242,6 +262,11 @@ impl LedgerServer {
         )
         .await
     }
+}
+
+#[must_use]
+pub fn snapshot_directory_name(snapshot_id: [u8; 16]) -> String {
+    format!(".ledger-snapshot-{}", uuid::Uuid::from_bytes(snapshot_id).simple())
 }
 
 /// Execute the same bounded named intent as a descriptor client against an

@@ -28,6 +28,10 @@ const OPERATION_TIMEOUT: Duration = Duration::from_secs(1);
 const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(test)]
 const STREAM_TIMEOUT: Duration = Duration::from_millis(250);
+#[cfg(not(test))]
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5 * 60 + 5);
+#[cfg(test)]
+const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 
 type ClientSender = ipc_channel::Sender<LedgerClientMessage>;
 type ClientReceiver = ipc_channel::Receiver<LedgerServerMessage>;
@@ -50,6 +54,10 @@ enum Command {
     },
     ExportWarc {
         reply: oneshot::Sender<Result<LedgerWarcExport, String>>,
+    },
+    Snapshot {
+        snapshot_id: [u8; 16],
+        reply: oneshot::Sender<Result<(), String>>,
     },
 }
 
@@ -135,6 +143,17 @@ impl LedgerClient {
         let (reply, result) = oneshot::channel();
         self.send(Command::ExportWarc { reply }).await?;
         receive_result(result, "WARC export").await
+    }
+
+    pub async fn snapshot(&self, snapshot_id: [u8; 16]) -> Result<PathBuf, String> {
+        let (reply, result) = oneshot::channel();
+        self.send(Command::Snapshot { snapshot_id, reply }).await?;
+        receive_result(result, "snapshot").await?;
+        Ok(self
+            .path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(crate::ledger_server::snapshot_directory_name(snapshot_id)))
     }
 
     async fn send(&self, command: Command) -> Result<(), String> {
@@ -265,6 +284,21 @@ async fn dispatch(
             finish(reply, result)
         }
         Command::ExportWarc { reply } => export_warc(sender, receiver, request_id, reply).await,
+        Command::Snapshot { snapshot_id, reply } => {
+            let result = one_reply_with_timeout(
+                sender,
+                receiver,
+                request_id,
+                LedgerCommand::Snapshot { snapshot_id },
+                SNAPSHOT_TIMEOUT,
+            )
+            .await
+            .and_then(|response| match response {
+                LedgerReply::Snapshotted => Ok(()),
+                response => Err(unexpected("snapshot", response)),
+            });
+            finish(reply, result)
+        }
     }
 }
 
@@ -292,8 +326,18 @@ async fn one_reply(
     request_id: u64,
     command: LedgerCommand,
 ) -> Result<LedgerReply, String> {
+    one_reply_with_timeout(sender, receiver, request_id, command, OPERATION_TIMEOUT).await
+}
+
+async fn one_reply_with_timeout(
+    sender: &ClientSender,
+    receiver: &ClientReceiver,
+    request_id: u64,
+    command: LedgerCommand,
+    timeout: Duration,
+) -> Result<LedgerReply, String> {
     send_request(sender, request_id, command).await?;
-    tokio::time::timeout(OPERATION_TIMEOUT, receive_reply(receiver, request_id))
+    tokio::time::timeout(timeout, receive_reply(receiver, request_id))
         .await
         .map_err(|_| "ledger client operation timed out".to_string())?
 }
@@ -503,6 +547,9 @@ fn fail_pending(commands: &mut mpsc::Receiver<Command>, reason: &str) {
                 let _ = reply.send(Err(reason.to_string()));
             }
             Command::ExportWarc { reply } => {
+                let _ = reply.send(Err(reason.to_string()));
+            }
+            Command::Snapshot { reply, .. } => {
                 let _ = reply.send(Err(reason.to_string()));
             }
         }
