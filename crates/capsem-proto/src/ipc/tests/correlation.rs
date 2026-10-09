@@ -124,6 +124,7 @@ fn mcp_tool_status_annotations_roundtrip_msgpack() {
             namespaced_name: "github__search".into(),
             original_name: "search".into(),
             description: None,
+            input_schema: serde_json::json!({"type": "object"}),
             server_name: "github".into(),
             annotations: Some(crate::mcp_contracts::ToolAnnotations {
                 title: Some("Search".into()),
@@ -142,4 +143,5 @@ fn mcp_tool_status_annotations_roundtrip_msgpack() {
     let annotations = tools[0].annotations.as_ref().expect("annotations survive");
     assert!(annotations.read_only_hint && !annotations.destructive_hint);
     assert_eq!(annotations.title.as_deref(), Some("Search"));
+    assert_eq!(tools[0].input_schema, serde_json::json!({"type": "object"}));
 }
