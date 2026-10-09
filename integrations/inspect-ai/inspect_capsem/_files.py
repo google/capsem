@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import posixpath
 import shlex
 from typing import TYPE_CHECKING
@@ -10,6 +11,21 @@ from inspect_ai.util import OutputLimitExceededError, SandboxEnvironmentLimits
 
 if TYPE_CHECKING:
     from inspect_capsem._controller import CapsemController
+
+logger = logging.getLogger(__name__)
+
+
+def _chown_to_container_user_snippet(target_q: str, default_user: str | None) -> str:
+    """Build shell snippet that chowns `target_q` to `default_user` or `$1` when non-root."""
+    fallback_q = shlex.quote((default_user or "").strip())
+    return (
+        f'__u={fallback_q}; [ -z "$__u" ] && __u="$1"; '
+        'if [ -n "$__u" ] && [ "$__u" != "0" ] && [ "$__u" != "root" ] '
+        '&& [ "$__u" != "0:0" ] && [ "$__u" != "root:root" ]; then '
+        'case "$__u" in *:*) chown "$__u" '
+        f'{target_q} ;; *) chown "$__u:" {target_q} 2>/dev/null || chown "$__u" {target_q} ;; '
+        "esac; fi"
+    )
 
 
 def _resolve_guest_path(path: str, working_dir: str) -> str:
@@ -50,7 +66,7 @@ async def read_guest_file(
     *,
     text: bool = True,
 ) -> str | bytes:
-    """Read `file` from guest VM, enforcing size limits and permissions."""
+    """Read `file` from guest VM or OCI container, enforcing size limits and permissions."""
     resolved = _resolve_guest_path(file, working_dir)
     limit_bytes = SandboxEnvironmentLimits.MAX_READ_FILE_SIZE
     res_q = shlex.quote(resolved)
@@ -98,8 +114,11 @@ async def write_guest_file(
     working_dir: str,
     file: str,
     contents: str | bytes,
+    *,
+    is_container: bool = False,
+    default_user: str | None = None,
 ) -> None:
-    """Write `contents` to `file` in guest VM, checking permissions."""
+    """Write `contents` to `file` in guest VM or OCI workload container."""
     resolved = _resolve_guest_path(file, working_dir)
     data = contents.encode("utf-8") if isinstance(contents, str) else contents
     res_q = shlex.quote(resolved)
@@ -118,3 +137,18 @@ async def write_guest_file(
         raise PermissionError(f"Permission denied: '{file}'")
 
     await controller.upload_to_vm(vm_id, resolved, data)
+    if is_container:
+        chown_snip = _chown_to_container_user_snippet(res_q, default_user)
+        chown_res = await controller.exec_in_vm(
+            vm_id,
+            f'set -- "$(stat -c %u:%g /proc/1 2>/dev/null)"; {chown_snip}',
+            timeout=30,
+        )
+        if chown_res.exit_code != 0:
+            logger.warning(
+                "Failed to chown %s in container (VM %s, exit %s): %s",
+                resolved,
+                vm_id,
+                chown_res.exit_code,
+                (chown_res.stderr or chown_res.stdout).strip(),
+            )

@@ -23,6 +23,7 @@ class _FilesClient(Protocol):
 
 _XFER_PART_BYTES = MAX_REQUEST_BODY_BYTES - 2 * 1024 * 1024
 _XFER_STAGE_DIR = "/root"
+_OCI_STAGE_DIR = "/workspace"
 # Direct Files API eligibility check: the service's path filter silently strips
 # characters outside `[A-Za-z0-9._-/]` instead of returning 400, so only
 # relative paths that the service stores verbatim take the direct Files API fast
@@ -59,6 +60,8 @@ async def _staged_upload(
     vm_id: str,
     guest_path: str,
     data: bytes,
+    *,
+    stage_dir: str | None = None,
 ) -> None:
     dest_q = shlex.quote(guest_path)
     parent_q = shlex.quote(posixpath.dirname(guest_path) or "/")
@@ -71,9 +74,9 @@ async def _staged_upload(
             what="Empty upload",
         )
         return
-    stage_dir = _XFER_STAGE_DIR
+    effective_stage_dir = stage_dir if stage_dir is not None else _XFER_STAGE_DIR
     part_bytes = _XFER_PART_BYTES
-    rel = _rel_to_stage_dir(guest_path, stage_dir)
+    rel = _rel_to_stage_dir(guest_path, effective_stage_dir)
     if rel is not None and len(data) <= part_bytes:
         try:
             await files.write(rel, data)
@@ -82,7 +85,7 @@ async def _staged_upload(
             if exc.status not in (400, 403, 413):
                 raise
     stage = f".capsem-xfer-{uuid.uuid4().hex[:12]}"
-    stage_q = shlex.quote(posixpath.join(stage_dir, stage))
+    stage_q = shlex.quote(posixpath.join(effective_stage_dir, stage))
     cleaned_inline = False
     try:
         for index, offset in enumerate(range(0, len(data), part_bytes)):
@@ -113,10 +116,11 @@ async def _staged_download(
     guest_path: str,
     *,
     max_bytes: int | None = None,
+    stage_dir: str | None = None,
 ) -> bytes:
-    stage_dir = _XFER_STAGE_DIR
+    effective_stage_dir = stage_dir if stage_dir is not None else _XFER_STAGE_DIR
     part_bytes = _XFER_PART_BYTES
-    rel = _rel_to_stage_dir(guest_path, stage_dir)
+    rel = _rel_to_stage_dir(guest_path, effective_stage_dir)
     if rel is not None:
         try:
             direct = bytes(await files.read(rel))
@@ -125,7 +129,7 @@ async def _staged_download(
             if exc.status not in (400, 403, 413):
                 raise
     stage = f".capsem-xfer-{uuid.uuid4().hex[:12]}"
-    stage_q = shlex.quote(posixpath.join(stage_dir, stage))
+    stage_q = shlex.quote(posixpath.join(effective_stage_dir, stage))
     guest_q = shlex.quote(guest_path)
     split_cmd = (
         f"head -c {max_bytes + 1} -- {guest_q} | split -b {part_bytes} -d -a 6 - part."

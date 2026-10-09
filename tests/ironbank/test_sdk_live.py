@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import pytest
+from helpers.constants import ASSETS_DIR
 from helpers.gateway import GatewayInstance
 from helpers.sdk_packages import inspect_ai_gateway, python_gateway, typescript_gateway
 from helpers.service import ServiceInstance
@@ -84,6 +85,7 @@ def test_inspect_ai_live_vm_sandbox_acceptance() -> None:
         environment = {
             **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
             "CAPSEM_HOME": str(service.home_dir),
+            "CAPSEM_ASSETS_DIR": str(service.assets_dir or ASSETS_DIR),
             "CAPSEM_GATEWAY_URL": gateway.base_url,
             "CAPSEM_GATEWAY_TOKEN": gateway.token,
         }
@@ -95,6 +97,7 @@ def test_inspect_ai_live_vm_sandbox_acceptance() -> None:
             timeout_seconds=240,
         )
         assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in output
+        assert "INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK" in output
         assert "INSPECT_CAPSEM_VM_ACCEPTANCE_OK" in output
         print(output.strip())
     finally:

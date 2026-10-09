@@ -10,10 +10,20 @@ import inspect_capsem
 import pytest
 from inspect_ai.util._sandbox.registry import registry_find_sandboxenv
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
+from inspect_capsem._compose import coerce_config
 from inspect_capsem._controller import SdkCapsemController, is_root_user_spec
 from inspect_capsem._exec import _format_exec_command
-from inspect_capsem.config import coerce_config
+from inspect_capsem.containers.compose_fields import (
+    _is_host_path_allowed,
+    extract_capsem_compose_fields,
+)
+from inspect_capsem.containers.runtime import (
+    _stage_oci_bind_volumes,
+    prepare_oci_workload_container,
+)
 from pydantic import ValidationError
+
+from .helpers import Scripted, ok
 
 
 def test_package_exports_and_registry() -> None:
@@ -58,10 +68,99 @@ def test_coerce_config_and_unsupported_knobs() -> None:
         coerce_config({"allow_domains": ["pypi.org"]})
     with pytest.raises(NotImplementedError, match="host_workspace_dir"):
         coerce_config({"host_workspace_dir": "/tmp/ws"})
+    with pytest.raises(ValidationError, match="requires an explicit OCI image reference"):
+        CapsemSandboxConfig(execution_mode="container")
+    with pytest.raises(ValueError, match="requires an explicit OCI image reference"):
+        CapsemSandboxConfig(compose_file="compose.yaml").to_container_spec()
     with pytest.raises(ValidationError):
         coerce_config({"pool_endpoint": "http://127.0.0.1:9999"})
     with pytest.raises(TypeError, match="Unsupported Capsem sandbox config type"):
         coerce_config(cast(Any, object()))
+
+
+async def test_host_path_containment_and_operator_allowlist_plumbing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    compose_dir, sibling_dir, outside_dir = tmp_path / "a", tmp_path / "ab", tmp_path / "outside"
+    for d in (compose_dir, sibling_dir, outside_dir):
+        d.mkdir()
+    outside_file, sibling_file = outside_dir / "secret.txt", sibling_dir / "sibling.txt"
+    outside_file.write_text("secret")
+    sibling_file.write_text("sibling")
+    escape_dir_link, escape_file_link = compose_dir / "escape_dir", compose_dir / "escape.txt"
+    escape_dir_link.symlink_to(outside_dir)
+    escape_file_link.symlink_to(outside_file)
+
+    for p in (escape_dir_link, escape_file_link, sibling_dir, sibling_file):
+        assert not _is_host_path_allowed(p, (str(compose_dir),), base_dir=compose_dir)
+
+    allow_link = tmp_path / "allow_link"
+    allow_link.symlink_to(outside_dir)
+    assert _is_host_path_allowed(outside_file, (str(allow_link),))
+    assert not _is_host_path_allowed(tmp_path / "other.txt", (str(allow_link),))
+    monkeypatch.chdir(tmp_path)
+    assert _is_host_path_allowed(outside_file, ("outside",))
+    assert not _is_host_path_allowed(sibling_file, ("outside",))
+
+    monkeypatch.setenv("HOME", str(outside_dir))
+    monkeypatch.delenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", raising=False)
+    for bad_vol in (
+        "./escape_dir:/mnt",
+        "./escape.txt:/mnt/s.txt",
+        "../ab:/mnt",
+        "../outside/secret.txt:/mnt/s.txt",
+        f"{outside_dir}:/mnt",
+        "~/secret.txt:/mnt/s.txt",
+        {"type": "bind", "source": "nonexistent_in_cwd", "target": "/mnt"},
+    ):
+        doc = {"services": {"app": {"image": "alpine:3.20", "volumes": [bad_vol]}}}
+        with pytest.raises(ValueError, match="allowed_host_paths"):
+            extract_capsem_compose_fields(doc, base_dir=compose_dir)
+
+    vol_doc = {"services": {"app": {"image": "a", "volumes": [f"{outside_file}:/mnt/s.txt:ro"]}}}
+    allow_out = (str(outside_dir),)
+    with pytest.raises(ValueError, match="allowed_host_paths"):
+        extract_capsem_compose_fields(vol_doc, base_dir=compose_dir, allowed_host_paths=allow_out)
+
+    monkeypatch.setenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", f"{outside_dir},{sibling_dir}")
+    ext_ok = extract_capsem_compose_fields(
+        vol_doc, base_dir=compose_dir, allowed_host_paths=allow_out
+    )
+    assert ext_ok["volumes"] == (f"{outside_file.resolve()}:/mnt/s.txt:ro",)
+
+    sib_doc = {"services": {"app": {"image": "a", "volumes": [f"{sibling_file}:/mnt/sib.txt:ro"]}}}
+    with pytest.raises(ValueError, match="allowed_host_paths"):
+        extract_capsem_compose_fields(sib_doc, base_dir=compose_dir, allowed_host_paths=allow_out)
+
+    allow_cmp = (str(compose_dir),)
+    with pytest.raises(ValueError, match="allowed_host_paths"):
+        await _stage_oci_bind_volumes(
+            cast(Any, Scripted()),
+            "vm-1",
+            (f"{escape_file_link}:/mnt/s.txt",),
+            allowed_host_paths=allow_cmp,
+        )
+
+    monkeypatch.delenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", raising=False)
+    spec_unallowed = CapsemSandboxConfig(
+        execution_mode="container",
+        image="alpine:3.20",
+        volumes=(f"{outside_file}:/mnt/secret.txt",),
+        allowed_host_paths=allow_out,
+    ).to_container_spec()
+    assert spec_unallowed.allowed_host_paths == ()
+    with pytest.raises(ValueError, match="allowed_host_paths"):
+        await prepare_oci_workload_container(Scripted(), "vm-1", spec_unallowed)
+
+    in_dir = compose_dir / "data"
+    in_dir.mkdir()
+    (in_dir / "in.txt").write_text("in")
+    compose_path = compose_dir / "compose.yaml"
+    compose_path.write_text(
+        "services:\n  app:\n    image: alpine:3.20\n    volumes:\n      - ./data:/mnt/data:ro\n"
+    )
+    spec_ok = coerce_config(str(compose_path)).to_container_spec()
+    await prepare_oci_workload_container(Scripted([("", ok())]), "vm-1", spec_ok)
 
 
 def test_user_spec_quoting_and_mixed_groups() -> None:

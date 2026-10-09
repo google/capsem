@@ -8,7 +8,6 @@ import logging
 import re
 import shlex
 import uuid
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from capsem.execution import EXEC_TIMEOUT_CEILING_SECS
@@ -25,6 +24,32 @@ logger = logging.getLogger(__name__)
 _TIMEOUT_SENTINEL = "__CAPSEM_INSPECT_EXEC_TIMED_OUT__"
 _EXEC_TIMEOUT_MARGIN_SECS = 10
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# When a root-owned OCI workload container inherits a non-`/root` `HOME`
+# (for example from base-image `ENV`), reset `HOME=/root` for root execs.
+_CONTAINER_HOME_FIX = (
+    'if [ "$(id -u)" = 0 ] && [ "${HOME:-/root}" != /root ] && [ -d /root ]; '
+    "then export HOME=/root; fi; "
+)
+_CONTAINER_ROOT_CHECK = (
+    '[ "$(id -u)" = 0 ] || { echo '
+    '"capsem: cannot switch to root inside a non-root workload (no-new-privileges)" '
+    ">&2; exit 126; }; "
+)
+_NONROOT_SWITCH_DENY = (
+    'elif [ "$(id -u)" != 0 ]; then echo '
+    '"capsem: cannot switch user inside a non-root workload (no-new-privileges)" '
+    ">&2; exit 126; "
+)
+
+
+def _wrap_target_command(
+    shell_cmd: str, *, is_container: bool = False, user: str | None = None
+) -> str:
+    """Wrap a shell command for execution in the VM or OCI workload container."""
+    if not is_container or not is_root_user_spec(user):
+        return shell_cmd
+    root_chk = _CONTAINER_ROOT_CHECK if user and user.strip() else ""
+    return f"bash -c {shlex.quote(f'{root_chk}{_CONTAINER_HOME_FIX}{shell_cmd}')}"
 
 
 def _truncate_utf8(text: str, max_bytes: int) -> tuple[str, bool]:
@@ -62,45 +87,46 @@ def _format_exec_command(
         )
         user_body_q = shlex.quote(f"{user_env_reset}{inner_body}")
         err_user_q = shlex.quote(f"capsem: unknown user {user}")
+        then_deny = f"then /bin/bash -c {user_body_q}; {_NONROOT_SWITCH_DENY}"
         if target_user.isdigit() and target_group.isdigit():
+            setpriv_cmd = f"setpriv --reuid={target_user} --regid={target_group} --clear-groups"
             inner_body = (
-                f"setpriv --reuid={target_user} --regid={target_group} "
-                f"--clear-groups /bin/bash -c {user_body_q}"
+                f'if [ "$(id -u):$(id -g)" = {target_user}:{target_group} ]; '
+                f"{then_deny}else {setpriv_cmd} /bin/bash -c {user_body_q}; fi"
             )
         elif target_user.isdigit() and not target_group:
             u_q = shlex.quote(target_user)
+            setpriv_cmd = f"setpriv --reuid={target_user} --regid=0 --clear-groups"
             inner_body = (
-                f"if id -u {u_q} >/dev/null 2>&1; then "
-                f'su -m "$(id -un {u_q})" -s /bin/bash -c {user_body_q}; '
-                f"else setpriv --reuid={target_user} --regid=0 "
-                f"--clear-groups /bin/bash -c {user_body_q}; fi"
+                f'if [ "$(id -u)" = {target_user} ]; {then_deny}'
+                f'elif id -u {u_q} >/dev/null 2>&1; then su -m "$(id -un {u_q})" -s /bin/bash -c {user_body_q}; '
+                f"else {setpriv_cmd} /bin/bash -c {user_body_q}; fi"
             )
         elif not target_group:
             su_user = shlex.quote(target_user)
             inner_body = (
-                f"if id -u {su_user} >/dev/null 2>&1; then "
-                f"su -m {su_user} -s /bin/bash -c {user_body_q}; "
-                f"else echo {err_user_q} >&2; exit 1; fi"
+                f"_uid=$(id -u {su_user} 2>/dev/null) || {{ echo {err_user_q} >&2; exit 1; }}; "
+                f'if [ "$(id -u)" = "$_uid" ]; {then_deny}'
+                f"else su -m {su_user} -s /bin/bash -c {user_body_q}; fi"
             )
         else:
             u_q, g_q = shlex.quote(target_user), shlex.quote(target_group)
+            err_grp_q = shlex.quote(f"capsem: unknown group {target_group}")
             uid_step = (
                 f"_uid={target_user}; "
                 if target_user.isdigit()
                 else f"_uid=$(id -u {u_q} 2>/dev/null) || {{ echo {err_user_q} >&2; exit 1; }}; "
             )
-            err_grp_q = shlex.quote(f"capsem: unknown group {target_group}")
             gid_step = (
                 f"_gid={target_group}; "
                 if target_group.isdigit()
-                else (
-                    f"_gid=$(getent group {g_q} 2>/dev/null | cut -d: -f3); "
-                    f'[ -n "$_gid" ] || {{ echo {err_grp_q} >&2; exit 1; }}; '
-                )
+                else f"_gid=$(getent group {g_q} 2>/dev/null | cut -d: -f3); "
+                f'[ -n "$_gid" ] || {{ echo {err_grp_q} >&2; exit 1; }}; '
             )
+            setpriv_cmd = 'setpriv --reuid="$_uid" --regid="$_gid" --clear-groups'
             inner_body = (
-                f'{uid_step}{gid_step}setpriv --reuid="$_uid" --regid="$_gid" '
-                f"--clear-groups /bin/bash -c {user_body_q}"
+                f'{uid_step}{gid_step}if [ "$(id -u):$(id -g)" = "$_uid:$_gid" ]; '
+                f"{then_deny}else {setpriv_cmd} /bin/bash -c {user_body_q}; fi"
             )
     if timeout is None:
         return inner_body, EXEC_TIMEOUT_CEILING_SECS
@@ -117,7 +143,8 @@ def _format_exec_command(
 
 
 async def _prepare_exec_expr(
-    stage_bytes: Callable[[bytes, str], Awaitable[None]],
+    controller: CapsemController,
+    vm_id: str,
     quoted_cmd: str,
     input_data: str | bytes | None,
     temp_files: list[str],
@@ -125,7 +152,7 @@ async def _prepare_exec_expr(
     if len(quoted_cmd) > 65536:
         script_guest = f"/tmp/.capsem_cmd_{uuid.uuid4().hex[:10]}.sh"
         temp_files.append(script_guest)
-        await stage_bytes(quoted_cmd.encode("utf-8"), script_guest)
+        await controller.upload_to_vm(vm_id, script_guest, quoted_cmd.encode("utf-8"))
         exec_expr = f"bash {shlex.quote(script_guest)}"
     else:
         exec_expr = quoted_cmd
@@ -138,7 +165,7 @@ async def _prepare_exec_expr(
         else:
             stdin_guest = f"/tmp/.capsem_stdin_{uuid.uuid4().hex[:10]}.dat"
             temp_files.append(stdin_guest)
-            await stage_bytes(input_bytes, stdin_guest)
+            await controller.upload_to_vm(vm_id, stdin_guest, input_bytes)
             exec_expr = f"{exec_expr} < {shlex.quote(stdin_guest)}"
     return exec_expr
 
@@ -154,8 +181,10 @@ async def exec_in_sandbox(
     env_vars: dict[str, str] | None = None,
     user: str | None = None,
     timeout: int | None = None,
+    *,
+    is_container: bool = False,
 ) -> ExecResult[str]:
-    """Execute command in Capsem sandbox VM, enforcing timeouts and limits."""
+    """Execute command in Capsem sandbox VM or OCI workload container."""
     if not cmd:
         return ExecResult(success=True, returncode=0, stdout="", stderr="")
 
@@ -165,15 +194,11 @@ async def exec_in_sandbox(
     temp_files_to_clean: list[str] = []
     cleaned_inline = False
     controller_timeout: int = EXEC_TIMEOUT_CEILING_SECS
+    effective_user = user or default_user
     try:
-
-        async def stage_bytes(data: bytes, path: str) -> None:
-            await controller.upload_to_vm(vm_id, path, data)
-
         exec_expr = await _prepare_exec_expr(
-            stage_bytes, quoted_cmd, input_data, temp_files_to_clean
+            controller, vm_id, quoted_cmd, input_data, temp_files_to_clean
         )
-        effective_user = user or default_user
         timed_script, controller_timeout = _format_exec_command(
             exec_expr,
             effective_cwd=effective_cwd,
@@ -184,7 +209,8 @@ async def exec_in_sandbox(
         if temp_files_to_clean:
             rm_targets = " ".join(shlex.quote(p) for p in temp_files_to_clean)
             timed_script = f"( {timed_script} ); __ec=$?; rm -f {rm_targets}; exit $__ec"
-        res = await controller.exec_in_vm(vm_id, timed_script, timeout=controller_timeout)
+        wrapped = _wrap_target_command(timed_script, is_container=is_container, user=effective_user)
+        res = await controller.exec_in_vm(vm_id, wrapped, timeout=controller_timeout)
         cleaned_inline = True
     except TimeoutError as exc:
         effective_timeout = timeout if timeout is not None else controller_timeout
@@ -198,7 +224,9 @@ async def exec_in_sandbox(
     stderr_str = res.stderr
     if timeout is not None and _TIMEOUT_SENTINEL in stderr_str:
         raise TimeoutError(f"Command timed out after {timeout}s")
-    if res.exit_code == 126 and "permission denied" in stderr_str.lower():
+    if res.exit_code == 126 and any(
+        s in stderr_str.lower() for s in ("permission denied", "no-new-privileges")
+    ):
         raise PermissionError(stderr_str.strip())
 
     limit_bytes = SandboxEnvironmentLimits.MAX_EXEC_OUTPUT_SIZE

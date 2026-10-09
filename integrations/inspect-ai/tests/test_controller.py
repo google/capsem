@@ -145,6 +145,12 @@ async def test_sdk_controller_prefix_labels(
         }
         vid = await ctrl.start_vm(cpu_count=2, ram_gb=4)
         assert vid == "vm-ephemeral-1" and last_create["labels"] == _lbl("bench-a")
+        ctrl._registry_ca_pem = "CA-CTOR"
+        await ctrl.start_vm(cpu_count=1, ram_gb=1, image="b:1")
+        assert last_create["registry"].ca_pem == "CA-CTOR"
+        await ctrl.start_vm(cpu_count=1, ram_gb=1, image="b:1", registry_ca_pem="CA-ARG")
+        assert last_create["registry"].ca_pem == "CA-ARG"
+        ctrl._registry_ca_pem = None
 
         for raw, slug in (
             ("inspect-capsem-run_2/x-", "run-2-x"),

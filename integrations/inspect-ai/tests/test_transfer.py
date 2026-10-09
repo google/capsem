@@ -91,6 +91,15 @@ async def test_sdk_direct_stage_dir_transfers_and_assembly_failure(
         assert await sdk_ctrl.download_from_vm(vid, target) == b"direct-bytes"
         assert await sdk_ctrl.download_from_vm(vid, target, max_bytes=5) == b"direct"
         assert execs == []
+
+        writes.clear()
+        oci_vid = await sdk_ctrl.start_vm(cpu_count=1, ram_gb=1, image="alpine:3.19")
+        await sdk_ctrl.upload_to_vm(oci_vid, "/workspace/direct/file.bin", b"oci")
+        assert writes == [("direct/file.bin", b"oci")]
+        assert await sdk_ctrl.download_from_vm(oci_vid, "/workspace/direct/file.bin") == (
+            b"direct-bytes"
+        )
+        assert execs == []
         fail_cat = True
         with pytest.raises(RuntimeError, match="disk full"):
             await sdk_ctrl.upload_to_vm(vid, "/dest", b"abc")

@@ -89,10 +89,11 @@ async def test_exec_edge_cases() -> None:
     assert len(ctrl.commands) == 2 and "rm -f /tmp/.capsem_cmd_" in ctrl.commands[1]
 
     ctrl.commands.clear()
-    env_nonroot = env_for(ctrl, user="developer")
+    env_nonroot = env_for(ctrl, execution_mode="container", user="developer")
     assert (await env_nonroot.exec(["id", "-un"])).success
     assert any(
-        "su -m developer" in c
+        not c.startswith("bash -c")
+        and "su -m developer" in c
         and 'export USER="$__u" LOGNAME="$__u" HOME="${__h:-/home/$__u}"' in c
         for c in ctrl.commands
     )
@@ -147,16 +148,20 @@ async def test_exec_edge_cases() -> None:
         )
 
     ctrl.commands.clear()
-    env_uid = env_for(ctrl, user="1000:1000")
+    env_uid = env_for(ctrl, execution_mode="container", user="1000:1000")
     assert (await env_uid.exec(["id", "-u"])).success
     assert any(
-        "setpriv --reuid=1000 --regid=1000 --clear-groups /bin/bash -c" in c for c in ctrl.commands
+        not c.startswith("bash -c")
+        and "setpriv --reuid=1000 --regid=1000 --clear-groups /bin/bash -c" in c
+        for c in ctrl.commands
     )
     ctrl.commands.clear()
-    env_bare_uid = env_for(ctrl, user="1000")
+    env_bare_uid = env_for(ctrl, execution_mode="container", user="1000")
     assert (await env_bare_uid.exec(["id", "-u"])).success
     assert any(
-        "id -un 1000" in c and "setpriv --reuid=1000 --regid=0 --clear-groups /bin/bash -c" in c
+        not c.startswith("bash -c")
+        and "id -un 1000" in c
+        and "setpriv --reuid=1000 --regid=0 --clear-groups /bin/bash -c" in c
         for c in ctrl.commands
     )
 
