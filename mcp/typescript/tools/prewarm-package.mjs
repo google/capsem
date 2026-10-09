@@ -1,7 +1,7 @@
 // Warm npm's complete runtime dependency graph before offline acceptance.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import process from 'node:process';
@@ -9,6 +9,7 @@ import {fileURLToPath} from 'node:url';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const fixture = mkdtempSync(join(tmpdir(), 'capsem-mcp-prewarm-'));
+const home = process.env.HOME && existsSync(process.env.HOME) ? process.env.HOME : fixture;
 try {
   const archives = [];
   for (const [owner, source] of [['sdk', join(project, '../../sdk/typescript')], ['mcp', project]]) {
@@ -16,7 +17,7 @@ try {
     const output = join(fixture, owner);
     mkdirSync(output);
     execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', output], {
-      cwd: source, stdio: 'pipe', timeout: 15_000,
+      cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: home},
     });
     const names = readdirSync(output).filter(name => name.endsWith('.tgz'));
     assert.equal(names.length, 1);
@@ -26,7 +27,7 @@ try {
   writeFileSync(join(fixture, 'package.json'), JSON.stringify({name: 'capsem-mcp-prewarm', private: true}));
   execFileSync('npm', ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...archives], {
     cwd: fixture, stdio: 'inherit', timeout: 60_000,
-    env: {PATH: process.env.PATH ?? '',
+    env: {HOME: home, PATH: process.env.PATH ?? '',
       ...(process.env.NPM_CONFIG_CACHE ? {NPM_CONFIG_CACHE: process.env.NPM_CONFIG_CACHE} : {})},
   });
 } finally {
