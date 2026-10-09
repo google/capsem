@@ -25,6 +25,7 @@ pub mod mcp_aggregator;
 pub mod mcp_contracts;
 pub mod poll;
 pub mod privatelink;
+pub mod proxy_control;
 pub mod repeated;
 pub mod router;
 mod sparse;
