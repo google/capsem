@@ -11,6 +11,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use capsem_foundation::ipc_channel;
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
+use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::proxy_control::{
     decode_proxy_control_event, encode_proxy_control_request, ProxyCapability, ProxyControlEvent, ProxyControlRequest,
     ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
@@ -69,6 +70,15 @@ impl ProxyWorker {
     }
 
     pub(crate) async fn grant(&self, capability: ProxyCapability, stream: UnixStream) -> Result<()> {
+        self.grant_capability(GrantedCapability::Ordinary(capability), stream)
+            .await
+    }
+
+    pub(crate) async fn grant_ledger(&self, stream: UnixStream, grant: LedgerChannelGrant) -> Result<()> {
+        self.grant_capability(GrantedCapability::Ledger(grant), stream).await
+    }
+
+    async fn grant_capability(&self, capability: GrantedCapability, stream: UnixStream) -> Result<()> {
         let (completed, result) = oneshot::channel();
         self.commands
             .send(CommandRequest::Grant {
@@ -178,7 +188,7 @@ pub(crate) fn spawn_for_session(binary: &Path, active_policy: Vec<u8>, log_path:
 
 enum CommandRequest {
     Grant {
-        capability: ProxyCapability,
+        capability: GrantedCapability,
         stream: UnixStream,
         completed: oneshot::Sender<Result<()>>,
     },
@@ -189,6 +199,36 @@ enum CommandRequest {
     Shutdown {
         completed: oneshot::Sender<Result<()>>,
     },
+}
+
+#[derive(Clone, Copy)]
+enum GrantedCapability {
+    Ordinary(ProxyCapability),
+    Ledger(LedgerChannelGrant),
+}
+
+impl GrantedCapability {
+    const fn kind(self) -> ProxyCapability {
+        match self {
+            Self::Ordinary(capability) => capability,
+            Self::Ledger(_) => ProxyCapability::Ledger,
+        }
+    }
+
+    fn channel_grant(
+        self,
+        generation: ProxyGeneration,
+        grant_id: u64,
+    ) -> Result<capsem_proto::proxy_control::ProxyChannelGrant> {
+        match self {
+            Self::Ordinary(capability) => Ok(capsem_proto::proxy_control::ProxyChannelGrant::new(
+                generation, grant_id, capability,
+            )?),
+            Self::Ledger(ledger) => Ok(capsem_proto::proxy_control::ProxyChannelGrant::with_ledger(
+                generation, grant_id, ledger,
+            )?),
+        }
+    }
 }
 
 struct WorkerProcess {
@@ -305,9 +345,9 @@ impl WorkerProcess {
         Ok(process)
     }
 
-    async fn grant(&mut self, capability: ProxyCapability, stream: UnixStream) -> Result<()> {
+    async fn grant(&mut self, capability: GrantedCapability, stream: UnixStream) -> Result<()> {
         let grant_id = self.allocate_grant_id()?;
-        let grant = capsem_proto::proxy_control::ProxyChannelGrant::new(self.generation, grant_id, capability)?;
+        let grant = capability.channel_grant(self.generation, grant_id)?;
         self.control_tx
             .send(
                 &encode_proxy_control_request(ProxyControlRequest::Attach(grant)),
@@ -326,7 +366,10 @@ impl WorkerProcess {
                 grant_id: rejected,
                 reason,
             } if generation == self.generation && rejected == grant_id => {
-                bail!("proxy worker rejected {capability:?} grant {grant_id}: {reason:?}")
+                bail!(
+                    "proxy worker rejected {:?} grant {grant_id}: {reason:?}",
+                    capability.kind()
+                )
             }
             event => bail!("proxy worker sent {event:?} while adopting grant {grant_id}"),
         }
@@ -601,6 +644,29 @@ fn generation_hex(generation: ProxyGeneration) -> String {
 }
 
 impl ServiceState {
+    pub(crate) async fn grant_proxy_ledger(
+        &self,
+        session_id: &str,
+        session_dir: &Path,
+        worker: &ProxyWorker,
+    ) -> Result<()> {
+        let client = self
+            .ledger_workers
+            .acquire(
+                session_id,
+                &session_dir.join("session.db"),
+                &session_dir.join("ledger.log"),
+                capsem_proto::ledger::LedgerClientRole::Proxy,
+            )
+            .await
+            .context("acquire proxy ledger channel")?;
+        let (stream, grant) = client.into_parts();
+        worker
+            .grant_ledger(stream, grant)
+            .await
+            .context("grant proxy ledger channel")
+    }
+
     pub(crate) fn register_proxy_worker(
         self: &std::sync::Arc<Self>,
         session_id: &str,

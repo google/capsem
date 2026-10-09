@@ -295,6 +295,12 @@ impl ServiceState {
                 return Err(error.context("start confined proxy worker"));
             }
         };
+        if let Err(error) =
+            tokio::runtime::Handle::current().block_on(self.grant_proxy_ledger(id, &session_dir, &proxy))
+        {
+            instance_reaper::kill_and_reap(child);
+            return Err(error);
+        }
         let upstream_broker = upstream_broker.with_proxy(proxy.clone());
 
         // Provisioning runs on a blocking thread that keeps the runtime
