@@ -446,6 +446,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     }
     let children = std::mem::take(&mut companions.lock().unwrap().children);
     shutdown::stop_companions(children).await;
+    remove_gateway_runtime_files(&run_dir);
     if let Err(error) = state
         .record_service_event(capsem_logger::HostEventKind::ServiceStopped)
         .await
@@ -709,14 +710,7 @@ pub(super) async fn spawn_companions(
     // A previous service may have exited before its gateway removed runtime
     // markers. Never let those stale files satisfy our readiness poll for the
     // replacement gateway.
-    for name in ["gateway.token", "gateway.port", "gateway.pid", "preview.port"] {
-        let path = run_dir.join(name);
-        if let Err(error) = std::fs::remove_file(&path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                warn!(path = %path.display(), %error, "failed to remove stale gateway runtime file");
-            }
-        }
-    }
+    remove_gateway_runtime_files(run_dir);
 
     let gateway_bin = gateway_bin.unwrap_or_else(|| find_sibling_binary("capsem-gateway"));
     let (gw_out, gw_err) = companion_stdio(&log_dir.join("gateway.log"));
@@ -840,6 +834,17 @@ fn gateway_runtime_ready(
             .and_then(|value| value.trim().parse::<u16>().ok())
             .is_some_and(|port| port != 0)
     })
+}
+
+fn remove_gateway_runtime_files(run_dir: &std::path::Path) {
+    for name in ["gateway.token", "gateway.port", "gateway.pid", "preview.port"] {
+        let path = run_dir.join(name);
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                warn!(path = %path.display(), %error, "failed to remove gateway runtime file");
+            }
+        }
+    }
 }
 
 /// Remove the sentinels capsem-process writes beside its socket: `.launched`
