@@ -164,6 +164,8 @@ struct Args {
     #[arg(long)]
     proxy_binary: Option<PathBuf>,
     #[arg(long)]
+    ledger_binary: Option<PathBuf>,
+    #[arg(long)]
     gateway_binary: Option<PathBuf>,
     #[arg(long)]
     gateway_port: Option<u16>,
@@ -206,6 +208,11 @@ const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 pub struct ServiceState {
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
     proxy_workers: Mutex<HashMap<String, (uuid::Uuid, proxy_worker::ProxyWorker)>>,
+    #[expect(
+        dead_code,
+        reason = "S09-004 connects the VM and proxy producers through this lifecycle table"
+    )]
+    ledger_workers: Arc<ledger_worker::LedgerWorkers>,
     retirements: instance_reaper::Retirements,
     /// Logger-owned DB handles keyed by session/VM id. Logged-data routes
     /// resolve a handle here and call `ready/query`; they do not open SQLite

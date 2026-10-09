@@ -47,6 +47,9 @@ fn test_state(run_dir: PathBuf, assets_dir: PathBuf, test_tempdir: Option<tempfi
     ServiceState {
         instances: Mutex::new(HashMap::new()),
         proxy_workers: Mutex::new(HashMap::new()),
+        ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(PathBuf::from(
+            "/nonexistent/capsem-ledger",
+        ))),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(

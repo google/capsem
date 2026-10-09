@@ -151,6 +151,9 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         .process_binary
         .unwrap_or_else(|| PathBuf::from("cache/target/cargo/debug/capsem-process"));
     let proxy_binary = args.proxy_binary.unwrap_or_else(|| find_sibling_binary("capsem-proxy"));
+    let ledger_binary = args
+        .ledger_binary
+        .unwrap_or_else(|| find_sibling_binary("capsem-ledger"));
     let assets_base_dir = args
         .assets_dir
         .unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
@@ -243,6 +246,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
         proxy_workers: Mutex::new(HashMap::new()),
+        ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(ledger_binary)),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(persistent_registry),

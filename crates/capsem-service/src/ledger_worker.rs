@@ -12,8 +12,9 @@ use std::fmt::Write as _;
 use std::io;
 use std::os::fd::{AsRawFd as _, OwnedFd};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -44,6 +45,126 @@ type ControlSender = DescriptorSender<LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_
 type ControlReceiver = DescriptorReceiver<LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_MAX_FDS>;
 type ControlFrame = capsem_foundation::unix::router_channel::DescriptorFrame<LEDGER_CONTROL_FRAME_SIZE>;
 
+struct LedgerSlot {
+    database: PathBuf,
+    worker: LedgerWorker,
+}
+
+/// Service-owned table that serializes each session's ledger lifetime.
+pub(crate) struct LedgerWorkers {
+    binary: PathBuf,
+    slots: tokio::sync::Mutex<std::collections::HashMap<String, LedgerSlot>>,
+}
+
+impl LedgerWorkers {
+    pub(crate) fn new(binary: PathBuf) -> Self {
+        Self {
+            binary,
+            slots: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Acquire a role-bound channel from the one worker for `session_id`.
+    /// The slot lock deliberately spans readiness: no replacement generation
+    /// can start before a stopped generation has been fully reaped.
+    pub(crate) async fn acquire(
+        self: &Arc<Self>,
+        session_id: &str,
+        database: &Path,
+        log_path: &Path,
+        role: LedgerClientRole,
+    ) -> Result<LedgerClient> {
+        let worker = {
+            let mut slots = self.slots.lock().await;
+            let mut watcher = None;
+            if slots
+                .get(session_id)
+                .is_some_and(|slot| slot.worker.stop_receiver().borrow().is_some() && slot.database == database)
+            {
+                slots.remove(session_id);
+            }
+            let worker = if let Some(slot) = slots.get(session_id) {
+                if slot.database != database {
+                    bail!(
+                        "ledger worker slot for {session_id} owns {}, not {}",
+                        slot.database.display(),
+                        database.display()
+                    );
+                }
+                slot.worker.clone()
+            } else {
+                let worker = self.spawn(database, log_path).await?;
+                slots.insert(
+                    session_id.to_string(),
+                    LedgerSlot {
+                        database: database.to_path_buf(),
+                        worker: worker.clone(),
+                    },
+                );
+                watcher = Some((worker.generation(), worker.stop_receiver()));
+                worker
+            };
+            drop(slots);
+            if let Some((generation, mut stopped)) = watcher {
+                let registry = Arc::clone(self);
+                let watched_session_id = session_id.to_string();
+                tokio::spawn(async move {
+                    if stopped.borrow().is_none() {
+                        let _ = stopped.changed().await;
+                    }
+                    let mut slots = registry.slots.lock().await;
+                    if slots
+                        .get(&watched_session_id)
+                        .is_some_and(|slot| slot.worker.generation() == generation)
+                    {
+                        slots.remove(&watched_session_id);
+                    }
+                });
+            }
+            worker
+        };
+        worker.connect(role).await
+    }
+
+    /// Stop and reap the current generation before vacating its slot.
+    pub(crate) async fn shutdown(&self, session_id: &str) -> Result<()> {
+        let Some(worker) = self.slots.lock().await.get(session_id).map(|slot| slot.worker.clone()) else {
+            return Ok(());
+        };
+        let generation = worker.generation();
+        let result = worker.shutdown().await;
+        let mut slots = self.slots.lock().await;
+        if slots
+            .get(session_id)
+            .is_some_and(|slot| slot.worker.generation() == generation)
+        {
+            slots.remove(session_id);
+        }
+        result
+    }
+
+    async fn spawn(&self, database: &Path, log_path: &Path) -> Result<LedgerWorker> {
+        let log = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)
+            .await
+            .with_context(|| format!("open {}", log_path.display()))?
+            .into_std()
+            .await;
+        LedgerWorker::spawn(&self.binary, database, Stdio::from(log.try_clone()?), Stdio::from(log)).await
+    }
+
+    #[cfg(test)]
+    async fn generation(&self, session_id: &str) -> Option<LedgerGeneration> {
+        self.slots
+            .lock()
+            .await
+            .get(session_id)
+            .map(|slot| slot.worker.generation())
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct LedgerClient {
     stream: UnixStream,
@@ -68,10 +189,6 @@ pub(crate) struct LedgerWorker {
 }
 
 impl LedgerWorker {
-    #[cfg_attr(
-        test,
-        expect(dead_code, reason = "production launch is covered by capsem-ledger subprocess tests")
-    )]
     pub(crate) async fn spawn(binary: &Path, database: &Path, stdout: Stdio, stderr: Stdio) -> Result<Self> {
         let generation = fresh_generation();
         let mut command = Command::new(binary);
@@ -138,7 +255,7 @@ struct WorkerProcess {
     child: Child,
     control_tx: ControlSender,
     control_events: mpsc::Receiver<io::Result<ControlFrame>>,
-    control_reader: tokio::task::JoinHandle<()>,
+    control_reader: Option<tokio::task::JoinHandle<()>>,
     next_client_id: u64,
 }
 
@@ -212,7 +329,7 @@ impl WorkerProcess {
             child,
             control_tx,
             control_events,
-            control_reader,
+            control_reader: Some(control_reader),
             next_client_id: 1,
         })
     }
@@ -311,8 +428,10 @@ impl WorkerProcess {
     async fn kill_reap(&mut self) {
         let _ = self.child.start_kill();
         let _ = self.child.wait().await;
-        self.control_reader.abort();
-        let _ = (&mut self.control_reader).await;
+        if let Some(mut control_reader) = self.control_reader.take() {
+            control_reader.abort();
+            let _ = (&mut control_reader).await;
+        }
     }
 }
 
@@ -392,6 +511,10 @@ async fn supervise(
                     }
                     CommandRequest::Shutdown { completed } => {
                         let result = process.shutdown().await;
+                        // Completion is the replacement barrier: even a send
+                        // or protocol failure is reaped before the coordinator
+                        // is allowed to vacate this generation's slot.
+                        process.kill_reap().await;
                         let reason = result
                             .as_ref()
                             .err()
