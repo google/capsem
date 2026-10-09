@@ -25,6 +25,22 @@ fn production_vm_owner_never_opens_the_session_database() {
 }
 
 #[test]
+fn confinement_grants_exact_runtime_paths_and_attests_ledger_denial() {
+    let source = include_str!("main.rs");
+    assert!(!source.contains("grant_owner_path(policy, session_dir"));
+    assert!(source.contains("grant_owner_session_paths(policy, session_dir)"));
+    assert!(source.contains("session_dir.join(\"session.db\")"));
+    assert!(source.contains("std::fs::File::open(&attestation.ledger_path)"));
+    assert!(source.contains("open session ledger storage"));
+}
+
+#[test]
+fn suspend_checkpoint_stays_in_owner_state() {
+    let session = Path::new("/tmp/session");
+    assert_eq!(owner_checkpoint_path(session), session.join("owner/checkpoint.vzsave"));
+}
+
+#[test]
 fn platform_confinement_and_attestation_precede_owner_readiness() {
     let source = include_str!("main.rs");
     let run = source.split_once("async fn run_async_main_loop(").unwrap().1;

@@ -639,16 +639,8 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         other => panic!("unexpected MCP call result: {other:?}"),
     }
 
-    service_tx
-        .send(ServiceToProcess::Suspend {
-            checkpoint_path: "checkpoint.vzsave".to_string(),
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        ctrl_rx.recv().await.unwrap(),
-        ServiceToProcess::Suspend { .. }
-    ));
+    service_tx.send(ServiceToProcess::Suspend).await.unwrap();
+    assert!(matches!(ctrl_rx.recv().await.unwrap(), ServiceToProcess::Suspend));
     service_tx.send(ServiceToProcess::Shutdown).await.unwrap();
     assert!(matches!(ctrl_rx.recv().await.unwrap(), ServiceToProcess::Shutdown));
     handler.await.unwrap().unwrap();
@@ -839,12 +831,7 @@ fn classify_shutdown() {
 
 #[test]
 fn classify_suspend() {
-    assert_eq!(
-        classify_ipc_message(&ServiceToProcess::Suspend {
-            checkpoint_path: "cp.vzsave".into()
-        }),
-        IpcAction::Lifecycle
-    );
+    assert_eq!(classify_ipc_message(&ServiceToProcess::Suspend), IpcAction::Lifecycle);
 }
 
 #[test]

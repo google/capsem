@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Restrict VM owners to the guest share, system overlay, read-only image share,
+  and a dedicated mutable owner-state directory; attest after confinement that
+  the owner cannot open `session.db`, and fix suspend checkpoints to that
+  confined directory instead of accepting a path over IPC.
+
 - Coordinate live forks through a path-free freeze/copy/thaw handshake and
   copy coherent database state only from the session ledger worker's
   maintainer-scoped snapshot, keeping both VM owners and the service from
