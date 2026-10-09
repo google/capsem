@@ -29,7 +29,7 @@ fn completing_a_flushed_exec_commits_its_count_with_the_row() {
     let path = dir.path().join("session.db");
     let (conn, mut bodies, mut tally) = ledger(&path);
 
-    execute_memory_batch(&conn, &[exec(3)], &mut bodies, 0, &mut tally).unwrap();
+    execute_memory_batch(&conn, &[WriteEnvelope::plain(exec(3))], &mut bodies, 0, &mut tally).unwrap();
     flush_dirty_tables_to_disk(
         &conn,
         &mut BTreeSet::from(["exec_events"]),
@@ -43,7 +43,7 @@ fn completing_a_flushed_exec_commits_its_count_with_the_row() {
 
     // The start row is on disk now, so the completion updates it there, and
     // that update is durable the moment this batch commits -- no flush follows.
-    execute_memory_batch(&conn, &[exec_done(3)], &mut bodies, 0, &mut tally).unwrap();
+    execute_memory_batch(&conn, &[WriteEnvelope::plain(exec_done(3))], &mut bodies, 0, &mut tally).unwrap();
     let (snapshot, completed_rows) = on_disk(&path);
     assert_eq!(completed_rows, 1);
     assert_eq!(
@@ -53,7 +53,7 @@ fn completing_a_flushed_exec_commits_its_count_with_the_row() {
     assert_eq!(snapshot, *tally.counters());
 
     // A duplicate completion rewrites the row and counts nothing.
-    execute_memory_batch(&conn, &[exec_done(3)], &mut bodies, 0, &mut tally).unwrap();
+    execute_memory_batch(&conn, &[WriteEnvelope::plain(exec_done(3))], &mut bodies, 0, &mut tally).unwrap();
     assert_eq!(tally.counters().exec.completed, 1);
 }
 
@@ -69,7 +69,11 @@ fn a_rejected_op_is_not_counted_and_its_batch_neighbours_are() {
         None,
         1_700_000_000.0,
     );
-    let batch = [exec(1), refused, exec(2)];
+    let batch = [
+        WriteEnvelope::plain(exec(1)),
+        WriteEnvelope::plain(refused),
+        WriteEnvelope::plain(exec(2)),
+    ];
     assert!(execute_memory_batch(&conn, &batch, &mut bodies, 0, &mut tally).is_err());
     assert_eq!(
         tally.counters(),
@@ -118,7 +122,7 @@ fn mcp_protocol_only_event_does_not_claim_tool_storage() {
     let outcome = metrics::with_local_recorder(&recorder, || {
         execute_memory_batch(
             &conn,
-            &[event],
+            &[WriteEnvelope::plain(event)],
             &mut bodies,
             0,
             &mut crate::counters::LedgerTally::default(),

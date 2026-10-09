@@ -15,7 +15,7 @@ use tracing::{info, warn};
 
 use super::bodies::BodyArchive;
 use super::retention::{retain_bodies, RetainOutcome};
-use super::{FlushOutcome, RetainReply, WriteOp, WriterMessage};
+use super::{FlushOutcome, RetainReply, WriteEnvelope, WriterMessage};
 
 /// Barrier requests collected from one drain of the writer channel.
 #[derive(Default)]
@@ -28,7 +28,7 @@ impl Barriers {
     /// Sort one message into `batch` or into this set. `true` when it was a
     /// barrier, which ends the drain: a barrier answers for what was queued
     /// before it, so nothing queued after it may join the same transaction.
-    pub(super) fn accept(&mut self, message: WriterMessage, batch: &mut Vec<WriteOp>) -> bool {
+    pub(super) fn accept(&mut self, message: WriterMessage, batch: &mut Vec<WriteEnvelope>) -> bool {
         match message {
             WriterMessage::Write(op) => {
                 batch.push(op);

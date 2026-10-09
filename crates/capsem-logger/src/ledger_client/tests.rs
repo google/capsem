@@ -27,11 +27,12 @@ impl Fixture {
 
         let producer_grant = LedgerChannelGrant::new(GENERATION, 1, LedgerClientRole::VmOwner).unwrap();
         let (producer, producer_server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (commitment, _commitment_task) = crate::writer::test_commitment_channel(producer_grant);
         let producer_owner = Arc::clone(&server);
         let producer_task =
             tokio::spawn(async move { producer_owner.serve_client(producer_server, producer_grant).await });
         let writer = tokio::task::spawn_blocking(move || {
-            crate::DbWriter::from_ledger_channel(producer, producer_grant, &path, 16)
+            crate::DbWriter::from_ledger_channel(producer, commitment, producer_grant, &path, 16)
         })
         .await
         .unwrap()

@@ -56,10 +56,11 @@ async fn remote_writer(
     let generation = LedgerGeneration::new([5; 16]);
     let grant = LedgerChannelGrant::new(generation, 9, role).unwrap();
     let (client, worker) = UnixStream::pair().unwrap();
+    let (commitment, _commitment_task) = super::test_commitment_channel(grant);
     let task = tokio::spawn(async move { server.serve_client(worker, grant).await });
     let writer = tokio::task::spawn_blocking({
         let path = path.clone();
-        move || crate::DbWriter::from_ledger_channel(client, grant, &path, 8)
+        move || crate::DbWriter::from_ledger_channel(client, commitment, grant, &path, 8)
     })
     .await
     .unwrap()
@@ -96,7 +97,7 @@ async fn descriptor_writer_reports_role_refusal_to_the_producer() {
     let (_directory, writer, task) = remote_writer(LedgerClientRole::Reader).await;
     let error = writer.write_checked(event("denied.example")).await.unwrap_err();
     assert!(
-        error.contains("cannot perform") || error.contains("unauthorized"),
+        error.contains("cannot perform") || error.contains("unauthorized") || error.contains("not a producer"),
         "{error}"
     );
     tokio::task::spawn_blocking(move || writer.shutdown_blocking())
@@ -148,6 +149,7 @@ async fn a_stalled_owner_fails_the_pending_operation_and_bounded_shutdown() {
     let path = directory.path().join("session.db");
     let grant = LedgerChannelGrant::new(LedgerGeneration::new([6; 16]), 10, LedgerClientRole::VmOwner).unwrap();
     let (client, worker) = UnixStream::pair().unwrap();
+    let (commitment, _commitment_task) = super::test_commitment_channel(grant);
     let server = tokio::spawn(async move {
         let (sender, receiver) =
             capsem_foundation::ipc_channel::channel_from_std::<LedgerServerMessage, LedgerClientMessage>(worker)
@@ -165,10 +167,11 @@ async fn a_stalled_owner_fails_the_pending_operation_and_bounded_shutdown() {
         let _request = receiver.recv().await.unwrap();
         std::future::pending::<()>().await;
     });
-    let writer = tokio::task::spawn_blocking(move || crate::DbWriter::from_ledger_channel(client, grant, &path, 2))
-        .await
-        .unwrap()
-        .unwrap();
+    let writer =
+        tokio::task::spawn_blocking(move || crate::DbWriter::from_ledger_channel(client, commitment, grant, &path, 2))
+            .await
+            .unwrap()
+            .unwrap();
     let started = std::time::Instant::now();
     let error = writer.write_checked(event("stalled.example")).await.unwrap_err();
     assert!(error.contains("timed out"), "{error}");

@@ -3,6 +3,7 @@ use std::time::SystemTime;
 
 use capsem_foundation::ipc_channel;
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration, LedgerRequest};
+use capsem_proto::ledger_commitment::{LedgerCommitment, ZERO_COMMITMENT_HASH};
 
 use super::*;
 use crate::{ExecEventComplete, FileAction, FileEvent, FileKind, WriteOp};
@@ -12,18 +13,32 @@ fn grant(role: LedgerClientRole) -> LedgerChannelGrant {
 }
 
 fn file_write() -> LedgerCommand {
+    let event = WriteOp::FileEvent(FileEvent {
+        event_id: None,
+        timestamp: SystemTime::UNIX_EPOCH,
+        action: FileAction::Modified,
+        path: "/root/report.txt".into(),
+        size: Some(12),
+        kind: FileKind::File,
+        trace_id: None,
+        credential_ref: None,
+    });
     LedgerCommand::Admit {
-        event: Box::new(WriteOp::FileEvent(FileEvent {
-            event_id: None,
-            timestamp: SystemTime::UNIX_EPOCH,
-            action: FileAction::Modified,
-            path: "/root/report.txt".into(),
-            size: Some(12),
-            kind: FileKind::File,
-            trace_id: None,
-            credential_ref: None,
-        })),
+        commitment: commitment(&event),
+        event: Box::new(event),
     }
+}
+
+fn commitment(event: &WriteOp) -> LedgerCommitment {
+    LedgerCommitment::new(
+        grant(LedgerClientRole::VmOwner),
+        1,
+        1,
+        event.kind(),
+        crate::writer::commitment_event_hash(event).unwrap(),
+        ZERO_COMMITMENT_HASH,
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -39,7 +54,7 @@ async fn request_round_trips_over_the_landed_bounded_channel() {
     assert!(matches!(
         decoded.operation(),
         LedgerCommand::Admit {
-            event
+            event, ..
         } if matches!(event.as_ref(), WriteOp::FileEvent(event) if event.path == "/root/report.txt")
     ));
 }
@@ -80,17 +95,19 @@ fn snapshot_ids_must_be_nonzero_fixed_width_values() {
 
 #[test]
 fn oversized_event_and_malformed_query_are_rejected_before_dispatch() {
+    let huge_event = WriteOp::ExecEventComplete(ExecEventComplete {
+        exec_id: 1,
+        exit_code: 0,
+        duration_ms: 1,
+        stdout: vec![b'x'; MAX_LEDGER_OPERATION_BYTES],
+        stderr: Vec::new(),
+        stdout_bytes: MAX_LEDGER_OPERATION_BYTES as u64,
+        stderr_bytes: 0,
+        pid: None,
+    });
     let huge = LedgerCommand::Admit {
-        event: Box::new(WriteOp::ExecEventComplete(ExecEventComplete {
-            exec_id: 1,
-            exit_code: 0,
-            duration_ms: 1,
-            stdout: vec![b'x'; MAX_LEDGER_OPERATION_BYTES],
-            stderr: Vec::new(),
-            stdout_bytes: MAX_LEDGER_OPERATION_BYTES as u64,
-            stderr_bytes: 0,
-            pid: None,
-        })),
+        commitment: commitment(&huge_event),
+        event: Box::new(huge_event),
     };
     assert_eq!(
         LedgerRequest::new(1, huge)
@@ -118,17 +135,19 @@ fn oversized_event_and_malformed_query_are_rejected_before_dispatch() {
 
 #[test]
 fn event_bytes_use_messagepack_binary_inside_the_request() {
+    let event = WriteOp::ExecEventComplete(ExecEventComplete {
+        exec_id: 1,
+        exit_code: 0,
+        duration_ms: 1,
+        stdout: vec![0xa5; 1024 * 1024],
+        stderr: Vec::new(),
+        stdout_bytes: 1024 * 1024,
+        stderr_bytes: 0,
+        pid: None,
+    });
     let command = LedgerCommand::Admit {
-        event: Box::new(WriteOp::ExecEventComplete(ExecEventComplete {
-            exec_id: 1,
-            exit_code: 0,
-            duration_ms: 1,
-            stdout: vec![0xa5; 1024 * 1024],
-            stderr: Vec::new(),
-            stdout_bytes: 1024 * 1024,
-            stderr_bytes: 0,
-            pid: None,
-        })),
+        commitment: commitment(&event),
+        event: Box::new(event),
     };
     let encoded = rmp_serde::to_vec_named(&LedgerRequest::new(1, command).unwrap()).unwrap();
     assert!(
