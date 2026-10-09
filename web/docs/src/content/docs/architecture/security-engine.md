@@ -177,5 +177,8 @@ through HTTP inspection. See [network connections](/architecture/security/#netwo
 Before accepting VM traffic, the worker receives its VM's policy, certificates,
 credentials, allowed upstream authority, and log-writer connection, then enters
 its OS sandbox. It has no VM-control authority, another VM's credentials, or
-direct ledger access. The exact macOS Seatbelt and Linux Landlock/seccomp
-allowlists remain to be finalized in [#206](https://github.com/google/capsem/issues/206).
+direct ledger access.
+
+On macOS, a deny-by-default Seatbelt profile permits only the worker's assigned
+resources. On Linux, Landlock restricts filesystem access and a seccomp allowlist
+restricts system calls. The worker accepts traffic only after confinement succeeds.

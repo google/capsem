@@ -41,8 +41,11 @@ The agreed target routes CLI operations through the authenticated gateway;
 track remaining direct-service paths as implementation work.
 
 Use the completed 0.7/#206 model for the requested security explanation,
-while recording unverified target boundaries before publication. Show actual
-processes, privilege separation, and OS/hardware sandbox boundaries; file
+while recording unverified target boundaries before publication.
+For this user-directed completed-design draft, describe mechanisms in present
+tense. Keep implementation progress and outstanding verification in internal
+tracking, not reader-facing architecture prose; do not invent missing details.
+Show actual processes, privilege separation, and OS/hardware sandbox boundaries; file
 permissions and separate libraries are not substitutes for confinement.
 Show per-VM workers and shared/per-network processes, using multiple VMs when
 their relationship is the subject of the diagram.

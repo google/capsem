@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Security engine sandboxing describes the completed design and OS enforcement
+  mechanisms directly instead of linking to implementation progress.
+
 - Security engine architecture separates protocol parsing and MITM certificate
   trust, model/MCP logging, and an illustrative security-event structure.
 
