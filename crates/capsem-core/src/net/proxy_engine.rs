@@ -12,17 +12,21 @@
 
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
 use capsem_logger::{DbWriter, WriteOp};
 
 use crate::credential_broker::{BrokeredCredential, BrokeredUpstreamCredentials, CredentialObservation};
+use crate::mcp::policy::McpConfig;
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::security_engine::{MaterializedHttpRequest, SecurityActionError, SecurityBoundaryEvaluation, SecurityEvent};
 
 use super::policy::NetworkMechanics;
-use super::policy_config::{ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet};
+use super::policy_config::{
+    active_policy_digest, ActivePolicyFile, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
+};
 
 pub type ProxyCapabilityFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -144,6 +148,55 @@ impl ProxyEngine {
 
     pub fn redact_bytes(&self, bytes: &[u8], observations: &[CredentialObservation]) -> Vec<u8> {
         self.credentials.redact_bytes(bytes, observations)
+    }
+}
+
+/// One path-free active-policy revision compiled for a confined proxy worker.
+///
+/// The coordinator sends exact bytes over a capability channel. Compilation
+/// cannot consult ambient settings, session directories, or built-in policy,
+/// and the digest therefore names precisely the revision put in force.
+pub struct ProxyRuntimePolicy {
+    snapshot: ProxyPolicySnapshot,
+    dns_upstreams: Vec<SocketAddr>,
+    mcp: McpConfig,
+}
+
+impl ProxyRuntimePolicy {
+    pub fn compile(active_policy: &[u8]) -> Result<Self, String> {
+        let source = std::str::from_utf8(active_policy).map_err(|error| format!("decode active policy: {error}"))?;
+        let active =
+            toml::from_str::<ActivePolicyFile>(source).map_err(|error| format!("parse active policy: {error}"))?;
+        let compiled = active
+            .compile_runtime()
+            .map_err(|error| format!("compile active policy: {error}"))?;
+        Ok(Self {
+            snapshot: ProxyPolicySnapshot::new(
+                active_policy_digest(active_policy),
+                compiled.network,
+                compiled.security_rules,
+                compiled.plugins,
+                compiled.model_endpoints,
+            ),
+            dns_upstreams: compiled.dns_upstreams,
+            mcp: compiled.mcp,
+        })
+    }
+
+    pub fn snapshot(&self) -> &ProxyPolicySnapshot {
+        &self.snapshot
+    }
+
+    pub fn dns_upstreams(&self) -> &[SocketAddr] {
+        &self.dns_upstreams
+    }
+
+    pub fn mcp(&self) -> &McpConfig {
+        &self.mcp
+    }
+
+    pub fn into_parts(self) -> (ProxyPolicySnapshot, Vec<SocketAddr>, McpConfig) {
+        (self.snapshot, self.dns_upstreams, self.mcp)
     }
 }
 

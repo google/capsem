@@ -53,6 +53,58 @@ fn credential_revision() -> ProxyPolicySnapshot {
     )
 }
 
+const ACTIVE_POLICY: &str = r#"
+[network]
+[network.dns]
+upstreams = ["127.0.0.1:5353"]
+
+[user_rules.profiles.rules.worker_http]
+name = "worker_http"
+action = "allow"
+priority = 10
+match = 'http.host == "worker.example"'
+
+[corp_rules]
+
+[plugins.credential_broker]
+mode = "rewrite"
+detection_level = "informational"
+
+[mcp.server_enabled]
+local = false
+"#;
+
+#[test]
+fn runtime_policy_compiles_exact_bytes_without_a_path() {
+    let runtime = ProxyRuntimePolicy::compile(ACTIVE_POLICY.as_bytes()).unwrap();
+    let snapshot = runtime.snapshot();
+
+    assert_eq!(
+        snapshot.digest(),
+        crate::net::policy_config::active_policy_digest(ACTIVE_POLICY.as_bytes())
+    );
+    assert!(snapshot
+        .security_rules()
+        .rules()
+        .iter()
+        .any(|rule| rule.rule_id == "profiles.rules.worker_http"));
+    assert_eq!(
+        snapshot.plugins()["credential_broker"].mode,
+        SecurityPluginMode::Rewrite
+    );
+    assert_eq!(runtime.dns_upstreams(), &["127.0.0.1:5353".parse().unwrap()]);
+    assert_eq!(runtime.mcp().server_enabled.get("local"), Some(&false));
+}
+
+#[test]
+fn malformed_runtime_policy_is_rejected() {
+    let error = ProxyRuntimePolicy::compile(b"[network]\nunknown = true")
+        .err()
+        .expect("invalid policy must fail");
+
+    assert!(error.contains("parse active policy"), "{error}");
+}
+
 #[test]
 fn policy_handle_replaces_one_immutable_revision_atomically() {
     let handle = ProxyPolicyHandle::new(revision(0));
