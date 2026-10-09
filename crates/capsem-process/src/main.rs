@@ -1,4 +1,3 @@
-mod aggregator_driver;
 mod cables;
 mod helpers;
 mod ipc;
@@ -1064,7 +1063,7 @@ async fn spawn_mcp_aggregator(
     let defs_vec = servers.to_vec();
     write_frame(&mut child_stdin, &defs_vec).await?;
 
-    let inflight = aggregator_driver::spawn(rx, child_stdin, child_stdout);
+    let inflight = capsem_core::mcp::aggregator_driver::spawn(rx, child_stdin, child_stdout);
 
     // Monitor child process.
     tokio::spawn(async move {
