@@ -174,6 +174,51 @@ async fn supervisor_mints_unique_role_bound_channels_and_reaps() {
     assert!(stopped.borrow().as_deref().unwrap().contains("coordinator"));
 }
 
+#[tokio::test]
+async fn terminal_event_after_observed_child_exit_is_still_drained() {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "ledger_worker::tests::fake_ledger_worker_child",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("CAPSEM_FAKE_LEDGER_WORKER", "refuse")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn().unwrap();
+    assert_eq!(child.wait().await.unwrap().code(), Some(42));
+
+    let (control, _control_peer) = UnixStream::pair().unwrap();
+    let (events_tx, control_events) = mpsc::channel(1);
+    let mut process = WorkerProcess {
+        generation: GENERATION,
+        child,
+        control_tx: ControlSender::new(control).unwrap(),
+        control_events,
+        control_reader: None,
+        next_client_id: 1,
+    };
+    let delayed = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        events_tx
+            .send(Ok(ControlFrame {
+                bytes: encode_ledger_control_event(LedgerControlEvent::Stopped { generation: GENERATION }),
+                fds: Vec::new(),
+            }))
+            .await
+            .unwrap();
+    });
+
+    assert!(matches!(
+        process.recv_event().await.unwrap(),
+        LedgerControlEvent::Stopped { generation } if generation == GENERATION
+    ));
+    delayed.await.unwrap();
+}
+
 #[test]
 fn generated_worker_lifetimes_are_fresh_and_nonzero() {
     assert_ne!(fresh_generation(), fresh_generation());
