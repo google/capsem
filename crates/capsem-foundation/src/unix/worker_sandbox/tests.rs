@@ -102,6 +102,68 @@ fn landlock_abi_eight_synchronizes_existing_threads() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn linux_device_grant_preserves_kvm_ioctls() {
+    let kvm = std::path::Path::new("/dev/kvm");
+    if !kvm.exists() {
+        return;
+    }
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "unix::worker_sandbox::tests::linux_kvm_device_child",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("WORKER_SANDBOX_KVM", kvm)
+        .status()
+        .unwrap();
+    if status.code() == Some(77) {
+        // Coverage runtimes may start a profiler thread before the test body.
+        // Landlock ABIs before TSYNC cannot confine that artificial sibling;
+        // production workers are explicitly single-threaded at confinement.
+        return;
+    }
+    assert!(status.success(), "sandboxed KVM probe failed: {status}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_kvm_device_child() {
+    let Some(kvm) = std::env::var_os("WORKER_SANDBOX_KVM") else {
+        return;
+    };
+    let kvm = std::path::PathBuf::from(kvm);
+    let device = std::fs::OpenOptions::new().read(true).write(true).open(&kvm).unwrap();
+    if let Err(error) = confine(&Policy::new(Role::VmOwner).allow(&kvm, Access::ReadWriteDevice)) {
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+        assert!(error.to_string().contains("single-threaded worker startup"));
+        std::process::exit(77);
+    }
+
+    // nix's no-argument ioctl wrapper omits the variadic argument while the
+    // KVM ABI expects an explicit zero. The descriptor and constant are valid
+    // for KVM_GET_API_VERSION, which reads no userspace pointer.
+    let version = unsafe { libc::ioctl(device.as_raw_fd(), 0xae00, 0u64) };
+    assert_eq!(
+        version,
+        12,
+        "KVM_GET_API_VERSION failed: {}",
+        std::io::Error::last_os_error()
+    );
+    std::process::exit(0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_device_grant_rejects_regular_files() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let error = confine(&Policy::new(Role::VmOwner).allow(file.path(), Access::ReadWriteDevice)).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(error.to_string().contains("sandbox device grant is not a device"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn linux_policy_preserves_grants_and_denies_ambient_authority() {
     let directory = tempfile::tempdir().unwrap();
     let allowed = directory.path().join("allowed");
