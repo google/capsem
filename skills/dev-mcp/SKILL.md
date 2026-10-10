@@ -8,7 +8,7 @@ description: MCP for Capsem: the SDK-backed npm host server, guest relay, and to
 Capsem has two MCP entry points:
 
 1. **`@capsem/mcp`** (host): a standalone TypeScript stdio server. It presents typed tools and uses `@capsem/sdk` for authenticated gateway HTTP. It does not open the service UDS, discover local services, or read VM runtime state.
-2. **Guest MCP relay + MITM MCP endpoint**: bridges AI agents inside a VM to built-in and external MCP servers through bounded framed records on vsock port 5002.
+2. **Guest MCP relay + confined proxy endpoint**: bridges AI agents inside a VM to built-in and external MCP servers through bounded framed records on vsock port 5002.
 
 The native installer does not install Node.js or download the npm host package.
 The guest relay, aggregator, and built-in Rust components remain native product
@@ -99,7 +99,12 @@ credential, CA private key, direct database access, or service socket access.
 
 ## MCP subprocess architecture
 
-The guest MCP path is not a single process. `capsem-process` (the per-VM host process) owns the MITM MCP endpoint and spawns two privilege-isolated subprocesses that together handle MCP traffic from the guest:
+The guest MCP path is not a single process. The per-session `capsem-proxy`
+owns the guest-facing framed endpoint, MCP policy, and ledger admission.
+`capsem-process` owns a scoped adapter to the aggregator and VM exposure tools;
+it cannot reopen the session ledger and the proxy cannot reach the aggregator
+except through that granted connected channel. The VM owner spawns two
+privilege-isolated subprocesses behind the adapter:
 
 | Crate | Role | Privileges |
 |-------|------|-----------|
@@ -108,29 +113,34 @@ The guest MCP path is not a single process. `capsem-process` (the per-VM host pr
 
 Rationale: isolating external-server connections in a low-privilege subprocess means a compromised third-party MCP server cannot reach the host filesystem or the session DB. The built-in tool server runs in its own process for the same reason.
 
-Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). Between the in-guest AI agent and `capsem-process`: `/run/capsem-mcp-server` relays stdio JSON-RPC as bounded framed MCP records over **vsock port 5002**. Tool activity writes the canonical `tool_calls` ledger. Visible MCP protocol facts are represented as typed security events and `security_rule_events`.
+Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). `/run/capsem-mcp-server` relays guest stdio JSON-RPC as bounded framed records over **vsock port 5002**; the VM owner grants each accepted stream to `capsem-proxy`. The proxy parses and evaluates it, then invokes the VM-owner adapter over its scoped MCP capability. Tool activity reaches the canonical `tool_calls` ledger through the proxy's typed ledger client. Visible protocol facts are typed security events and `security_rule_events`.
 
 Binaries land in `~/.capsem/bin/` at install time: `capsem-mcp-aggregator`, `capsem-mcp-builtin`.
 
 ## Guest MCP Endpoint
 
-The guest MCP relay bridges AI agents in the guest VM to the host MITM MCP endpoint. It runs over vsock port 5002 using bounded length-prefixed MCP frames that carry JSON-RPC payloads and per-frame process attribution.
+The guest MCP relay bridges AI agents in the guest VM to the confined proxy
+endpoint. It runs over vsock port 5002 using bounded length-prefixed MCP
+frames that carry JSON-RPC payloads and per-frame process attribution.
 
 Framed guest MCP over `vsock:5002` must be tested as the default transport, not as an opt-in benchmark mode. The minimum hardening matrix for that path is:
 - parser/interpreter: bounded frames, invalid JSON, malformed flags, stream-id reuse, notification/request-id mismatch
 - dispatch: `initialize`, `tools/list`, builtin `tools/call`, configured external stdio `tools/call`, `resources/list`, `prompts/list`, and method error mapping
 - policy: live policy mutation, per-tool block, resource URI rule, argument-name rule, argument-value rule, return-value rule, deny-over-allow precedence, and proof that blocked requests/responses do not leak original data
 - telemetry: `session.db` rows for success, denial, timeout, process attribution, request/response previews, policy fields, and terminal errors
-- boundary: aggregator remains DB-free; MITM/process owns MCP audit writes
-- VM E2E: boot a real VM, run `/run/capsem-mcp-server` with no transport override, then query `session.db`
+- boundary: aggregator and VM owner remain DB-free; `capsem-proxy` writes MCP
+  audit facts through its role-bound ledger capability
+- VM E2E: boot a real VM, run `/run/capsem-mcp-server` with no transport
+  override, then inspect the typed timeline/ledger routes
 
 ### Architecture
 
 ```
 Guest (Claude/Gemini) -> capsem-mcp-server (stdin/stdout relay)
-  -> framed vsock:5002 -> MITM MCP endpoint (capsem-core)
-  -> SecurityEvent rule check -> Route to: builtin tools | external MCP servers (via rmcp)
-  -> Telemetry -> session.db tool_calls table plus security_rule_events protocol evidence
+  -> framed vsock:5002 -> capsem-process descriptor handoff -> capsem-proxy
+  -> SecurityEvent rule check -> scoped VM-owner MCP adapter
+  -> builtin tools | external MCP servers (via aggregator)
+  -> typed ledger capability -> tool_calls plus security_rule_events evidence
 ```
 
 ### Workloads: streamable HTTP at `mcp.capsem.internal`

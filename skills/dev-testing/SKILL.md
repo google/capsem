@@ -456,7 +456,10 @@ for complete validation at major phase boundaries and before merge or release.
 At the major phase boundary for changes touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
 
 1. `just exec "capsem-doctor"` -- verifies sandbox integrity inside the VM
-2. After telemetry/logging changes: run a real session and verify with `python3 build_system/scripts/doctor/check_session.py` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
+2. After telemetry/logging changes: run a real session and verify the exercised
+   protocols through the typed timeline, history, statistics, and security
+   routes. Use `check_session.py --db` only on a coherent, quiesced evidence
+   copy after its ledger worker has stopped.
 
 ## When tests fail
 

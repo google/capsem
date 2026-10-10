@@ -11,8 +11,9 @@ for a named one. The ledger is two files that only make sense together:
 
 - `session.db` -- SQLite, every telemetry table plus the index of captured bodies.
 - `session.bodies` -- the append-only body archive: HTTP, model, tool, exec and
-  security payloads, deflated in blocks of about 1 MiB. SQLite never holds
-  body bytes.
+  security payloads, written as streaming zstd level 3 blocks of about 1 MiB.
+  Readers retain raw-deflate support for older blocks. SQLite never holds body
+  bytes, and native codec execution stays inside `capsem-ledger`.
 
 Copy, fork or delete them as a pair; either one alone is useless. The host
 ledger `~/.capsem/sessions/host.db` records what happened to every session
@@ -55,12 +56,15 @@ Sessions come from the host ledger, so they're listed after the session director
 
 ### Deep inspection
 
+The commands below open ledger files directly. Use them only on preserved test
+evidence or a coherent copy after its ledger worker has stopped. Live and
+stopped product-session reads go through the service's typed ledger routes;
+debug tooling must not become a second product reader outside `capsem-ledger`.
+
 ```bash
-python3 build_system/scripts/doctor/check_session.py                   # Full integrity check on latest session
-python3 build_system/scripts/doctor/check_session.py <id>              # Specific session or named VM
-python3 build_system/scripts/doctor/check_session.py --db path/session.db  # A ledger file directly
-python3 build_system/scripts/doctor/check_session.py --verify-bodies   # Also read every body back through its hash
-python3 build_system/scripts/doctor/check_session.py -n 10             # Show 10 preview rows per table
+uv run --project build_system --frozen python build_system/scripts/doctor/check_session.py --db /path/to/evidence/session.db
+uv run --project build_system --frozen python build_system/scripts/doctor/check_session.py --db /path/to/evidence/session.db --verify-bodies
+uv run --project build_system --frozen python build_system/scripts/doctor/check_session.py --db /path/to/evidence/session.db -n 10
 ```
 
 Checks: SQLite page integrity (`PRAGMA quick_check`, first -- a damaged file
@@ -457,7 +461,8 @@ old `main.db` beside it is never opened.
 ### tool_calls without matching tool_responses
 - The model invoked a tool but the next turn's tool results weren't captured
 - Check if the VM session ended before the tool result was sent back
-- `python3 build_system/scripts/doctor/check_session.py` reports orphaned tool_calls automatically
+- `check_session.py --db /path/to/evidence/session.db` reports orphaned
+  `tool_calls` automatically on a quiesced evidence copy
 
 ### Empty fs_events
 - The host file monitor (`crates/capsem-core/src/fs_monitor.rs`) polls the
@@ -507,7 +512,7 @@ old `main.db` beside it is never opened.
 
 ## When to inspect sessions
 
-**Always** run `python3 build_system/scripts/doctor/check_session.py` after changes to:
+**Always** run `check_session.py` on preserved or copied evidence after changes to:
 - Guest MCP endpoint (tool routing, policy, response format)
 - MITM proxy (SSE parsing, body preview, Content-Encoding)
 - File monitor (VirtioFS poll loop, kinds, overflow windows)
@@ -516,40 +521,48 @@ old `main.db` beside it is never opened.
 
 The inspect output now includes a tool usage breakdown from `tool_calls` plus MCP transport evidence when present. Check it after MCP changes to verify user tools return `allowed` with reasonable latency and that MCP-origin rows link back to protocol evidence when available.
 
-## Ad-hoc SQL queries
+## Ad-hoc SQL queries on offline evidence
 
-Use `sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db"` to run SQL against a session DB (a named VM's is under `run/persistent/<name>/`). Open it read-only (`-readonly`) while the VM runs: the owning `capsem-process` is the only writer. SQL answers what was captured and where; the bytes of a body are in `session.bodies` (see Bodies above).
+Run SQL only against a coherent, quiesced evidence copy. `capsem-ledger` is the
+sole process that opens a product session's `session.db`; VM owners, proxy
+workers, and service readers use typed ledger channels. SQL answers what the
+copy captured and where; body bytes remain in the matching `session.bodies`
+copy (see Bodies above).
 
 ```bash
+ledger_db=/path/to/evidence/session.db
+
 # Decisions breakdown
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT decision, COUNT(*) FROM net_events GROUP BY decision"
+sqlite3 -readonly "$ledger_db" "SELECT decision, COUNT(*) FROM net_events GROUP BY decision"
 
 # Token totals by provider
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT provider, SUM(input_tokens) as in_tok, SUM(output_tokens) as out_tok, SUM(estimated_cost_usd) as cost FROM model_calls GROUP BY provider"
+sqlite3 -readonly "$ledger_db" "SELECT provider, SUM(input_tokens) as in_tok, SUM(output_tokens) as out_tok, SUM(estimated_cost_usd) as cost FROM model_calls GROUP BY provider"
 
 # Find orphaned tool calls
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
+sqlite3 -readonly "$ledger_db" "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
 
 # MCP-origin user tool usage breakdown (http, external servers, etc.)
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
+sqlite3 -readonly "$ledger_db" "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
 
 # MCP-origin tool usage breakdown
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT method, tool_name, decision, COUNT(*) as cnt FROM tool_calls WHERE origin = 'mcp' GROUP BY method, tool_name, decision ORDER BY cnt DESC"
+sqlite3 -readonly "$ledger_db" "SELECT method, tool_name, decision, COUNT(*) as cnt FROM tool_calls WHERE origin = 'mcp' GROUP BY method, tool_name, decision ORDER BY cnt DESC"
 
 # Check fs_events actions
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT action, COUNT(*) FROM fs_events GROUP BY action"
+sqlite3 -readonly "$ledger_db" "SELECT action, COUNT(*) FROM fs_events GROUP BY action"
 
 # Trace a tool call chain
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
+sqlite3 -readonly "$ledger_db" "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
 
 # What bodies an event has, and how big they were
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT source_table, direction, content_type, original_bytes, stored_bytes, truncated FROM event_body_blobs WHERE event_id = '<event_id>'"
+sqlite3 -readonly "$ledger_db" "SELECT source_table, direction, content_type, original_bytes, stored_bytes, truncated FROM event_body_blobs WHERE event_id = '<event_id>'"
 
 # Archive health at a glance: blocks, bytes, and any body pointing at an unrecorded block
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT COUNT(*), SUM(raw_len), SUM(disk_len), MIN(sealed_at) FROM body_blocks; SELECT COUNT(*) FROM event_body_blobs b LEFT JOIN body_blocks k USING (block_offset) WHERE k.block_offset IS NULL"
+sqlite3 -readonly "$ledger_db" "SELECT COUNT(*), SUM(raw_len), SUM(disk_len), MIN(sealed_at) FROM body_blocks; SELECT COUNT(*) FROM event_body_blobs b LEFT JOIN body_blocks k USING (block_offset) WHERE k.block_offset IS NULL"
 
 # File-monitor overflow windows and what kinds of paths changed
-sqlite3 "$HOME/.capsem/run/sessions/<id>/session.db" "SELECT kind, action, COUNT(*) FROM fs_events GROUP BY kind, action"
+sqlite3 -readonly "$ledger_db" "SELECT kind, action, COUNT(*) FROM fs_events GROUP BY kind, action"
 ```
 
-Tip: `check_session --list` shows recent sessions from the host ledger; `run/sessions/<id>/session.db` is queryable while the session directory exists.
+Tip: `check_session --list` shows recent sessions from the host ledger. Use
+service routes for a live or retained product session and direct inspection
+only for quiesced evidence copies.
