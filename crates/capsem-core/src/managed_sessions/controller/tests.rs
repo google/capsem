@@ -151,10 +151,12 @@ impl Effects for Arc<Fixture> {
         })
     }
     fn reconcile(&self, _ticket: Ticket, intent: Option<VmBinding>) -> EffectFuture<Option<VmBinding>> {
-        if self.creates.load(Ordering::SeqCst) > 0 {
-            assert_eq!(intent.as_ref(), Some(&self.binding));
-        } else {
-            assert!(intent.is_none());
+        // A create timeout may cancel immediately after prepare_spawn durably
+        // records the intent but before this fixture increments `creates`.
+        // Reconciliation must accept that exact durable intent in either
+        // scheduling order and still reject a substituted binding.
+        if let Some(intent) = intent {
+            assert_eq!(intent, self.binding);
         }
         self.reconciles.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Ok(None) })
@@ -412,15 +414,16 @@ async fn finite_expiry_cleans_up_without_a_client() {
     fixture.cleanup_release.add_permits(1);
     let request = Uuid::new_v4();
     let cap = Capability::from_bytes([24; 32]);
-    owner
+    let created = owner
         .create(
             request,
             cap.clone(),
-            LeasePolicy::new(Duration::from_millis(40)).unwrap(),
+            LeasePolicy::new(Duration::from_millis(400)).unwrap(),
             effects(&fixture),
         )
         .await
         .unwrap();
+    assert_eq!(created.state(), State::Active);
     tokio::time::timeout(Duration::from_secs(1), fixture.cleanup_entered.acquire())
         .await
         .unwrap()
