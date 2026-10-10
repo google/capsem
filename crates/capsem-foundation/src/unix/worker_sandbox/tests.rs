@@ -4,6 +4,7 @@ use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::os::fd::AsFd;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Command, Stdio};
