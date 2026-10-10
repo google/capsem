@@ -597,22 +597,22 @@ fn drain_dead_instances_releases_mutex_before_returning() {
         "mutex still held after drain_dead_instances returned"
     );
 }
-
 pub(crate) fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
     let run_dir = test_root.join("run");
     std::fs::create_dir_all(run_dir.join("sessions")).unwrap();
     let mut state = make_test_state_owned();
-    state.persistent_registry = SharedRegistry::new(
-        PersistentRegistry::load(run_dir.join("persistent_registry.json")).expect("registry loads"),
-    );
-    state.networks = tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(PathBuf::from(
-        "/nonexistent/networks",
-    )));
+    let registry = PersistentRegistry::load(run_dir.join("persistent_registry.json")).unwrap();
+    state.persistent_registry = SharedRegistry::new(registry);
+    let networks = capsem_core::net::network_registry::NetworkRegistry::new("/nonexistent/networks".into());
+    state.networks = tokio::sync::Mutex::new(networks);
     state.service_socket = PathBuf::from("/nonexistent/service.sock");
     state.asset_status_path = asset_status_path_for_run_dir(&run_dir);
     state.host_ledger = test_host_ledger(&run_dir);
+    state.ledger_workers = Arc::new(ledger_worker::LedgerWorkers::new(
+        "/no".into(),
+        run_dir.join("ledger-commitments"),
+    ));
     state.run_dir = run_dir;
-    // The caller owns `test_root`; the fixture's own temporary root goes.
     state._test_tempdir = None;
     Arc::new(state)
 }

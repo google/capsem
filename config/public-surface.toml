@@ -37,7 +37,7 @@ approved = [
 ]
 
 [capsem_cli]
-count = 41
+count = 42
 approved = [
   "assets ensure",
   "assets status",
@@ -67,6 +67,7 @@ approved = [
   "network list",
   "network logs",
   "persist",
+  "proxy",
   "purge",
   "restart",
   "resume",
@@ -83,7 +84,7 @@ approved = [
 ]
 
 [http]
-count = 95
+count = 99
 approved = [
   "DELETE /networks/{id}",
   "DELETE /networks/{id}/members/{vm_id}",
@@ -143,11 +144,15 @@ approved = [
   "POST /corp/reload",
   "POST /corp/validate",
   "POST /purge",
+  "POST /proxies",
+  "POST /proxies/{id}/heartbeat",
+  "POST /proxies/{id}/stop",
   "POST /restart",
   "POST /run",
   "POST /internal/vms/{id}/exposures/{exposure_id}/preview-admission",
   "POST /internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap",
   "POST /internal/vms/{id}/exposures/{exposure_id}/preview-session",
+  "POST /internal/vms/{id}/metrics",
   "POST /update/apply",
   "POST /update/check",
   "POST /images/pull",

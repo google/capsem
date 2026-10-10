@@ -26,6 +26,8 @@ packages=(
     capsem-mcp-aggregator
     capsem-mcp-builtin
     capsem-process
+    capsem-ledger
+    capsem-proxy
     capsem-router
     capsem-bench
     capsem-mock-server

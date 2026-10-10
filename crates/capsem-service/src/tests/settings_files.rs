@@ -188,6 +188,8 @@ fn resolve_rejects_symlink_escape() {
         "test-vm".into(),
         InstanceInfo {
             generation: uuid::Uuid::new_v4(),
+            authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: "test-vm".into(),
             name: "test-vm".into(),
             asset_pins: test_asset_pins(),
@@ -201,7 +203,6 @@ fn resolve_rejects_symlink_escape() {
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 
@@ -222,6 +223,8 @@ fn resolve_valid_path_inside_workspace() {
         "test-vm".into(),
         InstanceInfo {
             generation: uuid::Uuid::new_v4(),
+            authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: "test-vm".into(),
             name: "test-vm".into(),
             asset_pins: test_asset_pins(),
@@ -235,7 +238,6 @@ fn resolve_valid_path_inside_workspace() {
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 
@@ -516,7 +518,7 @@ async fn wait_for_vm_ready_uses_tight_poll_contract_and_detects_ready() {
     let ready_clone = ready_path.clone();
     let creator = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        std::fs::write(&ready_clone, b"").unwrap();
+        std::fs::write(&ready_clone, b"ready\n").unwrap();
     });
 
     wait_for_vm_ready(&uds_path, 30, None, None)

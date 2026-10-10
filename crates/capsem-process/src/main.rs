@@ -1,31 +1,34 @@
-mod aggregator_driver;
 mod cables;
 mod helpers;
 mod ipc;
 mod job_store;
 mod mcp_runtime;
 mod metric_export;
-mod private_names;
+mod owner_sandbox;
 mod private_seats;
+mod proxy_mcp;
 mod runtime_config;
 mod terminal;
+mod trace_hints;
 mod vsock;
 
 use anyhow::{Context, Result};
 use capsem_core::fs_monitor::FsMonitor;
-use capsem_core::net::dns::{DnsAnswerCache, DnsResolver};
-use capsem_core::{boot_vm, BootOptions, VirtioFsShare, VsockConnection};
+use capsem_core::net::upstream_grant::{adopt_inherited, UpstreamGrantClient};
+use capsem_core::{prepare_vm, BootOptions, VirtioFsShare, VsockConnection};
 use capsem_logger::DbWriter;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use clap::Parser;
+use std::os::fd::AsFd as _;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::net::UnixListener;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use job_store::JobStore;
 use mcp_runtime::{GuestExposureTools, McpRuntime};
+use owner_sandbox::{attest_owner, confine_owner, prepare_owner_sandbox_attestation};
 use vsock::VsockOptions;
 
 /// Owns the background-thread resources that MUST drain before the main
@@ -38,6 +41,45 @@ pub(crate) struct Shutdown {
     publisher: Option<Arc<capsem_core::container::publish::Publisher>>,
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
+    proxy_mcp: Option<tokio::task::JoinHandle<()>>,
+    proxy_trace_hints: Option<tokio::task::JoinHandle<()>>,
+}
+
+struct PreparedOwnerResources {
+    seats: private_seats::Prepared,
+    workspace: capsem_foundation::unix::contained::ContainedDir,
+    metric_service: Option<std::os::unix::net::UnixStream>,
+    ipc_listener: std::os::unix::net::UnixListener,
+    launched: std::fs::File,
+    ready: std::fs::File,
+    pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
+    aggregator: capsem_proto::mcp_aggregator::AggregatorClient,
+    mcp_servers: Vec<capsem_proto::mcp_contracts::McpServerDef>,
+    builtin_bin: Option<PathBuf>,
+    builtin_env: std::collections::HashMap<String, String>,
+    ledger: PreparedLedger,
+}
+
+struct PreparedLedger {
+    stream: std::os::unix::net::UnixStream,
+    commitment: std::os::unix::net::UnixStream,
+    grant: capsem_proto::ledger::LedgerChannelGrant,
+}
+
+impl PreparedLedger {
+    fn from_grant(
+        (stream, commitment, grant): (
+            std::os::unix::net::UnixStream,
+            std::os::unix::net::UnixStream,
+            capsem_proto::ledger::LedgerChannelGrant,
+        ),
+    ) -> Self {
+        Self {
+            stream,
+            commitment,
+            grant,
+        }
+    }
 }
 
 impl Shutdown {
@@ -59,6 +101,14 @@ pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
     // stop the run loop while the first caller is still draining its owners.
     let mut guard = shutdown.lock().await;
     let mut owned = std::mem::take(&mut *guard);
+    if let Some(proxy_mcp) = owned.proxy_mcp.take() {
+        proxy_mcp.abort();
+        let _ = proxy_mcp.await;
+    }
+    if let Some(proxy_trace_hints) = owned.proxy_trace_hints.take() {
+        proxy_trace_hints.abort();
+        let _ = proxy_trace_hints.await;
+    }
     if let Some(publisher) = owned.publisher.take() {
         publisher.shutdown().await;
     }
@@ -120,17 +170,16 @@ struct Args {
     #[arg(long)]
     run_dir: Option<PathBuf>,
     /// The service's own socket, where this owner asks on a guest's behalf
-    /// (private names). Given by the service: it is not always
+    /// (private names and brokered metrics). Given by the service: it is not always
     /// `{run_dir}/service.sock`.
     #[arg(long)]
     service_socket: Option<PathBuf>,
+    /// Export metrics through the service's generation-authenticated local
+    /// broker. The service grants this without exposing a collector address.
+    #[arg(long)]
+    metric_broker: bool,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
-    /// The corp OTLP endpoint this process exports its metrics to, resolved
-    /// by the service from the corp config. Absent means export is off; the
-    /// process never reads settings or corp files for it.
-    #[arg(long)]
-    metric_endpoint: Option<String>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
     #[arg(long = "env")]
     env: Vec<String>,
@@ -170,6 +219,14 @@ fn aggregator_log_path(session_dir: &Path) -> PathBuf {
     session_dir.join("mcp-aggregator.stderr.log")
 }
 
+const OWNER_CHECKPOINT_FILE: &str = "checkpoint.vzsave";
+
+fn owner_checkpoint_path(session_dir: &Path) -> PathBuf {
+    session_dir
+        .join(capsem_core::session::OWNER_STATE_DIR)
+        .join(OWNER_CHECKPOINT_FILE)
+}
+
 fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Result<PathBuf> {
     capsem_core::create_virtiofs_session(session_dir, scratch_disk_size_gb)?;
     let guest_dir = capsem_core::guest_share_dir(session_dir);
@@ -201,13 +258,35 @@ fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Resu
     Ok(guest_dir)
 }
 
+fn prepare_sentinel(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("prepare readiness sentinel {}", path.display()))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
 fn main() -> Result<()> {
+    // SAFETY: process entry precedes argument parsing, telemetry, descriptor
+    // owners and runtime threads. Broker grants will be named here explicitly.
+    unsafe { capsem_foundation::unix::fd::close_inherited_descriptors()? };
+    let upstream_socket =
+        adopt_inherited(std::io::stdin().as_fd()).context("adopt inherited upstream grant channel")?;
     let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-process",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
         default_filter: "info",
     })?;
     let args = Args::parse();
+    let controller = capsem_foundation::unix::peer::PeerIdentity {
+        pid: capsem_foundation::unix::process::parent_process_id().context("missing coordinator parent")?,
+        uid: capsem_foundation::unix::process::current_uid(),
+    };
 
     // Root span shared across the whole capsem-process run: every
     // subsequent log line inherits `vm_id` and `trace_id` as structured
@@ -216,19 +295,27 @@ fn main() -> Result<()> {
     let root_span = tracing::info_span!("vm", vm_id = %args.id, trace_id = %trace_id);
     let _root_span_guard = root_span.enter();
 
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-
-    info!(id = %args.id, "capsem-sandbox-process starting");
-    // Held until the process exits: dropping it flushes the last measurements.
-    let _metric_export = metric_export::install(&args.id, args.metric_endpoint.as_deref());
-
     std::fs::create_dir_all(&args.session_dir)?;
     let mut session_dir = args.session_dir.clone();
     if let Ok(resolved) = session_dir.canonicalize() {
         session_dir = resolved;
     }
+    let _owner_singleton = capsem_guard::Singleton::try_acquire(&session_dir.join("process.lock"))?
+        .context("this session already has a running VM owner")?;
 
+    // A current-thread runtime creates no worker before confinement. Tasks
+    // queued during preparation start only after the sandbox is installed.
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    let runtime_source = runtime_config::RuntimePolicySource::new(args.active_policy.clone());
+    let runtime_config = runtime_source.load()?;
+    let upstream_grants = {
+        let _runtime = rt.enter();
+        Arc::new(UpstreamGrantClient::start(upstream_socket)?)
+    };
+
+    info!(id = %args.id, "capsem-sandbox-process starting");
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
+    capsem_core::container::publish::Publisher::prepare_session(&session_dir)?;
     // The image share is attached to every session, read-only at the device:
     // a device cannot be added after boot, and an image is pulled only once
     // the VM runs (its owner admits the pull). It stays empty until the
@@ -239,11 +326,13 @@ fn main() -> Result<()> {
             tag: "capsem".into(),
             host_path: guest_dir,
             read_only: false,
+            metadata_authority: Some(upstream_grants.clone()),
         },
         VirtioFsShare {
             tag: capsem_core::session::IMAGE_SHARE_TAG.into(),
             host_path: capsem_core::session::prepare_image_share(&session_dir)?,
             read_only: true,
+            metadata_authority: None,
         },
     ];
 
@@ -255,9 +344,50 @@ fn main() -> Result<()> {
     // `system/` directory, outside the share, so the guest cannot swap it
     // for a link to a host file (`capsem_core::session::adopt_system_overlay`).
     let system_img = capsem_core::session::system_overlay_image_path(&session_dir);
-    let machine_identifier_path = session_dir.join("machine_identifier");
+    let owner_state = session_dir.join(capsem_core::session::OWNER_STATE_DIR);
+    let machine_identifier_path = owner_state.join("machine_identifier");
+    let legacy_machine_identifier = session_dir.join("machine_identifier");
+    if legacy_machine_identifier.exists() && !machine_identifier_path.exists() {
+        std::fs::rename(&legacy_machine_identifier, &machine_identifier_path)
+            .context("move machine identifier into owner state")?;
+    }
     let serial_log_path = session_dir.join("serial.log");
-    let (vm, vsock_rx, sm) = boot_vm(BootOptions {
+    drop(capsem_foundation::unix::fs::open_private_append_no_follow(
+        &serial_log_path,
+    )?);
+    let pty_log = match capsem_core::pty_log::PtyLog::open(&session_dir.join("pty.log")) {
+        Ok(log) => Some(Arc::new(log)),
+        Err(error) => {
+            warn!(%error, "failed to prepare pty.log");
+            None
+        }
+    };
+    let executable = std::env::current_exe().context("locate VM-owner executable")?;
+    let aggregator_bin = resolve_mcp_aggregator_binary(&executable)?;
+    let aggregator_stderr =
+        capsem_foundation::unix::fs::open_private_append_no_follow(&aggregator_log_path(&session_dir))?;
+    let builtin_bin = executable
+        .parent()
+        .map(|directory| directory.join("capsem-mcp-builtin"));
+    let mut builtin_env = std::collections::HashMap::new();
+    builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
+    builtin_env.insert(
+        "CAPSEM_ACTIVE_POLICY".into(),
+        runtime_config.active_policy_path.to_string_lossy().to_string(),
+    );
+    let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
+    // The aggregator is a separately supervised process. Spawn it while the
+    // VM owner still has the one executable capability needed to create it;
+    // parent-side driver tasks remain queued on the current-thread runtime.
+    let aggregator = rt.block_on(spawn_mcp_aggregator(
+        &mcp_servers,
+        &session_dir,
+        &args.id,
+        &trace_id,
+        aggregator_bin,
+        aggregator_stderr,
+    ))?;
+    let prepared_vm = prepare_vm(BootOptions {
         assets: &args.assets_dir,
         kernel_override: args.kernel.as_deref(),
         initrd_override: args.initrd.as_deref(),
@@ -280,6 +410,57 @@ fn main() -> Result<()> {
         }),
     })?;
 
+    let prepared_seats = private_seats::prepare(private_seats::Seats {
+        id: &args.id,
+        service_socket: args.service_socket.as_deref(),
+        uds_path: &args.uds_path,
+        run_dir: args.run_dir.as_deref(),
+    })?;
+    let metric_service = if args.metric_broker {
+        Some(
+            std::os::unix::net::UnixStream::connect(&prepared_seats.service_socket)
+                .context("prepare metric service channel")?,
+        )
+    } else {
+        None
+    };
+    if args.uds_path.exists() {
+        std::fs::remove_file(&args.uds_path)?;
+    }
+    let ipc_listener = std::os::unix::net::UnixListener::bind(&args.uds_path)?;
+    ipc_listener.set_nonblocking(true)?;
+    std::fs::set_permissions(&args.uds_path, std::fs::Permissions::from_mode(0o600))?;
+    let launched_path = args.uds_path.with_extension("launched");
+    let launched = prepare_sentinel(&launched_path)?;
+    let ready = prepare_sentinel(&args.uds_path.with_extension("ready"))?;
+    // The grant response proves the supervised ledger worker has opened and
+    // initialized session.db. Acquire it before confinement so the denial
+    // attestation below always tests an existing ledger, then carry only the
+    // connected descriptors across the boundary.
+    let ledger = PreparedLedger::from_grant(
+        rt.block_on(upstream_grants.open_ledger())
+            .context("acquire supervised session ledger")?,
+    );
+    // Opening through the session root after confinement would require read
+    // authority over session.db and every other sibling. Resolve the
+    // guest-writable workspace before confinement, then carry only its
+    // no-follow directory descriptor into the VM owner.
+    let workspace = capsem_core::session::open_workspace(&session_dir).context("open workspace before confinement")?;
+    let attestation = prepare_owner_sandbox_attestation(&session_dir)?;
+
+    confine_owner(&args, &session_dir).context("install VM-owner confinement")?;
+    rt.block_on(attest_owner(
+        attestation,
+        prepared_seats.service_socket.clone(),
+        Arc::clone(&upstream_grants),
+    ))
+    .context("attest VM-owner confinement")?;
+    // The parent watcher is the first worker thread and therefore inherits
+    // the installed Landlock/Seatbelt and seccomp policy.
+    capsem_guard::watch_parent_or_exit(Some(controller.pid.get()))?;
+
+    let (vm, vsock_rx, sm) = prepared_vm.boot()?;
+
     // Delete checkpoint file if we just restored from it, so we don't accidentally suspend on normal shutdown
     if let Some(cp) = &args.checkpoint_path {
         let full_path = if std::path::Path::new(cp).is_absolute() {
@@ -291,6 +472,21 @@ fn main() -> Result<()> {
     }
 
     let vm_arc = Arc::new(tokio::sync::Mutex::new(vm));
+
+    let prepared_resources = PreparedOwnerResources {
+        seats: prepared_seats,
+        workspace,
+        metric_service,
+        ipc_listener,
+        launched,
+        ready,
+        pty_log,
+        aggregator,
+        mcp_servers,
+        builtin_bin,
+        builtin_env,
+        ledger,
+    };
 
     // Emit boot timeline state transitions for process.log.
     for t in sm.history() {
@@ -305,22 +501,24 @@ fn main() -> Result<()> {
 
     let shutdown: Arc<Mutex<Shutdown>> = Arc::new(Mutex::new(Shutdown::default()));
 
-    let trace_id_for_loop = trace_id;
     let session_dir_for_loop = session_dir;
     let shutdown_for_loop = Arc::clone(&shutdown);
     let shutdown_for_loop_error = Arc::clone(&shutdown);
     let vm_for_signal = Arc::clone(&vm_arc);
     let vm_for_exit = Arc::clone(&vm_arc);
     rt.spawn(async move {
-        if let Err(e) = run_async_main_loop(
+        if let Err(e) = Box::pin(run_async_main_loop(
             args,
+            controller,
             vm_arc,
             vsock_rx,
-            sm,
-            trace_id_for_loop,
             session_dir_for_loop,
             shutdown_for_loop,
-        )
+            runtime_source,
+            runtime_config,
+            upstream_grants,
+            prepared_resources,
+        ))
         .await
         {
             error!(error = format!("{e:#}"), "async loop failed");
@@ -367,6 +565,10 @@ fn main() -> Result<()> {
     });
 
     #[cfg(target_os = "macos")]
+    let _runtime_thread = std::thread::Builder::new()
+        .name("capsem-process-runtime".into())
+        .spawn(move || rt.block_on(std::future::pending::<()>()))?;
+    #[cfg(target_os = "macos")]
     unsafe {
         core_foundation_sys::runloop::CFRunLoopRun();
     }
@@ -376,29 +578,64 @@ fn main() -> Result<()> {
     // A VM the hypervisor stopped on its own is not a clean exit: the
     // service keeps the session directory and reports the VM as exited
     // unexpectedly, which is what happened.
-    if let Some(reason) = rt.block_on(async { vm_for_exit.lock().await.stop_reason() }) {
+    #[cfg(target_os = "macos")]
+    let stop_reason = vm_for_exit.blocking_lock().stop_reason();
+    #[cfg(not(target_os = "macos"))]
+    let stop_reason = rt.block_on(async { vm_for_exit.lock().await.stop_reason() });
+    if let Some(reason) = stop_reason {
         anyhow::bail!("the hypervisor stopped the VM: {reason}");
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_async_main_loop(
     args: Args,
+    controller: capsem_foundation::unix::peer::PeerIdentity,
     vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
-    _sm: capsem_core::host_state::HostStateMachine,
-    trace_id: String,
     session_dir: std::path::PathBuf,
     shutdown: Arc<Mutex<Shutdown>>,
+    runtime_source: runtime_config::RuntimePolicySource,
+    runtime_config: runtime_config::RuntimePolicyConfig,
+    upstream_grants: Arc<UpstreamGrantClient>,
+    prepared: PreparedOwnerResources,
 ) -> Result<()> {
-    let runtime_source = runtime_config::RuntimePolicySource::new(args.active_policy.clone());
-    let runtime_config = runtime_source.load()?;
+    let PreparedOwnerResources {
+        seats: prepared_seats,
+        workspace,
+        metric_service,
+        ipc_listener,
+        mut launched,
+        ready,
+        pty_log,
+        aggregator: aggregator_client,
+        mcp_servers,
+        builtin_bin,
+        builtin_env,
+        ledger,
+    } = prepared;
     let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
 
+    let ledger_path = session_dir.join("session.db");
     // 1024 queued events: a guest resolving and fetching in parallel enqueues
     // several rows per request, and a full queue makes every producer sleep
     // in 5 ms steps on its reply path (see `DbWriter::send_with_backpressure`).
-    let db = Arc::new(capsem_logger::DbWriter::open(&session_dir.join("session.db"), 1024)?);
+    // The logical path is diagnostic identity only; the descriptor selects
+    // the worker that exclusively owns and opens the database.
+    let db = Arc::new(
+        tokio::task::spawn_blocking(move || {
+            capsem_logger::DbWriter::from_ledger_channel(
+                ledger.stream,
+                ledger.commitment,
+                ledger.grant,
+                &ledger_path,
+                1024,
+            )
+        })
+        .await
+        .context("join supervised session ledger handshake")??,
+    );
     // Register the DbWriter with the SIGTERM handler BEFORE any work that
     // produces writes. If the signal fires before the workspace monitor
     // starts, we still want a clean checkpoint.
@@ -421,12 +658,14 @@ async fn run_async_main_loop(
     let guest_config = capsem_core::net::policy_config::GuestConfig::default();
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.security_rules.clone())));
     let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.plugins.clone())));
+    let proxy_policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(runtime_config.proxy_policy_snapshot());
     let job_store = Arc::new(JobStore {
         publisher: Arc::new(
-            capsem_core::container::publish::Publisher::for_session(
+            capsem_core::container::publish::Publisher::for_prepared_session(
                 &session_dir,
                 runtime_config.network.router.clone(),
             )?
+            .with_listener_authority(upstream_grants.clone())
             .with_security(
                 args.id.clone(),
                 args.vm_name.clone().unwrap_or_else(|| args.id.clone()),
@@ -442,17 +681,9 @@ async fn run_async_main_loop(
     shutdown.lock().await.publisher = Some(job_store.publisher.clone());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
-    let seats = private_seats::bind(
-        private_seats::Seats {
-            id: &args.id,
-            service_socket: args.service_socket.as_deref(),
-            uds_path: &args.uds_path,
-            run_dir: args.run_dir.as_deref(),
-            session_dir: &session_dir,
-        },
-        &job_store,
-        ctrl_tx.clone(),
-    )?;
+    let seats = prepared_seats.activate(&job_store, ctrl_tx.clone())?;
+    // Held until the process exits: dropping it flushes the last measurements.
+    let _metric_export = metric_export::install(&args.id, metric_service, args.metric_broker);
     let restored = job_store
         .publisher
         .restore(ctrl_tx.clone())
@@ -461,156 +692,83 @@ async fn run_async_main_loop(
     info!(restored, "restored published ports");
     let model_trace_state = Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new()));
 
-    // Start host file monitor to record fs_events.
-    // Opened once, by descriptor: the guest can swap its workspace for a host link.
-    match capsem_core::session::open_workspace(&session_dir)
-        .map_err(anyhow::Error::from)
-        .and_then(|workspace| {
-            capsem_core::fs_monitor::FsMonitor::start(
-                workspace,
-                Arc::clone(&db),
-                Arc::clone(&security_rules),
-                Arc::clone(&model_trace_state),
-            )
-        }) {
-        Ok(monitor) => {
-            info!("host file monitor started");
-            shutdown.lock().await.fs_monitor = Some(monitor);
-        }
-        Err(e) => {
-            error!(error = %e, "failed to start host file monitor");
-        }
-    }
+    let monitor = capsem_core::fs_monitor::FsMonitor::start(
+        workspace,
+        Arc::clone(&db),
+        Arc::clone(&security_rules),
+        Arc::clone(&model_trace_state),
+    )
+    .context("start host file monitor")?;
+    info!("host file monitor started");
+    shutdown.lock().await.fs_monitor = Some(monitor);
 
     let net_state = Arc::new(capsem_core::create_net_state_with_policy(
         &args.id,
         Arc::clone(&db),
         runtime_config.network.clone(),
     )?);
-    // Locate the builtin MCP server binary next to our own binary.
-    let builtin_bin = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("capsem-mcp-builtin")));
-    let mut builtin_env = std::collections::HashMap::new();
-    builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
-    let db_path = session_dir.join("session.db");
-    builtin_env.insert("CAPSEM_SESSION_DB".into(), db_path.to_string_lossy().to_string());
-    builtin_env.insert(
-        "CAPSEM_ACTIVE_POLICY".into(),
-        runtime_config.active_policy_path.to_string_lossy().to_string(),
-    );
-    let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
-    // Spawn the isolated MCP aggregator subprocess.
-    let aggregator_client = spawn_mcp_aggregator(&mcp_servers, &session_dir, &args.id, &trace_id).await?;
-
-    // Persist the aggregator's discovered tool catalog to the cache file
-    // so the service's GET /mcp/tools endpoint can serve it.
-    if let Ok(tools) = aggregator_client.list_tools().await {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs().to_string())
-            .unwrap_or_default();
-        // Merge with existing cache to preserve approval state.
-        let existing = capsem_core::mcp::load_tool_cache();
-        let cache_entries: Vec<capsem_core::mcp::ToolCacheEntry> = tools
-            .iter()
-            .map(|t| {
-                let pin_hash = capsem_core::mcp::compute_tool_hash(t);
-                let prev = existing.iter().find(|e| e.namespaced_name == t.namespaced_name);
-                capsem_core::mcp::ToolCacheEntry {
-                    namespaced_name: t.namespaced_name.clone(),
-                    original_name: t.original_name.clone(),
-                    description: t.description.clone(),
-                    server_name: t.server_name.clone(),
-                    annotations: t.annotations.clone(),
-                    pin_hash: pin_hash.clone(),
-                    first_seen: prev.map(|p| p.first_seen.clone()).unwrap_or_else(|| now.clone()),
-                    last_seen: now.clone(),
-                    approved: prev.map(|p| p.approved && p.pin_hash == pin_hash).unwrap_or(false),
-                }
-            })
-            .collect();
-        if let Err(e) = capsem_core::mcp::save_tool_cache(&cache_entries) {
-            warn!(error = %e, "failed to write tool cache");
-        } else {
-            info!(tools = cache_entries.len(), "wrote tool cache");
-        }
-    }
-
     let inflight_cap = capsem_core::mcp::resolve_inflight_cap();
     info!(inflight_cap, "MITM MCP endpoint in-flight handler cap");
-    let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.model_endpoints.clone())));
     let mcp_inflight = Arc::new(tokio::sync::Semaphore::new(inflight_cap));
+    let mcp_timeouts = capsem_core::net::mitm_proxy::McpTimeouts::from_env();
+    let builtin_servers = capsem_core::mcp::builtin_server_names(&mcp_servers);
+    let scoped_tools: Arc<dyn capsem_core::net::mitm_proxy::ScopedMcpTools> = Arc::new(GuestExposureTools::new(
+        Arc::clone(&job_store.publisher),
+        ctrl_tx.clone(),
+    ));
     let mcp_endpoint = Arc::new(
         capsem_core::net::mitm_proxy::McpEndpointState::new(
             aggregator_client.clone(),
             Arc::clone(&security_rules),
             Arc::clone(&plugin_policy),
             Arc::clone(&mcp_inflight),
-            capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
+            mcp_timeouts.clone(),
         )
-        .with_builtin_ledger(Arc::clone(&db), capsem_core::mcp::builtin_server_names(&mcp_servers))
-        .with_scoped_tools(Arc::new(GuestExposureTools::new(
-            Arc::clone(&job_store.publisher),
-            ctrl_tx.clone(),
-        ))),
+        .with_builtin_ledger(Arc::clone(&db), builtin_servers.clone())
+        .with_scoped_tools(Arc::clone(&scoped_tools)),
     );
     let mcp_runtime = Arc::new(McpRuntime {
-        aggregator: aggregator_client,
+        aggregator: aggregator_client.clone(),
         endpoint: Arc::clone(&mcp_endpoint),
         db: Arc::clone(&db),
         security_rules: Arc::clone(&security_rules),
         plugin_policy: Arc::clone(&plugin_policy),
-        model_endpoints: Arc::clone(&model_endpoints),
+        proxy_policy: proxy_policy.clone(),
     });
-
-    let telemetry_deps = Arc::new(capsem_core::net::mitm_proxy::telemetry_hook::TelemetryDeps {
-        db: Arc::clone(&db),
-        pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
-        trace_state: Arc::clone(&model_trace_state),
-        security_rules: Arc::clone(&security_rules),
-        plugin_policy: Arc::clone(&plugin_policy),
+    let (proxy_trace_hints, owner_trace_hints) = std::os::unix::net::UnixStream::pair()?;
+    let owner_trace_state = Arc::clone(&model_trace_state);
+    let proxy_trace_hints_task = tokio::spawn(async move {
+        if let Err(error) = trace_hints::serve(owner_trace_hints, owner_trace_state).await {
+            tracing::warn!(%error, "proxy trace-hint capability stopped");
+        }
     });
-    let mitm_pipeline = capsem_core::net::mitm_proxy::make_production_pipeline(
-        Arc::clone(&net_state.policy),
-        Arc::clone(&telemetry_deps),
-    );
-    let mitm_config = Arc::new(capsem_core::net::mitm_proxy::MitmProxyConfig {
-        ca: Arc::clone(&net_state.ca),
-        server_tls: capsem_core::net::mitm_proxy::make_server_tls_config(&net_state.ca),
-        policy: Arc::clone(&net_state.policy),
-        model_endpoints,
-        db: Arc::clone(&db),
-        upstream_tls: Arc::clone(&net_state.upstream_tls),
-        telemetry: telemetry_deps,
-        pipeline: mitm_pipeline,
-        mcp_endpoint: Some(mcp_endpoint),
-        upstream_resolver: capsem_core::net::upstream_address::UpstreamResolver::system(),
-    });
-
-    // DNS handler shares the same security rule/plugin handles as MITM
-    // so admin enforcement edits take effect across protocols at once.
-    let dns_resolver = if runtime_config.dns_upstreams.is_empty() {
-        DnsResolver::new()
-    } else {
-        DnsResolver::with_upstreams(runtime_config.dns_upstreams.clone())
-    };
-    // The private zone is the service's to answer, for this VM's networks.
-    let private_names = Arc::new(private_names::ServicePrivateNames::new(
-        seats.service_socket,
-        seats.owner_secret,
-        args.id.clone(),
-    ));
-    let dns_handler = Arc::new(
-        capsem_core::net::dns::DnsHandler::with_cache(
-            Arc::clone(&net_state.policy),
-            Arc::clone(&security_rules),
-            Arc::clone(&plugin_policy),
-            Arc::new(dns_resolver),
-            Arc::new(DnsAnswerCache::default()),
+    if let Err(error) = upstream_grants.attach_proxy_trace_hints(proxy_trace_hints.into()).await {
+        proxy_trace_hints_task.abort();
+        let _ = proxy_trace_hints_task.await;
+        return Err(error.context("grant proxy trace-hint capability"));
+    }
+    shutdown.lock().await.proxy_trace_hints = Some(proxy_trace_hints_task);
+    let (proxy_mcp, owner_mcp) = std::os::unix::net::UnixStream::pair()?;
+    let proxy_mcp_task = tokio::spawn(async move {
+        if let Err(error) = proxy_mcp::serve(
+            owner_mcp,
+            aggregator_client,
+            scoped_tools,
+            builtin_servers,
+            inflight_cap,
+            mcp_timeouts,
         )
-        .with_private_names(private_names),
-    );
+        .await
+        {
+            tracing::warn!(%error, "proxy MCP capability stopped");
+        }
+    });
+    if let Err(error) = upstream_grants.attach_proxy_mcp(proxy_mcp.into()).await {
+        proxy_mcp_task.abort();
+        let _ = proxy_mcp_task.await;
+        return Err(error.context("grant proxy MCP capability"));
+    }
+    shutdown.lock().await.proxy_mcp = Some(proxy_mcp_task);
 
     let ipc_tx_clone = ipc_tx.clone();
     let job_store_clone = Arc::clone(&job_store);
@@ -622,8 +780,7 @@ async fn run_async_main_loop(
     // the first ~100ms of post-resume output.
 
     let net_state_clone = Arc::clone(&net_state);
-    let mitm_config_clone = Arc::clone(&mitm_config);
-    let dns_handler_clone = Arc::clone(&dns_handler);
+    let upstream_grants_for_vsock = Arc::clone(&upstream_grants);
 
     // Parse --env KEY=VALUE pairs for guest injection
     let cli_env: Vec<(String, String)> = args
@@ -639,17 +796,16 @@ async fn run_async_main_loop(
     let is_restore = args.checkpoint_path.is_some();
     let vm_for_vsock = Arc::clone(&vm);
     let vm_ready_vsock = Arc::clone(&vm_ready);
-    let uds_path_vsock = uds_path.clone();
     let db_for_vsock = Arc::clone(&db);
     let shutdown_for_vsock = Arc::clone(&shutdown);
     let shutdown_for_vsock_error = Arc::clone(&shutdown);
-    let pty_log = match capsem_core::pty_log::PtyLog::open(&session_dir.join("pty.log")) {
-        Ok(pl) => Some(Arc::new(pl)),
-        Err(e) => {
-            warn!(error = %e, "failed to open pty.log");
-            None
-        }
-    };
+    let listener = tokio::net::UnixListener::from_std(ipc_listener)?;
+    seats.start();
+    use std::io::Write as _;
+    launched.write_all(b"launched\n")?;
+    launched.sync_data()?;
+    info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
+
     tokio::spawn(async move {
         if let Err(e) = vsock::setup_vsock(VsockOptions {
             vm_id: args.id.clone(),
@@ -663,14 +819,13 @@ async fn run_async_main_loop(
             session_dir: session_dir.clone(),
             cli_env,
             guest_config,
-            mitm_config: mitm_config_clone,
-            dns_handler: dns_handler_clone,
+            upstream_grants: upstream_grants_for_vsock,
             security_rules: Arc::clone(&security_rules),
             plugin_policy: Arc::clone(&plugin_policy),
             _net_state: net_state_clone,
             is_restore,
             vm_ready: vm_ready_vsock,
-            uds_path: uds_path_vsock,
+            ready,
             db: db_for_vsock,
             pty_log,
             shutdown: shutdown_for_vsock,
@@ -689,28 +844,6 @@ async fn run_async_main_loop(
             std::process::exit(1);
         }
     });
-
-    if uds_path.exists() {
-        std::fs::remove_file(&uds_path)?;
-    }
-    let listener = UnixListener::bind(&uds_path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&uds_path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
-    // The launch signal: the hypervisor has started the VM and this process
-    // is answering IPC. `create` returns on it instead of waiting out a timer
-    // (`.ready`, written after the guest handshake, comes much later). A
-    // separate file rather than the socket's existence, because a stale
-    // socket from an earlier run at this path was just deleted above.
-    let launched_path = uds_path.with_extension("launched");
-    std::fs::File::create(&launched_path)?;
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&launched_path, std::fs::Permissions::from_mode(0o600))?;
-    }
 
     // Terminal relay: fan-out broadcast + ring buffer so a newly-attached
     // terminal stream sees the shell's startup banner (printed before it joined).
@@ -739,6 +872,7 @@ async fn run_async_main_loop(
         tokio::spawn(async move {
             if let Err(e) = ipc::handle_ipc_connection(
                 stream,
+                controller,
                 tx_c,
                 ipc_tx_pass,
                 term_c,
@@ -769,39 +903,14 @@ async fn spawn_mcp_aggregator(
     session_dir: &Path,
     vm_id: &str,
     trace_id: &str,
+    aggregator_bin: PathBuf,
+    stderr_file: std::fs::File,
 ) -> Result<capsem_proto::mcp_aggregator::AggregatorClient> {
     use capsem_proto::mcp_aggregator::*;
 
     let (client, rx) = AggregatorClient::channel(64);
 
-    let exe_path = std::env::current_exe()?;
-    let aggregator_bin = resolve_mcp_aggregator_binary(&exe_path)?;
-
-    // Dedicated stderr log for the aggregator -- keeps its JSON tracing
-    // stream out of the parent's process.log. 0o600 to match the
-    // project's sensitive-log permissions policy (see
-    // /dev-rust-patterns lesson 14).
     let log_path = aggregator_log_path(session_dir);
-    let stderr_file = {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .mode(0o600)
-                .open(&log_path)
-                .with_context(|| format!("failed to open {}", log_path.display()))?
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-                .with_context(|| format!("failed to open {}", log_path.display()))?
-        }
-    };
 
     info!(
         bin = %aggregator_bin.display(),
@@ -840,7 +949,7 @@ async fn spawn_mcp_aggregator(
     let defs_vec = servers.to_vec();
     write_frame(&mut child_stdin, &defs_vec).await?;
 
-    let inflight = aggregator_driver::spawn(rx, child_stdin, child_stdout);
+    let inflight = capsem_core::mcp::aggregator_driver::spawn(rx, child_stdin, child_stdout);
 
     // Monitor child process.
     tokio::spawn(async move {

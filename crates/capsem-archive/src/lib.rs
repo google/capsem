@@ -2,7 +2,7 @@
 //!
 //! SQLite stays the index of every ledger row and selects one immutable
 //! generation by typed archive and generation identities. Bodies (HTTP,
-//! model, tool, security payloads) are fed to one open deflate stream, a
+//! model, tool, security payloads) are fed to one open compression stream, a
 //! block, and each disk flush appends what that stream produced as a segment.
 //! The block stays open across flushes, so every body compresses against the
 //! ones before it, until it reaches its target size. Consecutive bodies from
@@ -13,22 +13,24 @@
 //! header. Descriptor-based readers enforce the ledger's committed file and
 //! block extents, so appended or torn bytes cannot widen a selected snapshot.
 //!
-//! Pure Rust by rule: the runtime links one C library (SQLite) and this
-//! crate must not add a second in front of attacker-influenced bytes.
-//! `tests/citadel/test_runtime_native_dependencies.py` holds it.
+//! This crate remains pure Rust. The codec interface lets a separately
+//! confined owner provide a reviewed native implementation without adding
+//! that dependency to every process which uses the archive types.
 
 #[cfg(not(unix))]
 compile_error!("capsem-archive relies on O_NOFOLLOW and mode 0600");
 
+mod codec;
 pub mod format;
 pub mod reader;
 pub mod retain;
 pub mod warc;
 pub mod writer;
 
+pub use codec::{ArchiveCodecs, BlockCodec, BlockDecoder, BlockEncoder};
 pub use format::{
-    ArchiveId, BodyRef, FileHeader, GenerationId, BLOCK_HEADER_BYTES, FILE_HEADER_BYTES, MAX_BLOCK_RAW_BYTES,
-    TARGET_BLOCK_BYTES,
+    ArchiveId, BodyRef, FileHeader, GenerationId, BLOCK_HEADER_BYTES, CODEC_ZSTD, FILE_HEADER_BYTES,
+    MAX_BLOCK_RAW_BYTES, TARGET_BLOCK_BYTES,
 };
 pub use reader::{BlockExtent, BodyLogReader};
 pub use retain::{commit_retained, stage_retained_blocks, validate_block_extent, RetainedStaging};
@@ -61,6 +63,8 @@ pub enum ArchiveError {
     /// later writer's bytes as something they are not.
     #[error("block at offset {block_offset} uses unsupported codec {codec}")]
     UnsupportedCodec { block_offset: u64, codec: u8 },
+    #[error("codec id {0} is reserved or conflicts with built-in deflate")]
+    InvalidCodecId(u8),
     /// A segment header that is not one, or that fails its bounds: wrong
     /// magic or flags, a raw extent that does not continue the block, a
     /// length past the ceilings, or an extent that does not end on a segment.

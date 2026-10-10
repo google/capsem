@@ -102,6 +102,7 @@ pub(crate) async fn apply_policy_mutation(
         .await?
         .map_err(bad_request)
         .inspect_err(rejected)?;
+    state.invalidate_plugin_policy_cache();
     let event = write_policy_mutation_event(state, &mutation, summary).await?;
     info!(
         target: "capsem.policy_mutation",

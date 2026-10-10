@@ -8,7 +8,9 @@ use tokio::sync::mpsc;
 use tracing::{debug_span, info, info_span, warn};
 
 use crate::host_state::{HostState, HostStateMachine};
-use crate::hypervisor::{Hypervisor, VmHandle, VsockConnection};
+#[cfg(target_os = "macos")]
+use crate::hypervisor::Hypervisor;
+use crate::hypervisor::{VmHandle, VsockConnection};
 use crate::vm::config::VmConfig;
 
 #[cfg(target_os = "macos")]
@@ -92,13 +94,7 @@ pub struct BootOptions<'a> {
 /// as the overlayfs upper.
 /// If `virtiofs_shares` is non-empty, VirtioFS directory sharing devices are
 /// attached and `capsem.storage=virtiofs` is appended to the kernel cmdline.
-pub fn boot_vm(
-    options: BootOptions,
-) -> Result<(
-    Box<dyn VmHandle>,
-    mpsc::UnboundedReceiver<VsockConnection>,
-    HostStateMachine,
-)> {
+pub fn prepare_vm(options: BootOptions<'_>) -> Result<PreparedVm> {
     let BootOptions {
         assets,
         kernel_override,
@@ -115,7 +111,7 @@ pub fn boot_vm(
         expected_asset_hashes,
     } = options;
     let _span = info_span!("boot_vm").entered();
-    let mut sm = HostStateMachine::new_host();
+    let sm = HostStateMachine::new_host();
 
     info!(
         "[boot-audit] boot_vm: cpu={cpu_count} ram_bytes={ram_bytes} virtiofs_shares={}",
@@ -209,7 +205,7 @@ pub fn boot_vm(
                 share.tag,
                 share.host_path.display()
             );
-            builder = builder.virtio_fs_share(&share.tag, &share.host_path, share.read_only);
+            builder = builder.virtio_fs_share_config(share.clone());
         }
 
         info!("[boot-audit] calling VmConfig::build()");
@@ -217,34 +213,83 @@ pub fn boot_vm(
     };
     info!("[boot-audit] VmConfig built successfully");
 
-    info!("[boot-audit] calling hypervisor boot");
-    let boot_span = debug_span!(
-        target: "capsem.launch",
-        capsem_foundation::telemetry::LAUNCH_VM_BOOT_SPAN,
-        status = tracing::field::Empty,
-    );
-    let (vm, vsock_rx) = {
-        let _span = boot_span.clone().entered();
-        #[cfg(target_os = "macos")]
-        let result = AppleVzHypervisor.boot(&config, capsem_proto::host_vsock_ports());
+    #[cfg(target_os = "linux")]
+    let prepared_vsock = KvmHypervisor::prepare_vsock(
+        capsem_proto::host_vsock_ports(),
+        crate::hypervisor::kvm::kvm_vsock_seed(&config),
+    )?;
+
+    Ok(PreparedVm {
+        config,
+        sm,
         #[cfg(target_os = "linux")]
-        let result = KvmHypervisor.boot(&config, capsem_proto::host_vsock_ports());
-        match result {
-            Ok(value) => {
-                boot_span.record("status", "ok");
-                value
-            }
-            Err(error) => {
-                boot_span.record("status", "error");
-                return Err(error).context("failed to boot VM");
-            }
-        }
-    };
-    info!("[boot-audit] hypervisor boot returned OK");
+        prepared_vsock,
+    })
+}
 
-    sm.transition(HostState::Booting, "vm_started")?;
+/// A VM configuration whose direct host socket resources have already been
+/// acquired. Preparing this value is single-threaded; activation may therefore
+/// happen after the caller installs its worker sandbox.
+pub struct PreparedVm {
+    config: VmConfig,
+    sm: HostStateMachine,
+    #[cfg(target_os = "linux")]
+    prepared_vsock: crate::hypervisor::kvm::PreparedVsock,
+}
 
-    Ok((vm, vsock_rx, sm))
+impl PreparedVm {
+    pub fn boot(
+        self,
+    ) -> Result<(
+        Box<dyn VmHandle>,
+        mpsc::UnboundedReceiver<VsockConnection>,
+        HostStateMachine,
+    )> {
+        let PreparedVm {
+            config,
+            mut sm,
+            #[cfg(target_os = "linux")]
+            prepared_vsock,
+        } = self;
+        info!("[boot-audit] calling hypervisor boot");
+        let boot_span = debug_span!(
+            target: "capsem.launch",
+            capsem_foundation::telemetry::LAUNCH_VM_BOOT_SPAN,
+            status = tracing::field::Empty,
+        );
+        let (vm, vsock_rx) = {
+            let _span = boot_span.clone().entered();
+            #[cfg(target_os = "macos")]
+            let result = AppleVzHypervisor.boot(&config, capsem_proto::host_vsock_ports());
+            #[cfg(target_os = "linux")]
+            let result = KvmHypervisor.boot_prepared(&config, capsem_proto::host_vsock_ports(), prepared_vsock);
+            match result {
+                Ok(value) => {
+                    boot_span.record("status", "ok");
+                    value
+                }
+                Err(error) => {
+                    boot_span.record("status", "error");
+                    return Err(error).context("failed to boot VM");
+                }
+            }
+        };
+        info!("[boot-audit] hypervisor boot returned OK");
+        sm.transition(HostState::Booting, "vm_started")?;
+        Ok((vm, vsock_rx, sm))
+    }
+}
+
+/// Prepare and immediately boot a VM. Long-lived owners should call
+/// [`prepare_vm`] before confinement and [`PreparedVm::boot`] afterward.
+pub fn boot_vm(
+    options: BootOptions<'_>,
+) -> Result<(
+    Box<dyn VmHandle>,
+    mpsc::UnboundedReceiver<VsockConnection>,
+    HostStateMachine,
+)> {
+    prepare_vm(options)?.boot()
 }
 
 fn effective_kernel_cmdline(base: &str, virtiofs_shares: &[VirtioFsShare], rootfs_override: Option<&Path>) -> String {

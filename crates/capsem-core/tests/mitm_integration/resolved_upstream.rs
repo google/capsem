@@ -177,6 +177,10 @@ fn default_rules() -> capsem_core::net::policy_config::SecurityRuleSet {
 fn resolving(config: Arc<MitmProxyConfig>, name: &str, address: &str) -> Arc<MitmProxyConfig> {
     let mut config = Arc::try_unwrap(config).ok().expect("config not yet shared");
     config.upstream_resolver = UpstreamResolver::system().with_fixed_answer(name, vec![address.parse().unwrap()]);
+    config.upstream_grants = Some(Arc::new(IntegrationGrants::new(
+        config.engine.policy().clone(),
+        config.upstream_resolver.clone(),
+    )));
     Arc::new(config)
 }
 

@@ -10,6 +10,7 @@ use super::*;
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
 use hickory_proto::rr::{Name, RecordType};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 
 fn query_bytes(id: u16, name: &str) -> Vec<u8> {
     let mut message = Message::new(id, MessageType::Query, OpCode::Query);
@@ -189,4 +190,113 @@ async fn a_hundred_concurrent_resolves_complete_against_one_upstream() {
     for task in tasks {
         task.await.unwrap();
     }
+}
+
+#[derive(Clone)]
+struct IndexedGrants {
+    upstreams: Arc<Vec<SocketAddr>>,
+    requested: Arc<Mutex<Vec<u16>>>,
+    policy_digests: Arc<Mutex<Vec<String>>>,
+    refuse: bool,
+}
+
+impl DnsUpstreamGrants for IndexedGrants {
+    fn open(&self, upstream_index: u16, policy_digest: &str) -> DnsGrantFuture<'_> {
+        self.policy_digests.lock().unwrap().push(policy_digest.to_string());
+        Box::pin(async move {
+            self.requested.lock().unwrap().push(upstream_index);
+            if self.refuse {
+                return Err(anyhow!("grant refused"));
+            }
+            let upstream = self.upstreams[usize::from(upstream_index)];
+            let socket = UdpSocket::bind("127.0.0.1:0").await?;
+            socket.connect(upstream).await?;
+            Ok(DnsDatagram::new(socket, || {}))
+        })
+    }
+}
+
+#[tokio::test]
+async fn injected_grants_preserve_configured_failover_order() {
+    let sink = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let primary = sink.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut bytes = [0_u8; 512];
+        while sink.recv_from(&mut bytes).await.is_ok() {}
+    });
+    let failover = fake_upstream(|query| {
+        let id = u16::from_be_bytes([query[0], query[1]]);
+        vec![answer_for(query, id, "ordered.example.")]
+    })
+    .await;
+    let requested = Arc::new(Mutex::new(Vec::new()));
+    let policy_digests = Arc::new(Mutex::new(Vec::new()));
+    let grants = IndexedGrants {
+        upstreams: Arc::new(vec![primary, failover]),
+        requested: Arc::clone(&requested),
+        policy_digests: Arc::clone(&policy_digests),
+        refuse: false,
+    };
+    let resolver =
+        DnsResolver::with_grants(vec![primary, failover], Arc::new(grants)).with_timeout(Duration::from_millis(50));
+
+    resolver
+        .resolve_for_policy(&query_bytes(7, "ordered.example."), "blake3:dns")
+        .await
+        .expect("the second configured grant answers");
+    assert_eq!(*requested.lock().unwrap(), vec![0, 1]);
+    assert_eq!(
+        *policy_digests.lock().unwrap(),
+        vec!["blake3:dns".to_string(), "blake3:dns".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn refused_grant_never_falls_back_to_direct_udp() {
+    let upstream = fake_upstream(|query| {
+        let id = u16::from_be_bytes([query[0], query[1]]);
+        vec![answer_for(query, id, "closed.example.")]
+    })
+    .await;
+    let requested = Arc::new(Mutex::new(Vec::new()));
+    let grants = IndexedGrants {
+        upstreams: Arc::new(vec![upstream]),
+        requested: Arc::clone(&requested),
+        policy_digests: Arc::new(Mutex::new(Vec::new())),
+        refuse: true,
+    };
+    let error = DnsResolver::with_grants(vec![upstream], Arc::new(grants))
+        .resolve(&query_bytes(9, "closed.example."))
+        .await
+        .expect_err("a missing descriptor grant fails closed");
+    assert!(error.to_string().contains("grant refused"), "{error:#}");
+    assert_eq!(*requested.lock().unwrap(), vec![0]);
+}
+
+#[tokio::test]
+async fn a_policy_reload_replaces_the_configured_grant_order() {
+    let upstream = fake_upstream(|query| {
+        let id = u16::from_be_bytes([query[0], query[1]]);
+        vec![answer_for(query, id, "reloaded.example.")]
+    })
+    .await;
+    let requested = Arc::new(Mutex::new(Vec::new()));
+    let grants = IndexedGrants {
+        upstreams: Arc::new(vec![upstream]),
+        requested: Arc::clone(&requested),
+        policy_digests: Arc::new(Mutex::new(Vec::new())),
+        refuse: false,
+    };
+    let resolver = DnsResolver::with_grants(Vec::new(), Arc::new(grants));
+    resolver
+        .resolve(&query_bytes(10, "reloaded.example."))
+        .await
+        .expect_err("empty policy has no implicit direct fallback");
+
+    resolver.replace_upstreams(vec![upstream]);
+    resolver
+        .resolve(&query_bytes(11, "reloaded.example."))
+        .await
+        .expect("the reloaded upstream order is used");
+    assert_eq!(*requested.lock().unwrap(), vec![0]);
 }

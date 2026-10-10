@@ -104,8 +104,8 @@ fn watch_tree(root: &ContainedDir, watch: &mut ChangeWatch, maximum_entries: usi
     let mut remaining = maximum_entries
         .checked_sub(1)
         .context("inventory entry budget exhausted")?;
-    let mut directories = vec![root.try_clone()?];
-    while let Some(directory) = directories.pop() {
+    let mut directories = vec![(root.try_clone()?, PathBuf::new())];
+    while let Some((directory, relative)) = directories.pop() {
         directory.visit_entries(|entry| {
             remaining = remaining
                 .checked_sub(1)
@@ -113,10 +113,24 @@ fn watch_tree(root: &ContainedDir, watch: &mut ChangeWatch, maximum_entries: usi
             match entry.kind {
                 EntryKind::Directory => {
                     let child = directory.descend(&entry.name)?;
-                    watch.add(child.as_fd())?;
-                    directories.push(child);
+                    let child_relative = relative.join(&entry.name);
+                    // kqueue reports opens of flock control children as
+                    // directory activity too. Inventory epochs already own
+                    // those transitions, so neither the directory nor its
+                    // files belong to the filesystem-change proof.
+                    if !child_relative.starts_with("locks") {
+                        watch.add(child.as_fd())?;
+                    }
+                    directories.push((child, child_relative));
                 }
                 EntryKind::File => {
+                    // Materialization flock transitions are represented by
+                    // explicit inventory epochs. Watching their control files
+                    // makes macOS kqueue report our own lock probes as cache
+                    // mutations, so no quiet inventory can ever publish.
+                    if relative.starts_with("locks") {
+                        return Ok(true);
+                    }
                     let file = directory.open_file(&entry.name, ContainedOpenOptions::read_only())?;
                     let current = file.metadata()?;
                     if (current.dev(), current.ino()) != (entry.identity.dev, entry.identity.ino) {

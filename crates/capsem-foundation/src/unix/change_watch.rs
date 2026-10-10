@@ -59,7 +59,7 @@ impl ChangeWatch {
 
     /// Add an already-contained open file or directory, never a pathname.
     pub fn add(&mut self, fd: BorrowedFd<'_>) -> io::Result<()> {
-        let result = self.add_inner(fd, None);
+        let result = self.add_inner(fd, None, false);
         if result.is_err() {
             self.changed = true;
         }
@@ -119,16 +119,27 @@ impl ChangeWatch {
             if std::fs::symlink_metadata(parent)?.file_type().is_symlink() {
                 continue;
             }
+            #[cfg(target_os = "macos")]
+            if !std::fs::symlink_metadata(child)?.file_type().is_symlink() {
+                // kqueue vnode events carry no child name. Watching the
+                // enclosing directory would therefore turn every sibling
+                // write into a false invalidation. The ancestor inode itself
+                // reports rename/delete/revoke when its binding changes.
+                let directory = ContainedDir::open_root(child)?;
+                self.add_inner(directory.as_fd(), None, true)?;
+                continue;
+            }
             let directory = ContainedDir::open_root(parent)?;
-            self.add_inner(directory.as_fd(), Some(name))?;
+            self.add_inner(directory.as_fd(), Some(name), false)?;
         }
         Ok(())
     }
 
-    fn add_inner(&mut self, fd: BorrowedFd<'_>, name: Option<&OsStr>) -> io::Result<()> {
+    fn add_inner(&mut self, fd: BorrowedFd<'_>, name: Option<&OsStr>, binding_only: bool) -> io::Result<()> {
         let held = super::fd::duplicate(fd)?;
         #[cfg(target_os = "linux")]
         {
+            let _ = binding_only;
             // Linux has no fd form of inotify_add_watch. This process-owned
             // proc descriptor link resolves the held inode, not its old path.
             let path = format!("/proc/self/fd/{}", held.as_raw_fd());
@@ -155,20 +166,27 @@ impl ChangeWatch {
         }
         #[cfg(target_os = "macos")]
         {
-            // Vnode events have no child name. Any ancestor event is a
-            // conservative invalidation on macOS.
+            // Vnode events have no child name. A path binding therefore
+            // watches only changes to its already-open ancestor inode;
+            // NOTE_WRITE/EXTEND/LINK would report unrelated sibling activity.
+            // Content watches retain every mutation flag.
             let _ = name;
-            let event = KEvent::new(
-                held.as_raw_fd() as usize,
-                EventFilter::EVFILT_VNODE,
-                EventFlag::EV_ADD | EventFlag::EV_CLEAR,
+            let filters = if binding_only {
+                FilterFlag::NOTE_ATTRIB | FilterFlag::NOTE_RENAME | FilterFlag::NOTE_DELETE | FilterFlag::NOTE_REVOKE
+            } else {
                 FilterFlag::NOTE_WRITE
                     | FilterFlag::NOTE_EXTEND
                     | FilterFlag::NOTE_ATTRIB
                     | FilterFlag::NOTE_LINK
                     | FilterFlag::NOTE_RENAME
                     | FilterFlag::NOTE_DELETE
-                    | FilterFlag::NOTE_REVOKE,
+                    | FilterFlag::NOTE_REVOKE
+            };
+            let event = KEvent::new(
+                held.as_raw_fd() as usize,
+                EventFilter::EVFILT_VNODE,
+                EventFlag::EV_ADD | EventFlag::EV_CLEAR,
+                filters,
                 0,
                 0,
             );

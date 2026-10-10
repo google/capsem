@@ -5,18 +5,25 @@ sidebar:
   order: 0
 ---
 
-Capsem uses a service-oriented architecture with multiple cooperating binaries. Every VM operation flows through a single path: client -> service -> per-VM process -> guest.
+Capsem uses a service-oriented architecture with multiple cooperating binaries.
+Every VM operation flows through a single path: client -> service -> per-VM
+owner -> guest. Security-sensitive parsing and storage run in separately
+confined proxy and ledger workers. See [Host Process Isolation](/architecture/host-isolation/)
+for the authority of each process and its failure behavior.
 
 ## Host binaries
 
-Seven binaries run on the host machine. They are installed to
+The native host binaries are installed to
 `~/.capsem/bin/` by the platform package or source install flow.
 
 | Binary | Role | Communication |
 |--------|------|---------------|
 | **capsem** | CLI client | HTTP over UDS to service |
-| **capsem-service** | Background daemon | Axum HTTP over UDS (`~/.capsem/run/service.sock`) |
+| **capsem-service** | Background daemon and trusted producer-checkpoint authority | Axum HTTP over UDS (`~/.capsem/run/service.sock`) plus connected worker capabilities |
 | **capsem-process** | Per-VM process | Spawned by service, bounded MessagePack over UDS (after a MessagePack Hello) |
+| **capsem-proxy** | Per-session HTTP, DNS, model, and MCP policy worker | Generation-bound connected descriptor grants |
+| **capsem-ledger** | Sole owner of one session ledger | Role- and generation-bound connected ledger channels |
+| **capsem-router** | Per-VM published-port relay or per-network L2 switch | Connected descriptor grants; never chooses or opens destinations |
 | **capsem-mcp-aggregator** | External MCP server connections | Length-prefixed MessagePack frames over stdin/stdout, spawned by capsem-process |
 | **capsem-mcp-builtin** | Built-in HTTP tools | stdio MCP, spawned by the aggregator |
 | **capsem-gateway** | HTTP/WebSocket gateway | TCP port 19222, proxies to service UDS |
@@ -64,10 +71,17 @@ graph TD
 
     SVC["capsem-service (daemon)"]
 
-    SVC -->|"bounded MessagePack/UDS"| PROC["capsem-process (per-VM)"]
+    SVC -->|"bounded MessagePack/UDS"| PROC["capsem-process (per-VM owner)"]
+    SVC -->|"generation-bound descriptors"| PROXY["capsem-proxy (per session)"]
+    SVC -->|"role-bound channels"| LEDGER["capsem-ledger (per session)"]
 
     PROC -->|"MessagePack frames/stdio"| AGG["capsem-mcp-aggregator"]
     AGG -->|"HTTP/SSE"| EXT["External MCP servers"]
+    PROC -->|"HTTP/DNS/MCP descriptors"| PROXY
+    PROC -->|"typed writer channel"| LEDGER
+    PROXY -->|"typed writer channel"| LEDGER
+    PROC -->|"commitment channel"| SVC
+    PROXY -->|"commitment channel"| SVC
 
     subgraph "Linux VM (guest)"
         AGENT["capsem-pty-agent"]
@@ -78,9 +92,9 @@ graph TD
     end
 
     PROC -->|"vsock:5000,5001,5005,5006"| AGENT
-    PROC -->|"vsock:5002"| NETPROXY
-    PROC -->|"vsock:5007"| DNSPROXY
-    PROC -->|"vsock:5002"| MCPGW
+    NETPROXY -->|"vsock:5002 via owner"| PROXY
+    DNSPROXY -->|"vsock:5007 via owner"| PROXY
+    MCPGW -->|"vsock:5002 via owner"| PROXY
     PROC -->|"vsock:5004"| SYSUTIL
 ```
 
@@ -138,16 +152,31 @@ The CLI (`capsem`) auto-launches the service if it's not running. On every servi
 3. Fall back to direct spawn
 4. Poll socket for up to 5 seconds
 
-## Per-VM process isolation
+## Per-session process isolation
 
-Each running VM gets its own `capsem-process` child. This provides security isolation:
+Each running VM gets its own VM owner, proxy worker, and ledger worker. The
+service creates resources and hands each worker connected descriptors instead
+of paths or destination names. The short summary is:
 
-- **Minimal environment**: service uses `env_clear()` before spawn -- API keys and tokens from the user's shell never reach the process
-- **Socket permissions 0600**: only the owning user can connect to per-VM sockets
-- **Session directory 0700**: contains workspace, system, serial.log, session.db
-- **No guest-triggered exit**: control channel errors cause loop exit, not `process::exit()`
-- **VirtioFS boundary**: only `session_dir/guest/` is shared -- host-only files (session.db, serial.log, checkpoints) are outside the share
-- **MCP aggregator isolation**: external MCP server connections run in a separate subprocess (`capsem-mcp-aggregator`) with only network access -- no VM, database, or filesystem access. See [MCP Aggregator](/architecture/mcp-aggregator/) for details.
+- **VM owner**: exact session runtime paths, boot assets, hypervisor, and granted
+  control channels; no direct session-ledger path access.
+- **Proxy**: descriptor-only policy engine with no filesystem or arbitrary
+  socket authority.
+- **Ledger**: the only process that opens one session's `session.db` and body
+  archive; no network or execution authority.
+- **Commitment authority**: the service globally orders producer commitments,
+  syncs their durable prefixes outside the ledger directory, and verifies them
+  through typed reads before a fresh ledger generation accepts producers.
+- **Minimal inheritance**: child environments are cleared where secrets could
+  leak and unrelated descriptors are closed before readiness.
+- **OS confinement**: Seatbelt on macOS and Landlock plus seccomp on Linux.
+  Workers prove important denials before announcing readiness.
+- **MCP transport**: external connections stay in `capsem-mcp-aggregator`;
+  guest requests cross proxy policy before receiving that scoped transport.
+
+Socket permissions `0600`, session directories `0700`, a read-only guest
+rootfs, and the VirtioFS share boundary still apply. They complement the
+process sandbox rather than defining it.
 
 ## Service HTTP API
 
@@ -203,6 +232,17 @@ connection.
 | GET | `/vms/{id}/history/processes` | Process history |
 | GET | `/vms/{id}/history/counts` | History counters |
 | GET | `/vms/{id}/history/transcript` | Terminal transcript history |
+
+### Standalone Proxy Runtime
+
+The CLI owns a short lease and presents only the printed data-plane URL to the
+model SDK. The lease token stays on the local service control path.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/proxies` | Start a VM-free provider-pinned proxy and return its base URL plus lease |
+| POST | `/proxies/{id}/heartbeat` | Renew the current lease token |
+| POST | `/proxies/{id}/stop` | Revoke the listener and worker capabilities, then remove the ephemeral session |
 
 ### Ledger Runtime
 
@@ -277,7 +317,7 @@ authority path.
 
 ```
 ~/.capsem/
-  bin/                 capsem, capsem-service, capsem-process, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
+  bin/                 capsem, service, gateway, process, proxy, ledger, router, MCP workers, tray
   assets/              manifest.json, manifest-metadata.json, vmlinuz-{hash16}, initrd-{hash16}.img, rootfs-{hash16}.erofs
   run/                 service.sock, service.pid, gateway.token, gateway.port, instances/
   settings.toml        User policy (rules, plugins, MCP, AI providers) and app preferences
@@ -309,8 +349,11 @@ from VM asset releases.
 |-------|------|------|
 | `capsem-core` | lib | All shared business logic (VM, network, policy, telemetry, config) |
 | `capsem-service` | bin | Daemon. Axum HTTP over UDS, spawns/manages capsem-process children |
-| `capsem-process` | bin | Per-VM. Boots VM via capsem-core, bridges vsock, job store |
-| `capsem` | bin | CLI. HTTP over UDS to service, direct UDS to process for shell |
+| `capsem-process` | bin | Per-VM owner. Boots VM, bridges VSOCK, owns session runtime paths |
+| `capsem-proxy` | bin | Confined per-session HTTP, DNS, model, and MCP policy worker |
+| `capsem-ledger` | bin | Confined sole owner of one session ledger and body archive |
+| `capsem-router` | bin | Confined publication relay and named-network switch modes |
+| `capsem` | bin | CLI. HTTP over UDS to service; streams remain service-mediated |
 | `capsem-mcp-aggregator` | bin | Isolated subprocess. Manages external MCP server connections over length-prefixed MessagePack frames |
 | `capsem-mcp-builtin` | bin | Isolated built-in HTTP MCP tools |
 | `capsem-gateway` | bin | HTTP gateway. Axum on TCP:19222, Bearer auth, `/vms/{id}/stream` WebSocket tunnel to the service |

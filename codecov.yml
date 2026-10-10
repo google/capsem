@@ -62,6 +62,7 @@ flags:
       - build_system/release_site/scripts/**
       - build_system/release_site/src/**
       - build_system/builder/**
+      - integrations/inspect-ai/inspect_capsem/**
     carryforward: true
   integration:
     paths:
@@ -107,6 +108,7 @@ component_management:
         - crates/capsem-core/src/net/mod.rs
         - crates/capsem-core/src/net/hostname.rs
         - crates/capsem-core/src/net/upstream_address.rs
+        - crates/capsem-core/src/net/upstream_grant.rs
         - crates/capsem-core/src/net/ai_traffic/**
         - crates/capsem-core/src/net/cert_authority.rs
         - crates/capsem-core/src/net/decompress.rs
@@ -115,6 +117,7 @@ component_management:
         - crates/capsem-core/src/net/mitm_proxy/**
         - crates/capsem-core/src/net/parsers/**
         - crates/capsem-core/src/net/policy.rs
+        - crates/capsem-core/src/net/proxy_engine.rs
         - crates/capsem-core/src/net/address_pool.rs
         - crates/capsem-core/src/net/network_registry.rs
         - crates/capsem-core/src/net/network_registry/**
@@ -254,6 +257,18 @@ component_management:
       name: Process
       paths:
         - crates/capsem-process/src/**
+
+    # Per-session network policy enforcement and capability handling.
+    - component_id: proxy
+      name: Proxy
+      paths:
+        - crates/capsem-proxy/src/**
+
+    # Per-session database ownership and descriptor-only ledger RPC.
+    - component_id: ledger
+      name: Ledger
+      paths:
+        - crates/capsem-ledger/src/**
 
     # Admin tooling: manifest generation, image build orchestration, and
     # release asset validation.

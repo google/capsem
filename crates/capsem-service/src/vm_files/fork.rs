@@ -58,7 +58,7 @@ pub(crate) async fn handle_fork(
     // separate from the human display name.
     let vm_id = new_persistent_vm_id();
     let new_session_dir = state.run_dir.join("persistent").join(&vm_id);
-    let size_bytes = clone_session_state(&state, uds_path.as_deref(), session_dir, new_session_dir.clone())
+    let size_bytes = clone_session_state(&state, &id, uds_path.as_deref(), session_dir, new_session_dir.clone())
         .await
         .map_err(|e| {
             capsem_service::app_error_logged!(error, StatusCode::INTERNAL_SERVER_ERROR, "fork: clone failed: {e}")
@@ -111,6 +111,7 @@ pub(crate) async fn handle_fork(
 /// stopped sandbox has no writer and is copied here, off the async workers.
 pub(crate) async fn clone_session_state(
     state: &ServiceState,
+    source_id: &str,
     running: Option<&std::path::Path>,
     source: PathBuf,
     destination: PathBuf,
@@ -118,7 +119,13 @@ pub(crate) async fn clone_session_state(
     tokio::fs::create_dir_all(&destination)
         .await
         .map_err(|error| format!("create {}: {error}", destination.display()))?;
-    let size = clone_guest_state(state, running, source.clone(), destination.clone()).await?;
+    let size = match clone_guest_state(state, source_id, running, source.clone(), destination.clone()).await {
+        Ok(size) => size,
+        Err(error) => {
+            let _ = tokio::fs::remove_dir_all(&destination).await;
+            return Err(error);
+        }
+    };
     // The clone boots the source's staged image; the service must know it
     // runs one, or exec and the files API would treat it as a bare VM.
     if let Err(error) = crate::container_setup::carry_launch_record(&source, &destination) {
@@ -130,43 +137,166 @@ pub(crate) async fn clone_session_state(
 
 async fn clone_guest_state(
     state: &ServiceState,
+    source_id: &str,
     running: Option<&std::path::Path>,
     source: PathBuf,
     destination: PathBuf,
 ) -> Result<u64, String> {
     let Some(uds_path) = running else {
-        return tokio::task::spawn_blocking(move || {
-            capsem_core::session::clone_sandbox_state(&source, &destination).map_err(|error| {
-                let _ = std::fs::remove_dir_all(&destination);
-                format!("{error:#}")
-            })
-        })
-        .await
-        .map_err(|error| format!("clone task failed: {error}"))?;
+        return clone_coordinator_state(state, source_id, source, destination).await;
     };
     let id = state.next_job_id();
-    let request = ServiceToProcess::CloneState {
-        id,
-        destination: destination.to_string_lossy().into_owned(),
+    let owner = owner_connection::OwnerConnection::acquire(state, uds_path)?;
+    let (tx, rx) = owner.open(state, "capsem-service", false).await?;
+    tx.send(ServiceToProcess::CloneState { id })
+        .await
+        .map_err(|error| format!("send clone freeze request: {error}"))?;
+    match receive_clone_message(&rx, id, ClonePhase::Ready).await? {
+        ProcessToService::CloneStateReady { .. } => {}
+        ProcessToService::CloneStateResult { error, .. } => {
+            return Err(error.unwrap_or_else(|| "the sandbox thawed before clone readiness".into()));
+        }
+        _ => unreachable!(),
+    }
+    owner.validate(state, false)?;
+
+    let copied = clone_coordinator_state(state, source_id, source, destination.clone()).await;
+    let completion = match &copied {
+        Ok(size_bytes) => ServiceToProcess::CloneStateComplete {
+            id,
+            size_bytes: Some(*size_bytes),
+            error: None,
+        },
+        Err(error) => ServiceToProcess::CloneStateComplete {
+            id,
+            size_bytes: None,
+            error: Some(error.clone()),
+        },
     };
-    let result = match send_ipc_command(uds_path, request, Some(CLONE_STATE_REPLY_SECS)).await {
-        Ok(ProcessToService::CloneStateResult {
+    tx.send(completion)
+        .await
+        .map_err(|error| format!("send clone completion: {error}"))?;
+    let owner_result = match receive_clone_message(&rx, id, ClonePhase::Complete).await? {
+        ProcessToService::CloneStateResult {
             size_bytes: Some(size),
             error: None,
             ..
-        }) => Ok(size),
-        Ok(ProcessToService::CloneStateResult { error, .. }) => {
+        } => Ok(size),
+        ProcessToService::CloneStateResult { error, .. } => {
             Err(error.unwrap_or_else(|| "the sandbox reported no clone size".into()))
         }
-        Ok(other) => Err(format!("unexpected clone reply: {other:?}")),
-        Err(error) => Err(error),
+        _ => unreachable!(),
+    };
+    owner.validate(state, false)?;
+    let result = match (copied, owner_result) {
+        (Err(error), _) => Err(error),
+        (Ok(expected), Ok(actual)) if expected == actual => Ok(actual),
+        (Ok(expected), Ok(actual)) => Err(format!(
+            "the sandbox reported clone size {actual}, coordinator measured {expected}"
+        )),
+        (Ok(_), Err(error)) => Err(error),
     };
     if result.is_err() {
-        // The owner removes what it wrote; this covers an owner that never
-        // answered, so no half-made fork directory outlives the request.
         let _ = tokio::fs::remove_dir_all(&destination).await;
     }
     result
+}
+
+#[derive(Clone, Copy)]
+enum ClonePhase {
+    Ready,
+    Complete,
+}
+
+async fn receive_clone_message(
+    rx: &capsem_foundation::ipc_channel::Receiver<ProcessToService>,
+    id: u64,
+    phase: ClonePhase,
+) -> Result<ProcessToService, String> {
+    let receive = async {
+        loop {
+            let message = rx
+                .recv()
+                .await
+                .map_err(|error| format!("clone owner connection closed: {error}"))?;
+            let matches = match (&phase, &message) {
+                (ClonePhase::Ready, ProcessToService::CloneStateReady { id: reply })
+                | (ClonePhase::Ready, ProcessToService::CloneStateResult { id: reply, .. })
+                | (ClonePhase::Complete, ProcessToService::CloneStateResult { id: reply, .. }) => *reply == id,
+                _ => false,
+            };
+            if matches {
+                return Ok(message);
+            }
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(CLONE_STATE_REPLY_SECS), receive)
+        .await
+        .map_err(|_| format!("clone owner timed out after {CLONE_STATE_REPLY_SECS}s"))?
+}
+
+async fn clone_coordinator_state(
+    state: &ServiceState,
+    source_id: &str,
+    source: PathBuf,
+    destination: PathBuf,
+) -> Result<u64, String> {
+    let files_source = source.clone();
+    let files_destination = destination.clone();
+    tokio::task::spawn_blocking(move || {
+        capsem_core::session::clone_sandbox_files(&files_source, &files_destination)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await
+    .map_err(|error| format!("clone task failed: {error}"))??;
+
+    match tokio::fs::symlink_metadata(source.join("session.db")).await {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("inspect source ledger: {error}")),
+        Ok(_) => clone_ledger(state, source_id, &source, &destination).await?,
+    }
+    Ok(capsem_core::session::disk_usage_bytes(&destination))
+}
+
+async fn clone_ledger(
+    state: &ServiceState,
+    source_id: &str,
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    let database = source.join("session.db");
+    let channel = state
+        .ledger_workers
+        .acquire(
+            source_id,
+            &database,
+            &source.join("ledger.log"),
+            capsem_proto::ledger::LedgerClientRole::Maintainer,
+        )
+        .await
+        .map_err(|error| format!("acquire source ledger owner: {error:#}"))?;
+    let (stream, commitment, grant) = channel.into_parts();
+    debug_assert!(commitment.is_none());
+    let client = capsem_logger::ledger_client::LedgerClient::connect(stream, grant, database).await?;
+    let snapshot = client.snapshot(*uuid::Uuid::new_v4().as_bytes()).await?;
+    let snapshot_copy = snapshot.clone();
+    let destination = destination.to_path_buf();
+    let copied = tokio::task::spawn_blocking(move || {
+        let source = capsem_foundation::unix::contained::ContainedDir::open_root(&snapshot_copy)
+            .map_err(|error| format!("open staged ledger snapshot: {error}"))?;
+        let destination = capsem_foundation::unix::contained::ContainedDir::open_root(&destination)
+            .map_err(|error| format!("open clone destination: {error}"))?;
+        capsem_foundation::unix::tree_clone::clone_tree(&source, &destination)
+            .map_err(|error| format!("copy staged ledger snapshot: {error}"))?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|error| format!("ledger copy task failed: {error}"))?;
+    let removed = tokio::fs::remove_dir_all(&snapshot)
+        .await
+        .map_err(|error| format!("remove staged ledger snapshot {}: {error}", snapshot.display()));
+    copied?;
+    removed
 }
 
 /// The owner answers within its own 900 s clone bound; wait a little longer

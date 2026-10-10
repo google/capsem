@@ -1,61 +1,34 @@
-//! Ledger query results as route rows.
-//!
-//! The DB handle answers a query as `{"columns":[...],"rows":[[...]]}` JSON;
-//! these turn that into the objects and typed rows routes return.
+//! Typed ledger-worker results mapped into route JSON objects.
 use super::*;
 
-/// A ledger query's `{"columns":[...],"rows":[[...]]}` result, as parsed.
-#[derive(Deserialize)]
-struct QueryRows {
-    columns: Vec<String>,
-    rows: Vec<Vec<serde_json::Value>>,
-}
-
-/// One JSON object per row of a ledger query result, keyed by column.
-///
-/// Values are moved out of the parsed result, never cloned: a polled route's
-/// rows used to be parsed into a tree, deep-copied out of it, then copied
-/// again into objects.
-pub(super) fn query_json_to_objects(raw: &str) -> serde_json::Result<Vec<serde_json::Value>> {
-    let QueryRows { columns, rows } = serde_json::from_str(raw)?;
-    Ok(rows
+pub(super) fn ledger_rows_to_objects(rows: capsem_logger::ledger_protocol::LedgerRows) -> Vec<serde_json::Value> {
+    rows.rows
         .into_iter()
         .map(|values| {
             let mut values = values.into_iter();
             serde_json::Value::Object(
-                columns
+                rows.columns
                     .iter()
-                    .map(|column| (column.clone(), values.next().unwrap_or(serde_json::Value::Null)))
+                    .map(|column| {
+                        let value = values.next().map_or(serde_json::Value::Null, ledger_value_to_json);
+                        (column.clone(), value)
+                    })
                     .collect(),
             )
         })
-        .collect())
+        .collect()
 }
 
-/// [`query_json_to_objects`], naming the route and query when the result is
-/// not the shape the DB handle promises.
-pub(super) fn route_query_objects(
-    vm_id: &str,
-    ledger: &str,
-    query_name: &str,
-    db_path: &StdPath,
-    raw: &str,
-) -> Result<Vec<serde_json::Value>, AppError> {
-    query_json_to_objects(raw).map_err(|error| {
-        error!(
-            vm_id,
-            ledger,
-            operation = "parse query json",
-            query_name,
-            db_path = %db_path.display(),
-            error = %error,
-            "session ledger route DB query returned invalid JSON"
-        );
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("{ledger} ledger query {query_name} returned invalid json for {vm_id}: {error}"),
-        )
-    })
+fn ledger_value_to_json(value: capsem_logger::ledger_protocol::LedgerValue) -> serde_json::Value {
+    match value {
+        capsem_logger::ledger_protocol::LedgerValue::Null => serde_json::Value::Null,
+        capsem_logger::ledger_protocol::LedgerValue::Integer(value) => value.into(),
+        capsem_logger::ledger_protocol::LedgerValue::Real(value) => serde_json::json!(value),
+        capsem_logger::ledger_protocol::LedgerValue::Text(value) => value.into(),
+        capsem_logger::ledger_protocol::LedgerValue::Blob(value) => {
+            serde_json::Value::Array(value.into_iter().map(serde_json::Value::from).collect())
+        }
+    }
 }
 
 pub(super) async fn query_route_objects(
@@ -63,23 +36,11 @@ pub(super) async fn query_route_objects(
     ledger: &str,
     query_name: &str,
     db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
-    sql: &str,
-    params: &[serde_json::Value],
+    db: &session_db_handles::SessionLedger,
+    query: capsem_logger::ledger_protocol::LedgerQuery,
+    set: usize,
 ) -> Result<Vec<serde_json::Value>, AppError> {
-    // Down the batch rail, which carries its own readiness check and answers
-    // a repeat fetch of a ledger that has not moved from the handle's cache
-    // instead of executing the statement again.
-    let raw = db
-        .query_many(vec![(sql.to_string(), params.to_vec())])
-        .await
-        .and_then(|results| {
-            let [raw]: [String; 1] = results
-                .try_into()
-                .map_err(|results: Vec<String>| format!("query returned {} results, expected 1", results.len()))?;
-            Ok(raw)
-        });
-    let raw = raw.map_err(|error| {
+    let mut sets = db.query(query).await.map_err(|error| {
         error!(
             vm_id,
             ledger,
@@ -94,7 +55,16 @@ pub(super) async fn query_route_objects(
             format!("{ledger} ledger query {query_name} failed for {vm_id}: {error}"),
         )
     })?;
-    route_query_objects(vm_id, ledger, query_name, db_path, &raw)
+    if set >= sets.len() {
+        return Err(ledger_route_error(
+            vm_id,
+            ledger,
+            query_name,
+            db_path,
+            format!("query returned {} result sets, missing set {set}", sets.len()),
+        ));
+    }
+    Ok(ledger_rows_to_objects(sets.swap_remove(set)))
 }
 
 pub(super) async fn query_route_typed_rows<T>(
@@ -102,14 +72,14 @@ pub(super) async fn query_route_typed_rows<T>(
     ledger: &str,
     query_name: &str,
     db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
-    sql: &str,
-    params: &[serde_json::Value],
+    db: &session_db_handles::SessionLedger,
+    query: capsem_logger::ledger_protocol::LedgerQuery,
+    set: usize,
 ) -> Result<Vec<T>, AppError>
 where
     T: DeserializeOwned,
 {
-    let objects = query_route_objects(vm_id, ledger, query_name, db_path, db, sql, params).await?;
+    let objects = query_route_objects(vm_id, ledger, query_name, db_path, db, query, set).await?;
     objects
         .into_iter()
         .map(|object| {

@@ -29,6 +29,7 @@ struct Turn {
     request: String,
     response: Vec<String>,
     response_bytes: usize,
+    policy_snapshot: Arc<crate::net::proxy_engine::ProxyPolicySnapshot>,
     state: HookState,
 }
 
@@ -206,8 +207,10 @@ impl Turns {
 
 impl Turn {
     fn new(text: &str, lane: Option<String>, inference: bool, ctx: &Context) -> Self {
+        let policy_snapshot = ctx.engine.policy().snapshot();
         let mut state = HookState::default();
         state.set::<Option<TelemetryRequestContext>>(Some(TelemetryRequestContext {
+            policy_snapshot: Arc::clone(&policy_snapshot),
             domain: ctx.conn.domain.clone(),
             process_name: ctx.conn.process_name.clone(),
             ai_provider: ctx.conn.ai_provider,
@@ -249,6 +252,7 @@ impl Turn {
             request: text.to_owned(),
             response: vec![],
             response_bytes: 0,
+            policy_snapshot,
             state,
         }
     }
@@ -284,11 +288,7 @@ impl Turn {
             ..Default::default()
         });
         let event = security_event_with_transport(event, ctx.ip, ctx.conn.port);
-        let rules = ctx.telemetry.security_rules.read().unwrap().clone();
-        let plugins = ctx.telemetry.plugin_policy.read().unwrap().clone();
-        Ok(crate::security_engine::evaluate_security_boundary(
-            &rules, plugins, event,
-        )?)
+        Ok(ctx.engine.evaluate(&self.policy_snapshot, event)?)
     }
 
     fn decision(&mut self, decision: &crate::security_engine::SecurityEnforcementDecision) {

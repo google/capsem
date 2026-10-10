@@ -2,6 +2,8 @@ use super::*;
 
 mod shutdown;
 pub(crate) mod telemetry_export;
+#[cfg(test)]
+mod tests;
 
 pub(super) async fn run_service() -> Result<()> {
     let args = Args::parse();
@@ -148,6 +150,10 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let process_binary = args
         .process_binary
         .unwrap_or_else(|| PathBuf::from("cache/target/cargo/debug/capsem-process"));
+    let proxy_binary = args.proxy_binary.unwrap_or_else(|| find_sibling_binary("capsem-proxy"));
+    let ledger_binary = args
+        .ledger_binary
+        .unwrap_or_else(|| find_sibling_binary("capsem-ledger"));
     let assets_base_dir = args
         .assets_dir
         .unwrap_or_else(|| run_dir.parent().unwrap().join("assets"));
@@ -245,11 +251,18 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let host_ledger = host_ledger::open_host_ledger(&capsem_foundation::paths::capsem_sessions_dir())?;
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
+        proxy_workers: Mutex::new(HashMap::new()),
+        standalone_proxies: tokio::sync::Mutex::new(HashMap::new()),
+        ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(
+            ledger_binary,
+            capsem_foundation::paths::capsem_home().join("ledger-commitments"),
+        )),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(persistent_registry),
         networks: tokio::sync::Mutex::new(networks),
         process_binary: process_binary.clone(),
+        proxy_binary,
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
         service_socket: service_sock.clone(),
@@ -261,6 +274,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path,
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        plugin_policy_cache: Mutex::new(Default::default()),
         host_ledger,
         host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
@@ -279,7 +293,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
         _test_tempdir: None,
     });
 
-    state.hydrate_session_db_handles();
+    state.hydrate_session_db_handles().await;
     state.hydrate_host_stats().await?;
     state
         .record_service_event(capsem_logger::HostEventKind::ServiceStarted)
@@ -411,9 +425,11 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let gateway_binary = args.gateway_binary;
     let gateway_port = args.gateway_port;
     let tray_binary = args.tray_binary;
+    let state_for_spawn = Arc::clone(&state);
 
     let spawn_task = tokio::spawn(async move {
         let spawned = spawn_companions(
+            state_for_spawn,
             &service_sock_for_spawn,
             &run_dir_for_spawn,
             gateway_binary,
@@ -434,7 +450,15 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
             }
         }
         info!("service shutting down, stopping VM processes and draining replies");
-        kill_all_vm_processes(&shutdown_state);
+        let ephemeral_sessions = kill_all_vm_processes(&shutdown_state);
+        shutdown_state.stop_all_standalone_proxies().await;
+        shutdown_state.ledger_workers.shutdown_all().await;
+        let deleted_ephemeral = delete_shutdown_ephemeral_sessions(&shutdown_state, ephemeral_sessions);
+        for id in deleted_ephemeral {
+            if let Err(error) = shutdown_state.ledger_workers.retire(&id).await {
+                warn!(id, %error, "failed to retire ephemeral checkpoints during service shutdown");
+            }
+        }
     })
     .await;
 
@@ -447,6 +471,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     }
     let children = std::mem::take(&mut companions.lock().unwrap().children);
     shutdown::stop_companions(children).await;
+    remove_gateway_runtime_files(&run_dir);
     if let Err(error) = state
         .record_service_event(capsem_logger::HostEventKind::ServiceStopped)
         .await
@@ -565,23 +590,31 @@ pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
 /// NOT orphan running guests. Without this, each service shutdown leaked one
 /// `capsem-process` per live VM, which in turn held Apple VZ memory -- making
 /// long test runs increasingly slow until boots timed out.
-pub(super) fn kill_all_vm_processes(state: &ServiceState) {
-    let pids_and_sockets: Vec<(u32, PathBuf, PathBuf, bool)> = {
+pub(super) fn kill_all_vm_processes(state: &ServiceState) -> Vec<(String, PathBuf)> {
+    let pids_and_sockets: Vec<(String, u32, PathBuf, PathBuf, bool)> = {
         let instances = state.instances.lock().unwrap();
         instances
             .values()
-            .map(|i| (i.pid, i.uds_path.clone(), i.session_dir.clone(), i.persistent))
+            .map(|i| {
+                (
+                    i.id.clone(),
+                    i.pid,
+                    i.uds_path.clone(),
+                    i.session_dir.clone(),
+                    i.persistent,
+                )
+            })
             .collect()
     };
     // Nothing to reap -- skip the grace sleep. `_ensure-service` only waits
     // 500ms before respawning the service, so every unnecessary ms here
     // widens the orphan-gateway race.
     if pids_and_sockets.is_empty() {
-        return;
+        return Vec::new();
     }
     let mut signaled_any_vm = false;
     let mut probe = process_control::ProcessProbe::new("probe-vm-during-service-shutdown");
-    for (pid, uds_path, session_dir, persistent) in &pids_and_sockets {
+    for (_, pid, uds_path, _, _) in &pids_and_sockets {
         let pid = *pid;
         if pid > 0 {
             // SIGTERM first so capsem-process gets a chance to run its own cleanup
@@ -592,43 +625,70 @@ pub(super) fn kill_all_vm_processes(state: &ServiceState) {
         }
         let _ = std::fs::remove_file(uds_path);
         remove_instance_sentinels(uds_path);
-        if !persistent {
-            let _ = std::fs::remove_dir_all(session_dir);
-        }
     }
-    if !signaled_any_vm {
-        return;
-    }
-
-    // Bounded wait: poll for up to 2 seconds
-    let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(2);
-    let poll_interval = std::time::Duration::from_millis(100);
-
-    loop {
-        let survivors: Vec<u32> = pids_and_sockets
-            .iter()
-            .map(|(pid, _, _, _)| *pid)
-            .filter(|&pid| pid > 0 && probe.is_alive(pid))
-            .collect();
-
-        if survivors.is_empty() {
-            break;
-        }
-
-        if start.elapsed() >= timeout {
-            tracing::warn!(
-                count = survivors.len(),
-                "some VMs survived SIGTERM, escalating to SIGKILL"
-            );
-            for pid in survivors {
-                process_control::send_or_log(pid, process_control::Signal::Kill, "escalate-service-shutdown-vm");
+    if signaled_any_vm {
+        // Bounded wait: poll for up to 2 seconds.
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(2);
+        let poll_interval = std::time::Duration::from_millis(100);
+        loop {
+            let survivors: Vec<u32> = pids_and_sockets
+                .iter()
+                .map(|(_, pid, _, _, _)| *pid)
+                .filter(|&pid| pid > 0 && probe.is_alive(pid))
+                .collect();
+            if survivors.is_empty() {
+                break;
             }
-            break;
+            if start.elapsed() >= timeout {
+                tracing::warn!(
+                    count = survivors.len(),
+                    "some VMs survived SIGTERM, escalating to SIGKILL"
+                );
+                for pid in survivors {
+                    process_control::send_or_log(pid, process_control::Signal::Kill, "escalate-service-shutdown-vm");
+                }
+                break;
+            }
+            std::thread::sleep(poll_interval);
         }
-
-        std::thread::sleep(poll_interval);
+        let kill_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while pids_and_sockets
+            .iter()
+            .any(|(_, pid, _, _, _)| *pid > 0 && probe.is_alive(*pid))
+            && std::time::Instant::now() < kill_deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
+    let mut ephemeral_sessions = Vec::new();
+    for (id, pid, _, session_dir, persistent) in &pids_and_sockets {
+        if !persistent {
+            if *pid > 0 && probe.is_alive(*pid) {
+                tracing::error!(
+                    id,
+                    pid,
+                    "refusing to delete an ephemeral session whose process is still alive"
+                );
+                continue;
+            }
+            ephemeral_sessions.push((id.clone(), session_dir.clone()));
+        }
+    }
+    ephemeral_sessions
+}
+
+fn delete_shutdown_ephemeral_sessions(state: &ServiceState, sessions: Vec<(String, PathBuf)>) -> Vec<String> {
+    sessions
+        .into_iter()
+        .filter_map(|(id, session_dir)| match state.delete_session_dir(&session_dir) {
+            Ok(()) => Some(id),
+            Err(error) => {
+                tracing::warn!(id, %error, "failed to delete ephemeral session during service shutdown");
+                None
+            }
+        })
+        .collect()
 }
 
 pub(super) async fn shutdown_signal() {
@@ -678,6 +738,7 @@ pub(super) fn companion_stdio(log_path: &std::path::Path) -> (std::process::Stdi
 
 /// Spawn the gateway and tray as child processes of the service.
 pub(super) async fn spawn_companions(
+    state: Arc<ServiceState>,
     service_sock: &std::path::Path,
     run_dir: &std::path::Path,
     gateway_bin: Option<PathBuf>,
@@ -709,21 +770,23 @@ pub(super) async fn spawn_companions(
     // A previous service may have exited before its gateway removed runtime
     // markers. Never let those stale files satisfy our readiness poll for the
     // replacement gateway.
-    for name in ["gateway.token", "gateway.port", "gateway.pid", "preview.port"] {
-        let path = run_dir.join(name);
-        if let Err(error) = std::fs::remove_file(&path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                warn!(path = %path.display(), %error, "failed to remove stale gateway runtime file");
-            }
-        }
-    }
+    remove_gateway_runtime_files(run_dir);
 
     let gateway_bin = gateway_bin.unwrap_or_else(|| find_sibling_binary("capsem-gateway"));
     let (gw_out, gw_err) = companion_stdio(&log_dir.join("gateway.log"));
     info!(binary = %gateway_bin.display(), "spawning capsem-gateway");
 
     let mut gw_cmd = tokio::process::Command::new(&gateway_bin);
+    let (grant_server, grant_client) = match std::os::unix::net::UnixStream::pair() {
+        Ok(pair) => pair,
+        Err(error) => {
+            warn!(%error, "failed to create gateway descriptor grant channel");
+            return children;
+        }
+    };
     gw_cmd.arg("--uds-path").arg(service_sock);
+    gw_cmd.arg("--service-grant-stdin");
+    gw_cmd.stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(grant_client)));
     // Pin the gateway to the service's run_dir so gateway.{token,port,pid} land
     // in the same place we poll for them below and the same place clients read.
     gw_cmd.arg("--run-dir").arg(run_dir);
@@ -743,6 +806,11 @@ pub(super) async fn spawn_companions(
         Ok(child) => {
             info!(pid = child.id(), "capsem-gateway spawned");
             children.push(child);
+            tokio::spawn(async move {
+                if let Err(error) = crate::gateway_grant::serve(grant_server, state).await {
+                    tracing::debug!(%error, "gateway descriptor grant channel closed");
+                }
+            });
 
             // Wait for gateway to write token + port files (up to 5s)
             let token_path = run_dir.join("gateway.token");
@@ -759,7 +827,7 @@ pub(super) async fn spawn_companions(
                         let pp = pp.clone();
                         let ppp = ppp.clone();
                         async move {
-                            if tp.exists() && pp.exists() && ppp.exists() {
+                            if gateway_runtime_ready(&tp, &pp, &ppp) {
                                 Some(())
                             } else {
                                 None
@@ -770,7 +838,7 @@ pub(super) async fn spawn_companions(
                 .instrument(gateway_span.clone())
                 .await;
             }
-            if token_path.exists() && port_path.exists() && preview_port_path.exists() {
+            if gateway_runtime_ready(&token_path, &port_path, &preview_port_path) {
                 gateway_span.record("status", "ok");
             } else {
                 gateway_span.record("status", "error");
@@ -807,6 +875,36 @@ pub(super) async fn spawn_companions(
     }
 
     children
+}
+
+fn gateway_runtime_ready(
+    token_path: &std::path::Path,
+    port_path: &std::path::Path,
+    preview_path: &std::path::Path,
+) -> bool {
+    let Ok(token) = std::fs::read_to_string(token_path) else {
+        return false;
+    };
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return false;
+    }
+    [port_path, preview_path].into_iter().all(|path| {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|value| value.trim().parse::<u16>().ok())
+            .is_some_and(|port| port != 0)
+    })
+}
+
+fn remove_gateway_runtime_files(run_dir: &std::path::Path) {
+    for name in ["gateway.token", "gateway.port", "gateway.pid", "preview.port"] {
+        let path = run_dir.join(name);
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                warn!(path = %path.display(), %error, "failed to remove gateway runtime file");
+            }
+        }
+    }
 }
 
 /// Remove the sentinels capsem-process writes beside its socket: `.launched`

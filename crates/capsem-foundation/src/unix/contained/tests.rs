@@ -576,3 +576,47 @@ fn only_filesystem_limits_count_as_a_link_that_cannot_be_made() {
         assert!(!is_link_unsupported(&io::Error::from(errno)), "{errno}");
     }
 }
+
+#[test]
+fn relative_mode_changes_stay_beneath_the_open_root() {
+    let tree = tree();
+    std::fs::create_dir_all(tree.root_path.join("nested/dir")).unwrap();
+    std::fs::write(tree.root_path.join("nested/file"), b"data").unwrap();
+
+    tree.root.set_relative_mode(Path::new("nested/file"), 0o751).unwrap();
+    tree.root.set_relative_mode(Path::new("nested/dir"), 0o710).unwrap();
+
+    assert_eq!(
+        std::fs::metadata(tree.root_path.join("nested/file")).unwrap().mode() & 0o7777,
+        0o751
+    );
+    assert_eq!(
+        std::fs::metadata(tree.root_path.join("nested/dir")).unwrap().mode() & 0o7777,
+        0o710
+    );
+}
+
+#[test]
+fn relative_mode_changes_refuse_links_and_traversal() {
+    let tree = tree();
+    let secret = tree.outside.join("secret");
+    std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+    symlink(&secret, tree.root_path.join("link")).unwrap();
+    symlink(&tree.outside, tree.root_path.join("dir-link")).unwrap();
+    let _socket = std::os::unix::net::UnixListener::bind(tree.root_path.join("socket")).unwrap();
+
+    for path in [
+        "link",
+        "dir-link/secret",
+        "socket",
+        "../outside/secret",
+        "/tmp/file",
+        "a/../b",
+    ] {
+        assert!(
+            tree.root.set_relative_mode(Path::new(path), 0o777).is_err(),
+            "accepted {path}"
+        );
+    }
+    assert_eq!(std::fs::metadata(secret).unwrap().mode() & 0o7777, 0o600);
+}

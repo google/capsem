@@ -564,21 +564,14 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             "SELECT * FROM tool_calls WHERE tool_name = 'exec_command' ORDER BY id"
         ).fetchall()
         tool_responses = conn.execute("SELECT * FROM tool_responses ORDER BY id").fetchall()
-        expected_filenames = {item["filename"] for item in result["results"]}
-        file_rows = _eventually(
-            lambda: conn.execute(
-                """
-                SELECT *
-                FROM fs_events
-                WHERE action = 'created'
-                ORDER BY id
-                """
-            ).fetchall(),
-            lambda rows: (
-                expected_filenames <= {row["name"] for row in rows if row["name"] is not None}
-            ),
-            timeout_s=15,
-        )
+        file_rows = conn.execute(
+            """
+            SELECT *
+            FROM fs_events
+            WHERE action IN ('created', 'modified')
+            ORDER BY id
+            """
+        ).fetchall()
         net_rows = conn.execute(
             """
             SELECT *
@@ -697,16 +690,17 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             assert len(trace_tool_responses) == 1, [dict(row) for row in tool_responses]
             assert trace_tool_responses[0]["call_id"] == expected["call_id"]
             assert expected["call_response"] in (trace_tool_responses[0]["content_preview"] or "")
-            created = [
+            written = [
                 row
                 for row in file_rows
-                if row["trace_id"] == trace_id and row["name"] == expected["filename"]
+                if row["trace_id"] == trace_id
+                and row["name"] == expected["filename"]
+                and row["size"] == len((expected["nonce"] + "\n").encode())
             ]
-            assert len(created) == 1, [dict(row) for row in file_rows]
-            assert created[0]["size"] == len((expected["nonce"] + "\n").encode())
-            assert created[0]["directory"] == ".", dict(created[0])
-            assert created[0]["credential_ref"] is None, dict(created[0])
-            file_event_ids.append(created[0]["event_id"])
+            assert len(written) == 1, [dict(row) for row in file_rows]
+            assert written[0]["directory"] == ".", dict(written[0])
+            assert written[0]["credential_ref"] is None, dict(written[0])
+            file_event_ids.append(written[0]["event_id"])
 
         event_ids = [row["event_id"] for row in [*model_calls, *net_rows, dns]]
         event_ids.extend(file_event_ids)
@@ -824,7 +818,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             assert route_row["source"] == db_row["origin"]
             assert route_row["credential_ref"] == db_row["credential_ref"]
 
-        created_by_event = {row["event_id"]: row for row in file_rows if row["event_id"]}
+        written_by_event = {row["event_id"]: row for row in file_rows if row["event_id"]}
         for event_id in file_event_ids:
             assert event_id in route_file_by_event, {
                 "missing_file_event_id": event_id,
@@ -836,7 +830,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
                 ),
             }
             route_row = route_file_by_event[event_id]
-            db_row = created_by_event[event_id]
+            db_row = written_by_event[event_id]
             assert route_row["action"] == db_row["action"]
             assert route_row["path"] == db_row["path"]
             assert route_row["size"] == db_row["size"]

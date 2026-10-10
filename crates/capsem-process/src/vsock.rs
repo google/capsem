@@ -17,7 +17,6 @@ mod clone_state;
 #[cfg(test)]
 use audit::handle_audit_frame;
 use audit::serve_audit_records;
-mod dns;
 mod handshake;
 mod streams;
 use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
@@ -71,17 +70,13 @@ pub(crate) struct VsockOptions {
     pub(crate) session_dir: PathBuf,
     pub(crate) cli_env: Vec<(String, String)>,
     pub(crate) guest_config: capsem_core::net::policy_config::GuestConfig,
-    pub(crate) mitm_config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
-    /// Handler for DNS queries forwarded over vsock port 5007. DNS
-    /// NXDOMAIN decisions come from the shared security rules; the network
-    /// policy handle remains for resolver mechanics such as redirects/cache.
-    pub(crate) dns_handler: Arc<capsem_core::net::dns::DnsHandler>,
+    pub(crate) upstream_grants: Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
     pub(crate) security_rules: SecurityRulesHandle,
     pub(crate) plugin_policy: PluginPolicyHandle,
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(crate) is_restore: bool,
     pub(crate) vm_ready: Arc<AtomicBool>,
-    pub(crate) uds_path: PathBuf,
+    pub(crate) ready: std::fs::File,
     pub(crate) db: Arc<capsem_logger::DbWriter>,
     pub(crate) pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
     pub(crate) shutdown: Arc<tokio::sync::Mutex<crate::Shutdown>>,
@@ -101,13 +96,12 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         session_dir,
         cli_env,
         guest_config,
-        mitm_config,
-        dns_handler,
+        upstream_grants,
         security_rules,
         plugin_policy,
         is_restore,
         vm_ready,
-        uds_path,
+        mut ready,
         db,
         pty_log,
         shutdown,
@@ -184,8 +178,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         })
     );
     vm_ready.store(true, Ordering::Release);
-    let ready_path = uds_path.with_extension("ready");
-    if let Err(e) = std::fs::File::create(&ready_path) {
+    let ready_for_reader = ready.try_clone().context("clone ready sentinel")?;
+    if let Err(e) = ready.write_all(b"ready\n").and_then(|()| ready.sync_data()) {
         warn!(error = %e, "failed to create ready sentinel");
     }
 
@@ -300,7 +294,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
     let js_for_teardown = Arc::clone(&job_store);
     let vm_ready_for_reader = Arc::clone(&vm_ready);
-    let ready_path_for_reader = ready_path;
+    let ready_for_reader = ready_for_reader;
 
     // Pending-ack map lives on `JobStore` (see job_store.rs::pending_acks)
     // and the bridge end here can replay-on-rekey. See the field doc on
@@ -318,7 +312,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     None => {
                         js_for_teardown.fail_all("control channel closed");
                         vm_ready_for_reader.store(false, Ordering::Release);
-                        let _ = std::fs::remove_file(&ready_path_for_reader);
+                        let _ = ready_for_reader.set_len(0).and_then(|()| ready_for_reader.sync_data());
                         break;
                     }
                 },
@@ -485,7 +479,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let ipc_tx_for_cmd = ipc_tx.clone();
     let vm_id_for_cmd = vm_id_original;
     let vm_handle_for_cmd = vm_handle_original;
-    let db_for_cmd = Arc::clone(&db);
     let pty_log_for_cmd = pty_log.clone();
     let shutdown_for_cmd = Arc::clone(&shutdown);
     let exec_dispatch = exec_dispatch::ExecDispatch {
@@ -569,11 +562,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         .insert(id, ActiveFileOp::Read { path: path.clone() });
                     capsem_core::try_send!("hub_file_read", hub_tx.send(HostToGuest::FileRead { id, path }).await);
                 }
-                ServiceToProcess::CloneState { id, destination } => {
-                    clone_state::spawn(&hub_tx, &js_for_cmd, &db_for_cmd, &session_dir, id, destination);
+                ServiceToProcess::CloneState { id } => {
+                    clone_state::spawn(&hub_tx, &js_for_cmd, &ipc_tx_for_cmd, id);
                 }
-                ServiceToProcess::Suspend { checkpoint_path } => {
-                    let full_path = session_dir.join(checkpoint_path);
+                ServiceToProcess::Suspend => {
+                    let full_path = crate::owner_checkpoint_path(&session_dir);
                     let complete_path = checkpoint_complete_path(&full_path);
                     let _ = std::fs::remove_file(&complete_path);
                     let checkpoint_path_for_save = full_path.clone();
@@ -723,8 +716,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     // -----------------------------------------------------------------------
     // 4. Central Dispatcher Loop (Vsock -> Hub)
     // -----------------------------------------------------------------------
-    let mitm_config_loop = Arc::clone(&mitm_config);
-    let dns_handler_loop = Arc::clone(&dns_handler);
+    let upstream_grants_loop = Arc::clone(&upstream_grants);
     let security_rules_loop = Arc::clone(&security_rules);
     let db_for_audit = Arc::clone(&db);
     let ipc_tx_lifecycle = ipc_tx.clone();
@@ -742,8 +734,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         for conn in pending_aux.drain(..) {
             dispatch_aux_connection(
                 conn,
-                &mitm_config_loop,
-                &dns_handler_loop,
+                &upstream_grants_loop,
                 &security_rules_loop,
                 &job_store_vsock,
                 &db_for_audit,
@@ -779,8 +770,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             for aux_conn in pending_aux.drain(..) {
                                 dispatch_aux_connection(
                                     aux_conn,
-                                    &mitm_config_loop,
-                                    &dns_handler_loop,
+                                    &upstream_grants_loop,
                                     &security_rules_loop,
                                     &job_store_vsock,
                                     &db_for_audit,
@@ -819,8 +809,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         // only thing that requires a successful handshake lock-step.
                         dispatch_aux_connection(
                             conn,
-                            &mitm_config_loop,
-                            &dns_handler_loop,
+                            &upstream_grants_loop,
                             &security_rules_loop,
                             &job_store_vsock,
                             &db_for_audit,
@@ -843,8 +832,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 fn dispatch_aux_connection(
     conn: VsockConnection,
-    mitm_config: &Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>,
-    dns_handler: &Arc<capsem_core::net::dns::DnsHandler>,
+    upstream_grants: &Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
     security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
     job_store: &Arc<JobStore>,
     db: &Arc<capsem_logger::DbWriter>,
@@ -855,8 +843,18 @@ fn dispatch_aux_connection(
     match HostVsockService::from_port(conn.port) {
         Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
         Some(HostVsockService::Network) => streams::serve_network(conn, job_store, vm_id),
-        Some(HostVsockService::SniProxy) => streams::serve_mitm(conn, Arc::clone(mitm_config)),
-        Some(HostVsockService::DnsProxy) => dns::serve(conn, dns_handler, db, security_rules),
+        Some(HostVsockService::SniProxy) => surrender_proxy_traffic(
+            conn,
+            capsem_proto::upstream_grant::ProxyTrafficService::Http,
+            "HTTP",
+            upstream_grants,
+        ),
+        Some(HostVsockService::DnsProxy) => surrender_proxy_traffic(
+            conn,
+            capsem_proto::upstream_grant::ProxyTrafficService::Dns,
+            "DNS",
+            upstream_grants,
+        ),
         Some(HostVsockService::Exec) => {
             let js = Arc::clone(job_store);
             std::thread::spawn(move || {
@@ -935,12 +933,7 @@ fn dispatch_aux_connection(
                             "ipc_lifecycle_suspend",
                             itx.send(ProcessToService::SuspendRequested { id })
                         );
-                        capsem_core::try_send!(
-                            "ctrl_lifecycle_suspend",
-                            ctx.blocking_send(ServiceToProcess::Suspend {
-                                checkpoint_path: "checkpoint.vzsave".into()
-                            })
-                        );
+                        capsem_core::try_send!("ctrl_lifecycle_suspend", ctx.blocking_send(ServiceToProcess::Suspend));
                     }
                     other => {
                         // W4: a lifecycle-port frame the host doesn't recognize
@@ -967,6 +960,25 @@ fn dispatch_aux_connection(
                 "vsock dispatch: unknown port; auxiliary connection ignored"
             );
         }
+    }
+}
+
+fn surrender_proxy_traffic(
+    conn: VsockConnection,
+    service: capsem_proto::upstream_grant::ProxyTrafficService,
+    label: &'static str,
+    upstream_grants: &Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
+) {
+    match conn.try_clone_fd() {
+        Ok(descriptor) => {
+            let grants = Arc::clone(upstream_grants);
+            tokio::spawn(async move {
+                if let Err(error) = grants.attach_proxy_traffic(service, descriptor).await {
+                    warn!(%error, "{label} port: proxy worker refused the session descriptor");
+                }
+            });
+        }
+        Err(error) => warn!(%error, "{label} port: cannot duplicate the session descriptor"),
     }
 }
 

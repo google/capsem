@@ -32,6 +32,7 @@ pub(crate) async fn log_file_boundary_on_owner(
 ) -> Result<Option<Vec<u8>>, AppError> {
     let id = state.next_job_id();
     let res = send_ipc_command(
+        state,
         uds_path,
         ServiceToProcess::LogFileBoundary {
             id,

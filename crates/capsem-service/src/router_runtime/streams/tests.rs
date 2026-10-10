@@ -19,7 +19,7 @@ async fn fixture() -> Fixture {
     let state = make_test_state();
     let session_dir = dir.path().join("session");
     std::fs::create_dir_all(session_dir.join("guest/workspace")).unwrap();
-    insert_fake_instance_with_session_dir(&state, "box", 1, session_dir);
+    insert_fake_instance_with_session_dir(&state, "box", std::process::id(), session_dir);
     let uds_path = state.instances.lock().unwrap()["box"].uds_path.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();

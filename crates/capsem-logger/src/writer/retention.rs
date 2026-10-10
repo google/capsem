@@ -14,12 +14,13 @@ use capsem_archive::{format, BodyLogWriter, FileHeader, GenerationId, FILE_HEADE
 use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
 use capsem_foundation::unix::lock::{self, LockMode};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::bodies::{archive_lock_path_for_db, BodyArchive};
 use super::retention_faults::{take_retention_failure_for_tests, RetentionFault};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetainOutcome {
     pub blocks_dropped: u64,
     pub blocks_kept: u64,
@@ -118,8 +119,13 @@ pub(super) fn retain_bodies(
     }
 
     let generation_id = GenerationId::new_v4();
-    let mut candidate = BodyLogWriter::create_generation(&directory, state.header.archive_id, generation_id)
-        .map_err(|error| format!("create retained generation: {error}"))?;
+    let mut candidate = BodyLogWriter::create_generation_with_codecs(
+        &directory,
+        state.header.archive_id,
+        generation_id,
+        bodies.codecs(),
+    )
+    .map_err(|error| format!("create retained generation: {error}"))?;
     let copied = match copy_survivors(conn, cutoff, &mut source, &mut candidate) {
         Ok(copied) => copied,
         Err(cause) => {

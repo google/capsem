@@ -37,6 +37,11 @@ class SdkConfig(SourcePackageConfig):
     specification: str
 
 
+class PythonSdkConfig(SdkConfig):
+    environment_python: str
+    package_build_requirements: str
+
+
 class NodePackageConfig(Strict):
     project: str
 

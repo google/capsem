@@ -24,6 +24,11 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
+        if let Some(remote) = &self.remote {
+            let result = remote.admit(op).await;
+            record_enqueue(started, if result.is_ok() { "queued" } else { "closed" }, &span);
+            return result;
+        }
         let Some(tx) = self.clone_sender() else {
             record_enqueue(started, "missing_sender", &span);
             return Err("db writer sender missing".to_string());
@@ -37,6 +42,22 @@ impl DbWriter {
         Ok(())
     }
 
+    pub(crate) async fn write_committed(
+        &self,
+        op: WriteOp,
+        commitment: capsem_proto::ledger_commitment::LedgerCommitment,
+    ) -> Result<(), String> {
+        if self.remote.is_some() {
+            return Err("a remote ledger writer cannot accept a prebuilt commitment".into());
+        }
+        let Some(tx) = self.clone_sender() else {
+            return Err("db writer sender missing".to_string());
+        };
+        send_with_backpressure(&tx, WriterMessage::committed(op, commitment))
+            .await
+            .map_err(|error| format!("db writer channel closed: {error}"))
+    }
+
     /// Try to enqueue without blocking. Returns false when the queue is full or closed.
     pub fn try_write(&self, op: WriteOp) -> bool {
         let span = tracing::debug_span!(
@@ -46,6 +67,11 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
+        if let Some(remote) = &self.remote {
+            let accepted = remote.try_admit(op);
+            record_enqueue(started, if accepted { "queued" } else { "full" }, &span);
+            return accepted;
+        }
         let queue_result = match self.clone_sender() {
             Some(tx) => match tx.try_send(WriterMessage::write(op)) {
                 Ok(()) => "queued",
@@ -78,6 +104,11 @@ impl DbWriter {
             queue_result = tracing::field::Empty,
         );
         let started = Instant::now();
+        if let Some(remote) = &self.remote {
+            let result = remote.admit_blocking(op);
+            record_enqueue(started, if result.is_ok() { "queued" } else { "closed" }, &span);
+            return result;
+        }
         let Some(tx) = self.clone_sender() else {
             record_enqueue(started, "missing_sender", &span);
             return Err("db writer sender missing".to_string());

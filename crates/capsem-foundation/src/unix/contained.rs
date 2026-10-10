@@ -13,7 +13,7 @@ use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
 use nix::fcntl::{openat, readlinkat, renameat, AtFlags, OFlag};
-use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
+use nix::sys::stat::{fchmod, fchmodat, fstatat, mkdirat, FchmodatFlags, Mode, SFlag};
 use nix::unistd::{linkat, symlinkat};
 use nix::unistd::{unlinkat, UnlinkatFlags};
 
@@ -292,6 +292,45 @@ impl ContainedDir {
         Ok(metadata.permissions().mode() & 0o7777)
     }
 
+    /// Change one entry's permission bits below this open directory.
+    ///
+    /// Every parent component is opened without following links and the final
+    /// operation uses `AT_SYMLINK_NOFOLLOW`, so a guest cannot redirect a
+    /// metadata request outside the share between validation and mutation.
+    /// An empty relative path names this directory itself.
+    pub fn set_relative_mode(&self, rel: &Path, mode: u32) -> io::Result<()> {
+        let names = rel
+            .components()
+            .map(|component| match component {
+                Component::Normal(name) => Ok(name),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("relative path may only contain plain names: {}", rel.display()),
+                )),
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let Some((name, parents)) = names.split_last() else {
+            return fchmod(self.fd.as_raw_fd(), permission_mode(mode)).map_err(Into::into);
+        };
+        let mut parent = self.try_clone()?;
+        for component in parents {
+            parent = parent.descend(component)?;
+        }
+        if parent.entry_kind(name)? == Some(EntryKind::Other) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a file or directory", Path::new(name).display()),
+            ));
+        }
+        fchmodat(
+            Some(parent.fd.as_raw_fd()),
+            *name,
+            permission_mode(mode),
+            FchmodatFlags::NoFollowSymlink,
+        )
+        .map_err(Into::into)
+    }
+
     /// Create a symlink child. An existing entry of any type is an error; the
     /// target is stored verbatim and never resolved.
     pub fn symlink(&self, name: &OsStr, target: &OsStr) -> io::Result<()> {
@@ -426,10 +465,20 @@ impl ContainedDir {
             | OFlag::O_NONBLOCK;
         let fd = openat(Some(self.fd.as_raw_fd()), name, flags, permission_mode(0o600))?;
         let file = File::from(owned(fd));
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        let metadata = file.metadata()?;
+        let mut metadata = file.metadata()?;
+        // Normal umasks leave an explicitly requested 0600 mode unchanged.
+        // Avoid a redundant fchmod so sandboxed workers can create private
+        // files while permission changes remain outside their authority.
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            metadata = file.metadata()?;
+        }
         let uid = super::process::current_uid();
-        if !metadata.is_file() || metadata.uid() != uid || metadata.nlink() != 1 {
+        if !metadata.is_file()
+            || metadata.uid() != uid
+            || metadata.nlink() != 1
+            || metadata.permissions().mode() & 0o777 != 0o600
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!("refusing newly created private file {}", Path::new(name).display()),

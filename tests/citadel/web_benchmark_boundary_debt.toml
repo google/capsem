@@ -15,6 +15,6 @@ lint_mapping_count = 4
 lint_mapping_sha256 = "ac42e4aac5f97bab38e19bf3691343d0f79934dabef4137ac501baa6f164d538"
 coverage_mapping_count = 4
 coverage_mapping_sha256 = "6e6d023b00ea5f0dcdb1f2373c3217907ef1b14075697ad50c4a3ebf5884aee0"
-legacy_reference_count = 324
-# Same 324 references; the reviewed Python root record now also names integrations.
-legacy_reference_sha256 = "4017ecf37754dc6b54de93af214d39a65e208297a8a905edafa2b3c585188f45"
+legacy_reference_count = 322
+# Same reviewed surface after the integrated 0.7 path and gate updates.
+legacy_reference_sha256 = "fe582d8926ad23876af1d5205e378e5cc907244591f21004a0408103cb820b27"

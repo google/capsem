@@ -19,9 +19,9 @@ graph TB
     GATEWAY -->|explicit routes| SERVICE["capsem-service"]
 
     GUEST_AGENT["Guest AI agent"] -->|stdio| RELAY["capsem-mcp-server"]
-    RELAY -->|framed vsock| ENDPOINT["VM-owned MCP endpoint"]
-    ENDPOINT -->|scoped owner tool| OWNER["VM owner Publisher"]
-    ENDPOINT -->|policy and telemetry| AGG["capsem-mcp-aggregator"]
+    RELAY -->|"framed vsock surrendered by VM owner"| ENDPOINT["confined capsem-proxy MCP endpoint"]
+    ENDPOINT -->|"scoped owner capability"| OWNER["VM owner MCP adapter"]
+    OWNER --> AGG["capsem-mcp-aggregator"]
     AGG --> BUILTIN["capsem-mcp-builtin"]
     AGG --> EXTERNAL["External MCP servers"]
 ```
@@ -64,7 +64,10 @@ sanitized category and optional HTTP status without gateway bodies or secrets.
 
 ## Guest MCP relay (capsem-mcp-server)
 
-The guest MCP relay is a minimal stdio-to-framed-vsock bridge. It does not route or execute tools; the host MITM MCP endpoint owns parsing, policy, telemetry, and dispatch.
+The guest MCP relay is a minimal stdio-to-framed-vsock bridge. It does not
+route or execute tools. The VM owner surrenders the connected VSOCK descriptor
+to the confined proxy, whose MCP endpoint owns parsing, policy, telemetry, and
+dispatch through a separately granted MCP capability.
 
 ### Framed relay
 
@@ -72,7 +75,7 @@ The guest MCP relay is a minimal stdio-to-framed-vsock bridge. It does not route
 sequenceDiagram
     participant Agent as Guest AI process
     participant Relay as capsem-mcp-server
-    participant EP as Host MITM MCP Endpoint
+    participant EP as Confined proxy MCP endpoint
 
     Relay->>EP: \0CAPSEM_META:claude\n (metadata)
     Agent->>Relay: {"jsonrpc":"2.0","method":"tools/list"}\n (stdin)
@@ -155,19 +158,20 @@ telemetry bug.
 See [Session Telemetry](/architecture/session-telemetry/) for the full
 `tool_calls`, `tool_responses`, and security-rule ledger joins.
 
-## Endpoint runtime state
+## Endpoint capabilities
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `aggregator` | `AggregatorClient` | Client handle for the isolated MCP aggregator subprocess |
-| `db` | `Arc<DbWriter>` | Async telemetry writer |
-| `security_rules` | `RwLock<Arc<SecurityRuleSet>>` | Hot-reloadable security-event rules |
-| `plugin_policy` | `RwLock<Arc<SecurityPluginPolicy>>` | Hot-reloadable plugin modes for security-event preprocessing/postprocessing |
+| Capability | Purpose |
+|-------|------|
+| MCP channel | Bounded requests to the VM owner's scoped tools and isolated aggregator |
+| Ledger channel | Admit tool, protocol, and security rows without a database path |
+| Policy channel | Apply exact active-policy bytes and atomically replace the snapshot |
+| Credential channel | Capture and substitute brokered material without store access |
+| Traffic descriptor | One already-connected guest MCP stream |
 
-The `AggregatorClient` is cloneable (`Arc`-wrapped mpsc channel) and shared
-across endpoint sessions for a given VM. The rule set uses double-Arc style
-atomic swap through the endpoint state. New frames read the current rules, so
-reloads affect already-open guest MCP connections.
+The proxy snapshots the current policy for each request. Reloads therefore
+affect new frames on an existing stream without mixing revisions inside one
+request. Closing the MCP or traffic descriptor revokes that part of the
+endpoint immediately.
 
 ## Configuration files
 
@@ -191,11 +195,13 @@ url = "https://mcp.example.com/github"
 enabled = true
 ```
 
-The service validates the merged configuration and writes it into each
-session's `vm/active_policy.toml`; capsem-process reads that file and passes
-the server list to the [MCP Aggregator](/architecture/mcp-aggregator/)
-subprocess at spawn time. Credentials are broker-owned references, not raw
-tokens in MCP config.
+The service validates the merged configuration and materializes an exact
+active-policy revision for the session. The VM owner builds the scoped MCP
+transport and passes server definitions to the
+[MCP Aggregator](/architecture/mcp-aggregator/) at spawn time; the proxy gets
+policy bytes and a connected MCP capability, not the policy path or
+aggregator process. Credentials are broker-owned references, not raw tokens in
+MCP config.
 
 ## Key source files
 
@@ -205,6 +211,8 @@ tokens in MCP config.
 | `capsem-agent/src/mcp_server.rs` | Guest relay: stdin/stdout <-> framed MCP over vsock:5002 |
 | `capsem-core/src/net/mitm_proxy/mcp_frame.rs` | Framed transport parser, stream lifecycle, and disconnect metrics |
 | `capsem-core/src/net/mitm_proxy/mcp_endpoint.rs` | Host endpoint: JSON-RPC dispatch, policy, telemetry |
+| `capsem-proxy/src/main.rs` | Confined endpoint runtime and descriptor capability adoption |
+| `capsem-process/src/proxy_mcp.rs` | Scoped bridge from the proxy to owner tools and aggregator |
 | `capsem-proto/src/mcp_aggregator.rs` | Aggregator protocol types and `AggregatorClient` |
 | `capsem-core/src/mcp/builtin_tools.rs` | Builtin HTTP tools (fetch_http, grep_http, http_headers) |
 | `capsem-mcp-aggregator/src/server_manager.rs` | External MCP server lifecycle and tool catalog |

@@ -1,5 +1,5 @@
-//! Source contract: exactly one owner opens the main ledger and exactly one
-//! opens per-session external readers.
+//! Source contract: the service owns only its host ledger; session SQLite is
+//! opened by the supervised ledger worker and reached through a granted FD.
 
 #[test]
 fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
@@ -16,18 +16,20 @@ fn service_db_handle_open_is_owned_by_explicit_service_state_owners() {
     assert_eq!(
         opens, 1,
         "DbHandle::open must live only in the service main-ledger owner. Per-session \
-         route ledgers are external readers because capsem-process owns writes. Routes and helpers \
-         resolve registered handles and call ready/query/write; they do not create a second \
-         DB lifecycle."
+         ledgers belong to capsem-ledger."
     );
     assert_eq!(
-        external_reader_opens, 1,
-        "DbHandle::open_external_reader must live only in register_session_db_handle for \
-         per-session ledgers written by capsem-process."
+        external_reader_opens, 0,
+        "service production code must not open per-session SQLite readers"
     );
     assert!(
-        source.contains("fn register_session_db_handle(") && source.contains("DbHandle::open_external_reader("),
-        "the session-state registration method must own the external DB reader lifecycle"
+        source.contains("LedgerClientRole::Reader")
+            && source.contains("capsem_logger::ledger_client::LedgerClient::connect"),
+        "session registration must request reader authority and adopt the granted channel"
+    );
+    assert!(
+        source.contains("async fn reconnect(&self)") && source.contains("operation(replacement).await"),
+        "a cached reader must replace a failed generation and retry through a fresh grant"
     );
     assert!(
         source.contains("fn open_host_ledger("),
@@ -58,4 +60,17 @@ fn provision_never_opens_the_ledger_its_child_is_creating() {
          then refused the ledger as stale and provision killed a healthy VM (trunk test-install, \
          2026-09-24). Routes register the reader lazily once the ledger is ready."
     );
+}
+
+#[test]
+fn fork_coordinates_ledger_snapshot_without_opening_storage() {
+    let fork = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm_files/fork.rs"))
+        .expect("fork source must be readable");
+    assert!(!fork.contains("clone_sandbox_state"));
+    assert!(!fork.contains("snapshot_session_ledger"));
+    assert!(!fork.contains("rusqlite"));
+    assert!(fork.contains("LedgerClientRole::Maintainer"));
+    assert!(fork.contains("client.snapshot("));
+    assert!(fork.contains("CloneStateReady"));
+    assert!(fork.contains("CloneStateComplete"));
 }

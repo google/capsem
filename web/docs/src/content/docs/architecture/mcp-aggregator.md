@@ -5,24 +5,35 @@ sidebar:
   order: 26
 ---
 
-The MCP aggregator (`capsem-mcp-aggregator`) is a low-privilege subprocess that manages connections to external MCP servers. It runs in an isolated process with only network access -- no VM, no session database, no filesystem, no service IPC.
+The MCP aggregator (`capsem-mcp-aggregator`) is a low-privilege subprocess that
+manages connections to external MCP servers. It has no VM, ledger storage, or
+service API authority. Guest MCP requests reach it only through the confined
+session proxy after policy evaluation.
 
 ## Why a separate process
 
-External MCP servers require network access, broker-resolved auth material, and custom HTTP headers. The main per-VM process (`capsem-process`) has extensive privileges: VM control, session database, VirtioFS workspace, service IPC. Running external server connections inside capsem-process would expose all of those privileges to any vulnerability in an MCP server connection or the HTTP/SSE transport layer.
+External MCP servers require network access, broker-resolved auth material,
+and custom HTTP headers. The per-VM owner controls virtualization and exact
+session runtime paths, while `capsem-ledger` owns storage and `capsem-proxy`
+owns MCP policy. Running external server transports inside any of those
+processes would combine unrelated authority with remote protocol parsing.
 
 The aggregator subprocess enforces a hard privilege boundary:
 
 | | capsem-process | capsem-mcp-aggregator |
 |---|---|---|
 | VM control (vsock) | Yes | No |
-| Session database | Yes | No |
+| Session database path | No | No |
 | VirtioFS workspace | Yes | No |
-| Service IPC | Yes | No |
+| Scoped service/owner control | Yes | No |
 | Network (external MCP servers) | No | Yes |
 | Broker-resolved auth material | No | Yes |
 
-If the aggregator is compromised, the attacker has network access and short-lived MCP auth material resolved by the broker -- but cannot reach the VM, read telemetry, or modify files.
+If the aggregator is compromised, its remaining authority is the configured
+external MCP transport and broker-resolved material needed there. It cannot
+control the VM, open a session ledger, or modify the workspace. See
+[Host Process Isolation](/architecture/host-isolation/) for the complete
+process matrix.
 
 ## Architecture
 

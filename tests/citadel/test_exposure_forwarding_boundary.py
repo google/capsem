@@ -4,8 +4,8 @@ A prototype of google/capsem#207 reached exposed guest ports through the
 service and gateway: a reverse proxy that read and wrote workload bytes in
 processes holding credentials, the session ledger and every VM's lifecycle.
 The shipped design keeps the privilege split of the network router: the
-service decides and sends bounded IPC, the VM owner binds the loopback
-listener and connects the authorized guest target, and only the
+service decides and mints an exact loopback listener descriptor, the VM owner
+admits that listener and connects the authorized guest target, and only the
 environment-cleared, sandbox-confirmed `capsem-router` copies bytes between
 the two connected descriptors it is handed.
 """
@@ -26,7 +26,7 @@ capsem-service authorizes exposures and talks to the VM owner over typed IPC.
 capsem-gateway may accept a loopback browser socket and read bounded control
 material needed to authenticate it, but hands that same descriptor to the VM
 owner without opening the guest destination or carrying workload bytes. The VM
-owner binds loopback TCP exposures, connects the authorized guest target, and
+owner receives loopback TCP exposures, connects the authorized guest target, and
 grants connected descriptor pairs to a router spawned with a cleared
 environment, "/" as its directory, no stdout, and a confirmed sandbox. Do not
 add a service or gateway reverse proxy, and do not give the router privileged
@@ -53,6 +53,9 @@ GATEWAY_LISTENER = (
     "crates/capsem-gateway/src/main.rs",
     "crates/capsem-gateway/src/preview.rs",
 )
+GATEWAY_NEGATIVE_ATTESTATION = {
+    'require_denied(std::net::TcpStream::connect(listener), "dial TCP directly")?;'
+}
 
 
 def _code(path: Path) -> list[tuple[int, str]]:
@@ -84,7 +87,7 @@ def forwarding_in_gateway(root: Path = PROJECT_ROOT) -> list[str]:
             continue
         for number, code in _code(path):
             outbound_tcp = TCP.search(code) and relative not in GATEWAY_LISTENER
-            connect = re.search(r"\bTcpStream::connect\b", code)
+            connect = re.search(r"\bTcpStream::connect\b", code) and code not in GATEWAY_NEGATIVE_ATTESTATION
             copy = BYTE_COPY.search(code) and relative != GATEWAY_TUNNEL
             if outbound_tcp or connect or copy:
                 found.append(f"{relative}:{number}: {code}")
@@ -103,18 +106,24 @@ def test_gateway_forwards_only_the_stream_tunnel() -> None:
 
 def test_the_gateway_tunnel_is_the_stream_upgrade_to_the_service_socket() -> None:
     tunnel = (PROJECT_ROOT / GATEWAY_TUNNEL).read_text(encoding="utf-8")
-    assert "UnixStream::connect(state.uds_path" in tunnel, RATIONALE
+    assert "state.service_client.connect().await" in tunnel, RATIONALE
     assert "SWITCHING_PROTOCOLS" in tunnel and "hyper::upgrade::on" in tunnel, RATIONALE
 
 
-def test_vm_owner_binds_loopback_and_grants_connected_pairs() -> None:
+def test_coordinator_mints_loopback_listener_and_owner_grants_connected_pairs() -> None:
     publisher = (
         PROJECT_ROOT / "crates/capsem-core/src/container/publish.rs"
+    ).read_text(encoding="utf-8")
+    coordinator = (
+        PROJECT_ROOT / "crates/capsem-service/src/upstream_broker.rs"
     ).read_text(encoding="utf-8")
     broker = (
         PROJECT_ROOT / "crates/capsem-core/src/container/publish/broker.rs"
     ).read_text(encoding="utf-8")
-    assert "TcpListener::bind((Ipv4Addr::LOCALHOST, host_port))" in publisher, RATIONALE
+    assert "TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))" in coordinator, RATIONALE
+    assert ".accept(" not in coordinator and not BYTE_COPY.search(coordinator), RATIONALE
+    assert re.search(r"listener_authority\s*\.open\(host_port\)", publisher), RATIONALE
+    assert "TcpListener::bind" not in publisher, RATIONALE
     grant = " ".join(broker.split())
     assert ".grant( flow.source.as_fd(), destination.as_fd()," in grant, RATIONALE
 

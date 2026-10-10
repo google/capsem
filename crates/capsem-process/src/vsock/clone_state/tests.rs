@@ -1,43 +1,30 @@
 use super::*;
 
-use capsem_logger::{DbWriter, FileAction, FileEvent, FileKind, WriteOp};
-
-/// A fork of a running session carries the rows its writer accepted a moment
-/// ago (#243). The writer holds accepted rows in memory until its next disk
-/// flush, up to five seconds away, and the clone copies the file.
 #[tokio::test]
-async fn a_fork_carries_rows_the_writer_has_not_flushed_yet() {
-    let tmp = tempfile::tempdir().unwrap();
-    let source = tmp.path().join("src");
-    let destination = tmp.path().join("dst");
-    std::fs::create_dir_all(source.join("system")).unwrap();
-    std::fs::create_dir_all(source.join("guest/workspace")).unwrap();
-    std::fs::create_dir(&destination).unwrap();
+async fn frozen_clone_waits_for_the_correlated_coordinator_result() {
+    let jobs = Arc::new(JobStore::new());
+    let (events, mut listener) = broadcast::channel(4);
+    let waiting = {
+        let jobs = Arc::clone(&jobs);
+        let events = events.clone();
+        tokio::spawn(async move { await_coordinator_copy(&jobs, &events, 41).await })
+    };
 
-    let db = DbWriter::open(&source.join("session.db"), 64).unwrap();
-    db.write(WriteOp::FileEvent(FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: FileAction::Created,
-        path: "/root/written-just-before-the-fork".into(),
-        size: Some(7),
-        kind: FileKind::File,
-        trace_id: None,
-        credential_ref: None,
-    }))
-    .await;
+    assert!(matches!(
+        listener.recv().await.unwrap(),
+        ProcessToService::CloneStateReady { id: 41 }
+    ));
+    jobs.complete_clone(41, Ok(8192)).unwrap();
+    assert_eq!(waiting.await.unwrap().unwrap(), 8192);
+    assert!(jobs.clone_completions.lock().unwrap().is_empty());
+}
 
-    flush_then_clone(&db, source.clone(), destination.clone())
-        .await
-        .unwrap();
-
-    let cloned = capsem_logger::DbReader::open(&destination.join("session.db")).unwrap();
-    let rows = cloned.query_raw("SELECT path FROM fs_events").unwrap();
-    assert_eq!(
-        rows,
-        r#"{"columns":["path"],"rows":[["/root/written-just-before-the-fork"]]}"#
-    );
-    tokio::task::spawn_blocking(move || db.shutdown_blocking())
-        .await
-        .unwrap();
+#[tokio::test]
+async fn clone_without_a_coordinator_listener_keeps_no_completion_slot() {
+    let jobs = JobStore::new();
+    let (events, listener) = broadcast::channel(1);
+    drop(listener);
+    let error = await_coordinator_copy(&jobs, &events, 7).await.unwrap_err();
+    assert!(error.to_string().contains("no coordinator listener"));
+    assert!(jobs.clone_completions.lock().unwrap().is_empty());
 }

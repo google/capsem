@@ -1,6 +1,6 @@
 //! Metadata FUSE operations: INIT, LOOKUP, GETATTR, SETATTR, STATFS, FORGET.
 
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 
 use super::FuseProcessor;
 use crate::hypervisor::fuse::{self, *};
@@ -75,7 +75,7 @@ impl FuseProcessor {
             nodeid: ino,
             generation: 0,
             entry_valid: 1,
-            attr_valid: 1,
+            attr_valid: fuse::ATTR_CACHE_SECONDS,
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
             attr: fuse::metadata_to_fuse_attr(ino, &meta, header),
@@ -94,7 +94,7 @@ impl FuseProcessor {
         };
 
         let attr_out = FuseAttrOut {
-            attr_valid: 1,
+            attr_valid: fuse::ATTR_CACHE_SECONDS,
             attr_valid_nsec: 0,
             dummy: 0,
             attr: fuse::metadata_to_fuse_attr(header.nodeid, &meta, header),
@@ -127,7 +127,7 @@ impl FuseProcessor {
             if is_symlink {
                 return fuse::error_response(header.unique, -libc::EPERM);
             }
-            if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(attr_in.mode)) {
+            if let Err(e) = self.set_guest_mode(&path, attr_in.mode) {
                 return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
             }
         }

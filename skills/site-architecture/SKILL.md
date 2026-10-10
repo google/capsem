@@ -79,9 +79,11 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 - Workspace and overlay bytes are session state, never
   a hidden image-authoring rail; package changes go through the runtime
   package set (`/build-images`) or an OCI image under `images/`.
-- `capsem-process` stays low privilege: a cleared allowlisted environment,
-  0600 sockets, a 0700 session directory, read-only assets and guest binaries,
-  and only `session_dir/guest/` shared with the VM.
+- `capsem-process` clears its inherited environment, uses 0600 sockets and a
+  0700 session directory, attaches read-only assets and guest binaries, and
+  shares only `session_dir/guest/` with the VM. These controls do not confine
+  a compromised same-UID host worker. The VM owner still has ambient user
+  authority; #206 owns its OS confinement and the proxy/ledger extraction.
 - capsem-app contains no VM logic or `capsem-core` dependency. Gateway and tray
   are service-owned companions and must self-exit with their parent.
 

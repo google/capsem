@@ -111,9 +111,12 @@ def functional(
     # SDK producers need their toolchain, not VM content. In a composed plan
     # they already belong to the fast phase; adding the later runtime-content
     # edge to those shared producers would close a dependency cycle.
-    prepared: tuple[Step, ...] = (
-        sdk_node, *checked, *sdkchecks.braavos(plan, phase, config, after=(sdk_node,)),
+    sdk_ready = sdkchecks.braavos(plan, phase, config, after=(sdk_node,))
+    python_consumer = phase.add(
+        sdkchecks.python_package_prewarm(config),
+        after=(sdk_ready[0], *checked),
     )
+    prepared: tuple[Step, ...] = (sdk_node, *checked, *sdk_ready, python_consumer)
     # The generated mock is gitignored, so it is never part of the source a run
     # is given, and the broad suite checks it for staleness. Made here when
     # this module runs alone, and handed over when a composed run has already

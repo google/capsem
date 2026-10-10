@@ -233,7 +233,7 @@ async fn broken_session_db_schema_is_explicit_error_for_session_status() {
         .data
         .vms
         .insert("status-broken-db-vm".to_string(), entry);
-    state.hydrate_session_db_handles();
+    state.hydrate_session_db_handles().await;
     let handle = state
         .session_db_handle(&vm_id)
         .expect("startup hydration installs the handle so routes surface the schema error explicitly");

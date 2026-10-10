@@ -16,7 +16,7 @@ try {
     const output = join(fixture, owner);
     mkdirSync(output);
     execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', output], {
-      cwd: source, stdio: 'pipe', timeout: 15_000,
+      cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: fixture},
     });
     const names = readdirSync(output).filter(name => name.endsWith('.tgz'));
     assert.equal(names.length, 1);

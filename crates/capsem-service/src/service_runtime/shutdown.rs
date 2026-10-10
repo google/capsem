@@ -22,7 +22,11 @@ async fn drain(
     timeout: Duration,
 ) -> io::Result<()> {
     let (started, stopped) = oneshot::channel();
-    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<crate::ServicePeer>(),
+    )
+    .with_graceful_shutdown(async move {
         shutdown.await;
         let _ = started.send(());
     });

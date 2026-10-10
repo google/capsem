@@ -2,6 +2,8 @@ use super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::net::policy::NetworkMechanics;
+use crate::net::policy_config::SecurityRuleSet;
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
 use hickory_proto::rr::{Name, RecordType};
 
@@ -13,30 +15,23 @@ fn build_query_bytes(name: &str, qtype: RecordType, id: u16) -> Vec<u8> {
     msg.to_vec().unwrap()
 }
 
-fn shared_policy() -> SharedPolicy {
-    Arc::new(std::sync::RwLock::new(Arc::new(NetworkMechanics::new())))
-}
-
-fn security_rules(toml: &str) -> SharedSecurityRules {
+fn proxy_policy(toml: &str) -> ProxyPolicyHandle {
     let profile = crate::net::policy_config::SecurityRuleProfile::parse_toml(toml).unwrap();
     let rules =
         SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User).unwrap();
-    Arc::new(std::sync::RwLock::new(Arc::new(rules)))
-}
-
-fn plugin_policy() -> SharedPluginPolicy {
-    Arc::new(std::sync::RwLock::new(Arc::new(BTreeMap::new())))
+    ProxyPolicyHandle::new(crate::net::proxy_engine::ProxyPolicySnapshot::new(
+        "blake3:test".into(),
+        NetworkMechanics::new(),
+        rules,
+        BTreeMap::new(),
+        crate::net::policy_config::ModelEndpointRegistry::default(),
+    ))
 }
 
 #[tokio::test]
 async fn only_a_single_standard_question_can_reach_upstream() {
     let (addr, seen) = counting_upstream(hickory_proto::op::ResponseCode::NoError, std::time::Duration::ZERO).await;
-    let handler = DnsHandler::new(
-        shared_policy(),
-        security_rules(""),
-        plugin_policy(),
-        Arc::new(DnsResolver::with_upstreams(vec![addr])),
-    );
+    let handler = DnsHandler::new(proxy_policy(""), Arc::new(DnsResolver::with_upstreams(vec![addr])));
     let ordinary = build_query_bytes("allowed.example.", RecordType::A, 123);
     let mut multiple = Message::from_vec(&ordinary).unwrap();
     multiple.add_query(Query::query(
@@ -61,8 +56,7 @@ async fn only_a_single_standard_question_can_reach_upstream() {
 #[tokio::test]
 async fn dns_handler_blocks_query_through_security_event_rules() {
     let handler = DnsHandler::new(
-        shared_policy(),
-        security_rules(
+        proxy_policy(
             r#"
             [profiles.rules.block_dns_example]
             name = "block_dns_example"
@@ -71,7 +65,6 @@ async fn dns_handler_blocks_query_through_security_event_rules() {
             match = 'dns.qname == "blocked.example.com"'
             "#,
         ),
-        plugin_policy(),
         Arc::new(DnsResolver::new()),
     );
 
@@ -91,12 +84,7 @@ async fn dns_handler_blocks_query_through_security_event_rules() {
 
 #[tokio::test]
 async fn dns_handler_returns_local_nxdomain_for_capsem_bogus_without_upstream() {
-    let handler = DnsHandler::new(
-        shared_policy(),
-        security_rules(""),
-        plugin_policy(),
-        Arc::new(DnsResolver::with_upstreams(Vec::new())),
-    );
+    let handler = DnsHandler::new(proxy_policy(""), Arc::new(DnsResolver::with_upstreams(Vec::new())));
 
     let result = handler
         .handle(&build_query_bytes("load-test.capsem-bogus.", RecordType::A, 0xBEEF))
@@ -165,8 +153,8 @@ async fn counting_upstream(
 fn handler_with(upstream: std::net::SocketAddr, rules: &str, cache: Option<Arc<DnsAnswerCache>>) -> DnsHandler {
     let resolver = Arc::new(DnsResolver::with_upstreams(vec![upstream]));
     match cache {
-        Some(cache) => DnsHandler::with_cache(shared_policy(), security_rules(rules), plugin_policy(), resolver, cache),
-        None => DnsHandler::new(shared_policy(), security_rules(rules), plugin_policy(), resolver),
+        Some(cache) => DnsHandler::with_cache(proxy_policy(rules), resolver, cache),
+        None => DnsHandler::new(proxy_policy(rules), resolver),
     }
 }
 
@@ -317,13 +305,7 @@ async fn a_failed_leader_gives_every_follower_its_own_servfail_and_caches_nothin
     let cache = Arc::new(DnsAnswerCache::default());
     let resolver =
         Arc::new(DnsResolver::with_upstreams(vec![upstream]).with_timeout(std::time::Duration::from_millis(100)));
-    let handler = Arc::new(DnsHandler::with_cache(
-        shared_policy(),
-        security_rules(""),
-        plugin_policy(),
-        resolver,
-        Arc::clone(&cache),
-    ));
+    let handler = Arc::new(DnsHandler::with_cache(proxy_policy(""), resolver, Arc::clone(&cache)));
     let mut tasks = Vec::new();
     for id in 1..=5u16 {
         let handler = Arc::clone(&handler);

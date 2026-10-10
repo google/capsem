@@ -119,3 +119,35 @@ async fn a_client_leaving_while_out_of_credit_cancels_the_exec() {
     drop(client);
     owner.await.unwrap();
 }
+
+#[tokio::test]
+async fn replaced_generation_output_is_rejected_and_the_old_exec_is_cancelled() {
+    let fx = fixture().await;
+    let state = Arc::clone(&fx.state);
+    let owner = owner(&fx.uds_path, move |tx, rx| async move {
+        let ServiceToProcess::ExecStream { id, .. } = rx.recv().await.unwrap() else {
+            panic!("expected ExecStream")
+        };
+        state.instances.lock().unwrap().get_mut("box").unwrap().generation = uuid::Uuid::new_v4();
+        tx.send(ProcessToService::ExecOutput {
+            id,
+            channel: capsem_proto::ExecOutputChannel::Stdout,
+            data: b"revoked output".to_vec(),
+        })
+        .await
+        .unwrap();
+        let message = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(message, ServiceToProcess::CancelExec { id: cancelled } if cancelled == id),
+            "{message:?}"
+        );
+    });
+    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    start_exec(&mut client, "sleep 600").await;
+    let result = status(&next_server_frame(&mut client).await.unwrap().1);
+    assert!(matches!(result, StreamStatus::Error { message } if message.contains("VM owner changed")));
+    owner.await.unwrap();
+}

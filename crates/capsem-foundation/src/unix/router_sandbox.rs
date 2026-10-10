@@ -2,39 +2,7 @@
 
 use std::io;
 
-/// Close every inherited descriptor except the three explicitly assigned
-/// standard streams before creating runtime or parent-watch threads.
-///
-/// # Safety
-/// Call only at process entry, before any other code owns descriptors above 2
-/// or another thread can open/reuse them.
-pub unsafe fn close_inherited_descriptors() -> io::Result<()> {
-    #[cfg(target_os = "macos")]
-    let directory = "/dev/fd";
-    #[cfg(not(target_os = "macos"))]
-    let directory = "/proc/self/fd";
-    let mut descriptors = Vec::new();
-    for entry in std::fs::read_dir(directory)? {
-        let name = entry?.file_name();
-        let fd: i32 = name
-            .to_str()
-            .ok_or_else(|| io::Error::other("invalid descriptor name"))?
-            .parse()
-            .map_err(io::Error::other)?;
-        if fd > 2 {
-            descriptors.push(fd);
-        }
-    }
-    for fd in descriptors {
-        // The caller guarantees no live Rust owner or fd reuse. The directory
-        // iterator itself has closed; EBADF for that fd is expected.
-        match nix::unistd::close(fd) {
-            Ok(()) | Err(nix::errno::Errno::EBADF) => {}
-            Err(error) => return Err(super::errno::io(error)),
-        }
-    }
-    Ok(())
-}
+pub use super::fd::close_inherited_descriptors;
 
 /// Restrict the whole process after runtime setup and descriptor inheritance.
 /// Only connected descriptors are granted; no listener permission is needed.

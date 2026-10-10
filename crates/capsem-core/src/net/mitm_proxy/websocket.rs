@@ -14,7 +14,7 @@ mod turns;
 
 pub(super) struct Context {
     pub pipeline: Arc<pipeline::Pipeline>,
-    pub telemetry: Arc<telemetry_hook::TelemetryDeps>,
+    pub engine: Arc<crate::net::proxy_engine::ProxyEngine>,
     pub conn: ConnMeta,
     pub ip: Option<IpAddr>,
     pub method: String,

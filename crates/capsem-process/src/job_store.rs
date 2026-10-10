@@ -9,6 +9,8 @@ use tracing::{info, warn};
 pub(crate) struct JobStore {
     pub(crate) publisher: Arc<capsem_core::container::publish::Publisher>,
     pub(crate) jobs: Mutex<HashMap<u64, oneshot::Sender<JobResult>>>,
+    /// Frozen clones awaiting their coordinator-owned copy result.
+    pub(crate) clone_completions: Mutex<HashMap<u64, oneshot::Sender<Result<u64, String>>>>,
     /// Active exec jobs keyed by id, each with captured stdout and a notifier
     /// the EXEC-port reader thread fires after depositing captured bytes.
     pub(crate) active_execs: Mutex<HashMap<u64, ActiveExec>>,
@@ -105,6 +107,7 @@ impl JobStore {
         Self {
             publisher: Arc::new(capsem_core::container::publish::Publisher::default()),
             jobs: Mutex::new(HashMap::new()),
+            clone_completions: Mutex::new(HashMap::new()),
             active_execs: Mutex::new(HashMap::new()),
             active_file_ops: Mutex::new(HashMap::new()),
             snapshot_ready: Mutex::new(None),
@@ -139,6 +142,9 @@ impl JobStore {
                 })
             );
         }
+        for (_id, tx) in self.clone_completions.lock().unwrap().drain() {
+            capsem_core::try_send!("clone_completion_fail_all", tx.send(Err(message.to_string())));
+        }
         if let Some(tx) = self.snapshot_ready.lock().unwrap().take() {
             capsem_core::try_send!("snapshot_ready_fail_all", tx.send(()));
         }
@@ -148,6 +154,18 @@ impl JobStore {
             active.deposited.notify_one();
         }
         self.active_file_ops.lock().unwrap().clear();
+    }
+
+    pub(crate) fn complete_clone(&self, id: u64, result: Result<u64, String>) -> Result<(), String> {
+        let sender = self
+            .clone_completions
+            .lock()
+            .unwrap()
+            .remove(&id)
+            .ok_or_else(|| format!("clone {id} is not waiting for coordinator completion"))?;
+        sender
+            .send(result)
+            .map_err(|_| format!("clone {id} stopped before coordinator completion"))
     }
 }
 

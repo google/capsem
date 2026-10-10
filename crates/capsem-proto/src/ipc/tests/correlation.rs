@@ -22,13 +22,7 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             Some(8),
         ),
         (ServiceToProcess::McpRefreshTools { id: 10 }, Some(10)),
-        (
-            ServiceToProcess::CloneState {
-                id: 12,
-                destination: "/tmp/fork".into(),
-            },
-            Some(12),
-        ),
+        (ServiceToProcess::CloneState { id: 12 }, Some(12)),
         (
             ServiceToProcess::LinkDetach {
                 id: 11,
@@ -47,7 +41,21 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             Some(12),
         ),
         (ServiceToProcess::Ping, None),
-        (ServiceToProcess::ReloadConfig { id: 13 }, Some(13)),
+        (
+            ServiceToProcess::ReloadConfig {
+                id: 13,
+                active_policy: Vec::new(),
+            },
+            Some(13),
+        ),
+        (
+            ServiceToProcess::CloneStateComplete {
+                id: 14,
+                size_bytes: Some(1),
+                error: None,
+            },
+            None,
+        ),
     ];
     for (request, id) in requests {
         assert_eq!(request.request_id(), id, "{request:?}");
@@ -122,6 +130,7 @@ fn mcp_tool_status_annotations_roundtrip_msgpack() {
             namespaced_name: "github__search".into(),
             original_name: "search".into(),
             description: None,
+            input_schema: serde_json::json!({"type": "object"}),
             server_name: "github".into(),
             annotations: Some(crate::mcp_contracts::ToolAnnotations {
                 title: Some("Search".into()),
@@ -140,4 +149,5 @@ fn mcp_tool_status_annotations_roundtrip_msgpack() {
     let annotations = tools[0].annotations.as_ref().expect("annotations survive");
     assert!(annotations.read_only_hint && !annotations.destructive_hint);
     assert_eq!(annotations.title.as_deref(), Some("Search"));
+    assert_eq!(tools[0].input_schema, serde_json::json!({"type": "object"}));
 }

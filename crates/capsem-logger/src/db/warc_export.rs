@@ -46,10 +46,6 @@
 //! record list is not the session -- which is the one thing a reader cannot
 //! work out from the records themselves.
 //!
-//! Every body goes out through the same hash-verified read path a route uses.
-//! An export is evidence, and evidence that skipped the check the interactive
-//! path performs would be the one copy nobody verified.
-
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs::File;
@@ -58,7 +54,7 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use capsem_archive::{warc, BlockExtent, BodyLogReader, BodyRef, WarcRecord};
+use capsem_archive::{warc, ArchiveCodecs, BlockExtent, BodyLogReader, BodyRef, WarcRecord};
 use capsem_foundation::unix::contained::ContainedDir;
 use capsem_foundation::unix::lock::{self, LockMode};
 use rusqlite::{Connection, OptionalExtension};
@@ -396,7 +392,11 @@ fn warc_page_sql() -> String {
     )
 }
 
-pub(super) fn capture_warc(conn: &Connection, db_path: &std::path::Path) -> DbResult<CapturedWarc> {
+pub(super) fn capture_warc(
+    conn: &Connection,
+    db_path: &std::path::Path,
+    codecs: &ArchiveCodecs,
+) -> DbResult<CapturedWarc> {
     let deadline = std::time::Instant::now() + WARC_CAPTURE_DEADLINE;
     let archive_lock = lock::acquire_existing_until(
         &crate::writer::archive_lock_path_for_db(db_path),
@@ -415,8 +415,9 @@ pub(super) fn capture_warc(conn: &Connection, db_path: &std::path::Path) -> DbRe
             Ok(directory)
         })
         .map_err(|error| format!("open WARC generation directory: {error}"))?;
-    let reader = BodyLogReader::open_generation(&directory, state.header, state.committed_end)
-        .map_err(|error| format!("open WARC generation: {error}"))?;
+    let reader =
+        BodyLogReader::open_generation_with_codecs(&directory, state.header, state.committed_end, codecs.clone())
+            .map_err(|error| format!("open WARC generation: {error}"))?;
     drop(archive_lock);
     super::bodies::pause_archive_capture_for_tests(db_path);
 

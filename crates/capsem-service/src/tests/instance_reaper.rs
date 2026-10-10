@@ -1,6 +1,36 @@
 use super::*;
 
 #[tokio::test]
+async fn exited_generation_is_revoked_while_its_pid_is_still_reserved() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = "unreaped-owner";
+    let session = state.run_dir.join("sessions").join(id);
+    std::fs::create_dir_all(&session).unwrap();
+    let mut child = tokio::process::Command::new("sh")
+        .args(["-c", "sleep 0.05; exit 11"])
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    insert_fake_instance_with_session_dir(&state, id, pid, session);
+    let generation = state.instances.lock().unwrap()[id].generation;
+    let grant = state.instances.lock().unwrap()[id].authority.grant();
+
+    let revoked = crate::instance_reaper::revoke_exited_generation(&child, id, &state, generation).await;
+
+    assert!(!state.instances.lock().unwrap().contains_key(id));
+    tokio::time::timeout(std::time::Duration::from_millis(100), grant.revoked())
+        .await
+        .expect("exit observation revokes grants before the removed instance is dropped");
+    let pid = capsem_foundation::unix::process::ProcessId::try_from(pid).unwrap();
+    assert!(
+        capsem_foundation::unix::process::child_has_exited(pid).unwrap(),
+        "generation revocation must happen before the child is reaped"
+    );
+    drop(revoked);
+    assert_eq!(child.wait().await.unwrap().code(), Some(11));
+}
+
+#[tokio::test]
 async fn generation_retirement_waits_for_reaper_after_instance_map_removal() {
     let (state, _dir) = make_test_state_with_tempdir();
     let id = "retirement-owner";
@@ -153,6 +183,24 @@ fn child_reapers_start_after_instance_registration() {
             "{function} must publish the instance before its child reaper can run"
         );
     }
+}
+
+#[test]
+fn child_exit_authority_is_revoked_before_reaping() {
+    let source = include_str!("../instance_reaper.rs")
+        .split_once("pub(super) fn spawn_exit_reaper")
+        .unwrap()
+        .1;
+    let revoke = source
+        .find("revoke_exited_generation(&child")
+        .expect("the reaper observes exit and revokes the registered generation");
+    let reap = source
+        .find("child.wait().await")
+        .expect("the reaper eventually consumes the child exit status");
+    assert!(
+        revoke < reap,
+        "the kernel must still reserve the worker PID when its authority is revoked"
+    );
 }
 
 /// There is one child reaper. The resume path had its own, which removed the

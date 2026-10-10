@@ -34,6 +34,10 @@ graph TD
         STOP["stop"]
     end
 
+    subgraph "Model Proxy"
+        PROXY["proxy"]
+    end
+
     subgraph "Misc Commands"
         UPDATE["update"]
         DOCTOR["doctor"]
@@ -393,6 +397,35 @@ applied; a close carries the switch's frame, byte and drop counters for that
 cable. `-f` keeps printing new events until Ctrl-C. The
 history is kept by network id, so it survives disconnecting every member and
 deleting the network; a new network under the same name starts empty.
+
+## Model proxy
+
+### proxy
+
+Run a VM-free OpenAI-compatible endpoint through Capsem's policy, credential,
+model parsing, telemetry, and session-ledger pipeline.
+
+```sh
+capsem proxy                         # configured OpenAI provider, random loopback port
+capsem proxy --provider openai       # explicit provider key
+capsem proxy --bind 127.0.0.1 --port 8080
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--provider <KEY>` | `openai` | Provider key from effective built-in, user, and corp policy |
+| `--bind <IP>` | `127.0.0.1` | Address for the unauthenticated model API listener |
+| `--port <PORT>` | `0` | Listener port; zero asks the OS for an available port |
+
+The command prints a `Base URL` ending in the configured provider's base path,
+keeps a short service lease alive while it runs, and stops the endpoint on
+Ctrl-C or SIGTERM. Point the official SDK's `base_url`/`baseURL` at that value.
+The endpoint accepts origin-form model API requests; it is not a `CONNECT` or
+absolute-form forward proxy. A non-loopback bind exposes an unauthenticated
+listener, so its network access control belongs to the deployment.
+
+See [Host Process Isolation](/architecture/host-isolation/#standalone-openai-compatible-endpoint)
+for Python and TypeScript examples, lifecycle behavior, and limits.
 
 ## Service commands
 

@@ -200,7 +200,7 @@ def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> 
         json.dumps({"timestamp": 1, "identity": "tracked"}), encoding="utf-8"
     )
     subprocess.run(
-        ["git", "add", "benchmarks/baselines/fork/tracked.json"],
+        ["git", "add", str((evidence / "tracked.json").relative_to(tmp_path))],
         cwd=tmp_path,
         check=True,
     )
@@ -254,7 +254,7 @@ def test_release_benchmarks_use_typed_evidence_instead_of_authored_limits() -> N
 def _evidence_repo(tmp_path: Path, files: dict[str, dict]) -> Path:
     """A tracked evidence directory, plus the config the lane names come from."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    evidence = tmp_path / "benchmarks" / "baselines" / "fork"
+    evidence = tmp_path / PRUNE.BENCHMARKS.relative_to(PROJECT_ROOT) / "fork"
     evidence.mkdir(parents=True)
     for name, document in files.items():
         (evidence / name).write_text(json.dumps(document), encoding="utf-8")

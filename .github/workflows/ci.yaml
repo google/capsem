@@ -126,6 +126,12 @@ jobs:
         timeout-minutes: 45
         run: just test-linux-rust
 
+      # These integration targets execute the real self-confined worker
+      # binaries. The unit coverage command uses --lib/--bins and therefore
+      # cannot prove Landlock/seccomp took effect before readiness.
+      - name: Confined worker subprocess tests
+        run: cargo test --locked -p capsem-ledger -p capsem-proxy --test subprocess
+
       # cargo check still runs BLAKE3's native SIMD build. Both guest targets
       # belong on their native Linux C toolchain, already provisioned above.
       # Build and link the production feature set, not a pure-Rust substitute.
@@ -281,8 +287,13 @@ jobs:
       - name: Unit tests with coverage
         run: |
           set -o pipefail
-          cargo llvm-cov nextest --no-cfg-coverage --lib --bins --profile ci-unit --codecov --output-path cache/target/coverage/rust/unit.json -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-network -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
-          cargo llvm-cov report --summary-only -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-network -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee cache/target/coverage/rust/summary.txt
+          cargo llvm-cov nextest --no-cfg-coverage --lib --bins --profile ci-unit --codecov --output-path cache/target/coverage/rust/unit.json -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-ledger -p capsem-proxy -p capsem-network -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
+          cargo llvm-cov report --summary-only -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-ledger -p capsem-proxy -p capsem-network -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee cache/target/coverage/rust/summary.txt
+
+      # Run the production executables under the host's real Seatbelt policy.
+      # --lib/--bins above compiles but does not execute integration targets.
+      - name: Confined worker subprocess tests
+        run: cargo test --locked -p capsem-ledger -p capsem-proxy --test subprocess
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
@@ -296,6 +307,11 @@ jobs:
         env:
           CAPSEM_FRONTEND_JUNIT: ${{ github.workspace }}/cache/target/coverage/junit/frontend.xml
         run: bash build_system/scripts/web/check-web-surface.sh frontend-verify
+
+      - name: Build Python SDK distributions
+        run: |
+          uv sync --project sdk/python --frozen --no-install-project
+          uv run --project sdk/python --frozen --no-sync python -m build --no-isolation --outdir cache/target/sdk/python sdk/python
 
       # Python schema tests with coverage
       - name: Python SDK tests with coverage
@@ -313,6 +329,7 @@ jobs:
         working-directory: sdk/typescript
         run: |
           pnpm install --frozen-lockfile
+          pnpm run prewarm:package
           pnpm test --reporter=default --reporter=junit --outputFile=../../cache/target/coverage/junit/typescript-sdk.xml
 
       # Builds against the SDK package the step above just built.
@@ -320,6 +337,7 @@ jobs:
         working-directory: mcp/typescript
         run: |
           pnpm install --frozen-lockfile
+          pnpm run prewarm:packed
           pnpm test --reporter=default --reporter=junit --outputFile=../../cache/target/coverage/junit/mcp-typescript.xml
 
       - name: Cross-system Python schema tests with coverage
@@ -358,10 +376,12 @@ jobs:
       - name: Python integration tests (non-VM suites)
         run: |
           bash build_system/scripts/test/prepare-install-test-assets.sh
-          cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mock-server -p capsem-bench
+          cargo build -p capsem-process -p capsem-ledger -p capsem-proxy -p capsem-service -p capsem -p capsem-mock-server -p capsem-bench
           for bin in cache/target/cargo/debug/capsem-process cache/target/cargo/debug/capsem-service cache/target/cargo/debug/capsem cache/target/cargo/debug/capsem-mock-server cache/target/cargo/debug/capsem-bench-rs; do
             codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force "$bin"
           done
+          codesign --sign - --force cache/target/cargo/debug/capsem-ledger
+          codesign --sign - --force cache/target/cargo/debug/capsem-proxy
           uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir . tests/capsem-bootstrap/ \
             tests/capsem-codesign/ \
             tests/capsem-rootfs-artifacts/ \

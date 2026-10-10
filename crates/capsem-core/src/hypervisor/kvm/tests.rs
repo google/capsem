@@ -533,6 +533,7 @@ fn every_mmio_slot_up_to_the_last_share_is_announced() {
         tag: tag.into(),
         host_path: "/share".into(),
         read_only: tag == "capsem-image",
+        metadata_authority: None,
     };
     let mut config = crate::VmConfig {
         cpu_count: 1,
@@ -562,4 +563,35 @@ fn every_mmio_slot_up_to_the_last_share_is_announced() {
     assert_eq!(virtio_mmio_device_count(&config, &[]), 2);
     config.disk_path = None;
     assert_eq!(virtio_mmio_device_count(&config, &[]), 1);
+}
+
+#[test]
+fn writable_virtiofs_requires_brokered_metadata_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = crate::VmConfig {
+        cpu_count: 1,
+        ram_bytes: 1 << 30,
+        kernel_path: "/vmlinuz".into(),
+        initrd_path: None,
+        disk_path: None,
+        scratch_disk_path: None,
+        virtio_fs_shares: vec![crate::VirtioFsShare {
+            tag: "capsem".into(),
+            host_path: dir.path().into(),
+            read_only: false,
+            metadata_authority: None,
+        }],
+        kernel_cmdline: String::new(),
+        expected_kernel_hash: None,
+        expected_initrd_hash: None,
+        checkpoint_path: None,
+        expected_disk_hash: None,
+        machine_identifier_path: None,
+        serial_log_path: None,
+    };
+
+    let error = require_metadata_authority(&config).unwrap_err();
+    assert!(error.to_string().contains("trusted metadata authority"));
+    config.virtio_fs_shares[0].read_only = true;
+    require_metadata_authority(&config).unwrap();
 }

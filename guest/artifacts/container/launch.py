@@ -86,6 +86,10 @@ RUNC = ("runc", "--rootless=true", "--root", str(RUNTIME / "state"))
 TERMINAL_SHELL = ["/bin/sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l; exec sh -l"]
 TERMINAL_TYPE = "TERM=xterm-256color"
 ATTACH_INTERVAL = 1.0
+COMMAND_TIMEOUT = 30
+# Large test-tooling images can take longer to materialize when several VMs
+# unpack in parallel. Keep this below the service's 110-second create wait.
+IMAGE_UNPACK_TIMEOUT = 90
 # A detached workload's terminal: runc runs in the foreground on a PTY this
 # launcher holds (runc gives the container its own and relays the two; it
 # allows a console socket only when it detaches, which would lose the exit
@@ -480,8 +484,8 @@ def idmap_workspace(id_map, target):
         os.waitpid(child, 0)
 
 
-def command(*args, check=True, **kwargs):
-    return subprocess.run(args, check=check, timeout=30, **kwargs)
+def command(*args, check=True, timeout=COMMAND_TIMEOUT, **kwargs):
+    return subprocess.run(args, check=check, timeout=timeout, **kwargs)
 
 
 def hosts_file():
@@ -840,6 +844,7 @@ def unpacked_root(digest, id_map, share=image_share):
         command(
             "umoci", "unpack", "--uid-map", mapping, "--gid-map", mapping,
             "--image", f"{layout}:image", str(root / "bundle"),
+            timeout=IMAGE_UNPACK_TIMEOUT,
         )
         (root / "bundle").chmod(0o711)
         shutil.copyfile(root / "bundle" / "config.json", root / "runtime.json")

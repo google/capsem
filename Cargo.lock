@@ -982,6 +982,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-ledger"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "capsem-archive",
+ "capsem-foundation",
+ "capsem-guard",
+ "capsem-logger",
+ "capsem-proto",
+ "clap",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "zstd",
+]
+
+[[package]]
 name = "capsem-logger"
 version = "0.7.0"
 dependencies = [
@@ -997,8 +1014,10 @@ dependencies = [
  "memmap2",
  "metrics",
  "metrics-util",
+ "rmp-serde",
  "rusqlite",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha2",
  "tempfile",
@@ -1090,16 +1109,21 @@ name = "capsem-process"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
+ "bytes",
  "capsem-assets",
  "capsem-core",
  "capsem-foundation",
+ "capsem-guard",
  "capsem-logger",
  "capsem-proto",
  "capsem-telemetry",
  "clap",
  "core-foundation-sys",
  "futures",
+ "http",
+ "opentelemetry-http",
  "serde",
  "serde_json",
  "tempfile",
@@ -1123,6 +1147,27 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+]
+
+[[package]]
+name = "capsem-proxy"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "capsem-core",
+ "capsem-foundation",
+ "capsem-guard",
+ "capsem-logger",
+ "capsem-proto",
+ "capsem-telemetry",
+ "clap",
+ "http",
+ "opentelemetry-http",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1161,9 +1206,11 @@ name = "capsem-service"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "blake3",
+ "bytes",
  "capsem-api",
  "capsem-assets",
  "capsem-config",
@@ -1178,11 +1225,15 @@ dependencies = [
  "clap",
  "filetime",
  "futures",
+ "http",
  "humantime",
+ "metrics",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry_sdk",
  "rand 0.8.8",
  "reqwest 0.12.28",
+ "rmp-serde",
  "rusqlite",
  "serde",
  "serde_json",

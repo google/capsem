@@ -5,10 +5,17 @@ sidebar:
   order: 15
 ---
 
-The MITM proxy is Capsem's HTTPS inspection layer. It terminates TLS from the
-guest, normalizes protocol details into `SecurityEvent`, evaluates the shared
-security rule rail, forwards allowed requests to the real upstream, and logs
-telemetry plus matched rule rows to the session database.
+The proxy engine is Capsem's HTTP, DNS, model, and MCP inspection layer. In VM
+mode it terminates TLS from the guest. In standalone mode it accepts plaintext
+OpenAI-compatible HTTP on an explicit listener. Both adapters normalize
+protocol details into `SecurityEvent`, evaluate the same rule rail, forward
+allowed requests through a brokered upstream capability, and emit telemetry
+through the session ledger capability.
+
+The engine runs in a per-session `capsem-proxy` process with no filesystem or
+arbitrary socket authority. The service and VM owner pass it connected
+descriptors for traffic, upstream, credentials, policy, telemetry, private
+names, MCP, and the ledger. See [Host Process Isolation](/architecture/host-isolation/#shared-proxy-engine).
 
 ## Connection pipeline
 
@@ -40,7 +47,7 @@ The proxy uses hyper for HTTP parsing and tokio-rustls for TLS. Each vsock conne
 graph LR
     CA["CertAuthority<br/>(static CA keypair)"]
     POL["Network mechanics<br/>(hot-swappable via RwLock)"]
-    DB["DbWriter<br/>(async telemetry)"]
+    DB["ProxyLedger<br/>(typed ledger capability)"]
     TLS["Upstream TLS config<br/>(webpki roots)"]
     PRICE["PricingTable<br/>(embedded JSON)"]
     TRACE["TraceState<br/>(multi-turn linking)"]
@@ -57,7 +64,7 @@ graph LR
 |-------|------|---------|
 | `ca` | `Arc<CertAuthority>` | Static Capsem CA for leaf cert minting |
 | `policy` | `Arc<RwLock<Arc<NetworkPolicy>>>` | Hot-swappable network mechanics such as body capture and upstream port handling |
-| `db` | `Arc<DbWriter>` | Async telemetry writer to session.db |
+| ledger | `Arc<dyn ProxyLedger>` | Typed admit/flush capability to the session's ledger worker |
 | `upstream_tls` | `Arc<rustls::ClientConfig>` | Shared TLS config with webpki root CAs |
 | `pricing` | `PricingTable` | Embedded model pricing for cost estimation |
 | `trace_state` | `Mutex<TraceState>` | Links multi-turn tool-use conversations by trace_id |

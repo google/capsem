@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use thiserror::Error;
@@ -69,8 +70,14 @@ pub enum ConfigError {
     ArchMismatch(String),
 }
 
+/// Trusted authority for metadata operations a confined KVM owner cannot
+/// safely perform itself.
+pub trait GuestMetadataAuthority: Send + Sync {
+    fn set_mode(&self, relative_path: &[u8], mode: u16) -> std::io::Result<()>;
+}
+
 /// A VirtioFS shared directory to expose to the guest via virtio-fs.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VirtioFsShare {
     /// Mount tag visible in guest (e.g., "capsem"). Max 36 ASCII bytes.
     pub tag: String,
@@ -78,6 +85,20 @@ pub struct VirtioFsShare {
     pub host_path: PathBuf,
     /// If true, guest cannot write to this share.
     pub read_only: bool,
+    /// Coordinator broker for permission changes on a writable KVM share.
+    pub metadata_authority: Option<Arc<dyn GuestMetadataAuthority>>,
+}
+
+impl std::fmt::Debug for VirtioFsShare {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VirtioFsShare")
+            .field("tag", &self.tag)
+            .field("host_path", &self.host_path)
+            .field("read_only", &self.read_only)
+            .field("metadata_authority", &self.metadata_authority.is_some())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -196,7 +217,13 @@ impl VmConfigBuilder {
             tag: tag.into(),
             host_path: path.as_ref().to_path_buf(),
             read_only,
+            metadata_authority: None,
         });
+        self
+    }
+
+    pub fn virtio_fs_share_config(mut self, share: VirtioFsShare) -> Self {
+        self.virtio_fs_shares.push(share);
         self
     }
 

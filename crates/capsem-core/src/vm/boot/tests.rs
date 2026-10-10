@@ -100,6 +100,7 @@ fn virtiofs_cmdline_append() {
         tag: "capsem".into(),
         host_path: "/tmp/session".into(),
         read_only: false,
+        metadata_authority: None,
     }];
     let effective = effective_kernel_cmdline(base, &shares, None);
     assert!(effective.contains("capsem.storage=virtiofs"));

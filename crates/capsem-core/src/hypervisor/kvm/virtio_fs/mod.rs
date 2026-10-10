@@ -14,6 +14,7 @@ mod ops_dir;
 mod ops_file;
 mod ops_meta;
 
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -29,6 +30,7 @@ use super::virtio_mmio::{QueueConfig, VirtioDevice};
 use super::virtio_queue::{DescriptorChain, VirtQueue};
 
 use crate::hypervisor::fuse::{self, *};
+use crate::GuestMetadataAuthority;
 use checkpoint_state::VirtioFsBackendSnapshot;
 
 const VIRTIO_ID_FS: u32 = 26;
@@ -56,9 +58,21 @@ pub(super) struct FuseProcessor {
     pub(super) read_only: bool,
     pub(super) inodes: InodeTable,
     pub(super) file_handles: FileHandleTable,
+    pub(super) metadata_authority: Option<Arc<dyn GuestMetadataAuthority>>,
 }
 
 impl FuseProcessor {
+    fn set_guest_mode(&self, path: &Path, mode: u32) -> std::io::Result<()> {
+        let authority = self
+            .metadata_authority
+            .as_ref()
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EPERM))?;
+        let relative = path
+            .strip_prefix(&self.root_path)
+            .map_err(|_| std::io::Error::from_raw_os_error(libc::EACCES))?;
+        authority.set_mode(relative.as_os_str().as_bytes(), (mode & 0o7777) as u16)
+    }
+
     fn handle_request(&mut self, request_buf: &[u8]) -> Vec<u8> {
         let header: FuseInHeader = match fuse::read_struct(request_buf) {
             Some(h) => h,
@@ -126,7 +140,12 @@ impl FuseProcessor {
         self.encode_checkpoint_with_tag([0; TAG_LEN])
     }
 
-    fn restore_snapshot(root_path: &Path, read_only: bool, snapshot: &VirtioFsBackendSnapshot) -> Result<Self> {
+    fn restore_snapshot(
+        root_path: &Path,
+        read_only: bool,
+        metadata_authority: Option<Arc<dyn GuestMetadataAuthority>>,
+        snapshot: &VirtioFsBackendSnapshot,
+    ) -> Result<Self> {
         ensure!(
             snapshot.read_only == read_only,
             "VirtioFS checkpoint read-only identity mismatch"
@@ -138,13 +157,14 @@ impl FuseProcessor {
             read_only,
             inodes,
             file_handles,
+            metadata_authority,
         })
     }
 
     #[cfg(test)]
     fn restore_checkpoint(root_path: &Path, read_only: bool, encoded: &[u8]) -> Result<Self> {
         let snapshot = VirtioFsBackendSnapshot::decode(encoded)?;
-        Self::restore_snapshot(root_path, read_only, &snapshot)
+        Self::restore_snapshot(root_path, read_only, None, &snapshot)
     }
 }
 
@@ -376,9 +396,13 @@ impl VirtioFsDevice {
         tag: &str,
         root_path: &Path,
         read_only: bool,
+        metadata_authority: Option<Arc<dyn GuestMetadataAuthority>>,
         irq_fd: RawFd,
         interrupt_status: Arc<AtomicU32>,
     ) -> Result<Self> {
+        let root_path = root_path
+            .canonicalize()
+            .with_context(|| format!("canonicalize VirtioFS root: {}", root_path.display()))?;
         let mut tag_buf = [0u8; TAG_LEN];
         let len = tag.len().min(TAG_LEN);
         tag_buf[..len].copy_from_slice(&tag.as_bytes()[..len]);
@@ -386,10 +410,11 @@ impl VirtioFsDevice {
         Ok(Self {
             tag: tag_buf,
             processor: Some(FuseProcessor {
-                root_path: root_path.to_path_buf(),
+                root_path: root_path.clone(),
                 read_only,
-                inodes: InodeTable::new(root_path)?,
+                inodes: InodeTable::new(&root_path)?,
                 file_handles: FileHandleTable::new(),
+                metadata_authority,
             }),
             notify_tx: None,
             worker_handle: None,
@@ -619,7 +644,12 @@ impl VirtioDevice for VirtioFsDevice {
             snapshot.read_only == current.read_only,
             "VirtioFS checkpoint read-only identity mismatch"
         );
-        let restored = FuseProcessor::restore_snapshot(&current.root_path, current.read_only, &snapshot)?;
+        let restored = FuseProcessor::restore_snapshot(
+            &current.root_path,
+            current.read_only,
+            current.metadata_authority.clone(),
+            &snapshot,
+        )?;
         self.processor = Some(restored);
         self.checkpoint_state = Some(encoded.to_vec());
         Ok(())

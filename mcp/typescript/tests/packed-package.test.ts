@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {createServer as createHttpServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
 import {homedir, tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -46,7 +46,7 @@ describe('packed-package', () => {
         retained.push({path, sha256: digest(path)});
         copyFileSync(path, join(destination, `capsem-${owner}-${version}.tgz`));
       } else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', destination], {
-        cwd: source, stdio: 'pipe', timeout: 15_000,
+        cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: fixture},
       });
       const name = readdirSync(destination).find(entry => entry.endsWith('.tgz'));
       if (!name) throw new Error('pnpm pack did not create a tarball');
@@ -94,7 +94,7 @@ describe('packed-package', () => {
     const transport = new StdioClientTransport({
       command: consumerNode,
       args: [cli, '--gateway-url', gatewayUrl, '--timeout-ms', '5000'],
-      env: {PATH: process.env.PATH ?? '', CAPSEM_GATEWAY_TOKEN: token},
+      env: {HOME: dirname(cli), PATH: process.env.PATH ?? '', CAPSEM_GATEWAY_TOKEN: token},
       stderr: 'pipe',
     });
     const stderr: string[] = [];

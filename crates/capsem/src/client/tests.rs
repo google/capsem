@@ -799,6 +799,8 @@ fn isolated_direct_spawn_uses_an_ephemeral_gateway_port() {
     let paths = paths::CapsemPaths {
         service_bin: PathBuf::from("/opt/capsem/bin/capsem-service"),
         process_bin: PathBuf::from("/opt/capsem/bin/capsem-process"),
+        ledger_bin: PathBuf::from("/opt/capsem/bin/capsem-ledger"),
+        proxy_bin: PathBuf::from("/opt/capsem/bin/capsem-proxy"),
         gateway_bin: PathBuf::from("/opt/capsem/bin/capsem-gateway"),
         tray_bin: PathBuf::from("/opt/capsem/bin/capsem-tray"),
         assets_dir: PathBuf::from("/opt/capsem/assets"),
@@ -810,6 +812,16 @@ fn isolated_direct_spawn_uses_an_ephemeral_gateway_port() {
         args.windows(2).any(|pair| pair == ["--gateway-port", "0"]),
         "isolated service must not collide with an installed gateway: {args:?}"
     );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--proxy-binary", "/opt/capsem/bin/capsem-proxy"]),
+        "direct service must use its sibling confined proxy: {args:?}"
+    );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--ledger-binary", "/opt/capsem/bin/capsem-ledger"]),
+        "direct service must use its sibling confined ledger: {args:?}"
+    );
 }
 
 #[test]
@@ -817,6 +829,8 @@ fn bounded_direct_spawn_exits_with_its_one_shot_cli_parent() {
     let paths = paths::CapsemPaths {
         service_bin: PathBuf::from("/opt/capsem/bin/capsem-service"),
         process_bin: PathBuf::from("/opt/capsem/bin/capsem-process"),
+        ledger_bin: PathBuf::from("/opt/capsem/bin/capsem-ledger"),
+        proxy_bin: PathBuf::from("/opt/capsem/bin/capsem-proxy"),
         gateway_bin: PathBuf::from("/opt/capsem/bin/capsem-gateway"),
         tray_bin: PathBuf::from("/opt/capsem/bin/capsem-tray"),
         assets_dir: PathBuf::from("/opt/capsem/assets"),
@@ -868,6 +882,8 @@ fn ordinary_direct_spawn_preserves_the_installed_gateway_port_contract() {
     let paths = paths::CapsemPaths {
         service_bin: PathBuf::from("/opt/capsem/bin/capsem-service"),
         process_bin: PathBuf::from("/opt/capsem/bin/capsem-process"),
+        ledger_bin: PathBuf::from("/opt/capsem/bin/capsem-ledger"),
+        proxy_bin: PathBuf::from("/opt/capsem/bin/capsem-proxy"),
         gateway_bin: PathBuf::from("/opt/capsem/bin/capsem-gateway"),
         tray_bin: PathBuf::from("/opt/capsem/bin/capsem-tray"),
         assets_dir: PathBuf::from("/opt/capsem/assets"),

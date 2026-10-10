@@ -1,5 +1,122 @@
 use super::*;
+use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use clap::Parser;
+use std::os::fd::AsRawFd as _;
+
+#[test]
+fn entry_closes_ambient_descriptors_before_runtime_initialization() {
+    let source = include_str!("main.rs");
+    let entry = source.split_once("fn main() -> Result<()> {").unwrap().1;
+    let close = entry
+        .find("close_inherited_descriptors()")
+        .expect("VM owner closes ambient descriptors at process entry");
+    let telemetry = entry.find("telemetry::init").unwrap();
+    let arguments = entry.find("Args::parse()").unwrap();
+    assert!(close < telemetry && close < arguments);
+}
+
+#[test]
+fn production_vm_owner_never_opens_the_session_database() {
+    let source = include_str!("main.rs");
+    assert!(!source.contains("DbWriter::open("));
+    assert!(source.contains("DbWriter::from_ledger_channel("));
+    assert!(
+        !source.contains("CAPSEM_SESSION_DB"),
+        "VM owner must not delegate the ledger path to built-in MCP servers"
+    );
+}
+
+#[test]
+fn prepared_ledger_retains_the_connected_channels_and_exact_grant() {
+    let (stream, _stream_peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let (commitment, _commitment_peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let stream_fd = stream.as_raw_fd();
+    let commitment_fd = commitment.as_raw_fd();
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([7; 16]), 41, LedgerClientRole::VmOwner).unwrap();
+
+    let prepared = PreparedLedger::from_grant((stream, commitment, grant));
+
+    assert_eq!(prepared.stream.as_raw_fd(), stream_fd);
+    assert_eq!(prepared.commitment.as_raw_fd(), commitment_fd);
+    assert_eq!(prepared.grant, grant);
+}
+
+#[test]
+fn confinement_grants_exact_runtime_paths_and_attests_ledger_denial() {
+    let sandbox = include_str!("owner_sandbox.rs");
+    assert!(!sandbox.contains("grant_owner_path(policy, session_dir"));
+    assert!(sandbox.contains("grant_owner_session_paths(policy, session_dir)"));
+    assert!(!sandbox.contains("&args.active_policy"));
+    assert!(sandbox.contains("session_dir.join(\"session.db\")"));
+    assert!(sandbox.contains("std::fs::File::open(&attestation.ledger_path)"));
+    assert!(sandbox.contains("open session ledger storage"));
+}
+
+#[test]
+fn suspend_checkpoint_stays_in_owner_state() {
+    let session = Path::new("/tmp/session");
+    assert_eq!(owner_checkpoint_path(session), session.join("owner/checkpoint.vzsave"));
+}
+
+#[test]
+fn platform_confinement_and_attestation_precede_owner_readiness() {
+    let source = include_str!("main.rs");
+    let entry = source.split_once("fn main() -> Result<()> {").unwrap().1;
+    let ledger = entry
+        .find("open_ledger()")
+        .expect("VM owner acquires its initialized ledger before confinement");
+    let workspace = entry
+        .find("let workspace = capsem_core::session::open_workspace")
+        .expect("VM owner preopens the contained workspace before confinement");
+    let prepare = entry.find("prepare_owner_sandbox_attestation").unwrap();
+    let runtime = entry.find("Builder::new_current_thread()").unwrap();
+    let confine = entry
+        .find("confine_owner(&args")
+        .expect("all supported platforms install the VM-owner policy");
+    let attest = entry
+        .find("attest_owner(")
+        .expect("all supported platforms attest the installed policy");
+    let watcher = entry.find("watch_parent_or_exit").unwrap();
+    let boot = entry.find("prepared_vm.boot()").unwrap();
+    let run = entry.find("run_async_main_loop(").unwrap();
+    assert!(!entry.contains("Builder::new_multi_thread()"));
+    assert!(
+        runtime < ledger
+            && ledger < workspace
+            && workspace < prepare
+            && prepare < confine
+            && confine < attest
+            && attest < watcher
+    );
+    assert!(confine < boot && boot < run);
+
+    let async_loop = source.split_once("async fn run_async_main_loop(").unwrap().1;
+    assert!(
+        !async_loop.contains("open_workspace(&session_dir)"),
+        "the confined owner must use its preopened workspace descriptor"
+    );
+    assert!(
+        async_loop.contains(".context(\"start host file monitor\")?"),
+        "a missing filesystem audit rail must fail VM startup"
+    );
+}
+
+#[test]
+fn private_name_broker_carries_no_session_bearer() {
+    let source = include_str!("private_seats.rs");
+    assert!(!source.contains("owner_secret"));
+    assert!(!source.contains("owner-secret"));
+}
+
+#[test]
+fn metric_export_has_no_collector_destination_surface() {
+    for source in [include_str!("main.rs"), include_str!("metric_export.rs")] {
+        assert!(!source.contains("metric_endpoint"));
+        assert!(!source.contains("--metric-endpoint"));
+        assert!(!source.contains("Destination::Corp"));
+        assert!(!source.contains("OTEL_EXPORTER"));
+    }
+}
 
 // -----------------------------------------------------------------------
 // Args parsing
@@ -37,11 +154,11 @@ fn args_parses_all_required() {
     assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
 }
 
-/// The metric endpoint is granted by the service at launch; without the flag
-/// export is off. The process has no other way to learn it: it may not read
-/// settings or corp files (`test_process_policy_runtime_contract.py`).
+/// The metric broker is granted by the service at launch; without the flag
+/// export is off. The process has no collector configuration surface and may
+/// not read settings or corp files (`test_process_policy_runtime_contract.py`).
 #[test]
-fn args_metric_endpoint_is_granted_at_launch_and_off_without_it() {
+fn args_accept_an_optional_metric_broker_grant() {
     let required = [
         "capsem-process",
         "--id",
@@ -64,16 +181,21 @@ fn args_metric_endpoint_is_granted_at_launch_and_off_without_it() {
         "/tmp/vm.sock",
     ];
     let off = Args::try_parse_from(required).unwrap();
-    assert_eq!(off.metric_endpoint, None);
-    assert!(metric_export::install(&off.id, off.metric_endpoint.as_deref()).is_none());
+    assert!(!off.metric_broker);
+    assert!(metric_export::install(&off.id, None, off.metric_broker).is_none());
 
-    let granted = Args::try_parse_from(
-        required
-            .into_iter()
-            .chain(["--metric-endpoint", "https://otel.example"]),
-    )
-    .unwrap();
-    assert_eq!(granted.metric_endpoint.as_deref(), Some("https://otel.example"));
+    let broker =
+        Args::try_parse_from(
+            required
+                .into_iter()
+                .chain(["--service-socket", "/tmp/service.sock", "--metric-broker"]),
+        )
+        .unwrap();
+    assert!(broker.metric_broker);
+    assert_eq!(
+        broker.service_socket.as_deref(),
+        Some(std::path::Path::new("/tmp/service.sock"))
+    );
 }
 
 #[test]

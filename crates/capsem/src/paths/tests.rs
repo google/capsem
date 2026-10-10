@@ -70,6 +70,8 @@ fn discover_paths_sibling_binaries_use_exe_dir() {
     let exe_dir = exe.parent().unwrap();
     assert_eq!(paths.service_bin.parent().unwrap(), exe_dir);
     assert_eq!(paths.process_bin.parent().unwrap(), exe_dir);
+    assert_eq!(paths.ledger_bin.parent().unwrap(), exe_dir);
+    assert_eq!(paths.proxy_bin.parent().unwrap(), exe_dir);
 }
 
 #[test]
@@ -104,6 +106,13 @@ fn discover_paths_process_bin_name() {
         paths.process_bin.file_name().unwrap().to_str().unwrap(),
         "capsem-process"
     );
+}
+
+#[test]
+fn discover_paths_confined_worker_names() {
+    let paths = discover_paths().unwrap();
+    assert_eq!(paths.ledger_bin.file_name().unwrap(), "capsem-ledger");
+    assert_eq!(paths.proxy_bin.file_name().unwrap(), "capsem-proxy");
 }
 
 // -----------------------------------------------------------------------

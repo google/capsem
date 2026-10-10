@@ -116,14 +116,39 @@ pub(super) async fn handle_mcp_default_info(
 }
 
 pub(super) fn latest_mcp_tool_cache(state: &ServiceState) -> Vec<ToolCacheEntry> {
-    let latest = capsem_core::mcp::load_tool_cache();
-    let Ok(mut cache) = state.mcp_tool_cache.lock() else {
-        return latest;
-    };
-    if !latest.is_empty() || cache.is_empty() {
-        *cache = latest;
-    }
-    cache.clone()
+    state.mcp_tool_cache.lock().unwrap().clone()
+}
+
+pub(super) fn persist_mcp_tool_cache(
+    state: &ServiceState,
+    tools: Vec<capsem_proto::ipc::McpToolStatus>,
+) -> Result<(), AppError> {
+    let tools = tools
+        .into_iter()
+        .map(|tool| capsem_proto::mcp_contracts::McpToolDef {
+            namespaced_name: tool.namespaced_name,
+            original_name: tool.original_name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+            server_name: tool.server_name,
+            annotations: tool.annotations,
+            timeout_secs: None,
+        })
+        .collect::<Vec<_>>();
+    let mut cache = state
+        .mcp_tool_cache
+        .lock()
+        .map_err(|_| AppError(StatusCode::INTERNAL_SERVER_ERROR, "MCP tool cache lock poisoned".into()))?;
+    let updated = capsem_core::mcp::build_cache_entries(&tools, &cache);
+    capsem_core::mcp::save_tool_cache(&updated).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("persist MCP tool cache: {error}"),
+        )
+    })?;
+    *cache = updated;
+    drop(cache);
+    Ok(())
 }
 
 /// GET /mcp/servers/{server_id}/tools/list -- one server's discovered tools
@@ -180,18 +205,55 @@ pub(super) async fn handle_mcp_server_refresh(
             .collect::<Vec<_>>()
     };
     let mut refreshed = 0;
+    let mut catalog_saved = targets.is_empty();
     for (vm_id, uds_path) in &targets {
         let id = state.next_job_id();
-        match send_ipc_command(uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await {
-            Ok(_) => refreshed += 1,
+        match send_ipc_command(&state, uds_path, ServiceToProcess::McpRefreshTools { id }, Some(30)).await {
+            Ok(ProcessToService::McpRefreshResult {
+                success: true,
+                error: None,
+                ..
+            }) => {
+                refreshed += 1;
+                if !catalog_saved {
+                    let id = state.next_job_id();
+                    match send_ipc_command(&state, uds_path, ServiceToProcess::McpListTools { id }, Some(30)).await {
+                        Ok(ProcessToService::McpToolsResult { tools, .. }) => {
+                            persist_mcp_tool_cache(&state, tools)?;
+                            catalog_saved = true;
+                        }
+                        Ok(reply) => warn!(
+                            vm_id = %vm_id,
+                            server_id = %server_id,
+                            ?reply,
+                            "MCP tool catalog returned an unexpected reply"
+                        ),
+                        Err(error) => warn!(
+                            vm_id = %vm_id,
+                            server_id = %server_id,
+                            %error,
+                            "MCP tool catalog query failed"
+                        ),
+                    }
+                }
+            }
+            Ok(ProcessToService::McpRefreshResult { error, .. }) => warn!(
+                vm_id = %vm_id,
+                server_id = %server_id,
+                ?error,
+                "MCP tool refresh was refused"
+            ),
+            Ok(reply) => warn!(
+                vm_id = %vm_id,
+                server_id = %server_id,
+                ?reply,
+                "MCP tool refresh returned an unexpected reply"
+            ),
             Err(error) => warn!(vm_id = %vm_id, server_id = %server_id, %error, "MCP tool refresh failed"),
         }
     }
-    if let Ok(mut cache) = state.mcp_tool_cache.lock() {
-        *cache = capsem_core::mcp::load_tool_cache();
-    }
     Ok(Json(api::McpRefreshResponse {
-        success: refreshed == targets.len(),
+        success: refreshed == targets.len() && catalog_saved,
         server_id,
         instances: refreshed,
     }))
@@ -270,7 +332,7 @@ pub(super) async fn handle_mcp_tool_call(
         namespaced_name,
         arguments_json,
     };
-    match send_ipc_command(&uds_path, msg, Some(60))
+    match send_ipc_command(&state, &uds_path, msg, Some(60))
         .await
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?
     {

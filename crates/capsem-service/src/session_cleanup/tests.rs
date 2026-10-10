@@ -122,7 +122,11 @@ async fn one_shot_completion_deletes_success_and_preserves_ipc_failure() {
 
     let clean_id = "code-run-clean";
     let clean_dir = state.run_dir.join("sessions").join(clean_id);
+    let commitments = state.run_dir.join("ledger-commitments");
+    let clean_checkpoints = commitments.join(blake3::hash(clean_id.as_bytes()).to_hex().to_string());
     std::fs::create_dir_all(&clean_dir).unwrap();
+    std::fs::create_dir_all(&clean_checkpoints).unwrap();
+    std::fs::write(clean_checkpoints.join("checkpoints.log"), b"trusted").unwrap();
     std::fs::write(clean_dir.join("process.log"), b"command completed").unwrap();
     finalize_one_shot_session(
         Arc::clone(&state),
@@ -133,10 +137,26 @@ async fn one_shot_completion_deletes_success_and_preserves_ipc_failure() {
     .await
     .unwrap();
     assert!(!clean_dir.exists(), "successful one-shot state must be deleted");
+    assert!(
+        !clean_checkpoints.exists(),
+        "successful one-shot checkpoints must be retired"
+    );
+
+    let already_deleted_id = "code-run-already-deleted";
+    let already_deleted_checkpoints =
+        commitments.join(blake3::hash(already_deleted_id.as_bytes()).to_hex().to_string());
+    std::fs::create_dir_all(&already_deleted_checkpoints).unwrap();
+    finalize_one_shot_session(Arc::clone(&state), already_deleted_id.to_string(), None, false)
+        .await
+        .unwrap();
+    assert!(!already_deleted_checkpoints.exists());
 
     let failed_id = "code-run-ipc";
     let failed_dir = state.run_dir.join("sessions").join(failed_id);
+    let failed_checkpoints = commitments.join(blake3::hash(failed_id.as_bytes()).to_hex().to_string());
     std::fs::create_dir_all(&failed_dir).unwrap();
+    std::fs::create_dir_all(&failed_checkpoints).unwrap();
+    std::fs::write(failed_checkpoints.join("checkpoints.log"), b"trusted").unwrap();
     std::fs::write(failed_dir.join("process.log"), b"exec IPC closed").unwrap();
     finalize_one_shot_session(
         Arc::clone(&state),
@@ -149,6 +169,13 @@ async fn one_shot_completion_deletes_success_and_preserves_ipc_failure() {
     assert!(!failed_dir.exists());
     let preserved = find_failed_session_dir(&state.run_dir, failed_id)
         .expect("one-shot exec IPC loss must retain the process evidence");
+    let preserved_id = preserved.file_name().unwrap().to_str().unwrap();
+    let preserved_checkpoints = commitments.join(blake3::hash(preserved_id.as_bytes()).to_hex().to_string());
+    assert!(!failed_checkpoints.exists());
+    assert_eq!(
+        std::fs::read(preserved_checkpoints.join("checkpoints.log")).unwrap(),
+        b"trusted"
+    );
     assert_eq!(
         capsem_foundation::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
         "exec IPC closed"

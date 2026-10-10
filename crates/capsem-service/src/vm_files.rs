@@ -19,7 +19,7 @@ pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handl
 pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
 pub(super) use exec::{handle_exec, proto_exec_target};
 pub(crate) use fork::{clone_session_state, handle_fork};
-pub(super) use ipc_command::send_ipc_command;
+pub(super) use ipc_command::{send_ipc_command, send_owner_command};
 
 pub(super) fn gib(bytes: u64) -> u64 {
     bytes / 1024 / 1024 / 1024
@@ -627,9 +627,16 @@ pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &s
 async fn failed_process_log_tail(state: &Arc<ServiceState>, id: &str) -> String {
     let vm_id = id.to_string();
     state
-        .off_worker(move |state| match find_failed_session_dir(&state.run_dir, &vm_id) {
-            Some(dir) => read_process_log_tail(&dir, 20),
-            None => "(no preserved log found)".to_string(),
+        .off_worker(move |state| {
+            if let Some(entry) = find_persistent_entry_by_route_id(&state, &vm_id) {
+                return entry
+                    .last_error
+                    .unwrap_or_else(|| read_process_log_tail(&entry.session_dir, 20));
+            }
+            match find_failed_session_dir(&state.run_dir, &vm_id) {
+                Some(dir) => read_process_log_tail(&dir, 20),
+                None => "(no preserved log found)".to_string(),
+            }
         })
         .await
         .unwrap_or_else(|error| format!("(log read failed: {})", error.1))
@@ -742,16 +749,9 @@ pub(super) async fn provision_attempt(
         launch::LaunchWait::Launched => ProvisionAttemptOutcome::Launched { uds_path },
         launch::LaunchWait::TimedOut => ProvisionAttemptOutcome::StillBootingTimedOut { uds_path },
         launch::LaunchWait::Crashed => {
-            // Crash before ready. Prefer the persistent entry's
-            // cached last_error (already computed by the child-exit
-            // handler) to avoid re-reading the log; fall back to
-            // find_failed_session_dir for ephemeral VMs whose dir was
-            // renamed to `-failed-*`.
-            let cached = find_persistent_entry_by_route_id(state, id).and_then(|e| e.last_error);
-            let tail = match cached {
-                Some(tail) => tail,
-                None => failed_process_log_tail(state, id).await,
-            };
+            // The instance may disappear before its persistent last_error is
+            // cached. Read its log during that window; ephemeral evidence lives in `-failed-*`.
+            let tail = failed_process_log_tail(state, id).await;
             if is_launchd_cleanup_transient(&tail) {
                 warn!(
                     id,
@@ -1019,17 +1019,6 @@ pub(super) async fn handle_stats_summary(
     Ok(Json(ledger_routes::activity::stats_summary(&counters)))
 }
 
-/// Wait until a VM signals readiness via a `.ready` sentinel file.
-/// The capsem-process creates this file once the guest handshake completes.
-///
-/// If `state` and `id` are provided, also checks on every poll iteration that
-/// the VM is still in the instance registry. The resume_sandbox / spawn child-
-/// exit handlers remove the instance when capsem-process dies; observing that
-/// removal lets us fail fast (within ~50ms) instead of polling the dead
-/// sentinel for the full timeout. Without this, a capsem-process that crashes
-/// or exits during boot/restore would hang the API for `timeout_secs` (was
-/// reproducibly 30s under heavy suspend/resume churn).
-#[tracing::instrument(skip_all, fields(timeout_secs))]
 pub(super) fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::path::PathBuf, AppError> {
     let instances = state.instances.lock().unwrap();
     let path = instances

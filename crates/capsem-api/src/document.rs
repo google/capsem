@@ -19,6 +19,9 @@ pub fn openapi() -> OpenApi {
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
     doc.post::<RunRequest, ExecResponse>("/run", "runVm");
     doc.post::<PurgeRequest, PurgeResponse>("/purge", "purgeVms");
+    doc.post::<CreateProxyRequest, CreateProxyResponse>("/proxies", "createProxy");
+    doc.post::<ProxyLeaseRequest, ProxyHeartbeatResponse>("/proxies/{id}/heartbeat", "heartbeatProxy");
+    doc.post::<ProxyLeaseRequest, StopProxyResponse>("/proxies/{id}/stop", "stopProxy");
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
@@ -87,7 +90,7 @@ struct Document {
 /// force every generated SDK to be regenerated, and an SDK built against the
 /// contract keeps working across binary releases. Raise it when the contract
 /// changes in a way clients must notice.
-pub const CONTRACT_VERSION: &str = "3.0.0";
+pub const CONTRACT_VERSION: &str = "3.1.0";
 
 impl Document {
     fn schema<T: ToSchema>(&mut self) -> Ref {

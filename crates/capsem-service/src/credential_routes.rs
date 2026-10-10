@@ -61,7 +61,7 @@ pub(crate) async fn sync_memory(state: &Arc<ServiceState>, socket: &StdPath) -> 
     let command = ServiceToProcess::InjectCredentials { id, credentials };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        vm_files::send_ipc_command(socket, command, Some(5)),
+        vm_files::send_ipc_command(state, socket, command, Some(5)),
     )
     .await;
     match result {

@@ -7,7 +7,12 @@
 use super::hot_counters::HOT_REFRESH_INTERVAL;
 use super::*;
 
-pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, hot: Arc<HotCounters>) {
+pub(super) fn reader_loop(
+    path: PathBuf,
+    rx: mpsc::Receiver<ReadRequest>,
+    hot: Arc<HotCounters>,
+    codecs: ArchiveCodecs,
+) {
     let started = Instant::now();
     // WAL makes the file readable while its writer commits, so this reader
     // queries `main` and holds no copy of it, whichever process writes.
@@ -170,18 +175,18 @@ pub(super) fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, hot: A
                 reply,
             } => {
                 let result = observe_change(&reader).and_then(|observed| {
-                    super::bodies::capture_body_rows(reader.connection(), &path, queries, requested_ids).map(|value| {
-                        Observed {
+                    super::bodies::capture_body_rows(reader.connection(), &path, queries, requested_ids, &codecs).map(
+                        |value| Observed {
                             changed: commit(&reader, observed),
                             value,
-                        }
-                    })
+                        },
+                    )
                 });
                 let _ = reply.send(result);
             }
             ReadRequest::CaptureWarc { reply } => {
                 let result = observe_change(&reader).and_then(|observed| {
-                    super::warc_export::capture_warc(reader.connection(), &path).map(|value| Observed {
+                    super::warc_export::capture_warc(reader.connection(), &path, &codecs).map(|value| Observed {
                         changed: commit(&reader, observed),
                         value,
                     })

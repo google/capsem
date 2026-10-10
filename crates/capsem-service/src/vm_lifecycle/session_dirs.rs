@@ -79,11 +79,19 @@ pub(crate) fn settle_persistent_session_dir(state: &ServiceState, name: &str, ex
 /// reports is data, not authority, and used to go straight to
 /// `remove_dir_all`.
 pub(super) async fn remove_purged_session_dir(state: &Arc<ServiceState>, vm_id: &str, session_dir: PathBuf) -> bool {
+    state.unregister_session_db_handle(vm_id);
+    if let Err(error) = state.ledger_workers.shutdown(vm_id).await {
+        warn!(vm_id, error = %error, "purge could not stop the session ledger worker");
+        return false;
+    }
     let delete_state = Arc::clone(state);
     let dir = session_dir.clone();
     let outcome = tokio::task::spawn_blocking(move || delete_state.delete_session_dir(&dir)).await;
     let error = match outcome {
-        Ok(Ok(())) => return true,
+        Ok(Ok(())) => match state.ledger_workers.retire(vm_id).await {
+            Ok(()) => return true,
+            Err(error) => format!("purge checkpoint cleanup failed: {error:#}"),
+        },
         Ok(Err(error)) => error.to_string(),
         Err(join_error) => format!("purge delete task failed: {join_error}"),
     };

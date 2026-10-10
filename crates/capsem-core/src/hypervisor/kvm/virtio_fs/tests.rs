@@ -5,6 +5,7 @@ use crate::hypervisor::kvm::virtio_queue::VirtqDesc;
 use std::collections::BTreeMap;
 use std::io::{Seek, SeekFrom};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -120,6 +121,19 @@ fn host_file_type(metadata: &std::fs::Metadata) -> u32 {
     metadata.mode() & MASK
 }
 
+struct LocalMetadataAuthority(PathBuf);
+
+impl crate::GuestMetadataAuthority for LocalMetadataAuthority {
+    fn set_mode(&self, relative_path: &[u8], mode: u16) -> std::io::Result<()> {
+        let root = capsem_foundation::unix::contained::ContainedDir::open_root(&self.0)?;
+        root.set_relative_mode(Path::new(std::ffi::OsStr::from_bytes(relative_path)), u32::from(mode))
+    }
+}
+
+fn metadata_authority(dir: &Path) -> Arc<dyn crate::GuestMetadataAuthority> {
+    Arc::new(LocalMetadataAuthority(dir.to_path_buf()))
+}
+
 /// Helper: create a FuseProcessor for testing (no queues needed).
 pub(super) fn test_processor(dir: &Path) -> FuseProcessor {
     FuseProcessor {
@@ -127,11 +141,20 @@ pub(super) fn test_processor(dir: &Path) -> FuseProcessor {
         read_only: false,
         inodes: InodeTable::new(dir).unwrap(),
         file_handles: FileHandleTable::new(),
+        metadata_authority: Some(metadata_authority(dir)),
     }
 }
 
 pub(super) fn test_device(dir: &Path) -> VirtioFsDevice {
-    VirtioFsDevice::new("capsem", dir, false, -1, Arc::new(AtomicU32::new(0))).unwrap()
+    VirtioFsDevice::new(
+        "capsem",
+        dir,
+        false,
+        Some(metadata_authority(dir)),
+        -1,
+        Arc::new(AtomicU32::new(0)),
+    )
+    .unwrap()
 }
 
 const TEST_QUEUE_SIZE: u16 = 8;
@@ -852,11 +875,19 @@ fn virtiofs_device_restore_rejects_tag_and_read_only_identity_mismatch() {
     source.quiesce().unwrap();
     let state = source.checkpoint_state().unwrap();
 
-    let mut wrong_tag = VirtioFsDevice::new("other", &dir, false, -1, Arc::new(AtomicU32::new(0))).unwrap();
+    let mut wrong_tag = VirtioFsDevice::new(
+        "other",
+        &dir,
+        false,
+        Some(metadata_authority(&dir)),
+        -1,
+        Arc::new(AtomicU32::new(0)),
+    )
+    .unwrap();
     let tag_err = wrong_tag.restore_checkpoint_state(&state).unwrap_err();
     assert!(tag_err.to_string().contains("tag identity mismatch"), "{tag_err:#}");
 
-    let mut wrong_mode = VirtioFsDevice::new("capsem", &dir, true, -1, Arc::new(AtomicU32::new(0))).unwrap();
+    let mut wrong_mode = VirtioFsDevice::new("capsem", &dir, true, None, -1, Arc::new(AtomicU32::new(0))).unwrap();
     let mode_err = wrong_mode.restore_checkpoint_state(&state).unwrap_err();
     assert!(
         mode_err.to_string().contains("read-only identity mismatch"),
@@ -1002,6 +1033,43 @@ fn setattr_chmod() {
 
     let perms = std::fs::metadata(dir.join("f.txt")).unwrap().permissions();
     assert_eq!(perms.mode() & 0o777, 0o755);
+}
+
+#[test]
+fn setattr_mode_never_falls_back_to_owner_authority() {
+    let dir = temp_share("setattr-mode-no-broker");
+    std::fs::write(dir.join("f.txt"), b"x").unwrap();
+    std::fs::set_permissions(dir.join("f.txt"), std::fs::Permissions::from_mode(0o640)).unwrap();
+    let mut proc = test_processor(&dir);
+    proc.metadata_authority = None;
+    let ino = lookup(&mut proc, 1, "f.txt").unwrap();
+    let attr_in = FuseSetAttrIn {
+        valid: FATTR_MODE,
+        padding: 0,
+        fh: 0,
+        size: 0,
+        lock_owner: 0,
+        atime: 0,
+        mtime: 0,
+        ctime: 0,
+        atimensec: 0,
+        mtimensec: 0,
+        ctimensec: 0,
+        mode: 0o777,
+        unused4: 0,
+        uid: 0,
+        gid: 0,
+        unused5: 0,
+    };
+
+    let h = make_header(FUSE_SETATTR, ino, 4);
+    let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&attr_in)));
+
+    assert_eq!(response_error(&resp), -libc::EPERM);
+    assert_eq!(
+        std::fs::metadata(dir.join("f.txt")).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
 }
 
 #[test]

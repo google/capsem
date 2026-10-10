@@ -30,7 +30,7 @@
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = "b5afdd2273970adef7c40ad5cdbaf59e092c2eae1449e02dd84aa07dc421cbd3"
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/fd_util.rs" = "380483007d81c4751ff3e79c5867ee4688a7e3a5ecdd11ee5be91235a85cd1c2"
 "crates/capsem-core/src/hypervisor/kvm/virtio_console.rs" = "b0a92055b6ed9190b992f25a16b92b2aa0242b3c4be245d474410b0b2fa6cdeb"
-"crates/capsem-core/src/hypervisor/kvm/virtio_fs/mod.rs" = "68d881024c1366de0e1c95bf8f24dc63270a79efc7244fd0bb0349cb3232e421"
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/mod.rs" = "3a1c3f22f248a8fce490d848a856d86f5df2aa9a66a2631d1c9166ed26a950a7"
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_dir.rs" = "1c2723207e04d0be3594c7ba21fdc13d6ff761e6f6d4dbff85ab2fc06da3f4c4"
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_file.rs" = "b5f5c223d1f514cb692d8e6604227f687087f481b07ed84b42b1a20b7a693be4"
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_meta.rs" = "b6a5d6293aef393907f718dfb1416e44acdae879fed1b72a6b5f8ea9d1aa5160"
@@ -76,6 +76,10 @@ fingerprint = "003d8fd29845c26d97ce2f3c5f7d4a3ee00a3e84c0fe122c71385f8b0d650fde"
 reason = "Linux AF_VSOCK buffer bounds (SO_VM_SOCKETS_BUFFER_* 0/1/2) set before credit can grow"
 nix_gap = "nix::sys::socket::sockopt defines no AF_VSOCK buffer options, so there is no SetSockOpt type"
 
+[foundation.raw_calls."crates/capsem-foundation/src/unix/fd.rs::syscall"]
+fingerprint = "484b5c9efe57fe349ba09a8c628eeabe3c6cd0cfd9b60e592cf28fc8cf4e9662"
+reason = "Linux close_range avoids procfs after a parent Landlock domain is inherited across exec"
+
 [foundation.raw_calls."crates/capsem-foundation/src/unix/fs/extents.rs::fclonefileat"]
 fingerprint = "1382b8391823c31f4fbdbf23e319493504ee03a024fcd02c45f543e466af0d2d"
 reason = "macOS APFS clone from an open descriptor into a directory descriptor; no nix wrapper"
@@ -84,12 +88,16 @@ reason = "macOS APFS clone from an open descriptor into a directory descriptor; 
 fingerprint = "f0720ea72a4811bd1ce6b506f2b6ee445cb5c61c89cdec7fa63fb70d7f217cb7"
 reason = "host load average for admission; nix has no wrapper"
 
+[foundation.raw_calls."crates/capsem-foundation/src/unix/process.rs::_NSGetEnviron"]
+fingerprint = "c7aec49f0e6f7f7cabe1f0ea581cf1f9d4a86565d4cb0ac6347ffb9cf84a1119"
+reason = "Darwin inherited environment pointer for descriptor-only process spawning; nix has no wrapper"
+
 [foundation.raw_calls."crates/capsem-foundation/src/unix/process.rs::proc_listpgrppids"]
 fingerprint = "c1be64a4c316e2674c3627d8193db0d380ccf0d8cf6c4c7bf701ee9e525b51d8"
 reason = "macOS libproc process-group listing; no nix wrapper"
 
 [foundation.raw_calls."crates/capsem-foundation/src/unix/process.rs::waitid"]
-fingerprint = "28b3eead89af899046069d614987786cfce11ef7131806a89f7b6da5df2d3363"
+fingerprint = "ad944aed3e75f6a36c63b0db8815e8d6bdfd845e5607db8b1f9475ce192d7c91"
 reason = "observe a child's exit without reaping it (WNOWAIT) on macOS and Linux alike"
 
 [foundation.raw_calls."crates/capsem-foundation/src/unix/router_channel.rs::CMSG_DATA"]
@@ -133,3 +141,15 @@ reason = "macOS Seatbelt confinement of the router; no nix wrapper"
 [foundation.raw_calls."crates/capsem-foundation/src/unix/router_sandbox/linux.rs::syscall"]
 fingerprint = "d14267a19410254a6633ba264e8046ea3dbd9c9046b72006155d76ee76db008f"
 reason = "seccomp(2) filter install with TSYNC; nix has no seccomp"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/worker_sandbox/linux.rs::syscall"]
+fingerprint = "7286c55845201710a915c8334492ab2a9cb35c11f6bcb1ebb4843554cf1f8986"
+reason = "Landlock ABI-aware rules and thread-synchronized seccomp installation have no nix API"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/worker_sandbox/macos.rs::sandbox_free_error"]
+fingerprint = "429f4efde365972763d15c7976b45af1d29819c8342fa1c4da5be3e123555fdb"
+reason = "macOS Seatbelt error release paired with sandbox_init_with_parameters"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/worker_sandbox/macos.rs::sandbox_init_with_parameters"]
+fingerprint = "4d6b9f0844b92206d15c663c6a82d1619a9a7117d06167eb037c779af1fc9f44"
+reason = "macOS parameterized Seatbelt confinement for worker-specific path grants; nix has no wrapper"

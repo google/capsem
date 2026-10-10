@@ -34,8 +34,9 @@ def test_dbwriter_source_boundaries_are_single_rail() -> None:
     # Workspace snapshots were retired (#228): no status query reaches the process.
     assert "SnapshotStatus" not in service_prod
 
-    assert "capsem_logger::DbWriter::open(" in process_prod
-    assert '&session_dir.join("session.db")' in process_prod
+    assert "capsem_logger::DbWriter::from_ledger_channel(" in process_prod
+    assert "DbWriter::open(" not in process_prod
+    assert 'let ledger_path = session_dir.join("session.db");' in process_prod
     assert "Arc<capsem_logger::DbWriter>" in process_vsock
     assert "rusqlite::Connection" not in process_vsock
     assert "write_many" not in process_vsock

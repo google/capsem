@@ -10,7 +10,7 @@
 //! The image itself needs nothing from here. A relaunch unpacks from the
 //! session's own image share, which is host-only and survives a stop, or not
 //! at all when the unpacked root is already on its overlay; a clone's share is
-//! linked from its source's (`capsem_core::session::clone_sandbox_state`).
+//! linked from its source's (`capsem_core::session::clone_sandbox_files`).
 //! Neither reads the workspace, and neither depends on the host's blob cache,
 //! which may have pruned the image since.
 
@@ -144,6 +144,7 @@ fn relaunch_in_background(state: &Arc<ServiceState>, id: &str, generation: u64) 
     tokio::spawn(async move {
         let reply = tokio::select! {
             reply = send_ipc_command(
+            &state,
             &uds_path,
             ServiceToProcess::Exec {
                 id: state.next_job_id(),

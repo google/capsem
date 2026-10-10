@@ -12,17 +12,25 @@ use std::sync::Arc;
 use capsem_core::net::cert_authority::CertAuthority;
 use capsem_core::net::mitm_proxy::{self, MitmProxyConfig};
 use capsem_core::net::policy::{NetworkMechanics, UpstreamOverride, UpstreamOverrideProtocol};
+use capsem_core::net::upstream_address::UpstreamResolver;
 use capsem_logger::{DbWriter, Decision};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
-use rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
+use rustls::pki_types::ServerName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::TlsConnector;
 
 // Case modules live beside this file; the ratcheted line count stays flat.
 #[path = "mitm_integration/mod.rs"]
 mod cases;
+#[path = "mitm_integration/grants.rs"]
+mod grants;
+#[path = "mitm_integration/tls.rs"]
+mod tls;
+
+use grants::IntegrationGrants;
+use tls::make_tls_client_config;
 
 const CA_KEY: &str = include_str!("../resources/ca/capsem-ca.key");
 const CA_CERT: &str = include_str!("../resources/ca/capsem-ca.crt");
@@ -168,33 +176,43 @@ fn make_proxy_config_with_mechanics(
     policy_inner: NetworkMechanics,
 ) -> (Arc<MitmProxyConfig>, Arc<DbWriter>) {
     let ca = Arc::new(CertAuthority::load(CA_KEY, CA_CERT).unwrap());
-    let policy = Arc::new(std::sync::RwLock::new(Arc::new(policy_inner)));
-    let dir = tempfile::tempdir().unwrap();
-    let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
-    std::mem::forget(dir); // the tempdir lives as long as the test
-    let telemetry = Arc::new(mitm_proxy::telemetry_hook::TelemetryDeps {
-        db: db.clone(),
-        pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
-        trace_state: Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new())),
-        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(security_rules))),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
-    });
-    let pipeline = mitm_proxy::make_production_pipeline(Arc::clone(&policy), Arc::clone(&telemetry));
-    let config = Arc::new(MitmProxyConfig {
-        server_tls: mitm_proxy::make_server_tls_config(&ca),
-        ca,
-        policy,
-        model_endpoints: Arc::new(std::sync::RwLock::new(Arc::new(
+    let policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(
+        capsem_core::net::proxy_engine::ProxyPolicySnapshot::new(
+            "blake3:integration".into(),
+            policy_inner,
+            security_rules,
+            BTreeMap::new(),
             capsem_core::net::policy_config::ProviderRuleProfile::builtin_defaults()
                 .endpoint_registry()
                 .expect("builtin provider endpoint registry"),
-        ))),
+        ),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(DbWriter::open(&dir.path().join("test.db"), 256).unwrap());
+    std::mem::forget(dir); // the tempdir lives as long as the test
+    let engine = Arc::new(capsem_core::net::proxy_engine::ProxyEngine::local(
+        policy.clone(),
+        Arc::clone(&db),
+    ));
+    let telemetry = Arc::new(mitm_proxy::telemetry_hook::TelemetryDeps {
+        db: db.clone(),
+        credentials: engine.credentials(),
+        pricing: Arc::new(capsem_core::net::ai_traffic::pricing::PricingTable::load()),
+        trace_state: Arc::new(std::sync::Mutex::new(capsem_core::net::ai_traffic::TraceState::new())),
+    });
+    let pipeline = mitm_proxy::make_production_pipeline(Arc::clone(&telemetry));
+    let upstream_grants = Arc::new(IntegrationGrants::new(policy, UpstreamResolver::system()));
+    let config = Arc::new(MitmProxyConfig {
+        server_tls: mitm_proxy::make_server_tls_config(&ca),
+        ca,
+        engine,
         db: db.clone(),
         upstream_tls: mitm_proxy::make_upstream_tls_config(),
         telemetry,
         pipeline,
         mcp_endpoint: None,
         upstream_resolver: Default::default(),
+        upstream_grants: Some(upstream_grants),
     });
     (config, db)
 }
@@ -207,25 +225,6 @@ fn security_rules_from_toml(toml: &str) -> capsem_core::net::policy_config::Secu
         capsem_core::net::policy_config::SecurityRuleSource::User,
     )
     .expect("test security rules")
-}
-
-/// Build a rustls ClientConfig that trusts the Capsem MITM CA.
-fn make_tls_client_config() -> rustls::ClientConfig {
-    let mut root_store = rustls::RootCertStore::empty();
-    let certs: Vec<_> = CertificateDer::pem_slice_iter(CA_CERT.as_bytes())
-        .collect::<Result<_, _>>()
-        .unwrap();
-    for cert in certs {
-        root_store.add(cert).unwrap();
-    }
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let mut config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    config
 }
 
 /// Spawn the MITM proxy on a TCP listener and return the address.
@@ -241,6 +240,25 @@ async fn spawn_proxy(config: Arc<MitmProxyConfig>) -> (tokio::task::JoinHandle<(
         mitm_proxy::handle_connection(fd, config).await;
     });
 
+    (handle, addr)
+}
+
+/// Spawn the standalone model adapter for exactly one accepted connection.
+async fn spawn_standalone_proxy(
+    config: Arc<MitmProxyConfig>,
+    provider_id: &str,
+) -> (tokio::task::JoinHandle<()>, std::net::SocketAddr) {
+    let target = mitm_proxy::StandaloneModelTarget::from_registry(
+        config.engine.policy().snapshot().model_endpoints(),
+        provider_id,
+    )
+    .expect("configured standalone provider");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        mitm_proxy::handle_standalone_connection(stream.into_std().unwrap().into(), config, target).await;
+    });
     (handle, addr)
 }
 #[tokio::test]
@@ -1179,6 +1197,52 @@ async fn mitm_proxy_plain_http_preserves_host_header_to_upstream() {
         host_line_present,
         "upstream did not receive the inbound Host header verbatim. Saw:\n{head}"
     );
+}
+
+#[tokio::test]
+async fn standalone_proxy_ignores_client_host_and_pins_configured_provider() {
+    let received: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received_for_serve = Arc::clone(&received);
+    let (upstream_port, upstream_task) = spawn_fake_upstream(move |mut sock| {
+        Box::pin(async move {
+            let bytes = read_http11_request(&mut sock).await;
+            *received_for_serve.lock().unwrap() = bytes.clone();
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await
+                .unwrap();
+            bytes
+        })
+    })
+    .await;
+    let (config, db) = make_proxy_config_with_local_http_upstream("api.openai.com", upstream_port);
+    let (proxy_task, proxy_addr) = spawn_standalone_proxy(config, "openai").await;
+
+    let mut client = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
+    client
+        .write_all(b"POST /v1/responses HTTP/1.1\r\nHost: attacker.invalid:22\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+        .await
+        .unwrap();
+    let mut response = Vec::new();
+    client.read_to_end(&mut response).await.unwrap();
+
+    upstream_task.await.unwrap();
+    proxy_task.await.unwrap();
+    db.flush().await;
+
+    assert!(String::from_utf8_lossy(&response).contains("200 OK"));
+    let request = String::from_utf8_lossy(&received.lock().unwrap()).to_ascii_lowercase();
+    assert!(
+        request.contains("host: api.openai.com"),
+        "configured Host missing: {request}"
+    );
+    assert!(
+        !request.contains("attacker.invalid"),
+        "client Host reached upstream: {request}"
+    );
+    let events = db.reader().unwrap().recent_net_events(10).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].domain, "api.openai.com");
+    assert_eq!(events[0].port, 443);
 }
 
 /// T2.2: a request to a plain-HTTP upstream that fails to dial

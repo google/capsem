@@ -10,6 +10,8 @@ mod asset_status;
 mod asset_wait;
 mod instance_reaper;
 mod policy_push;
+#[path = "tests/session_housekeeping.rs"]
+mod session_housekeeping_tests;
 
 pub(crate) static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -39,6 +41,12 @@ fn test_host_ledger(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
     host_ledger::open_host_ledger(&run_dir.parent().unwrap().join("sessions")).unwrap()
 }
 
+pub(crate) fn test_session_ledger(db_path: PathBuf) -> Result<session_db_handles::SessionLedger, String> {
+    capsem_logger::DbHandle::open_external_reader(&db_path)
+        .map(|db| session_db_handles::SessionLedger::embedded(db_path, db))
+        .map_err(|error| error.to_string())
+}
+
 /// The one test `ServiceState` constructor. The manifest is whatever
 /// `assets_dir` holds, as at service startup.
 fn test_state(run_dir: PathBuf, assets_dir: PathBuf, test_tempdir: Option<tempfile::TempDir>) -> ServiceState {
@@ -46,6 +54,12 @@ fn test_state(run_dir: PathBuf, assets_dir: PathBuf, test_tempdir: Option<tempfi
     let manifest = capsem_assets::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
     ServiceState {
         instances: Mutex::new(HashMap::new()),
+        proxy_workers: Mutex::new(HashMap::new()),
+        standalone_proxies: tokio::sync::Mutex::new(HashMap::new()),
+        ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(
+            PathBuf::from("/nonexistent/capsem-ledger"),
+            run_dir.join("ledger-commitments"),
+        )),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(
@@ -55,6 +69,7 @@ fn test_state(run_dir: PathBuf, assets_dir: PathBuf, test_tempdir: Option<tempfi
             run_dir.join("networks"),
         )),
         process_binary: PathBuf::from("/nonexistent/capsem-process"),
+        proxy_binary: PathBuf::from("/nonexistent/capsem-proxy"),
         assets_dir,
         service_socket: run_dir.join("service.sock"),
         switches: switches::Switches::in_process(),
@@ -65,6 +80,7 @@ fn test_state(run_dir: PathBuf, assets_dir: PathBuf, test_tempdir: Option<tempfi
         asset_reconcile_inflight: AtomicBool::new(false),
         asset_status_path: asset_status_path_for_run_dir(&run_dir),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        plugin_policy_cache: Mutex::new(Default::default()),
         host_ledger: test_host_ledger(&run_dir),
         host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
@@ -130,6 +146,8 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
 pub(crate) fn test_instance() -> InstanceInfo {
     InstanceInfo {
         generation: uuid::Uuid::new_v4(),
+        authority: Default::default(),
+        upstream_policy: upstream_broker::test_policy_publisher(),
         id: String::new(),
         name: String::new(),
         asset_pins: test_asset_pins(),
@@ -143,7 +161,6 @@ pub(crate) fn test_instance() -> InstanceInfo {
         persistent: false,
         env: None,
         forked_from: None,
-        owner_secret: String::new(),
     }
 }
 
@@ -172,7 +189,8 @@ pub(crate) fn spawn_fake_process(
     std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
     tokio::spawn(async move {
         let mut messages = Vec::new();
-        for received in 0..expected {
+        while messages.len() < expected {
+            let received = messages.len();
             // A route that stops talking to its VM used to hang the whole
             // binary here: tests serialized on SETTINGS_ENV_LOCK stalled
             // behind the one waiting forever. Fail with what was missing.
@@ -194,6 +212,12 @@ pub(crate) fn spawn_fake_process(
                 capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
             ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
             let message = rx.recv().await.unwrap();
+            if let ServiceToProcess::InjectCredentials { id, .. } = &message {
+                tx.send(ProcessToService::CredentialsInjected { id: *id, error: None })
+                    .await
+                    .unwrap();
+                continue;
+            }
             if let Some(reply) = handler(&message).await {
                 tx.send(reply).await.unwrap();
             }
@@ -211,54 +235,80 @@ pub(crate) fn only_reloads(received: &[ServiceToProcess], count: usize) -> bool 
             .all(|message| matches!(message, ServiceToProcess::ReloadConfig { .. }))
 }
 
-/// A VM owner that answers `CloneState` the way the real one does once the
-/// guest is frozen -- by cloning `source` -- or refuses with `refusal`.
+/// A VM owner that freezes, lets the service clone, and then reports thaw.
 pub(crate) fn spawn_fake_fork_owner(
     uds_path: &StdPath,
-    source: PathBuf,
+    _source: PathBuf,
     refusal: Option<&'static str>,
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    spawn_fake_process(uds_path, 1, move |message| {
-        let reply = match message {
-            ServiceToProcess::CloneState { id, destination } => {
-                let (size_bytes, error) = match refusal {
-                    None => (
-                        Some(capsem_core::session::clone_sandbox_state(&source, StdPath::new(destination)).unwrap()),
-                        None,
-                    ),
-                    Some(reason) => (None, Some(reason.to_string())),
-                };
-                Some(ProcessToService::CloneStateResult {
-                    id: *id,
-                    size_bytes,
-                    error,
-                })
-            }
-            other => panic!("fork sent an unexpected owner message: {other:?}"),
+    let _ = std::fs::remove_file(uds_path);
+    let listener = tokio::net::UnixListener::bind(uds_path).unwrap();
+    std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let std_stream = stream.into_std().unwrap();
+        let std_stream = tokio::task::spawn_blocking(move || {
+            let mut std_stream = std_stream;
+            capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
+            Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let (tx, rx): (
+            capsem_foundation::ipc_channel::Sender<ProcessToService>,
+            capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
+        ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
+        let request = rx.recv().await.unwrap();
+        let ServiceToProcess::CloneState { id } = request else {
+            panic!("fork sent an unexpected owner message: {request:?}")
         };
-        Box::pin(async move { reply })
+        let mut messages = vec![request];
+        if let Some(reason) = refusal {
+            tx.send(ProcessToService::CloneStateResult {
+                id,
+                size_bytes: None,
+                error: Some(reason.to_string()),
+            })
+            .await
+            .unwrap();
+            return messages;
+        }
+        tx.send(ProcessToService::CloneStateReady { id }).await.unwrap();
+        let completion = rx.recv().await.unwrap();
+        let ServiceToProcess::CloneStateComplete {
+            id: completed_id,
+            size_bytes,
+            error,
+        } = &completion
+        else {
+            panic!("fork sent an unexpected completion: {completion:?}")
+        };
+        assert_eq!(*completed_id, id);
+        tx.send(ProcessToService::CloneStateResult {
+            id,
+            size_bytes: *size_bytes,
+            error: error.clone(),
+        })
+        .await
+        .unwrap();
+        messages.push(completion);
+        messages
     })
 }
 
 /// A fake process that answers ping, and reloads by reporting the digest of
-/// the active policy it finds in its session, as capsem-process does.
+/// the exact active policy the service delivered, as capsem-process does.
 pub(crate) fn spawn_fake_process_reload_ack(
     uds_path: &StdPath,
     expected: usize,
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    let active_policy = uds_path
-        .parent()
-        .unwrap()
-        .join(ACTIVE_POLICY_DIR)
-        .join(ACTIVE_POLICY_FILE);
-    spawn_fake_process(uds_path, expected, move |message| {
+    spawn_fake_process(uds_path, expected, |message| {
         let reply = match message {
             ServiceToProcess::Ping => Some(ProcessToService::Pong),
-            ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
+            ServiceToProcess::ReloadConfig { id, active_policy } => Some(ProcessToService::ConfigReloadResult {
                 id: *id,
-                active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(
-                    &std::fs::read(&active_policy).unwrap(),
-                )),
+                active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(active_policy)),
                 error: None,
             }),
             _ => None,

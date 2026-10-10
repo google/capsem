@@ -525,14 +525,6 @@
    "strum"
   ]
  },
- "bincode": {
-  "build_script": false,
-  "dependencies": [
-   "serde",
-   "serde_bytes",
-   "serde_derive"
-  ]
- },
  "bit-set": {
   "build_script": false,
   "dependencies": [
@@ -780,6 +772,7 @@
   "build_script": false,
   "dependencies": [
    "capsem-foundation",
+   "capsem-guard",
    "capsem-proto",
    "nix",
    "serde",
@@ -922,7 +915,6 @@
    "rmcp",
    "rusqlite",
    "rustls",
-   "rustls-pemfile",
    "scraper",
    "serde",
    "serde_json",
@@ -932,6 +924,7 @@
    "time",
    "tokio",
    "tokio-rustls",
+   "tokio-tungstenite",
    "tokio-util",
    "toml",
    "tracing",
@@ -944,18 +937,33 @@
  "capsem-credentials": {
   "build_script": false,
   "dependencies": [
+   "base64",
+   "bytes",
    "capsem-foundation",
    "capsem-proto",
+   "futures",
+   "getrandom",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "jsonwebtoken",
+   "reqwest",
+   "ring",
    "serde",
    "serde_json",
+   "sha2",
+   "signature",
+   "subtle",
    "tempfile",
-   "tracing"
+   "tokio",
+   "tracing",
+   "url",
+   "zeroize"
   ]
  },
  "capsem-foundation": {
   "build_script": false,
   "dependencies": [
-   "bincode",
    "blake3",
    "capsem-proto",
    "libc",
@@ -971,7 +979,7 @@
   ]
  },
  "capsem-gateway": {
-  "build_script": false,
+  "build_script": true,
   "dependencies": [
    "anyhow",
    "axum",
@@ -989,6 +997,7 @@
    "rand",
    "serde",
    "serde_json",
+   "sha2",
    "tempfile",
    "tokio",
    "tokio-tungstenite",
@@ -1009,6 +1018,22 @@
    "tracing"
   ]
  },
+ "capsem-ledger": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "capsem-archive",
+   "capsem-foundation",
+   "capsem-guard",
+   "capsem-logger",
+   "capsem-proto",
+   "clap",
+   "tempfile",
+   "tokio",
+   "tracing",
+   "zstd"
+  ]
+ },
  "capsem-logger": {
   "build_script": false,
   "dependencies": [
@@ -1024,8 +1049,10 @@
    "memmap2",
    "metrics",
    "metrics-util",
+   "rmp-serde",
    "rusqlite",
    "serde",
+   "serde_bytes",
    "serde_json",
    "sha2",
    "tempfile",
@@ -1112,15 +1139,21 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
+   "async-trait",
    "axum",
+   "bytes",
    "capsem-assets",
    "capsem-core",
    "capsem-foundation",
+   "capsem-guard",
    "capsem-logger",
    "capsem-proto",
+   "capsem-telemetry",
    "clap",
    "core-foundation-sys",
    "futures",
+   "http",
+   "opentelemetry-http",
    "serde",
    "serde_json",
    "tempfile",
@@ -1143,6 +1176,26 @@
    "tempfile",
    "thiserror",
    "tokio"
+  ]
+ },
+ "capsem-proxy": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "async-trait",
+   "bytes",
+   "capsem-core",
+   "capsem-foundation",
+   "capsem-guard",
+   "capsem-logger",
+   "capsem-proto",
+   "capsem-telemetry",
+   "clap",
+   "http",
+   "opentelemetry-http",
+   "tempfile",
+   "tokio",
+   "tracing"
   ]
  },
  "capsem-router": {
@@ -1178,24 +1231,34 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
+   "async-trait",
    "axum",
    "base64",
    "blake3",
+   "bytes",
    "capsem-api",
    "capsem-assets",
    "capsem-config",
    "capsem-core",
+   "capsem-credentials",
    "capsem-foundation",
    "capsem-guard",
    "capsem-logger",
    "capsem-proto",
    "capsem-router",
+   "capsem-telemetry",
    "clap",
    "filetime",
    "futures",
+   "http",
    "humantime",
+   "metrics",
+   "opentelemetry",
+   "opentelemetry-http",
+   "opentelemetry_sdk",
    "rand",
    "reqwest",
+   "rmp-serde",
    "rusqlite",
    "serde",
    "serde_json",
@@ -1203,24 +1266,35 @@
    "tokio",
    "tokio-stream",
    "tokio-tungstenite",
+   "tokio-util",
    "toml",
    "tower",
    "tower-http",
    "tracing",
-   "uuid"
+   "uuid",
+   "zeroize"
   ]
  },
  "capsem-telemetry": {
   "build_script": false,
   "dependencies": [
+   "async-trait",
+   "bytes",
+   "http",
    "metrics",
-   "metrics-util"
+   "metrics-util",
+   "opentelemetry",
+   "opentelemetry-http",
+   "opentelemetry-otlp",
+   "opentelemetry_sdk",
+   "reqwest"
   ]
  },
  "capsem-tray": {
   "build_script": true,
   "dependencies": [
    "anyhow",
+   "capsem-api",
    "capsem-foundation",
    "capsem-guard",
    "clap",
@@ -2464,14 +2538,6 @@
    "thread_local"
   ]
  },
- "fxhash": {
-  "build_script": false,
-  "dependencies": [
-   "byteorder",
-   "fnv",
-   "seahash"
-  ]
- },
  "gdk": {
   "build_script": false,
   "dependencies": [
@@ -3213,9 +3279,6 @@
    "crossterm",
    "dyn-clone",
    "fuzzy-matcher",
-   "fxhash",
-   "newline-converter",
-   "once_cell",
    "rstest",
    "tempfile",
    "termion",
@@ -3484,6 +3547,32 @@
    "serde_json",
    "syn",
    "toml"
+  ]
+ },
+ "jsonwebtoken": {
+  "build_script": false,
+  "dependencies": [
+   "aws-lc-rs",
+   "base64",
+   "criterion",
+   "ed25519-dalek",
+   "getrandom",
+   "hmac",
+   "js-sys",
+   "p256",
+   "p384",
+   "pem",
+   "rand",
+   "rand_core",
+   "rsa",
+   "serde",
+   "serde_json",
+   "sha2",
+   "signature",
+   "simple_asn1",
+   "time",
+   "wasm-bindgen-test",
+   "zeroize"
   ]
  },
  "jwt": {
@@ -3895,17 +3984,6 @@
  "new_debug_unreachable": {
   "build_script": false,
   "dependencies": []
- },
- "newline-converter": {
-  "build_script": false,
-  "dependencies": [
-   "criterion",
-   "fancy-regex",
-   "lazy-regex",
-   "once_cell",
-   "quickcheck",
-   "unicode-segmentation"
-  ]
  },
  "nibble_vec": {
   "build_script": false,
@@ -4343,6 +4421,102 @@
    "dunce",
    "is-wsl",
    "libc"
+  ]
+ },
+ "opentelemetry": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "futures-core",
+   "futures-sink",
+   "js-sys",
+   "pin-project-lite",
+   "rand",
+   "thiserror",
+   "tokio",
+   "tracing"
+  ]
+ },
+ "opentelemetry-http": {
+  "build_script": false,
+  "dependencies": [
+   "async-trait",
+   "bytes",
+   "futures-executor",
+   "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "opentelemetry",
+   "reqwest",
+   "tokio",
+   "tower-service"
+  ]
+ },
+ "opentelemetry-otlp": {
+  "build_script": false,
+  "dependencies": [
+   "async-trait",
+   "flate2",
+   "futures-executor",
+   "futures-util",
+   "http",
+   "httpdate",
+   "opentelemetry",
+   "opentelemetry-http",
+   "opentelemetry-proto",
+   "opentelemetry_sdk",
+   "prost",
+   "reqwest",
+   "serde_json",
+   "temp-env",
+   "thiserror",
+   "tokio",
+   "tokio-stream",
+   "tonic",
+   "tonic-types",
+   "zstd"
+  ]
+ },
+ "opentelemetry-proto": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "const-hex",
+   "opentelemetry",
+   "opentelemetry_sdk",
+   "prost",
+   "schemars",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tonic",
+   "tonic-prost",
+   "tonic-prost-build"
+  ]
+ },
+ "opentelemetry_sdk": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "futures-channel",
+   "futures-executor",
+   "futures-util",
+   "http",
+   "opentelemetry",
+   "opentelemetry-http",
+   "percent-encoding",
+   "portable-atomic",
+   "pprof",
+   "rand",
+   "rstest",
+   "serde",
+   "serde_json",
+   "temp-env",
+   "thiserror",
+   "tokio",
+   "tokio-stream",
+   "url"
   ]
  },
  "option-ext": {
@@ -4801,6 +4975,26 @@
    "trybuild",
    "unarray",
    "x86"
+  ]
+ },
+ "prost": {
+  "build_script": false,
+  "dependencies": [
+   "bytes",
+   "criterion",
+   "proptest",
+   "prost-derive",
+   "rand"
+  ]
+ },
+ "prost-derive": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "itertools",
+   "proc-macro2",
+   "quote",
+   "syn"
   ]
  },
  "quanta": {
@@ -5373,6 +5567,7 @@
    "rand",
    "reqwest",
    "rmcp-macros",
+   "rstest",
    "schemars",
    "serde",
    "serde_json",
@@ -5504,13 +5699,6 @@
    "x509-parser",
    "zeroize",
    "zlib-rs"
-  ]
- },
- "rustls-pemfile": {
-  "build_script": false,
-  "dependencies": [
-   "bencher",
-   "rustls-pki-types"
   ]
  },
  "rustls-pki-types": {
@@ -5917,6 +6105,16 @@
    "errno",
    "libc",
    "signal-hook"
+  ]
+ },
+ "signature": {
+  "build_script": false,
+  "dependencies": [
+   "digest",
+   "hex-literal",
+   "rand_core",
+   "sha2",
+   "signature_derive"
   ]
  },
  "simd-adler32": {
@@ -7263,7 +7461,6 @@
  "unicode-width": {
   "build_script": false,
   "dependencies": [
-   "compiler_builtins",
    "rustc-std-workspace-core",
    "rustc-std-workspace-std"
   ]
@@ -8209,6 +8406,14 @@
   "dependencies": [
    "serde",
    "zeroize_derive"
+  ]
+ },
+ "zeroize_derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
   ]
  },
  "zerotrie": {

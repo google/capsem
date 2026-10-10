@@ -9,6 +9,186 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Preserve HTTP/security trace IDs and model-to-filesystem attribution after
+  proxy isolation through coordinator-derived process identity and a bounded,
+  acknowledged, one-way trace-hint capability to the VM owner. Preopen the
+  contained workspace before owner confinement and fail VM startup if its
+  filesystem audit rail cannot start.
+
+- Reject symlink and special-entry targets before descriptor-relative mode
+  changes, preserving the contained-filesystem contract on macOS as well as
+  Linux without following a guest-controlled link.
+
+- Install VM-owner confinement before starting its runtime, hypervisor,
+  parent watcher, ledger client, filesystem monitor, or metric workers;
+  pre-bind only the exact IPC and VSOCK descriptors those workers inherit.
+
+- Keep dynamic port publication inside VM-owner confinement by having the
+  generation-bound coordinator channel grant an exact loopback listener. The
+  owner validates and admits that descriptor while retaining no ambient bind
+  authority, grants only `/dev/null` for the confined router's closed output,
+  persists restored mappings without mode-change authority, and preserves TCP
+  resets through descriptor closure without restoring outbound connect. The
+  service never accepts or forwards workload bytes.
+
+- Keep host-worker confinement fail-closed across supported Linux Landlock
+  ABIs, including single-threaded startup on ABI 6 and 7, and canonicalize
+  macOS Seatbelt grants so system path aliases cannot silently deny or widen
+  the intended authority.
+
+- Bind each standalone model-proxy lease to one service-selected provider and
+  one revocable worker generation; client traffic receives only connected
+  descriptors and cannot choose an upstream with `Host` or proxy semantics.
+
+- Restrict VM owners to the guest share, system overlay, read-only image share,
+  and a dedicated mutable owner-state directory; attest after confinement that
+  the owner cannot open `session.db`, and fix suspend checkpoints to that
+  confined directory instead of accepting a path over IPC.
+
+- Coordinate live forks through a path-free freeze/copy/thaw handshake and
+  copy coherent database state only from the session ledger worker's
+  maintainer-scoped snapshot, keeping both VM owners and the service from
+  opening session SQLite storage.
+
+- Export confined proxy metrics through a bounded, generation-bound broker
+  capability that fixes session attribution and keeps collector destinations,
+  credentials and environment state in the trusted service.
+
+- Move guest HTTP interception, DNS framing, private-name resolution, policy
+  enforcement and audit admission into the confined per-session proxy, with
+  the VM owner surrendering each connection through its generation-bound
+  broker.
+
+- Serve live and stopped-session inspection through coordinator-granted,
+  role-bound ledger channels and bounded named operations, eliminating the
+  service's per-session SQLite readers and closing ledger workers before a
+  session is deleted. Ledger counter replies now carry the DB-owned read-cache
+  epoch so service routes invalidate cached security rows after every commit.
+
+- Give each VM owner one coordinator-minted, generation- and role-bound
+  ledger channel and route its existing event writer through the supervised
+  session owner, eliminating the VM process's direct SQLite open.
+
+- Bind every producer record to a producer-authored content and order
+  commitment, and acknowledge a flush only after the trusted service syncs
+  the matching checkpoint outside the ledger directory. Startup verification
+  now rejects altered, substituted, reordered, or omitted checkpointed rows.
+
+- Split high-volume ledger flushes across bounded commitment checkpoints, so
+  filesystem and package-manager audit bursts cannot stop the fail-closed
+  security ledger and refuse later VM commands.
+
+- Retire trusted ledger checkpoints with every permanent session deletion and
+  move them with retained failure evidence, so a reused ephemeral session name
+  cannot inherit an earlier ledger's authority.
+
+- Pass the packaged ledger and proxy worker paths explicitly to installed and
+  direct services, refuse incomplete confined-worker cohorts, and retire both
+  children during reinstall or uninstall.
+
+- Ship the confined ledger and proxy workers in every supported package and
+  sign them without macOS virtualization authority, so clean installs cannot
+  fall back to privileged in-process execution or grant VM capabilities to
+  data-plane helpers.
+
+- Start one fresh-generation confined proxy worker with every live VM, apply
+  exact active-policy bytes before registration, revoke it with the VM owner,
+  and terminate only the matching owner generation if its proxy dies.
+
+- Apply each proxy policy reload as one digest-keyed immutable revision across
+  HTTP routing, security plugins, provider identity, response telemetry and
+  guest DNS, preventing a request from combining authority from two revisions.
+
+- Deliver VM-owner policy reloads as exact authenticated IPC bytes and retain
+  the last valid snapshot for MCP refreshes, so atomic policy publication
+  cannot replace the file inode granted at confinement and leave a running VM
+  stuck on stale policy; drop that post-boot path grant.
+
+- Keep credential broker calls valid on the confined proxy's single-threaded
+  runtime, preventing credential capture during model requests from panicking
+  the proxy and tearing down its VM session.
+
+- Route proxy policy evaluation, credential capture, upstream substitution and
+  redaction through a transport-independent engine with typed ledger and
+  credential capabilities, so a confined proxy needs no credential-store or
+  session-database path authority.
+
+- Confine each session-ledger owner before readiness to its one database and
+  inherited channels, denying sibling sessions, ambient network and control
+  sockets, execution, signals and files; erase inherited environment bytes and
+  reject symlinked session grants before serving clients.
+
+- Compress new session body blocks with streaming zstd only inside the
+  confined ledger owner, retaining durable cross-flush history and legacy
+  deflate reads without linking the native decoder into privileged workers.
+
+- Confine the Linux API gateway before readiness to its inherited listeners
+  and coordinator-minted service and VM-owner channels, denying filesystem
+  access, process execution and direct network or control-socket dialing.
+
+- Confine the macOS API gateway and VM owner with role-specific Seatbelt
+  policies before readiness, retaining only explicit session, asset, listener,
+  runtime-file and broker grants while denying ambient files, execution,
+  signals and direct network or control-socket dialing.
+
+- Confine Linux VM-owner runtime threads before readiness to their session,
+  read-only boot assets, prepared service channels and inherited network
+  grants; deny sibling files, path-based control connections and direct
+  network dialing after startup.
+
+- Keep the global MCP discovery cache under coordinator ownership. VM owners
+  return complete tool schemas over authenticated IPC without receiving a
+  cross-session cache-file grant.
+
+- Broker guest VirtioFS permission changes through the coordinator beneath
+  the session's guest share, keeping direct host permission syscalls denied
+  and attesting that authority before the VM owner publishes readiness.
+
+- Restrict registered VM-owner service connections to private-name lookup and
+  that owner's metrics route, preventing a compromised worker from invoking
+  the coordinator's public API over its same-user control socket.
+
+- Add the Linux worker confinement primitive that restricts every runtime
+  thread to explicit filesystem grants, inherited network descriptors and its
+  signal domain while denying ambient control sockets and process execution.
+
+- Broker VM DNS and TCP upstream access through generation-bound connected
+  descriptors selected from the service's trusted active-policy snapshot.
+  Policy reload, worker replacement, release and malformed ownership attempts
+  revoke live sockets; workers cannot choose DNS servers or dial addresses.
+
+- Route VM-owner metrics through a generation-authenticated service broker
+  with a fixed corporate collector destination, bounded protobuf bodies and
+  no redirects, keeping collector addresses and credentials out of workers;
+  revoking or replacing a worker generation cancels its in-flight exports.
+
+- Authenticate private-network name lookups with the registered VM owner's
+  kernel Unix identity, eliminating the reusable bearer secret previously
+  written into each session directory and carried in lookup requests.
+
+- Close ambient inherited file descriptors before each VM owner or gateway
+  initializes, preventing service resources from leaking across worker exec
+  boundaries.
+
+- Keep an exited VM owner's process identity under coordinator custody until
+  its registered generation has been revoked, preventing PID reuse from
+  inheriting worker and broker authority.
+
+- Authenticate coordinator connections against each registered VM owner's kernel
+  process and user identity before sending protocol bytes. Refuse stale owner
+  generations for commands, streams and private-network descriptor handoffs;
+  cancel streaming commands when their authority is revoked.
+
+- Authenticate VM-owner control connections with the kernel's process and user
+  identity before reading protocol claims. Owners retain a session singleton
+  and exit when their launching coordinator dies.
+
+- Bind private-network and preview handoff endpoints to the coordinator's
+  session identity and VM-owner spawn generation. Refuse worker replies that
+  name another endpoint or arrive after that owner has been replaced, and
+  authenticate the preview owner's kernel identity before transferring a
+  browser connection descriptor.
+
 - OAuth disconnect joins an in-flight refresh and retires the latest rotated
   token under denial, including material whose durable publication failed.
 
@@ -20,6 +200,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open connection. Completed turns retain model, usage and caller telemetry.
 
 ### Fixed
+
+- Confined Linux VM owners retain ioctl authority only for their KVM and
+  vhost devices, and prepare saved-publication state before confinement, so
+  VMs boot without reopening authority to the session root or ordinary files.
+
+- Persistent VMs that crash during creation report their `process.log` tail
+  even when the child reaper has not yet cached it in the registry.
+
+- Confined macOS ledger and proxy workers now distinguish private unnamed
+  socketpairs from external endpoint authority during readiness attestation,
+  allowing worker-internal channels while Seatbelt continues to deny bind,
+  listen and connect operations.
+
+- OCI cache inventory no longer watches the flock-only control directory or
+  its files, preventing macOS from invalidating observations on the inventory's
+  own lock probes.
+
+- The authenticated gateway forwards standalone proxy create, heartbeat and
+  stop operations instead of returning 404 for documented SDK endpoints.
 
 - CLI history and MCP tool tables truncate Unicode text at character
   boundaries instead of panicking on a split UTF-8 character.
@@ -42,6 +241,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - WebSocket upgrade handshakes retain network telemetry without inflating
   model call counts with an empty inference record.
+
+- Keep a confined proxy generation alive when an ordinary HTTP or DNS client
+  disconnects, while still terminating it for unknown, stale or required
+  capability closure events.
+
+- Keep SQLite writer scratch state in memory so a confined VM owner can flush
+  high-volume session-ledger bursts without ambient temporary-directory access.
+
+- Launch OCI workloads without mutating the guest-owned staging file, so the
+  Linux VM-owner sandbox can keep host permission syscalls denied.
+
+- KVM image workloads retain write access to their workspace after VM-root
+  access by expiring caller-owned VirtioFS attributes across user namespaces.
 
 - Rust SDK start and resume cover workload readiness with the same deadline
   budget as creation, retaining larger client defaults and cancellation.
@@ -76,6 +288,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python SDK distributions use the 0.7.0 client version.
 
 ### Added
+
+- `capsem proxy` starts a leased, VM-free OpenAI-compatible endpoint for a
+  configured provider, prints its base URL, keeps it alive while the command
+  runs and tears down its confined worker and ledger on exit.
 
 - Desktop credential settings accept explicit API keys or tokens with file or
   memory storage, clear submitted input, and return a copyable reference.
@@ -1779,9 +1995,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A half-close on a published connection is carried as a signal:
   a slow reply after the client stops sending, and an upload after the peer
   stops sending, both arrive in full.
-- Published TCP listeners stay with the VM owner. The confined router receives
-  only connected descriptor pairs; bounded acknowledgements and control failure
-  close both endpoints even when the router retains duplicate descriptors.
+- Published TCP listeners are granted to and held by the VM owner. The confined
+  router receives only connected descriptor pairs; bounded acknowledgements and
+  control failure close both endpoints even when the router retains duplicate
+  descriptors.
 - The confined network companion is now named `capsem-router`; package signing
   continues to exclude virtualization authority.
 - Shell runs flush captured output before exiting, preserving short output

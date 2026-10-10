@@ -45,9 +45,8 @@ impl ServiceState {
     /// every such path.
     ///
     /// If the rename fails (EEXIST, permission, different filesystem,
-    /// etc.) we `warn!` with the specific error and fall back to
-    /// `remove_dir_all` so disk isn't leaked when the filesystem is
-    /// already unhappy.
+    /// etc.) we `warn!` with the specific error and fall back to the same
+    /// contained deletion used by every permanent session cleanup.
     pub(crate) fn preserve_failed_session_dir(&self, session_dir: &std::path::Path, id: &str) -> Option<PathBuf> {
         let failed_id = format!("{}-failed-{}", id, capsem_core::session::generate_session_id(),);
         let failed_dir = self.run_dir.join("sessions").join(&failed_id);
@@ -57,6 +56,18 @@ impl ServiceState {
             .and_then(|()| std::fs::rename(session_dir, &failed_dir));
         match moved {
             Ok(()) => {
+                if let Err(error) = self.ledger_workers.preserve_quiesced(id, &failed_id) {
+                    warn!(id, failed_id, %error, "failed to preserve trusted ledger checkpoints; discarding unauthenticated evidence");
+                    if let Err(delete_error) = self.delete_session_dir(&failed_dir) {
+                        warn!(id, failed_id, %delete_error, "failed to discard unauthenticated session evidence");
+                    }
+                    for checkpoint_id in [id, failed_id.as_str()] {
+                        if let Err(retire_error) = self.ledger_workers.retire_quiesced(checkpoint_id) {
+                            warn!(checkpoint_id, %retire_error, "failed to retire unpreserved ledger checkpoints");
+                        }
+                    }
+                    return None;
+                }
                 info!(
                     id,
                     path = %failed_dir.display(),
@@ -78,13 +89,16 @@ impl ServiceState {
                     error = %e,
                     "failed to preserve session dir for post-mortem -- logs lost; removing to reclaim disk"
                 );
-                if let Err(e) = std::fs::remove_dir_all(session_dir) {
+                if let Err(e) = self.delete_session_dir(session_dir) {
                     warn!(
                         id,
                         path = %session_dir.display(),
                         error = %e,
                         "also failed to remove session dir -- orphaned on disk"
                     );
+                }
+                if let Err(error) = self.ledger_workers.retire_quiesced(id) {
+                    warn!(id, %error, "failed to retire checkpoints after lost session evidence");
                 }
                 None
             }
@@ -161,9 +175,16 @@ impl ServiceState {
         let mut culled = 0;
         for (path, _) in failed_dirs.iter().take(to_delete) {
             info!(path = %path.display(), "culling old failed session dir");
-            match std::fs::remove_dir_all(path) {
-                Ok(()) => culled += 1,
-                Err(e) => warn!(path = %path.display(), error = %e, "cull remove_dir_all failed"),
+            match self.delete_session_dir(path) {
+                Ok(()) => {
+                    if let Some(id) = path.file_name().and_then(|name| name.to_str()) {
+                        if let Err(error) = self.ledger_workers.retire_quiesced(id) {
+                            warn!(id, %error, "failed to retire culled session checkpoints");
+                        }
+                    }
+                    culled += 1;
+                }
+                Err(e) => warn!(path = %path.display(), error = %e, "cull failed session delete failed"),
             }
         }
         Ok(culled)

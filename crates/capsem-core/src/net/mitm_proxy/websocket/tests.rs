@@ -1,6 +1,10 @@
 use super::*;
 use crate::net::ai_traffic::{pricing::PricingTable, TraceState};
 use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
+use crate::net::proxy_engine::{
+    LocalProxyCredentials, ProxyCredentials, ProxyEngine, ProxyPolicyHandle, ProxyPolicySnapshot,
+};
+use capsem_logger::DbWriter;
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -15,17 +19,18 @@ type Socket = WebSocketStream<DuplexStream>;
 fn context(db: Arc<DbWriter>, rules: &str) -> Context {
     let profile = SecurityRuleProfile::parse_toml(rules).unwrap();
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::Corp).unwrap();
+    let policy = ProxyPolicyHandle::new(policy_snapshot(rules));
+    let credentials: Arc<dyn ProxyCredentials> = Arc::new(LocalProxyCredentials);
+    let engine = Arc::new(ProxyEngine::new(policy, db.clone(), Arc::clone(&credentials)));
     let telemetry = Arc::new(telemetry_hook::TelemetryDeps {
         db,
+        credentials,
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: Arc::new(std::sync::RwLock::new(Arc::new(rules))),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
-    let policy = Arc::new(std::sync::RwLock::new(Arc::new(NetworkMechanics::new())));
     Context {
-        pipeline: make_production_pipeline(policy, Arc::clone(&telemetry)),
-        telemetry,
+        pipeline: make_production_pipeline(telemetry),
+        engine,
         conn: ConnMeta {
             domain: "api.openai.com".into(),
             process_name: Some("codex".into()),
@@ -43,6 +48,16 @@ fn context(db: Arc<DbWriter>, rules: &str) -> Context {
         credential_ref: None,
         credential_observations: vec![],
     }
+}
+
+fn policy_snapshot(rules: SecurityRuleSet) -> ProxyPolicySnapshot {
+    ProxyPolicySnapshot::new(
+        "blake3:websocket-test".into(),
+        crate::net::policy::NetworkMechanics::new(),
+        rules,
+        BTreeMap::new(),
+        crate::net::policy_config::ModelEndpointRegistry::default(),
+    )
 }
 
 const ALLOW: &str =
@@ -138,7 +153,7 @@ async fn websocket_models_enforce_live_request_rules_before_forwarding() {
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(DbWriter::open(&dir.path().join("session.db"), 16).unwrap());
     let ctx = context(Arc::clone(&db), ALLOW);
-    let rules = Arc::clone(&ctx.telemetry.security_rules);
+    let policy = ctx.engine.policy().clone();
     let (mut client, mut server, job) = sockets(ctx).await;
     exchange(
         &mut client,
@@ -152,7 +167,9 @@ async fn websocket_models_enforce_live_request_rules_before_forwarding() {
         "[corp.rules.block]\nname='block'\naction='block'\npriority=-100\nmatch='model.provider == \"openai\"'\n",
     )
     .unwrap();
-    *rules.write().unwrap() = Arc::new(SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::Corp).unwrap());
+    policy.replace(policy_snapshot(
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::Corp).unwrap(),
+    ));
     client
         .send(Message::Text(
             json!({"type":"response.create","model":"gpt-fixture","input":[]})

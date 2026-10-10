@@ -30,12 +30,21 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             post(private_routes::handle_private_resolve),
         )
         .route(
+            "/internal/vms/{id}/metrics",
+            post(service_runtime::telemetry_export::handle_metric_relay).layer(axum::extract::DefaultBodyLimit::max(
+                capsem_core::service_uds::MAX_BODY_BYTES,
+            )),
+        )
+        .route(
             "/networks/{id}/members/{vm_id}",
             put(network_routes::handle_network_attach).delete(network_routes::handle_network_detach),
         )
         .route("/images", get(container_setup::images::handle_list_images))
         .route("/images/pull", post(container_setup::images::handle_pull_image))
         .route("/vms/create", post(handle_provision))
+        .route("/proxies", post(standalone_proxy::handle_create))
+        .route("/proxies/{id}/heartbeat", post(standalone_proxy::handle_heartbeat))
+        .route("/proxies/{id}/stop", post(standalone_proxy::handle_stop))
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
@@ -154,6 +163,10 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         // refused file uploads the API documents.
         .layer(axum::extract::DefaultBodyLimit::max(capsem_api::MAX_REQUEST_BODY_BYTES))
         .layer(TraceLayer::new_for_http().on_request(()).on_response(()))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            service_peer::restrict_owner_routes,
+        ))
         .with_state(state)
 }
 

@@ -64,12 +64,15 @@ def _environment(tmp_path: Path, **extra: str) -> dict[str, str]:
 
 
 @contextlib.contextmanager
-def _bounded(tmp_path: Path, *command: str, machine_lease: bool = True, **extra: str) -> Iterator[subprocess.Popen[str]]:
+def _bounded(
+    tmp_path: Path, *command: str, machine_lease: bool = True,
+    environment: dict[str, str] | None = None, **extra: str,
+) -> Iterator[subprocess.Popen[str]]:
     """The real launcher around `command`; killed and drained on the way out."""
     with subprocess.Popen(
         [sys.executable, str(BOUNDED), "--timeout-seconds", "30",
          *(["--machine-lease"] if machine_lease else []), "--", *command],
-        env=_environment(tmp_path, **extra),
+        env=_environment(tmp_path, **{**(environment or {}), **extra}),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -247,7 +250,7 @@ def test_cargo_inside_a_gate_run_does_not_wait_for_its_own_parent(tmp_path: Path
     inside_a_run = {LOCK.run_marker: "capsem-gate candidate"}
     with (
         _gate_holds_the_machine(tmp_path),
-        _bounded(tmp_path, "cargo", "build", **inside_a_run) as inside,
+        _bounded(tmp_path, "cargo", "build", environment=inside_a_run) as inside,
     ):
         assert _finished_within(inside, 20), "a gate's own cargo deadlocked on its parent's lock"
         assert inside.returncode == 0

@@ -1,8 +1,9 @@
-"""capsem-process reads its runtime policy from the session's active policy file.
+"""capsem-process consumes only the service's published active policy.
 
 The service merges built-in defaults, settings.toml and corp config into
-`vm/active_policy.toml`; the per-VM process never re-reads those sources, or a
-reload could apply policy the service never published.
+`vm/active_policy.toml`; the per-VM process boots from that file and receives
+the same exact published bytes for reload. It never reads the source files, or
+a reload could apply policy the service never published.
 """
 
 from pathlib import Path
@@ -23,6 +24,8 @@ def test_capsem_process_runtime_does_not_load_settings_or_corp_files() -> None:
         text = path.read_text()
         for needle, reason in forbidden.items():
             if needle in text:
-                offenders.append(f"{path.relative_to(PROJECT_ROOT)} contains {needle!r}: {reason}")
+                offenders.append(
+                    f"{path.relative_to(PROJECT_ROOT)} contains {needle!r}: {reason}"
+                )
 
     assert not offenders, "\n".join(offenders)

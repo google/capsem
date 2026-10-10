@@ -3,13 +3,15 @@
 //! Validated at construction so a malformed record never reaches SQLite: the
 //! registry that owns these is the sole authority, and a CHECK failure inside
 //! a batched write would be a producer bug reported far from its cause.
+use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use uuid::Uuid;
 
 pub const NETWORK_NAME_MAX: usize = 64;
 pub const VM_ID_MAX: usize = 128;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NetworkState {
     Active,
     Retired,
@@ -24,7 +26,8 @@ impl NetworkState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MembershipState {
     Declared,
     Attaching,
@@ -48,7 +51,7 @@ impl MembershipState {
 /// One named network. Written once at creation and again when retired;
 /// the row is upserted by id, so a later write is a state change, never a
 /// second network.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkRecord {
     pub(crate) id: String,
     pub(crate) name: String,
@@ -111,7 +114,7 @@ impl NetworkRecord {
 /// One VM's membership of one network, keyed by both. Written on every state
 /// change; the row is upserted, so the table holds the current state of each
 /// membership and the ledger holds its history.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkMembership {
     pub(crate) network_id: String,
     pub(crate) vm_id: String,

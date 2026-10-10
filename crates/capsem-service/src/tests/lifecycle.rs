@@ -1090,38 +1090,10 @@ fn resume_sandbox_requires_uuid_route_id_not_display_name() {
     );
 }
 
-#[tokio::test]
-async fn resume_sandbox_passes_the_session_scratch_disk_size_to_process() {
-    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
-    let settings_dir = tempfile::tempdir().unwrap();
-    let (_settings_guard, _, _) = install_empty_settings_env(&settings_dir);
-    let (mut state, _dir) = make_test_state_with_tempdir();
-    let run_dir = state.run_dir.clone();
-    let argv_path = run_dir.join("resume-argv.txt");
-    let argv_tmp_path = run_dir.join("resume-argv.txt.tmp");
-    let process_path = run_dir.join("record-process-argv.sh");
-    std::fs::write(
-        &process_path,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nmv '{}' '{}'\nsleep 1\n",
-            argv_tmp_path.display(),
-            argv_tmp_path.display(),
-            argv_path.display()
-        ),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&process_path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&process_path, perms).unwrap();
-    }
-    Arc::get_mut(&mut state).unwrap().process_binary = process_path;
-    install_test_runtime_assets(&state);
-
-    let vm_id = new_persistent_vm_id();
-    let session_dir = state.run_dir.join("persistent").join(&vm_id);
+#[test]
+fn resume_sandbox_passes_the_session_scratch_disk_size_to_process() {
+    let session = tempfile::tempdir().unwrap();
+    let session_dir = session.path().join("persistent");
     std::fs::create_dir_all(&session_dir).unwrap();
     let rootfs = capsem_core::session::system_overlay_image_path(&session_dir);
     std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
@@ -1129,29 +1101,18 @@ async fn resume_sandbox_passes_the_session_scratch_disk_size_to_process() {
         .unwrap()
         .set_len(24 * 1024 * 1024 * 1024)
         .unwrap();
-    let mut entry = test_persistent_entry("resume-size", session_dir);
-    entry.id = vm_id.clone();
-    state
-        .persistent_registry
-        .lock()
-        .unwrap()
-        .data
-        .vms
-        .insert("resume-size".to_string(), entry);
-
-    assert_eq!(state.resume_sandbox(&vm_id, None, None).unwrap(), vm_id);
-    for _ in 0..50 {
-        if argv_path.exists() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    let argv = std::fs::read_to_string(&argv_path).expect("resume process argv should be recorded");
-    let args: Vec<&str> = argv.lines().collect();
+    let entry = test_persistent_entry("resume-size", session_dir);
+    let mut command = tokio::process::Command::new("capsem-process");
+    crate::vm_lifecycle::configure_resume_storage(&mut command, &entry).unwrap();
+    let args = command
+        .as_std()
+        .get_args()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
     let size_flag = args
         .windows(2)
         .find(|window| window[0] == "--scratch-disk-size-gb")
-        .map(|window| window[1]);
+        .map(|window| window[1].as_str());
     assert_eq!(
         size_flag,
         Some("24"),
@@ -1304,7 +1265,7 @@ async fn service_rehydrates_session_db_handles() {
         state.session_db_handle(&vm_id).is_none(),
         "test must prove startup hydration installs the handle"
     );
-    state.hydrate_session_db_handles();
+    state.hydrate_session_db_handles().await;
 
     let handle = state
         .session_db_handle(&vm_id)

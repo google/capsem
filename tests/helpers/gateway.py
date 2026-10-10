@@ -4,12 +4,16 @@ Starts capsem-gateway pointing at a given UDS path (either a mock or real servic
 Reads the generated token from the runtime file for authenticated requests.
 """
 
+import contextlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from array import array
 from pathlib import Path
 from urllib.parse import quote
 
@@ -24,7 +28,9 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 GATEWAY_BINARY = BIN_DIR / "capsem-gateway"
 # Every gateway source: a list of three files let a stream.rs change run the
 # tests against the previous binary.
-GATEWAY_SOURCE_PATHS = sorted((PROJECT_ROOT / "crates" / "capsem-gateway" / "src").rglob("*.rs"))
+GATEWAY_SOURCE_PATHS = sorted(
+    (PROJECT_ROOT / "crates" / "capsem-gateway" / "src").rglob("*.rs")
+)
 
 
 def _ensure_gateway_binary_current() -> None:
@@ -39,7 +45,12 @@ def _ensure_gateway_binary_current() -> None:
 class GatewayInstance:
     """A running capsem-gateway on an isolated temp dir."""
 
-    def __init__(self, uds_path: str | Path, port: int = 0, frontend_dir: str | Path | None = None):
+    def __init__(
+        self,
+        uds_path: str | Path,
+        port: int = 0,
+        frontend_dir: str | Path | None = None,
+    ):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-gw-test-"))
         self.uds_path = str(uds_path)
         self._port = port
@@ -48,6 +59,8 @@ class GatewayInstance:
         self._log_file = None
         self._stdio_log_path = self.tmp_dir / "gateway-stdio.log"
         self._log_path = self.tmp_dir / ".capsem" / "run" / "gateway.log"
+        self._grant_socket = None
+        self._grant_thread = None
         self.token = ""
         self.port = port
 
@@ -95,16 +108,29 @@ class GatewayInstance:
             str(run_dir),
             "--parent-pid",
             str(os.getpid()),
+            "--service-grant-stdin",
         ]
         if self.frontend_dir:
             cmd += ["--frontend-dir", self.frontend_dir]
 
+        grant_server, grant_client = socket.socketpair(
+            socket.AF_UNIX, socket.SOCK_STREAM
+        )
+        self._grant_socket = grant_server
+        self._grant_thread = threading.Thread(
+            target=self._serve_grants,
+            args=(grant_server, run_dir),
+            daemon=True,
+        )
+        self._grant_thread.start()
         self.proc = subprocess.Popen(
             cmd,
             env=env,
+            stdin=grant_client.fileno(),
             stdout=self._log_file,
             stderr=self._log_file,
         )
+        grant_client.close()
 
         # Wait for gateway to start and write runtime files
         token_path = run_dir / "gateway.token"
@@ -120,7 +146,7 @@ class GatewayInstance:
                     _, _, body = probe.request("GET", "/health", timeout=2)
                     if b"ok" in body.lower():
                         return
-                except Exception:
+                except (OSError, TimeoutError):
                     pass
                 finally:
                     probe.close()
@@ -146,9 +172,71 @@ class GatewayInstance:
                 self.proc.kill()
                 self.proc.wait()
             self.proc = None
+        if self._grant_socket:
+            self._grant_socket.close()
+            self._grant_socket = None
+        if self._grant_thread:
+            self._grant_thread.join(timeout=2)
+            self._grant_thread = None
         if self._log_file:
             self._log_file.close()
             self._log_file = None
+
+    def _serve_grants(self, channel: socket.socket, run_dir: Path) -> None:
+        """Test coordinator: mint only connections to this fixture's service."""
+        try:
+            while request := self._recv_exact(channel, 80):
+                if request[:3] != b"GG\x01":
+                    return
+                request_id = request[4:12]
+                kind = request[3]
+                response = bytearray(80)
+                response[:3] = b"GG\x01"
+                response[4:12] = request_id
+                granted = None
+                if kind == 1:
+                    try:
+                        granted = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        granted.connect(self.uds_path)
+                    except OSError:
+                        if granted:
+                            granted.close()
+                        granted = None
+                if granted:
+                    response[3] = 101
+                    response[12] = kind
+                    fds = array("i", [granted.fileno()])
+                    sent = channel.sendmsg(
+                        [response], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds)]
+                    )
+                    if sent < len(response):
+                        channel.sendall(response[sent:])
+                    granted.close()
+                else:
+                    response[3] = 102
+                    response[12] = 1
+                    channel.sendall(response)
+        except OSError:
+            pass
+        finally:
+            for name in (
+                "gateway.token",
+                "gateway.port",
+                "gateway.pid",
+                "preview.port",
+            ):
+                with contextlib.suppress(FileNotFoundError):
+                    (run_dir / name).unlink()
+
+    @staticmethod
+    def _recv_exact(channel: socket.socket, size: int) -> bytes:
+        data = bytearray()
+        while len(data) < size:
+            chunk = channel.recv(size - len(data))
+            if not chunk:
+                return b""
+            data.extend(chunk)
+        return bytes(data)
 
     def stop_and_read_log(self) -> str:
         """Stop the gateway so Rust's stdout/stderr log buffer is flushed.
@@ -200,14 +288,22 @@ class TcpHttpClient:
         (bytes); `headers` are added to (and may override) the defaults.
         """
         return self._transport.request(
-            method, path, headers=self._headers(use_auth, headers), body=body, timeout=timeout
+            method,
+            path,
+            headers=self._headers(use_auth, headers),
+            body=body,
+            timeout=timeout,
         )
 
-    def call_json(self, method, path, body: object = None, *, use_auth=True, timeout=30):
+    def call_json(
+        self, method, path, body: object = None, *, use_auth=True, timeout=30
+    ):
         """(status, payload): JSON when the body parses, the text when it does
         not, None when it is empty."""
         payload = None if body is None else json.dumps(body).encode()
-        status, _, data = self.call(method, path, body=payload, use_auth=use_auth, timeout=timeout)
+        status, _, data = self.call(
+            method, path, body=payload, use_auth=use_auth, timeout=timeout
+        )
         text = data.decode(errors="replace")
         if not text.strip():
             return status, None
@@ -216,10 +312,17 @@ class TcpHttpClient:
         except json.JSONDecodeError:
             return status, text
 
-    def _raw(self, method, path, body=None, timeout=30, use_auth=True, extra_headers=None):
+    def _raw(
+        self, method, path, body=None, timeout=30, use_auth=True, extra_headers=None
+    ):
         payload = None if body is None else json.dumps(body).encode()
         status, _, data = self.call(
-            method, path, body=payload, headers=extra_headers, use_auth=use_auth, timeout=timeout
+            method,
+            path,
+            body=payload,
+            headers=extra_headers,
+            use_auth=use_auth,
+            timeout=timeout,
         )
         return status, data
 
@@ -252,7 +355,13 @@ class TcpHttpClient:
     def get_status_and_body(self, path, timeout=30, use_auth=True, extra_headers=None):
         """Return (status_code, body_text) tuple; (0, "") when the request could not be made."""
         try:
-            status, data = self._raw("GET", path, timeout=timeout, use_auth=use_auth, extra_headers=extra_headers)
+            status, data = self._raw(
+                "GET",
+                path,
+                timeout=timeout,
+                use_auth=use_auth,
+                extra_headers=extra_headers,
+            )
         except ConnectionError:
             return 0, ""
         return status, data.decode(errors="replace")
@@ -270,7 +379,9 @@ class TcpHttpClient:
 
     def download_file(self, vm_id, path, timeout=30):
         status, _, data = self.call(
-            "GET", f"/vms/{vm_id}/files/content?path={quote(path, safe='')}", timeout=timeout,
+            "GET",
+            f"/vms/{vm_id}/files/content?path={quote(path, safe='')}",
+            timeout=timeout,
         )
         return data if status == 200 else None
 

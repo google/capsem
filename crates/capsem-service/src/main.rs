@@ -32,28 +32,38 @@ mod asset_background;
 mod asset_routes;
 mod blocking;
 mod container_setup;
+mod gateway_grant;
 mod host_ledger;
 mod instance;
 mod instance_reaper;
 pub mod managed_sessions;
 use instance::InstanceInfo;
 mod network_routes;
+mod owner_connection;
+mod owner_handoff;
 mod policy_mutation;
 use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
 mod credential_routes;
+mod ledger_commitment;
+mod ledger_worker;
 mod mcp_routes;
 mod plugin_routes;
 mod private_routes;
 mod process_control;
+mod proxy_credentials;
+mod proxy_private_names;
+mod proxy_worker;
 mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
+mod standalone_proxy;
 mod switches;
 use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
 mod ledger_routes;
 mod router_runtime;
+mod service_peer;
 mod service_runtime;
 mod settings_routes;
 mod shutdown_policy;
@@ -61,11 +71,13 @@ mod startup;
 mod suspend_confirmation;
 mod update_command;
 mod update_status;
+mod upstream_broker;
 mod vm_files;
 mod vm_lifecycle;
 use asset_routes::*;
 use ledger_routes::*;
 use router_runtime::*;
+use service_peer::ServicePeer;
 use service_runtime::*;
 use settings_routes::*;
 use shutdown_policy::*;
@@ -80,7 +92,7 @@ use vm_lifecycle::*;
 /// choice, not ours; every reader takes a bounded tail.
 const SESSION_LOG_TAIL_MAX_BYTES: usize = 5 * 1024 * 1024;
 
-const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
+const RESUME_CHECKPOINT_NAME: &str = "owner/checkpoint.vzsave";
 const SUSPEND_CONFIRM_TIMEOUT_SECS: u64 = 45;
 const AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60;
 const AUTOMATIC_UPDATE_POLL_SECS: u64 = 60 * 60;
@@ -155,6 +167,10 @@ struct Args {
     #[arg(long)]
     process_binary: Option<PathBuf>,
     #[arg(long)]
+    proxy_binary: Option<PathBuf>,
+    #[arg(long)]
+    ledger_binary: Option<PathBuf>,
+    #[arg(long)]
     gateway_binary: Option<PathBuf>,
     #[arg(long)]
     gateway_port: Option<u16>,
@@ -196,15 +212,18 @@ const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 
 pub struct ServiceState {
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
+    proxy_workers: Mutex<HashMap<String, (uuid::Uuid, proxy_worker::ProxyWorker)>>,
+    standalone_proxies: tokio::sync::Mutex<HashMap<String, standalone_proxy::StandaloneProxy>>,
+    ledger_workers: Arc<ledger_worker::LedgerWorkers>,
     retirements: instance_reaper::Retirements,
-    /// Logger-owned DB handles keyed by session/VM id. Logged-data routes
-    /// resolve a handle here and call `ready/query`; they do not open SQLite
-    /// readers or create per-route projection caches.
-    session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
+    /// Authenticated ledger channels keyed by session/VM id. Logged-data
+    /// routes use named operations; only the supervised worker opens SQLite.
+    session_db_handles: Mutex<HashMap<String, Arc<session_db_handles::SessionLedger>>>,
     persistent_registry: SharedRegistry,
     /// Named networks as groups of VMs, durable in each network's database.
     networks: tokio::sync::Mutex<capsem_core::net::network_registry::NetworkRegistry>,
     process_binary: PathBuf,
+    proxy_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
     service_socket: PathBuf,      // this service's own, where an owner asks on a guest's behalf
@@ -223,6 +242,10 @@ pub struct ServiceState {
     /// by explicit MCP discovery routes. Hot MCP list routes must not read the
     /// tool cache JSON from disk.
     mcp_tool_cache: Mutex<Vec<ToolCacheEntry>>,
+    /// Effective plugin settings loaded on the first plugin route read and
+    /// invalidated by every service-owned policy edit or explicit reload.
+    /// Hot plugin list polls must not parse settings and corp TOML per request.
+    plugin_policy_cache: Mutex<plugin_routes::PluginPolicyCache>,
     /// Logger-owned DB handle for the host ledger (`sessions/host.db`): host
     /// events and policy mutations. Routes call `write`; they must never open
     /// SQLite directly or hold a side `DbWriter`.
@@ -546,6 +569,7 @@ impl ServiceState {
             .extract_if(|_, info| probe.is_gone(info.pid))
             .map(|(id, info)| {
                 tracing::warn!(id, "drain_dead_instances removing instance");
+                info.authority.revoke();
                 (id, info)
             })
             .collect();

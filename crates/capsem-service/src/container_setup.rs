@@ -351,7 +351,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         LaunchWait::Crashed => return Err("container owner exited before launch".into()),
         LaunchWait::TimedOut => return Err("container owner did not launch within 30s".into()),
     }
-    match send_ipc_command(&uds_path, admission, Some(5)).await? {
+    match send_ipc_command(state, &uds_path, admission, Some(5)).await? {
         ProcessToService::ContainerPullAdmission { error: None, .. } => {}
         ProcessToService::ContainerPullAdmission {
             error: Some(error),
@@ -452,6 +452,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     }
     let uds_path = running_uds_path(state, id).map_err(|e| e.1)?;
     let reply = send_ipc_command(
+        state,
         &uds_path,
         ServiceToProcess::Exec {
             id: state.next_job_id(),

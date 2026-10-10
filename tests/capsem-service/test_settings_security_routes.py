@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from helpers.service import ServiceInstance
+
 SERVER = "local"
 
 
@@ -49,16 +51,22 @@ def _seed_mcp_tool_cache(service_env: Any) -> None:
     )
 
 
-def test_settings_security_routes_expose_single_contract(client: Any, service_env: Any) -> None:
-    _seed_mcp_tool_cache(service_env)
-    refresh = client.post(f"/mcp/servers/{SERVER}/refresh")
-    assert refresh["success"] is True
-    assert refresh["server_id"] == SERVER
+def test_settings_security_routes_expose_single_contract() -> None:
+    service = ServiceInstance()
+    _seed_mcp_tool_cache(service)
+    service.start()
+    try:
+        client = service.client()
+        refresh = client.post(f"/mcp/servers/{SERVER}/refresh")
+        assert refresh["success"] is True
+        assert refresh["server_id"] == SERVER
 
-    plugins = client.get("/plugins/list")
-    mcp_info = client.get("/mcp/info")
-    mcp_default = client.get("/mcp/default/info")
-    mcp_tools = client.get(f"/mcp/servers/{SERVER}/tools/list")
+        plugins = client.get("/plugins/list")
+        mcp_info = client.get("/mcp/info")
+        mcp_default = client.get("/mcp/default/info")
+        mcp_tools = client.get(f"/mcp/servers/{SERVER}/tools/list")
+    finally:
+        service.stop()
 
     assert set(plugins) == {"plugins"}
     assert {plugin["id"] for plugin in plugins["plugins"]} == {

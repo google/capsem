@@ -101,6 +101,23 @@ pub const CREATE_SCHEMA: &str = "
         counters BLOB NOT NULL CHECK (typeof(counters) = 'blob')
     );
 
+    -- Producer-authored identity/content chains. The trusted coordinator
+    -- checkpoints these rows outside the ledger directory only after the
+    -- corresponding event flush is durable.
+    CREATE TABLE IF NOT EXISTS ledger_commitments (
+        global_sequence INTEGER PRIMARY KEY CHECK (global_sequence > 0),
+        generation BLOB NOT NULL CHECK (typeof(generation) = 'blob' AND length(generation) = 16),
+        client_id INTEGER NOT NULL CHECK (client_id > 0),
+        producer_role TEXT NOT NULL CHECK (producer_role IN ('vm_owner', 'proxy', 'coordinator')),
+        producer_sequence INTEGER NOT NULL CHECK (producer_sequence > 0),
+        event_kind TEXT NOT NULL CHECK (length(event_kind) BETWEEN 1 AND 64),
+        event_hash BLOB NOT NULL CHECK (typeof(event_hash) = 'blob' AND length(event_hash) = 32),
+        previous_hash BLOB NOT NULL CHECK (typeof(previous_hash) = 'blob' AND length(previous_hash) = 32),
+        commitment_hash BLOB NOT NULL CHECK (typeof(commitment_hash) = 'blob' AND length(commitment_hash) = 32),
+        UNIQUE(generation, client_id, producer_sequence),
+        UNIQUE(commitment_hash)
+    );
+
     -- One block of an archive generation. The bytes live in the archive file;
     -- SQLite records where each block landed so a reader never scans. A block
     -- stays open across disk flushes and grows by one segment per flush, so

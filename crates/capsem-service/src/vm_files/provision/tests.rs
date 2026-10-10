@@ -1,6 +1,41 @@
 use super::*;
 use crate::container_setup::{ContainerSetups, ImageFetch, ImageSource, PullFuture};
-use crate::tests::{insert_fake_instance_with_session_dir, spawn_fake_process};
+use crate::tests::insert_fake_instance_with_session_dir;
+
+/// Re-executed owner stays alive until the create's real teardown kills it.
+#[tokio::test]
+async fn refused_image_owner_child() {
+    let Some(path) = std::env::var_os("CAPSEM_REFUSED_IMAGE_OWNER") else {
+        return;
+    };
+    use std::io::Write;
+    use std::os::fd::AsFd;
+    let listener = tokio::net::UnixListener::bind(&path).unwrap();
+    std::fs::write(PathBuf::from(&path).with_extension("ready"), b"ready").unwrap();
+    let mut control =
+        std::os::unix::net::UnixStream::from(capsem_foundation::unix::fd::duplicate(std::io::stdin().as_fd()).unwrap());
+    control.write_all(b"ready").unwrap();
+    let (socket, _) = listener.accept().await.unwrap();
+    let mut socket = socket.into_std().unwrap();
+    let socket = tokio::task::spawn_blocking(move || {
+        capsem_foundation::ipc_handshake::negotiate_responder(&mut socket, "capsem-process-test", "").unwrap();
+        socket
+    })
+    .await
+    .unwrap();
+    let (tx, rx) = channel_from_std::<ProcessToService, ServiceToProcess>(socket).unwrap();
+    let ServiceToProcess::AdmitContainerPull { id, .. } = rx.recv().await.unwrap() else {
+        panic!("expected admission")
+    };
+    tx.send(ProcessToService::ContainerPullAdmission {
+        id,
+        error: None,
+        policy_refused: false,
+    })
+    .await
+    .unwrap();
+    std::future::pending::<()>().await;
+}
 
 /// An image source whose registry refuses every pull. Its policy grants that
 /// registry, so the refusal is the registry's: the default policy reads the
@@ -36,6 +71,21 @@ impl ImageSource for RefusingImages {
     }
 }
 
+#[tokio::test]
+async fn persistent_boot_crash_reads_the_log_before_the_reaper_caches_its_tail() {
+    let state = Arc::new(crate::tests::make_test_state_owned());
+    let session_dir = state.run_dir.join("persistent").join("named-box");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("process.log"), b"ledger confinement failed\n").unwrap();
+    let mut entry = crate::tests::test_persistent_entry("named-box", session_dir);
+    entry.id = "box".into();
+    state.persistent_registry.lock().unwrap().register(entry).unwrap();
+
+    let tail = failed_process_log_tail(&state, "box").await;
+
+    assert_eq!(tail, "ledger confinement failed");
+}
+
 /// A create whose container fails after the VM is registered used to answer
 /// 500 and leave the VM running: the caller never learned its id, and a named
 /// VM kept its name, so the retry got 409. The failed create is discarded --
@@ -44,7 +94,6 @@ impl ImageSource for RefusingImages {
 /// kept for post-mortem the way any failed session is.
 #[tokio::test]
 async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
-    let dir = tempfile::tempdir().unwrap();
     let mut state = crate::tests::make_test_state_owned();
     state.containers = ContainerSetups::with_source(Box::new(RefusingImages));
     let state = Arc::new(state);
@@ -53,8 +102,43 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
     // Not SQLite: its counters cannot be read at stop, and the ledger must be kept anyway.
     std::fs::write(session_dir.join("session.db"), b"ledger").unwrap();
     std::fs::write(session_dir.join("process.log"), b"log").unwrap();
-    // pid 0: teardown must not signal a real process.
-    insert_fake_instance_with_session_dir(&state, "box", 0, session_dir.clone());
+    use tokio::io::AsyncReadExt;
+    let uds_path = session_dir.join("process.sock");
+    let (control, child_control) = std::os::unix::net::UnixStream::pair().unwrap();
+    control.set_nonblocking(true).unwrap();
+    let mut control = tokio::net::UnixStream::from_std(control).unwrap();
+    let child = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "vm_files::provision::tests::refused_image_owner_child",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("CAPSEM_REFUSED_IMAGE_OWNER", &uds_path)
+        .stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(child_control)))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut ready = [0; 5];
+    tokio::time::timeout(std::time::Duration::from_secs(5), control.read_exact(&mut ready))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&ready, b"ready");
+    insert_fake_instance_with_session_dir(&state, "box", child.id().unwrap(), session_dir.clone());
+    let generation = state.instances.lock().unwrap()["box"].generation;
+    let retirement = state.retirements.register("box", generation).unwrap();
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        "box".into(),
+        "named-box".into(),
+        Arc::clone(&state),
+        uds_path,
+        session_dir.clone(),
+        retirement,
+    );
     let mut entry = crate::tests::test_persistent_entry("named-box", session_dir.clone());
     entry.id = "box".into();
     state
@@ -64,18 +148,6 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
         .data
         .vms
         .insert("named-box".into(), entry);
-    let uds_path = state.instances.lock().unwrap()["box"].uds_path.clone();
-    let owner = spawn_fake_process(&uds_path, 1, |message| {
-        let reply = match message {
-            ServiceToProcess::AdmitContainerPull { id, .. } => Some(ProcessToService::ContainerPullAdmission {
-                id: *id,
-                error: None,
-                policy_refused: false,
-            }),
-            other => panic!("unexpected owner message: {other:?}"),
-        };
-        Box::pin(async move { reply })
-    });
     let spec = api::ContainerSpec {
         image: "registry.example/app:1".into(),
         args: vec![],
@@ -85,7 +157,7 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
     };
 
     let error = finish_create(&state, "box", &[], Some(spec)).await.unwrap_err();
-    owner.await.unwrap();
+    reaper.await.unwrap();
     assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR, "{}", error.1);
     assert!(error.1.contains("registry refused the image"), "{}", error.1);
     assert!(
@@ -106,5 +178,4 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
     let kept = find_failed_session_dir(&state.run_dir, "box").expect("the failed create's ledger and logs are kept");
     assert_eq!(std::fs::read(kept.join("session.db")).unwrap(), b"ledger");
     assert_eq!(std::fs::read(kept.join("process.log")).unwrap(), b"log");
-    drop(dir);
 }

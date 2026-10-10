@@ -493,7 +493,7 @@ fn expired_reservation_cannot_admit_a_create_side_effect() {
     };
     let earlier = Instant::now()
         .checked_sub(Duration::from_secs(2))
-        .expect("earlier test instant");
+        .expect("the monotonic clock has at least two seconds of history");
     store
         .start_lease(
             &ticket,

@@ -1,4 +1,14 @@
-use super::boot_failure_summary;
+use super::{boot_failure_summary, prepare_owner_state_dir};
+
+#[test]
+fn owner_state_is_a_private_host_only_subdirectory() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let session = tempfile::tempdir().unwrap();
+    let owner = prepare_owner_state_dir(session.path()).unwrap();
+    assert_eq!(owner, session.path().join("owner"));
+    assert_eq!(std::fs::metadata(owner).unwrap().permissions().mode() & 0o777, 0o700);
+}
 
 #[test]
 fn boot_failure_summary_returns_the_last_line_that_says_something() {

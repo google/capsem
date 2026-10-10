@@ -22,7 +22,7 @@ mod settings_policy;
 mod tree;
 mod types;
 
-pub use active_policy::{active_policy_digest, ActivePolicyFile};
+pub use active_policy::{active_policy_digest, ActivePolicyFile, CompiledActivePolicy};
 pub use builder::*;
 pub use capsem_config::*;
 pub use lint::load_merged_lint;

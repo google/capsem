@@ -3,7 +3,7 @@ use super::super::hooks::{ChunkCtx, ChunkHook, ConnMeta, HookState};
 use super::*;
 use crate::credential_broker::{CredentialInjection, CredentialObservation, CredentialProvider};
 use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
-use capsem_logger::{credential_reference, Decision};
+use capsem_logger::{credential_reference, DbWriter, Decision};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -128,6 +128,7 @@ impl Drop for TraceEnvGuard {
 /// Returns a generic request context for an allowed Anthropic POST.
 fn anthropic_req_ctx() -> TelemetryRequestContext {
     TelemetryRequestContext {
+        policy_snapshot: policy_snapshot(SecurityRuleSet::new(Vec::new())),
         domain: "api.anthropic.com".into(),
         process_name: Some("agent".into()),
         ai_provider: Some(ProviderKind::Anthropic),
@@ -156,6 +157,16 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
     }
 }
 
+fn policy_snapshot(rules: SecurityRuleSet) -> Arc<crate::net::proxy_engine::ProxyPolicySnapshot> {
+    Arc::new(crate::net::proxy_engine::ProxyPolicySnapshot::new(
+        "blake3:telemetry-test".into(),
+        crate::net::policy::NetworkMechanics::new(),
+        rules,
+        BTreeMap::new(),
+        crate::net::policy_config::ModelEndpointRegistry::default(),
+    ))
+}
+
 fn empty_resp_stats() -> TelemetryResponseStats {
     TelemetryResponseStats::default()
 }
@@ -169,10 +180,9 @@ async fn websocket_upgrade_is_network_admission_and_not_model_inference() {
     let trace = Arc::new(Mutex::new(TraceState::new()));
     let hook = TelemetryHook::new(Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::clone(&pricing),
         trace_state: Arc::clone(&trace),
-        security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     }));
     let mut request = anthropic_req_ctx();
     request.domain = "api.openai.com".into();
@@ -653,15 +663,10 @@ fn fake_deps() -> Arc<TelemetryDeps> {
     let db = Arc::new(DbWriter::open_in_memory(64).expect("in-memory db"));
     Arc::new(TelemetryDeps {
         db,
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     })
-}
-
-fn empty_security_rules() -> Arc<std::sync::RwLock<Arc<SecurityRuleSet>>> {
-    Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new()))))
 }
 
 /// Without a seeded request context, the hook is shadow-mode: it
@@ -722,10 +727,9 @@ async fn hook_accepts_primary_net_event_before_completing_response() {
     let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
     let deps = Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     });
     let hook = TelemetryHook::new(deps);
 
@@ -781,10 +785,9 @@ async fn bounded_logger_backpressure_keeps_every_completed_response_event() {
     let db = Arc::new(DbWriter::open(&db_path, 1).expect("test db"));
     let hook = TelemetryHook::new(Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::new(PricingTable::load()),
         trace_state: Arc::new(Mutex::new(TraceState::new())),
-        security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     }));
     let conn = ConnMeta {
         domain: "127.0.0.1".to_string(),

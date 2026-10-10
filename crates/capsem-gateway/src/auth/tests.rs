@@ -97,6 +97,22 @@ fn token_uniqueness_over_100_samples() {
 // --- AuthState file lifecycle ---
 
 #[test]
+fn prepared_runtime_files_do_not_publish_readiness() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = AuthState::prepare(dir.path()).unwrap();
+    for path in [
+        &state.token_path,
+        &state.port_path,
+        &state.pid_path,
+        &state.preview_port_path,
+    ] {
+        assert_eq!(std::fs::read(path).unwrap(), b"");
+    }
+    state.publish("a-token", 19222, 19223).unwrap();
+    assert_eq!(std::fs::read_to_string(&state.token_path).unwrap(), "a-token");
+}
+
+#[test]
 fn auth_state_lifecycle() {
     let dir = tempfile::tempdir().unwrap();
     let state = AuthState::new(dir.path(), "test-token", 19222, 19223).unwrap();

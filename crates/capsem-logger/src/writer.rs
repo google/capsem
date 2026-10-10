@@ -4,8 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
+use capsem_archive::ArchiveCodecs;
 use capsem_telemetry::db::{DB_MEMORY_UNFLUSHED_OPS, DB_SHUTDOWN_FLUSH_MS};
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 use uuid::Uuid;
 
@@ -188,7 +190,7 @@ fn blake3_bytes_ref(value: &[u8]) -> String {
 }
 
 /// Typed write operations sent to the writer thread.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WriteOp {
     TransportEvent(TransportEvent),
     NetEvent(NetEvent),
@@ -234,7 +236,7 @@ type RetainReply = tokio::sync::oneshot::Sender<Result<RetainOutcome, String>>;
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum WriterMessage {
-    Write(WriteOp),
+    Write(WriteEnvelope),
     /// Commit everything queued before this and report whether the disk flush
     /// happened.
     Flush(tokio::sync::oneshot::Sender<FlushOutcome>),
@@ -248,11 +250,31 @@ enum WriterMessage {
 
 impl WriterMessage {
     fn write(op: WriteOp) -> Self {
-        Self::Write(op)
+        Self::Write(WriteEnvelope { op, commitment: None })
+    }
+
+    fn committed(op: WriteOp, commitment: capsem_proto::ledger_commitment::LedgerCommitment) -> Self {
+        Self::Write(WriteEnvelope {
+            op,
+            commitment: Some(commitment),
+        })
     }
 
     fn flush(reply: tokio::sync::oneshot::Sender<FlushOutcome>) -> Self {
         Self::Flush(reply)
+    }
+}
+
+#[derive(Debug)]
+struct WriteEnvelope {
+    op: WriteOp,
+    commitment: Option<capsem_proto::ledger_commitment::LedgerCommitment>,
+}
+
+impl WriteEnvelope {
+    #[cfg(test)]
+    fn plain(op: WriteOp) -> Self {
+        Self { op, commitment: None }
     }
 }
 
@@ -262,15 +284,20 @@ impl WriterMessage {
 const _: () = assert!(std::mem::size_of::<WriterMessage>() <= 1024);
 
 type WriterSender = mpsc::SyncSender<WriterMessage>;
+type WriterReceiver = mpsc::Receiver<WriterMessage>;
 
-fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessage>) {
+fn writer_channel(capacity: usize) -> (WriterSender, WriterReceiver) {
     mpsc::sync_channel(capacity.max(1))
 }
 
 mod barriers;
 mod batch;
 mod operation;
+pub use operation::commitment_event_hash;
 mod recording;
+mod remote;
+#[cfg(test)]
+pub(crate) use remote::test_commitment_channel;
 mod retention;
 mod retention_faults;
 mod writer_lock;
@@ -306,13 +333,30 @@ pub struct DbWriter {
     /// Published by the writer thread after every batch so a test can prove
     /// the bound without a second view of the thread's state.
     pending_body_bytes: Arc<AtomicU64>,
+    remote: Option<remote::RemoteWriter>,
+}
+
+pub(crate) struct PreparedDbWriter {
+    tx: WriterSender,
+    rx: WriterReceiver,
+    held: capsem_foundation::unix::lock::FileLock,
+    conn: Connection,
+    db_path: PathBuf,
+    batch_capacity: usize,
+    pending_body_bytes: Arc<AtomicU64>,
+    bodies: BodyArchive,
+    tally: LedgerTally,
 }
 
 impl DbWriter {
     /// Spawn a dedicated writer thread that owns the DB connection.
     /// `capacity` controls the mpsc channel size (backpressure).
     pub fn open(path: &Path, capacity: usize) -> rusqlite::Result<Self> {
-        Self::open_with_clock(path, capacity, SystemTime::now)
+        Self::open_with_codecs(path, capacity, ArchiveCodecs::default())
+    }
+
+    pub fn open_with_codecs(path: &Path, capacity: usize, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
+        Self::prepare_with_clock_and_codecs(path, capacity, SystemTime::now, codecs).map(PreparedDbWriter::start)
     }
 
     /// `open`, with the archive index's timestamps read from `now`.
@@ -320,14 +364,31 @@ impl DbWriter {
     /// Only a replay of an existing ledger has any business supplying one; see
     /// `LedgerClock`.
     pub fn open_with_clock(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
+        Self::prepare_with_clock_and_codecs(path, capacity, now, ArchiveCodecs::default()).map(PreparedDbWriter::start)
+    }
+
+    pub(crate) fn prepare_with_codecs(
+        path: &Path,
+        capacity: usize,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
+        Self::prepare_with_clock_and_codecs(path, capacity, SystemTime::now, codecs)
+    }
+
+    fn prepare_with_clock_and_codecs(
+        path: &Path,
+        capacity: usize,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
 
         let mut last_busy = None;
         for _ in 0..50 {
-            match Self::open_once(path, capacity, now) {
-                Ok(writer) => return Ok(writer),
+            match Self::prepare_once(path, capacity, now, codecs.clone()) {
+                Ok(prepared) => return Ok(prepared),
                 Err(error) if is_sqlite_busy(&error) => {
                     last_busy = Some(error);
                     std::thread::sleep(Duration::from_millis(20));
@@ -341,7 +402,12 @@ impl DbWriter {
         )))
     }
 
-    fn open_once(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
+    fn prepare_once(
+        path: &Path,
+        capacity: usize,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
         let held = writer_lock::acquire(path)?;
         legacy::set_aside_pre_archive_ledger(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -356,14 +422,14 @@ impl DbWriter {
         schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
         let bodies = match schema::archive_schema_status(&conn)? {
             schema::ArchiveSchemaStatus::Fresh => {
-                let (bodies, archive_lock, header) = BodyArchive::prepare_new(path, now)?;
+                let (bodies, archive_lock, header) = BodyArchive::prepare_new(path, now, codecs)?;
                 schema::create_tables_with_archive_header(&conn, Some(header))?;
                 drop(archive_lock);
                 bodies
             }
             schema::ArchiveSchemaStatus::Current(_) => {
                 schema::create_tables(&conn)?;
-                BodyArchive::open_existing(path, now, &conn)?
+                BodyArchive::open_existing(path, now, &conn, codecs)?
             }
             // Moved aside above, under this same writer lock.
             schema::ArchiveSchemaStatus::PreArchive => {
@@ -388,31 +454,17 @@ impl DbWriter {
         };
         let (tx, rx) = writer_channel(batch_capacity);
         let db_path = path.to_path_buf();
-        let writer_loop_db_path = Some(db_path.clone());
         let pending_body_bytes = Arc::new(AtomicU64::new(0));
-        let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
-
-        let join_handle = std::thread::Builder::new()
-            .name("capsem-db-writer".into())
-            .spawn(move || {
-                let _held = held;
-                writer_loop(
-                    conn,
-                    rx,
-                    writer_loop_db_path,
-                    batch_capacity,
-                    &loop_pending_body_bytes,
-                    bodies,
-                    tally,
-                )
-            })
-            .expect("failed to spawn db writer thread");
-
-        Ok(Self {
-            tx: std::sync::Mutex::new(Some(tx)),
-            join_handle: std::sync::Mutex::new(Some(join_handle)),
+        Ok(PreparedDbWriter {
+            tx,
+            rx,
+            held,
+            conn,
             db_path,
+            batch_capacity,
             pending_body_bytes,
+            bodies,
+            tally,
         })
     }
 
@@ -453,6 +505,26 @@ impl DbWriter {
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
             pending_body_bytes,
+            remote: None,
+        })
+    }
+
+    /// Construct the familiar producer facade over a coordinator-minted
+    /// channel. This process retains no SQLite connection or writer lock; the
+    /// dedicated ledger worker owns both.
+    pub fn from_ledger_channel(
+        stream: std::os::unix::net::UnixStream,
+        commitment_stream: std::os::unix::net::UnixStream,
+        grant: capsem_proto::ledger::LedgerChannelGrant,
+        logical_path: &Path,
+        capacity: usize,
+    ) -> std::io::Result<Self> {
+        Ok(Self {
+            tx: std::sync::Mutex::new(None),
+            join_handle: std::sync::Mutex::new(None),
+            db_path: logical_path.to_path_buf(),
+            pending_body_bytes: Arc::new(AtomicU64::new(0)),
+            remote: Some(remote::RemoteWriter::start(stream, commitment_stream, grant, capacity)?),
         })
     }
 
@@ -469,6 +541,9 @@ impl DbWriter {
     /// Every reader reads the file, so an `Err` means no reader will see the
     /// rows yet, and the caller must not claim otherwise.
     pub async fn flush_checked(&self) -> Result<(), String> {
+        if let Some(remote) = &self.remote {
+            return remote.flush().await;
+        }
         let Some(tx) = self.clone_sender() else {
             return Ok(());
         };
@@ -491,6 +566,9 @@ impl DbWriter {
     /// halves of the ledger. A caller that holds no writer holds no right to
     /// rewrite either one.
     pub async fn retain_bodies_since(&self, cutoff: &str) -> Result<RetainOutcome, String> {
+        if let Some(remote) = &self.remote {
+            return remote.retain(cutoff).await;
+        }
         let Some(tx) = self.clone_sender() else {
             return Err("db writer is shut down; nothing was retained".to_string());
         };
@@ -526,6 +604,10 @@ impl DbWriter {
     /// and runs the final `PRAGMA wal_checkpoint(TRUNCATE)`. Call from a
     /// blocking thread (e.g. via `tokio::task::spawn_blocking`).
     pub fn shutdown_blocking(&self) {
+        if let Some(remote) = &self.remote {
+            remote.shutdown();
+            return;
+        }
         let _ = self.tx.lock().unwrap().take();
         let handle = self.join_handle.lock().unwrap().take();
         if let Some(handle) = handle {
@@ -537,6 +619,9 @@ impl DbWriter {
     /// It sees what the writer has flushed, not what it has only accepted.
     /// Returns Err for in-memory writers (no file to share between connections).
     pub fn reader(&self) -> rusqlite::Result<crate::reader::DbReader> {
+        if self.remote.is_some() {
+            return Err(rusqlite::Error::InvalidPath(self.db_path.clone()));
+        }
         if self.db_path.to_str() == Some(":memory:") {
             return Err(rusqlite::Error::InvalidPath(self.db_path.clone()));
         }
@@ -552,7 +637,50 @@ impl DbWriter {
     /// block but not yet written. They reach `session.bodies` at the next
     /// disk flush or when the block closes, so this is the backlog a crash would lose.
     pub fn pending_body_bytes(&self) -> u64 {
+        if self.remote.is_some() {
+            return 0;
+        }
         self.pending_body_bytes.load(Ordering::Acquire)
+    }
+}
+
+impl PreparedDbWriter {
+    pub(crate) fn start(self) -> DbWriter {
+        let Self {
+            tx,
+            rx,
+            held,
+            conn,
+            db_path,
+            batch_capacity,
+            pending_body_bytes,
+            bodies,
+            tally,
+        } = self;
+        let writer_loop_db_path = Some(db_path.clone());
+        let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
+        let join_handle = std::thread::Builder::new()
+            .name("capsem-db-writer".into())
+            .spawn(move || {
+                let _held = held;
+                writer_loop(
+                    conn,
+                    rx,
+                    writer_loop_db_path,
+                    batch_capacity,
+                    &loop_pending_body_bytes,
+                    bodies,
+                    tally,
+                )
+            })
+            .expect("failed to spawn db writer thread");
+        DbWriter {
+            tx: std::sync::Mutex::new(Some(tx)),
+            join_handle: std::sync::Mutex::new(Some(join_handle)),
+            db_path,
+            pending_body_bytes,
+            remote: None,
+        }
     }
 }
 
