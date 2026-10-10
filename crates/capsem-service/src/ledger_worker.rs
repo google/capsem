@@ -536,18 +536,19 @@ impl WorkerProcess {
     async fn recv_event(&mut self) -> Result<LedgerControlEvent> {
         tokio::time::timeout(OPERATION_TIMEOUT, async {
             tokio::select! {
+                frame = self.control_events.recv() => {
+                    decode_control_event(frame)
+                }
                 status = self.child.wait() => {
                     let status = status.context("reap ledger worker")?;
-                    bail!("ledger worker exited: {status}")
-                }
-                frame = self.control_events.recv() => {
-                    let frame = frame
-                        .context("ledger control event pump stopped")?
-                        .context("ledger worker control channel failed")?;
-                    if !frame.fds.is_empty() {
-                        bail!("ledger worker returned a descriptor on its control channel");
+                    // A worker can write its terminal protocol event and exit
+                    // before the control-reader task gets scheduled. Drain
+                    // that queued event before classifying the clean exit as
+                    // an unexpected failure.
+                    match self.control_events.recv().await {
+                        Some(frame) => decode_control_event(Some(frame)),
+                        None => bail!("ledger worker exited: {status}"),
                     }
-                    decode_ledger_control_event(&frame.bytes).map_err(anyhow::Error::from)
                 }
             }
         })
@@ -563,6 +564,16 @@ impl WorkerProcess {
             let _ = (&mut control_reader).await;
         }
     }
+}
+
+fn decode_control_event(frame: Option<io::Result<ControlFrame>>) -> Result<LedgerControlEvent> {
+    let frame = frame
+        .context("ledger control event pump stopped")?
+        .context("ledger worker control channel failed")?;
+    if !frame.fds.is_empty() {
+        bail!("ledger worker returned a descriptor on its control channel");
+    }
+    decode_ledger_control_event(&frame.bytes).map_err(anyhow::Error::from)
 }
 
 struct PendingWorker {
