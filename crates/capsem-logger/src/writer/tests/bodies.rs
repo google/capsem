@@ -34,7 +34,7 @@ fn recovered_writer_fences_then_collects_only_owned_orphan_generations() {
     let before = crate::schema::archive_state(&conn).unwrap();
     let archive_dir = archive_path_for_db(&db_path);
     let directory = capsem_foundation::unix::contained::ContainedDir::open_root(&archive_dir).unwrap();
-    let orphan = capsem_archive::GenerationId::new_v4();
+    let orphan = capsem_archive::GenerationId::generate();
     let mut candidate =
         capsem_archive::BodyLogWriter::create_generation(&directory, before.header.archive_id, orphan).unwrap();
     candidate.sync().unwrap();
@@ -652,7 +652,7 @@ fn publication_crash_child() {
     let state = crate::schema::archive_state(&conn).unwrap();
     let directory =
         capsem_foundation::unix::contained::ContainedDir::open_root(&archive_path_for_db(&db_path)).unwrap();
-    let generation = capsem_archive::GenerationId::new_v4();
+    let generation = capsem_archive::GenerationId::generate();
 
     if case == "candidate-partial" {
         let mut file = directory

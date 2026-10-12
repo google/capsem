@@ -53,7 +53,7 @@ fn publication_remaps_and_switches_generation_in_one_transaction() {
     let dir = tempfile::tempdir().unwrap();
     let conn = ledger_with_two_blocks(&dir.path().join("session.db"));
     let old = crate::schema::archive_state(&conn).unwrap();
-    let next = GenerationId::new_v4();
+    let next = GenerationId::generate();
     let tx = conn.unchecked_transaction().unwrap();
     let counts = publish_inside_transaction(&tx, "2026-03-01T00:00:00Z", old, next, 120, 1, dir.path()).unwrap();
     tx.commit().unwrap();
@@ -82,7 +82,7 @@ fn publication_failure_rolls_back_rows_offsets_and_identity_together() {
         &tx,
         "2026-03-01T00:00:00Z",
         old,
-        GenerationId::new_v4(),
+        GenerationId::generate(),
         120,
         1,
         &crate::writer::archive_path_for_db(&path),
@@ -104,7 +104,7 @@ fn candidate_count_or_extent_disagreement_refuses_before_commit() {
         &tx,
         "2026-03-01T00:00:00Z",
         old,
-        GenerationId::new_v4(),
+        GenerationId::generate(),
         121,
         2,
         dir.path(),
@@ -126,7 +126,7 @@ fn uncertain_commit_is_typed_for_either_authoritative_generation() {
         let path = dir.path().join("session.db");
         let conn = ledger_with_two_blocks(&path);
         let old = crate::schema::archive_state(&conn).unwrap();
-        let next = GenerationId::new_v4();
+        let next = GenerationId::generate();
         super::super::retention_faults::fail_retention_for_path_for_tests(&path, fault);
         let error = publish_index(
             &conn,

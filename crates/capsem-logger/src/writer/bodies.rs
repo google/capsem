@@ -268,8 +268,8 @@ impl BodyArchive {
             })
             .map_err(|error| archive_contract_error(format!("open {}: {error}", path.display())))?;
         let header = FileHeader {
-            archive_id: ArchiveId::new_v4(),
-            generation_id: GenerationId::new_v4(),
+            archive_id: ArchiveId::generate(),
+            generation_id: GenerationId::generate(),
         };
         let mut writer = BodyLogWriter::create_generation(&directory, header.archive_id, header.generation_id)
             .map_err(|error| archive_contract_error(format!("create generation: {error}")))?;

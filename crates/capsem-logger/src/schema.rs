@@ -56,8 +56,8 @@ pub(crate) fn create_tables_with_archive_header(
         conn.execute_batch(CREATE_SCHEMA)?;
         if !has_archive_state {
             let header = prepared.unwrap_or(FileHeader {
-                archive_id: ArchiveId::new_v4(),
-                generation_id: GenerationId::new_v4(),
+                archive_id: ArchiveId::generate(),
+                generation_id: GenerationId::generate(),
             });
             conn.execute(
                 "INSERT INTO archive_state(

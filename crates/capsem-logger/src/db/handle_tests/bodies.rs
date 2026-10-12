@@ -427,7 +427,7 @@ async fn ledger_snapshot_copies_the_archive_the_db_references() {
     drop(source_conn);
     let source_archive = crate::writer::archive_path_for_db(&src_dir.join("session.db"));
     let source_directory = capsem_foundation::unix::contained::ContainedDir::open_root(&source_archive).unwrap();
-    let orphan_id = capsem_archive::GenerationId::new_v4();
+    let orphan_id = capsem_archive::GenerationId::generate();
     let mut orphan =
         capsem_archive::BodyLogWriter::create_generation(&source_directory, captured.header.archive_id, orphan_id)
             .unwrap();

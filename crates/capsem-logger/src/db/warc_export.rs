@@ -680,7 +680,7 @@ impl DbHandle {
         let session = self.session_name();
         // One id per export, not per record kind: two exports of the same
         // session must not collide when a reader merges them.
-        let export_id = uuid::Uuid::new_v4().simple().to_string();
+        let export_id = capsem_crypto::uuid_v4().simple().to_string();
         write_warcinfo(
             &mut counting,
             &session,

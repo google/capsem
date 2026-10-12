@@ -398,7 +398,7 @@ fn a_transport_event_id_already_on_disk_is_refused_not_replaced() {
             1,
             TransportEventKind::Connect,
             None,
-            Some(uuid::Uuid::new_v4()),
+            Some(capsem_crypto::uuid_v4()),
             &serde_json::json!({ "facts": facts }),
         )
         .unwrap()

@@ -73,7 +73,7 @@ async fn records_are_durable_after_a_flush_barrier_and_upserted_by_key() {
     let dir = tempfile::tempdir().unwrap();
     let path = network_at(&dir);
     let db = open(&path).unwrap();
-    let id = Uuid::new_v4();
+    let id = capsem_crypto::uuid_v4();
     let network = NetworkRecord::new(id, "backend", SUBNET, 1_700_000_000_000).unwrap();
     db.write(WriteOp::Network(network.clone())).await.unwrap();
     let member = |state, at| NetworkMembership::new(id, "vm-1", Ipv4Addr::new(10, 128, 0, 2), state, at).unwrap();
@@ -141,7 +141,7 @@ async fn audit_rows_for_a_network_use_the_shared_transport_ledger() {
     let dir = tempfile::tempdir().unwrap();
     let path = network_at(&dir);
     let db = open(&path).unwrap();
-    let id = Uuid::new_v4();
+    let id = capsem_crypto::uuid_v4();
     let row = TransportEvent::new(
         "abcdef123456".into(),
         1_700_000_000_000,
@@ -166,10 +166,10 @@ async fn audit_rows_for_a_network_use_the_shared_transport_ledger() {
 #[test]
 fn records_validate_identity_and_bounds_before_they_reach_sqlite() {
     assert!(NetworkRecord::new(Uuid::nil(), "backend", SUBNET, 0).is_err());
-    assert!(NetworkRecord::new(Uuid::new_v4(), "", SUBNET, 0).is_err());
-    assert!(NetworkRecord::new(Uuid::new_v4(), &"n".repeat(65), SUBNET, 0).is_err());
-    assert!(NetworkRecord::new(Uuid::new_v4(), "two words", SUBNET, 0).is_err());
-    assert!(NetworkRecord::new(Uuid::new_v4(), "backend", SUBNET, -1).is_err());
+    assert!(NetworkRecord::new(capsem_crypto::uuid_v4(), "", SUBNET, 0).is_err());
+    assert!(NetworkRecord::new(capsem_crypto::uuid_v4(), &"n".repeat(65), SUBNET, 0).is_err());
+    assert!(NetworkRecord::new(capsem_crypto::uuid_v4(), "two words", SUBNET, 0).is_err());
+    assert!(NetworkRecord::new(capsem_crypto::uuid_v4(), "backend", SUBNET, -1).is_err());
     for subnet in [
         (Ipv4Addr::new(10, 128, 7, 1), 24),
         (Ipv4Addr::new(10, 128, 7, 0), 7),
@@ -177,15 +177,15 @@ fn records_validate_identity_and_bounds_before_they_reach_sqlite() {
         (Ipv4Addr::new(10, 128, 7, 0), 33),
     ] {
         assert!(
-            NetworkRecord::new(Uuid::new_v4(), "backend", subnet, 0).is_err(),
+            NetworkRecord::new(capsem_crypto::uuid_v4(), "backend", subnet, 0).is_err(),
             "{subnet:?}"
         );
     }
-    let network = NetworkRecord::new(Uuid::new_v4(), "backend", SUBNET, 10).unwrap();
+    let network = NetworkRecord::new(capsem_crypto::uuid_v4(), "backend", SUBNET, 10).unwrap();
     assert!(network.clone().retired(9).is_err());
     assert!(network.retired(10).is_ok());
 
-    let id = Uuid::new_v4();
+    let id = capsem_crypto::uuid_v4();
     let address = Ipv4Addr::new(10, 128, 0, 2);
     assert!(NetworkMembership::new(Uuid::nil(), "vm", address, MembershipState::Declared, 0).is_err());
     assert!(NetworkMembership::new(id, "", address, MembershipState::Declared, 0).is_err());

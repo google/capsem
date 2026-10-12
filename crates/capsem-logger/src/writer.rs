@@ -7,7 +7,6 @@ use std::time::{Duration, Instant, SystemTime};
 use capsem_telemetry::db::{DB_MEMORY_UNFLUSHED_OPS, DB_SHUTDOWN_FLUSH_MS};
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
 use tracing::{error, warn};
-use uuid::Uuid;
 
 use crate::counters::{self, LedgerCounters, LedgerTally};
 use crate::events::{
@@ -96,7 +95,7 @@ pub type LedgerClock = fn() -> SystemTime;
 static IN_MEMORY_WRITER_ID: AtomicU64 = AtomicU64::new(0);
 
 fn new_event_id() -> String {
-    let value = Uuid::new_v4().simple().to_string();
+    let value = capsem_crypto::uuid_v4().simple().to_string();
     value[..12].to_string()
 }
 

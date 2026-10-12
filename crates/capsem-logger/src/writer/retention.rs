@@ -117,7 +117,7 @@ pub(super) fn retain_bodies(
         return Ok(RetainOutcome::default());
     }
 
-    let generation_id = GenerationId::new_v4();
+    let generation_id = GenerationId::generate();
     let mut candidate = BodyLogWriter::create_generation(&directory, state.header.archive_id, generation_id)
         .map_err(|error| format!("create retained generation: {error}"))?;
     let copied = match copy_survivors(conn, cutoff, &mut source, &mut candidate) {
