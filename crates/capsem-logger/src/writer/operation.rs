@@ -77,11 +77,15 @@ impl WriteOp {
 }
 
 pub fn commitment_event_hash(op: &WriteOp) -> Result<[u8; 32], String> {
+    commitment_event_fingerprint(op).map(|(hash, _)| hash)
+}
+
+pub(crate) fn commitment_event_fingerprint(op: &WriteOp) -> Result<([u8; 32], usize), String> {
     let encoded = serde_json::to_vec(op).map_err(|error| format!("encode ledger event commitment: {error}"))?;
     let mut hash = blake3::Hasher::new();
     hash.update(b"capsem-ledger-event-v1\0");
     hash.update(&encoded);
-    Ok(*hash.finalize().as_bytes())
+    Ok((*hash.finalize().as_bytes(), encoded.len()))
 }
 
 fn ensure_option_event_id(event_id: &mut Option<String>) -> Option<String> {

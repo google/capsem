@@ -14,6 +14,11 @@ use crate::{BodyDirection, RetainOutcome, WriteOp};
 
 /// Leave room inside the 16 MiB frame for request map keys and ids.
 pub const MAX_LEDGER_OPERATION_BYTES: usize = MAX_IPC_FRAME_SIZE as usize - 4 * 1024;
+// An admission's only bytes outside its event are fixed field names, ids and
+// one bounded LedgerCommitment. Reserving 4 KiB for them lets validation reuse
+// the event encoding that produced its commitment hash instead of encoding the
+// whole operation a second time on every ledger admission.
+const MAX_ADMIT_METADATA_BYTES: usize = 4 * 1024;
 /// Every large result streams in independently bounded pieces.
 pub const MAX_LEDGER_STREAM_CHUNK_BYTES: usize = 256 * 1024;
 pub const MAX_LEDGER_QUERY_ROWS: usize = 2_000;
@@ -91,13 +96,15 @@ impl LedgerOperation for LedgerCommand {
                 commitment
                     .validate()
                     .map_err(|_| LedgerProtocolError::InvalidOperation)?;
-                if commitment.event_kind() != event.kind()
-                    || commitment.event_hash()
-                        != crate::writer::commitment_event_hash(event)
-                            .map_err(|_| LedgerProtocolError::InvalidOperation)?
-                {
+                let (event_hash, event_bytes) = crate::writer::commitment_event_fingerprint(event)
+                    .map_err(|_| LedgerProtocolError::InvalidOperation)?;
+                if commitment.event_kind() != event.kind() || commitment.event_hash() != event_hash {
                     return Err(LedgerProtocolError::InvalidOperation);
                 }
+                if event_bytes > MAX_LEDGER_OPERATION_BYTES - MAX_ADMIT_METADATA_BYTES {
+                    return Err(LedgerProtocolError::OperationTooLarge);
+                }
+                return Ok(());
             }
             Self::Query { query } => query.validate()?,
             Self::ReadBodies { event_id } if !valid_event_id(event_id) => {

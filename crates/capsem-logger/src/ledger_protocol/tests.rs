@@ -134,6 +134,18 @@ fn oversized_event_and_malformed_query_are_rejected_before_dispatch() {
 }
 
 #[test]
+fn admission_metadata_stays_within_its_reserved_frame_allowance() {
+    let command = file_write();
+    let LedgerCommand::Admit { event, .. } = &command else {
+        unreachable!("file_write always returns an admission")
+    };
+    let event_bytes = serde_json::to_vec(event).unwrap().len();
+    let operation_bytes = serde_json::to_vec(&command).unwrap().len();
+
+    assert!(operation_bytes - event_bytes < MAX_ADMIT_METADATA_BYTES);
+}
+
+#[test]
 fn event_bytes_use_messagepack_binary_inside_the_request() {
     let event = WriteOp::ExecEventComplete(ExecEventComplete {
         exec_id: 1,

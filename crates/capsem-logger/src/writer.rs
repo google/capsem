@@ -312,6 +312,7 @@ fn writer_channel(capacity: usize) -> (WriterSender, WriterReceiver) {
 mod barriers;
 mod batch;
 mod operation;
+pub(crate) use operation::commitment_event_fingerprint;
 pub use operation::commitment_event_hash;
 mod recording;
 mod remote;
