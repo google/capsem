@@ -301,7 +301,8 @@ pub(super) fn read_checkpoint(
     expected_vcpu_count: u32,
     expected_mmio_device_count: u32,
 ) -> Result<RestoredCheckpoint> {
-    let file = std::fs::File::open(path).with_context(|| format!("open KVM checkpoint: {}", path.display()))?;
+    let file = capsem_foundation::unix::fs::open_regular_file_no_follow(path)
+        .with_context(|| format!("open KVM checkpoint: {}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut header_bytes = [0u8; HEADER_LEN as usize];
     reader.read_exact(&mut header_bytes).context("read checkpoint header")?;
@@ -328,21 +329,54 @@ pub(super) fn read_checkpoint(
         mmio_devices.push(snapshot);
     }
 
-    let mut offset = 0u64;
-    let mut buf = vec![0u8; COPY_CHUNK_SIZE.min(memory.size() as usize)];
-    while offset < memory.size() {
-        let len = (memory.size() - offset).min(buf.len() as u64) as usize;
-        reader.read_exact(&mut buf[..len]).context("read checkpoint memory")?;
-        memory
-            .write_at(offset, &buf[..len])
-            .context("restore checkpoint memory")?;
-        offset += len as u64;
+    // Keep the file format and exact length checks; restore only allocated
+    // extents into zeroed lazy RAM instead of populating multi-GiB holes.
+    let memory_start = reader.stream_position().context("checkpoint memory start position")?;
+    let memory_end = memory_start
+        .checked_add(memory.size())
+        .context("checkpoint memory end overflow")?;
+    let file = reader.into_inner();
+    use std::os::fd::AsFd;
+    let actual_len =
+        capsem_foundation::unix::fd::regular_file_size(file.as_fd()).context("checkpoint file metadata")?;
+    if actual_len < memory_end {
+        bail!("read checkpoint memory: file is truncated");
     }
-
-    let mut trailing = [0u8; 1];
-    if reader.read(&mut trailing).context("check checkpoint length")? != 0 {
+    if actual_len != memory_end {
         bail!("checkpoint has trailing bytes");
     }
+    memory.discard_contents().context("clear inactive checkpoint memory")?;
+    let mut offset = memory_start;
+    let mut restored_bytes = 0u64;
+    let mut buf = vec![0u8; COPY_CHUNK_SIZE.min(memory.size() as usize)];
+    while let Some(range) = capsem_foundation::unix::fs::next_data_range(&file, offset, memory_end)
+        .context("locate checkpoint memory extent")?
+    {
+        offset = range.start;
+        while offset < range.end {
+            let len = (range.end - offset).min(buf.len() as u64) as usize;
+            let mut read = 0usize;
+            while read < len {
+                let count =
+                    capsem_foundation::unix::fd::read_at(file.as_fd(), &mut buf[read..len], offset + read as u64)
+                        .context("read checkpoint memory")?;
+                if count == 0 {
+                    bail!("read checkpoint memory: file is truncated");
+                }
+                read += count;
+            }
+            memory
+                .write_at(offset - memory_start, &buf[..len])
+                .context("restore checkpoint memory")?;
+            offset += len as u64;
+            restored_bytes += len as u64;
+        }
+    }
+    tracing::debug!(
+        logical_bytes = memory.size(),
+        restored_bytes,
+        "checkpoint sparse memory restored"
+    );
 
     Ok(RestoredCheckpoint {
         vcpus,
@@ -400,14 +434,31 @@ fn write_checkpoint_inner(
         memory
             .read_at(offset, &mut buf[..len])
             .context("read guest memory for checkpoint")?;
-        if buf[..len] == zero_buf[..len] {
-            writer
-                .seek(SeekFrom::Current(len as i64))
-                .context("seek sparse guest memory checkpoint hole")?;
-            sparse_bytes += len as u64;
-        } else {
-            writer.write_all(&buf[..len]).context("write guest memory checkpoint")?;
-            data_bytes += len as u64;
+        // Coalesce runs of equal page occupancy, preserving 4-KiB holes even
+        // when shuffled guest allocation scatters used pages across a chunk.
+        let mut start = 0usize;
+        while start < len {
+            let mut end = (start + 4096).min(len);
+            let zero = buf[start..end] == zero_buf[..end - start];
+            while end < len {
+                let next = (end + 4096).min(len);
+                if (buf[end..next] == zero_buf[..next - end]) != zero {
+                    break;
+                }
+                end = next;
+            }
+            if zero {
+                writer
+                    .seek(SeekFrom::Current((end - start) as i64))
+                    .context("seek sparse guest memory checkpoint hole")?;
+                sparse_bytes += (end - start) as u64;
+            } else {
+                writer
+                    .write_all(&buf[start..end])
+                    .context("write guest memory checkpoint")?;
+                data_bytes += (end - start) as u64;
+            }
+            start = end;
         }
         offset += len as u64;
         if offset >= next_progress || offset == memory.size() {

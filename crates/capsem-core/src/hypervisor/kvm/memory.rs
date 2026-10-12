@@ -346,6 +346,12 @@ impl GuestMemory {
         self.size
     }
 
+    /// Clear inactive guest RAM before restoring a sparse checkpoint. Holes
+    /// must stay zero even if this allocation previously held another state.
+    pub fn discard_contents(&self) -> Result<()> {
+        self._mapping.discard_contents().map_err(Into::into)
+    }
+
     /// Write bytes into guest memory at a given offset from RAM_BASE.
     /// The offset is relative to the start of the mmap'd region (i.e., guest
     /// physical address = RAM_BASE + offset).

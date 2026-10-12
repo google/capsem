@@ -168,6 +168,7 @@ fn dummy_device() -> VhostVsockDevice {
         activated: false,
         checkpoint_state: None,
         restore_vring_bases: None,
+        event_queue: None,
     }
 }
 
@@ -393,6 +394,42 @@ fn warm_restore_applies_captured_bases_before_restarting_backend() {
 }
 
 #[test]
+fn warm_restore_emits_transport_reset_through_the_guest_event_queue() {
+    let mut device = dummy_device();
+    device.vhost_fd = Some(create_eventfd().unwrap());
+    device
+        .restore_checkpoint_state(&encode_vsock_checkpoint(device.guest_cid, Some([0, 0])))
+        .unwrap();
+    let (mem, queues) = configured_queues();
+    let event = &queues[2];
+    let desc = event.desc_addr - RAM_BASE;
+    let buffer = RAM_BASE + 0x1F000;
+    mem.write_at(desc, &buffer.to_le_bytes()).unwrap();
+    mem.write_at(desc + 8, &4u32.to_le_bytes()).unwrap();
+    mem.write_at(desc + 12, &2u16.to_le_bytes()).unwrap();
+    mem.write_at(event.driver_addr - RAM_BASE + 2, &1u16.to_le_bytes())
+        .unwrap();
+    mem.write_at(buffer - RAM_BASE, &[0xAA; 4]).unwrap();
+    device
+        .restore_activate_with(mem.clone_ref(RAM_BASE), &queues, &mut RecordingIoctl::new([0, 0]))
+        .unwrap();
+    let mut bytes = [0; 4];
+    mem.read_at(buffer - RAM_BASE, &mut bytes).unwrap();
+    assert_eq!(
+        u32::from_le_bytes(bytes),
+        0,
+        "warm restore must deliver TRANSPORT_RESET so guest sockets reconnect immediately"
+    );
+    let mut used = [0; 2];
+    mem.read_at(event.device_addr - RAM_BASE + 2, &mut used).unwrap();
+    assert_eq!(
+        u16::from_le_bytes(used),
+        1,
+        "event completion must be visible before the interrupt"
+    );
+}
+
+#[test]
 fn warm_restore_restart_failure_is_returned_and_device_stays_inactive() {
     let mut device = dummy_device();
     device.vhost_fd = Some(create_eventfd().unwrap());
@@ -493,6 +530,7 @@ fn config_space_guest_cid() {
         activated: false,
         checkpoint_state: None,
         restore_vring_bases: None,
+        event_queue: None,
     };
     let mut buf = [0u8; 8];
     dev.read_config(0, &mut buf);
@@ -517,6 +555,7 @@ fn config_space_partial_read() {
         activated: false,
         checkpoint_state: None,
         restore_vring_bases: None,
+        event_queue: None,
     };
     // Read just the first 4 bytes
     let mut buf = [0u8; 4];
@@ -550,6 +589,7 @@ fn config_space_offset_within_cid() {
         activated: false,
         checkpoint_state: None,
         restore_vring_bases: None,
+        event_queue: None,
     };
     let mut buf = [0u8; 2];
     dev.read_config(3, &mut buf);

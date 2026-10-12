@@ -57,14 +57,15 @@ const VSOCK_PORT_BLOCK_COUNT: u32 = 2_500;
 // ---------------------------------------------------------------------------
 
 mod checkpoint;
+mod events;
+mod lifecycle;
+use checkpoint::{decode_vsock_checkpoint, encode_vsock_checkpoint, queue_avail_idx, queue_used_idx};
+
 /// Virtio-vsock device backed by Linux's vhost-vsock kernel module.
 ///
 /// Implements the VirtioDevice trait for MMIO transport discovery and
 /// feature negotiation. The actual data plane runs in-kernel via
 /// /dev/vhost-vsock.
-mod lifecycle;
-use checkpoint::{decode_vsock_checkpoint, encode_vsock_checkpoint, queue_avail_idx, queue_used_idx};
-
 pub(super) struct VhostVsockDevice {
     guest_cid: u64,
     vhost_fd: Option<OwnedFd>,
@@ -73,6 +74,7 @@ pub(super) struct VhostVsockDevice {
     activated: bool,
     checkpoint_state: Option<Vec<u8>>,
     restore_vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>,
+    event_queue: Option<events::TransportEvents>,
 }
 
 trait VhostIoctl {
@@ -132,6 +134,7 @@ impl VhostVsockDevice {
             activated: false,
             checkpoint_state: None,
             restore_vring_bases: None,
+            event_queue: None,
         };
 
         Ok((dev, call_raw))
@@ -310,8 +313,11 @@ impl VhostVsockDevice {
         let vring_bases = self
             .restore_vring_bases
             .context("missing vhost-vsock checkpoint state for warm restore")?;
+        self.configure_event_queue(mem.clone(), queues)?;
         self.configure_vhost_with(&mem, queues, Some(vring_bases), ioctl)
             .context("restore vhost-vsock backend")?;
+        self.event_queue.as_mut().unwrap().reset_pending = true;
+        self.process_transport_events()?;
         self.activated = true;
         info!(
             guest_cid = self.guest_cid,
@@ -319,6 +325,24 @@ impl VhostVsockDevice {
             tx_base = vring_bases[1],
             "vhost-vsock restored and restarted"
         );
+        Ok(())
+    }
+
+    fn configure_event_queue(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
+        let config = queues
+            .get(events::QUEUE_INDEX)
+            .context("missing virtio-vsock event queue")?;
+        self.event_queue = Some(events::TransportEvents::new(mem, config)?);
+        Ok(())
+    }
+
+    fn process_transport_events(&mut self) -> Result<()> {
+        if let Some(events) = self.event_queue.as_mut() {
+            if events.drain_reset()? {
+                use std::os::fd::AsFd;
+                capsem_foundation::unix::fd::signal_counter(self.call_fds[events::QUEUE_INDEX].as_fd())?;
+            }
+        }
         Ok(())
     }
 }
@@ -551,6 +575,10 @@ impl VirtioDevice for VhostVsockDevice {
         if self.activated {
             return;
         }
+        if let Err(error) = self.configure_event_queue(mem.clone(), queues) {
+            warn!(%error, "virtio-vsock event queue activation failed");
+            return;
+        }
         if let Err(e) = self.configure_vhost(&mem, queues) {
             warn!(error = format!("{e:#}"), "vhost-vsock activate failed");
             return;
@@ -560,6 +588,12 @@ impl VirtioDevice for VhostVsockDevice {
     }
 
     fn queue_notify(&mut self, queue_index: u32) -> bool {
+        if queue_index as usize == events::QUEUE_INDEX {
+            if let Err(error) = self.process_transport_events() {
+                warn!(%error, "virtio-vsock reset event delivery failed");
+            }
+            return false;
+        }
         let idx = queue_index as usize;
         if idx >= VHOST_VSOCK_BACKEND_QUEUES {
             if idx < VSOCK_NUM_QUEUES {

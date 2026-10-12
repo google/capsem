@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux warm resume restores allocated checkpoint extents into lazy zeroed RAM
+  and immediately resets stale guest vsock connections. Checkpoints preserve
+  page-sized sparse holes and existing file and directory handles.
+
 - The pinned guest kernel honors negotiated FUSE I/O sizes for large explicit
   reads while retaining the existing speculative read-ahead limits.
 
