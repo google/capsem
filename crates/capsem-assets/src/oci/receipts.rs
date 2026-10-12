@@ -6,9 +6,9 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use capsem_crypto::Sha256;
 use oci_client::Reference;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 
 use super::{image_reference, CacheIdentity, CacheKey, Digest, ImageReference, METADATA_LIMIT};
 

@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use capsem_crypto::Sha256;
 use capsem_foundation::{
     paths,
     poll::{poll_until, PollOpts},
@@ -21,7 +22,6 @@ use capsem_foundation::{
     },
 };
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 use super::digest_hex;
 mod inventory;

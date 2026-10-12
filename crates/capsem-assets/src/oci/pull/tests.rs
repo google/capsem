@@ -11,8 +11,8 @@ use axum::{
 };
 use oci_client::{client::ClientProtocol, secrets::RegistryAuth};
 
+use capsem_crypto::Sha256;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 const ROOTFS_MEDIA: &str = "application/vnd.capsem.rootfs.erofs.v1";
 pub(super) const ROOTFS_BYTES: &[u8] = b"opaque published EROFS bytes: never unpack these on the host";

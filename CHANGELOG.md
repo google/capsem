@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OCI cache and prepared filesystem verification use the existing accelerated
+  crypto backend on CPUs without dedicated SHA instructions, retaining SHA-256
+  identities and full integrity checks.
+
 - Explicitly admitted image references select their catalog-bound EROFS
   filesystem instead of unnecessarily extracting OCI layers at startup.
 

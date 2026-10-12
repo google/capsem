@@ -3,8 +3,8 @@
 use std::{collections::HashSet, fs::Metadata, os::unix::fs::MetadataExt};
 
 use anyhow::{ensure, Context, Result};
+use capsem_crypto::Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 
 use super::{receipts::BlobKind, CacheKey, ImageCache, METADATA_LIMIT};
 

@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use capsem_crypto::Sha256;
 use futures::{stream, StreamExt, TryStreamExt};
 use oci_client::{
     client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol},
@@ -14,7 +15,6 @@ use oci_client::{
     Client, Reference, RegistryOperation,
 };
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use super::receipts::{BlobKind, BlobRef, CacheReceipt, RootReceipt};

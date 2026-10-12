@@ -15,7 +15,9 @@
 //! (`vmlinuz-{hash16}`, `rootfs-{hash16}.erofs`). Same hash = same file =
 //! natural dedup across asset versions.
 
+use capsem_crypto::blake3::{hash, Hasher};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
@@ -727,7 +729,7 @@ fn canonical_active_artifacts(
 }
 
 fn state_revision(prefix: &str, value: &serde_json::Value) -> String {
-    let hash = blake3::hash(canonical_json(value).as_bytes()).to_hex().to_string();
+    let hash = hash(canonical_json(value).as_bytes()).to_hex().to_string();
     format!("{prefix}-{}", &hash[..16])
 }
 
@@ -779,10 +781,9 @@ fn canonical_json(value: &serde_json::Value) -> String {
 /// Compute the blake3 hash of a file.
 /// Copy `source` to `dest` and return the blake3 hex of the bytes written.
 fn copy_hashed(source: &Path, dest: &Path) -> Result<String> {
-    use std::io::{Read, Write};
     let mut from = std::fs::File::open(source).with_context(|| format!("cannot open {}", source.display()))?;
     let mut to = std::fs::File::create(dest).with_context(|| format!("cannot create {}", dest.display()))?;
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = Hasher::new();
     let mut buf = vec![0u8; 256 * 1024];
     loop {
         let n = from.read(&mut buf)?;
@@ -797,11 +798,10 @@ fn copy_hashed(source: &Path, dest: &Path) -> Result<String> {
 }
 
 pub fn hash_file(path: &Path) -> Result<String> {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = Hasher::new();
     let mut file = std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let mut buf = vec![0u8; 256 * 1024];
     loop {
-        use std::io::Read;
         let n = file.read(&mut buf)?;
         if n == 0 {
             break;
