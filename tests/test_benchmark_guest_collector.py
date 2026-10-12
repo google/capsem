@@ -39,6 +39,20 @@ def test_guest_command_forwards_only_owned_benchmark_controls(monkeypatch) -> No
     assert os.environ["UNRELATED_SECRET"] not in command
 
 
+def test_storage_controls_allow_a_focused_workspace_measurement(monkeypatch) -> None:
+    controls = {
+        "CAPSEM_STORAGE_BENCH_PATHS": "/root",
+        "CAPSEM_STORAGE_BENCH_SIZE_MB": "8",
+        "CAPSEM_STORAGE_IO_PROFILE_SIZE_MB": "8",
+        "CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS": "16",
+    }
+    for name, value in controls.items():
+        monkeypatch.setenv(name, value)
+    args = shlex.split(collector()["guest_command"]("storage"))
+    for name, value in controls.items():
+        assert f"{name}={value}" in args
+
+
 def test_flatten_preserves_indexed_load_rows() -> None:
     flatten = collector()["flatten"]
 
@@ -103,7 +117,10 @@ def test_guest_result_preserves_error_counts_and_concurrency(monkeypatch, capsys
     ]}}
     stopped = []
     client = SimpleNamespace(
-        post=lambda *args, **kwargs: {"exit_code": 0, "stdout": json.dumps(document)},
+        post=lambda route, *args, **kwargs: (
+            {"id": "bench-test-vm"} if route == "/vms/create"
+            else {"exit_code": 0, "stdout": {"encoding": "utf8", "data": json.dumps(document)}}
+        ),
         delete=lambda *args: None,
     )
     main = collector()["main"]

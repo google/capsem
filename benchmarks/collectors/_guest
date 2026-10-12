@@ -19,6 +19,7 @@ distribution that was never measured.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shlex
@@ -37,7 +38,7 @@ from helpers.constants import (
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
 )
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 # Units the guest reports, by the suffix its key carries.
 UNITS = {
@@ -52,6 +53,10 @@ FORWARDED_ENV = (
     "CAPSEM_BENCH_CONCURRENCY",
     "CAPSEM_BENCH_DURATION_S",
     "CAPSEM_BENCH_MITM_TARGET",
+    "CAPSEM_STORAGE_BENCH_PATHS",
+    "CAPSEM_STORAGE_BENCH_SIZE_MB",
+    "CAPSEM_STORAGE_IO_PROFILE_SIZE_MB",
+    "CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS",
 )
 
 # The mitm-load target: a name the mock server's DNS answers (with 127.0.0.1,
@@ -177,17 +182,20 @@ def main() -> int:
             os.environ.setdefault("CAPSEM_BENCH_MITM_TARGET", MITM_FIXTURE_TARGET)
         service.start()
         print(f"provisioning {name}", file=sys.stderr)
-        client.post(
+        created = client.post(
             "/vms/create",
             {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": guest_cpus(mode)},
         )
+        if not created or not created.get("id"):
+            raise RuntimeError(f"provision {name} failed: {created}")
+        name = created["id"]
         if not wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT):
             raise RuntimeError(f"{name} never became exec-ready")
 
         print(f"running capsem-bench {mode}", file=sys.stderr)
         benchmark_result = client.post(
             f"/vms/{name}/exec",
-            {"command": guest_command(mode), "timeout_secs": args.timeout},
+            {"target": "vm", "command": guest_command(mode), "timeout_secs": args.timeout},
             timeout=args.timeout + 10,
         )
         if not benchmark_result or benchmark_result.get("exit_code") != 0:
@@ -199,7 +207,7 @@ def main() -> int:
 
         artifact_result = client.post(
             f"/vms/{name}/exec",
-            {"command": "cat /tmp/capsem-benchmark.json", "timeout_secs": 15},
+            {"target": "vm", "command": "cat /tmp/capsem-benchmark.json", "timeout_secs": 15},
             timeout=25,
         )
         if not artifact_result or artifact_result.get("exit_code") != 0:
@@ -208,9 +216,9 @@ def main() -> int:
                 f"exit={None if not artifact_result else artifact_result.get('exit_code')}\n"
                 f"{(artifact_result or {}).get('stderr', '')[:500]}"
             )
-        document = json.loads(artifact_result.get("stdout", ""))
+        document = json.loads(exec_output_text(artifact_result))
     finally:
-        with __import__("contextlib").suppress(Exception):
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
         service.stop()
         if mock_proc is not None:
