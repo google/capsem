@@ -1198,12 +1198,12 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
- "blake3",
  "capsem-api",
  "capsem-assets",
  "capsem-config",
  "capsem-core",
  "capsem-credentials",
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-guard",
  "capsem-logger",
@@ -1216,7 +1216,6 @@ dependencies = [
  "humantime",
  "opentelemetry",
  "opentelemetry_sdk",
- "rand 0.8.8",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -1231,7 +1230,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "uuid",
- "zeroize",
 ]
 
 [[package]]
@@ -5186,7 +5184,7 @@ dependencies = [
  "bitflags 2.13.2",
  "num-traits",
  "rand 0.9.5",
- "rand_chacha 0.9.0",
+ "rand_chacha",
  "rand_xorshift",
  "regex-syntax",
  "rusty-fork",
@@ -5340,8 +5338,6 @@ version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
- "libc",
- "rand_chacha 0.3.1",
  "rand_core 0.6.4",
 ]
 
@@ -5351,7 +5347,7 @@ version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
- "rand_chacha 0.9.0",
+ "rand_chacha",
  "rand_core 0.9.5",
 ]
 
@@ -5364,16 +5360,6 @@ dependencies = [
  "chacha20",
  "getrandom 0.4.3",
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.6.4",
 ]
 
 [[package]]

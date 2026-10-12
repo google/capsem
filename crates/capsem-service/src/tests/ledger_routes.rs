@@ -853,7 +853,7 @@ async fn db_boundary_route_contract_db_handle_route_rewire() {
             .encode()
             .unwrap();
     let expected_bodies = json!({"abcdef123456": [{
-        "body_hash": format!("blake3:{}", blake3::hash(&forensic).to_hex()),
+        "body_hash": format!("blake3:{}", capsem_crypto::blake3::hash(&forensic).to_hex()),
         "content_type": "application/vnd.capsem.security+msgpack",
         "direction": "payload",
         "event_id": "abcdef123456",

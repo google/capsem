@@ -292,7 +292,7 @@ const TEST_RUNTIME_ASSETS: [(&str, &[u8]); 3] = [
 const TEST_ASSET_VERSION: &str = "2030.0101.1";
 
 fn test_asset_hex(body: &[u8]) -> String {
-    blake3::hash(body).to_hex().to_string()
+    capsem_crypto::blake3::hash(body).to_hex().to_string()
 }
 
 /// A format-2 manifest whose one release, for this host's architecture, is

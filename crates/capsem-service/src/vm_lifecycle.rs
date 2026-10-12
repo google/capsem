@@ -59,7 +59,7 @@ pub(super) fn persistent_resume_state_fingerprint(state: &ServiceState, entry: &
 pub(super) fn small_file_fingerprint(path: &StdPath) -> Option<String> {
     std::fs::read(path)
         .ok()
-        .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
+        .map(|bytes| capsem_crypto::blake3::hash(&bytes).to_hex().to_string())
 }
 
 pub(super) fn file_metadata_fingerprint(path: &StdPath) -> Option<(u64, u128)> {

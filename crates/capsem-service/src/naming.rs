@@ -1,7 +1,6 @@
 //! VM-name helpers: generated session names and persistent-name validation.
 
 use anyhow::{anyhow, Result};
-use rand::Rng;
 
 /// The first free `vm-N` among `existing` names.
 pub fn generate_session_name<I, S>(existing: I) -> String
@@ -20,7 +19,7 @@ where
             return candidate;
         }
     }
-    format!("{base}-{}", rand::thread_rng().gen_range(10_000..99_999))
+    format!("{base}-{}", capsem_crypto::random::range_u32(10_000..99_999))
 }
 
 /// Validate that a persistent VM name is safe for use as a directory name.
