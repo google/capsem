@@ -661,7 +661,7 @@ def manifest_digest(options):
 
 
 @contextlib.contextmanager
-def verified_blob(share, digest, size=None, limit=None, destination=None):
+def verified_blob(share, digest, size=None, limit=None, destination=None, integrity=None):
     """Hold the exact regular blob verified, optionally copying its bytes.
 
     A filesystem mount uses this descriptor, so checking and using cannot
@@ -672,12 +672,24 @@ def verified_blob(share, digest, size=None, limit=None, destination=None):
     if size is not None and not (type(size) is int and size >= 0):
         raise ValueError(f"refusing OCI blob size {size!r} for {digest}")
     hexdigest = digest.removeprefix("sha256:")
-    hasher = hashlib.sha256()
+    hasher = hashlib.sha256() if integrity is None else None
     count = 0
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
     with os.fdopen(os.open(share / hexdigest, flags), "rb") as source:
         if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
             raise ValueError(f"OCI blob {digest} is not a regular file")
+        if integrity is not None:
+            if destination is not None or size is None or os.fstat(source.fileno()).st_size != size:
+                raise ValueError("invalid prepared root integrity bounds")
+            if not re.fullmatch(r"blake3:[0-9a-f]{64}", integrity):
+                raise ValueError("invalid prepared root BLAKE3 integrity digest")
+            try:
+                command("/run/capsem-sysutil", "verify-blob", integrity, str(size), stdin=source)
+            except subprocess.CalledProcessError as error:
+                raise ValueError("prepared root BLAKE3 integrity mismatch") from error
+            source.seek(0)
+            yield source, size
+            return
         output_context = (
             destination.open("xb") if destination is not None else contextlib.nullcontext()
         )
@@ -762,9 +774,11 @@ def published_root(options, id_map, share=None, run=None):
     descriptor = options.get("rootfs")
     if (
         not isinstance(descriptor, dict)
-        or set(descriptor) != {"digest", "size"}
+        or set(descriptor) != {"digest", "integrity", "size"}
         or not isinstance(descriptor["digest"], str)
         or not DIGEST.fullmatch(descriptor["digest"])
+        or not isinstance(descriptor["integrity"], str)
+        or not re.fullmatch(r"blake3:[0-9a-f]{64}", descriptor["integrity"])
         or type(descriptor["size"]) is not int
         or not 0 < descriptor["size"] <= ROOTFS_LIMIT
     ):
@@ -790,7 +804,7 @@ def published_root(options, id_map, share=None, run=None):
         )
         startup_mark("erofs_verify_start")
         with verified_blob(
-            blobs, descriptor["digest"], size=descriptor["size"], limit=ROOTFS_LIMIT
+            blobs, descriptor["digest"], size=descriptor["size"], limit=ROOTFS_LIMIT, integrity=descriptor["integrity"]
         ) as (blob, _):
             startup_mark("erofs_verified")
             try:
