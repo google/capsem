@@ -64,6 +64,23 @@ enum RemoteMessage {
     },
 }
 
+enum AdmissionMessage {
+    Operation {
+        message: RemoteMessage,
+        commitment: Option<LedgerCommitment>,
+    },
+    Shutdown,
+}
+
+enum AdmissionResult {
+    Operation {
+        message: RemoteMessage,
+        commitment: Option<LedgerCommitment>,
+        result: Result<LedgerReply, String>,
+    },
+    Shutdown(Result<LedgerReply, String>),
+}
+
 pub(super) struct RemoteWriter {
     tx: Mutex<Option<mpsc::SyncSender<RemoteMessage>>>,
     join: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -219,17 +236,6 @@ fn run(
             return;
         }
     };
-    let channel = {
-        let _entered = runtime.enter();
-        ipc_channel::channel_from_std::<LedgerClientMessage, LedgerServerMessage>(stream)
-    };
-    let (sender, receiver) = match channel {
-        Ok(channel) => channel,
-        Err(error) => {
-            let _ = startup.send(Err(format!("open ledger client channel: {error}")));
-            return;
-        }
-    };
     let commitment_channel = {
         let _entered = runtime.enter();
         ipc_channel::channel_from_std::<CommitmentClientMessage, CommitmentServerMessage>(commitment_stream)
@@ -242,12 +248,171 @@ fn run(
         }
     };
     let handshake = runtime.block_on(async {
-        tokio::time::timeout(OPERATION_TIMEOUT, async {
-            handshake(&sender, &receiver, grant).await?;
-            commitment_handshake(&commitment_sender, &commitment_receiver, grant).await
-        })
+        tokio::time::timeout(
+            OPERATION_TIMEOUT,
+            commitment_handshake(&commitment_sender, &commitment_receiver, grant),
+        )
         .await
-        .map_err(|_| "ledger client handshake timed out".to_string())?
+        .map_err(|_| "ledger commitment handshake timed out".to_string())?
+    });
+    if let Err(error) = handshake {
+        let _ = startup.send(Err(error));
+        return;
+    }
+    let (admission_tx, admission_rx) = mpsc::sync_channel(1);
+    let (result_tx, result_rx) = mpsc::channel();
+    let (admission_startup_tx, admission_startup_rx) = mpsc::sync_channel(1);
+    let admission_abort = match stream.try_clone() {
+        Ok(abort) => abort,
+        Err(error) => {
+            let _ = startup.send(Err(format!("clone ledger client channel: {error}")));
+            return;
+        }
+    };
+    let admission = match std::thread::Builder::new()
+        .name("capsem-ledger-admission".into())
+        .spawn(move || admission_run(stream, grant, admission_rx, result_tx, admission_startup_tx))
+    {
+        Ok(admission) => admission,
+        Err(error) => {
+            let _ = startup.send(Err(format!("spawn ledger admission stage: {error}")));
+            return;
+        }
+    };
+    match admission_startup_rx.recv_timeout(STARTUP_TIMEOUT) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            let _ = admission.join();
+            let _ = startup.send(Err(error));
+            return;
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let _ = admission_abort.shutdown(std::net::Shutdown::Both);
+            let _ = admission.join();
+            let _ = startup.send(Err("ledger admission stage startup timed out".into()));
+            return;
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            let _ = admission.join();
+            let _ = startup.send(Err("ledger admission stage stopped during startup".into()));
+            return;
+        }
+    }
+    if startup.send(Ok(())).is_err() {
+        return;
+    }
+
+    let mut commitments = CommitmentState::new(commitment_sender, commitment_receiver, grant);
+    let mut failure = None;
+    loop {
+        while let Ok(result) = result_rx.try_recv() {
+            if let Err(error) = apply_admission_result(&runtime, &mut commitments, result) {
+                failure = Some(error);
+                break;
+            }
+        }
+        if failure.is_some() {
+            break;
+        }
+        let message = match messages.recv_timeout(Duration::from_millis(1)) {
+            Ok(message) => message,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if admission_tx.send(AdmissionMessage::Shutdown).is_err() {
+                    failure = Some("ledger admission stage stopped before shutdown flush".into());
+                    break;
+                }
+                loop {
+                    match result_rx.recv_timeout(OPERATION_TIMEOUT) {
+                        Ok(AdmissionResult::Shutdown(result)) => {
+                            if let Err(error) = apply_shutdown_result(&runtime, &mut commitments, result) {
+                                tracing::error!(%error, "ledger client shutdown left an unanchored tail");
+                            }
+                            break;
+                        }
+                        Ok(result) => {
+                            if let Err(error) = apply_admission_result(&runtime, &mut commitments, result) {
+                                tracing::error!(%error, "ledger client stopped while draining admissions");
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            tracing::error!(%error, "ledger admission stage did not complete shutdown");
+                            break;
+                        }
+                    }
+                }
+                drop(admission_tx);
+                let _ = admission.join();
+                return;
+            }
+        };
+        let commitment = if let RemoteMessage::Admit { event, .. } = &message {
+            match runtime.block_on(async {
+                tokio::time::timeout(OPERATION_TIMEOUT, commitments.reserve(event))
+                    .await
+                    .map_err(|_| "ledger commitment reservation timed out".to_string())?
+            }) {
+                Ok(commitment) => Some(commitment),
+                Err(error) => {
+                    finish(message, Err(error.clone()));
+                    failure = Some(error);
+                    break;
+                }
+            }
+        } else {
+            None
+        };
+        if let Err(error) = admission_tx.send(AdmissionMessage::Operation { message, commitment }) {
+            let AdmissionMessage::Operation { message, .. } = error.0 else {
+                unreachable!("only operation messages are sent here")
+            };
+            let reason = "ledger admission stage stopped".to_string();
+            finish(message, Err(reason.clone()));
+            failure = Some(reason);
+            break;
+        }
+    }
+    drop(admission_tx);
+    let _ = admission_abort.shutdown(std::net::Shutdown::Both);
+    let _ = admission.join();
+    let reason = failure.unwrap_or_else(|| "ledger client stopped".into());
+    tracing::error!(error = %reason, "ledger client operation failed");
+    while let Ok(result) = result_rx.try_recv() {
+        fail_admission_result(result, &reason);
+    }
+    fail_pending(&messages, &reason);
+}
+
+fn admission_run(
+    stream: UnixStream,
+    grant: LedgerChannelGrant,
+    messages: mpsc::Receiver<AdmissionMessage>,
+    results: mpsc::Sender<AdmissionResult>,
+    startup: mpsc::SyncSender<Result<(), String>>,
+) {
+    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            let _ = startup.send(Err(format!("build ledger admission runtime: {error}")));
+            return;
+        }
+    };
+    let channel = {
+        let _entered = runtime.enter();
+        ipc_channel::channel_from_std::<LedgerClientMessage, LedgerServerMessage>(stream)
+    };
+    let (sender, receiver) = match channel {
+        Ok(channel) => channel,
+        Err(error) => {
+            let _ = startup.send(Err(format!("open ledger client channel: {error}")));
+            return;
+        }
+    };
+    let handshake = runtime.block_on(async {
+        tokio::time::timeout(OPERATION_TIMEOUT, handshake(&sender, &receiver, grant))
+            .await
+            .map_err(|_| "ledger client handshake timed out".to_string())?
     });
     if let Err(error) = handshake {
         let _ = startup.send(Err(error));
@@ -258,40 +423,57 @@ fn run(
     }
 
     let mut request_id = 1_u64;
-    let mut commitments = CommitmentState::new(commitment_sender, commitment_receiver, grant);
     while let Ok(message) = messages.recv() {
-        let result = runtime.block_on(async {
-            tokio::time::timeout(
-                OPERATION_TIMEOUT,
-                dispatch(&sender, &receiver, request_id, &message, &mut commitments),
-            )
-            .await
-            .map_err(|_| "ledger client operation timed out".to_string())?
-        });
-        finish(message, result.clone());
-        if let Err(error) = result {
-            tracing::error!(%error, "ledger client operation failed");
-            fail_pending(&messages, &error);
+        let (result, response) = match message {
+            AdmissionMessage::Operation { message, commitment } => {
+                let result = runtime.block_on(async {
+                    tokio::time::timeout(
+                        OPERATION_TIMEOUT,
+                        dispatch_admission(&sender, &receiver, request_id, &message, commitment.as_ref()),
+                    )
+                    .await
+                    .map_err(|_| "ledger client operation timed out".to_string())?
+                });
+                let failed = result.is_err();
+                (
+                    failed,
+                    AdmissionResult::Operation {
+                        message,
+                        commitment,
+                        result,
+                    },
+                )
+            }
+            AdmissionMessage::Shutdown => {
+                let result = runtime.block_on(async {
+                    tokio::time::timeout(OPERATION_TIMEOUT, flush_admissions(&sender, &receiver, request_id))
+                        .await
+                        .map_err(|_| "ledger client shutdown flush timed out".to_string())?
+                });
+                let _ = results.send(AdmissionResult::Shutdown(result));
+                return;
+            }
+        };
+        if results.send(response).is_err() {
+            return;
+        }
+        if result {
+            while let Ok(message) = messages.try_recv() {
+                fail_admission_message(
+                    message,
+                    &results,
+                    "ledger admission stage stopped after an operation failed",
+                );
+            }
             return;
         }
         let Some(next) = request_id.checked_add(1) else {
-            fail_pending(&messages, "ledger request id exhausted");
+            while let Ok(message) = messages.try_recv() {
+                fail_admission_message(message, &results, "ledger request id exhausted");
+            }
             return;
         };
         request_id = next;
-    }
-    if !commitments.pending.is_empty() {
-        let result = runtime.block_on(async {
-            tokio::time::timeout(
-                OPERATION_TIMEOUT,
-                flush_and_anchor(&sender, &receiver, request_id, &mut commitments),
-            )
-            .await
-            .map_err(|_| "ledger client shutdown flush timed out".to_string())?
-        });
-        if let Err(error) = result {
-            tracing::error!(%error, "ledger client shutdown left an unanchored tail");
-        }
     }
 }
 
@@ -418,22 +600,6 @@ impl CommitmentState {
         Ok(commitment)
     }
 
-    async fn cancel(&mut self, commitment: &LedgerCommitment) -> Result<(), String> {
-        let reply = self
-            .request(CommitmentCommand::Cancel {
-                global_sequence: commitment.global_sequence(),
-            })
-            .await?;
-        if !matches!(reply, CommitmentReply::Canceled) {
-            return Err(format!(
-                "ledger commitment coordinator returned {reply:?} for cancellation"
-            ));
-        }
-        self.producer_sequence = self.producer_sequence.saturating_sub(1);
-        self.previous_hash = commitment.previous_hash();
-        Ok(())
-    }
-
     async fn anchor_through(&mut self, through_admission_id: u64) -> Result<(), String> {
         let count = self
             .pending
@@ -458,94 +624,134 @@ impl CommitmentState {
     }
 }
 
-async fn dispatch(
+async fn dispatch_admission(
     sender: &ClientSender,
     receiver: &ClientReceiver,
     request_id: u64,
     message: &RemoteMessage,
-    commitments: &mut CommitmentState,
+    commitment: Option<&LedgerCommitment>,
 ) -> Result<LedgerReply, String> {
-    let reserved = match message {
-        RemoteMessage::Admit { event, .. } => Some(commitments.reserve(event).await?),
-        _ => None,
-    };
     let command = match message {
         RemoteMessage::Admit { event, .. } => LedgerCommand::Admit {
             event: event.clone(),
-            commitment: reserved.clone().expect("admission reserved above"),
+            commitment: commitment.cloned().expect("admission was reserved before dispatch"),
         },
         RemoteMessage::Flush { .. } => LedgerCommand::Flush,
         RemoteMessage::Retain { cutoff, .. } => LedgerCommand::Retain { cutoff: cutoff.clone() },
     };
-    let response = async {
-        sender
-            .send(LedgerClientMessage::Request {
-                request: LedgerRequest::new(request_id, command).map_err(|error| error.to_string())?,
-            })
-            .await
-            .map_err(|error| format!("send ledger request: {error}"))?;
-        let message = receiver
-            .recv()
-            .await
-            .map_err(|error| format!("receive ledger response: {error}"))?;
-        let LedgerServerMessage::Response { response } = message else {
-            return Err("ledger worker repeated welcome".to_string());
-        };
-        if response.request_id() != request_id {
-            return Err(format!(
-                "ledger response id {} does not match {request_id}",
-                response.request_id()
-            ));
-        }
-        match response.outcome() {
-            LedgerOutcome::Success { reply } => {
-                reply.validate().map_err(|error| error.to_string())?;
-                Ok(reply.clone())
-            }
-            LedgerOutcome::Failure { failure } => Err(format!("ledger {:?}: {}", failure.code(), failure.message())),
-        }
+    sender
+        .send(LedgerClientMessage::Request {
+            request: LedgerRequest::new(request_id, command).map_err(|error| error.to_string())?,
+        })
+        .await
+        .map_err(|error| format!("send ledger request: {error}"))?;
+    let message = receiver
+        .recv()
+        .await
+        .map_err(|error| format!("receive ledger response: {error}"))?;
+    let LedgerServerMessage::Response { response } = message else {
+        return Err("ledger worker repeated welcome".to_string());
+    };
+    if response.request_id() != request_id {
+        return Err(format!(
+            "ledger response id {} does not match {request_id}",
+            response.request_id()
+        ));
     }
-    .await;
-    match (response, reserved) {
-        (Ok(LedgerReply::Accepted { admission_id }), Some(commitment)) => {
-            commitments.pending.push((admission_id, commitment));
-            Ok(LedgerReply::Accepted { admission_id })
+    match response.outcome() {
+        LedgerOutcome::Success { reply } => {
+            reply.validate().map_err(|error| error.to_string())?;
+            Ok(reply.clone())
         }
-        (Ok(LedgerReply::Durable { through_admission_id }), None) => {
-            commitments.anchor_through(through_admission_id).await?;
-            Ok(LedgerReply::Durable { through_admission_id })
-        }
-        (Err(error), Some(commitment)) => {
-            let cancellation = commitments.cancel(&commitment).await;
-            Err(match cancellation {
-                Ok(()) => error,
-                Err(cancel) => format!("{error}; commitment cancellation failed: {cancel}"),
-            })
-        }
-        (result, _) => result,
+        LedgerOutcome::Failure { failure } => Err(format!("ledger {:?}: {}", failure.code(), failure.message())),
     }
 }
 
-async fn flush_and_anchor(
+async fn flush_admissions(
     sender: &ClientSender,
     receiver: &ClientReceiver,
     request_id: u64,
-    commitments: &mut CommitmentState,
-) -> Result<(), String> {
-    let reply = dispatch(
+) -> Result<LedgerReply, String> {
+    dispatch_admission(
         sender,
         receiver,
         request_id,
         &RemoteMessage::Flush {
             reply: oneshot::channel().0,
         },
-        commitments,
+        None,
     )
-    .await?;
-    if matches!(reply, LedgerReply::Durable { .. }) {
-        Ok(())
-    } else {
-        Err(format!("ledger returned {reply:?} for shutdown flush"))
+    .await
+}
+
+fn apply_admission_result(
+    runtime: &tokio::runtime::Runtime,
+    commitments: &mut CommitmentState,
+    result: AdmissionResult,
+) -> Result<(), String> {
+    let AdmissionResult::Operation {
+        message,
+        commitment,
+        result,
+    } = result
+    else {
+        return Err("ledger admission stage sent an unexpected shutdown result".into());
+    };
+    let result = match (result, commitment) {
+        (Ok(LedgerReply::Accepted { admission_id }), Some(commitment)) => {
+            commitments.pending.push((admission_id, commitment));
+            Ok(LedgerReply::Accepted { admission_id })
+        }
+        (Ok(LedgerReply::Durable { through_admission_id }), None) => {
+            runtime.block_on(async {
+                tokio::time::timeout(OPERATION_TIMEOUT, commitments.anchor_through(through_admission_id))
+                    .await
+                    .map_err(|_| "ledger commitment checkpoint timed out".to_string())?
+            })?;
+            Ok(LedgerReply::Durable { through_admission_id })
+        }
+        (Ok(reply @ LedgerReply::Retained { .. }), None) => Ok(reply),
+        (Ok(reply), _) => Err(format!("ledger returned {reply:?} for the staged operation")),
+        (Err(error), _) => Err(error),
+    };
+    let failed = result.as_ref().err().cloned();
+    finish(message, result);
+    failed.map_or(Ok(()), Err)
+}
+
+fn apply_shutdown_result(
+    runtime: &tokio::runtime::Runtime,
+    commitments: &mut CommitmentState,
+    result: Result<LedgerReply, String>,
+) -> Result<(), String> {
+    let LedgerReply::Durable { through_admission_id } = result? else {
+        return Err("ledger returned a non-durable shutdown response".into());
+    };
+    runtime.block_on(async {
+        tokio::time::timeout(OPERATION_TIMEOUT, commitments.anchor_through(through_admission_id))
+            .await
+            .map_err(|_| "ledger commitment shutdown checkpoint timed out".to_string())?
+    })
+}
+
+fn fail_admission_message(message: AdmissionMessage, results: &mpsc::Sender<AdmissionResult>, reason: &str) {
+    match message {
+        AdmissionMessage::Operation { message, commitment } => {
+            let _ = results.send(AdmissionResult::Operation {
+                message,
+                commitment,
+                result: Err(reason.into()),
+            });
+        }
+        AdmissionMessage::Shutdown => {
+            let _ = results.send(AdmissionResult::Shutdown(Err(reason.into())));
+        }
+    }
+}
+
+fn fail_admission_result(result: AdmissionResult, reason: &str) {
+    if let AdmissionResult::Operation { message, .. } = result {
+        finish(message, Err(reason.into()));
     }
 }
 

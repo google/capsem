@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 
-use crate::ledger_protocol::{LedgerClientMessage, LedgerServerMessage};
+use crate::ledger_protocol::{LedgerClientMessage, LedgerResponse, LedgerServerMessage};
 use crate::ledger_server::LedgerServer;
 use crate::{Decision, NetEvent, WriteOp};
 
@@ -141,6 +141,228 @@ async fn descriptor_writer_preserves_blocking_and_try_admission_order() {
         task.await.unwrap().unwrap(),
         crate::ledger_server::LedgerClientExit::Disconnected
     );
+}
+
+#[tokio::test]
+async fn the_next_commitment_reservation_overlaps_the_previous_admission() {
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([8; 16]), 12, LedgerClientRole::VmOwner).unwrap();
+    let (ledger_client, ledger_server) = UnixStream::pair().unwrap();
+    let (commitment_client, commitment_server) = UnixStream::pair().unwrap();
+    let second_reserved = Arc::new(tokio::sync::Notify::new());
+    let commitment_signal = Arc::clone(&second_reserved);
+    let commitment_task = tokio::spawn(async move {
+        let (responses, requests) = capsem_foundation::ipc_channel::channel_from_std::<
+            CommitmentServerMessage,
+            CommitmentClientMessage,
+        >(commitment_server)
+        .unwrap();
+        let CommitmentClientMessage::Hello { hello } = requests.recv().await.unwrap() else {
+            panic!("expected commitment hello")
+        };
+        grant.validate_hello(&hello).unwrap();
+        responses
+            .send(CommitmentServerMessage::Welcome {
+                welcome: capsem_proto::ledger::LedgerWelcome::for_grant(&grant),
+            })
+            .await
+            .unwrap();
+        let mut sequence = 0_u64;
+        let mut pending = Vec::new();
+        loop {
+            let CommitmentClientMessage::Request { request_id, command } = requests.recv().await.unwrap() else {
+                panic!("unexpected repeated commitment hello")
+            };
+            let reply = match command {
+                capsem_proto::ledger_commitment::CommitmentCommand::Reserve {
+                    producer_sequence,
+                    event_kind,
+                    event_hash,
+                    previous_hash,
+                } => {
+                    sequence += 1;
+                    let commitment = LedgerCommitment::new(
+                        grant,
+                        producer_sequence,
+                        sequence,
+                        event_kind,
+                        event_hash,
+                        previous_hash,
+                    )
+                    .unwrap();
+                    pending.push(commitment);
+                    if sequence == 2 {
+                        commitment_signal.notify_one();
+                    }
+                    CommitmentReply::Reserved {
+                        global_sequence: sequence,
+                    }
+                }
+                capsem_proto::ledger_commitment::CommitmentCommand::Anchor { commitments } => {
+                    assert_eq!(commitments, pending);
+                    pending.clear();
+                    CommitmentReply::Anchored { checkpoint_sequence: 1 }
+                }
+                command => panic!("unexpected commitment command: {command:?}"),
+            };
+            responses
+                .send(CommitmentServerMessage::Response { request_id, reply })
+                .await
+                .unwrap();
+            if sequence == 2 && pending.is_empty() {
+                return;
+            }
+        }
+    });
+    let ledger_task = tokio::spawn(async move {
+        let (responses, requests) =
+            capsem_foundation::ipc_channel::channel_from_std::<LedgerServerMessage, LedgerClientMessage>(ledger_server)
+                .unwrap();
+        let LedgerClientMessage::Hello { hello } = requests.recv().await.unwrap() else {
+            panic!("expected ledger hello")
+        };
+        grant.validate_hello(&hello).unwrap();
+        responses
+            .send(LedgerServerMessage::Welcome {
+                welcome: capsem_proto::ledger::LedgerWelcome::for_grant(&grant),
+            })
+            .await
+            .unwrap();
+        for admission_id in 1..=2 {
+            let LedgerClientMessage::Request { request } = requests.recv().await.unwrap() else {
+                panic!("unexpected repeated ledger hello")
+            };
+            assert!(matches!(
+                request.operation(),
+                crate::ledger_protocol::LedgerCommand::Admit { .. }
+            ));
+            if admission_id == 1 {
+                second_reserved.notified().await;
+            }
+            responses
+                .send(LedgerServerMessage::Response {
+                    response: LedgerResponse::success(
+                        request.request_id(),
+                        crate::ledger_protocol::LedgerReply::Accepted { admission_id },
+                    )
+                    .unwrap(),
+                })
+                .await
+                .unwrap();
+        }
+        let LedgerClientMessage::Request { request } = requests.recv().await.unwrap() else {
+            panic!("unexpected repeated ledger hello")
+        };
+        assert!(matches!(
+            request.operation(),
+            crate::ledger_protocol::LedgerCommand::Flush
+        ));
+        responses
+            .send(LedgerServerMessage::Response {
+                response: LedgerResponse::success(
+                    request.request_id(),
+                    crate::ledger_protocol::LedgerReply::Durable {
+                        through_admission_id: 2,
+                    },
+                )
+                .unwrap(),
+            })
+            .await
+            .unwrap();
+    });
+    let writer = tokio::task::spawn_blocking(move || {
+        crate::DbWriter::from_ledger_channel(
+            ledger_client,
+            commitment_client,
+            grant,
+            std::path::Path::new("capability:test"),
+            4,
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    let (first, second) = tokio::join!(
+        writer.write_checked(event_with_id("one.example", "0123456789ae")),
+        writer.write_checked(event_with_id("two.example", "0123456789af")),
+    );
+    first.unwrap();
+    second.unwrap();
+    writer.flush_checked().await.unwrap();
+    commitment_task.await.unwrap();
+    ledger_task.await.unwrap();
+    tokio::task::spawn_blocking(move || writer.shutdown_blocking())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_flush_splits_more_than_one_checkpoint_of_commitments() {
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([7; 16]), 11, LedgerClientRole::VmOwner).unwrap();
+    let (client, server) = UnixStream::pair().unwrap();
+    let serving = tokio::spawn(async move {
+        let (responses, requests) = capsem_foundation::ipc_channel::channel_from_std::<
+            CommitmentServerMessage,
+            CommitmentClientMessage,
+        >(server)
+        .unwrap();
+        let mut batch_sizes = Vec::new();
+        loop {
+            let Ok(CommitmentClientMessage::Request {
+                request_id,
+                command: capsem_proto::ledger_commitment::CommitmentCommand::Anchor { commitments },
+            }) = requests.recv().await
+            else {
+                break;
+            };
+            if commitments.is_empty() || commitments.len() > MAX_COMMITMENTS_PER_CHECKPOINT {
+                responses
+                    .send(CommitmentServerMessage::Response {
+                        request_id,
+                        reply: CommitmentReply::Failed {
+                            message: "checkpoint batch exceeds its bound".into(),
+                        },
+                    })
+                    .await
+                    .unwrap();
+                continue;
+            }
+            batch_sizes.push(commitments.len());
+            responses
+                .send(CommitmentServerMessage::Response {
+                    request_id,
+                    reply: CommitmentReply::Anchored {
+                        checkpoint_sequence: batch_sizes.len() as u64,
+                    },
+                })
+                .await
+                .unwrap();
+        }
+        batch_sizes
+    });
+    let (sender, receiver) =
+        capsem_foundation::ipc_channel::channel_from_std::<CommitmentClientMessage, CommitmentServerMessage>(client)
+            .unwrap();
+    let mut state = super::CommitmentState::new(sender, receiver, grant);
+    let mut previous_hash = ZERO_COMMITMENT_HASH;
+    for sequence in 1..=(MAX_COMMITMENTS_PER_CHECKPOINT as u64 + 1) {
+        let commitment = LedgerCommitment::new(
+            grant,
+            sequence,
+            sequence,
+            "net_event",
+            [sequence as u8; 32],
+            previous_hash,
+        )
+        .unwrap();
+        previous_hash = commitment.commitment_hash();
+        state.pending.push((sequence, commitment));
+    }
+
+    state.anchor_through(u64::MAX).await.unwrap();
+    assert!(state.pending.is_empty());
+    drop(state);
+    assert_eq!(serving.await.unwrap(), vec![MAX_COMMITMENTS_PER_CHECKPOINT, 1]);
 }
 
 #[tokio::test]
