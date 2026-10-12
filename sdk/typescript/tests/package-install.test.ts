@@ -1,5 +1,5 @@
 import {execFileSync, spawnSync} from 'node:child_process';
-import {createHash} from 'node:crypto';
+import {sha256} from '../tools/crypto.mjs';
 import {copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, relative, resolve, sep} from 'node:path';
@@ -11,7 +11,7 @@ interface Report {ok: boolean; sha256: string; version: string; httpPaths: strin
 
 const source = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(source, '../..');
-const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
+const sha = (path: string): string => sha256(readFileSync(path));
 
 it('prewarms offline without forwarding unsupported pnpm settings to npm', () => {
   const prewarm = spawnSync(process.execPath, [join(source, 'tools/prewarm-package.mjs')], {
