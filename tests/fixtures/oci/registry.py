@@ -6,12 +6,16 @@ import hashlib
 import http.server
 import json
 import re
+import shutil
 import ssl
 import subprocess
 import threading
 from pathlib import Path
 
+from tests.fixtures.oci.layout_registry import layout_registry
 from tests.fixtures.oci.prepare_redis import native_pin
+
+__all__ = ["layout_registry"]
 
 FIXTURES = Path(__file__).parent
 IMAGE = FIXTURES.parents[2] / "cache/target/tests/redis-image"
@@ -24,7 +28,9 @@ def _listed(section: str, key: str) -> set[str]:
     return set(re.findall(r'"([^"]+)"', found.group(1))) if found else set()
 
 
-def _grant(home: Path, sources: set[str], admit: set[str]) -> None:
+def _grant(
+    home: Path, sources: set[str], admit: set[str], *, catalog=None, certificate=None
+) -> None:
     """Add selectors to the service's own `[images]` policy in settings.toml,
     keeping what earlier grants listed."""
     path = home / "settings.toml"
@@ -36,7 +42,14 @@ def _grant(home: Path, sources: set[str], admit: set[str]) -> None:
     def listed(names: set[str]) -> str:
         return ", ".join(f'"{name}"' for name in sorted(names))
 
-    block = f"[images]\nsources = [{listed(sources)}]\nadmit = [{listed(admit)}]\n"
+    if catalog is not None:
+        catalog_config = f'catalog = "{catalog}"\ncatalog_ca = "{certificate}"\n'
+    else:
+        catalog_config = "\n".join(
+            line for line in section.splitlines() if line.startswith(("catalog =", "catalog_ca ="))
+        )
+        catalog_config = catalog_config + "\n" if catalog_config else "catalog = false\n"
+    block = f"[images]\nsources = [{listed(sources)}]\nadmit = [{listed(admit)}]\n{catalog_config}"
     text = re.sub(r"\[images\]\n(?:[^\[\n][^\n]*\n)*", "", text)
     path.write_text(text + ("\n" if text and not text.endswith("\n") else "") + block)
 
@@ -53,13 +66,13 @@ def grant_image(home: Path, reference: str) -> None:
     _grant(home, {authority}, {authority})
 
 
-def grant_exact(home: Path, reference: str) -> None:
+def grant_exact(home: Path, reference: str, *, catalog=None, certificate=None) -> None:
     """Allow exactly one image: its repository as a source, that repository at
     that digest as the one image admitted. `reference` must carry its digest."""
     repository, separator, digest = reference.partition("@")
     if not separator or not digest.startswith("sha256:"):
         raise ValueError(f"an exact grant needs a digest reference, not {reference}")
-    _grant(home, {repository}, {reference})
+    _grant(home, {repository}, {reference}, catalog=catalog, certificate=certificate)
 
 
 @contextlib.contextmanager
@@ -81,8 +94,7 @@ def registry(directory, *, image_config=None, image="redis", artifacts=None):
         {
             "architecture": pin["platform"].split("/")[1],
             "os": "linux",
-            "config": image_config
-            or json.loads((FIXTURES / f"{image}-config.json").read_text()),
+            "config": image_config or json.loads((FIXTURES / f"{image}-config.json").read_text()),
             "rootfs": {"type": "layers", "diff_ids": ["sha256:" + diff_id]},
         },
         sort_keys=True,
@@ -98,27 +110,6 @@ def registry(directory, *, image_config=None, image="redis", artifacts=None):
         sort_keys=True,
     ).encode()
     with serve(directory, image, manifest, media, blobs.get, artifacts) as served:
-        yield served
-
-
-@contextlib.contextmanager
-def layout_registry(directory, layout, image):
-    """Serve the single-platform image in an OCI layout (`docker buildx build
-    --output type=oci,tar=false`) under `library/<image>`."""
-    layout = Path(layout)
-    (entry,) = json.loads((layout / "index.json").read_text())["manifests"]
-
-    def fetch(digest):
-        path = layout / "blobs" / "sha256" / digest.removeprefix("sha256:")
-        return (
-            path.read_bytes()
-            if digest.startswith("sha256:") and path.is_file()
-            else None
-        )
-
-    manifest = fetch(entry["digest"])
-    assert manifest is not None, entry
-    with serve(directory, image, manifest, entry["mediaType"], fetch) as served:
         yield served
 
 
@@ -197,12 +188,21 @@ def serve(directory, image, manifest, media, fetch, artifacts=None):
             self.send_response(200 if body is not None else 404)
             body = body or b""
             self.send_header("Content-Type", kind)
-            self.send_header("Content-Length", str(len(body)))
             self.send_header(
-                "Docker-Content-Digest", "sha256:" + hashlib.sha256(body).hexdigest()
+                "Content-Length", str(body.stat().st_size if isinstance(body, Path) else len(body))
+            )
+            self.send_header(
+                "Docker-Content-Digest",
+                "sha256:" + body.name
+                if isinstance(body, Path)
+                else "sha256:" + hashlib.sha256(body).hexdigest(),
             )
             self.end_headers()
-            self.wfile.write(body)
+            if isinstance(body, Path):
+                with body.open("rb") as source:
+                    shutil.copyfileobj(source, self.wfile, 1 << 20)
+            else:
+                self.wfile.write(body)
 
         def log_message(self, format, *args):
             pass

@@ -29,7 +29,6 @@ import os
 import re
 import shutil
 import ssl
-import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -71,9 +70,7 @@ def verify(layout: Path, digest: str, platform: str) -> None:
         raise ValueError(f"{layout}: manifest bytes do not hash to {digest}")
     manifest = json.loads(manifest_path.read_bytes())
     if manifest.get("mediaType") not in MANIFEST_TYPES:
-        raise ValueError(
-            f"{digest} is a {manifest.get('mediaType')}, not one platform's manifest"
-        )
+        raise ValueError(f"{digest} is a {manifest.get('mediaType')}, not one platform's manifest")
     for descriptor in (manifest["config"], *manifest["layers"]):
         path = _blob(layout, descriptor["digest"])
         if (
@@ -81,14 +78,10 @@ def verify(layout: Path, digest: str, platform: str) -> None:
             or path.stat().st_size != descriptor["size"]
             or _sha256(path) != descriptor["digest"]
         ):
-            raise ValueError(
-                f"{layout}: blob {descriptor['digest']} is missing or corrupt"
-            )
+            raise ValueError(f"{layout}: blob {descriptor['digest']} is missing or corrupt")
     image = json.loads(_blob(layout, manifest["config"]["digest"]).read_bytes())
     if f"{image['os']}/{image['architecture']}" != platform:
-        raise ValueError(
-            f"{digest} is {image['os']}/{image['architecture']}, not {platform}"
-        )
+        raise ValueError(f"{digest} is {image['os']}/{image['architecture']}, not {platform}")
 
 
 def _publish(staged: Path, layout: Path) -> None:
@@ -122,9 +115,7 @@ class _Registry:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         if accept:
             headers["Accept"] = accept
-        return self._opener.open(
-            urllib.request.Request(url, headers=headers), timeout=TIMEOUT
-        )
+        return self._opener.open(urllib.request.Request(url, headers=headers), timeout=TIMEOUT)
 
 
 def _token(client: _Registry, registry: str, name: str) -> str | None:
@@ -189,9 +180,7 @@ def pull(
         manifest = json.loads(manifest_bytes)
         for descriptor in (manifest["config"], *manifest["layers"]):
             blob = descriptor["digest"]
-            _fetch(
-                client, f"{base}/blobs/{blob}", token, None, _blob(staged, blob), blob
-            )
+            _fetch(client, f"{base}/blobs/{blob}", token, None, _blob(staged, blob), blob)
         os_name, architecture = platform.split("/")
         (staged / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
         entry = {
@@ -280,67 +269,18 @@ class PinnedImage:
             print(f"Verified cached {name} {platform}: {digest}")
         else:
             self.pull(digest, platform, layout)
-            print(
-                f"Pulled {name} {platform} by digest: {self.settings().repository}@{digest}"
-            )
+            print(f"Pulled {name} {platform} by digest: {self.settings().repository}@{digest}")
         # The stage is retained least-recently-used; using an entry is what keeps it.
         os.utime(layout)
+        from tests.fixtures.oci.published_root import prepare
+
+        prepare(layout, self.settings().repository)
         return layout
 
     def build(self, selected: str | None = None) -> str:
-        """Build the image into the stage by digest and load it as `<name>:<arch>` too.
+        from tests.fixtures.oci.image_build import build
 
-        An image built FROM a base (`base_context`) gets that base built first
-        and passed as its BASE argument, as the image workflow does.
-        """
-        settings = self.settings()
-        platform = self.platform_name(selected)
-        arch = platform.split("/")[1]
-        common = [
-            "docker",
-            "buildx",
-            "build",
-            "--platform",
-            platform,
-            "--provenance=false",
-            "--sbom=false",
-        ]
-        if settings.base_context:
-            base = f"{settings.name}-base:{arch}"
-            subprocess.run(
-                [*common, "--load", "--tag", base, str(ROOT / settings.base_context)],
-                check=True,
-                timeout=3600,
-            )
-            common += ["--build-arg", f"BASE={base}"]
-        context = str(ROOT / settings.context)
-        self.stage().mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=self.stage(), prefix=".build-") as tmp:
-            staged = Path(tmp) / "layout"
-            output = f"type=oci,tar=false,dest={staged}"
-            subprocess.run(
-                [*common, "--output", output, context], check=True, timeout=3600
-            )
-            (entry,) = json.loads((staged / "index.json").read_text())["manifests"]
-            digest = entry["digest"]
-            verify(staged, digest, platform)
-            layout = self.layout_path(digest)
-            if layout.is_dir():
-                verify(layout, digest, platform)
-            else:
-                _publish(staged, layout)
-        # The same build again from BuildKit's cache, loaded into Docker under a
-        # local tag, for images/ci/rootfs.py (the OBOM) and hands-on use.
-        tag = f"{settings.name}:{arch}"
-        subprocess.run(
-            [*common, "--load", "--tag", tag, context], check=True, timeout=3600
-        )
-        print(f"Built {settings.name} {platform}: {digest}")
-        print(f"  layout: {layout}")
-        print(f"  docker: {tag}")
-        print(f"Pin it in config/gate.toml [functional.{self.section}] digests:")
-        print(f'  "{platform}" = "{digest}"')
-        return digest
+        return build(self, selected)
 
 
 @functools.cache
