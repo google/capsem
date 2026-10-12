@@ -15,7 +15,8 @@ use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSend
 use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::proxy_control::{
     decode_proxy_control_event, encode_proxy_control_request, ProxyCapability, ProxyChannelCloseReason,
-    ProxyControlEvent, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
+    ProxyControlEvent, ProxyControlRejection, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE,
+    PROXY_CONTROL_MAX_FDS,
 };
 use capsem_proto::proxy_policy::{ProxyPolicyRequest, ProxyPolicyResponse};
 use tokio::process::{Child, Command};
@@ -291,6 +292,15 @@ enum PolicyApply {
     Rejected(String),
 }
 
+enum GrantApply {
+    Adopted,
+    Rejected {
+        capability: ProxyCapability,
+        grant_id: u64,
+        reason: ProxyControlRejection,
+    },
+}
+
 async fn launch(
     mut command: Command,
     generation: ProxyGeneration,
@@ -389,7 +399,7 @@ impl WorkerProcess {
         Ok(process)
     }
 
-    async fn grant(&mut self, capability: GrantedCapability, descriptors: Vec<OwnedFd>) -> Result<()> {
+    async fn grant(&mut self, capability: GrantedCapability, descriptors: Vec<OwnedFd>) -> Result<GrantApply> {
         let grant_id = self.allocate_grant_id()?;
         let grant = capability.channel_grant(self.generation, grant_id)?;
         if descriptors.len() != grant.expected_descriptor_count() {
@@ -410,18 +420,17 @@ impl WorkerProcess {
                 grant_id: adopted,
             } if generation == self.generation && adopted == grant_id => {
                 self.active_grants.insert(grant_id, capability.kind());
-                Ok(())
+                Ok(GrantApply::Adopted)
             }
             ProxyControlEvent::Rejected {
                 generation,
                 grant_id: rejected,
                 reason,
-            } if generation == self.generation && rejected == grant_id => {
-                bail!(
-                    "proxy worker rejected {:?} grant {grant_id}: {reason:?}",
-                    capability.kind()
-                )
-            }
+            } if generation == self.generation && rejected == grant_id => Ok(GrantApply::Rejected {
+                capability: capability.kind(),
+                grant_id,
+                reason,
+            }),
             event => bail!("proxy worker sent {event:?} while adopting grant {grant_id}"),
         }
     }
@@ -655,12 +664,28 @@ async fn supervise(
                         descriptors,
                         completed,
                     } => {
-                        let result = process.grant(capability, descriptors).await;
-                        let failed = result.is_err();
-                        let diagnostic = result.as_ref().err().map(|error| format!("{error:#}"));
-                        let _ = completed.send(result);
-                        if failed {
-                            break diagnostic.expect("failed result has diagnostic");
+                        match process.grant(capability, descriptors).await {
+                            Ok(GrantApply::Adopted) => {
+                                let _ = completed.send(Ok(()));
+                            }
+                            Ok(GrantApply::Rejected {
+                                capability,
+                                grant_id,
+                                reason,
+                            }) => {
+                                let diagnostic = format!(
+                                    "proxy worker rejected {capability:?} grant {grant_id}: {reason:?}"
+                                );
+                                let _ = completed.send(Err(anyhow!(diagnostic.clone())));
+                                if reason != ProxyControlRejection::Capacity {
+                                    break diagnostic;
+                                }
+                            }
+                            Err(error) => {
+                                let diagnostic = format!("{error:#}");
+                                let _ = completed.send(Err(error));
+                                break diagnostic;
+                            }
                         }
                     }
                     CommandRequest::ApplyPolicy { active_policy, completed } => {

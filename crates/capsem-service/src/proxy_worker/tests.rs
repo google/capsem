@@ -93,6 +93,7 @@ async fn fake_proxy_worker_child() {
     let (control_events_tx, mut control_events) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
     tokio::spawn(read_control(control_rx, control_events_tx));
     let mut policies = 0;
+    let mut traffic_grants = 0;
     let mut held = Vec::new();
     loop {
         tokio::select! {
@@ -119,6 +120,20 @@ async fn fake_proxy_worker_child() {
                         if mode == "ledger" {
                             assert_eq!(grant.capability(), ProxyCapability::Ledger);
                             assert_eq!(grant.ledger_grant(), Some(proxy_ledger_grant()));
+                        }
+                        if grant.capability() == ProxyCapability::HttpTraffic {
+                            traffic_grants += 1;
+                        }
+                        if mode == "capacity_once" && traffic_grants == 1 {
+                            control_tx.send(
+                                &encode_proxy_control_event(ProxyControlEvent::Rejected {
+                                    generation,
+                                    grant_id: grant.grant_id(),
+                                    reason: ProxyControlRejection::Capacity,
+                                }),
+                                &[],
+                            ).await.unwrap();
+                            continue;
                         }
                         held.extend(frame.fds.into_iter().map(UnixStream::from));
                         control_tx.send(
@@ -212,6 +227,26 @@ async fn ordinary_traffic_disconnect_does_not_terminate_the_proxy_generation() {
         digest,
         capsem_core::net::policy_config::active_policy_digest(ACTIVE_POLICY)
     );
+    worker.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn capacity_rejection_fails_only_the_grant_and_keeps_the_worker_healthy() {
+    let worker = fake("capacity_once").await.unwrap();
+    let (_first_peer, first) = UnixStream::pair().unwrap();
+    let error = worker
+        .grant(ProxyCapability::HttpTraffic, first.into())
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("Capacity"), "{error:#}");
+
+    let digest = worker.apply_policy(ACTIVE_POLICY.to_vec()).await.unwrap();
+    assert_eq!(
+        digest,
+        capsem_core::net::policy_config::active_policy_digest(ACTIVE_POLICY)
+    );
+    let (_second_peer, second) = UnixStream::pair().unwrap();
+    worker.grant(ProxyCapability::HttpTraffic, second.into()).await.unwrap();
     worker.shutdown().await.unwrap();
 }
 
