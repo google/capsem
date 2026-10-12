@@ -152,47 +152,30 @@ impl FuseProcessor {
         // without effect, as tools running as guest root (cp -a, tar -x)
         // require; it used to reach an unprivileged host
         // lchown and fail with EPERM.
-        if attr_in.valid & (FATTR_ATIME | FATTR_MTIME) != 0 {
-            let c_path = match std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) {
-                Ok(c) => c,
-                Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
+        if attr_in.valid & (FATTR_ATIME | FATTR_MTIME | FATTR_ATIME_NOW | FATTR_MTIME_NOW) != 0 {
+            use capsem_proto::upstream_grant::GuestFileTime;
+            let atime = if attr_in.valid & FATTR_ATIME_NOW != 0 {
+                GuestFileTime::Now
+            } else if attr_in.valid & FATTR_ATIME != 0 {
+                GuestFileTime::Exact {
+                    seconds: attr_in.atime as i64,
+                    nanoseconds: attr_in.atimensec,
+                }
+            } else {
+                GuestFileTime::Omit
             };
-            let times = [
-                libc::timespec {
-                    tv_sec: if attr_in.valid & FATTR_ATIME != 0 {
-                        attr_in.atime as i64
-                    } else {
-                        0
-                    },
-                    tv_nsec: if attr_in.valid & FATTR_ATIME != 0 {
-                        i64::from(attr_in.atimensec)
-                    } else {
-                        libc::UTIME_OMIT
-                    },
-                },
-                libc::timespec {
-                    tv_sec: if attr_in.valid & FATTR_MTIME != 0 {
-                        attr_in.mtime as i64
-                    } else {
-                        0
-                    },
-                    tv_nsec: if attr_in.valid & FATTR_MTIME != 0 {
-                        i64::from(attr_in.mtimensec)
-                    } else {
-                        libc::UTIME_OMIT
-                    },
-                },
-            ];
-            if unsafe {
-                libc::utimensat(
-                    libc::AT_FDCWD,
-                    c_path.as_ptr(),
-                    times.as_ptr(),
-                    libc::AT_SYMLINK_NOFOLLOW,
-                )
-            } != 0
-            {
-                return fuse::error_response(header.unique, -fuse::errno());
+            let mtime = if attr_in.valid & FATTR_MTIME_NOW != 0 {
+                GuestFileTime::Now
+            } else if attr_in.valid & FATTR_MTIME != 0 {
+                GuestFileTime::Exact {
+                    seconds: attr_in.mtime as i64,
+                    nanoseconds: attr_in.mtimensec,
+                }
+            } else {
+                GuestFileTime::Omit
+            };
+            if let Err(error) = self.set_guest_times(&path, atime, mtime) {
+                return fuse::error_response(header.unique, -fuse::io_error_to_errno(&error));
             }
         }
 

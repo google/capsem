@@ -51,6 +51,8 @@ pub const FATTR_GID: u32 = 1 << 2;
 pub const FATTR_SIZE: u32 = 1 << 3;
 pub const FATTR_ATIME: u32 = 1 << 4;
 pub const FATTR_MTIME: u32 = 1 << 5;
+pub const FATTR_ATIME_NOW: u32 = 1 << 7;
+pub const FATTR_MTIME_NOW: u32 = 1 << 8;
 
 // File type masks
 pub const S_IFMT: u32 = 0o170000;

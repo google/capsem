@@ -15,8 +15,9 @@ use capsem_foundation::unix::fd::{self, SocketShutdown};
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::upstream_grant::{
-    decode_upstream_grant_response, encode_upstream_grant_request, ProxyTrafficService, UpstreamDescriptorKind,
-    UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
+    decode_upstream_grant_response, encode_upstream_grant_request, GuestFileTime, ProxyTrafficService,
+    UpstreamDescriptorKind, UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE,
+    UPSTREAM_GRANT_MAX_FDS,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -44,6 +45,12 @@ enum Command {
     SetGuestMode {
         relative_path: Vec<u8>,
         mode: u16,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    SetGuestTimes {
+        relative_path: Vec<u8>,
+        atime: GuestFileTime,
+        mtime: GuestFileTime,
         reply: oneshot::Sender<Result<(), String>>,
     },
     OpenDns {
@@ -148,6 +155,22 @@ impl crate::GuestMetadataAuthority for UpstreamGrantClient {
             .blocking_send(Command::SetGuestMode {
                 relative_path: relative_path.to_vec(),
                 mode,
+                reply,
+            })
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "upstream grant channel is closed"))?;
+        result
+            .blocking_recv()
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "upstream grant channel stopped"))?
+            .map_err(io::Error::other)
+    }
+
+    fn set_times(&self, relative_path: &[u8], atime: GuestFileTime, mtime: GuestFileTime) -> io::Result<()> {
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .blocking_send(Command::SetGuestTimes {
+                relative_path: relative_path.to_vec(),
+                atime,
+                mtime,
                 reply,
             })
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "upstream grant channel is closed"))?;
@@ -281,6 +304,15 @@ async fn dispatch(
         } => finish(
             reply,
             set_guest_mode(sender, receiver, request_id, relative_path, mode).await,
+        ),
+        Command::SetGuestTimes {
+            relative_path,
+            atime,
+            mtime,
+            reply,
+        } => finish(
+            reply,
+            set_guest_times(sender, receiver, request_id, relative_path, atime, mtime).await,
         ),
         Command::OpenDns {
             upstream_index,
@@ -452,6 +484,42 @@ async fn set_guest_mode(
         } if response_id == request_id => Ok(Err(format!("guest mode change denied: {reason:?}"))),
         response => Err(format!(
             "unexpected guest mode response for request {request_id}: {response:?}"
+        )),
+    }
+}
+
+async fn set_guest_times(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    request_id: u64,
+    relative_path: Vec<u8>,
+    atime: GuestFileTime,
+    mtime: GuestFileTime,
+) -> Result<Result<(), String>, String> {
+    send_request(
+        sender,
+        &UpstreamGrantRequest::SetGuestTimes {
+            request_id,
+            relative_path,
+            atime,
+            mtime,
+        },
+    )
+    .await?;
+    let (response, fds) = receive_response(receiver).await?;
+    if !fds.is_empty() {
+        return Err("guest timestamp response carried a descriptor".into());
+    }
+    match response {
+        UpstreamGrantResponse::GuestTimesSet {
+            request_id: response_id,
+        } if response_id == request_id => Ok(Ok(())),
+        UpstreamGrantResponse::Denied {
+            request_id: response_id,
+            reason,
+        } if response_id == request_id => Ok(Err(format!("guest timestamp change denied: {reason:?}"))),
+        response => Err(format!(
+            "unexpected guest timestamp response for request {request_id}: {response:?}"
         )),
     }
 }

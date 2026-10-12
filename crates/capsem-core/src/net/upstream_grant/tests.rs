@@ -7,8 +7,8 @@ use crate::net::mitm_proxy::{TcpUpstreamGrants, UpstreamTarget};
 use crate::GuestMetadataAuthority as _;
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use capsem_proto::upstream_grant::{
-    decode_upstream_grant_request, encode_upstream_grant_response, ProxyTrafficService, UpstreamDescriptorKind,
-    UpstreamGrantDenial, UpstreamGrantRequest, UpstreamGrantResponse,
+    decode_upstream_grant_request, encode_upstream_grant_response, GuestFileTime, ProxyTrafficService,
+    UpstreamDescriptorKind, UpstreamGrantDenial, UpstreamGrantRequest, UpstreamGrantResponse,
 };
 
 use super::*;
@@ -223,6 +223,49 @@ async fn guest_mode_changes_use_the_serialized_coordinator_channel() {
     tokio::task::spawn_blocking(move || {
         client_for_mode
             .set_mode(b"workspace/pyvenv/bin/activate", 0o755)
+            .unwrap();
+    })
+    .await
+    .unwrap();
+    broker_task.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn guest_timestamp_changes_use_the_serialized_coordinator_channel() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = Arc::new(UpstreamGrantClient::start(worker).unwrap());
+    let (requests, responses) = channels(broker);
+    let broker_task = tokio::spawn(async move {
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::SetGuestTimes {
+                request_id: 1,
+                relative_path: b"workspace/archive.txt".to_vec(),
+                atime: GuestFileTime::Omit,
+                mtime: GuestFileTime::Exact {
+                    seconds: 1234,
+                    nanoseconds: 5678,
+                },
+            }
+        );
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::GuestTimesSet { request_id: 1 },
+            None,
+        )
+        .await;
+    });
+    let client_for_times = Arc::clone(&client);
+    tokio::task::spawn_blocking(move || {
+        client_for_times
+            .set_times(
+                b"workspace/archive.txt",
+                GuestFileTime::Omit,
+                GuestFileTime::Exact {
+                    seconds: 1234,
+                    nanoseconds: 5678,
+                },
+            )
             .unwrap();
     })
     .await

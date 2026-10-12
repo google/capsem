@@ -74,6 +74,12 @@ pub enum ConfigError {
 /// safely perform itself.
 pub trait GuestMetadataAuthority: Send + Sync {
     fn set_mode(&self, relative_path: &[u8], mode: u16) -> std::io::Result<()>;
+    fn set_times(
+        &self,
+        relative_path: &[u8],
+        atime: capsem_proto::upstream_grant::GuestFileTime,
+        mtime: capsem_proto::upstream_grant::GuestFileTime,
+    ) -> std::io::Result<()>;
 }
 
 /// A VirtioFS shared directory to expose to the guest via virtio-fs.

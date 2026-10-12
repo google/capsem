@@ -75,6 +75,22 @@ impl FuseProcessor {
         authority.set_mode(relative.as_os_str().as_bytes(), (mode & 0o7777) as u16)
     }
 
+    fn set_guest_times(
+        &self,
+        path: &Path,
+        atime: capsem_proto::upstream_grant::GuestFileTime,
+        mtime: capsem_proto::upstream_grant::GuestFileTime,
+    ) -> std::io::Result<()> {
+        let authority = self
+            .metadata_authority
+            .as_ref()
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EPERM))?;
+        let relative = path
+            .strip_prefix(&self.root_path)
+            .map_err(|_| std::io::Error::from_raw_os_error(libc::EACCES))?;
+        authority.set_times(relative.as_os_str().as_bytes(), atime, mtime)
+    }
+
     fn handle_request(&mut self, request_buf: &[u8]) -> Vec<u8> {
         let mut response = Vec::new();
         self.handle_request_into(request_buf, &mut response);
