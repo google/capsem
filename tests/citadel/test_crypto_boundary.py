@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER = Path("crates/capsem-crypto")
@@ -56,7 +56,7 @@ boundary. Protocol identities remain the caller's contract. See AGENTS.md.
 """
 NAMES = "|".join(re.escape(name.replace("-", "_")) for name in sorted(PROVIDERS))
 RAW_PATH = re.compile(
-    rf"\b(?:{NAMES})\s*::|::\s*crypto\b|\b(?:EVP_\w+|SHA256|SHA1|HMAC|RAND_bytes)\s*\("
+    rf"\b(?:{NAMES})\s*::|::\s*crypto\b|::\s*new_v4\s*\(|\b(?:EVP_\w+|SHA256|SHA1|HMAC|RAND_bytes)\s*\("
 )
 IMPORT = re.compile(r"\b(?:use|extern\s+crate)\b[^;]*;", re.DOTALL)
 RAW_IMPORT = re.compile(rf"\b(?:{NAMES})\b")
@@ -149,6 +149,7 @@ def test_crypto_providers_are_owned_only_by_capsem_crypto() -> None:
         "use rustls::crypto as provider;",
         "use rustls::{crypto as provider};",
         "use rustls as tls; tls::crypto::CryptoProvider::get_default();",
+    "Uuid::new_v4();", "use uuid::Uuid as Id; Id::new_v4();",
         'extern "C" { fn EVP_DigestUpdate(context: *mut u8); }',
     ],
 )
