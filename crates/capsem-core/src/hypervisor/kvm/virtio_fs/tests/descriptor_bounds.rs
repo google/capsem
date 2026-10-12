@@ -18,16 +18,16 @@ fn chain(descriptors: Vec<VirtqDesc>) -> DescriptorChain {
 }
 
 #[test]
-fn gather_readable_skips_descriptor_spilling_past_ram() {
+fn gather_readable_rejects_descriptor_spilling_past_ram() {
     let mem = GuestMemory::new(2 * 0x1000).unwrap();
     let memref = mem.clone_ref(RAM_BASE);
     mem.write_at(0x100, &[0x7Au8; 16]).unwrap();
     let ram = mem.size();
     let c = chain(vec![desc(RAM_BASE + 0x100, 16, 0), desc(RAM_BASE + ram - 8, 4096, 0)]);
 
-    let buf = gather_readable(&memref, &c).expect("gather within MAX_GATHER_SIZE");
-
-    assert_eq!(buf, vec![0x7Au8; 16]);
+    let mut buf = vec![0xFF; 64];
+    assert!(gather_readable(&memref, &c, &mut buf).is_none());
+    assert!(buf.is_empty(), "invalid descriptors must not leave a partial request");
 }
 
 #[test]

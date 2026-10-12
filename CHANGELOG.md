@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux VM RAM stays aligned for transparent huge pages, accelerating boot and
+  cold filesystem reads without eagerly allocating guest memory. VirtioFS
+  supports full one-MiB requests, event-index wakeups on fresh and resumed VMs,
+  and bounded reusable I/O buffers through the shared Unix owner.
+
 - Prepared EROFS images use a catalog-bound BLAKE3 integrity annotation for
   accelerated host and guest verification. The version 2 artifact contract
   retains OCI transport SHA-256 and exact size, subject and descriptor checks.

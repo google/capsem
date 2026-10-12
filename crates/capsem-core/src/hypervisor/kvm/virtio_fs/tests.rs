@@ -14,6 +14,8 @@ use tracing_subscriber::layer::Context as LayerContext;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::Layer;
 mod descriptor_bounds;
+mod io_buffers;
+mod queue_io;
 static EVENT_CAPTURE_LOCK: Mutex<()> = Mutex::new(());
 static EVENT_CAPTURE: OnceLock<EventCaptureState> = OnceLock::new();
 
@@ -407,18 +409,6 @@ fn closed_worker_notification_warns_once_and_disables_sender() {
 fn fs_device_type() {
     let dir = temp_share("dev-type");
     assert_eq!(test_device(&dir).device_type(), VIRTIO_ID_FS);
-}
-
-#[test]
-fn fs_features() {
-    let dir = temp_share("features");
-    assert_ne!(test_device(&dir).features() & VIRTIO_F_VERSION_1, 0);
-}
-
-#[test]
-fn fs_two_queues() {
-    let dir = temp_share("queues");
-    assert_eq!(test_device(&dir).queue_max_sizes(), &[QUEUE_SIZE, QUEUE_SIZE]);
 }
 
 #[test]

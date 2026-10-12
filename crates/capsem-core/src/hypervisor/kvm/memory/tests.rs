@@ -103,6 +103,29 @@ fn guest_memory_new_valid() {
 }
 
 #[test]
+fn guest_ram_and_kvm_slot_offsets_preserve_huge_page_alignment() {
+    const HUGE_PAGE: u64 = 2 * 1024 * 1024;
+    for size in [4096, HUGE_PAGE, 12 * 1024 * 1024 * 1024] {
+        let memory = GuestMemory::new(size).unwrap();
+        assert_eq!(
+            memory.as_ptr().addr() % HUGE_PAGE as usize,
+            0,
+            "4-KiB host backing once cost 1.5s reading EROFS and 1.1s booting Linux; guest RAM must stay 2-MiB aligned"
+        );
+        assert_eq!(memory.size(), size, "alignment must not increase advertised guest RAM");
+        #[cfg(target_arch = "x86_64")]
+        if size > PCI_HOLE_START {
+            assert_eq!(
+                memory.as_ptr_at(PCI_HOLE_START).unwrap().addr() % HUGE_PAGE as usize,
+                0,
+                "the KVM slot above the PCI hole must retain host huge-page alignment"
+            );
+            assert!(PCI_HOLE_END.is_multiple_of(HUGE_PAGE));
+        }
+    }
+}
+
+#[test]
 fn fresh_guest_memory_is_zeroed_without_reusing_a_previous_guests_bytes() {
     let size = 2 * 1024 * 1024;
     {
