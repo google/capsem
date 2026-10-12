@@ -164,7 +164,10 @@ the broker's hermetic OAuth endpoint -- stays a `"target": "vm"` exec.
    `uv run --project build_system --frozen python images/ci/rootfs.py --image capsem-debug:<arch> --arch <arch> --repository ghcr.io/google/capsem/capsem-debug --digest sha256:<hex digest> --out <dir>`
    and `oras attach --artifact-type application/vnd.cyclonedx+json ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/obom.cdx.json:application/vnd.cyclonedx+json`.
    Attach the prepared filesystem to the same platform subject too:
-   `oras attach --artifact-type application/vnd.capsem.rootfs.erofs.v1 ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/rootfs.erofs:application/vnd.capsem.rootfs.erofs.v1`.
+   `oras attach --artifact-type application/vnd.capsem.rootfs.erofs.v2 --annotation org.capsem.rootfs.blake3="$(cat <dir>/rootfs.blake3)" ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/rootfs.erofs:application/vnd.capsem.rootfs.erofs.v2`.
+   The pinned manifest binds the BLAKE3 annotation to the platform subject.
+   OCI transport retains SHA-256; host and guest verify the prepared EROFS
+   bytes with BLAKE3 before use. Version 1 roots are not admitted.
    The package must be public, or CI's anonymous pull by digest fails.
 5. x86_64: repeat 2-4 on a Linux x86_64 host (Colima on Apple Silicon has no
    amd64 emulator here) and add its `linux/amd64` digest beside the arm64 one.

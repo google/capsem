@@ -63,7 +63,7 @@ def test_a_producer_output_for_another_image_is_not_staged(tmp_path):
     )
     with pytest.raises(ValueError, match="subject"):
         stage(layout, output)
-    assert not (layout / "rootfs").exists()
+    assert not (layout / "rootfs-v2").exists()
 
 
 def test_the_registry_serves_the_catalog_and_subject_bound_root(tmp_path):
@@ -138,7 +138,7 @@ def test_prefetch_retains_a_verified_published_root_before_offline_tests(tmp_pat
                     image.split("@")[0],
                     context=ssl.create_default_context(cafile=str(certificate)),
                 )
-            assert not (target / "rootfs").exists()
+            assert not (target / "rootfs-v2").exists()
         else:
             prepare(
                 target,

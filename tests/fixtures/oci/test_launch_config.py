@@ -1,7 +1,6 @@
 """Guest launcher policy, exercised without executing an image on the host."""
 
 import contextlib
-import hashlib
 import importlib.util
 import json
 import shlex
@@ -9,16 +8,28 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder import crypto
+from capsem_builder import crypto as hashlib
 
 SOURCE = Path(__file__).resolve().parents[3] / "guest/artifacts/container/launch.py"
 
 
 @pytest.fixture
-def launcher():
+def launcher(monkeypatch):
     spec = importlib.util.spec_from_file_location("container_launch", SOURCE)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    original = module.command
+    def verify(*args, **kwargs):
+        if args[:2] == ("/run/capsem-sysutil", "verify-blob"):
+            try:
+                crypto.verify_reader(kwargs["stdin"], args[2], int(args[3]))
+            except ValueError as error:
+                raise subprocess.CalledProcessError(1, args) from error
+            return subprocess.CompletedProcess(args, 0)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(module, "command", verify)
     return module
 
 
@@ -544,7 +555,7 @@ def test_published_root_uses_read_only_descriptor_and_umoci_then_releases_mounts
                 raise RuntimeError("converter failed")
             Path(argv[-1]).write_text(json.dumps(unpacked()))
 
-    options = {"manifest": manifest, "rootfs": {"digest": digest, "size": len(data)}}
+    options = {"manifest": manifest, "rootfs": {"digest": digest, "integrity": "blake3:" + crypto.blake3(data).hexdigest(), "size": len(data)}}
 
     def use():
         with launcher.published_root(
@@ -633,7 +644,7 @@ def test_published_root_refuses_unverified_or_special_payload_before_mount(
     with (
         pytest.raises(expected) as error,
         launcher.published_root(
-            {"manifest": manifest, "rootfs": {"digest": digest, "size": size}},
+            {"manifest": manifest, "rootfs": {"digest": digest, "integrity": "blake3:" + crypto.blake3(data).hexdigest(), "size": size}},
             SECURITY["id_map"],
             share=mounted,
             run=lambda *argv, **_: calls.append(argv),
@@ -646,7 +657,7 @@ def test_published_root_refuses_unverified_or_special_payload_before_mount(
     elif victim == "fifo":
         assert "regular file" in str(error.value)
     else:
-        assert "digest mismatch" in str(error.value)
+        assert "integrity" in str(error.value)
     assert calls == [] and closed == [True]
 
 
@@ -666,7 +677,7 @@ def test_published_root_refuses_a_mapping_different_from_its_inode_contract(laun
     with (
         pytest.raises(ValueError, match="mapping"),
         launcher.published_root(
-            {"rootfs": {"digest": "sha256:" + "a" * 64, "size": 1}},
+            {"rootfs": {"digest": "sha256:" + "a" * 64, "integrity": "blake3:" + "a" * 64, "size": 1}},
             id_map,
             share=forbidden,
         ),

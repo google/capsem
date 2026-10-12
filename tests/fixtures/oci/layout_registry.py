@@ -21,14 +21,14 @@ def layout_registry(directory, layout, image):
     manifest = fetch(entry["digest"])
     assert manifest is not None, entry
     artifacts = {}
-    prepared = (layout / "rootfs").is_dir()
+    prepared = (layout / "rootfs-v2").is_dir()
     if prepared:
         from tests.fixtures.oci.published_root import ready
 
         root_manifest, _ = ready(layout)
-        (artifact,) = json.loads((layout / "rootfs/index.json").read_text())["manifests"]
+        (artifact,) = json.loads((layout / "rootfs-v2/index.json").read_text())["manifests"]
         for blob in (artifact, root_manifest["config"], *root_manifest["layers"]):
-            path = layout / "rootfs/blobs/sha256" / blob["digest"].removeprefix("sha256:")
+            path = layout / "rootfs-v2/blobs/sha256" / blob["digest"].removeprefix("sha256:")
             route = "manifests" if blob == artifact else "blobs"
             artifacts[f"/v2/library/{image}/{route}/{blob['digest']}"] = (path, blob["mediaType"])
         artifacts[f"/v2/library/{image}/referrers/{entry['digest']}"] = (

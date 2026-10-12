@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -10,7 +9,10 @@ import shutil
 import tempfile
 from pathlib import Path
 
-MEDIA = "application/vnd.capsem.rootfs.erofs.v1"
+from capsem_builder import crypto as hashlib
+from capsem_builder.crypto import digest_file
+
+MEDIA = "application/vnd.capsem.rootfs.erofs.v2"
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 EMPTY = "application/vnd.oci.empty.v1+json"
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -57,7 +59,7 @@ def _verified(root: Path, entry: dict, kind: str, limit: int) -> Path:
 
 
 def ready(layout: Path, *, root: Path | None = None) -> tuple[dict, Path]:
-    root = root or layout / "rootfs"
+    root = root or layout / "rootfs-v2"
     (entry,) = json.loads((root / "index.json").read_text())["manifests"]
     manifest_path = _verified(root, entry, MANIFEST, 4 * 1024 * 1024)
     manifest = json.loads(manifest_path.read_bytes())
@@ -71,7 +73,11 @@ def ready(layout: Path, *, root: Path | None = None) -> tuple[dict, Path]:
     if config.read_bytes() != b"{}":
         raise ValueError("prepared-root config is not empty")
     (layer,) = manifest["layers"]
-    return manifest, _verified(root, layer, MEDIA, LIMIT)
+    path = _verified(root, layer, MEDIA, LIMIT)
+    integrity = manifest.get("annotations", {}).get("org.capsem.rootfs.blake3")
+    if integrity != "blake3:" + digest_file(path):
+        raise ValueError("prepared-root BLAKE3 integrity differs")
+    return manifest, path
 
 
 def stage(layout: Path, output: Path) -> None:
@@ -86,7 +92,7 @@ def stage(layout: Path, output: Path) -> None:
         raise ValueError("prepared-root size exceeds the runtime bound")
     root_digest = sha256(filesystem)
     with tempfile.TemporaryDirectory(dir=layout, prefix=".rootfs-") as temporary:
-        root = Path(temporary) / "rootfs"
+        root = Path(temporary) / "rootfs-v2"
         (root / "blobs/sha256").mkdir(parents=True)
         try:
             os.link(filesystem, _blob(root, root_digest))
@@ -99,6 +105,7 @@ def stage(layout: Path, output: Path) -> None:
             "subject": image,
             "config": descriptor(b"{}", EMPTY),
             "layers": [{"mediaType": MEDIA, "digest": root_digest, "size": size}],
+            "annotations": {"org.capsem.rootfs.blake3": "blake3:" + digest_file(filesystem)},
         }
         data = json.dumps(manifest, sort_keys=True).encode()
         _blob(root, manifest["config"]["digest"]).write_bytes(b"{}")
@@ -106,10 +113,10 @@ def stage(layout: Path, output: Path) -> None:
         _blob(root, entry["digest"]).write_bytes(data)
         (root / "index.json").write_text(json.dumps({"schemaVersion": 2, "manifests": [entry]}))
         (root / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
-        if (layout / "rootfs").exists():
+        if (layout / "rootfs-v2").exists():
             ready(layout)
         else:
-            root.rename(layout / "rootfs")
+            root.rename(layout / "rootfs-v2")
     ready(layout)
 
 
@@ -131,7 +138,7 @@ def _download(client, url, token, root, entry, kind, limit):
 
 def prepare(layout: Path, repository: str, *, context=None) -> None:
     """Fetch the published subject-bound artifact once, before offline tests."""
-    if (layout / "rootfs").exists():
+    if (layout / "rootfs-v2").exists():
         ready(layout)
         return
     from tests.fixtures.oci.pinned_image import _Registry, _token
@@ -152,7 +159,7 @@ def prepare(layout: Path, repository: str, *, context=None) -> None:
         )
     (entry,) = candidates
     with tempfile.TemporaryDirectory(dir=layout, prefix=".rootfs-") as temporary:
-        root = Path(temporary) / "rootfs"
+        root = Path(temporary) / "rootfs-v2"
         (root / "blobs/sha256").mkdir(parents=True)
         _download(
             client,
@@ -189,5 +196,5 @@ def prepare(layout: Path, repository: str, *, context=None) -> None:
         )
         (root / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
         ready(layout, root=root)
-        root.rename(layout / "rootfs")
+        root.rename(layout / "rootfs-v2")
     ready(layout)

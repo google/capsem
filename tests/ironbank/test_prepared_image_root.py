@@ -64,6 +64,7 @@ def test_prepared_root_is_used_on_create_and_cached_resume(tmp_path, image):
     manifest, _ = ready(image.ready())
     (layer,) = manifest["layers"]
     expected = {key: layer[key] for key in ("digest", "size")}
+    expected["integrity"] = manifest["annotations"]["org.capsem.rootfs.blake3"]
     service = ServiceInstance()
     measurements = {"image": image.settings().name}
     try:
