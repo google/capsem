@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The pinned guest kernel honors negotiated FUSE I/O sizes for large explicit
+  reads while retaining the existing speculative read-ahead limits.
+
 - Linux VM RAM stays aligned for transparent huge pages, accelerating boot and
   cold filesystem reads without eagerly allocating guest memory. VirtioFS
   supports full one-MiB requests, event-index wakeups on fresh and resumed VMs,
