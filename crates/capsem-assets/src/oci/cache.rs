@@ -247,7 +247,14 @@ impl BlobCache {
 
     /// Published roots use a separate immutable namespace. A layout's link
     /// protects the generation until its session share holds another link.
-    pub(super) async fn link_root_hit(&self, digest: &str, size: u64, destination: &Path) -> Result<bool> {
+    pub(super) async fn link_root_hit(
+        &self,
+        digest: &str,
+        size: u64,
+        destination: &Path,
+        integrity: &str,
+    ) -> Result<bool> {
+        capsem_crypto::verify::blake3_digest(integrity)?;
         ensure!(
             self.policy.protect_hardlinks,
             "published roots require cache link protection"
@@ -255,7 +262,7 @@ impl BlobCache {
         let lease = self.lookup_lease().await?;
         let cache = self.clone();
         let name = format!("immutable-{}", self.entry_name(digest)?);
-        let (digest, destination) = (digest.to_owned(), destination.to_owned());
+        let (digest, destination) = (integrity.to_owned(), destination.to_owned());
         tokio::task::spawn_blocking(move || -> Result<bool> {
             let _lease = lease;
             let directory = ContainedDir::open_root(&cache.root)?.walk(&cache.policy.entry_root)?;
@@ -532,7 +539,7 @@ fn verified_bytes(
     if source.metadata()?.len() != size {
         return Ok(false);
     }
-    let mut digest = Sha256::new();
+    let mut digest = capsem_crypto::verify::Verifier::new(expected)?;
     let mut count = 0u64;
     let mut bytes = vec![0; 65536];
     loop {
@@ -547,7 +554,7 @@ fn verified_bytes(
         digest.update(&bytes[..read]);
         consume(&bytes[..read])?;
     }
-    if count != size || format!("sha256:{:x}", digest.finalize()) != expected {
+    if count != size || !digest.finish() {
         return Ok(false);
     }
     Ok(true)

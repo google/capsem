@@ -184,17 +184,26 @@ async fn corrupt_inactive_root_is_a_miss_but_an_active_generation_cannot_be_repl
     std::fs::write(&stored, b"modified").unwrap();
     std::fs::set_permissions(&stored, std::fs::Permissions::from_mode(0o444)).unwrap();
     let destination = staging.path().join("refused");
-    let error = cache.link_root_hit(&digest, 8, &destination).await.unwrap_err();
+    let error = cache
+        .link_root_hit(&digest, 8, &destination, &integrity(b"original"))
+        .await
+        .unwrap_err();
     assert!(format!("{error:#}").contains("active immutable cache payload"));
     assert!(!destination.exists());
     assert!(stored.exists(), "an active generation must not be silently replaced");
     std::fs::remove_file(producer).unwrap();
-    assert!(!cache.link_root_hit(&digest, 8, &destination).await.unwrap());
+    assert!(!cache
+        .link_root_hit(&digest, 8, &destination, &integrity(b"original"))
+        .await
+        .unwrap());
     assert!(!stored.exists(), "an unheld corrupt generation is recoverable");
     let repaired = staging.path().join("repaired");
     readonly_payload(&repaired, b"original");
     cache.publish_root(&digest, &repaired).await.unwrap();
-    assert!(cache.link_root_hit(&digest, 8, &destination).await.unwrap());
+    assert!(cache
+        .link_root_hit(&digest, 8, &destination, &integrity(b"original"))
+        .await
+        .unwrap());
     assert_eq!(std::fs::read(destination).unwrap(), b"original");
 }
 
@@ -209,7 +218,10 @@ async fn root_publication_and_hits_share_one_readonly_inode_without_overwriting_
     readonly_payload(&producer, b"original");
     cache.publish_root(&digest, &producer).await.unwrap();
     let holder = staging.path().join("holder");
-    assert!(cache.link_root_hit(&digest, 8, &holder).await.unwrap());
+    assert!(cache
+        .link_root_hit(&digest, 8, &holder, &integrity(b"original"))
+        .await
+        .unwrap());
     let inode = std::fs::metadata(&producer).unwrap().ino();
     assert_eq!(std::fs::metadata(&holder).unwrap().ino(), inode);
     assert_eq!(std::fs::metadata(cached_root(root.path())).unwrap().ino(), inode);
@@ -247,7 +259,10 @@ async fn root_retention_preserves_holders_and_reclaims_after_the_last_link() {
     std::fs::remove_file(&producer).unwrap();
     cache.publish(&identity(b"bbbbbb"), &b).await.unwrap();
     assert!(!retained.exists(), "unheld stale generations are eligible again");
-    assert!(!cache.link_root_hit(&a, 6, &staging.path().join("late")).await.unwrap());
+    assert!(!cache
+        .link_root_hit(&a, 6, &staging.path().join("late"), &integrity(b"aaaaaa"))
+        .await
+        .unwrap());
 }
 
 #[tokio::test]
@@ -266,7 +281,12 @@ async fn root_capacity_refusal_rolls_back_the_new_link_without_mutating_active_b
     assert_eq!(std::fs::read(cached_root(root.path())).unwrap(), b"aaaaaa");
     assert_eq!(std::fs::read(a).unwrap(), b"aaaaaa");
     assert!(!cache
-        .link_root_hit(&identity(b"bbbbbb"), 6, &staging.path().join("missing"))
+        .link_root_hit(
+            &identity(b"bbbbbb"),
+            6,
+            &staging.path().join("missing"),
+            &integrity(b"bbbbbb")
+        )
         .await
         .unwrap());
 }
@@ -288,7 +308,10 @@ async fn root_owner_refuses_writable_payloads_and_never_follows_cache_links() {
     std::fs::remove_file(&stored).unwrap();
     symlink(&source, &stored).unwrap();
     let destination = staging.path().join("refused");
-    assert!(cache.link_root_hit(&digest, 8, &destination).await.is_err());
+    assert!(cache
+        .link_root_hit(&digest, 8, &destination, &integrity(b"original"))
+        .await
+        .is_err());
     assert!(!destination.exists());
     assert_eq!(std::fs::read(source).unwrap(), b"original");
 }
@@ -358,4 +381,8 @@ async fn abandoned_partial_is_reclaimed_by_publication() {
     std::fs::write(&source, b"valid").unwrap();
     cache.publish(&identity(b"valid"), &source).await.unwrap();
     assert!(!partial.exists());
+}
+
+fn integrity(bytes: &[u8]) -> String {
+    format!("blake3:{}", capsem_crypto::blake3::hash(bytes).to_hex())
 }

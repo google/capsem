@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prepared EROFS images use a catalog-bound BLAKE3 integrity annotation for
+  accelerated host and guest verification. The version 2 artifact contract
+  retains OCI transport SHA-256 and exact size, subject and descriptor checks.
+
 - OCI cache and prepared filesystem verification use the existing accelerated
   crypto backend on CPUs without dedicated SHA instructions, retaining SHA-256
   identities and full integrity checks.
