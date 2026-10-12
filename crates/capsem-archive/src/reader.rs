@@ -370,7 +370,7 @@ fn inflate_segment(cursor: &mut Cursor, header: &SegmentHeader, comp: &[u8], at:
     if consumed != comp.len() || written != want || ended != header.last {
         return Err(ArchiveError::Integrity(at));
     }
-    if blake3::hash(&cursor.raw[start..]).as_bytes() != &header.hash {
+    if capsem_crypto::blake3::hash(&cursor.raw[start..]).as_bytes() != &header.hash {
         return Err(ArchiveError::Integrity(at));
     }
     Ok(())

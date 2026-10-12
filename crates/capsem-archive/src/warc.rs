@@ -133,7 +133,7 @@ fn header_block(rec: &WarcRecord<'_>) -> String {
     // SQLite rather than a second one computed only for the file. The cost is
     // real and worth knowing -- a tool that verifies block digests will not
     // verify these and should treat them as opaque.
-    let digest = blake3::hash(rec.body);
+    let digest = capsem_crypto::blake3::hash(rec.body);
     let content_type = rec.content_type.unwrap_or(DEFAULT_CONTENT_TYPE);
     let target_uri = rec
         .target_uri

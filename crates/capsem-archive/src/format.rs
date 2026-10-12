@@ -176,7 +176,7 @@ pub fn encode_file_header(archive_id: ArchiveId, generation_id: GenerationId) ->
     header[12..16].copy_from_slice(&(FILE_HEADER_BYTES as u32).to_le_bytes());
     header[16..32].copy_from_slice(archive_id.as_bytes());
     header[32..48].copy_from_slice(generation_id.as_bytes());
-    let hash = blake3::hash(&header[..48]);
+    let hash = capsem_crypto::blake3::hash(&header[..48]);
     header[48..].copy_from_slice(hash.as_bytes());
     header
 }
@@ -190,7 +190,7 @@ pub fn decode_file_header(bytes: &[u8]) -> Result<FileHeader> {
         || u16::from_le_bytes([header[8], header[9]]) != FILE_VERSION
         || header[10..12] != [0, 0]
         || u32::from_le_bytes(header[12..16].try_into().expect("4 bytes")) != FILE_HEADER_BYTES as u32
-        || blake3::hash(&header[..48]).as_bytes() != &header[48..]
+        || capsem_crypto::blake3::hash(&header[..48]).as_bytes() != &header[48..]
     {
         return Err(ArchiveError::BadFileHeader);
     }

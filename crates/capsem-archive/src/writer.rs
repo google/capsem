@@ -63,7 +63,7 @@ struct OpenBlock {
     /// which carries the block header with it.
     disk_len: u64,
     /// blake3 of the raw bytes of the segment in progress.
-    hasher: blake3::Hasher,
+    hasher: capsem_crypto::blake3::Hasher,
     /// Compressed bytes of the segment in progress.
     out: Vec<u8>,
 }
@@ -278,7 +278,7 @@ impl BodyLogWriter {
             raw_len: 0,
             flushed_raw: 0,
             disk_len: 0,
-            hasher: blake3::Hasher::new(),
+            hasher: capsem_crypto::blake3::Hasher::new(),
             out: Vec::new(),
         });
         if let Err(error) = deflate_into(&mut block.compressor, body, &mut block.out, FlushCompress::None) {
@@ -398,7 +398,7 @@ impl BodyLogWriter {
         self.end += bytes.len() as u64;
         block.disk_len += bytes.len() as u64;
         block.flushed_raw = block.raw_len;
-        block.hasher = blake3::Hasher::new();
+        block.hasher = capsem_crypto::blake3::Hasher::new();
         block.out.clear();
         Ok(SegmentWritten {
             block_offset: block.offset,
