@@ -102,7 +102,7 @@ fn elapsed_ms_f64(started: Instant) -> f64 {
 }
 
 fn sql_fingerprint(sql: &str) -> String {
-    let hash = blake3::hash(sql.as_bytes()).to_hex();
+    let hash = capsem_crypto::blake3::hash(sql.as_bytes()).to_hex();
     hash[..12].to_string()
 }
 

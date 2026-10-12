@@ -180,11 +180,11 @@ pub fn output_preview(bytes: &[u8]) -> String {
 }
 
 fn blake3_ref(value: &str) -> String {
-    format!("blake3:{}", blake3::hash(value.as_bytes()).to_hex())
+    format!("blake3:{}", capsem_crypto::blake3::hash(value.as_bytes()).to_hex())
 }
 
 fn blake3_bytes_ref(value: &[u8]) -> String {
-    format!("blake3:{}", blake3::hash(value).to_hex())
+    format!("blake3:{}", capsem_crypto::blake3::hash(value).to_hex())
 }
 
 /// Typed write operations sent to the writer thread.

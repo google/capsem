@@ -439,7 +439,7 @@ pub(super) fn read_one_checked(reader: &BodyLogReader, row: IndexRow) -> Result<
     // index row picked out. A block's hash cannot notice an index row that
     // was edited to name a different offset inside the same valid block, and
     // that row would otherwise be served as this event's body.
-    let hash = format!("blake3:{}", blake3::hash(&bytes).to_hex());
+    let hash = format!("blake3:{}", capsem_crypto::blake3::hash(&bytes).to_hex());
     if hash != row.body_hash {
         return Err(BodyFault::Corrupt(format!(
             "session body archive returned the wrong bytes for {}/{} of event {}: index says {}, bytes hash to {hash}",

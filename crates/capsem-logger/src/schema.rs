@@ -238,7 +238,7 @@ pub fn memory_uri_for_path(path: &Path) -> String {
 }
 
 pub fn memory_uri_for_name(name: &str) -> String {
-    let hash = blake3::hash(name.as_bytes()).to_hex();
+    let hash = capsem_crypto::blake3::hash(name.as_bytes()).to_hex();
     format!("file:capsem-ledger-mem-{}?mode=memory&cache=shared", &hash[..16])
 }
 

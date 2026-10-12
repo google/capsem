@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+capsem-crypto = { path = "../capsem-crypto" }
 anyhow = { workspace = true }
 capsem-archive = { path = "../capsem-archive" }
 capsem-foundation = { path = "../capsem-foundation" }
@@ -21,7 +22,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-blake3 = "1"
 uuid = { version = "1", features = ["v4"] }
 metrics = "0.24"
 tempfile = "3"
@@ -32,7 +32,6 @@ workspace = true
 [dev-dependencies]
 # Reading the WARC export back the way an external tool does: member by member.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-sha2 = "0.10"
 metrics-util = "0.19"
 criterion = { version = "0.5", features = ["html_reports"] }
 memmap2 = "0.9"
