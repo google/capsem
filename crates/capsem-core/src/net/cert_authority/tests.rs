@@ -51,7 +51,7 @@ fn chain_includes_ca() {
     let ca = load_ca();
     let key = ca.certified_key_for_domain("chain-test.com").unwrap();
     // Second cert in chain should be the CA cert.
-    assert_eq!(key.cert[1].as_ref(), ca.ca_cert_der.as_ref());
+    assert_eq!(key.cert[1].as_ref(), ca.ca_cert_der().as_ref());
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn cache_is_bounded_under_a_distinct_sni_flood() {
 /// client. rustls refuses to *send* a trailing dot (RFC 6066), but its
 /// server accepts one, so the adversarial spelling has to be spliced in.
 fn client_hello_with_sni(name: &str) -> Vec<u8> {
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let provider = Arc::new(capsem_crypto::tls::provider());
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .unwrap()
@@ -185,7 +185,7 @@ fn client_hello_with_sni(name: &str) -> Vec<u8> {
 fn resolve_raw_sni(sni: &str) -> (Arc<CertAuthority>, rustls::ServerConnection) {
     let ca = Arc::new(load_ca());
     let resolver = Arc::new(MitmCertResolver::new(Arc::clone(&ca)));
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let provider = Arc::new(capsem_crypto::tls::provider());
     let config = rustls::ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .unwrap()

@@ -101,7 +101,7 @@ impl Registry {
         let _lease = self.lease()?;
         let mut record = self.read(request)?.context("managed reservation is missing")?;
         ensure!(
-            blake3::Hash::from(record.capability_hash) == capability.hash(request),
+            capsem_crypto::blake3::Hash::from(record.capability_hash) == capability.hash(request),
             "managed capability mismatch"
         );
         let mut deadlines = self.runtime_deadlines()?;

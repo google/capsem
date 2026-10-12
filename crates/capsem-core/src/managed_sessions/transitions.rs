@@ -27,7 +27,7 @@ impl Registry {
         let mut record = match self.read(request)? {
             Some(record) => {
                 ensure!(
-                    blake3::Hash::from(record.capability_hash) == capability.hash(request),
+                    capsem_crypto::blake3::Hash::from(record.capability_hash) == capability.hash(request),
                     "managed capability mismatch"
                 );
                 record

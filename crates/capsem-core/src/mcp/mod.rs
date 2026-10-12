@@ -195,7 +195,7 @@ pub enum PinChange {
 /// Compute a deterministic BLAKE3 hash of a tool's definition.
 /// Includes name, description, inputSchema, and annotations.
 pub fn compute_tool_hash(tool: &McpToolDef) -> String {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = capsem_crypto::blake3::Hasher::new();
     hasher.update(tool.original_name.as_bytes());
     hasher.update(b"|");
     if let Some(desc) = &tool.description {

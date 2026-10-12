@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["tls"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
@@ -24,10 +25,8 @@ capsem-foundation = { path = "../capsem-foundation" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-telemetry = { path = "../capsem-telemetry" }
 libc = "0.2"
-blake3 = "1"
 toml = { workspace = true }
 humantime = { workspace = true }
-rcgen = { workspace = true }
 time = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }

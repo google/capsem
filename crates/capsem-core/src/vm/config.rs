@@ -283,7 +283,7 @@ impl VmConfigBuilder {
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join("capsem-asset-hash-cache"));
         let cache_key_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let digest = blake3::hash(cache_key_path.to_string_lossy().as_bytes())
+        let digest = capsem_crypto::blake3::hash(cache_key_path.to_string_lossy().as_bytes())
             .to_hex()
             .to_string();
         root.join(format!("{}-{name}.capsem-hash-ok", &digest[..16]))
@@ -342,7 +342,7 @@ impl VmConfigBuilder {
         }
 
         let mut file = std::fs::File::open(path)?;
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = capsem_crypto::blake3::Hasher::new();
         let mut buffer = vec![0; 65536];
         loop {
             let n = file.read(&mut buffer)?;

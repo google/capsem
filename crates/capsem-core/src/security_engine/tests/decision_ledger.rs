@@ -250,7 +250,7 @@ match = 'http.body.contains("kept-exact")'
     assert_eq!(payload["http"]["body_bytes"], body.len());
     assert_eq!(
         payload["http"]["body_hash"],
-        format!("blake3:{}", blake3::hash(body.as_bytes()).to_hex())
+        format!("blake3:{}", capsem_crypto::blake3::hash(body.as_bytes()).to_hex())
     );
     assert_eq!(payload["http"]["body_truncated"], true);
     assert_eq!(payload["http"]["body_source"]["source_table"], "net_events");

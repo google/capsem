@@ -373,7 +373,7 @@ fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Byte
 pub fn make_upstream_tls_config() -> Arc<rustls::ClientConfig> {
     let mut root_store = rustls::RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let provider = Arc::new(capsem_crypto::tls::provider());
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("TLS config")

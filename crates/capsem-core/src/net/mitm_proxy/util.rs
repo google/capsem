@@ -192,7 +192,7 @@ pub(super) fn format_headers_for_domain(
                 {
                     observations.push(observation);
                 }
-                let digest = blake3::hash(raw);
+                let digest = capsem_crypto::blake3::hash(raw);
                 let hex = &digest.to_hex()[..12];
                 format!("{}: hash:{}", name, hex)
             }

@@ -103,7 +103,10 @@ fn referenced_request_body(body: Option<&str>) -> (Option<&str>, Option<String>,
     }
     (
         Some(&body[..end]),
-        Some(format!("blake3:{}", blake3::hash(body.as_bytes()).to_hex())),
+        Some(format!(
+            "blake3:{}",
+            capsem_crypto::blake3::hash(body.as_bytes()).to_hex()
+        )),
         Some(body.len()),
         end < body.len(),
     )

@@ -46,7 +46,7 @@ pub struct ActivePolicyFile {
 /// bytes, so an acknowledgement proves which policy a VM applied rather than
 /// merely that it applied one.
 pub fn active_policy_digest(bytes: &[u8]) -> String {
-    format!("blake3:{}", blake3::hash(bytes).to_hex())
+    format!("blake3:{}", capsem_crypto::blake3::hash(bytes).to_hex())
 }
 
 impl ActivePolicyFile {

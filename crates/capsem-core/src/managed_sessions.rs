@@ -26,8 +26,8 @@ impl Capability {
         Self(bytes)
     }
 
-    fn hash(&self, request: Uuid) -> blake3::Hash {
-        let mut hash = blake3::Hasher::new_derive_key("capsem managed session capability v1");
+    fn hash(&self, request: Uuid) -> capsem_crypto::blake3::Hash {
+        let mut hash = capsem_crypto::blake3::Hasher::new_derive_key("capsem managed session capability v1");
         hash.update(request.as_bytes());
         hash.update(&self.0);
         hash.finalize()
@@ -180,9 +180,9 @@ impl Registry {
         ensure!(!request.is_nil(), "managed request identity is nil");
         let _lease = self.lease()?;
         if let Some(record) = self.read(request)? {
-            // blake3::Hash equality is constant-time for these 32-byte hashes.
+            // capsem_crypto::blake3::Hash equality is constant-time for these 32-byte hashes.
             ensure!(
-                blake3::Hash::from(record.capability_hash) == capability.hash(request),
+                capsem_crypto::blake3::Hash::from(record.capability_hash) == capability.hash(request),
                 "managed capability mismatch"
             );
             return Ok(Reservation::Existing(Snapshot::from(&record)));

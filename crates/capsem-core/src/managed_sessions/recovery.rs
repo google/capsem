@@ -54,7 +54,7 @@ impl Registry {
             return Ok(None);
         };
         ensure!(
-            blake3::Hash::from(record.capability_hash) == capability.hash(request),
+            capsem_crypto::blake3::Hash::from(record.capability_hash) == capability.hash(request),
             "managed capability mismatch"
         );
         Ok(Some(Snapshot::from(&record)))
