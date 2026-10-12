@@ -94,7 +94,7 @@ fn every_dimension_is_listed_once() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), listed, "a dimension is listed twice");
-    assert_eq!(listed, 19, "ALL must carry every dimension");
+    assert_eq!(listed, 20, "ALL must carry every dimension");
 }
 
 #[test]
@@ -103,6 +103,14 @@ fn the_network_dimension_measures_members_over_a_switch_on_booted_vms() {
     assert_eq!(network, Dimension::Network);
     assert!(network.needs_vm(), "two members boot and plug into a switch");
     assert!(!network.in_quick_lane(), "it boots two VMs and runs transfers");
+}
+
+#[test]
+fn crypto_is_a_host_measurement_outside_the_quick_lane() {
+    let crypto: Dimension = serde_json::from_str("\"crypto\"").expect("parses");
+    assert_eq!(crypto, Dimension::Crypto);
+    assert!(!crypto.needs_vm());
+    assert!(!crypto.in_quick_lane());
 }
 
 #[test]

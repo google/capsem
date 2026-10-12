@@ -38,6 +38,8 @@ pub enum Dimension {
     Resources,
     Vsock,
     Criterion,
+    /// CPU hashing and cached EROFS verification, through the crypto owner.
+    Crypto,
     Protocol,
     /// Members of a private network, VM to VM through the network's switch.
     Network,
@@ -64,6 +66,7 @@ impl Dimension {
         Dimension::Resources,
         Dimension::Vsock,
         Dimension::Criterion,
+        Dimension::Crypto,
         Dimension::Protocol,
         Dimension::Network,
         Dimension::Disk,
@@ -87,6 +90,7 @@ impl Dimension {
             Dimension::Resources => "resources",
             Dimension::Vsock => "vsock",
             Dimension::Criterion => "criterion",
+            Dimension::Crypto => "crypto",
             Dimension::Protocol => "protocol",
             Dimension::Network => "network",
             Dimension::Disk => "disk",
@@ -103,7 +107,7 @@ impl Dimension {
     pub fn needs_vm(self) -> bool {
         !matches!(
             self,
-            Dimension::Criterion | Dimension::Protocol | Dimension::Routes | Dimension::Websocket
+            Dimension::Criterion | Dimension::Crypto | Dimension::Protocol | Dimension::Routes | Dimension::Websocket
         )
     }
 
