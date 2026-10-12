@@ -1,6 +1,6 @@
 import {execFileSync} from 'node:child_process';
 import {copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
-import {createHash} from 'node:crypto';
+import {sha256} from '../../../sdk/typescript/tools/crypto.mjs';
 import {createServer as createHttpServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
 import {homedir, tmpdir} from 'node:os';
@@ -28,7 +28,7 @@ describe('packed-package', () => {
     for (const archive of retained.splice(0)) expect(digest(archive.path)).toBe(archive.sha256);
   });
 
-  const digest = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
+  const digest = (path: string): string => sha256(readFileSync(path));
 
   function pack(): {cli: string; dependencies: string; manifest: Record<string, unknown>} {
     const packageRoot = fileURLToPath(new URL('..', import.meta.url));
