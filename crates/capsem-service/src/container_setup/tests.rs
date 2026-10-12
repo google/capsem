@@ -641,8 +641,8 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
     );
     assert_eq!(
         catalog_reads.load(Ordering::Relaxed),
-        0,
-        "the explicit grants decided source and admission; the catalog is never read"
+        1,
+        "explicit admission still checks for a prepared filesystem"
     );
 }
 

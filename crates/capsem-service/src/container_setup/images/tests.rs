@@ -326,6 +326,23 @@ async fn prefetch_selects_catalog_root_after_admission_with_original_platform_su
 }
 
 #[tokio::test]
+async fn explicit_digest_admission_still_selects_the_published_filesystem() {
+    let image = format!("ghcr.io/google/capsem/codex-cli@{}", digest('b'));
+    let fx = Fixture::new(grants(&["ghcr.io/google/capsem/codex-cli"], &[&image]));
+    fx.catalog.lock().unwrap().as_mut().unwrap()["entries"]["codex-cli"]["versions"][1]["erofs"] =
+        json!({host(): digest('8')});
+    let (status, body) = fx.pull(&image).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(body.to_string().contains("fixture artifact unavailable"));
+    assert_eq!(fx.reads(), 1);
+    let roots = fx.roots.lock().unwrap();
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].0, format!("ghcr.io/google/capsem/codex-cli@{}", digest('8')));
+    assert_eq!(roots[0].1, digest('7'));
+    drop(roots);
+}
+
+#[tokio::test]
 async fn denied_image_does_not_fetch_any_catalog_filesystem() {
     let fx = Fixture::new(ImagePolicyConfig {
         catalog: Some(CatalogSetting::Enabled(false)),
@@ -426,12 +443,12 @@ async fn a_name_with_no_version_for_this_host_is_refused_not_pulled() {
 }
 
 #[tokio::test]
-async fn explicit_grants_decide_without_reading_the_catalog() {
+async fn explicit_grants_admit_before_catalog_filesystem_lookup() {
     let fx = Fixture::new(grants(&["registry.example"], &["registry.example"]));
     let (status, body) = fx.pull("registry.example/app:1").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["resolved"], format!("registry.example/app@{}", digest('f')));
-    assert_eq!(fx.reads(), 0, "the grants decided; the catalog was read anyway");
+    assert_eq!(fx.reads(), 1, "filesystem selection still consults the catalog");
 }
 
 #[tokio::test]

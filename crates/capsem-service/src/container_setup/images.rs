@@ -15,7 +15,8 @@
 //! (`GET /images?refresh=true`). A failed read keeps the last good catalog and
 //! is not retried for [`CATALOG_RETRY`]; with none ever read, the catalog is
 //! empty, so only the explicit `[images]` grants admit anything. A decision
-//! the explicit grants already make never reads the catalog at all.
+//! the explicit grants already make needs no catalog for admission. Filesystem
+//! selection still reads it, so a grant cannot bypass a published EROFS binding.
 
 use super::*;
 use capsem_api::{
@@ -274,16 +275,16 @@ impl<'a> Decision<'a> {
 
     /// A compatible filesystem for this admitted image, fetched only from
     /// the same repository and with its original platform manifest as subject.
-    /// Explicit grants that never loaded a catalog stay on the universal path.
+    /// Admission grants do not bypass a catalog's filesystem binding.
     pub(crate) async fn published_root(
-        &self,
+        &mut self,
         requested: &Requested,
         image: &PulledImage,
         resolved: &ResolvedImage,
         access: RegistryAccess,
         mode: ImageFetch,
     ) -> Result<Option<capsem_assets::oci::RootfsLayout>, ImageError> {
-        let Some(loaded) = &self.catalog else {
+        let Some(loaded) = self.load(false).await else {
             return Ok(None);
         };
         let architecture = stage::catalog_architecture().map_err(|e| ImageError::Failed(format!("{e:#}")))?;

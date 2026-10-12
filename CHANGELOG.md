@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Explicitly admitted image references select their catalog-bound EROFS
+  filesystem instead of unnecessarily extracting OCI layers at startup.
+
 - CLI history and MCP tool tables truncate Unicode text at character
   boundaries instead of panicking on a split UTF-8 character.
 
