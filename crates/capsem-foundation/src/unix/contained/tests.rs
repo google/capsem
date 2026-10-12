@@ -397,6 +397,59 @@ fn mode_reads_permission_bits_from_the_descriptor() {
 }
 
 #[test]
+fn timestamp_updates_are_exact_descriptor_relative_and_never_follow_links() {
+    let tree = tree();
+    let file_path = tree.root_path.join("file");
+    std::fs::write(&file_path, b"data").unwrap();
+    tree.root
+        .set_relative_times(
+            Path::new("file"),
+            FileTimeSpec::Exact {
+                seconds: 1_234_567,
+                nanoseconds: 123_456_789,
+            },
+            FileTimeSpec::Exact {
+                seconds: 2_345_678,
+                nanoseconds: 987_654_321,
+            },
+        )
+        .unwrap();
+    let metadata = std::fs::metadata(&file_path).unwrap();
+    assert_eq!((metadata.atime(), metadata.atime_nsec()), (1_234_567, 123_456_789));
+    assert_eq!((metadata.mtime(), metadata.mtime_nsec()), (2_345_678, 987_654_321));
+
+    let target = tree.outside.join("target");
+    std::fs::write(&target, b"outside").unwrap();
+    let before = std::fs::metadata(&target).unwrap().modified().unwrap();
+    symlink(&target, tree.root_path.join("link")).unwrap();
+    tree.root
+        .set_relative_times(Path::new("link"), FileTimeSpec::Now, FileTimeSpec::Now)
+        .unwrap();
+    assert_eq!(std::fs::metadata(&target).unwrap().modified().unwrap(), before);
+}
+
+#[test]
+fn timestamp_updates_reject_invalid_paths_and_nanoseconds() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("file"), b"data").unwrap();
+    assert!(tree
+        .root
+        .set_relative_times(Path::new("../file"), FileTimeSpec::Omit, FileTimeSpec::Now)
+        .is_err());
+    assert!(tree
+        .root
+        .set_relative_times(
+            Path::new("file"),
+            FileTimeSpec::Omit,
+            FileTimeSpec::Exact {
+                seconds: 1,
+                nanoseconds: 1_000_000_000,
+            },
+        )
+        .is_err());
+}
+
+#[test]
 fn rename_moves_a_link_as_a_link_and_never_its_target() {
     let tree = tree();
     std::fs::write(tree.outside.join("secret"), b"host").unwrap();

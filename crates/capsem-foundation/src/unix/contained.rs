@@ -13,7 +13,10 @@ use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
 use nix::fcntl::{openat, readlinkat, renameat, AtFlags, OFlag};
-use nix::sys::stat::{fchmod, fchmodat, fstatat, mkdirat, FchmodatFlags, Mode, SFlag};
+use nix::sys::stat::{
+    fchmod, fchmodat, fstatat, futimens, mkdirat, utimensat, FchmodatFlags, Mode, SFlag, UtimensatFlags,
+};
+use nix::sys::time::TimeSpec;
 use nix::unistd::{linkat, symlinkat};
 use nix::unistd::{unlinkat, UnlinkatFlags};
 
@@ -31,6 +34,30 @@ pub struct ContainedOpenOptions {
     truncate: bool,
     exclusive: bool,
     mode: u32,
+}
+
+/// One timestamp update applied below a containment root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FileTimeSpec {
+    Omit,
+    Now,
+    Exact { seconds: i64, nanoseconds: u32 },
+}
+
+impl FileTimeSpec {
+    fn to_time_spec(self) -> io::Result<TimeSpec> {
+        match self {
+            Self::Omit => Ok(TimeSpec::UTIME_OMIT),
+            Self::Now => Ok(TimeSpec::UTIME_NOW),
+            Self::Exact { seconds, nanoseconds } if nanoseconds < 1_000_000_000 => {
+                Ok(TimeSpec::new(seconds, nanoseconds.into()))
+            }
+            Self::Exact { .. } => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "timestamp nanoseconds must be below one second",
+            )),
+        }
+    }
 }
 
 impl ContainedOpenOptions {
@@ -327,6 +354,41 @@ impl ContainedDir {
             *name,
             permission_mode(mode),
             FchmodatFlags::NoFollowSymlink,
+        )
+        .map_err(Into::into)
+    }
+
+    /// Change one entry's timestamps below this open directory.
+    ///
+    /// Parent components are opened without following links and the final
+    /// operation uses `AT_SYMLINK_NOFOLLOW`. An empty relative path names this
+    /// directory itself through its already-open descriptor.
+    pub fn set_relative_times(&self, rel: &Path, atime: FileTimeSpec, mtime: FileTimeSpec) -> io::Result<()> {
+        let atime = atime.to_time_spec()?;
+        let mtime = mtime.to_time_spec()?;
+        let names = rel
+            .components()
+            .map(|component| match component {
+                Component::Normal(name) => Ok(name),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("relative path may only contain plain names: {}", rel.display()),
+                )),
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let Some((name, parents)) = names.split_last() else {
+            return futimens(self.fd.as_raw_fd(), &atime, &mtime).map_err(Into::into);
+        };
+        let mut parent = self.try_clone()?;
+        for component in parents {
+            parent = parent.descend(component)?;
+        }
+        utimensat(
+            Some(parent.fd.as_raw_fd()),
+            *name,
+            &atime,
+            &mtime,
+            UtimensatFlags::NoFollowSymlink,
         )
         .map_err(Into::into)
     }
