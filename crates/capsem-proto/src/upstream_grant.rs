@@ -22,7 +22,7 @@ pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 pub const MAX_GUEST_SHARE_PATH_BYTES: usize = 4096;
 
 const MAGIC: [u8; 2] = *b"UG";
-const VERSION: u8 = 4;
+const VERSION: u8 = 7;
 const MAGIC_RANGE: std::ops::Range<usize> = 0..2;
 const VERSION_OFFSET: usize = 2;
 const KIND_OFFSET: usize = 3;
@@ -36,7 +36,13 @@ const POLICY_DIGEST_BYTES: usize = 71;
 const POLICY_DIGEST_RANGE: std::ops::Range<usize> = NAME_RANGE.end..NAME_RANGE.end + POLICY_DIGEST_BYTES;
 const PATH_LENGTH_RANGE: std::ops::Range<usize> = POLICY_DIGEST_RANGE.end..POLICY_DIGEST_RANGE.end + 2;
 const PATH_RANGE: std::ops::Range<usize> = PATH_LENGTH_RANGE.end..PATH_LENGTH_RANGE.end + MAX_GUEST_SHARE_PATH_BYTES;
-const RESERVED_RANGE: std::ops::Range<usize> = PATH_RANGE.end..UPSTREAM_GRANT_FRAME_SIZE;
+const TIME_FLAGS_OFFSET: usize = PATH_RANGE.end;
+const ATIME_SECONDS_RANGE: std::ops::Range<usize> = TIME_FLAGS_OFFSET + 1..TIME_FLAGS_OFFSET + 9;
+const ATIME_NANOS_RANGE: std::ops::Range<usize> = ATIME_SECONDS_RANGE.end..ATIME_SECONDS_RANGE.end + 4;
+const MTIME_SECONDS_RANGE: std::ops::Range<usize> = ATIME_NANOS_RANGE.end..ATIME_NANOS_RANGE.end + 8;
+const MTIME_NANOS_RANGE: std::ops::Range<usize> = MTIME_SECONDS_RANGE.end..MTIME_SECONDS_RANGE.end + 4;
+const TIME_FIELDS_RANGE: std::ops::Range<usize> = TIME_FLAGS_OFFSET..MTIME_NANOS_RANGE.end;
+const RESERVED_RANGE: std::ops::Range<usize> = TIME_FIELDS_RANGE.end..UPSTREAM_GRANT_FRAME_SIZE;
 
 const RESOLVE_TCP: u8 = 1;
 const CONNECT_TCP: u8 = 2;
@@ -47,6 +53,9 @@ const SET_GUEST_MODE: u8 = 6;
 const OPEN_LEDGER: u8 = 7;
 const ATTACH_PROXY_TRAFFIC: u8 = 8;
 const ATTACH_PROXY_MCP: u8 = 9;
+const ATTACH_PROXY_TRACE_HINTS: u8 = 10;
+const OPEN_LOOPBACK_LISTENER: u8 = 11;
+const SET_GUEST_TIMES: u8 = 12;
 const TCP_RESOLVED: u8 = 101;
 const DESCRIPTOR_GRANTED: u8 = 102;
 const DENIED: u8 = 103;
@@ -54,6 +63,18 @@ const GUEST_MODE_SET: u8 = 104;
 const LEDGER_GRANTED: u8 = 105;
 const PROXY_TRAFFIC_ADOPTED: u8 = 106;
 const PROXY_MCP_ADOPTED: u8 = 107;
+const PROXY_TRACE_HINTS_ADOPTED: u8 = 108;
+const LOOPBACK_LISTENER_GRANTED: u8 = 109;
+const GUEST_TIMES_SET: u8 = 110;
+
+/// One guest-requested file timestamp. Exact values preserve archive metadata;
+/// `Now` and `Omit` retain the corresponding `utimensat(2)` semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuestFileTime {
+    Omit,
+    Now,
+    Exact { seconds: i64, nanoseconds: u32 },
+}
 
 /// Application protocol spoken over a granted TCP stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -195,6 +216,12 @@ pub enum UpstreamGrantRequest {
         relative_path: Vec<u8>,
         mode: u16,
     },
+    SetGuestTimes {
+        request_id: u64,
+        relative_path: Vec<u8>,
+        atime: GuestFileTime,
+        mtime: GuestFileTime,
+    },
     OpenLedger {
         request_id: u64,
     },
@@ -230,6 +257,9 @@ pub enum UpstreamGrantResponse {
     GuestModeSet {
         request_id: u64,
     },
+    GuestTimesSet {
+        request_id: u64,
+    },
     LedgerGranted {
         request_id: u64,
         grant: LedgerChannelGrant,
@@ -262,6 +292,7 @@ impl UpstreamGrantResponse {
             Self::TcpResolved { .. }
             | Self::Denied { .. }
             | Self::GuestModeSet { .. }
+            | Self::GuestTimesSet { .. }
             | Self::ProxyTrafficAdopted { .. }
             | Self::ProxyMcpAdopted { .. } => 0,
         }
@@ -333,6 +364,22 @@ pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[
             put_u16(&mut frame, DETAIL_RANGE, *mode);
             put_path(&mut frame, relative_path)?;
         }
+        UpstreamGrantRequest::SetGuestTimes {
+            request_id,
+            relative_path,
+            atime,
+            mtime,
+        } => {
+            require_nonzero("request id", *request_id)?;
+            validate_guest_share_path(relative_path)?;
+            if matches!((atime, mtime), (GuestFileTime::Omit, GuestFileTime::Omit)) {
+                bail!("guest timestamp request changes no timestamps");
+            }
+            frame[KIND_OFFSET] = SET_GUEST_TIMES;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+            put_path(&mut frame, relative_path)?;
+            put_guest_times(&mut frame, *atime, *mtime)?;
+        }
         UpstreamGrantRequest::OpenLedger { request_id } => {
             require_nonzero("request id", *request_id)?;
             frame[KIND_OFFSET] = OPEN_LEDGER;
@@ -363,6 +410,9 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
     let detail = get_u16(frame, DETAIL_RANGE);
     let name = get_name(frame)?;
     let relative_path = get_path(frame)?;
+    if frame[KIND_OFFSET] != SET_GUEST_TIMES {
+        require_empty_time_fields(frame)?;
+    }
     match frame[KIND_OFFSET] {
         RESOLVE_TCP => {
             require_nonzero("request id", request_id)?;
@@ -428,6 +478,23 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
                 request_id,
                 relative_path,
                 mode: detail,
+            })
+        }
+        SET_GUEST_TIMES => {
+            require_nonzero("request id", request_id)?;
+            if resource_id != 0 || port != 0 || detail != 0 || !name.is_empty() {
+                bail!("invalid guest timestamp request fields");
+            }
+            validate_guest_share_path(&relative_path)?;
+            let (atime, mtime) = get_guest_times(frame)?;
+            if matches!((atime, mtime), (GuestFileTime::Omit, GuestFileTime::Omit)) {
+                bail!("guest timestamp request changes no timestamps");
+            }
+            Ok(UpstreamGrantRequest::SetGuestTimes {
+                request_id,
+                relative_path,
+                atime,
+                mtime,
             })
         }
         OPEN_LEDGER => {
@@ -510,6 +577,11 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
             frame[KIND_OFFSET] = GUEST_MODE_SET;
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
         }
+        UpstreamGrantResponse::GuestTimesSet { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = GUEST_TIMES_SET;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
         UpstreamGrantResponse::LedgerGranted { request_id, grant } => {
             require_nonzero("request id", *request_id)?;
             frame[KIND_OFFSET] = LEDGER_GRANTED;
@@ -535,6 +607,7 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
 /// Decode and fully validate one coordinator response.
 pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<UpstreamGrantResponse> {
     validate_envelope(frame)?;
+    require_empty_time_fields(frame)?;
     let request_id = get_u64(frame, REQUEST_ID_RANGE);
     let resource_id = get_u64(frame, RESOURCE_ID_RANGE);
     let port = get_u16(frame, PORT_RANGE);
@@ -597,6 +670,12 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
                 bail!("guest mode response carries unrelated fields");
             }
             Ok(UpstreamGrantResponse::GuestModeSet { request_id })
+        }
+        GUEST_TIMES_SET => {
+            if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {
+                bail!("guest timestamp response carries unrelated fields");
+            }
+            Ok(UpstreamGrantResponse::GuestTimesSet { request_id })
         }
         LEDGER_GRANTED => {
             if policy_digest.is_some() {
@@ -710,6 +789,67 @@ fn get_path(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<Vec<u8>> {
 fn require_empty_path(path: &[u8]) -> Result<()> {
     if !path.is_empty() {
         bail!("record carries an unrelated guest-share path");
+    }
+    Ok(())
+}
+
+fn put_guest_times(
+    frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE],
+    atime: GuestFileTime,
+    mtime: GuestFileTime,
+) -> Result<()> {
+    let (atime_code, atime_seconds, atime_nanos) = encode_guest_time(atime)?;
+    let (mtime_code, mtime_seconds, mtime_nanos) = encode_guest_time(mtime)?;
+    frame[TIME_FLAGS_OFFSET] = atime_code | (mtime_code << 2);
+    put_i64(frame, ATIME_SECONDS_RANGE, atime_seconds);
+    put_u32(frame, ATIME_NANOS_RANGE, atime_nanos);
+    put_i64(frame, MTIME_SECONDS_RANGE, mtime_seconds);
+    put_u32(frame, MTIME_NANOS_RANGE, mtime_nanos);
+    Ok(())
+}
+
+fn encode_guest_time(value: GuestFileTime) -> Result<(u8, i64, u32)> {
+    match value {
+        GuestFileTime::Omit => Ok((0, 0, 0)),
+        GuestFileTime::Now => Ok((1, 0, 0)),
+        GuestFileTime::Exact { seconds, nanoseconds } if nanoseconds < 1_000_000_000 => Ok((2, seconds, nanoseconds)),
+        GuestFileTime::Exact { .. } => bail!("guest timestamp nanoseconds must be below one second"),
+    }
+}
+
+fn get_guest_times(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<(GuestFileTime, GuestFileTime)> {
+    let flags = frame[TIME_FLAGS_OFFSET];
+    if flags & 0xf0 != 0 {
+        bail!("guest timestamp flags contain reserved bits");
+    }
+    Ok((
+        decode_guest_time(
+            flags & 0x03,
+            get_i64(frame, ATIME_SECONDS_RANGE),
+            get_u32(frame, ATIME_NANOS_RANGE),
+        )?,
+        decode_guest_time(
+            (flags >> 2) & 0x03,
+            get_i64(frame, MTIME_SECONDS_RANGE),
+            get_u32(frame, MTIME_NANOS_RANGE),
+        )?,
+    ))
+}
+
+fn decode_guest_time(code: u8, seconds: i64, nanoseconds: u32) -> Result<GuestFileTime> {
+    match (code, seconds, nanoseconds) {
+        (0, 0, 0) => Ok(GuestFileTime::Omit),
+        (1, 0, 0) => Ok(GuestFileTime::Now),
+        (2, seconds, nanoseconds) if nanoseconds < 1_000_000_000 => Ok(GuestFileTime::Exact { seconds, nanoseconds }),
+        (0 | 1, _, _) => bail!("non-exact guest timestamp carries a value"),
+        (2, _, _) => bail!("guest timestamp nanoseconds must be below one second"),
+        _ => bail!("invalid guest timestamp kind {code}"),
+    }
+}
+
+fn require_empty_time_fields(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<()> {
+    if frame[TIME_FIELDS_RANGE].iter().any(|byte| *byte != 0) {
+        bail!("record carries unrelated guest timestamps");
     }
     Ok(())
 }
@@ -853,6 +993,22 @@ fn put_u16(frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE], range: std::ops::Range<u
 
 fn get_u16(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE], range: std::ops::Range<usize>) -> u16 {
     u16::from_be_bytes(frame[range].try_into().unwrap())
+}
+
+fn put_u32(frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE], range: std::ops::Range<usize>, value: u32) {
+    frame[range].copy_from_slice(&value.to_be_bytes());
+}
+
+fn get_u32(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE], range: std::ops::Range<usize>) -> u32 {
+    u32::from_be_bytes(frame[range].try_into().unwrap())
+}
+
+fn put_i64(frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE], range: std::ops::Range<usize>, value: i64) {
+    frame[range].copy_from_slice(&value.to_be_bytes());
+}
+
+fn get_i64(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE], range: std::ops::Range<usize>) -> i64 {
+    i64::from_be_bytes(frame[range].try_into().unwrap())
 }
 
 fn put_u64(frame: &mut [u8; UPSTREAM_GRANT_FRAME_SIZE], range: std::ops::Range<usize>, value: u64) {

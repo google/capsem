@@ -53,6 +53,15 @@ fn every_request_round_trips_exactly() {
             relative_path: b"workspace/pyvenv/bin/activate".to_vec(),
             mode: 0o755,
         },
+        UpstreamGrantRequest::SetGuestTimes {
+            request_id: 12,
+            relative_path: b"workspace/archive.txt".to_vec(),
+            atime: GuestFileTime::Exact {
+                seconds: -1,
+                nanoseconds: 123_456_789,
+            },
+            mtime: GuestFileTime::Now,
+        },
     ] {
         request_roundtrip(request);
     }
@@ -99,6 +108,7 @@ fn every_response_round_trips_exactly() {
             reason: UpstreamGrantDenial::Revoked,
         },
         UpstreamGrantResponse::GuestModeSet { request_id: 7 },
+        UpstreamGrantResponse::GuestTimesSet { request_id: 13 },
         UpstreamGrantResponse::LedgerGranted {
             request_id: 8,
             grant: LedgerChannelGrant::new(LedgerGeneration::new([0x5a; 16]), 16, LedgerClientRole::VmOwner).unwrap(),
@@ -145,6 +155,54 @@ fn guest_mode_paths_are_bounded_normalized_bytes() {
         mode: 0o10_000,
     })
     .is_err());
+}
+
+#[test]
+fn guest_timestamp_values_and_padding_are_strict() {
+    request_roundtrip(UpstreamGrantRequest::SetGuestTimes {
+        request_id: 1,
+        relative_path: Vec::new(),
+        atime: GuestFileTime::Omit,
+        mtime: GuestFileTime::Exact {
+            seconds: 1_234,
+            nanoseconds: 999_999_999,
+        },
+    });
+    assert!(encode_upstream_grant_request(&UpstreamGrantRequest::SetGuestTimes {
+        request_id: 2,
+        relative_path: b"file".to_vec(),
+        atime: GuestFileTime::Omit,
+        mtime: GuestFileTime::Omit,
+    })
+    .is_err());
+    assert!(encode_upstream_grant_request(&UpstreamGrantRequest::SetGuestTimes {
+        request_id: 3,
+        relative_path: b"file".to_vec(),
+        atime: GuestFileTime::Now,
+        mtime: GuestFileTime::Exact {
+            seconds: 1,
+            nanoseconds: 1_000_000_000,
+        },
+    })
+    .is_err());
+
+    let valid = encode_upstream_grant_request(&UpstreamGrantRequest::SetGuestTimes {
+        request_id: 4,
+        relative_path: b"file".to_vec(),
+        atime: GuestFileTime::Now,
+        mtime: GuestFileTime::Omit,
+    })
+    .unwrap();
+    let mut reserved_flag = valid;
+    reserved_flag[TIME_FLAGS_OFFSET] |= 0x80;
+    assert!(decode_upstream_grant_request(&reserved_flag).is_err());
+    let mut value_on_now = valid;
+    put_i64(&mut value_on_now, ATIME_SECONDS_RANGE, 1);
+    assert!(decode_upstream_grant_request(&value_on_now).is_err());
+    let mut unrelated_time =
+        encode_upstream_grant_request(&UpstreamGrantRequest::OpenLedger { request_id: 5 }).unwrap();
+    unrelated_time[TIME_FLAGS_OFFSET] = 1;
+    assert!(decode_upstream_grant_request(&unrelated_time).is_err());
 }
 
 #[test]
