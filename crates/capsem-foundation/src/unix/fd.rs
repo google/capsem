@@ -52,6 +52,45 @@ pub fn write_at(fd: BorrowedFd<'_>, bytes: &[u8], offset: u64) -> io::Result<usi
     retry_eintr(|| nix::sys::uio::pwrite(fd, bytes, offset)).map_err(errno::io)
 }
 
+/// Exact logical size of an already-open regular file, retaining descriptor identity.
+pub fn regular_file_size(fd: BorrowedFd<'_>) -> io::Result<u64> {
+    regular_file_metadata(fd).map(|metadata| metadata.len)
+}
+
+/// Descriptor-owned logical and allocated sizes for a regular file.
+#[derive(Debug, Clone, Copy)]
+pub struct RegularFileMetadata {
+    pub len: u64,
+    pub allocated_bytes: u64,
+}
+
+pub fn regular_file_metadata(fd: BorrowedFd<'_>) -> io::Result<RegularFileMetadata> {
+    use nix::sys::stat::{fstat, SFlag};
+    let stat = retry_eintr(|| fstat(fd.as_raw_fd())).map_err(errno::io)?;
+    if SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT != SFlag::S_IFREG {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "descriptor is not a regular file",
+        ));
+    }
+    let len = u64::try_from(stat.st_size)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "file length is negative"))?;
+    let allocated_bytes = u64::try_from(stat.st_blocks)
+        .ok()
+        .and_then(|blocks| blocks.checked_mul(512))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "file allocation is invalid"))?;
+    Ok(RegularFileMetadata { len, allocated_bytes })
+}
+
+/// Signal one eventfd completion without borrowing raw Unix mechanics at callers.
+pub fn signal_counter(fd: BorrowedFd<'_>) -> io::Result<()> {
+    let count = retry_eintr(|| nix::unistd::write(fd, &1u64.to_ne_bytes())).map_err(errno::io)?;
+    if count != std::mem::size_of::<u64>() {
+        return Err(io::Error::new(io::ErrorKind::WriteZero, "short eventfd counter write"));
+    }
+    Ok(())
+}
+
 /// Set or clear `O_NONBLOCK`, returning its previous state.
 ///
 /// All unrelated descriptor status flags are preserved. An interrupted

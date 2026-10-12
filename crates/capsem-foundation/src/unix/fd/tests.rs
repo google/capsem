@@ -8,10 +8,22 @@ use super::{duplicate, retry_eintr, set_nonblocking, shutdown, wait_readable, So
 use nix::errno::Errno;
 
 #[test]
+fn counter_signals_are_owned_and_accumulate_completions() {
+    use nix::sys::eventfd::{EfdFlags, EventFd};
+    let counter = EventFd::from_flags(EfdFlags::EFD_CLOEXEC | EfdFlags::EFD_NONBLOCK).unwrap();
+    super::signal_counter(counter.as_fd()).unwrap();
+    assert_eq!(counter.read().unwrap(), 1);
+    super::signal_counter(counter.as_fd()).unwrap();
+    super::signal_counter(counter.as_fd()).unwrap();
+    assert_eq!(counter.read().unwrap(), 2);
+}
+
+#[test]
 fn positioned_io_preserves_cursor_and_reports_short_reads_and_eof() {
     use std::io::{Seek, SeekFrom};
     let mut file = tempfile::tempfile().unwrap();
     file.write_all(b"abcdef").unwrap();
+    assert_eq!(super::regular_file_size(file.as_fd()).unwrap(), 6);
     file.seek(SeekFrom::Start(2)).unwrap();
     assert_eq!(super::write_at(file.as_fd(), b"XY", 4).unwrap(), 2);
     assert_eq!(file.stream_position().unwrap(), 2);
@@ -38,6 +50,10 @@ fn positioned_io_rejects_unrepresentable_offsets_and_preserves_os_errors() {
         Some(22)
     );
     let (socket, _peer) = UnixStream::pair().unwrap();
+    assert_eq!(
+        super::regular_file_size(socket.as_fd()).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
     assert_eq!(
         super::read_at(socket.as_fd(), &mut [0], 0).unwrap_err().kind(),
         std::io::ErrorKind::NotSeekable

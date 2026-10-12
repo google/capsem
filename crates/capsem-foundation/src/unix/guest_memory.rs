@@ -4,10 +4,29 @@ use std::ffi::c_void;
 use std::io;
 use std::num::NonZeroUsize;
 use std::ptr::NonNull;
+use std::sync::OnceLock;
 
 use nix::sys::mman::{madvise, mmap_anonymous, munmap, MapFlags, MmapAdvise, ProtFlags};
 
 const HUGE_PAGE_SIZE: usize = 2 * 1024 * 1024;
+
+/// Host PMD alignment: at least two MiB, also covering 64-KiB-page ARM hosts.
+pub fn page_alignment() -> usize {
+    static ALIGNMENT: OnceLock<usize> = OnceLock::new();
+    *ALIGNMENT.get_or_init(|| {
+        super::fs::read_regular_file_no_follow(std::path::Path::new(
+            "/sys/kernel/mm/transparent_hugepage/hpage_pmd_size",
+        ))
+        .ok()
+        .and_then(|bytes| std::str::from_utf8(&bytes).ok().and_then(parse_alignment))
+        .unwrap_or(HUGE_PAGE_SIZE)
+    })
+}
+
+fn parse_alignment(text: &str) -> Option<usize> {
+    let value: usize = text.trim().parse().ok()?;
+    (value.is_power_of_two() && (HUGE_PAGE_SIZE..=1024 * 1024 * 1024).contains(&value)).then_some(value)
+}
 
 /// Owns the whole mapping, including a virtual-only alignment margin.
 /// Exposes no references; callers must bound and synchronize pointer accesses.
@@ -30,8 +49,9 @@ impl GuestRam {
                 "guest RAM must contain complete pages",
             ));
         }
+        let alignment = page_alignment();
         let mapping_len = len
-            .checked_add(HUGE_PAGE_SIZE)
+            .checked_add(alignment)
             .and_then(NonZeroUsize::new)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "guest RAM length overflows"))?;
         // SAFETY: creates a fresh, zeroed anonymous mapping with no file alias.
@@ -44,7 +64,7 @@ impl GuestRam {
             )
         }
         .map_err(super::errno::io)?;
-        let offset = mapping.as_ptr().addr().wrapping_neg() & (HUGE_PAGE_SIZE - 1);
+        let offset = mapping.as_ptr().addr().wrapping_neg() & (alignment - 1);
         // SAFETY: offset is less than the reserved margin; len bytes remain mapped.
         let ptr = unsafe { NonNull::new_unchecked(mapping.cast::<u8>().as_ptr().add(offset)) };
         Ok(Self {
@@ -64,6 +84,13 @@ impl GuestRam {
     pub fn prefer_huge_pages(&self) -> io::Result<()> {
         // SAFETY: this is the aligned payload within our owned live mapping.
         unsafe { madvise(self.ptr.cast(), self.len, MmapAdvise::MADV_HUGEPAGE) }.map_err(super::errno::io)
+    }
+
+    /// Reset an inactive VM's RAM to zero without touching or allocating pages.
+    /// Pointer users must be quiescent, just as during checkpoint restoration.
+    pub fn discard_contents(&self) -> io::Result<()> {
+        // SAFETY: the complete payload is live, anonymous, private and aligned.
+        unsafe { madvise(self.ptr.cast(), self.len, MmapAdvise::MADV_DONTNEED) }.map_err(super::errno::io)
     }
 }
 

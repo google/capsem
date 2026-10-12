@@ -13,6 +13,8 @@ mod durability;
 mod extents;
 
 pub use durability::{set_mode, sync, sync_before_barrier, sync_filesystem};
+#[cfg(target_os = "linux")]
+pub use extents::next_data_range;
 pub use extents::{clone_file_into, copy_sparse, CloneMethod};
 
 const PRIVATE_DIR_MODE: u32 = 0o700;
