@@ -1,6 +1,9 @@
 use super::super::memory::{GuestMemory, RAM_BASE};
 use super::*;
 
+#[cfg(target_arch = "x86_64")]
+mod bounds;
+
 // Helper: set up guest memory with a virtqueue at known offsets.
 // Returns (GuestMemory, desc_table_gpa, avail_ring_gpa, used_ring_gpa).
 fn setup_queue(size: u16) -> (GuestMemory, u64, u64, u64) {

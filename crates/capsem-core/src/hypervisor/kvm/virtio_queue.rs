@@ -37,8 +37,8 @@ pub(super) struct VirtqDesc {
 
 impl VirtqDesc {
     fn read_from(mem: &GuestMemoryRef, desc_table_gpa: u64, index: u16) -> Option<Self> {
-        let offset = desc_table_gpa + u64::from(index) * 16;
-        let host = mem.gpa_to_host(offset)?;
+        let offset = desc_table_gpa.checked_add(u64::from(index) * 16)?;
+        let host = mem.gpa_range_to_host(offset, 16)?;
         unsafe {
             let addr = u64::from_le(std::ptr::read_unaligned(host as *const u64));
             let len = u32::from_le(std::ptr::read_unaligned(host.cast_const().add(8) as *const u32));
@@ -99,7 +99,7 @@ struct QueueIndices {
 impl VirtQueue {
     /// Create a new virtqueue from guest-provided addresses.
     pub fn new(mem: GuestMemoryRef, desc_table_gpa: u64, avail_ring_gpa: u64, used_ring_gpa: u64, size: u16) -> Self {
-        let next_used = read_u16(&mem, used_ring_gpa + 2);
+        let next_used = read_u16_at(&mem, used_ring_gpa, 2);
         Self::from_indices(
             mem,
             QueueIndices {
@@ -124,7 +124,7 @@ impl VirtQueue {
         size: u16,
         event_idx: bool,
     ) -> Self {
-        let next_used = read_u16(&mem, used_ring_gpa + 2);
+        let next_used = read_u16_at(&mem, used_ring_gpa, 2);
         Self::from_indices(
             mem,
             QueueIndices {
@@ -154,8 +154,8 @@ impl VirtQueue {
         used_ring_gpa: u64,
         size: u16,
     ) -> Self {
-        let next_avail = read_u16(&mem, avail_ring_gpa + 2);
-        let next_used = read_u16(&mem, used_ring_gpa + 2);
+        let next_avail = read_u16_at(&mem, avail_ring_gpa, 2);
+        let next_used = read_u16_at(&mem, used_ring_gpa, 2);
         debug!(
             event_name = "virtio.queue.restore",
             desc_table_gpa, avail_ring_gpa, used_ring_gpa, size, next_avail, next_used, "virtqueue restored"
@@ -184,8 +184,8 @@ impl VirtQueue {
         size: u16,
         event_idx: bool,
     ) -> Self {
-        let next_avail = read_u16(&mem, avail_ring_gpa + 2);
-        let next_used = read_u16(&mem, used_ring_gpa + 2);
+        let next_avail = read_u16_at(&mem, avail_ring_gpa, 2);
+        let next_used = read_u16_at(&mem, used_ring_gpa, 2);
         debug!(
             event_name = "virtio.queue.restore",
             desc_table_gpa, avail_ring_gpa, used_ring_gpa, size, next_avail, next_used, event_idx, "virtqueue restored"
@@ -348,12 +348,7 @@ impl VirtQueue {
     /// Read the `idx` field from the available ring.
     fn read_avail_idx(&self) -> u16 {
         // avail ring layout: flags (u16), idx (u16), ring[size] (u16 each)
-        let idx_gpa = self.avail_ring_gpa + 2; // skip flags
-        if let Some(ptr) = self.mem.gpa_to_host(idx_gpa) {
-            unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) }
-        } else {
-            0
-        }
+        read_u16_at(&self.mem, self.avail_ring_gpa, 2)
     }
 
     /// Read the `flags` field from the available ring.
@@ -364,23 +359,20 @@ impl VirtQueue {
     /// Read a ring entry from the available ring.
     fn read_avail_ring(&self, ring_index: u16) -> u16 {
         // ring entries start at offset 4 (after flags + idx)
-        let entry_gpa = self.avail_ring_gpa + 4 + u64::from(ring_index) * 2;
-        if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
-            unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) }
-        } else {
-            0
-        }
+        read_u16_at(&self.mem, self.avail_ring_gpa, 4 + u64::from(ring_index) * 2)
     }
 
     /// Read `used_event` from the end of the available ring.
     fn read_used_event(&self) -> u16 {
-        read_u16(&self.mem, self.avail_ring_gpa + 4 + u64::from(self.size) * 2)
+        read_u16_at(&self.mem, self.avail_ring_gpa, 4 + u64::from(self.size) * 2)
     }
 
     /// Write `avail_event` at the end of the used ring.
     fn write_avail_event(&self, idx: u16) {
-        let event_gpa = self.used_ring_gpa + 4 + u64::from(self.size) * 8;
-        if let Some(ptr) = self.mem.gpa_to_host(event_gpa) {
+        let Some(event_gpa) = self.used_ring_gpa.checked_add(4 + u64::from(self.size) * 8) else {
+            return;
+        };
+        if let Some(ptr) = self.mem.gpa_range_to_host(event_gpa, 2) {
             unsafe {
                 std::ptr::write_unaligned(ptr as *mut u16, idx.to_le());
             }
@@ -390,8 +382,10 @@ impl VirtQueue {
     /// Write a used ring entry.
     fn write_used_ring(&self, ring_index: u16, id: u16, len: u32) {
         // used ring layout: flags (u16), idx (u16), ring[size] {id: u32, len: u32}
-        let entry_gpa = self.used_ring_gpa + 4 + u64::from(ring_index) * 8;
-        if let Some(ptr) = self.mem.gpa_to_host(entry_gpa) {
+        let Some(entry_gpa) = self.used_ring_gpa.checked_add(4 + u64::from(ring_index) * 8) else {
+            return;
+        };
+        if let Some(ptr) = self.mem.gpa_range_to_host(entry_gpa, 8) {
             unsafe {
                 std::ptr::write_unaligned(ptr as *mut u32, u32::from(id).to_le());
                 std::ptr::write_unaligned(ptr.add(4) as *mut u32, len.to_le());
@@ -401,8 +395,10 @@ impl VirtQueue {
 
     /// Write the `idx` field of the used ring.
     fn write_used_idx(&self, idx: u16) {
-        let idx_gpa = self.used_ring_gpa + 2; // skip flags
-        if let Some(ptr) = self.mem.gpa_to_host(idx_gpa) {
+        let Some(idx_gpa) = self.used_ring_gpa.checked_add(2) else {
+            return;
+        };
+        if let Some(ptr) = self.mem.gpa_range_to_host(idx_gpa, 2) {
             unsafe {
                 std::ptr::write_unaligned(ptr as *mut u16, idx.to_le());
             }
@@ -411,9 +407,13 @@ impl VirtQueue {
 }
 
 fn read_u16(mem: &GuestMemoryRef, gpa: u64) -> u16 {
-    mem.gpa_to_host(gpa).map_or(0, |ptr| unsafe {
+    mem.gpa_range_to_host(gpa, 2).map_or(0, |ptr| unsafe {
         u16::from_le(std::ptr::read_unaligned(ptr as *const u16))
     })
+}
+
+fn read_u16_at(mem: &GuestMemoryRef, base: u64, offset: u64) -> u16 {
+    base.checked_add(offset).map_or(0, |gpa| read_u16(mem, gpa))
 }
 
 #[cfg(test)]

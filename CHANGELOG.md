@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Virtio descriptor and ring metadata validate their complete guest RAM span
+  and address arithmetic before host access, including PCI-hole crossings.
+
 - OAuth disconnect joins an in-flight refresh and retires the latest rotated
   token under denial, including material whose durable publication failed.
 
