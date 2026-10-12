@@ -969,7 +969,7 @@ dependencies = [
 name = "capsem-foundation"
 version = "0.7.0"
 dependencies = [
- "blake3",
+ "capsem-crypto",
  "capsem-proto",
  "libc",
  "nix 0.29.0",

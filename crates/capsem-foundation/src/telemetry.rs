@@ -591,7 +591,7 @@ fn synthesize_16hex_id(seed: &str) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = capsem_crypto::blake3::Hasher::new();
     hasher.update(seed.as_bytes());
     hasher.update(&salt.to_le_bytes());
     let hash = hasher.finalize();
