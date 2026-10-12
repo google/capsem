@@ -202,7 +202,7 @@ def main() -> int:
             raise RuntimeError(
                 f"capsem-bench {mode} failed: "
                 f"exit={None if not benchmark_result else benchmark_result.get('exit_code')}\n"
-                f"{(benchmark_result or {}).get('stderr', '')[:500]}"
+                f"response={json.dumps(benchmark_result)[:1000]}"
             )
 
         artifact_result = client.post(
@@ -214,7 +214,7 @@ def main() -> int:
             raise RuntimeError(
                 f"read capsem-bench {mode} artifact failed: "
                 f"exit={None if not artifact_result else artifact_result.get('exit_code')}\n"
-                f"{(artifact_result or {}).get('stderr', '')[:500]}"
+                f"response={json.dumps(artifact_result)[:1000]}"
             )
         document = json.loads(exec_output_text(artifact_result))
     finally:
@@ -239,7 +239,7 @@ def main() -> int:
         raise RuntimeError(
             f"capsem-bench {mode} reported no numbers: "
             f"artifact={json.dumps(document, sort_keys=True)[:1000]!r}; "
-            f"stderr={(benchmark_result or {}).get('stderr', '')[:1000]!r}"
+            f"exec_response={json.dumps(benchmark_result)[:1000]!r}"
         )
 
     measured = {
