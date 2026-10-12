@@ -135,7 +135,7 @@ impl fmt::Display for GatewayRequestId {
 }
 
 fn gateway_request_id() -> GatewayRequestId {
-    GatewayRequestId(rand::random::<u64>() & 0x0000_ffff_ffff_ffff)
+    GatewayRequestId(capsem_crypto::random::u64() & 0x0000_ffff_ffff_ffff)
 }
 
 async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response> {

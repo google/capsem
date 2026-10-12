@@ -145,26 +145,14 @@ impl AuthState {
 
 /// Generate a 64-character alphanumeric random token.
 pub fn generate_token() -> String {
-    use rand::Rng;
-    rand::rng()
-        .sample_iter(&rand::distr::Alphanumeric)
-        .take(64)
-        .map(char::from)
-        .collect()
+    capsem_crypto::random::alphanumeric(64)
 }
 
 /// Compare a presented token with the real one in time independent of where
 /// they first differ. The token length is public (64), so a length mismatch
 /// may return early.
 pub fn token_matches(candidate: &str, token: &str) -> bool {
-    if candidate.len() != token.len() {
-        return false;
-    }
-    candidate
-        .bytes()
-        .zip(token.bytes())
-        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-        == 0
+    capsem_crypto::secrets::constant_time_eq(candidate.as_bytes(), token.as_bytes())
 }
 
 /// True unless the request names a host that is not this machine.
