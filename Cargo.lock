@@ -1157,7 +1157,7 @@ name = "capsem-proto"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "blake3",
+ "capsem-crypto",
  "quote",
  "rmp-serde",
  "serde",
