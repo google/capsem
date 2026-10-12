@@ -11,7 +11,11 @@ const OWNER_SECRET_FILE: &str = "owner-secret";
 /// Mint the secret an owner will show, and leave it in its session directory
 /// for that owner alone.
 pub(super) fn mint_owner_secret(session_dir: &std::path::Path) -> Result<String> {
-    let secret = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+    let secret = format!(
+        "{}{}",
+        capsem_crypto::uuid_v4().simple(),
+        capsem_crypto::uuid_v4().simple()
+    );
     let path = session_dir.join(OWNER_SECRET_FILE);
     let mut file = std::fs::OpenOptions::new();
     file.write(true).create(true).truncate(true);

@@ -373,9 +373,9 @@ async fn handshake(
         .await
         .summary(network)
         .context("the network retired during the plug")?;
-    let token = format!("{:016x}", Uuid::new_v4().as_u128() as u64);
+    let token = format!("{:016x}", capsem_crypto::uuid_v4().as_u128() as u64);
     let ask = ServiceToProcess::LinkAttach {
-        id: Uuid::new_v4().as_u128() as u64,
+        id: capsem_crypto::uuid_v4().as_u128() as u64,
         token: token.clone(),
         network: network.to_string(),
         network_name: summary.name,
@@ -444,7 +444,7 @@ pub(crate) async fn plug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) 
         drop(registry);
         (generation, address)
     };
-    let connection = Uuid::new_v4();
+    let connection = capsem_crypto::uuid_v4();
     match handshake(state, network, &uds_path, address, generation).await {
         Ok((host, port, keepalive)) => {
             let mut registry = state.networks.lock().await;
@@ -609,7 +609,7 @@ fn take_cable_down(state: &Arc<ServiceState>, network: Uuid, vm_id: &str, genera
     let vm_id = vm_id.to_string();
     tokio::spawn(async move {
         let ask = ServiceToProcess::LinkDetach {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: capsem_crypto::uuid_v4().as_u128() as u64,
             network: network.to_string(),
             generation,
         };

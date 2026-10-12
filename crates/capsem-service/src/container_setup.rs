@@ -444,9 +444,11 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     }
     let staged_image = stage::StageImage {
         manifest: &manifest,
-        rootfs: rootfs
-            .as_ref()
-            .map(|(digest, size)| stage::RootfsFile { digest, size: *size }),
+        rootfs: rootfs.as_ref().map(|(digest, integrity, size)| stage::RootfsFile {
+            digest,
+            integrity,
+            size: *size,
+        }),
     };
     let plan = stage::stage_plan(staged_image, &spec.args, &spec.env, resources, declared)
         .map_err(|e| format!("plan stage: {e:#}"))?;
@@ -865,7 +867,7 @@ async fn share_image(
     generation: u64,
     image: &PulledImage,
     rootfs: Option<capsem_assets::oci::RootfsLayout>,
-) -> Result<(String, Option<(String, u64)>), String> {
+) -> Result<(String, Option<(String, String, u64)>), String> {
     let lease = state
         .containers
         .work_lease(id, generation)
@@ -896,7 +898,7 @@ async fn share_image(
                         .ok_or_else(|| anyhow::anyhow!("rootfs name is not UTF-8"))?
                         .to_owned(),
                 );
-                Ok((rootfs.digest().to_string(), size))
+                Ok((rootfs.digest().to_string(), rootfs.integrity().to_owned(), size))
             })
             .transpose()?;
         capsem_core::session::publish_image_share(&session_dir, &blobs, &image.blobs)?;

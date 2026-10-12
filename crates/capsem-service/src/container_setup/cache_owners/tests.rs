@@ -43,7 +43,7 @@ fn cache_associations_refuse_stale_workload_and_replacement_vm_generations() {
     assert!(state
         .containers
         .pin_image("box", next, Some("manifest".into()), Some(image)));
-    state.instances.lock().unwrap().get_mut("box").unwrap().generation = uuid::Uuid::new_v4();
+    state.instances.lock().unwrap().get_mut("box").unwrap().generation = capsem_crypto::uuid_v4();
     assert!(state.containers.active_cache_owners(&state).is_empty());
     state.containers.cancel("box");
     assert!(state.containers.active_cache_owners(&state).is_empty());
@@ -83,7 +83,7 @@ fn cloned_and_restored_cache_identity_binds_only_the_new_instance_owner() {
     assert_eq!(first[0].key, key);
     assert_eq!(first[0].vm.id(), "clone");
     state.containers.cancel("clone");
-    let generation = uuid::Uuid::new_v4();
+    let generation = capsem_crypto::uuid_v4();
     state.instances.lock().unwrap().get_mut("clone").unwrap().generation = generation;
     restore(&state, "clone");
     let next = state.containers.active_cache_owners(&state);

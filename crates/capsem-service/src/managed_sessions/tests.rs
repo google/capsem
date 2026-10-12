@@ -35,7 +35,8 @@ async fn grant_failure_prevents_session_cleanup_and_retry_awaits_original_retire
     let root = tempfile::tempdir().unwrap();
     let registry = capsem_core::managed_sessions::Registry::open(&root.path().join("ownership")).unwrap();
     let cap = capsem_core::managed_sessions::Capability::from_bytes([42; 32]);
-    let capsem_core::managed_sessions::Reservation::New(ticket) = registry.reserve(uuid::Uuid::new_v4(), &cap).unwrap()
+    let capsem_core::managed_sessions::Reservation::New(ticket) =
+        registry.reserve(capsem_crypto::uuid_v4(), &cap).unwrap()
     else {
         panic!()
     };
@@ -125,7 +126,7 @@ async fn recovery_adapter_keeps_untracked_original_child_unknown_and_preserves_s
     let state = make_test_state();
     let root = tempfile::tempdir().unwrap();
     let registry = Registry::open(&root.path().join("ownership")).unwrap();
-    let request = uuid::Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let capability = Capability::from_bytes([54; 32]);
     let Reservation::New(ticket) = registry.reserve(request, &capability).unwrap() else {
         panic!()
@@ -139,7 +140,7 @@ async fn recovery_adapter_keeps_untracked_original_child_unknown_and_preserves_s
         )
         .unwrap();
     registry.begin_create(&ticket, clock).unwrap();
-    let binding = VmBinding::new(new_persistent_vm_id(), uuid::Uuid::new_v4()).unwrap();
+    let binding = VmBinding::new(new_persistent_vm_id(), capsem_crypto::uuid_v4()).unwrap();
     registry.prepare_spawn(&ticket, binding.clone(), clock).unwrap();
     let snapshot = registry.inspect(request, &capability).unwrap().unwrap();
     let adapter = ManagedLifecycle::for_recovery(Arc::clone(&state), &snapshot, Arc::new(RefuseGrants)).unwrap();
@@ -165,7 +166,7 @@ async fn recovery_adapter_keeps_untracked_original_child_unknown_and_preserves_s
     assert!(session.exists(), "metadata alone cannot prove the old child exited");
     assert!(owner
         .create(
-            uuid::Uuid::new_v4(),
+            capsem_crypto::uuid_v4(),
             Capability::from_bytes([55; 32]),
             LeasePolicy::new(std::time::Duration::from_secs(10)).unwrap(),
             Arc::new(adapter.clone()),
@@ -201,7 +202,7 @@ async fn rejected_pre_spawn_creation_reconciles_without_inventing_a_child() {
         )
         .unwrap(),
     );
-    let request = uuid::Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = capsem_core::managed_sessions::Capability::from_bytes([43; 32]);
     assert!(owner
         .create(
@@ -246,7 +247,8 @@ async fn managed_adapter_never_cleans_up_a_different_actual_generation() {
     let root = tempfile::tempdir().unwrap();
     let registry = capsem_core::managed_sessions::Registry::open(&root.path().join("ownership")).unwrap();
     let cap = capsem_core::managed_sessions::Capability::from_bytes([41; 32]);
-    let capsem_core::managed_sessions::Reservation::New(ticket) = registry.reserve(uuid::Uuid::new_v4(), &cap).unwrap()
+    let capsem_core::managed_sessions::Reservation::New(ticket) =
+        registry.reserve(capsem_crypto::uuid_v4(), &cap).unwrap()
     else {
         panic!()
     };

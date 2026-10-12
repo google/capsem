@@ -2,7 +2,7 @@ use super::*;
 
 impl ServiceState {
     pub(crate) fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
-        self.provision_sandbox_generation(options, uuid::Uuid::new_v4())
+        self.provision_sandbox_generation(options, capsem_crypto::uuid_v4())
     }
 
     pub(crate) fn provision_sandbox_generation(

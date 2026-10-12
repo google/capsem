@@ -187,7 +187,7 @@ fn resolve_rejects_symlink_escape() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
-            generation: uuid::Uuid::new_v4(),
+            generation: capsem_crypto::uuid_v4(),
             id: "test-vm".into(),
             name: "test-vm".into(),
             asset_pins: test_asset_pins(),
@@ -221,7 +221,7 @@ fn resolve_valid_path_inside_workspace() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
-            generation: uuid::Uuid::new_v4(),
+            generation: capsem_crypto::uuid_v4(),
             id: "test-vm".into(),
             name: "test-vm".into(),
             asset_pins: test_asset_pins(),

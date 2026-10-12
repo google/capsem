@@ -66,7 +66,7 @@ impl ManagedLifecycle {
             request.name.is_none() && !request.persistent,
             "managed sessions must be unnamed and ephemeral"
         );
-        let binding = VmBinding::new(new_persistent_vm_id(), uuid::Uuid::new_v4())?;
+        let binding = VmBinding::new(new_persistent_vm_id(), capsem_crypto::uuid_v4())?;
         let work = Arc::new(Work {
             scope: Default::default(),
             continuation: tokio::sync::Mutex::new(None),

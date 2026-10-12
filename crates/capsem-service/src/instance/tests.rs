@@ -20,7 +20,13 @@ async fn stale_shutdown_binding_leaves_replacement_socket_and_ledger_intact() {
         .lock()
         .unwrap()
         .insert("replacement".into(), Arc::clone(&ledger));
-    let result = shutdown_vm_process(&state, "replacement", ShutdownMode::Discard, Some(uuid::Uuid::new_v4())).await;
+    let result = shutdown_vm_process(
+        &state,
+        "replacement",
+        ShutdownMode::Discard,
+        Some(capsem_crypto::uuid_v4()),
+    )
+    .await;
     assert_eq!(result.unwrap_err().0, StatusCode::CONFLICT);
     assert_eq!(
         state.instances.lock().unwrap().get("replacement").unwrap().generation,
@@ -39,7 +45,7 @@ async fn stale_shutdown_binding_leaves_replacement_socket_and_ledger_intact() {
 async fn bound_shutdown_reports_missing_ownership_without_fabricating_completion() {
     let state = make_test_state();
     assert!(
-        shutdown_vm_process(&state, "absent", ShutdownMode::Discard, Some(uuid::Uuid::new_v4()))
+        shutdown_vm_process(&state, "absent", ShutdownMode::Discard, Some(capsem_crypto::uuid_v4()))
             .await
             .unwrap()
             .is_none()
@@ -49,14 +55,14 @@ async fn bound_shutdown_reports_missing_ownership_without_fabricating_completion
 #[test]
 fn selected_spawn_generation_is_durable_and_corruption_cannot_be_overwritten() {
     let root = tempfile::tempdir().unwrap();
-    let generation = uuid::Uuid::new_v4();
+    let generation = capsem_crypto::uuid_v4();
     persist_spawn_identity(root.path(), "selected-vm", generation).unwrap();
     let session = capsem_foundation::unix::contained::ContainedDir::open_root(root.path()).unwrap();
     let stored = capsem_core::session::read_spawn_identity(&session).unwrap().unwrap();
     assert_eq!(stored.id(), "selected-vm");
     assert_eq!(stored.generation(), generation);
     std::fs::write(root.path().join("spawn-identity.json"), b"corrupt").unwrap();
-    assert!(persist_spawn_identity(root.path(), "selected-vm", uuid::Uuid::new_v4()).is_err());
+    assert!(persist_spawn_identity(root.path(), "selected-vm", capsem_crypto::uuid_v4()).is_err());
     assert_eq!(
         std::fs::read(root.path().join("spawn-identity.json")).unwrap(),
         b"corrupt"

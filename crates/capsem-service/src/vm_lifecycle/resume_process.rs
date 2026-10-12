@@ -137,7 +137,7 @@ impl ServiceState {
             child_cmd.env(k, v);
         }
 
-        let generation = uuid::Uuid::new_v4();
+        let generation = capsem_crypto::uuid_v4();
         crate::instance::persist_spawn_identity(&entry.session_dir, &vm_id, generation)?;
         let retirement = self.retirements.register(&vm_id, generation)?;
         let process_spawn_span = tracing::debug_span!(

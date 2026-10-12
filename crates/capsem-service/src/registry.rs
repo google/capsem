@@ -277,7 +277,7 @@ impl RegistryGuard<'_> {
 }
 
 pub fn new_persistent_vm_id() -> String {
-    uuid::Uuid::new_v4().to_string()
+    capsem_crypto::uuid_v4().to_string()
 }
 
 #[cfg(test)]
