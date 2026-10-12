@@ -22,6 +22,7 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
+from capsem_builder.crypto import digest_file
 from capsem_builder.gate import config as gate_config
 from capsem_builder.image import assettools, docker
 from capsem_builder.image.config import load_guest_config
@@ -118,6 +119,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             runtime_network=network,
             id_offset=WORKLOAD_ID_OFFSET,
         )
+        (args.out / "rootfs.blake3").write_text("blake3:" + digest_file(args.out / "rootfs.erofs") + "\n")
     finally:
         tar.unlink(missing_ok=True)
 

@@ -225,8 +225,10 @@ jobs:
         run: |
           obom="$(oras attach --format json --artifact-type application/vnd.cyclonedx+json \
             "$SUBJECT" obom.cdx.json:application/vnd.cyclonedx+json | jq -r .digest)"
-          erofs="$(oras attach --format json --artifact-type application/vnd.capsem.rootfs.erofs.v1 \
-            "$SUBJECT" rootfs.erofs:application/vnd.capsem.rootfs.erofs.v1 | jq -r .digest)"
+          integrity="$(cat rootfs.blake3)"
+          erofs="$(oras attach --format json --artifact-type application/vnd.capsem.rootfs.erofs.v2 \
+            --annotation "org.capsem.rootfs.blake3=$integrity" \
+            "$SUBJECT" rootfs.erofs:application/vnd.capsem.rootfs.erofs.v2 | jq -r .digest)"
           printf 'obom=%s\nerofs=%s\n' "$obom" "$erofs" >> "$GITHUB_OUTPUT"
       - name: Record this architecture
         env:
