@@ -38,6 +38,20 @@ pub fn duplicate(fd: BorrowedFd<'_>) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
+/// Read at a checked file offset without changing the descriptor's cursor.
+/// Interrupted operations are retried; EOF and short reads remain visible.
+pub fn read_at(fd: BorrowedFd<'_>, bytes: &mut [u8], offset: u64) -> io::Result<usize> {
+    let offset = i64::try_from(offset).map_err(|_| io::Error::from_raw_os_error(Errno::EINVAL as i32))?;
+    retry_eintr(|| nix::sys::uio::pread(fd, bytes, offset)).map_err(errno::io)
+}
+
+/// Write at a checked file offset without changing the descriptor's cursor.
+/// Callers own any short-write loop so their protocol can account for progress.
+pub fn write_at(fd: BorrowedFd<'_>, bytes: &[u8], offset: u64) -> io::Result<usize> {
+    let offset = i64::try_from(offset).map_err(|_| io::Error::from_raw_os_error(Errno::EINVAL as i32))?;
+    retry_eintr(|| nix::sys::uio::pwrite(fd, bytes, offset)).map_err(errno::io)
+}
+
 /// Set or clear `O_NONBLOCK`, returning its previous state.
 ///
 /// All unrelated descriptor status flags are preserved. An interrupted

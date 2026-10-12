@@ -8,6 +8,43 @@ use super::{duplicate, retry_eintr, set_nonblocking, shutdown, wait_readable, So
 use nix::errno::Errno;
 
 #[test]
+fn positioned_io_preserves_cursor_and_reports_short_reads_and_eof() {
+    use std::io::{Seek, SeekFrom};
+    let mut file = tempfile::tempfile().unwrap();
+    file.write_all(b"abcdef").unwrap();
+    file.seek(SeekFrom::Start(2)).unwrap();
+    assert_eq!(super::write_at(file.as_fd(), b"XY", 4).unwrap(), 2);
+    assert_eq!(file.stream_position().unwrap(), 2);
+    let mut bytes = [0; 8];
+    assert_eq!(super::read_at(file.as_fd(), &mut bytes, 3).unwrap(), 3);
+    assert_eq!(&bytes[..3], b"dXY");
+    assert_eq!(super::read_at(file.as_fd(), &mut bytes, 6).unwrap(), 0);
+    assert_eq!(file.stream_position().unwrap(), 2);
+}
+
+#[test]
+fn positioned_io_rejects_unrepresentable_offsets_and_preserves_os_errors() {
+    let file = tempfile::tempfile().unwrap();
+    assert_eq!(
+        super::read_at(file.as_fd(), &mut [0], u64::MAX)
+            .unwrap_err()
+            .raw_os_error(),
+        Some(22)
+    );
+    assert_eq!(
+        super::write_at(file.as_fd(), b"x", u64::MAX)
+            .unwrap_err()
+            .raw_os_error(),
+        Some(22)
+    );
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    assert_eq!(
+        super::read_at(socket.as_fd(), &mut [0], 0).unwrap_err().kind(),
+        std::io::ErrorKind::NotSeekable
+    );
+}
+
+#[test]
 fn tcp_reset_waits_for_the_last_owned_descriptor_then_reaches_the_peer() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();

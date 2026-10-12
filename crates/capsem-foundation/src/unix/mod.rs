@@ -5,6 +5,8 @@ pub mod contained;
 mod errno;
 pub mod fd;
 pub mod fs;
+#[cfg(target_os = "linux")]
+pub mod guest_memory;
 pub mod lock;
 pub mod process;
 pub mod router_channel;
