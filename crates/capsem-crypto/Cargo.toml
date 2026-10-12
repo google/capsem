@@ -1,0 +1,51 @@
+[package]
+name = "capsem-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Capsem's accelerated cryptographic primitives and provider ownership"
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["sha256"]
+sha256 = ["dep:aws-lc-rs"]
+benchmark = ["sha256", "dep:blake2b_simd", "dep:blake2s_simd", "dep:serde_json", "dep:sha2"]
+random = ["dep:rand", "dep:getrandom"]
+secrets = ["dep:subtle", "dep:zeroize"]
+jwt = ["sha256", "secrets", "random", "dep:jsonwebtoken", "dep:ring", "dep:signature", "dep:serde"]
+tls = ["sha256", "dep:rustls", "dep:rcgen", "dep:time", "dep:anyhow"]
+test-fixtures = ["jwt"]
+
+[dependencies]
+aws-lc-rs = { version = "1.18", default-features = false, features = ["non-fips"], optional = true }
+blake3 = "1"
+blake2b_simd = { version = "1", optional = true }
+blake2s_simd = { version = "1", optional = true }
+serde_json = { workspace = true, optional = true }
+sha2 = { version = "0.10", optional = true }
+rand = { version = "0.9", optional = true }
+getrandom = { version = "0.3", optional = true }
+subtle = { version = "2", optional = true }
+zeroize = { version = "1", optional = true }
+jsonwebtoken = { version = "11.1", default-features = false, optional = true }
+ring = { version = "0.17", optional = true }
+signature = { version = "2.2", optional = true }
+serde = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rcgen = { version = "0.13", features = ["pem", "x509-parser"], optional = true }
+time = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+
+[dev-dependencies]
+sha2 = "0.10"
+serde_json.workspace = true
+
+[[example]]
+name = "compare_hashes"
+required-features = ["benchmark"]
+
+[lints]
+workspace = true

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/capsem-crypto",
     "sdk/rust",
     "crates/capsem-api",
     "crates/capsem-assets",
@@ -54,6 +55,15 @@ opt-level = 3
 # OCI cache hits verify full blobs too; unoptimized SHA-256 dominates warm
 # image startup and holds cache acquisition locks for large published roots.
 [profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.capsem-crypto]
+opt-level = 3
+
+[profile.dev.package.blake2b_simd]
+opt-level = 3
+
+[profile.dev.package.blake2s_simd]
 opt-level = 3
 
 # Always optimize hot wire-format codecs in dev/install builds. `just install`
