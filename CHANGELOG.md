@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Replace the archived `serde_yaml`/`unsafe-libyaml` Sigma-rule parser with a
+  maintained safe-Rust parser, rejecting duplicate detection keys instead of
+  silently accepting the last value.
+
+- Preserve HTTP/security trace IDs and model-to-filesystem attribution after
+  proxy isolation through coordinator-derived process identity and a bounded,
+  acknowledged, one-way trace-hint capability to the VM owner. Preopen the
+  contained workspace before owner confinement and fail VM startup if its
+  filesystem audit rail cannot start.
+
 - Reject symlink and special-entry targets before descriptor-relative mode
   changes, preserving the contained-filesystem contract on macOS as well as
   Linux without following a guest-controlled link.
