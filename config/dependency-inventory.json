@@ -67,6 +67,17 @@
    "libc"
   ]
  },
+ "annotate-snippets": {
+  "build_script": false,
+  "dependencies": [
+   "anstream",
+   "anstyle",
+   "divan",
+   "memchr",
+   "snapbox",
+   "unicode-width"
+  ]
+ },
  "anstream": {
   "build_script": false,
   "dependencies": [
@@ -134,6 +145,10 @@
    "num-complex",
    "num-traits"
   ]
+ },
+ "arraydeque": {
+  "build_script": false,
+  "dependencies": []
  },
  "arrayvec": {
   "build_script": false,
@@ -863,8 +878,8 @@
    "capsem-proto",
    "regex",
    "serde",
+   "serde-saphyr",
    "serde_json",
-   "serde_yaml",
    "toml",
    "tracing"
   ]
@@ -1696,6 +1711,12 @@
    "libc"
   ]
  },
+ "core_detect": {
+  "build_script": false,
+  "dependencies": [
+   "cupid"
+  ]
+ },
  "cpufeatures": {
   "build_script": false,
   "dependencies": [
@@ -2209,6 +2230,29 @@
  "embed_plist": {
   "build_script": false,
   "dependencies": []
+ },
+ "encoding_rs": {
+  "build_script": true,
+  "dependencies": [
+   "any_all_workaround",
+   "bincode",
+   "cfg-if",
+   "core_detect",
+   "multiversion",
+   "multiversion_no_op",
+   "rustversion",
+   "scopeguard",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "simdutf8"
+  ]
+ },
+ "encoding_rs_io": {
+  "build_script": false,
+  "dependencies": [
+   "encoding_rs"
+  ]
  },
  "endi": {
   "build_script": false,
@@ -2764,6 +2808,14 @@
    "shell-words",
    "system-deps",
    "tempfile"
+  ]
+ },
+ "granit-parser": {
+  "build_script": false,
+  "dependencies": [
+   "arraydeque",
+   "libtest-mimic",
+   "smallvec"
   ]
  },
  "gtk": {
@@ -3960,6 +4012,10 @@
    "winit",
    "wry"
   ]
+ },
+ "multiversion_no_op": {
+  "build_script": false,
+  "dependencies": []
  },
  "ndk": {
   "build_script": false,
@@ -5853,6 +5909,41 @@
    "serde_derive"
   ]
  },
+ "serde-saphyr": {
+  "build_script": false,
+  "dependencies": [
+   "annotate-snippets",
+   "anyhow",
+   "base64",
+   "encoding_rs_io",
+   "erased-serde",
+   "figment",
+   "figment2",
+   "garde",
+   "granit-parser",
+   "indoc",
+   "miette",
+   "nohash-hasher",
+   "num-traits",
+   "proptest",
+   "regex",
+   "rstest",
+   "serde",
+   "serde-transcode",
+   "serde_bytes",
+   "serde_core",
+   "serde_ignored",
+   "serde_json",
+   "serde_path_to_error",
+   "serde_repr",
+   "smallvec",
+   "tempfile",
+   "trybuild",
+   "typetag",
+   "validator",
+   "zmij"
+  ]
+ },
  "serde-untagged": {
   "build_script": false,
   "dependencies": [
@@ -6007,19 +6098,6 @@
    "serde_json",
    "syn",
    "trybuild"
-  ]
- },
- "serde_yaml": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "indexmap",
-   "indoc",
-   "itoa",
-   "ryu",
-   "serde",
-   "serde_derive",
-   "unsafe-libyaml"
   ]
  },
  "serialize-to-javascript": {
@@ -7469,12 +7547,6 @@
   "build_script": false,
   "dependencies": [
    "criterion"
-  ]
- },
- "unsafe-libyaml": {
-  "build_script": false,
-  "dependencies": [
-   "pretty_assertions"
   ]
  },
  "untrusted": {
