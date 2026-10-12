@@ -20,3 +20,8 @@ pub fn u64() -> u64 {
 pub fn range_u32(range: std::ops::Range<u32>) -> u32 {
     rand::rng().random_range(range)
 }
+
+/// UUID generation is also entropy use, including UUID-derived capabilities.
+pub fn uuid_v4() -> uuid::Uuid {
+    uuid::Uuid::new_v4()
+}

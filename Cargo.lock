@@ -952,6 +952,7 @@ dependencies = [
  "signature",
  "subtle",
  "time",
+ "uuid",
  "zeroize",
 ]
 

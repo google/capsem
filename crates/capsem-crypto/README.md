@@ -6,10 +6,10 @@ They call this crate instead of selecting a hash or TLS backend themselves.
 
 | Feature | API | Contract |
 |---|---|---|
-| always | `blake3::{hash, Hash, Hasher}` | Existing 256-bit BLAKE3 identities and constant-time hash equality |
+| always | `blake3::{hash, Hash, Hasher}`, `verify` | BLAKE3 identities, constant-time hash equality and bounded reader verification |
 | `sha256` (default) | `Sha256` | Streaming and one-shot SHA-256 through CPU-dispatched AWS-LC |
 | `sha256` | `websocket_accept_digest` | SHA-1 only for the RFC 6455 handshake |
-| `random` | `random` | OS-seeded tokens, identifiers, ranges and fallible entropy |
+| `random` | `random`, `uuid_v4` | OS-seeded tokens, UUID identifiers, ranges and fallible entropy |
 | `secrets` | `secrets` | Audited constant-time comparison and secret erasure |
 | `tls` | `tls` | Rustls provider, private key ownership and certificate minting |
 | `jwt` | `jwt` | RS256 public verification; signing and arbitrary key conversion refused |
@@ -37,6 +37,28 @@ and storage. `CAPSEM_CRYPTO_BENCH_SAMPLES` imports retained raw samples without
 repeating the measurement.
 
 The Rust boundary covers normal, build, dev, renamed, inherited and target
-dependencies, including SDK and future workspace members. Python build tools
-and the portable Python guest launcher retain their existing hashlib/OpenSSL
-bindings; this crate does not make them depend on a host Rust executable.
+dependencies, including SDK and future workspace members. It also rejects
+UUID entropy generated outside the owner. Guest EROFS verification streams
+the launcher-held descriptor into the existing `capsem-sysutil verify-blob`
+command; its lightweight build enables BLAKE3 without host TLS dependencies.
+
+Python tooling uses `capsem_builder.crypto`: OpenSSL hashlib for protocol
+hashes, SIMD BLAKE3 for content, native constant-time comparison and OS-seeded
+entropy. Node SDK/package acceptance tools use
+`sdk/typescript/tools/crypto.mjs`, backed by native Node crypto. Neither
+binding changes existing SHA or BLAKE2 identities. Source guards reject raw
+provider imports in these production/tooling surfaces.
+
+The exact stdlib-only source-key bootstrap in `gatelaunch.py` keeps hashlib
+until its re-exec. Portable installed and guest script fragments use native
+OpenSSL-backed hashlib/SHA tools where the builder package is unavailable;
+the guest launcher uses SHA only for OCI metadata. Independent Python test
+references and standalone SDK acceptance tests also retain native bindings.
+These are execution-environment bindings, with format identities fixed by
+their contracts; none permits a Rust caller to bypass this crate.
+
+Prepared root artifacts use `application/vnd.capsem.rootfs.erofs.v2`. Their
+pinned manifest authenticates `org.capsem.rootfs.blake3=blake3:<64 lowercase
+hex characters>` and the platform subject. Transport addresses remain OCI
+SHA-256. Download verifies both hashes in one pass; cache reuse and mounting
+verify BLAKE3 and exact size. Version 1 artifacts are not admitted.

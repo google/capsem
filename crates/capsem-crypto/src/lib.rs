@@ -16,10 +16,14 @@ pub use sha256::{websocket_accept_digest, Sha256};
 pub mod jwt;
 #[cfg(feature = "random")]
 pub mod random;
+#[cfg(feature = "random")]
+pub use random::uuid_v4;
 #[cfg(feature = "secrets")]
 pub mod secrets;
 #[cfg(feature = "tls")]
 pub mod tls;
+
+pub mod verify;
 
 #[cfg(test)]
 mod tests;

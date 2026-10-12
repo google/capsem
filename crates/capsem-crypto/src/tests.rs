@@ -33,6 +33,9 @@ fn random_tokens_keep_their_shape_and_fallible_entropy_contract() {
     assert_ne!(entropy, [0; 32]);
     assert!((10_000..99_999).contains(&crate::random::range_u32(10_000..99_999)));
     assert_ne!(crate::random::u64(), crate::random::u64());
+    let id = crate::uuid_v4();
+    assert_eq!(id.get_version_num(), 4);
+    assert_ne!(id, crate::uuid_v4());
 }
 
 #[cfg(feature = "secrets")]
