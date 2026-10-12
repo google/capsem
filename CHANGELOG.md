@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Vhost-vsock validates complete descriptor and ring ranges, queue sizes, and
+  index-cell arithmetic before exposing guest-controlled addresses to the
+  kernel backend.
+
 - Virtio descriptor and ring metadata validate their complete guest RAM span
   and address arithmetic before host access, including PCI-hole crossings.
 

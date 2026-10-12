@@ -1,5 +1,7 @@
 use super::super::memory::{GuestMemory, RAM_BASE};
+use super::checkpoint::VsockCheckpointState;
 use super::*;
+mod ring_bounds;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RecordedIoctl {
