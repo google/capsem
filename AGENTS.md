@@ -42,6 +42,7 @@ See `/dev-just` for the full recipe reference and dependency chains.
 
 ```
 crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
+crates/capsem-crypto/          Accelerated hashes, randomness, TLS keys, JWT verification, secrets
 crates/capsem-archive/  Block-compressed body archive for session ledgers (pure Rust)
 crates/capsem-telemetry/       Every metrics-facade metric name, kind, unit, and description
 crates/capsem-assets/          Asset manifest compatibility, resolution, download, and verification
@@ -328,6 +329,22 @@ Telemetry and security ledgers are database-owned.
   ledger shape as empty data.
 
 Every change touching logged data needs tests that guard this boundary.
+
+## Cryptographic Boundary
+
+Every first-party Rust cryptographic operation goes through `capsem-crypto`,
+including build scripts, tests, and SDK code. Do not depend on or import raw
+hash, random, certificate, JWT, signature, constant-time or secret-erasure
+providers elsewhere. TLS configuration may use rustls transport types, while
+provider selection and key operations belong to `capsem-crypto::tls`.
+
+Use BLAKE3 for new internal content fingerprints. Preserve SHA-256 wherever
+OCI, OAuth, release manifests or existing persisted identities require it;
+the owner supplies CPU-dispatched AWS-LC rather than a per-caller SHA backend.
+An algorithm identity change is a format migration, not a performance patch.
+Benchmark candidates on the actual CPU and I/O path before changing defaults.
+`tests/citadel/test_crypto_boundary.py` rejects direct providers and renamed
+dependencies, and the hot-build guard keeps hashing optimized in dev builds.
 
 ## Host Unix Boundary
 

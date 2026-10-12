@@ -14,6 +14,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 HOT_DEV_OPTIMIZED_PACKAGES = {
     "blake3",
+    "sha2",
+    "capsem-crypto",
+    "blake2b_simd",
+    "blake2s_simd",
     "serde",
     "serde_core",
     "serde_json",
