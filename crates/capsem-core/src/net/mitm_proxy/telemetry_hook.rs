@@ -641,9 +641,9 @@ pub fn maybe_build_model_call(
         let tid = state.lookup(&tool_response_ids).unwrap_or_else(|| {
             if tool_call_ids.is_empty() {
                 capsem_foundation::telemetry::ambient_capsem_trace_id()
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+                    .unwrap_or_else(|| capsem_crypto::uuid_v4().to_string())
             } else {
-                uuid::Uuid::new_v4().to_string()
+                capsem_crypto::uuid_v4().to_string()
             }
         });
         let is_tool_use = !tool_call_ids.is_empty()

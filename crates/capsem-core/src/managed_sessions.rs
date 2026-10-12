@@ -190,7 +190,7 @@ impl Registry {
         let record = Record {
             schema_version: 1,
             request,
-            generation: Uuid::new_v4(),
+            generation: capsem_crypto::uuid_v4(),
             capability_hash: *capability.hash(request).as_bytes(),
             state: State::Reserved,
             vm: None,
@@ -276,7 +276,7 @@ impl Registry {
 
     fn write(&self, record: &Record) -> Result<()> {
         let bytes = serde_json::to_vec(record)?;
-        let temporary_name = format!(".pending-managed-{}", Uuid::new_v4());
+        let temporary_name = format!(".pending-managed-{}", capsem_crypto::uuid_v4());
         let mut temporary = self.root.create_new_private_file(temporary_name.as_ref())?;
         let result = (|| -> Result<()> {
             temporary.write_all(&bytes)?;

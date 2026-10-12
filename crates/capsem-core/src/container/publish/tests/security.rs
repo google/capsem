@@ -80,7 +80,7 @@ async fn deny_ask_plugin_and_closed_audit_never_open_a_guest_destination() {
                 .clone()
                 .accept_publication(
                     listener,
-                    uuid::Uuid::new_v4(),
+                    capsem_crypto::uuid_v4(),
                     6379,
                     capsem_proto::PublicationTarget::Container,
                     stop.clone(),
@@ -143,7 +143,7 @@ async fn preview_denial_never_opens_a_guest_destination() {
         let source = Source(listener.accept().await.unwrap().0.into_std().unwrap());
         let audit = security::AuditFlow::preview(
             owner.security.clone().unwrap(),
-            uuid::Uuid::new_v4(),
+            capsem_crypto::uuid_v4(),
             source.0.local_addr().unwrap(),
             source.0.peer_addr().unwrap(),
             8080,
@@ -230,7 +230,7 @@ async fn missing_security_context_never_requests_a_guest_connection() {
     // never served, so no broker exists to request a guest destination.
     let feeder = owner.clone().accept_publication(
         listener,
-        uuid::Uuid::new_v4(),
+        capsem_crypto::uuid_v4(),
         6379,
         capsem_proto::PublicationTarget::Container,
         stop.clone(),
@@ -321,7 +321,7 @@ async fn a_control_lease_that_never_came_up_is_audited_as_unreachable() {
             .clone()
             .accept_publication(
                 listener,
-                uuid::Uuid::new_v4(),
+                capsem_crypto::uuid_v4(),
                 6379,
                 capsem_proto::PublicationTarget::Container,
                 stop.clone(),
@@ -360,7 +360,7 @@ async fn a_control_lease_lost_while_setup_waits_is_audited_as_cancelled() {
             .clone()
             .accept_publication(
                 listener,
-                uuid::Uuid::new_v4(),
+                capsem_crypto::uuid_v4(),
                 6379,
                 capsem_proto::PublicationTarget::Container,
                 stop.clone(),
@@ -582,7 +582,7 @@ async fn a_revoked_exposure_closes_then_is_audited_under_its_publication() {
     let (engine, path) = lifecycle_engine(&dir, BLOCK_REDIS);
     let owner = Arc::new(Publisher::default().with_security("vm-id".into(), "redis".into(), engine.clone()));
     let cancellation = CancellationToken::new();
-    let publication_id = uuid::Uuid::new_v4();
+    let publication_id = capsem_crypto::uuid_v4();
     let task = tokio::spawn(std::future::pending::<()>());
     owner.declared.insert(registry::Declared {
         id: "41234".into(),

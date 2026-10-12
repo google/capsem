@@ -201,7 +201,7 @@ impl AuditFlow {
     ) -> Self {
         Self {
             facts: NetworkFlow {
-                connection_id: uuid::Uuid::new_v4(),
+                connection_id: capsem_crypto::uuid_v4(),
                 route: NetworkRoute::Expose {
                     publication_id,
                     listener,
@@ -233,7 +233,7 @@ impl AuditFlow {
     ) -> Self {
         Self {
             facts: NetworkFlow {
-                connection_id: uuid::Uuid::new_v4(),
+                connection_id: capsem_crypto::uuid_v4(),
                 route: NetworkRoute::Preview {
                     publication_id,
                     listener,
@@ -265,7 +265,7 @@ impl AuditFlow {
         };
         Self {
             facts: NetworkFlow {
-                connection_id: uuid::Uuid::new_v4(),
+                connection_id: capsem_crypto::uuid_v4(),
                 route: NetworkRoute::Private { network },
                 side: NetworkSide::Destination,
                 protocol: NetworkProtocol::Link,

@@ -35,7 +35,7 @@ impl Registry {
             None => Record {
                 schema_version: 1,
                 request,
-                generation: Uuid::new_v4(),
+                generation: capsem_crypto::uuid_v4(),
                 capability_hash: *capability.hash(request).as_bytes(),
                 state: State::Closed,
                 vm: None,

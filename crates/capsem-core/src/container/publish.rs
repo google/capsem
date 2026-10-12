@@ -121,7 +121,7 @@ impl Publisher {
             control_lease: Mutex::new(None),
             // The UUID variant bits make its low half nonzero; the fallback is
             // unreachable and exists so that nothing here can panic.
-            generation: NonZeroU64::new(uuid::Uuid::new_v4().as_u128() as u64).unwrap_or(NonZeroU64::MIN),
+            generation: NonZeroU64::new(capsem_crypto::uuid_v4().as_u128() as u64).unwrap_or(NonZeroU64::MIN),
             saved: None,
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
@@ -206,7 +206,11 @@ impl PreviewState {
     }
 
     fn secret() -> String {
-        format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
+        format!(
+            "{}{}",
+            capsem_crypto::uuid_v4().simple(),
+            capsem_crypto::uuid_v4().simple()
+        )
     }
 
     fn create_session(&self) -> Result<String> {
@@ -264,7 +268,7 @@ impl PreviewState {
             credentials.handoffs.len() < MAX_PREVIEW_CREDENTIALS,
             "preview handoff quota reached"
         );
-        let mut token = uuid::Uuid::new_v4().as_u128() as u64;
+        let mut token = capsem_crypto::uuid_v4().as_u128() as u64;
         if token == 0 {
             token = 1;
         }
@@ -438,7 +442,7 @@ impl Publisher {
         let host_port = host_address.port();
         // Bound, so the audited listener is the real one, but not accepting:
         // dropping it on refusal serves nothing.
-        let publication_id = uuid::Uuid::new_v4();
+        let publication_id = capsem_crypto::uuid_v4();
         authority
             .admit_exposure(
                 publication_id,
@@ -657,7 +661,7 @@ impl Publisher {
             .clone()
             .try_acquire_owned()
             .context("VM publication limit reached")?;
-        let publication_id = uuid::Uuid::new_v4();
+        let publication_id = capsem_crypto::uuid_v4();
         let listener = (Ipv4Addr::LOCALHOST, listener_port).into();
         let authority = self.security.clone().context("publication security context missing")?;
         authority

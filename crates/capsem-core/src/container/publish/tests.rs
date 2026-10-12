@@ -273,7 +273,7 @@ async fn serve_fixture(
         owner
             .accept_publication(
                 listener,
-                uuid::Uuid::new_v4(),
+                capsem_crypto::uuid_v4(),
                 guest_port,
                 capsem_proto::PublicationTarget::Container,
                 cancellation.clone(),
@@ -361,7 +361,7 @@ async fn shared_admission_budget(budgets: capsem_config::router::RouterConfig, e
                 .clone()
                 .accept_publication(
                     listener,
-                    uuid::Uuid::new_v4(),
+                    capsem_crypto::uuid_v4(),
                     guest_port,
                     capsem_proto::PublicationTarget::Container,
                     cancellation.clone(),

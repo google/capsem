@@ -219,7 +219,7 @@ impl NetworkRegistry {
             });
         }
         let (index, subnet) = self.free_subnet()?;
-        let id = Uuid::new_v4();
+        let id = capsem_crypto::uuid_v4();
         let path = network_db_path_in(&self.root, &id.to_string());
         let handle = Arc::new(open(&path)?);
         let record = NetworkRecord::new(id, name, (subnet.network(), subnet.prefix_len()), now_unix_ms)

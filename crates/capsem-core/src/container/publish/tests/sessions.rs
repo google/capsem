@@ -103,7 +103,7 @@ async fn an_admitted_preview_flow_is_aborted_when_its_sessions_are_revoked() {
     let (accepted, peer) = listener.accept().unwrap();
     let audit = crate::container::publish::security::AuditFlow::preview(
         owner.security.clone().unwrap(),
-        uuid::Uuid::new_v4(),
+        capsem_crypto::uuid_v4(),
         accepted.local_addr().unwrap(),
         peer,
         6379,

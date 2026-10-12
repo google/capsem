@@ -48,7 +48,7 @@ pub fn write_spawn_identity(session: &ContainedDir, binding: &VmBinding) -> Resu
         schema_version: 1,
         binding: binding.clone(),
     })?;
-    let temporary_name = format!(".pending-spawn-{}", uuid::Uuid::new_v4());
+    let temporary_name = format!(".pending-spawn-{}", capsem_crypto::uuid_v4());
     let mut temporary = session.create_new_private_file(temporary_name.as_ref())?;
     let result = (|| -> Result<()> {
         temporary.write_all(&bytes)?;

@@ -29,7 +29,7 @@ async fn reopened_controller_recovers_original_intent_only_for_cleanup_and_can_r
     let path = root.path().join("ownership");
     let store = Registry::open(&path).unwrap();
     let fixture = Fixture::new();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([52; 32]);
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
@@ -108,7 +108,7 @@ impl Fixture {
             cancelled: Semaphore::new(0),
             cleanup_entered: Semaphore::new(0),
             cleanup_release: Semaphore::new(0),
-            binding: VmBinding::new("actual-canonical-id".into(), Uuid::new_v4()).unwrap(),
+            binding: VmBinding::new("actual-canonical-id".into(), capsem_crypto::uuid_v4()).unwrap(),
         })
     }
 }
@@ -167,7 +167,7 @@ async fn pending_vm_is_discoverable_immutable_and_closed_only_after_setup_retire
     let owner = controller(&root.path().join("ownership"));
     let fixture = Fixture::new();
     fixture.report_pending.store(true, Ordering::SeqCst);
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([29; 32]);
     let create = {
         let owner = owner.clone();
@@ -189,7 +189,7 @@ async fn pending_vm_is_discoverable_immutable_and_closed_only_after_setup_retire
     assert_eq!(pending.state(), State::Creating);
     assert_eq!(pending.vm(), Some(&fixture.binding));
     let reporter = fixture.reporter.lock().unwrap().clone().unwrap();
-    let different = VmBinding::new(fixture.binding.id().into(), Uuid::new_v4()).unwrap();
+    let different = VmBinding::new(fixture.binding.id().into(), capsem_crypto::uuid_v4()).unwrap();
     assert!(reporter.registered(different).await.is_err());
     assert_eq!(
         owner.inspect(request, cap.clone()).await.unwrap().unwrap().vm(),
@@ -224,7 +224,7 @@ async fn close_before_create_never_polls_effects_or_reuses_ownership() {
     let root = tempfile::tempdir().unwrap();
     let owner = controller(&root.path().join("ownership"));
     let fixture = Fixture::new();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([25; 32]);
     let tombstone = owner.close(request, cap.clone()).await.unwrap();
     assert!(owner
@@ -250,7 +250,7 @@ async fn renewal_reschedules_expiry_without_duplicate_creation() {
     let fixture = Fixture::new();
     fixture.create_release.add_permits(1);
     fixture.cleanup_release.add_permits(1);
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([26; 32]);
     let policy = LeasePolicy::new(Duration::from_millis(400)).unwrap();
     let original = owner
@@ -285,7 +285,7 @@ async fn interrupted_create_requires_an_absence_barrier_and_never_replays() {
         EffectBounds::new(Duration::from_millis(30), Duration::from_secs(2)).unwrap(),
     );
     let fixture = Fixture::new();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([28; 32]);
     let policy = LeasePolicy::new(Duration::from_secs(10)).unwrap();
     assert!(matches!(
@@ -324,7 +324,7 @@ async fn disconnected_create_and_concurrent_close_share_one_awaited_cleanup() {
     let root = tempfile::tempdir().unwrap();
     let owner = controller(&root.path().join("ownership"));
     let fixture = Fixture::new();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let capability = Capability::from_bytes([21; 32]);
     let client = {
         let owner = owner.clone();
@@ -382,7 +382,7 @@ async fn cleanup_failure_is_retryable_and_never_reports_closed() {
     fixture.create_release.add_permits(1);
     fixture.cleanup_release.add_permits(1);
     fixture.fail_cleanup.store(true, Ordering::SeqCst);
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([23; 32]);
     owner
         .create(
@@ -410,7 +410,7 @@ async fn finite_expiry_cleans_up_without_a_client() {
     let fixture = Fixture::new();
     fixture.create_release.add_permits(1);
     fixture.cleanup_release.add_permits(1);
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([24; 32]);
     owner
         .create(
