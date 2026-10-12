@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
+from .. import crypto as hashlib
 from .models import ArchConfig, BuildConfig
 
 INPUT_KEY_LABEL = "org.capsem.asset-tools.input-key"

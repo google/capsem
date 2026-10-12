@@ -19,7 +19,6 @@ retention still retires what no current checkout names.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import time
 from pathlib import Path
@@ -27,6 +26,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr, ValidationError
 
+from .. import crypto as hashlib
 from .dockerimages import repository_name
 from .models import CachePolicy
 from .paths import CachePaths

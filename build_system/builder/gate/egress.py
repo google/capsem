@@ -20,7 +20,6 @@ import atexit
 import contextlib
 import json
 import os
-import secrets
 import socket
 import stat
 import subprocess
@@ -30,6 +29,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import crypto as secrets
 from .config import GateConfig
 from .errors import GateError
 from .funnel import GuardedRunner

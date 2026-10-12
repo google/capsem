@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from .. import crypto as hashlib
 from .models import CachePolicy
 
 

@@ -26,8 +26,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-import blake3
-
+from ... import crypto as blake3
 from .list_release_manifest_assets import manifest_asset_rows
 
 #: `release.capsem.org` answers the default `python-urllib` agent with 403,

@@ -21,8 +21,7 @@ and a warm one run the same thing.
 
 from __future__ import annotations
 
-import hashlib
-
+from .. import crypto as hashlib
 from .actions import Action
 from .cachecontrol import CacheControl
 from .command import GateCommand

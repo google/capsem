@@ -6,7 +6,6 @@ import argparse
 import copy
 import errno
 import functools
-import hashlib
 import json
 import os
 import re
@@ -24,6 +23,7 @@ from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import SourceCommit
 
+from ... import crypto as hashlib
 from . import release_installed_probe as installed_probe
 from . import repository_root
 from .marketing_install_surface import validate_checked_in_marketing_install_surface
@@ -948,7 +948,7 @@ def file_sha256(path: Path) -> str:
 
 def file_blake3(path: Path) -> str:
     try:
-        import blake3
+        from ... import crypto as blake3
     except ModuleNotFoundError:
         return subprocess.check_output(["b3sum", str(path)], text=True).split()[0]
     return blake3.blake3(path.read_bytes()).hexdigest()

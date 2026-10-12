@@ -26,8 +26,7 @@ import stat
 from collections.abc import Iterator
 from pathlib import Path
 
-import blake3
-
+from .. import crypto as blake3
 from .config import GateConfig
 from .errors import GateError
 

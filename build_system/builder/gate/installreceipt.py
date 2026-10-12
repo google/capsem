@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
+from .. import crypto as hashlib
 from .cachecontrol import CacheControl
 from .config import GateConfig
 from .configschema import Strict

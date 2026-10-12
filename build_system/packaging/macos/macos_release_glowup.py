@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import platform
@@ -18,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
+from capsem_builder import crypto as hashlib
 from capsem_builder.gate import cachelayout
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.content import RuntimeContent

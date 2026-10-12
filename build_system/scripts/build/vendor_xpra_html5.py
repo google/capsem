@@ -16,13 +16,14 @@ Run from the repository root:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import io
 import shutil
 import tarfile
 import tomllib
 import urllib.request
 from pathlib import Path
+
+from capsem_builder import crypto as hashlib
 
 DEFAULT_VENDOR = Path("crates/capsem-gateway/vendor/xpra-html5")
 #: Where the package installs the client.

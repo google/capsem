@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
-import hashlib
 import json
 import os
 import re
@@ -26,8 +25,10 @@ from capsem_builder.release.tools.remote_ci_gate import (
     workflow_job_block,
 )
 
+from ... import crypto as hashlib
+
 try:
-    import blake3
+    from ... import crypto as blake3
 except ModuleNotFoundError as error:
     blake3 = None
     BLAKE3_IMPORT_ERROR = error

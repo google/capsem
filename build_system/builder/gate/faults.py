@@ -6,13 +6,14 @@ of facts, without a disk, a scheduler, or a sixty-minute gate behind them.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
+
+from .. import crypto as hashlib
 
 #: Directories under the checkout a run may write. Everything else is input:
 #: the gate reads it, and changing it mid-run means the thing being qualified

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-import blake3
+from ... import crypto as blake3
+from ... import crypto as hashlib
 
 
 def verify_runtime_publication(

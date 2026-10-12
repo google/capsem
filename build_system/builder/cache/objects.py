@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import os
-import secrets
 import shutil
 import stat
 from pathlib import Path
 from typing import Annotated
 
-import blake3
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints
 
+from .. import crypto as blake3
+from .. import crypto as secrets
 from .paths import CachePaths
 
 

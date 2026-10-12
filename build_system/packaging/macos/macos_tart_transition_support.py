@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
 import urllib.request
 from pathlib import Path
 from typing import cast
+
+from capsem_builder import crypto as hashlib
 
 
 def sha256(path: Path) -> str:

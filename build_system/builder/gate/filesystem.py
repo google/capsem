@@ -16,15 +16,13 @@ after.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import os
 import shutil
 import tempfile
-import uuid
 from pathlib import Path
 
-import blake3
-
+from .. import crypto as blake3
+from .. import crypto as hashlib
 from . import cancellation
 from .errors import GateError
 
@@ -68,7 +66,7 @@ def write_text(path: Path, text: str) -> None:
     rewrites bytes owned by a different run.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    scratch = path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+    scratch = path.with_name(f".{path.name}.tmp.{os.getpid()}.{hashlib.uuid_v4().hex}")
     descriptor = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:

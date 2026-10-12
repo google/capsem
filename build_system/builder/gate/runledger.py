@@ -19,11 +19,11 @@ machine, and every consumer that has ever needed that rule needs the same one.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import TypeVar
 
+from .. import crypto as hashlib
 from .config import GateConfig
 from .digestschema import LedgerConfig
 from .filesystem import write_text
