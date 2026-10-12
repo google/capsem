@@ -741,6 +741,7 @@ dependencies = [
 name = "capsem-agent"
 version = "0.7.0"
 dependencies = [
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-guard",
  "capsem-proto",
