@@ -697,6 +697,8 @@ identity_roots = [
     "crates/capsem-agent",
     "crates/capsem-proto",
     "crates/capsem-bench",
+    "crates/capsem-crypto",
+    "crates/capsem-foundation",
     "Cargo.toml",
     "Cargo.lock",
     "build_system/pyproject.toml",
