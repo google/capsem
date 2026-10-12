@@ -338,10 +338,17 @@ def _launcher_hook(argument):
     }
 
 
+def startup_mark(stage):
+    """Private, best-effort clock observations; never workload or secret data."""
+    with contextlib.suppress(OSError), (RUNTIME / "startup-timing.jsonl").open("a") as output:
+        output.write(json.dumps({"stage": stage, "monotonic_s": time.monotonic()}) + "\n")
+
+
 def workload_started(stage):
     """Mark the workload running: runc's poststart hook, once its process
     started. The service reads this marker, so `running` -- and a create
     that waited for it -- means an exec can enter the workload."""
+    startup_mark("workload_started")
     (stage / RUNNING).write_text("1\n")
 
 
@@ -771,6 +778,7 @@ def published_root(options, id_map, share=None, run=None):
     lower.mkdir(mode=0o711, parents=True)
     bundle.chmod(0o711)
     with share() as blobs:
+        startup_mark("image_metadata_start")
         assemble(blobs, digest, layout, layers=False)
         manifest = json.loads(
             (layout / "blobs/sha256" / digest.removeprefix("sha256:")).read_bytes()
@@ -780,9 +788,11 @@ def published_root(options, id_map, share=None, run=None):
                 layout / "blobs/sha256" / manifest["config"]["digest"].removeprefix("sha256:")
             ).read_bytes()
         )
+        startup_mark("erofs_verify_start")
         with verified_blob(
             blobs, descriptor["digest"], size=descriptor["size"], limit=ROOTFS_LIMIT
         ) as (blob, _):
+            startup_mark("erofs_verified")
             try:
                 run(
                     "mount",
@@ -794,6 +804,7 @@ def published_root(options, id_map, share=None, run=None):
                     str(lower),
                     pass_fds=(blob.fileno(),),
                 )
+                startup_mark("erofs_mounted")
                 mapping = f"{id_map['containerID']}:{id_map['hostID']}:{id_map['size']}"
                 run(
                     "umoci",
@@ -809,6 +820,7 @@ def published_root(options, id_map, share=None, run=None):
                     str(lower),
                     str(bundle / "config.json"),
                 )
+                startup_mark("runtime_configured")
                 runtime = json.loads((bundle / "config.json").read_bytes())
                 shutil.rmtree(layout)
                 yield bundle, image, runtime
@@ -883,6 +895,7 @@ def run(stage, detached=False):
     # bundle and the resolver file through here.
     RUNTIME.mkdir(mode=0o711)
     RUNTIME.chmod(0o711)
+    startup_mark("launch_start")
     state = RUNTIME / "state"
     process = None
     code = None
@@ -910,6 +923,7 @@ def run(stage, detached=False):
         config_path.write_text(json.dumps(config))
         (RUNTIME / "resolv.conf").write_text(resolv_conf())
         (RUNTIME / "hosts").write_text(hosts_file())
+        startup_mark("workload_configured")
         (stage / "ready").write_text("1\n")
         pid_file = RUNTIME / "workload.pid"
         argv = [*RUNC, "run", "--no-new-keyring", "--pid-file", str(pid_file), "--bundle", str(bundle)]
