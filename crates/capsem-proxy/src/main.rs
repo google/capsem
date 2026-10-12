@@ -32,8 +32,10 @@ mod metric_client;
 mod private_names_client;
 
 const CONTROL_QUEUE_CAPACITY: usize = 16;
-const GRANT_LIMIT: usize = 71;
-const TRAFFIC_GRANT_LIMIT: usize = 64;
+// A 64-request handler limit can transiently own more than 64 connection
+// descriptors: pooled connections are replaced before their asynchronous
+// close is observed. Keep one bounded replacement slot per active handler.
+const TRAFFIC_GRANT_LIMIT: usize = 128;
 const CONTROL_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 type ControlSender = router_channel::DescriptorSender<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
@@ -169,15 +171,9 @@ async fn run_control(
                             }
                             let capability = grant.capability();
                             let grant_id = grant.grant_id();
-                            let current = grants.get(&capability).map_or(0, Vec::len);
-                            let rejection = if grant_ids.contains(&grant_id) {
-                                Some(ProxyControlRejection::DuplicateGrant)
-                            } else if grant_ids.len() >= GRANT_LIMIT
-                                || (is_traffic(capability) && current >= TRAFFIC_GRANT_LIMIT)
-                            {
-                                Some(ProxyControlRejection::Capacity)
-                            } else if !is_traffic(capability) && current != 0 {
-                                Some(ProxyControlRejection::DuplicateCapability)
+                            let rejection = grant_rejection(&grants, &grant_ids, capability, grant_id);
+                            let rejection = if rejection.is_some() {
+                                rejection
                             } else if is_traffic(capability)
                                 && !state
                                     .lock()
@@ -378,6 +374,23 @@ async fn run_control(
 
 const fn is_traffic(capability: ProxyCapability) -> bool {
     matches!(capability, ProxyCapability::HttpTraffic | ProxyCapability::DnsTraffic)
+}
+
+fn grant_rejection(
+    grants: &BTreeMap<ProxyCapability, Vec<u64>>,
+    grant_ids: &HashSet<u64>,
+    capability: ProxyCapability,
+    grant_id: u64,
+) -> Option<ProxyControlRejection> {
+    if grant_ids.contains(&grant_id) {
+        return Some(ProxyControlRejection::DuplicateGrant);
+    }
+    let current = grants.get(&capability).map_or(0, Vec::len);
+    if is_traffic(capability) {
+        (current >= TRAFFIC_GRANT_LIMIT).then_some(ProxyControlRejection::Capacity)
+    } else {
+        (current != 0).then_some(ProxyControlRejection::DuplicateCapability)
+    }
 }
 
 enum ControlInput {

@@ -19,6 +19,54 @@ fn generation_parser_requires_canonical_nonzero_hex() {
 }
 
 #[test]
+fn generation_carries_trace_identity_without_environment_state() {
+    let generation = parse_generation("0102030405060708a1a2a3a4a5a6a7a8").unwrap();
+    assert_eq!(trace_id_from_generation(generation), "a1a2a3a4a5a6a7a8");
+}
+
+#[test]
+fn generation_never_derives_an_all_zero_trace_identity() {
+    let generation = parse_generation("01020304050607080000000000000000").unwrap();
+    assert_eq!(trace_id_from_generation(generation), "0102030405060708");
+}
+
+#[test]
+fn each_traffic_capability_keeps_its_full_bounded_capacity() {
+    let mut grants = BTreeMap::new();
+    let mut grant_ids = HashSet::new();
+    for (index, capability) in [
+        ProxyCapability::Policy,
+        ProxyCapability::Ledger,
+        ProxyCapability::Credential,
+        ProxyCapability::Upstream,
+        ProxyCapability::PrivateNames,
+        ProxyCapability::Mcp,
+        ProxyCapability::Telemetry,
+        ProxyCapability::TraceHints,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let grant_id = index as u64 + 1;
+        grants.insert(capability, vec![grant_id]);
+        grant_ids.insert(grant_id);
+    }
+    let http = (100..100 + TRAFFIC_GRANT_LIMIT as u64).collect::<Vec<_>>();
+    grant_ids.extend(http.iter().copied());
+    grants.insert(ProxyCapability::HttpTraffic, http);
+
+    assert_eq!(
+        grant_rejection(&grants, &grant_ids, ProxyCapability::HttpTraffic, 500),
+        Some(ProxyControlRejection::Capacity)
+    );
+    assert_eq!(
+        grant_rejection(&grants, &grant_ids, ProxyCapability::DnsTraffic, 501),
+        None,
+        "long-lived capabilities and full HTTP load do not consume DNS capacity"
+    );
+}
+
+#[test]
 fn failed_policy_update_preserves_the_running_engine_revision() {
     let active_policy = br#"
 [network]
