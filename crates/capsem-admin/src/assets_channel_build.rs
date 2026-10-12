@@ -134,7 +134,9 @@ pub(super) fn build_assets_channel(
     let channel_manifest = channel_dir.join("manifest.json");
     fs::write(&channel_manifest, &graph_manifest).with_context(|| format!("write {}", channel_manifest.display()))?;
     let graph_manifest_sha256 = format!("{:x}", Sha256::digest(graph_manifest.as_bytes()));
-    let graph_manifest_blake3 = blake3::hash(graph_manifest.as_bytes()).to_hex().to_string();
+    let graph_manifest_blake3 = capsem_crypto::blake3::hash(graph_manifest.as_bytes())
+        .to_hex()
+        .to_string();
     let index = assets_channel_index(
         &channel_manifest_doc,
         channel,
@@ -260,7 +262,7 @@ pub(super) fn mirror_graph_runtime_files(graph: &serde_json::Value, source_url: 
             let matches = |content: &[u8]| {
                 content.len() as u64 == bytes
                     && format!("{:x}", Sha256::digest(content)) == sha256
-                    && blake3::hash(content).to_hex().as_str() == blake3
+                    && capsem_crypto::blake3::hash(content).to_hex().as_str() == blake3
             };
             let destination = out_dir.join(relative);
             if fs::read(&destination).is_ok_and(|existing| matches(&existing)) {
@@ -311,7 +313,9 @@ pub(super) fn build_assets_channel_from_graph(
     let channel_manifest = channel_dir.join("manifest.json");
     fs::write(&channel_manifest, &graph_manifest).with_context(|| format!("write {}", channel_manifest.display()))?;
     let graph_manifest_sha256 = format!("{:x}", Sha256::digest(graph_manifest.as_bytes()));
-    let graph_manifest_blake3 = blake3::hash(graph_manifest.as_bytes()).to_hex().to_string();
+    let graph_manifest_blake3 = capsem_crypto::blake3::hash(graph_manifest.as_bytes())
+        .to_hex()
+        .to_string();
     let graph_value: serde_json::Value =
         serde_json::from_str(&graph_manifest).context("parse rendered graph manifest")?;
     let index = assets_channel_index_from_graph(&graph_value, channel, generated_at, &graph_manifest_blake3)?;

@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use capsem_assets::asset_manager::{BinaryExecutable, BinaryFile};
-use sha2::{Digest, Sha256};
+use capsem_crypto::Sha256;
 
 use super::{
     binary_description_for_name, is_host_sbom_file, is_package_sbom_file, release_graph, validate_host_spdx_sbom_bytes,
@@ -58,7 +58,7 @@ pub(super) fn binary_files_from_artifacts(artifacts: &[PathBuf]) -> Result<Vec<B
                 .with_context(|| format!("validate host SBOM artifact {}", path.display()))?;
         }
         let sha256 = format!("{:x}", Sha256::digest(&bytes));
-        let blake3 = blake3::hash(&bytes).to_hex().to_string();
+        let blake3 = capsem_crypto::blake3::hash(&bytes).to_hex().to_string();
         files.push(BinaryFile {
             name,
             size: bytes.len() as u64,
@@ -94,7 +94,7 @@ fn pkg_executable_inventory(path: &Path, bytes: &[u8]) -> Result<Vec<BinaryExecu
     let temp = std::env::temp_dir().join(format!(
         "capsem-admin-pkg-expand-{}-{}",
         std::process::id(),
-        blake3::hash(path.to_string_lossy().as_bytes()).to_hex()
+        capsem_crypto::blake3::hash(path.to_string_lossy().as_bytes()).to_hex()
     ));
     if temp.exists() {
         fs::remove_dir_all(&temp).with_context(|| format!("remove {}", temp.display()))?;
@@ -396,7 +396,7 @@ fn push_pkg_payload_executable(
         name,
         size: contents.len() as u64,
         sha256: format!("{:x}", Sha256::digest(&contents)),
-        blake3: blake3::hash(&contents).to_hex().to_string(),
+        blake3: capsem_crypto::blake3::hash(&contents).to_hex().to_string(),
     });
     Ok(())
 }
@@ -437,7 +437,7 @@ fn deb_executable_inventory(bytes: &[u8]) -> Result<Vec<BinaryExecutable>> {
             name,
             size: contents.len() as u64,
             sha256: format!("{:x}", Sha256::digest(&contents)),
-            blake3: blake3::hash(&contents).to_hex().to_string(),
+            blake3: capsem_crypto::blake3::hash(&contents).to_hex().to_string(),
         });
     }
     binaries.sort_by(|left, right| left.installed_path.cmp(&right.installed_path));

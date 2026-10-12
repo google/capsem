@@ -722,16 +722,15 @@ name = "capsem-admin"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "blake3",
  "capsem-assets",
  "capsem-core",
+ "capsem-crypto",
  "clap",
  "flate2",
  "reqwest 0.12.28",
  "semver",
  "serde",
  "serde_json",
- "sha2",
  "tar",
  "tempfile",
  "time",

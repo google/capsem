@@ -104,7 +104,9 @@ fn checks_manifest_contract() {
 
     assert_eq!(
         report.blake3,
-        blake3::hash(fs::read(&path).unwrap().as_slice()).to_hex().to_string()
+        capsem_crypto::blake3::hash(fs::read(&path).unwrap().as_slice())
+            .to_hex()
+            .to_string()
     );
     assert_eq!(report.refresh_policy, "24h");
     assert_eq!(report.asset_version, "2026.0607.1");
@@ -126,7 +128,7 @@ fn manifest_check_rejects_missing_refresh_policy() {
 fn manifest_verify_checks_literal_sibling_assets() {
     let temp = tempfile::tempdir().expect("tempdir");
     let payload = b"capsem test asset";
-    let hash = blake3::hash(payload).to_hex().to_string();
+    let hash = capsem_crypto::blake3::hash(payload).to_hex().to_string();
     let manifest_path = temp.path().join("manifest.json");
     fs::write(&manifest_path, minimal_manifest_json(Some(&hash), true)).expect("manifest");
     let assets_root = temp.path().join("assets");

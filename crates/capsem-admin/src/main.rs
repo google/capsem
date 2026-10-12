@@ -9,9 +9,9 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use capsem_assets::asset_manager::{BinaryExecutable, BinaryFile, ManifestV2};
 use capsem_core::net::policy_config::{CompiledSecurityRule, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
+use capsem_crypto::Sha256;
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 mod assets_channel_build;

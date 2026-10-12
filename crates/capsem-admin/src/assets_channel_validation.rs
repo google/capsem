@@ -392,7 +392,7 @@ pub(super) fn validate_assets_channel_graph_health(
             if bytes.len() as u64 != size {
                 return Err(anyhow!("asset channel blob {} size mismatch", local_path.display()));
             }
-            if blake3::hash(&bytes).to_hex().as_str() != hash {
+            if capsem_crypto::blake3::hash(&bytes).to_hex().as_str() != hash {
                 return Err(anyhow!("asset channel blob {} hash mismatch", local_path.display()));
             }
             if file.get("logical_name").and_then(|value| value.as_str()) == Some("obom.cdx.json") {
@@ -628,7 +628,9 @@ pub(super) fn validate_assets_channel_catalog_manifest_digest(
         return Err(anyhow!("channels.json manifest sha256 mismatch"));
     }
     let expected_blake3 = require_json_string(record, &["digest", "blake3"])?;
-    let actual_blake3 = blake3::hash(manifest_content.as_bytes()).to_hex().to_string();
+    let actual_blake3 = capsem_crypto::blake3::hash(manifest_content.as_bytes())
+        .to_hex()
+        .to_string();
     if actual_blake3 != expected_blake3 {
         return Err(anyhow!("channels.json manifest blake3 mismatch"));
     }
