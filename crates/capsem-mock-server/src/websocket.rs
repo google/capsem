@@ -9,7 +9,6 @@ use hyper::upgrade::Upgraded;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::{json, Value};
-use sha1::{Digest, Sha1};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(super) async fn upgrade(mut req: Request<Incoming>, path: String, state: State) -> Response<RespBody> {
@@ -39,10 +38,7 @@ pub(super) async fn upgrade(mut req: Request<Incoming>, path: String, state: Sta
 }
 
 pub(super) fn accept(key: &str) -> String {
-    let mut hasher = Sha1::new();
-    hasher.update(key.as_bytes());
-    hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+    base64::engine::general_purpose::STANDARD.encode(capsem_crypto::websocket_accept_digest(key.as_bytes()))
 }
 
 async fn serve(mut io: TokioIo<Upgraded>, path: String, state: State, headers: hyper::HeaderMap) -> anyhow::Result<()> {

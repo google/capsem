@@ -10,8 +10,6 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use rcgen::generate_simple_self_signed;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::convert::Infallible;
@@ -132,7 +130,7 @@ async fn main() -> Result<()> {
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "capsem_mock_server=warn".to_string()))
         .with_writer(std::io::stderr)
         .init();
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = capsem_crypto::tls::provider().install_default();
 
     let args = Args::parse();
     if args.parent_pid.is_some() {
@@ -245,10 +243,8 @@ async fn serve_https(listener: TcpListener, state: State, acceptor: TlsAcceptor)
 }
 
 fn tls_acceptor() -> Result<TlsAcceptor> {
-    let cert = generate_simple_self_signed(vec!["127.0.0.1".to_string(), "localhost".to_string()])
+    let (cert_der, key_der) = capsem_crypto::tls::self_signed(vec!["127.0.0.1".to_string(), "localhost".to_string()])
         .context("generate self-signed mock cert")?;
-    let cert_der = CertificateDer::from(cert.cert.der().to_vec());
-    let key_der = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
     let config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![cert_der], key_der)
