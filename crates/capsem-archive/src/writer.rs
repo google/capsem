@@ -119,8 +119,8 @@ impl BodyLogWriter {
         let end = file.metadata()?.len();
         if end == 0 {
             let header = FileHeader {
-                archive_id: ArchiveId::new_v4(),
-                generation_id: GenerationId::new_v4(),
+                archive_id: ArchiveId::generate(),
+                generation_id: GenerationId::generate(),
             };
             file.write_all(&format::encode_file_header(header.archive_id, header.generation_id))?;
             return Ok(Self::at(file, header, FILE_HEADER_BYTES as u64));

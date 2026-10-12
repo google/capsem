@@ -270,8 +270,8 @@ fn generation_creation_uses_its_typed_unique_name_and_private_descriptor() {
     let generations = root.path().join("session.bodies");
     std::fs::create_dir(&generations).unwrap();
     std::fs::set_permissions(&generations, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let archive_id = crate::ArchiveId::new_v4();
-    let generation_id = crate::GenerationId::new_v4();
+    let archive_id = crate::ArchiveId::generate();
+    let generation_id = crate::GenerationId::generate();
     let directory = ContainedDir::open_root(&generations).unwrap();
     let mut writer = BodyLogWriter::create_generation(&directory, archive_id, generation_id).unwrap();
     assert_eq!(
@@ -319,7 +319,7 @@ fn generation_creation_uses_its_typed_unique_name_and_private_descriptor() {
         BodyLogWriter::open_generation(
             &directory,
             FileHeader {
-                archive_id: crate::ArchiveId::new_v4(),
+                archive_id: crate::ArchiveId::generate(),
                 generation_id,
             },
             FILE_HEADER_BYTES as u64

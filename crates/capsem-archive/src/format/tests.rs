@@ -114,7 +114,7 @@ fn generation_names_are_canonical_and_checked_against_the_header() {
     header
         .validate(archive_id, generation_id, &generation_id.file_name())
         .unwrap();
-    let other = GenerationId::new_v4();
+    let other = GenerationId::generate();
     assert!(header.validate(archive_id, other, &other.file_name()).is_err());
 }
 

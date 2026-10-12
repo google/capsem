@@ -78,8 +78,8 @@ macro_rules! identity {
 
         impl $name {
             #[must_use]
-            pub fn new_v4() -> Self {
-                Self(*uuid::Uuid::new_v4().as_bytes())
+            pub fn generate() -> Self {
+                Self(*capsem_crypto::uuid_v4().as_bytes())
             }
 
             pub fn from_bytes(bytes: [u8; 16]) -> Result<Self> {
