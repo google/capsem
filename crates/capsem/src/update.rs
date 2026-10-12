@@ -25,8 +25,8 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use capsem_crypto::Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::platform::{self, InstallLayout};
@@ -916,7 +916,7 @@ fn verify_selected_channel_manifest(selection: &ResolvedReleaseChannelManifest, 
             actual_sha256
         );
     }
-    let actual_blake3 = blake3::hash(bytes).to_hex().to_string();
+    let actual_blake3 = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
     if actual_blake3 != selection.blake3 {
         anyhow::bail!(
             "channel {} manifest BLAKE3 mismatch: expected {}, got {}",
@@ -1662,7 +1662,7 @@ fn verify_binary_installer_bytes(bytes: &[u8], installer: &BinaryInstaller) -> R
             actual
         );
     }
-    let actual_blake3 = blake3::hash(bytes).to_hex().to_string();
+    let actual_blake3 = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
     if !actual_blake3.eq_ignore_ascii_case(&installer.blake3) {
         anyhow::bail!(
             "binary installer blake3 mismatch for {}: expected {}, got {}",

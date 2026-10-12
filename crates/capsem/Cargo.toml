@@ -14,6 +14,7 @@ name = "capsem"
 path = "src/main.rs"
 
 [dependencies]
+capsem-crypto = { path = "../capsem-crypto" }
 capsem-api = { path = "../capsem-api" }
 capsem-assets = { path = "../capsem-assets" }
 capsem-core = { path = "../capsem-core" }
@@ -34,9 +35,7 @@ bytes.workspace = true
 futures.workspace = true
 tokio-tungstenite = "0.29.0"
 inquire = "0.9"
-blake3 = "1"
 semver = "1"
-sha2 = "0.10"
 clap_complete = "4"
 tar = "0.4"
 flate2 = "1"

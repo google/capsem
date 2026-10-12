@@ -675,7 +675,7 @@ fn selected_channel_manifest_verification_rejects_payload_substitution() {
         channel: "stable".to_string(),
         url: "https://release.capsem.org/assets/stable/manifest.json".to_string(),
         sha256: sha256_hex(bytes),
-        blake3: blake3::hash(bytes).to_hex().to_string(),
+        blake3: capsem_crypto::blake3::hash(bytes).to_hex().to_string(),
     };
 
     verify_selected_channel_manifest(&selection, bytes).expect("matching payload");
@@ -1705,7 +1705,7 @@ fn test_sha256(bytes: &[u8]) -> String {
 }
 
 fn test_blake3(bytes: &[u8]) -> String {
-    blake3::hash(bytes).to_hex().to_string()
+    capsem_crypto::blake3::hash(bytes).to_hex().to_string()
 }
 
 struct EnvGuard {

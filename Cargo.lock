@@ -687,11 +687,11 @@ name = "capsem"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "blake3",
  "bytes",
  "capsem-api",
  "capsem-assets",
  "capsem-core",
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-proto",
  "clap",
@@ -707,7 +707,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2",
  "tar",
  "tempfile",
  "tokio",
