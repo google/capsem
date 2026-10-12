@@ -5,9 +5,9 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use capsem_crypto::secrets::Zeroizing;
 use serde::Deserialize;
 use url::Url;
-use zeroize::Zeroizing;
 
 use super::{AuthorizationParameters, CallbackExchange, LoopbackRedirect, Secret};
 

@@ -3,13 +3,13 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use capsem_crypto::secrets::Zeroizing;
 use capsem_foundation::unix::{
     contained::ContainedDir,
     fs,
     lock::{self, FileLock, LockAttempt, LockMode},
 };
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
 
 use super::*;
 

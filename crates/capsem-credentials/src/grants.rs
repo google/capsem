@@ -183,7 +183,7 @@ impl GrantAuthority {
     }
     fn new_handle(grants: &HashMap<GrantHandle, Arc<Grant>>) -> Result<GrantHandle, GrantError> {
         let mut bytes = [0; 32];
-        getrandom::fill(&mut bytes).map_err(|_| GrantError::Unavailable)?;
+        capsem_crypto::random::fill(&mut bytes).map_err(|_| GrantError::Unavailable)?;
         let handle = GrantHandle(bytes);
         if grants.contains_key(&handle) {
             return Err(GrantError::Unavailable);

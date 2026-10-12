@@ -3,8 +3,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ring::rand::SystemRandom;
-use ring::signature::{RsaKeyPair, RSA_PKCS1_SHA256};
 use serde_json::json;
 
 use super::super::tests::fixture::{Fixture, Reply};
@@ -44,15 +42,7 @@ async fn setup_subject(
         URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","kid":"test-only"}"#),
         URL_SAFE_NO_PAD.encode(claims.to_string())
     );
-    let pair = RsaKeyPair::from_der(KEY).unwrap();
-    let mut signature = vec![0; pair.public().modulus_len()];
-    pair.sign(
-        &RSA_PKCS1_SHA256,
-        &SystemRandom::new(),
-        input.as_bytes(),
-        &mut signature,
-    )
-    .unwrap();
+    let signature = capsem_crypto::jwt::sign_rs256_fixture(KEY, input.as_bytes()).unwrap();
     let jwt = format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature));
     let callback = format!(
         "http://127.0.0.1:4123/callback?state={}&code=private-code",

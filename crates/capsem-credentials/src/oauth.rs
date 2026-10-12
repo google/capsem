@@ -7,9 +7,8 @@ use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
-use zeroize::Zeroizing;
+use capsem_crypto::secrets::Zeroizing;
+use capsem_crypto::Sha256;
 
 mod google;
 #[cfg(test)]
@@ -245,7 +244,7 @@ impl OAuthAttempt {
         let fields = CallbackFields::parse(query)?;
         let pending = self.pending.as_ref().ok_or(OAuthError::Inactive(self.state))?;
         let state = fields.state.as_ref().ok_or(OAuthError::InvalidState)?;
-        if !bool::from(state.expose().as_bytes().ct_eq(pending.state.expose().as_bytes())) {
+        if !capsem_crypto::secrets::constant_time_eq(state.expose().as_bytes(), pending.state.expose().as_bytes()) {
             return Err(OAuthError::InvalidState);
         }
         match (fields.code, fields.error) {
@@ -325,7 +324,7 @@ fn valid_percent_encoding(query: &str) -> bool {
 
 fn random_secret() -> Result<Secret, OAuthError> {
     let mut bytes = Zeroizing::new([0u8; 32]);
-    getrandom::fill(&mut *bytes).map_err(|_| OAuthError::EntropyUnavailable)?;
+    capsem_crypto::random::fill(&mut *bytes).map_err(|_| OAuthError::EntropyUnavailable)?;
     Ok(Secret::new(URL_SAFE_NO_PAD.encode(bytes.as_slice())))
 }
 
