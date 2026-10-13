@@ -40,3 +40,14 @@ fn commitments_reject_reader_and_unbounded_identity() {
         Err(LedgerCommitmentError::InvalidEventKind)
     );
 }
+
+#[test]
+fn reservation_batches_share_the_commitment_identity_bound() {
+    let reservation = CommitmentReservation::new("dns_event", [9; 32]).unwrap();
+    assert_eq!(reservation.event_kind(), "dns_event");
+    assert_eq!(reservation.event_hash(), [9; 32]);
+    assert_eq!(
+        CommitmentReservation::new("x".repeat(MAX_COMMITMENT_EVENT_KIND_BYTES + 1), [0; 32]),
+        Err(LedgerCommitmentError::InvalidEventKind)
+    );
+}

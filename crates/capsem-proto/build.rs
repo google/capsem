@@ -74,6 +74,29 @@ fn write_runtime_limits() {
         .checked_mul(descriptors_per_client)
         .filter(|value| *value <= 1_048_576)
         .expect("runtime limits: derived network descriptor budget exceeds 1048576");
+    let producer_events_per_network_client = config
+        .get("ledger")
+        .and_then(|ledger| ledger.get("producer_events_per_network_client"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (1..=16).contains(value))
+        .unwrap_or_else(|| {
+            panic!("runtime limits: ledger.producer_events_per_network_client must be an integer between 1 and 16")
+        });
+    let ledger_queue_capacity = capacity
+        .checked_mul(producer_events_per_network_client)
+        .filter(|value| *value <= 65_536)
+        .expect("runtime limits: derived ledger producer queue exceeds 65536");
+    let ledger_batch_capacity = config
+        .get("ledger")
+        .and_then(|ledger| ledger.get("admission_batch_capacity"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (1..=1024).contains(value))
+        .unwrap_or_else(|| {
+            panic!("runtime limits: ledger.admission_batch_capacity must be an integer between 1 and 1024")
+        });
+    if ledger_batch_capacity > ledger_queue_capacity || ledger_queue_capacity % ledger_batch_capacity != 0 {
+        panic!("runtime limits: ledger producer queue must be an exact multiple of admission batch capacity");
+    }
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     std::fs::write(
         format!("{out_dir}/runtime_limits.rs"),
@@ -86,7 +109,11 @@ fn write_runtime_limits() {
              /// Live and retiring traffic grants allowed during connection replacement.\n\
              pub const NETWORK_TRAFFIC_GRANT_CAPACITY: usize = {traffic_grant_capacity};\n\
              /// Minimum descriptor budget for a network-facing process.\n\
-             pub const NETWORK_PROCESS_OPEN_FILE_LIMIT: u64 = {open_file_limit};\n"
+             pub const NETWORK_PROCESS_OPEN_FILE_LIMIT: u64 = {open_file_limit};\n\
+             /// Per-producer security-event queue derived from supported clients.\n\
+             pub const LEDGER_PRODUCER_QUEUE_CAPACITY: usize = {ledger_queue_capacity};\n\
+             /// Consecutive producer events coalesced into one ledger exchange.\n\
+             pub const LEDGER_ADMISSION_BATCH_CAPACITY: usize = {ledger_batch_capacity};\n"
         ),
     )
     .expect("runtime limits: write generated constants");

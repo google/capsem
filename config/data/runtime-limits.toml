@@ -9,3 +9,11 @@ traffic_grants_per_client = 3
 # descriptor. The remaining per-client allowance covers listeners, the Tokio
 # reactor, DNS, control traffic, and overlap while connections retire.
 file_descriptors_per_client = 8
+
+[ledger]
+# Each of the two persistent DNS sessions can have one audit row per client
+# waiting for the ledger producer. The queue is derived from the network cap.
+producer_events_per_network_client = 2
+# One transport exchange carries this many consecutive producer events. The
+# queue must be an exact multiple so a full burst drains without a tail shape.
+admission_batch_capacity = 64

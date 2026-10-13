@@ -9,6 +9,35 @@ pub const MAX_COMMITMENT_EVENT_KIND_BYTES: usize = 64;
 pub const MAX_COMMITMENTS_PER_CHECKPOINT: usize = 4096;
 pub const ZERO_COMMITMENT_HASH: [u8; 32] = [0; 32];
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitmentReservation {
+    event_kind: String,
+    event_hash: [u8; 32],
+}
+
+impl CommitmentReservation {
+    pub fn new(event_kind: impl Into<String>, event_hash: [u8; 32]) -> Result<Self, LedgerCommitmentError> {
+        let reservation = Self {
+            event_kind: event_kind.into(),
+            event_hash,
+        };
+        reservation.validate()?;
+        Ok(reservation)
+    }
+
+    pub fn validate(&self) -> Result<(), LedgerCommitmentError> {
+        validate_event_kind(&self.event_kind)
+    }
+
+    pub fn event_kind(&self) -> &str {
+        &self.event_kind
+    }
+
+    pub const fn event_hash(&self) -> [u8; 32] {
+        self.event_hash
+    }
+}
+
 /// Identity, order and content commitment for one producer record.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerCommitment {
@@ -107,9 +136,7 @@ impl LedgerCommitment {
         if self.role.producer_name().is_none() {
             return Err(LedgerCommitmentError::NonProducer);
         }
-        if self.event_kind.is_empty() || self.event_kind.len() > MAX_COMMITMENT_EVENT_KIND_BYTES {
-            return Err(LedgerCommitmentError::InvalidEventKind);
-        }
+        validate_event_kind(&self.event_kind)?;
         Ok(())
     }
 
@@ -126,6 +153,14 @@ impl LedgerCommitment {
         hash.update(&self.event_hash);
         hash.update(&self.previous_hash);
         *hash.finalize().as_bytes()
+    }
+}
+
+fn validate_event_kind(event_kind: &str) -> Result<(), LedgerCommitmentError> {
+    if event_kind.is_empty() || event_kind.len() > MAX_COMMITMENT_EVENT_KIND_BYTES {
+        Err(LedgerCommitmentError::InvalidEventKind)
+    } else {
+        Ok(())
     }
 }
 
@@ -148,6 +183,11 @@ pub enum CommitmentCommand {
         event_hash: [u8; 32],
         previous_hash: [u8; 32],
     },
+    ReserveBatch {
+        first_producer_sequence: u64,
+        previous_hash: [u8; 32],
+        reservations: Vec<CommitmentReservation>,
+    },
     Cancel {
         global_sequence: u64,
     },
@@ -159,6 +199,7 @@ pub enum CommitmentCommand {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommitmentReply {
     Reserved { global_sequence: u64 },
+    ReservedBatch { global_sequences: Vec<u64> },
     Canceled,
     Anchored { checkpoint_sequence: u64 },
     Failed { message: String },
