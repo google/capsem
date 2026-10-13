@@ -5,6 +5,7 @@ mod collector;
 mod commands;
 #[cfg(feature = "host")]
 mod comparison;
+mod http_load;
 #[cfg(feature = "host")]
 mod machine;
 mod ping;
@@ -62,6 +63,7 @@ async fn main() -> Result<()> {
         Command::Throughput(args) => println!("{}", serde_json::to_string(&throughput::run(args).await?)?),
         Command::Udp(args) => println!("{}", serde_json::to_string(&udp::run(args).await?)?),
         Command::Ping(args) => println!("{}", serde_json::to_string(&ping::run(args).await?)?),
+        Command::HttpLoad(args) => println!("{}", serde_json::to_string(&http_load::run(args).await?)?),
         Command::Protocol(args) => {
             #[cfg(feature = "host")]
             let destination = args.record.clone();

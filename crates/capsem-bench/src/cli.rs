@@ -20,6 +20,8 @@ pub(crate) enum Command {
     Udp(crate::udp::Args),
     /// ICMP echo against an address, without a ping binary.
     Ping(crate::ping::Args),
+    /// Drive sustained HTTP load with pooled async clients.
+    HttpLoad(crate::http_load::Args),
     /// Run deterministic protocol scenarios against capsem-mock-server.
     Protocol(ProtocolArgs),
     /// Run host-direct and guest-through-Capsem protocol lanes, then report delta.
