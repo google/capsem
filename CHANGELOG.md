@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Registered VM launches release shutdown admission before ongoing exec or
+  image setup, so workload duration does not hold the launch drain.
+
 - Failed VM launches retain original child retirement authority. Observed
   native spawn failures prove no child exists; failures after spawn kill and
   reap that child before publishing retirement to managed cleanup.

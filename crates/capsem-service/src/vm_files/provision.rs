@@ -127,6 +127,10 @@ async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Resul
     })
     .await;
 
+    // All spawn/retry attempts have published or failed. Image setup has its
+    // own cancellation owner and must not hold shutdown's launch drain.
+    drop(_launch);
+
     match result {
         Ok(Ok(_)) => finish_create(&state, &id, &networks, payload.container).await.map(Json),
         Ok(Err(app_err)) => Err(app_err),

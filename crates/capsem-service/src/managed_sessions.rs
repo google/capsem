@@ -252,6 +252,7 @@ impl ManagedLifecycle {
             })
             .await
             .map_err(app_error)??;
+        drop(_launch);
         anyhow::ensure!(
             self.matching_instance(&self.binding)?,
             "managed VM exited before registration"
