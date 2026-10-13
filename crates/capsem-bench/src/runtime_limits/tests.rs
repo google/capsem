@@ -16,4 +16,12 @@ fn benchmark_limits_are_the_protocol_authority() {
         limits.ledger_admission_coalesce_wait_microseconds,
         capsem_proto::LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS
     );
+    assert_eq!(
+        limits.ledger_disk_flush_interval_milliseconds,
+        capsem_proto::LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS
+    );
+    assert_eq!(
+        limits.ledger_disk_flush_max_pending_events,
+        capsem_proto::LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS
+    );
 }
