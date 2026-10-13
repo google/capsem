@@ -11,6 +11,10 @@ Sharing alone is not a reason to put code in `capsem-core`.
 
 - **`capsem-foundation`**: dependency-light host primitives: paths, UDS HTTP,
   polling, telemetry/log setup, and IPC handshakes.
+- **`capsem-crypto`**: first-party Rust cryptographic operations: accelerated
+  hashes and bounded integrity verification, randomness, TLS key/provider
+  selection, JWT verification and secret primitives. Speed measurements belong
+  in the existing `capsem-bench` harness, not a separate benchmark crate.
 - **`capsem-archive`**: block-compressed body archive for session ledgers.
   Pure Rust (`miniz_oxide`); SQLite keeps the index, this crate keeps the
   bytes, and every block is blake3-verified before a body is returned.
@@ -31,7 +35,8 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-guard`**: parent-watch and singleton-flock lifecycle primitives.
 - **`capsem-service`**: daemon HTTP/UDS API and VM-process orchestration.
 - **`capsem-process`**: low-privilege per-VM boot, vsock, IPC, and job runtime.
-- **`capsem`**: CLI client; HTTP/UDS to the service and direct process UDS for shell.
+- **`capsem`**: CLI client; HTTP/UDS to the service, including streamed shell
+  and terminal operations. It never dials a per-VM process socket.
 - **`capsem-tui`**: terminal control UI over the gateway API.
 - **`capsem-admin`**: runtime image build plus asset, release, and config validation.
 - **`@capsem/mcp`** (`mcp/typescript`): separately installed host MCP server;
@@ -58,7 +63,12 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
 5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.
 6. **Rootfs read-only**: runtime rootfs asset mounted read-only. Guest binaries deployed chmod 555.
 7. **Guest binary security**: all injected binaries are read-only. Guest cannot modify its own agent.
-8. **VirtioFS boundary**: only `session_dir/guest/` is shared via VirtioFS (contains `system/` and `workspace/`). Host-only files (`session.db`, `serial.log`, `checkpoint.vzsave`) are outside the share. Compat symlinks at `session_dir/{system,workspace}` point into `guest/` so existing code paths work unchanged.
+8. **VirtioFS boundary**: `session_dir/guest/` is the guest-writable share and
+   contains the workspace. The writable overlay image stays in host-only
+   `session_dir/system/`, alongside the host-only ledger, logs and checkpoint.
+   The separate `session_dir/image/` share contains immutable image blobs and
+   is read-only at the device. The workspace compatibility symlink points into
+   `guest/`; the system image must never be reachable through that share.
 
 ### What capsem-process CAN access
 - Its own session_dir (read-write)

@@ -13,6 +13,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | Crate | Role | CI macOS | CI Linux | Fast source | Full |
 |-------|------|:--------:|:--------:|:-----------:|:----:|
 | `capsem-foundation` | Host primitives | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-crypto` | Cryptographic primitives and integrity verification; speed measured by `capsem-bench` | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-archive` | Session body archive | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-telemetry` | Metric name/unit/description catalog | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-assets` | Asset lifecycle | Yes | Compile/no-run | Clippy | Yes |
@@ -30,7 +31,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | `capsem-tui` | Terminal UI | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-admin` | Runtime image, asset, and release administration | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-router` | Confined TCP publication relay | Yes | Subprocess + Redis E2E | Clippy | Yes |
-| `capsem-network` | smoltcp endpoint over framed packet streams | Yes (smoltcp client over an in-memory link) | Kingslanding tun0 lane | Clippy | Yes |
+| `capsem-network` | Framed ethernet codec and pure MAC-switch forwarding | Yes | Native codec/switch tests and private-link acceptance | Clippy | Yes |
 | `capsem-mcp-aggregator` | External MCP subprocess manager | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-mcp-builtin` | Built-in MCP tools | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-gateway` | Authenticated HTTP gateway | Yes | Compile/no-run | Clippy | Yes |
