@@ -22,21 +22,9 @@ const REQUEST_HEADERS: [http::HeaderName; 5] = [
 const RESPONSE_HEADERS: [http::HeaderName; 4] = [CONNECTION, UPGRADE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_PROTOCOL];
 
 /// Validate VM ID: alphanumeric, hyphens, underscores. Must start with
-/// alphanumeric, length 1-64. Matches capsem-service's `validate_vm_name`.
-pub(crate) fn validate_vm_id(id: &str) -> Result<(), &'static str> {
-    if id.is_empty() {
-        return Err("VM id cannot be empty");
-    }
-    if id.len() > 64 {
-        return Err("VM id too long (max 64 characters)");
-    }
-    if !id.chars().next().unwrap().is_ascii_alphanumeric() {
-        return Err("VM id must start with a letter or digit");
-    }
-    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err("VM id must contain only letters, digits, hyphens, and underscores");
-    }
-    Ok(())
+/// alphanumeric, length 1-64.
+pub(crate) fn validate_vm_id(id: &str) -> Result<(), String> {
+    capsem_api::validate_name("VM id", id)
 }
 
 fn refuse(status: http::StatusCode, message: &str) -> Response {
@@ -49,7 +37,7 @@ pub async fn handle_stream_tunnel(
     mut request: Request,
 ) -> Response {
     if let Err(message) = validate_vm_id(&id) {
-        return refuse(http::StatusCode::BAD_REQUEST, message);
+        return refuse(http::StatusCode::BAD_REQUEST, &message);
     }
     let is_upgrade = request
         .headers()
