@@ -94,7 +94,10 @@ fewer requests than its requested concurrency. The guest MITM lane delegates
 to `capsem-bench-rs http-load`; every client loop must attempt at least one
 request, and fewer total attempts than clients invalidates the run. Keep cold
 and warm latency separate so connection admission and TLS setup cannot be
-mistaken for steady-state request cost. The host collector also reads the
+mistaken for steady-state request cost. Each logical client owns one HTTP
+client and reuses its keep-alive connection: a shared pool may open multiple
+connections per logical client under load and invalidate the requested
+concurrency. The host collector also reads the
 fully flushed service log and rejects proxy traffic-descriptor refusals that
 the HTTP client retried internally; zero client errors alone is insufficient.
 
