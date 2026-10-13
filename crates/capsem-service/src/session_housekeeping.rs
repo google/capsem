@@ -275,6 +275,13 @@ impl ServiceState {
             ));
         }
 
+        // Ordinary stop/delete and bulk shutdown share this boundary. Retain
+        // the exact exit before discarding a managed owner's restart witness.
+        let root = capsem_foundation::unix::contained::ContainedDir::open_root(&canonical_session)?;
+        if let Some(binding) = capsem_core::session::read_spawn_identity(&root)? {
+            self.persist_native_exit(&canonical_session, &binding, false)?;
+        }
+
         // Remove the already verified canonical child, not a registry-provided
         // alias. This keeps a legitimate macOS /var -> /private/var spelling
         // difference working without giving a mutable alias another path

@@ -46,7 +46,10 @@ pub(super) fn spawn_exit_reaper(
         let receipt_id = id.clone();
         let receipt_dir = session_dir.clone();
         let receipt = state
-            .off_worker(move |_| crate::instance::persist_native_exit(&receipt_dir, &receipt_id, generation))
+            .off_worker(move |state| {
+                let binding = capsem_core::managed_sessions::VmBinding::new(receipt_id, generation)?;
+                state.persist_native_exit(&receipt_dir, &binding, false)
+            })
             .await;
         match receipt {
             Ok(Ok(())) => {}

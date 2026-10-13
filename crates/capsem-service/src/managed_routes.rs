@@ -53,6 +53,13 @@ impl Runtime {
                 {
                     warn!(%error, "managed tombstone retention remains pending");
                 }
+                if let Err(error) = runtime
+                    .controller
+                    .prune_native_retirements(state.native_retirements_path())
+                    .await
+                {
+                    warn!(%error, "managed native receipt retention remains pending");
+                }
             }
         });
     }

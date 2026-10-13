@@ -47,15 +47,37 @@ pub(crate) fn persist_spawn_identity(session_dir: &StdPath, id: &str, generation
     capsem_core::session::spawn_owner::prepare(session_dir, &binding, std::process::id())
 }
 
-/// Preserve confirmed native retirement before directory moves or host reboot.
-pub(crate) fn persist_native_exit(session_dir: &StdPath, id: &str, generation: uuid::Uuid) -> Result<()> {
-    let binding = capsem_core::managed_sessions::VmBinding::new(id.to_owned(), generation)?;
-    let mut fence = capsem_core::session::spawn_owner::fence(session_dir, &binding)?;
-    anyhow::ensure!(fence.confirm_exit()?, "original native VM exit is unconfirmed");
-    Ok(())
-}
-
 impl ServiceState {
+    pub(crate) fn native_retirements_path(&self) -> PathBuf {
+        self.run_dir.join("managed-retirements")
+    }
+
+    /// Preserve exact native exit before directory moves, deletion or reboot.
+    /// `never_spawned` is the joined original producer's no-child authority.
+    pub(crate) fn persist_native_exit(
+        &self,
+        session_dir: &StdPath,
+        binding: &capsem_core::managed_sessions::VmBinding,
+        never_spawned: bool,
+    ) -> Result<()> {
+        use capsem_core::session::spawn_owner::{fence, prepare, RetirementStore};
+        let receipts = RetirementStore::open(&self.native_retirements_path())?;
+        if receipts.contains(binding)? {
+            return Ok(());
+        }
+        if never_spawned {
+            let run = capsem_foundation::unix::contained::ContainedDir::open_root(&self.run_dir)?;
+            let sessions = run.descend_or_create("sessions".as_ref(), 0o700)?;
+            let root = sessions.descend_or_create(binding.id().as_ref(), 0o700)?;
+            if capsem_core::session::read_spawn_identity(&root)?.is_none() {
+                prepare(session_dir, binding, std::process::id())?;
+            }
+        }
+        let mut fence = fence(session_dir, binding)?;
+        anyhow::ensure!(fence.confirm_exit()?, "original native VM exit is unconfirmed");
+        receipts.retain(&fence)
+    }
+
     /// Remove a running instance record. The removal is the ownership token
     /// for teardown: of two callers racing to evict one VM, only one gets
     /// the record back.

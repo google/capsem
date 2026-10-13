@@ -288,27 +288,24 @@ impl ManagedLifecycle {
         )
         .await
         .map_err(app_error)?;
-        if stopped.is_none() && !self.state.retirements.wait(binding.id(), binding.generation()).await? {
-            self.confirm_native_exit(binding.clone()).await?;
+        if stopped.is_none() {
+            self.state.retirements.wait(binding.id(), binding.generation()).await?;
         }
+        self.confirm_native_exit(binding.clone(), false).await?;
         self.state.containers.cancel_and_wait(binding.id()).await;
         self.grants.revoke(ticket, binding.clone()).await?;
         network_routes::vm_deleted_checked(&self.state, binding.id()).await?;
         self.remove_session(binding, true).await
     }
 
-    async fn confirm_native_exit(&self, binding: VmBinding) -> Result<()> {
-        let confirmed = self
-            .state
+    async fn confirm_native_exit(&self, binding: VmBinding, never_spawned: bool) -> Result<()> {
+        self.state
             .off_worker(move |state| {
                 let directory = state.run_dir.join("sessions").join(binding.id());
-                let mut fence = capsem_core::session::spawn_owner::fence(&directory, &binding)?;
-                fence.confirm_exit()
+                state.persist_native_exit(&directory, &binding, never_spawned)
             })
             .await
-            .map_err(app_error)??;
-        anyhow::ensure!(confirmed, "managed original native child exit is unconfirmed");
-        Ok(())
+            .map_err(app_error)?
     }
 
     async fn remove_session(&self, binding: VmBinding, require_identity: bool) -> Result<()> {
@@ -389,6 +386,7 @@ impl Effects for ManagedLifecycle {
                     // The service producer registers retirement before spawn.
                     // With its owned continuation finished, no registration
                     // proves that this exact new target never spawned a child.
+                    owner.confirm_native_exit(intent.clone(), true).await?;
                     owner.grants.revoke(ticket, intent.clone()).await?;
                     network_routes::vm_deleted_checked(&owner.state, intent.id()).await?;
                     owner.remove_session(intent, false).await?;

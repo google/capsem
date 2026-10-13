@@ -62,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Managed close retains its confirmed original native exit outside ephemeral
+  session files, so restart can finish cleanup after directory deletion and
+  before the ownership close commit. Receipts survive unresolved cleanup and
+  retire with ownership tombstones.
+
 - Normal VM exit persists its native retirement receipt before moving a named
   session, preserving confirmed stop authority for resume after host reboot.
 

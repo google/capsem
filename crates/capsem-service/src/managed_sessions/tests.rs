@@ -14,6 +14,98 @@ fn recovery_native_child_fixture() {
 }
 
 #[tokio::test]
+async fn recovery_reopens_original_cleanup_after_session_deletion_before_closed_commit() {
+    use capsem_core::managed_sessions::{Capability, LeaseClock, LeasePolicy, Registry, Reservation, State};
+    for ordinary_delete in [false, true] {
+        let (state, _files) = crate::tests::make_test_state_with_tempdir();
+        let registry_path = state.run_dir.join("managed-ownership");
+        let registry = Registry::open(&registry_path).unwrap();
+        let request = capsem_crypto::uuid_v4();
+        let cap = Capability::from_bytes([62; 32]);
+        let Reservation::New(ticket) = registry.reserve(request, &cap).unwrap() else {
+            panic!()
+        };
+        let clock = LeaseClock::new(100, std::time::Instant::now());
+        registry
+            .start_lease(
+                &ticket,
+                LeasePolicy::new(std::time::Duration::from_secs(10)).unwrap(),
+                clock,
+            )
+            .unwrap();
+        registry.begin_create(&ticket, clock).unwrap();
+        let binding = VmBinding::new(new_persistent_vm_id(), capsem_crypto::uuid_v4()).unwrap();
+        registry.prepare_spawn(&ticket, binding.clone(), clock).unwrap();
+        registry.bind_created(&ticket, binding.clone(), clock).unwrap();
+        let snapshot = registry.close(request, &cap).unwrap();
+        let grants = Arc::new(ControlledGrants {
+            fail: false.into(),
+            calls: 0.into(),
+        });
+        let adapter =
+            ManagedLifecycle::for_recovery(Arc::clone(&state), &snapshot, Arc::new(Arc::clone(&grants))).unwrap();
+        let session = state.run_dir.join("sessions").join(binding.id());
+        std::fs::create_dir_all(&session).unwrap();
+        crate::instance::persist_spawn_identity(&session, binding.id(), binding.generation()).unwrap();
+        // The effects have completed, but the ownership commit has not happened.
+        // Drop them and reopen both runtime effects and persistence from disk.
+        if ordinary_delete {
+            state.delete_session_dir(&session).unwrap();
+        } else {
+            adapter.cleanup(ticket, binding.clone()).await.unwrap();
+        }
+        assert!(!session.exists());
+        assert_eq!(
+            registry.inspect(request, &cap).unwrap().unwrap().state(),
+            State::Closing
+        );
+        drop(adapter);
+        drop(registry);
+        let run_dir = state.run_dir.clone();
+        let assets_dir = state.assets_dir.clone();
+        drop(state);
+        let restarted = Arc::new(crate::tests::test_state(run_dir, assets_dir, None));
+        let registry = Registry::open(&registry_path).unwrap();
+        let snapshot = registry.inspect(request, &cap).unwrap().unwrap();
+        let adapter =
+            ManagedLifecycle::for_recovery(Arc::clone(&restarted), &snapshot, Arc::new(Arc::clone(&grants))).unwrap();
+        let controller = capsem_core::managed_sessions::controller::Controller::new(
+            registry,
+            capsem_core::managed_sessions::controller::EffectBounds::new(
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_secs(2),
+            )
+            .unwrap(),
+        );
+        let receipt = restarted
+            .native_retirements_path()
+            .join(format!("{}.json", binding.generation()));
+        let bytes = std::fs::read(&receipt).unwrap();
+        std::fs::write(&receipt, b"corrupt").unwrap();
+        assert!(controller.recover(request, Arc::new(adapter.clone())).await.is_err());
+        assert_eq!(
+            controller.inspect(request, cap.clone()).await.unwrap().unwrap().state(),
+            State::Closing
+        );
+        assert_eq!(
+            grants.calls.load(std::sync::atomic::Ordering::SeqCst),
+            usize::from(!ordinary_delete)
+        );
+        std::fs::write(&receipt, bytes).unwrap();
+        assert_eq!(
+            controller.recover(request, Arc::new(adapter)).await.unwrap().state(),
+            State::Closed
+        );
+        assert_eq!(
+            grants.calls.load(std::sync::atomic::Ordering::SeqCst),
+            if ordinary_delete { 1 } else { 2 }
+        );
+        assert!(restarted.instances.lock().unwrap().is_empty());
+        assert!(!session.exists());
+    }
+}
+
+#[tokio::test]
 async fn recovery_fences_preboot_and_awaits_original_native_exit_before_closing() {
     use capsem_core::managed_sessions::{Capability, LeaseClock, LeasePolicy, Registry, Reservation, State};
     struct Child(std::process::Child);
@@ -93,6 +185,11 @@ async fn recovery_fences_preboot_and_awaits_original_native_exit_before_closing(
                 State::Unknown
             );
             assert!(session.exists());
+            assert!(
+                state.delete_session_dir(&session).is_err(),
+                "ordinary deletion cannot discard a live native owner"
+            );
+            assert!(child.0.try_wait().unwrap().is_none());
             assert_eq!(grants.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
             child.0.kill().unwrap();
             child.0.wait().unwrap();

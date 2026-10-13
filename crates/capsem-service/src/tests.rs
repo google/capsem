@@ -41,7 +41,11 @@ fn test_host_ledger(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
 
 /// The one test `ServiceState` constructor. The manifest is whatever
 /// `assets_dir` holds, as at service startup.
-fn test_state(run_dir: PathBuf, assets_dir: PathBuf, test_tempdir: Option<tempfile::TempDir>) -> ServiceState {
+pub(crate) fn test_state(
+    run_dir: PathBuf,
+    assets_dir: PathBuf,
+    test_tempdir: Option<tempfile::TempDir>,
+) -> ServiceState {
     std::fs::create_dir_all(&run_dir).unwrap();
     let manifest = capsem_assets::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
     ServiceState {
@@ -396,7 +400,7 @@ pub(crate) fn test_persistent_entry(name: &str, session_dir: PathBuf) -> Persist
 // Image handler tests (service-level unit tests)
 // -----------------------------------------------------------------------
 
-fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
+pub(crate) fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let state = test_state(dir.path().join("run"), dir.path().join("assets"), None);
     (Arc::new(state), dir)
