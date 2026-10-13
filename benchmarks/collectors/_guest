@@ -119,6 +119,15 @@ def failed_load_levels(section: dict) -> list[int]:
     ]
 
 
+def resource_samples(metrics: dict) -> dict[str, float]:
+    """Flatten sampled host pressure for diagnostics from rejected load runs."""
+    return {
+        name: measurement["samples"][0]
+        for name, measurement in sorted(metrics.items())
+        if measurement.get("samples")
+    }
+
+
 def guest_command(mode: str) -> str:
     """One safely quoted command with only documented benchmark controls."""
     assignments = [
@@ -275,7 +284,8 @@ def main() -> int:
     if failed := failed_load_levels(section):
         raise RuntimeError(
             f"capsem-bench {mode}: requests failed at concurrency {failed}; "
-            "the rail did not sustain the requested load, so the run is rejected"
+            "the rail did not sustain the requested load, so the run is rejected; "
+            f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}"
         )
     numbers = flatten(section)
     if not numbers:

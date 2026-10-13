@@ -214,10 +214,27 @@ def test_guest_result_rejects_one_failed_request(monkeypatch, tmp_path) -> None:
     monkeypatch.setitem(
         main.__globals__, "wait_exec_ready", lambda *args, **kwargs: True
     )
+    class FailedRunSampler(ResourceSamplerStub):
+        def stop(self) -> dict:
+            return {
+                "resources.total.cpu_seconds": {
+                    "unit": "seconds",
+                    "samples": [12.5],
+                },
+                "resources.total.peak_rss_bytes": {
+                    "unit": "bytes",
+                    "samples": [1048576],
+                },
+            }
+
     monkeypatch.setitem(
-        main.__globals__, "process_tree_sampler", lambda service: ResourceSamplerStub()
+        main.__globals__, "process_tree_sampler", lambda service: FailedRunSampler()
     )
     monkeypatch.setattr(sys, "argv", ["mitm-load"])
 
-    with pytest.raises(RuntimeError, match="requests failed at concurrency \\[200\\]"):
+    with pytest.raises(RuntimeError) as failure:
         main()
+    message = str(failure.value)
+    assert "requests failed at concurrency [200]" in message
+    assert '"resources.total.cpu_seconds": 12.5' in message
+    assert '"resources.total.peak_rss_bytes": 1048576' in message
