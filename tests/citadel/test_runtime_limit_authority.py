@@ -94,6 +94,17 @@ REQUIRED_WIRING = {
         "NETWORK_PROCESS_OPEN_FILE_LIMIT",
         "ensure_open_file_limit",
     ),
+    "crates/capsem-bench/src/runtime_limits.rs": (
+        "NETWORK_CLIENT_CAPACITY",
+        "LEDGER_PRODUCER_QUEUE_CAPACITY",
+        "LEDGER_ADMISSION_BATCH_CAPACITY",
+        "LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS",
+    ),
+    "guest/artifacts/capsem_bench/dns_load.py": (
+        '"runtime-limits"',
+        '"network_client_capacity"',
+        "capacity // 2",
+    ),
 }
 
 
