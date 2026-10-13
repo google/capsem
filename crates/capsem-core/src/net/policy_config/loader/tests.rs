@@ -2,6 +2,43 @@ use super::*;
 use std::collections::HashMap;
 
 #[test]
+fn managed_policy_load_preserves_host_settings_and_corp_priority() {
+    let root = tempfile::tempdir().unwrap();
+    let user = root.path().join("settings.toml");
+    let system = root.path().join("system-corp.toml");
+    let local = root.path().join("user-corp.toml");
+    std::fs::write(
+        &user,
+        "[managed_sessions]\nlease_seconds = 900\nrenew_after_seconds = 120\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &system,
+        "[managed_sessions]\nlease_seconds = 180\nrenew_after_seconds = 30\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &local,
+        "[managed_sessions]\nlease_seconds = 600\nrenew_after_seconds = 100\n",
+    )
+    .unwrap();
+    let paths = [system.clone(), local];
+    let policy = managed_session_policy_from_paths(Some(&user), &paths).unwrap();
+    assert_eq!(policy.lease_seconds, 180);
+    assert_eq!(policy.renew_after_seconds, 30);
+    assert_eq!(policy.tombstone_seconds, 86_400);
+    let file = load_local_settings_file(&user).unwrap();
+    write_settings_file(&user, &file).unwrap();
+    assert_eq!(
+        load_local_settings_file(&user).unwrap().managed_sessions,
+        file.managed_sessions
+    );
+    // A malformed corporate constraint cannot silently become an empty policy.
+    std::fs::write(&system, "[managed_sessions]\nlease_seconds = 0\n").unwrap();
+    assert!(managed_session_policy_from_paths(Some(&user), &paths).is_err());
+}
+
+#[test]
 fn load_settings_file_missing_returns_default() {
     let result = load_settings_file(Path::new("/nonexistent/path/settings.toml"));
     assert!(result.is_ok());

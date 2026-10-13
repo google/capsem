@@ -278,6 +278,30 @@ pub fn load_policy_files() -> Result<(SettingsFile, SettingsFile), String> {
     Ok((settings, load_corp_files()))
 }
 
+/// Load finite managed ownership policy without the display-only corporate
+/// loader's warning-and-empty fallback. Invalid constraints refuse admission.
+pub fn load_managed_session_policy() -> Result<capsem_config::ManagedSessionPolicy, String> {
+    managed_session_policy_from_paths(settings_config_path().as_deref(), &corp_config_paths())
+}
+
+fn managed_session_policy_from_paths(
+    settings: Option<&Path>,
+    corp_paths: &[std::path::PathBuf],
+) -> Result<capsem_config::ManagedSessionPolicy, String> {
+    let user = match settings {
+        Some(path) => load_local_settings_file(path)?.managed_sessions,
+        None => None,
+    };
+    let mut corp = None;
+    for path in corp_paths {
+        let file = load_settings_file(path)?;
+        if corp.is_none() {
+            corp = file.managed_sessions;
+        }
+    }
+    capsem_config::ManagedSessionPolicy::resolve(user.as_ref(), corp.as_ref())
+}
+
 /// Corp constraints from every available path (system + user-provisioned).
 /// First path wins per-key (/etc/capsem/corp.toml overrides ~/.capsem/corp.toml).
 pub fn load_corp_files() -> SettingsFile {
@@ -296,6 +320,9 @@ pub fn load_corp_files() -> SettingsFile {
                 // Image policy: first non-None wins, and replaces the user's.
                 if corp.images.is_none() && file.images.is_some() {
                     corp.images = file.images;
+                }
+                if corp.managed_sessions.is_none() {
+                    corp.managed_sessions = file.managed_sessions;
                 }
                 // External rule files: first corp path wins per reference.
                 corp.rule_files.merge_first_wins(file.rule_files);
