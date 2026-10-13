@@ -15,6 +15,7 @@ replaced had ten producers each computing its own `p99`.
 just bench-quick                 # dev loop: no guest, bounded, records like any run
 just bench                       # every dimension that has a collector
 just bench routes criterion      # only these
+just bench-slow routes           # same harness, rebuilding intentionally stale VM assets
 just bench-report                # what each subject reads, and how it has moved
 ```
 
@@ -30,7 +31,7 @@ this repo took before it existed was taken on an unqualified machine.
 | `list` | every dimension and whether the quick lane covers it |
 | `run [dim...]` | measure, then record into the store |
 | `doctor` | is this machine fit to measure -- load, governor, KVM, strays |
-| `compare A B <dim>` | two stores, metric by metric |
+| `compare A B <dim>` | two stores, metric by metric; combines the latest two authoritative runs by default |
 | `verify` | ratchet a run against evidence; refuses on an unfit machine |
 | `report` | every subject and its trend |
 | `protocol`, `protocol-delta`, `delta` | the scenario engine: host-direct vs guest-through-Capsem |
