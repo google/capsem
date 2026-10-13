@@ -140,6 +140,31 @@ leak and close descriptors that were not deliberately preserved. The sandbox
 is additive to normal ownership and mode checks; mode `0600` sockets and mode
 `0700` session directories remain in use.
 
+The proxy keeps request correlation without retaining trace environment
+variables. After clearing its environment, it derives a compact process trace
+identity from the coordinator-minted worker generation passed on the command
+line. Model tool calls that name workspace files cross a separate fixed-size
+channel to the VM owner. The owner validates each relative path, installs the
+hint in the filesystem monitor's bounded correlation table, and acknowledges
+it before the model response completes. That channel grants the proxy no
+workspace descriptor or read authority; malformed, escaping, or oversized
+hints close it.
+
+The VM owner opens the workspace as a contained directory before confinement
+and carries that descriptor across the boundary. It never reopens the broader
+session directory, which also contains the ledger. If the filesystem monitor
+cannot start from the contained descriptor, VM startup fails instead of
+running without filesystem audit coverage.
+
+VirtioFS mode and timestamp updates follow the same capability boundary. The
+confined VM owner cannot invoke host permission or timestamp syscalls directly.
+It sends a typed relative-path request over its generation-bound coordinator
+channel; the service applies the change beneath the registered session's guest
+share through contained directory descriptors. Parent components cannot be
+links, and the final timestamp operation does not follow a link. Archive tools
+such as `cp -a` can therefore preserve guest-visible metadata without giving
+the guest-facing owner path authority over the host.
+
 ## Shared proxy engine
 
 VM interception and the standalone model API are transport adapters around the
