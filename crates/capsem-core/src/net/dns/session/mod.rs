@@ -30,7 +30,7 @@ use tracing::{debug, warn};
 
 /// Queries one connection answers concurrently. Past the shared guest/host
 /// bound the reader waits instead of admitting unbounded tasks.
-pub use capsem_proto::DNS_SESSION_MAX_IN_FLIGHT;
+use capsem_proto::DNS_SESSION_MAX_IN_FLIGHT;
 
 pub async fn serve_dns_session(
     conn: OwnedFd,
