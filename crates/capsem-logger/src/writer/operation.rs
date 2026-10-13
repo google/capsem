@@ -21,6 +21,7 @@ impl WriteOp {
             WriteOp::HostEvent(_) => "host_event",
             WriteOp::Network(_) => "network",
             WriteOp::NetworkMembership(_) => "network_membership",
+            WriteOp::NetworkDeparture(_) => "network_departure",
         }
     }
 
@@ -46,7 +47,8 @@ impl WriteOp {
             WriteOp::ExecEventComplete(_)
             | WriteOp::HostEvent(_)
             | WriteOp::Network(_)
-            | WriteOp::NetworkMembership(_) => None,
+            | WriteOp::NetworkMembership(_)
+            | WriteOp::NetworkDeparture(_) => None,
         }
     }
 
@@ -68,7 +70,8 @@ impl WriteOp {
             WriteOp::ExecEventComplete(_)
             | WriteOp::HostEvent(_)
             | WriteOp::Network(_)
-            | WriteOp::NetworkMembership(_) => None,
+            | WriteOp::NetworkMembership(_)
+            | WriteOp::NetworkDeparture(_) => None,
         }
     }
 }
@@ -130,7 +133,7 @@ pub(super) fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'stati
             tables.insert("host_events");
         }
         // Disk-only registry tables: written to main directly, nothing to flush.
-        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => {}
+        WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => {}
     }
 }
 

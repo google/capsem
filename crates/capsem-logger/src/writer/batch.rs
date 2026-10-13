@@ -12,6 +12,7 @@ use capsem_telemetry::db::{DB_WRITE_OPS_TOTAL, DB_WRITE_OP_REJECTED_TOTAL};
 pub(super) struct BatchWriteOutcome {
     pub(super) tables: BTreeSet<&'static str>,
     pub(super) written: usize,
+    pub(super) rejected: usize,
 }
 
 /// Re-run a failed batch one op at a time so a single rejected row cannot
@@ -33,6 +34,7 @@ pub(super) fn retry_batch_ops_individually(
     let mut salvaged = BatchWriteOutcome {
         tables: BTreeSet::new(),
         written: 0,
+        rejected: 0,
     };
     for op in batch {
         if !write_op_affects_storage(op) {
@@ -45,6 +47,7 @@ pub(super) fn retry_batch_ops_individually(
                 salvaged.written += outcome.written;
             }
             Err(error) => {
+                salvaged.rejected += 1;
                 // Loud on purpose: a rejected op is a producer bug, and a
                 // ledger that quietly loses rows is worse than one that
                 // complains about them.
@@ -80,6 +83,7 @@ pub(super) fn execute_memory_batch(
         return Ok(BatchWriteOutcome {
             tables: BTreeSet::new(),
             written: 0,
+            rejected: 0,
         });
     }
 
@@ -123,6 +127,7 @@ pub(super) fn execute_memory_batch(
     Ok(BatchWriteOutcome {
         tables: affected_tables,
         written: stored_ops,
+        rejected: 0,
     })
 }
 
@@ -191,6 +196,12 @@ fn insert_batch_ops<'a>(
             WriteOp::HostEvent(e) => insert_host_event(tx, e, WriteTarget::Memory)?,
             WriteOp::Network(n) => event_rows::upsert_network(tx, n, WriteTarget::Memory)?,
             WriteOp::NetworkMembership(m) => event_rows::upsert_network_membership(tx, m, WriteTarget::Memory)?,
+            WriteOp::NetworkDeparture(departure) => {
+                event_rows::upsert_network_membership(tx, &departure.membership, WriteTarget::Memory)?;
+                if let Some(retired) = &departure.retired {
+                    event_rows::upsert_network(tx, retired, WriteTarget::Memory)?;
+                }
+            }
         }
         effects.push((op, effect));
     }

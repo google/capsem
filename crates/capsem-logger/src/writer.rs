@@ -11,8 +11,8 @@ use tracing::{error, warn};
 use crate::counters::{self, LedgerCounters, LedgerTally};
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, HostEvent, McpCall, ModelCall, NetEvent,
-    NetworkMembership, NetworkRecord, PolicyMutationEvent, SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent,
-    SubstitutionEvent, TransportEvent,
+    NetworkDeparture, NetworkMembership, NetworkRecord, PolicyMutationEvent, SecurityAskEvent, SecurityDecisionEvent,
+    SecurityRuleEvent, SubstitutionEvent, TransportEvent,
 };
 use crate::schema;
 
@@ -208,6 +208,7 @@ pub enum WriteOp {
     /// Registry rows of a network database; upserted by key, disk-only.
     Network(NetworkRecord),
     NetworkMembership(NetworkMembership),
+    NetworkDeparture(NetworkDeparture),
 }
 
 /// What a flush barrier reports back: `Err` when the disk flush the barrier
@@ -624,6 +625,10 @@ fn writer_loop(
     let exec_floor = flush_watermarks.get("exec_events").copied().unwrap_or(0);
     let mut dirty_tables = BTreeSet::new();
     let mut dirty_ops = 0_usize;
+    // Producer acceptance is not SQL success. Preserve rejected-operation
+    // failures across ordinary batches and interval flushes until the next
+    // explicit durability boundary reports that its queued prefix failed.
+    let mut rejected_ops = 0_usize;
     let mut last_disk_flush = Instant::now();
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.
@@ -700,6 +705,7 @@ fn writer_loop(
                         .in_scope(|| retry_batch_ops_individually(&conn, &batch, &mut bodies, exec_floor, &mut tally));
                     dirty_tables.extend(salvaged.tables);
                     dirty_ops += salvaged.written;
+                    rejected_ops = rejected_ops.saturating_add(salvaged.rejected);
                 }
             }
         }
@@ -711,7 +717,11 @@ fn writer_loop(
         let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
             || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
             || barriers.waiting();
-        let mut barrier_outcome: FlushOutcome = Ok(());
+        let mut barrier_outcome: FlushOutcome = if rejected_ops == 0 {
+            Ok(())
+        } else {
+            Err(format!("db rejected {rejected_ops} accepted write operations"))
+        };
         if disk_flush_due {
             match flush_dirty_tables_to_disk(
                 &conn,
@@ -733,7 +743,11 @@ fn writer_loop(
             }
         }
         ::metrics::gauge!(DB_MEMORY_UNFLUSHED_OPS).set(dirty_ops as f64);
+        let explicit_boundary = barriers.waiting();
         barriers.answer(&conn, &mut bodies, &barrier_outcome);
+        if explicit_boundary {
+            rejected_ops = 0;
+        }
     }
 
     // Test hook: lets `test_wal_absent_after_clean_shutdown`-style tests

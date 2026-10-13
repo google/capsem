@@ -33,6 +33,29 @@ pub enum MembershipState {
     Detached,
 }
 
+/// A detached member and its optional last-member network retirement must
+/// commit in one database transaction. Neither half is independently durable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkDeparture {
+    pub(crate) membership: NetworkMembership,
+    pub(crate) retired: Option<NetworkRecord>,
+}
+
+impl NetworkDeparture {
+    pub fn new(membership: NetworkMembership, retired: Option<NetworkRecord>) -> Result<Self, String> {
+        if membership.state != MembershipState::Detached
+            || retired.as_ref().is_some_and(|network| {
+                network.id != membership.network_id
+                    || network.state != NetworkState::Retired
+                    || network.retired_unix_ms != Some(membership.updated_unix_ms)
+            })
+        {
+            return Err("network departure requires matching detached and retired records".into());
+        }
+        Ok(Self { membership, retired })
+    }
+}
+
 impl MembershipState {
     pub const fn as_str(self) -> &'static str {
         match self {

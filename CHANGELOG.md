@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Logger durability barriers report accepted operations rejected by SQLite
+  during batch salvage, preventing failed registry writes from returning a
+  successful flush while preserving valid rows in the same producer batch.
+
 - Managed policy reload narrows active leases from their original renewal time
   and updates expiry workers without extending ownership. Stale admission or
   claim completions cannot overwrite a tighter timer; responses report the

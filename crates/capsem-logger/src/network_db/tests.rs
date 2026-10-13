@@ -11,6 +11,59 @@ fn network_at(dir: &tempfile::TempDir) -> std::path::PathBuf {
 const SUBNET: (Ipv4Addr, u8) = (Ipv4Addr::new(10, 128, 7, 0), 24);
 
 #[tokio::test]
+async fn network_departure_is_atomic_when_network_retirement_write_fails() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = network_at(&directory);
+    let id = capsem_crypto::uuid_v4();
+    let record = NetworkRecord::new(id, "atomic", SUBNET, 1000).unwrap();
+    let membership =
+        NetworkMembership::new(id, "vm", Ipv4Addr::new(10, 128, 7, 2), MembershipState::Declared, 1001).unwrap();
+    let db = open(&path).unwrap();
+    db.write(WriteOp::Network(record.clone())).await.unwrap();
+    db.write(WriteOp::NetworkMembership(membership)).await.unwrap();
+    db.flush().await.unwrap();
+    drop(db);
+    // Configure the real database before its sole writer is reopened.
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reject_retire BEFORE UPDATE ON network WHEN NEW.state = 'retired'
+         BEGIN SELECT RAISE(ABORT, 'fixture retirement failure'); END;",
+        )
+        .unwrap();
+    let departure = crate::NetworkDeparture::new(
+        NetworkMembership::new(id, "vm", Ipv4Addr::new(10, 128, 7, 2), MembershipState::Detached, 1002).unwrap(),
+        Some(record.retired(1002).unwrap()),
+    )
+    .unwrap();
+    let db = open(&path).unwrap();
+    let accepted = db.write(WriteOp::NetworkDeparture(departure.clone())).await;
+    let flushed = db.flush().await;
+    assert!(
+        accepted.is_err() || flushed.is_err(),
+        "the real retirement trigger must fail"
+    );
+    let rows = db.query("SELECT network.state, network_members.state FROM network JOIN network_members ON network.id = network_members.network_id", &[]).await.unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&rows).unwrap()["rows"][0],
+        serde_json::json!(["active", "declared"])
+    );
+    drop(db);
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TRIGGER reject_retire")
+        .unwrap();
+    let db = open(&path).unwrap();
+    db.write(WriteOp::NetworkDeparture(departure)).await.unwrap();
+    db.flush().await.unwrap();
+    let rows = db.query("SELECT network.state, network_members.state FROM network JOIN network_members ON network.id = network_members.network_id", &[]).await.unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&rows).unwrap()["rows"][0],
+        serde_json::json!(["retired", "detached"])
+    );
+}
+
+#[tokio::test]
 async fn opening_creates_the_schema_and_reopening_keeps_it() {
     let dir = tempfile::tempdir().unwrap();
     let path = network_at(&dir);

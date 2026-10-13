@@ -7,7 +7,7 @@ mod host;
 mod network;
 mod transport;
 pub use host::{chain_hash, HostEvent, HostEventKind, GENESIS_HASH};
-pub use network::{MembershipState, NetworkMembership, NetworkRecord, NetworkState};
+pub use network::{MembershipState, NetworkDeparture, NetworkMembership, NetworkRecord, NetworkState};
 pub use transport::{TransportEvent, TransportEventKind};
 
 pub use capsem_proto::credential_reference::{credential_reference, is_credential_reference, CREDENTIAL_REF_PREFIX};
