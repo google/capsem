@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from capsem_builder.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -87,7 +88,7 @@ def test_mitm_fixture_corp_config_routes_dns_and_the_fixture_host_to_the_mock_se
     assert module["MITM_FIXTURE_TARGET"] == "https://fixture.capsem.test/tiny"
 
 
-def test_a_level_where_every_request_failed_is_not_a_measurement() -> None:
+def test_a_level_where_any_request_failed_is_not_a_measurement() -> None:
     failed = collector()["failed_load_levels"]
     section = {
         "concurrency_levels": [
@@ -97,7 +98,7 @@ def test_a_level_where_every_request_failed_is_not_a_measurement() -> None:
             {"concurrency": 200, "total_requests": 100, "errors": 250},
         ]
     }
-    assert failed(section) == [1, 200]
+    assert failed(section) == [1, 10, 200]
     assert failed({"concurrency_levels": []}) == []
     assert failed({}) == []
 
@@ -111,29 +112,97 @@ def test_load_dimensions_get_more_guest_cpus_bounded_by_the_host() -> None:
     assert guest_cpus("mitm-load", host_cpus=2) == 2, "never below the default"
 
 
-def test_guest_result_preserves_error_counts_and_concurrency(monkeypatch, capsys) -> None:
-    document = {"dns_load": {"concurrency_levels": [
-        {"concurrency": 200, "total_requests": 500, "errors": 3, "rps": 50.0},
-    ]}}
+def test_guest_result_preserves_zero_error_proof(monkeypatch, capsys) -> None:
+    document = {
+        "dns_load": {
+            "concurrency_levels": [
+                {"concurrency": 200, "total_requests": 500, "errors": 0, "rps": 50.0},
+            ]
+        }
+    }
     stopped = []
     client = SimpleNamespace(
         post=lambda route, *args, **kwargs: (
-            {"id": "bench-test-vm"} if route == "/vms/create"
-            else {"exit_code": 0, "stdout": {"encoding": "utf8", "data": json.dumps(document)}}
+            {"id": "bench-test-vm"}
+            if route == "/vms/create"
+            else {
+                "exit_code": 0,
+                "stdout": {"encoding": "utf8", "data": json.dumps(document)},
+            }
         ),
         delete=lambda *args: None,
     )
     main = collector()["main"]
-    monkeypatch.setitem(main.__globals__, "ServiceInstance", lambda: SimpleNamespace(
-        client=lambda: client, start=lambda: None, stop=lambda: stopped.append(True),
-    ))
-    monkeypatch.setitem(main.__globals__, "wait_exec_ready", lambda *args, **kwargs: True)
+    monkeypatch.setitem(
+        main.__globals__,
+        "ServiceInstance",
+        lambda: SimpleNamespace(
+            client=lambda: client,
+            start=lambda: None,
+            stop=lambda: stopped.append(True),
+        ),
+    )
+    monkeypatch.setitem(
+        main.__globals__, "wait_exec_ready", lambda *args, **kwargs: True
+    )
     monkeypatch.setattr(sys, "argv", ["dns-load"])
 
     assert main() == 0
     result = json.loads(capsys.readouterr().out)
     assert json.loads(result["sidecar"]) == document
     assert result["metrics"] == {
+        "concurrency_levels.0.error_ratio": {"unit": "ratio", "samples": [0.0]},
+        "concurrency_levels.0.errors": {"unit": "count", "samples": [0]},
         "concurrency_levels.0.rps": {"unit": "requests_per_second", "samples": [50.0]},
     }
     assert stopped == [True]
+
+
+def test_guest_result_rejects_one_failed_request(monkeypatch, tmp_path) -> None:
+    document = {
+        "mitm_load": {
+            "concurrency_levels": [
+                {"concurrency": 200, "total_requests": 500, "errors": 1, "rps": 49.9},
+            ]
+        }
+    }
+    client = SimpleNamespace(
+        post=lambda route, *args, **kwargs: (
+            {"id": "bench-test-vm"}
+            if route == "/vms/create"
+            else {
+                "exit_code": 0,
+                "stdout": {"encoding": "utf8", "data": json.dumps(document)},
+            }
+        ),
+        delete=lambda *args: None,
+    )
+    main = collector()["main"]
+    monkeypatch.setitem(
+        main.__globals__,
+        "ServiceInstance",
+        lambda: SimpleNamespace(
+            client=lambda: client,
+            start=lambda: None,
+            stop=lambda: None,
+            tmp_dir=tmp_path,
+        ),
+    )
+    import helpers.mock_server
+
+    monkeypatch.setattr(
+        helpers.mock_server,
+        "start_mock_server",
+        lambda: (
+            object(),
+            {"dns_udp_addr": "127.0.0.1:41000", "http_addr": "127.0.0.1:3713"},
+        ),
+    )
+    monkeypatch.setattr(helpers.mock_server, "stop_process", lambda proc: None)
+    monkeypatch.setitem(
+        main.__globals__, "wait_exec_ready", lambda *args, **kwargs: True
+    )
+    monkeypatch.setattr(sys, "argv", ["mitm-load"])
+
+    with pytest.raises(RuntimeError, match="requests failed at concurrency \\[200\\]"):
+        main()

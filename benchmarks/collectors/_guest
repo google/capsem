@@ -100,16 +100,15 @@ def mitm_fixture_corp_toml(ready: dict) -> str:
 
 
 def failed_load_levels(section: dict) -> list[int]:
-    """Concurrency levels whose every request failed.
+    """Concurrency levels where any request failed.
 
-    A level where nothing succeeded measured the failure path, not the rail
-    under test; recording it would ratchet the wrong number.
+    Partial success still means the rail failed to sustain the requested
+    concurrency. Recording its latency or RPS would ratchet a degraded run.
     """
     return [
         int(row.get("concurrency", -1))
         for row in section.get("concurrency_levels", [])
-        if int(row.get("total_requests", 0)) > 0
-        and int(row.get("errors", 0)) >= int(row.get("total_requests", 0))
+        if int(row.get("errors", 0)) > 0
     ]
 
 
@@ -158,6 +157,23 @@ def flatten(node, prefix: str = "") -> dict[str, float]:
     return found
 
 
+def load_quality_metrics(section: dict) -> dict[str, dict]:
+    """Store zero-error proof for every load concurrency level."""
+    metrics = {}
+    for index, row in enumerate(section.get("concurrency_levels", [])):
+        errors = int(row.get("errors", 0))
+        total = int(row.get("total_requests", 0))
+        metrics[f"concurrency_levels.{index}.errors"] = {
+            "unit": "count",
+            "samples": [errors],
+        }
+        metrics[f"concurrency_levels.{index}.error_ratio"] = {
+            "unit": "ratio",
+            "samples": [errors / total if total else 0.0],
+        }
+    return metrics
+
+
 def main() -> int:
     mode = Path(sys.argv[0]).name
     parser = argparse.ArgumentParser(description=f"measure {mode} inside a VM")
@@ -195,7 +211,11 @@ def main() -> int:
         print(f"running capsem-bench {mode}", file=sys.stderr)
         benchmark_result = client.post(
             f"/vms/{name}/exec",
-            {"target": "vm", "command": guest_command(mode), "timeout_secs": args.timeout},
+            {
+                "target": "vm",
+                "command": guest_command(mode),
+                "timeout_secs": args.timeout,
+            },
             timeout=args.timeout + 10,
         )
         if not benchmark_result or benchmark_result.get("exit_code") != 0:
@@ -207,7 +227,11 @@ def main() -> int:
 
         artifact_result = client.post(
             f"/vms/{name}/exec",
-            {"target": "vm", "command": "cat /tmp/capsem-benchmark.json", "timeout_secs": 15},
+            {
+                "target": "vm",
+                "command": "cat /tmp/capsem-benchmark.json",
+                "timeout_secs": 15,
+            },
             timeout=25,
         )
         if not artifact_result or artifact_result.get("exit_code") != 0:
@@ -231,8 +255,8 @@ def main() -> int:
     section = document.get(mode.replace("-", "_"), document)
     if failed := failed_load_levels(section):
         raise RuntimeError(
-            f"capsem-bench {mode}: every request failed at concurrency {failed}; "
-            "the rail under test was never reached, so nothing here is a measurement"
+            f"capsem-bench {mode}: requests failed at concurrency {failed}; "
+            "the rail did not sustain the requested load, so the run is rejected"
         )
     numbers = flatten(section)
     if not numbers:
@@ -247,6 +271,7 @@ def main() -> int:
         for key, value in sorted(numbers.items())
         if (unit := unit_for(key)) is not None
     }
+    measured.update(load_quality_metrics(section))
     if not measured:
         raise RuntimeError(
             f"capsem-bench {mode} reported {len(numbers)} numbers, none of which "

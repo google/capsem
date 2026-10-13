@@ -65,6 +65,7 @@ from .load_harness import (
 # on the developer machine. The benches themselves only run inside
 # the guest where rich + the helpers package are available.
 
+
 def _percentile(sorted_values, q):
     """Return the q-th percentile (q in [0, 100]) from a pre-sorted list.
     Local copy so this module doesn't need `.helpers` until the bench
@@ -191,7 +192,7 @@ def _drive_at_concurrency(qname, qtype, concurrency, duration_s, timeout_s):
 
 
 def _summarize(results, concurrency, duration_s):
-    latencies = [r[0] for r in results]
+    latencies = [r[0] for r in results if r[2] is None]
     errors = sum(1 for r in results if r[2] is not None)
     decisions = {}
     for _lat, rcode, err in results:
@@ -224,9 +225,7 @@ def dns_load_bench(qname=None, qtype=None, concurrency_levels=None, duration_s=N
         concurrency_levels=concurrency_levels,
         duration_s=duration_s,
     )
-    timeout_s = float(
-        os.environ.get("CAPSEM_BENCH_DNS_TIMEOUT", DEFAULT_TIMEOUT_S)
-    )
+    timeout_s = float(os.environ.get("CAPSEM_BENCH_DNS_TIMEOUT", DEFAULT_TIMEOUT_S))
 
     console.print(
         f"[bold]dns-load[/bold] qname={qname} qtype={qtype} "
@@ -251,9 +250,12 @@ def dns_load_bench(qname=None, qtype=None, concurrency_levels=None, duration_s=N
         f"dns-load (qname={qname}, qtype={qtype}, {config.duration_s}s per level)",
         rows,
         extra_columns=[
-            ("decisions", lambda row: ",".join(
-                f"{k}={v}" for k, v in row["decision_distribution"].items()
-            )),
+            (
+                "decisions",
+                lambda row: ",".join(
+                    f"{k}={v}" for k, v in row["decision_distribution"].items()
+                ),
+            ),
         ],
     )
 

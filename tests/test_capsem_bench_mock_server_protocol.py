@@ -20,6 +20,39 @@ def test_mitm_load_counts_http_failures(status):
     assert error == (None if 200 <= status < 300 else f"HTTP {status}")
 
 
+def test_mitm_load_excludes_failed_latency_and_reports_error_ratio():
+    row = mitm_load._summarize(
+        [(5.0, 200, None), (100.0, 0, "timed out")],
+        concurrency=2,
+        duration_s=10,
+    )
+
+    assert row["total_requests"] == 2
+    assert row["errors"] == 1
+    assert row["error_ratio"] == 0.5
+    assert row["rps"] == 0.1
+    assert row["p50_ms"] == 5.0
+    assert row["error_distribution"] == {"timed out": 1}
+
+
+def test_mitm_load_rejects_one_failed_request(monkeypatch):
+    monkeypatch.setattr(
+        mitm_load,
+        "_drive_at_concurrency",
+        lambda url, concurrency, duration_s: [
+            (5.0, 200, None),
+            (100.0, 0, "timed out"),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="1 of 2 requests failed"):
+        mitm_load.mitm_load_bench(
+            target="https://fixture.capsem.test/tiny",
+            concurrency_levels=[1],
+            duration_s=1,
+        )
+
+
 class _StubConsole:
     def __init__(self, *args, **kwargs):
         self.messages = []
@@ -76,12 +109,15 @@ def test_protocol_mode_delegates_to_rust_bench(monkeypatch, tmp_path):
 
     assert exc.value.code == 7
     assert calls == [
-        ([
-            bench_main.RUST_BENCH,
-            "protocol",
-            "--base-url",
-            "http://127.0.0.1:3713",
-        ], False)
+        (
+            [
+                bench_main.RUST_BENCH,
+                "protocol",
+                "--base-url",
+                "http://127.0.0.1:3713",
+            ],
+            False,
+        )
     ]
 
 
@@ -97,7 +133,9 @@ def test_all_mode_keeps_network_sections_by_merging_rust_protocol(monkeypatch):
     fake_module("capsem_bench.startup", "startup_bench")
     fake_module("capsem_bench.snapshot", "snapshot_bench")
     monkeypatch.setattr(sys, "argv", ["capsem-bench", "all"])
-    monkeypatch.setenv(bench_main.MOCK_SERVER_PROTOCOL_BASE_URL_ENV, "http://127.0.0.1:3713")
+    monkeypatch.setenv(
+        bench_main.MOCK_SERVER_PROTOCOL_BASE_URL_ENV, "http://127.0.0.1:3713"
+    )
     calls = []
 
     def fake_rust_protocol_artifact(scenarios=None, requests=None, concurrency=None):
@@ -153,7 +191,9 @@ def test_all_mode_keeps_network_sections_by_merging_rust_protocol(monkeypatch):
             }
         }
 
-    monkeypatch.setattr(bench_main, "_run_rust_protocol_artifact", fake_rust_protocol_artifact)
+    monkeypatch.setattr(
+        bench_main, "_run_rust_protocol_artifact", fake_rust_protocol_artifact
+    )
 
     bench_main.main()
 
@@ -163,7 +203,11 @@ def test_all_mode_keeps_network_sections_by_merging_rust_protocol(monkeypatch):
     assert data["throughput"]["http_code"] == 200
     assert data["throughput"]["size_bytes"] == 10 * 1024 * 1024
     assert "mock_server_protocol" in data
-    assert calls == [(None, None, None), ("tiny_http", None, None), ("http_10mb", "1", "1")]
+    assert calls == [
+        (None, None, None),
+        ("tiny_http", None, None),
+        ("http_10mb", "1", "1"),
+    ]
 
 
 def test_global_load_config_parses_count_and_duration_modes(monkeypatch):

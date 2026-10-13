@@ -11,8 +11,7 @@ termination, SNI, policy, cert mint, telemetry) and a real, fast upstream.
 It used to target a non-existent public domain "so every request fails at
 the upstream dial". The guest's resolver answered NXDOMAIN and the client
 failed before opening a socket, so the proxy never ran and the recorded
-numbers were DNS-failure numbers. A level where every request fails is now
-an error, not a measurement.
+numbers were DNS-failure numbers. Any failed request now rejects the run.
 
 Output schema:
 
@@ -25,6 +24,7 @@ Output schema:
         "duration_s": 30.0,
         "total_requests": 1234,
         "errors": 0,
+        "error_ratio": 0.0,
         "rps": 41.1,
         "p50_ms": 22.0,
         "p95_ms": 35.0,
@@ -44,6 +44,7 @@ import http.client
 import os
 import ssl
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlsplit
 
@@ -110,7 +111,7 @@ def _do_request(session):
         elapsed_ms = (time.monotonic() - start) * 1000
         error = None if 200 <= status < 300 else f"HTTP {status}"
         return (elapsed_ms, status, error)
-    except Exception as exc:
+    except (OSError, http.client.HTTPException) as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
         return (elapsed_ms, 0, str(exc))
 
@@ -142,9 +143,16 @@ def _drive_at_concurrency(url, concurrency, duration_s):
 
 def _summarize(results, concurrency, duration_s):
     """Build the JSON-shaped row for this concurrency level."""
-    latencies = sorted(r[0] for r in results)
+    latencies = sorted(r[0] for r in results if r[2] is None)
     errors = sum(1 for r in results if r[2] is not None)
-    return summarize_load_level(latencies, errors, concurrency, duration_s)
+    error_distribution = Counter(r[2] for r in results if r[2] is not None)
+    return summarize_load_level(
+        latencies,
+        errors,
+        concurrency,
+        duration_s,
+        extra={"error_distribution": dict(error_distribution)},
+    )
 
 
 def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
@@ -168,11 +176,11 @@ def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
         console.print(f"  concurrency={c} ...")
         results = _drive_at_concurrency(target, c, config.duration_s)
         row = _summarize(results, c, config.duration_s)
-        if row["total_requests"] and row["errors"] >= row["total_requests"]:
-            first_error = next((r[2] for r in results if r[2] is not None), "unknown")
+        if row["errors"]:
             raise RuntimeError(
-                f"mitm-load: every request at concurrency {c} failed ({first_error}); "
-                "the proxy was not measured"
+                f"mitm-load: {row['errors']} of {row['total_requests']} requests failed "
+                f"at concurrency {c}: {row['error_distribution']}; "
+                "the rail did not sustain the requested load"
             )
         rows.append(row)
 
