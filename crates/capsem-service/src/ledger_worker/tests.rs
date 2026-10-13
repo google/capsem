@@ -103,14 +103,13 @@ async fn fake_ledger_worker_child() {
 async fn fake(mode: &'static str) -> Result<LedgerWorker> {
     let dir = tempfile::tempdir().unwrap();
     let database = dir.path().join("session.db");
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = crate::tests::isolated_test_command(std::env::current_exe().unwrap());
     command
         .args([
             "--exact",
             "ledger_worker::tests::fake_ledger_worker_child",
             "--nocapture",
         ])
-        .env_clear()
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
@@ -176,14 +175,13 @@ async fn supervisor_mints_unique_role_bound_channels_and_reaps() {
 
 #[tokio::test]
 async fn terminal_event_after_observed_child_exit_is_still_drained() {
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = crate::tests::isolated_test_command(std::env::current_exe().unwrap());
     command
         .args([
             "--exact",
             "ledger_worker::tests::fake_ledger_worker_child",
             "--nocapture",
         ])
-        .env_clear()
         .env("CAPSEM_FAKE_LEDGER_WORKER", "refuse")
         .stdout(Stdio::null())
         .stderr(Stdio::null())

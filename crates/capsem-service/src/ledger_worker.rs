@@ -251,6 +251,8 @@ impl LedgerWorker {
         let generation = fresh_generation();
         let mut command = Command::new(binary);
         command.env_clear().stdout(stdout).stderr(stderr).kill_on_drop(true);
+        #[cfg(test)]
+        crate::tests::retain_coverage_profile(&mut command);
         launch(command, database, generation, |command, generation, database| {
             command
                 .arg("--parent-pid")

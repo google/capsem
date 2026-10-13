@@ -92,13 +92,12 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
     let (control, child_control) = std::os::unix::net::UnixStream::pair().unwrap();
     control.set_nonblocking(true).unwrap();
     let mut control = tokio::net::UnixStream::from_std(control).unwrap();
-    let child = tokio::process::Command::new(std::env::current_exe().unwrap())
+    let child = crate::tests::isolated_test_command(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "vm_files::provision::tests::refused_image_owner_child",
             "--nocapture",
         ])
-        .env_clear()
         .env("CAPSEM_REFUSED_IMAGE_OWNER", &uds_path)
         .stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(child_control)))
         .stdout(std::process::Stdio::null())

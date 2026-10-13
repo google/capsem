@@ -84,6 +84,8 @@ impl ProxyWorker {
         let generation = fresh_generation();
         let mut command = Command::new(binary);
         command.env_clear().stdout(stdout).stderr(stderr).kill_on_drop(true);
+        #[cfg(test)]
+        crate::tests::retain_coverage_profile(&mut command);
         launch(command, generation, active_policy, move |command, generation| {
             configure_worker_command(command, generation, &mode);
         })

@@ -1,4 +1,39 @@
 use super::*;
+
+pub(crate) fn isolated_std_test_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let coverage_profile = std::env::var_os("LLVM_PROFILE_FILE");
+    let mut command = std::process::Command::new(program);
+    command.env_clear();
+    if let Some(profile) = coverage_profile {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+    command
+}
+
+pub(crate) fn isolated_test_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    tokio::process::Command::from(isolated_std_test_command(program))
+}
+
+pub(crate) fn retain_coverage_profile(command: &mut tokio::process::Command) {
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+}
+
+#[test]
+fn isolated_test_children_keep_only_the_coverage_output_path() {
+    let mut command = isolated_test_command("true");
+    command.env_clear();
+    retain_coverage_profile(&mut command);
+    let environment: Vec<_> = command.as_std().get_envs().collect();
+    match std::env::var_os("LLVM_PROFILE_FILE") {
+        Some(profile) => assert_eq!(
+            environment,
+            [(std::ffi::OsStr::new("LLVM_PROFILE_FILE"), Some(profile.as_os_str()))]
+        ),
+        None => assert!(environment.is_empty()),
+    }
+}
 use axum::body::{to_bytes, Body};
 use capsem_assets::asset_manager::{
     hash_filename, host_manifest_arch, AssetEntry, AssetRelease, AssetsSection, BinariesSection, ManifestV2,

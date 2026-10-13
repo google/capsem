@@ -22,7 +22,7 @@ fn socket_replacement_victim_child() {
 async fn replaced_owner_socket_cannot_receive_another_sessions_commands() {
     use std::io::{Read, Write};
     use std::os::fd::AsFd;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     let state = make_test_state();
     let session_dir = state.run_dir.join("sessions/victim");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -31,13 +31,12 @@ async fn replaced_owner_socket_cannot_receive_another_sessions_commands() {
     control
         .set_read_timeout(Some(std::time::Duration::from_secs(5)))
         .unwrap();
-    let mut victim = Command::new(std::env::current_exe().unwrap())
+    let mut victim = crate::tests::isolated_std_test_command(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "tests::ipc_command::socket_replacement_victim_child",
             "--nocapture",
         ])
-        .env_clear()
         .env("CAPSEM_OWNER_SOCKET_TEST", &socket_path)
         .stdin(Stdio::from(std::os::fd::OwnedFd::from(child_control)))
         .stdout(Stdio::null())
