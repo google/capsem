@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import runpy
 import threading
 import time
@@ -32,6 +33,25 @@ def test_every_measured_route_resolves_to_a_concrete_fixture_request() -> None:
         "the benchmark sent route templates literally, so a fast 404 replaced "
         f"the intended latency measurement: {unresolved}"
     )
+
+
+def test_managed_routes_use_repeatable_authenticated_posts() -> None:
+    collector = _collector()
+    request_path = collector["request_path"]
+    request_input = collector["request_input"]
+
+    close_path = request_path("/vms/managed/{request_id}/close")
+    method, body = request_input(close_path)
+    assert method == "POST"
+    assert json.loads(body) == {
+        "ownership_token": "af" * 32,
+        "outcome": "cancelled",
+    }
+
+    claim_path = request_path("/vms/managed/{request_id}/claim")
+    method, body = request_input(claim_path)
+    assert method == "POST"
+    assert json.loads(body) == {"ownership_token": "af" * 32}
 
 
 def test_concurrent_route_samples_real_overlap_and_rps() -> None:

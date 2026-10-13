@@ -2,9 +2,9 @@
 """Measure HTTP route latency and per-request CPU, direct and via the gateway.
 
 53 of the 101 service routes had no timing signal of any kind. This measures
-read-only routes with isolated stopped-workspace and live-owner fixtures,
-both to the service and through the gateway, so the proxy hop's cost is a
-number rather than a guess.
+routes with isolated stopped-workspace fixtures, both to the service and through
+the gateway, so the proxy hop's cost is a number rather than a guess. Managed
+lifecycle POSTs use an idempotently closed tombstone.
 
 Which routes are measured comes from `[benchmark.routes] measured` in
 `config/gate.toml`, and the fast Citadel guard at
@@ -62,7 +62,8 @@ from helpers.stopped_workspace import (
 
 ROOT = Path(__file__).resolve().parents[2]
 WARMUP = 2
-LIVE_ROUTES = {"/vms/{id}/exposures", "/vms/{id}/security/status"}
+MANAGED_REQUEST_ID = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
+MANAGED_TOKEN = "af" * 32
 
 
 def measured_routes() -> list[str]:
@@ -79,7 +80,19 @@ def request_path(route: str) -> str:
     """Resolve a configured route template against the stopped VM fixture."""
     if route == BODY_ROUTE:
         return BODY_URL
-    return route.replace("{id}", VM_ID)
+    return route.replace("{id}", VM_ID).replace("{request_id}", MANAGED_REQUEST_ID)
+
+
+def request_input(path: str) -> tuple[str, bytes | None]:
+    """Return the method and body for one repeatable benchmark request."""
+    if path.endswith("/claim"):
+        return "POST", json.dumps({"ownership_token": MANAGED_TOKEN}).encode()
+    if path.endswith("/close"):
+        return "POST", json.dumps({
+            "ownership_token": MANAGED_TOKEN,
+            "outcome": "cancelled",
+        }).encode()
+    return "GET", None
 
 
 @dataclass(frozen=True)
@@ -92,7 +105,13 @@ class Target:
 
 def request(transport: Transport, target: Target, path: str) -> None:
     """Require one successful JSON response."""
-    status, _, body = transport.request("GET", path, headers=target.headers)
+    method, request_body = request_input(path)
+    headers = dict(target.headers)
+    if request_body is not None:
+        headers["Content-Type"] = "application/json"
+    status, _, body = transport.request(
+        method, path, headers=headers, body=request_body
+    )
     if not 200 <= status < 300:
         raise RuntimeError(
             f"{target.label} {path} returned HTTP {status}: {body[:500]!r}"
