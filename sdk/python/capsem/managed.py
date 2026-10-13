@@ -41,10 +41,12 @@ class ManagedSession:
         self.__finished = False
         self.__create: asyncio.Task[models.ProvisionResponse] | None = None
         self.__renew: asyncio.Task[None] | None = None
+        self.__expiry: asyncio.Task[None] | None = None
         self.__closing: asyncio.Task[None] | None = None
         self.__caller: asyncio.Task | None = None
         self.__failure: Exception | None = None
         self.__changed = asyncio.Event()
+        self.__lease_changed = asyncio.Event()
 
     @property
     def ownership(self) -> models.ManagedSessionOwnership | None:
@@ -73,6 +75,7 @@ class ManagedSession:
             raise RuntimeError("managed ownership lease expired or invalid") from None
         self.__ownership = ownership
         self.__changed.set()
+        self.__lease_changed.set()
 
     def __session(self, response: models.ProvisionResponse) -> None:
         if response.ownership is None or response.persistent or not response.id:
@@ -90,8 +93,11 @@ class ManagedSession:
         self.__create = asyncio.create_task(api.create_vm(
             self.__transport, body=self.__request, request_timeout=self.__timeout))
         self.__renew = asyncio.create_task(self.__maintain())
+        self.__expiry = asyncio.create_task(self.__watch_expiry())
         try:
-            await asyncio.wait((self.__create, self.__renew), return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait((self.__create, self.__renew, self.__expiry), return_when=asyncio.FIRST_COMPLETED)
+            if self.__expiry.done():
+                await self.__expiry
             if self.__renew.done():
                 await self.__renew
             response = await self.__create
@@ -139,12 +145,32 @@ class ManagedSession:
                 if claim.session is not None:
                     self.__session(claim.session)
         except Exception as error:
-            self.__failure = error
-            if self.__active and self.__caller is not None:
-                if self.__closing is None:
-                    self.__closing = asyncio.create_task(self.__cleanup(models.ManagedSessionOutcome.FAILED))
-                self.__caller.cancel()
+            self.__fail(error)
             raise
+
+    def __fail(self, error: Exception) -> None:
+        if self.__failure is not None:
+            return
+        self.__failure = error
+        if self.__active and self.__caller is not None:
+            if self.__closing is None:
+                self.__closing = asyncio.create_task(self.__cleanup(models.ManagedSessionOutcome.FAILED))
+            self.__caller.cancel()
+
+    async def __watch_expiry(self) -> None:
+        try:
+            while True:
+                self.__lease_changed.clear()
+                ownership = self.__ownership
+                remaining = (None if ownership is None else
+                             (datetime.fromisoformat(ownership.expires_at.replace("Z", "+00:00"))
+                              - datetime.now(UTC)).total_seconds())
+                async with asyncio.timeout(remaining):
+                    await self.__lease_changed.wait()
+        except TimeoutError:
+            error = RuntimeError("managed ownership lease expired")
+            self.__fail(error)
+            raise error from None
 
     async def close(self, outcome: models.ManagedSessionOutcome = models.ManagedSessionOutcome.COMPLETED) -> None:
         """Join cleanup, including repeated cancellation; a failed close may be retried explicitly."""
@@ -172,7 +198,7 @@ class ManagedSession:
 
     async def __cleanup(self, outcome: models.ManagedSessionOutcome) -> None:
         self.__active = False
-        tasks = [task for task in (self.__create, self.__renew) if task is not None]
+        tasks = [task for task in (self.__create, self.__renew, self.__expiry) if task is not None]
         for task in tasks:
             if not task.done():
                 task.cancel()

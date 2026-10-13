@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python managed scopes stop at the validated lease expiry, including while
+  a renewal request is stalled, and join original-generation cleanup.
+
 - The Rust SDK provides managed ephemeral scopes with finite renewal,
   cancellation-surviving cleanup, original-generation validation and explicit
   retry authority when the service cannot confirm closure.

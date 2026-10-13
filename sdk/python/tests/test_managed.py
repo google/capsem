@@ -34,10 +34,13 @@ class Service:
         self.fail_close = 0
         self.initial_missing = 0
         self.invalid_create_reply = False
+        self.expiry_seconds = 4.0
+        self.release_claim = asyncio.Event()
+        self.release_claim.set()
 
     def ownership(self, generation: str = GENERATION) -> dict:
         return {"request_id": self.request_id, "generation": generation,
-                "expires_at": (datetime.now(UTC) + timedelta(seconds=4)).isoformat(),
+                "expires_at": (datetime.now(UTC) + timedelta(seconds=self.expiry_seconds)).isoformat(),
                 "lease_seconds": 4, "renew_after_seconds": 1}
 
     def session(self) -> dict:
@@ -69,6 +72,7 @@ class Service:
                 self.initial_missing -= 1
                 return web.json_response({"code": "not_found", "error": "pending admission"}, status=404)
             self.claim_seen.set()
+            await self.release_claim.wait()
             return web.json_response({"ownership": self.ownership(self.claim_generation or GENERATION),
                                       "state": self.state, "session": self.session() if self.state == "active" else None})
         assert request.path.endswith("/close")
@@ -78,6 +82,7 @@ class Service:
             self.fail_close -= 1
             return web.json_response({"code": "cleanup_failed", "error": "cleanup pending"}, status=500)
         self.state = "closed"
+        self.release_claim.set()
         self.release_create.set()
         return web.json_response({"request_id": self.request_id, "generation": GENERATION,
                                   "state": "closed", "session_id": VM_ID, "evidence_retained": False})
@@ -125,6 +130,32 @@ def test_managed_scope_renews_service_policy_and_awaits_only_its_owned_close() -
             with pytest.raises(RuntimeError):
                 async with scope:
                     pass
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("expiry_seconds", "hold_claim"), [(0.2, False), (1.2, True)])
+def test_expiry_stops_the_body_before_or_during_renewal(expiry_seconds: float, hold_claim: bool) -> None:
+    async def run() -> None:
+        service = Service()
+        service.expiry_seconds = expiry_seconds
+        if hold_claim:
+            service.release_claim.clear()
+        async with gateway(service) as url, Hypervisor(url, "gateway-bearer") as hv:
+            async def owned() -> None:
+                async with hv.managed():
+                    await asyncio.Future()
+            scope = asyncio.create_task(owned())
+            try:
+                await asyncio.wait_for(service.close_seen.wait(), expiry_seconds + 0.55)
+                with pytest.raises(RuntimeError, match="expired"):
+                    await scope
+                assert service.state == "closed"
+                assert service.requests[-1][1]["outcome"] == "failed"
+                assert service.claim_seen.is_set() == hold_claim
+            finally:
+                if not scope.done():
+                    scope.cancel()
+                await asyncio.gather(scope, return_exceptions=True)
     asyncio.run(run())
 
 
