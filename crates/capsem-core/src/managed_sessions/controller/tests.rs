@@ -2,6 +2,52 @@ use super::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::Semaphore;
 
+#[tokio::test]
+async fn ownership_lookup_keeps_live_intent_when_storage_disappears_and_checks_generation() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ownership");
+    let owner = controller(&path);
+    let fixture = Fixture::new();
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([83; 32]);
+    let creating = {
+        let owner = owner.clone();
+        let effects = fixture.clone();
+        let cap = cap.clone();
+        tokio::spawn(async move {
+            owner
+                .create(
+                    request,
+                    cap,
+                    LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+                    Arc::new(effects),
+                )
+                .await
+        })
+    };
+    fixture.create_entered.acquire().await.unwrap().forget();
+    assert!(owner.owns_vm(&fixture.binding).await.unwrap());
+    let reopened = controller(&path);
+    assert!(reopened.owns_vm(&fixture.binding).await.unwrap());
+    let other_generation = VmBinding::new(fixture.binding.id().into(), capsem_crypto::uuid_v4()).unwrap();
+    assert!(!owner.owns_vm(&other_generation).await.unwrap());
+    std::fs::remove_file(path.join(format!("{request}.json"))).unwrap();
+    assert!(
+        owner.owns_vm(&fixture.binding).await.unwrap(),
+        "trusted live authority survives missing durable metadata"
+    );
+    std::fs::write(path.join(format!("{request}.json")), b"invalid ownership record").unwrap();
+    assert!(owner.owns_vm(&fixture.binding).await.unwrap());
+    assert!(matches!(
+        reopened.owns_vm(&fixture.binding).await,
+        Err(Failure::StoreUnavailable)
+    ));
+    fixture.create_release.add_permits(1);
+    let _ = creating.await;
+    fixture.cleanup_release.add_permits(1);
+    let _ = owner.close(request, cap).await;
+}
+
 struct RecoveryEffects(Arc<Fixture>);
 impl Effects for RecoveryEffects {
     fn create(

@@ -204,6 +204,28 @@ impl Controller {
         self.io(Registry::recovery_inventory).await
     }
 
+    /// Trusted host-side ownership query for persistence admission. Live
+    /// prepared authority remains binding even if its durable record is lost.
+    /// Failed inventory cannot establish that an unrelated VM is unowned.
+    pub async fn owns_vm(&self, binding: &VmBinding) -> ControlResult<bool> {
+        let works = self.0.works.lock().await;
+        for work in works.values() {
+            let intent = work.intent.lock().map_err(|_| Failure::RecoveryPending)?;
+            let owned = intent.as_ref() == Some(binding);
+            drop(intent);
+            if owned {
+                drop(works);
+                return Ok(true);
+            }
+        }
+        drop(works);
+        Ok(self
+            .recovery_inventory()
+            .await?
+            .iter()
+            .any(|snapshot| snapshot.vm() == Some(binding) || snapshot.spawn_intent() == Some(binding)))
+    }
+
     pub async fn prune_closed(&self, retention: Duration) -> ControlResult<usize> {
         self.io(move |registry| registry.prune_closed(retention, LeaseClock::now()?))
             .await
