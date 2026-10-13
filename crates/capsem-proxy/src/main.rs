@@ -32,10 +32,10 @@ mod metric_client;
 mod private_names_client;
 
 const CONTROL_QUEUE_CAPACITY: usize = 16;
-// A 64-request handler limit can transiently own more than 64 connection
-// descriptors: pooled connections are replaced before their asynchronous
-// close is observed. Keep one bounded replacement slot per active handler.
-const TRAFFIC_GRANT_LIMIT: usize = 128;
+// The supported 200-client load can transiently own twice as many descriptors:
+// pooled connections are replaced before their asynchronous close is observed.
+// Retain bounded headroom above that overlap without admitting unbounded FDs.
+const TRAFFIC_GRANT_LIMIT: usize = 512;
 const CONTROL_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 type ControlSender = router_channel::DescriptorSender<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;

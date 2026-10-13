@@ -172,6 +172,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The confined HTTP proxy admits the supported 200-client concurrent load plus
+  connection-replacement overlap instead of closing excess TLS handshakes when
+  its descriptor grant bound is reached.
+
 - Gateway `/status` reads VM, asset and update state in one coordinator
   snapshot, cutting service CPU for the polled overview without caching stale
   VM lifecycle state.

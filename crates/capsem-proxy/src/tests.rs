@@ -54,15 +54,29 @@ fn each_traffic_capability_keeps_its_full_bounded_capacity() {
     let http = (100..100 + TRAFFIC_GRANT_LIMIT as u64).collect::<Vec<_>>();
     grant_ids.extend(http.iter().copied());
     grants.insert(ProxyCapability::HttpTraffic, http);
+    let next_grant = 100 + TRAFFIC_GRANT_LIMIT as u64;
 
     assert_eq!(
-        grant_rejection(&grants, &grant_ids, ProxyCapability::HttpTraffic, 500),
+        grant_rejection(&grants, &grant_ids, ProxyCapability::HttpTraffic, next_grant),
         Some(ProxyControlRejection::Capacity)
     );
     assert_eq!(
-        grant_rejection(&grants, &grant_ids, ProxyCapability::DnsTraffic, 501),
+        grant_rejection(&grants, &grant_ids, ProxyCapability::DnsTraffic, next_grant + 1),
         None,
         "long-lived capabilities and full HTTP load do not consume DNS capacity"
+    );
+}
+
+#[test]
+fn http_capacity_covers_two_hundred_clients_and_replacement_overlap() {
+    let active = (1..=400).collect::<Vec<_>>();
+    let grants = BTreeMap::from([(ProxyCapability::HttpTraffic, active.clone())]);
+    let grant_ids = active.into_iter().collect::<HashSet<_>>();
+
+    assert_eq!(
+        grant_rejection(&grants, &grant_ids, ProxyCapability::HttpTraffic, 401),
+        None,
+        "the supported 200-client load needs one replacement descriptor per client"
     );
 }
 
