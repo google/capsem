@@ -320,6 +320,91 @@ fn effects(fixture: &Arc<Fixture>) -> Arc<dyn Effects> {
 }
 
 #[tokio::test]
+async fn corrupt_store_cannot_extend_a_live_managed_vm_past_its_finite_lease() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ownership");
+    let owner = controller(&path);
+    let fixture = Fixture::new();
+    let request = capsem_crypto::uuid_v4();
+    fixture.create_release.add_permits(1);
+    let snapshot = owner
+        .create(
+            request,
+            Capability::from_bytes([94; 32]),
+            LeasePolicy::new(Duration::from_millis(100)).unwrap(),
+            effects(&fixture),
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot.state(), State::Active);
+    std::fs::write(path.join(format!("{request}.json")), b"corrupt ownership record").unwrap();
+    fixture.cleanup_release.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(1), fixture.cleanup_entered.acquire())
+        .await
+        .expect("a store failure bypassed finite VM retirement")
+        .unwrap()
+        .forget();
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 1);
+    assert!(
+        matches!(
+            owner.inspect(request, Capability::from_bytes([94; 32])).await,
+            Err(Failure::StoreUnavailable)
+        ),
+        "failed persistence must not manufacture a Closed acknowledgement"
+    );
+}
+
+#[tokio::test]
+async fn missing_store_close_authenticates_memory_and_retires_only_the_original_vm() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ownership");
+    let owner = controller(&path);
+    let fixture = Fixture::new();
+    let request = capsem_crypto::uuid_v4();
+    let capability = Capability::from_bytes([95; 32]);
+    fixture.create_release.add_permits(1);
+    owner
+        .create(
+            request,
+            capability.clone(),
+            LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+            effects(&fixture),
+        )
+        .await
+        .unwrap();
+    std::fs::remove_file(path.join(format!("{request}.json"))).unwrap();
+    assert!(
+        matches!(
+            owner.close(request, Capability::from_bytes([96; 32])).await,
+            Err(Failure::Forbidden)
+        ),
+        "missing storage let an unauthenticated caller overwrite live ownership"
+    );
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 0);
+    let closing = {
+        let owner = owner.clone();
+        tokio::spawn(async move { owner.close(request, capability).await })
+    };
+    tokio::time::timeout(Duration::from_secs(1), fixture.cleanup_entered.acquire())
+        .await
+        .expect("authenticated close did not retire its original VM")
+        .unwrap()
+        .forget();
+    assert!(
+        !closing.is_finished(),
+        "close returned before the trusted effect's cleanup barrier"
+    );
+    fixture.cleanup_release.add_permits(1);
+    assert!(
+        matches!(closing.await.unwrap(), Err(Failure::StoreUnavailable)),
+        "missing original persistence must not acknowledge a replacement generation as Closed"
+    );
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn ownership_denials_are_typed_and_cannot_retire_a_live_generation() {
     let root = tempfile::tempdir().unwrap();
     let owner = controller(&root.path().join("ownership"));

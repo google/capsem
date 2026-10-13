@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Managed VM expiry and authenticated close retire the original trusted
+  effects even when ownership storage is missing or corrupt. Failed persistence
+  cannot acknowledge a replacement generation as closed.
+
 - Generated Python requests redact nested credential validation inputs,
   including raw parent inputs retained when another required field is missing.
 

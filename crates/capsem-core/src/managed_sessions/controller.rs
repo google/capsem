@@ -76,6 +76,7 @@ struct Work {
     capability_hash: Option<capsem_crypto::blake3::Hash>,
     ticket: std::sync::Mutex<Option<Ticket>>,
     binding: std::sync::Mutex<Option<VmBinding>>,
+    intent: std::sync::Mutex<Option<VmBinding>>,
     effects: Arc<dyn Effects>,
     cancel: CancellationToken,
     created: watch::Sender<Option<ControlResult<Snapshot>>>,
@@ -85,6 +86,9 @@ struct Work {
 
 impl Work {
     fn remember_binding(&self, binding: VmBinding) -> ControlResult<()> {
+        if self.intent.lock().map_err(|_| Failure::RecoveryPending)?.as_ref() != Some(&binding) {
+            return Err(Failure::CreationFailed);
+        }
         let mut known = self.binding.lock().map_err(|_| Failure::RecoveryPending)?;
         if known.as_ref().is_some_and(|original| original != &binding) {
             return Err(Failure::CreationFailed);
@@ -108,7 +112,14 @@ impl BindingReporter {
     /// Must complete before any VM spawn side effect. The selected canonical
     /// ID and generation survive a crash before registration can be reported.
     pub async fn prepare(&self, binding: VmBinding) -> ControlResult<Snapshot> {
-        self.work.upgrade().ok_or(Failure::RecoveryPending)?;
+        let work = self.work.upgrade().ok_or(Failure::RecoveryPending)?;
+        {
+            let mut intent = work.intent.lock().map_err(|_| Failure::RecoveryPending)?;
+            if intent.as_ref().is_some_and(|original| original != &binding) {
+                return Err(Failure::CreationFailed);
+            }
+            *intent = Some(binding.clone());
+        }
         let ticket = self.ticket.clone();
         self.owner
             .io(move |registry| registry.prepare_spawn(&ticket, binding, LeaseClock::now()?))
@@ -153,6 +164,7 @@ impl Controller {
             capability_hash: Some(capability.hash(request)),
             ticket: std::sync::Mutex::new(None),
             binding: std::sync::Mutex::new(None),
+            intent: std::sync::Mutex::new(None),
             effects,
             cancel: CancellationToken::new(),
             created: watch::channel(None).0,
@@ -218,6 +230,7 @@ impl Controller {
             capability_hash: None,
             ticket: std::sync::Mutex::new(None),
             binding: std::sync::Mutex::new(None),
+            intent: std::sync::Mutex::new(None),
             effects,
             cancel: CancellationToken::new(),
             created: watch::channel(None).0,
@@ -258,6 +271,7 @@ impl Controller {
         };
         *work.ticket.lock().map_err(|_| Failure::RecoveryPending)? = Some(ticket.clone());
         *work.binding.lock().map_err(|_| Failure::RecoveryPending)? = snapshot.vm.clone();
+        *work.intent.lock().map_err(|_| Failure::RecoveryPending)? = snapshot.spawn_intent.clone();
         work.cancel.cancel();
         work.created.send_replace(Some(Ok(snapshot.clone())));
         if snapshot.state == State::Closed {
@@ -408,7 +422,27 @@ impl Controller {
     }
 
     async fn close_worker(&self, request: Uuid, capability: Capability) -> ControlResult<Snapshot> {
-        let snapshot = self.io(move |registry| registry.close(request, &capability)).await?;
+        let work = self.0.works.lock().await.get(&request).cloned();
+        let authenticated = work.as_ref().is_some_and(|work| work.capability_hash.is_some());
+        if let Some(hash) = work.as_ref().and_then(|work| work.capability_hash) {
+            if hash != capability.hash(request) {
+                return Err(Failure::Forbidden);
+            }
+        }
+        let snapshot = self.io(move |registry| registry.close(request, &capability)).await;
+        if let Some(work) = work {
+            // Only independently authenticated live ownership can retire under
+            // a failed store. Recovery still needs its durable authority.
+            if snapshot.is_ok() || authenticated {
+                work.cancel.cancel();
+                let _creation = wait_created(&work).await;
+                let original = work.ticket.lock().map_err(|_| Failure::RecoveryPending)?.clone();
+                if let Some(ticket) = original {
+                    return self.cleanup_work(ticket, work, true).await;
+                }
+            }
+        }
+        let snapshot = snapshot?;
         if snapshot.state == State::Closed {
             return Ok(snapshot);
         }
@@ -416,17 +450,11 @@ impl Controller {
             request,
             generation: snapshot.generation,
         };
-        let work = self.0.works.lock().await.get(&request).cloned();
-        if let Some(work) = work {
-            work.cancel.cancel();
-            self.cleanup_work(ticket, work, true).await
+        let latest = self.snapshot(ticket).await?;
+        if latest.state == State::Closed {
+            Ok(latest)
         } else {
-            let latest = self.snapshot(ticket).await?;
-            if latest.state == State::Closed {
-                Ok(latest)
-            } else {
-                Err(Failure::RecoveryPending)
-            }
+            Err(Failure::RecoveryPending)
         }
     }
 
@@ -465,10 +493,6 @@ impl Controller {
 
     async fn cleanup_attempt(&self, ticket: Ticket, work: Arc<Work>) -> ControlResult<Snapshot> {
         let _creation = wait_created(&work).await;
-        let snapshot = self.snapshot(ticket.clone()).await?;
-        if snapshot.state == State::Closed {
-            return Ok(snapshot);
-        }
         let original = work
             .ticket
             .lock()
@@ -478,6 +502,7 @@ impl Controller {
         if original.generation != ticket.generation {
             return Err(Failure::RecoveryPending);
         }
+        let snapshot = self.snapshot(ticket.clone()).await;
         let effects = Arc::clone(&work.effects);
         let cleanup_ticket = ticket.clone();
         let known = work
@@ -485,34 +510,62 @@ impl Controller {
             .lock()
             .map_err(|_| Failure::RecoveryPending)?
             .clone()
-            .or(snapshot.vm);
+            .or_else(|| snapshot.as_ref().ok().and_then(|snapshot| snapshot.vm.clone()));
+        let intent = work
+            .intent
+            .lock()
+            .map_err(|_| Failure::RecoveryPending)?
+            .clone()
+            .or_else(|| {
+                snapshot
+                    .as_ref()
+                    .ok()
+                    .and_then(|snapshot| snapshot.spawn_intent.clone())
+            });
+        let publish_binding = snapshot.as_ref().is_ok_and(|snapshot| snapshot.state != State::Closed);
         let registry_owner = self.clone();
-        let intent = snapshot.spawn_intent;
-        let cleaned = bounded(self.0.bounds.cleanup, async move {
+        let (binding, publication_error) = bounded(self.0.bounds.cleanup, async move {
             let binding = match known {
                 Some(binding) => Some(binding),
-                None => effects.reconcile(cleanup_ticket.clone(), intent).await?,
+                None => effects.reconcile(cleanup_ticket.clone(), intent.clone()).await?,
             };
-            if let Some(binding) = binding {
-                let bind_ticket = cleanup_ticket.clone();
-                let verified = binding.clone();
-                registry_owner
-                    .io(move |registry| registry.reconcile_vm(&bind_ticket, verified))
-                    .await?;
-                effects.cleanup(cleanup_ticket.clone(), binding.clone()).await?;
-                registry_owner
-                    .io(move |registry| registry.complete_cleanup(&cleanup_ticket, &binding))
-                    .await
-                    .map_err(anyhow::Error::from)
-            } else {
-                registry_owner
-                    .io(move |registry| registry.confirm_absent(&cleanup_ticket))
-                    .await
-                    .map_err(anyhow::Error::from)
+            let mut publication_error = None;
+            if let Some(binding) = &binding {
+                ensure!(
+                    intent.as_ref().is_none_or(|original| original == binding),
+                    "managed cleanup target differs from trusted spawn intent"
+                );
+                if publish_binding {
+                    let bind_ticket = cleanup_ticket.clone();
+                    let verified = binding.clone();
+                    publication_error = registry_owner
+                        .io(move |registry| registry.reconcile_vm(&bind_ticket, verified))
+                        .await
+                        .err();
+                }
+                effects.cleanup(cleanup_ticket, binding.clone()).await?;
             }
+            Ok((binding, publication_error))
         })
         .await
         .map_err(|()| Failure::CleanupFailed)?;
+        // Trusted live effects must retire even if disk authority is missing.
+        // That grants no permission to acknowledge Closed or recreate a VM.
+        let snapshot = snapshot?;
+        if let Some(error) = publication_error {
+            return Err(error);
+        }
+        let cleaned = if snapshot.state == State::Closed {
+            snapshot
+        } else if let Some(binding) = binding {
+            let cleanup_ticket = ticket.clone();
+            self.io(move |registry| registry.complete_cleanup(&cleanup_ticket, &binding))
+                .await?
+        } else {
+            let cleanup_ticket = ticket.clone();
+            self.io(move |registry| registry.confirm_absent(&cleanup_ticket))
+                .await?
+        };
         self.remove_work(ticket.request, &work).await;
         Ok(cleaned)
     }
@@ -532,7 +585,7 @@ impl Controller {
                 .io(move |registry| registry.expire_lease(&expire_ticket, LeaseClock::now()?))
                 .await;
             let closing = matches!(snapshot, Ok(ref snapshot) if matches!(snapshot.state, State::Closing | State::Closed | State::Unknown));
-            if closing || work.cancel.is_cancelled() {
+            if closing || snapshot.is_err() || work.cancel.is_cancelled() {
                 work.cancel.cancel();
                 match self.cleanup_work(ticket.clone(), Arc::clone(&work), retry).await {
                     Ok(_) => return,
