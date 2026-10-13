@@ -10,10 +10,34 @@ use std::time::{Duration, UNIX_EPOCH};
 pub(crate) struct Runtime {
     controller: Controller,
     grants: Arc<capsem_credentials::GrantAuthority>,
-    policy: ManagedSessionPolicy,
+    policy: std::sync::RwLock<Option<ManagedSessionPolicy>>,
 }
 
 impl Runtime {
+    fn policy(&self) -> Result<ManagedSessionPolicy, Failure> {
+        self.policy
+            .read()
+            .map_err(|_| Failure::StoreUnavailable)?
+            .ok_or(Failure::StoreUnavailable)
+    }
+
+    pub(crate) async fn reload_policy(
+        &self,
+        policy: ManagedSessionPolicy,
+        _mutation: &PolicyMutation<'_>,
+    ) -> Result<(), Failure> {
+        policy.validate().map_err(|_| Failure::StoreUnavailable)?;
+        *self.policy.write().map_err(|_| Failure::StoreUnavailable)? = Some(policy);
+        let limit = LeasePolicy::new(Duration::from_secs(u64::from(policy.lease_seconds)))
+            .map_err(|_| Failure::StoreUnavailable)?;
+        self.controller.set_lease_limit(limit).await.map(|_| ())
+    }
+
+    pub(crate) async fn deny_policy(&self, _mutation: &PolicyMutation<'_>) -> Result<(), Failure> {
+        *self.policy.write().map_err(|_| Failure::StoreUnavailable)? = None;
+        self.controller.deny_lease_admission().await
+    }
+
     pub(crate) async fn owns_vm(&self, binding: &capsem_core::managed_sessions::VmBinding) -> Result<bool, Failure> {
         self.controller.owns_vm(binding).await
     }
@@ -34,7 +58,7 @@ impl Runtime {
                     max_lifetime: lifetime,
                 },
             )?),
-            policy,
+            policy: std::sync::RwLock::new(Some(policy)),
         })
     }
 
@@ -42,13 +66,18 @@ impl Runtime {
         tokio::spawn(Self::recover_pending(Arc::clone(&state)));
         tokio::spawn(async move {
             let runtime = &state.managed;
-            let mut interval =
-                tokio::time::interval(Duration::from_secs(u64::from(runtime.policy.renew_after_seconds)));
             loop {
-                interval.tick().await;
+                let policy = match runtime.policy() {
+                    Ok(policy) => policy,
+                    Err(error) => {
+                        warn!(%error, "managed retention policy unavailable");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
                 if let Err(error) = runtime
                     .controller
-                    .prune_closed(Duration::from_secs(u64::from(runtime.policy.tombstone_seconds)))
+                    .prune_closed(Duration::from_secs(u64::from(policy.tombstone_seconds)))
                     .await
                 {
                     warn!(%error, "managed tombstone retention remains pending");
@@ -60,6 +89,7 @@ impl Runtime {
                 {
                     warn!(%error, "managed native receipt retention remains pending");
                 }
+                tokio::time::sleep(Duration::from_secs(u64::from(policy.renew_after_seconds))).await;
             }
         });
     }
@@ -160,6 +190,13 @@ fn capability(token: &api::ManagedOwnershipToken) -> Result<Capability, ManagedE
 }
 
 fn ownership(snapshot: &Snapshot, policy: ManagedSessionPolicy) -> Result<api::ManagedSessionOwnership, ManagedError> {
+    let lease_seconds = match snapshot.lease_duration() {
+        Some(duration) => u32::try_from(duration.as_secs()).map_err(|_| Failure::StoreUnavailable)?,
+        None => policy.lease_seconds,
+    };
+    if lease_seconds < 2 {
+        return Err(Failure::StoreUnavailable.into());
+    }
     let expiry = UNIX_EPOCH
         .checked_add(Duration::from_millis(snapshot.expires_wall_ms().unwrap_or(0)))
         .ok_or(Failure::StoreUnavailable)?;
@@ -167,12 +204,16 @@ fn ownership(snapshot: &Snapshot, policy: ManagedSessionPolicy) -> Result<api::M
         request_id: snapshot.request().to_string(),
         generation: snapshot.generation().to_string(),
         expires_at: humantime::format_rfc3339_millis(expiry).to_string(),
-        lease_seconds: policy.lease_seconds,
-        renew_after_seconds: policy.renew_after_seconds,
+        lease_seconds,
+        renew_after_seconds: policy.renew_after_seconds.min(lease_seconds - 1),
     })
 }
 
-fn session(state: &ServiceState, snapshot: &Snapshot) -> Result<Option<ProvisionResponse>, ManagedError> {
+fn session(
+    state: &ServiceState,
+    snapshot: &Snapshot,
+    policy: ManagedSessionPolicy,
+) -> Result<Option<ProvisionResponse>, ManagedError> {
     let Some(binding) = snapshot.vm() else { return Ok(None) };
     let instances = state.instances.lock().unwrap();
     let Some(instance) = instances.get(binding.id()) else {
@@ -190,7 +231,7 @@ fn session(state: &ServiceState, snapshot: &Snapshot) -> Result<Option<Provision
         VmLifecycleState::Running.available_actions(false),
     );
     drop(instances);
-    response.ownership = Some(ownership(snapshot, state.managed.policy)?);
+    response.ownership = Some(ownership(snapshot, policy)?);
     Ok(Some(response))
 }
 
@@ -210,7 +251,7 @@ pub(crate) async fn create(
         Arc::clone(&state.managed.grants),
     )
     .map_err(|_| ManagedError::invalid())?;
-    let policy = LeasePolicy::new(Duration::from_secs(u64::from(state.managed.policy.lease_seconds)))
+    let policy = LeasePolicy::new(Duration::from_secs(u64::from(state.managed.policy()?.lease_seconds)))
         .map_err(|_| ManagedError::invalid())?;
     let snapshot = state
         .managed
@@ -220,7 +261,9 @@ pub(crate) async fn create(
     if snapshot.state() != OwnershipState::Active {
         return Err(Failure::CreationFailed.into());
     }
-    Ok(Json(session(&state, &snapshot)?.ok_or(Failure::RecoveryPending)?))
+    Ok(Json(
+        session(&state, &snapshot, state.managed.policy()?)?.ok_or(Failure::RecoveryPending)?,
+    ))
 }
 
 pub(crate) async fn claim(
@@ -230,6 +273,7 @@ pub(crate) async fn claim(
 ) -> Result<Json<api::ManagedSessionClaimResponse>, ManagedError> {
     let request = request_id(&id)?;
     let Json(payload) = payload.map_err(|_| ManagedError::invalid())?;
+    state.managed.policy()?;
     let snapshot = state
         .managed
         .controller
@@ -247,10 +291,11 @@ pub(crate) async fn claim(
     } else {
         None
     };
+    let policy = state.managed.policy()?;
     Ok(Json(api::ManagedSessionClaimResponse {
-        ownership: ownership(&snapshot, state.managed.policy)?,
+        ownership: ownership(&snapshot, policy)?,
         state: status,
-        session: session(&state, &snapshot)?,
+        session: session(&state, &snapshot, policy)?,
         error,
     }))
 }

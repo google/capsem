@@ -62,6 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Managed policy reload narrows active leases from their original renewal time
+  and updates expiry workers without extending ownership. Stale admission or
+  claim completions cannot overwrite a tighter timer; responses report the
+  enforced lease and valid renewal timing. Invalid policy refuses admission
+  and renewal while original cleanup authority remains available.
+
 - Managed close retains its confirmed original native exit outside ephemeral
   session files, so restart can finish cleanup after directory deletion and
   before the ownership close commit. Receipts survive unresolved cleanup and

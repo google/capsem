@@ -5,6 +5,7 @@ use capsem_core::managed_sessions::{
     controller::{BindingReporter, EffectFuture, Effects},
     Ticket, VmBinding,
 };
+use capsem_core::net::policy_config::ManagedSessionPolicy;
 use tokio_util::sync::CancellationToken;
 
 struct ChildEffects {
@@ -166,6 +167,53 @@ async fn ordinary_stop_and_delete_converge_managed_claim_to_original_closed_owne
         assert_eq!(status, StatusCode::OK);
         assert_eq!(repeated["ownership"]["expires_at"], closed["ownership"]["expires_at"]);
     }
+}
+
+#[tokio::test]
+async fn reloaded_policy_reports_actual_narrowed_lease_and_cannot_extend_old_reservation() {
+    let state = crate::tests::make_test_state();
+    let (effects, original) = active(&state).await;
+    let app = build_service_router(state.clone());
+    let policy = ManagedSessionPolicy {
+        lease_seconds: 120,
+        renew_after_seconds: 30,
+        tombstone_seconds: 86400,
+    };
+    let mutation = state.policy_mutation.begin().await;
+    state.managed.reload_policy(policy, &mutation).await.unwrap();
+    let claim = format!("/vms/managed/{REQUEST}/claim");
+    let (status, narrowed) = post(&app, &claim, json!({"ownership_token":"af".repeat(32)})).await;
+    assert_eq!(status, StatusCode::OK, "{narrowed}");
+    assert_eq!(narrowed["state"], "active");
+    assert_eq!(narrowed["ownership"]["lease_seconds"], 120);
+    assert_eq!(narrowed["ownership"]["renew_after_seconds"], 30);
+    assert_eq!(narrowed["ownership"]["generation"], original.generation().to_string());
+    state
+        .managed
+        .reload_policy(
+            ManagedSessionPolicy {
+                lease_seconds: 600,
+                renew_after_seconds: 150,
+                ..policy
+            },
+            &mutation,
+        )
+        .await
+        .unwrap();
+    drop(mutation);
+    let (status, retained) = post(&app, &claim, json!({"ownership_token":"af".repeat(32)})).await;
+    assert_eq!(status, StatusCode::OK, "{retained}");
+    assert_eq!(retained["ownership"]["lease_seconds"], 120);
+    assert_eq!(retained["ownership"]["renew_after_seconds"], 119);
+    let close = format!("/vms/managed/{REQUEST}/close");
+    let (status, closed) = post(
+        &app,
+        &close,
+        json!({"ownership_token":"af".repeat(32),"outcome":"completed"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{closed}");
+    effects.reaper.lock().await.take().unwrap().await.unwrap();
 }
 
 #[tokio::test]

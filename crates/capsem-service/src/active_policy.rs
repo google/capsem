@@ -73,6 +73,28 @@ pub(crate) async fn push_policy_to_running_instances(
     state: &Arc<ServiceState>,
     _mutation: &PolicyMutation<'_>,
 ) -> Result<usize, AppError> {
+    let managed = state
+        .off_worker(|_| capsem_core::net::policy_config::load_managed_session_policy())
+        .await?;
+    match managed {
+        Ok(policy) => state.managed.reload_policy(policy, _mutation).await.map_err(|_| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "managed lease policy reload failed".into(),
+            )
+        })?,
+        Err(_) => {
+            state
+                .managed
+                .deny_policy(_mutation)
+                .await
+                .map_err(|_| AppError(StatusCode::INTERNAL_SERVER_ERROR, "managed lease denial failed".into()))?;
+            return Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "managed lease policy invalid".into(),
+            ));
+        }
+    }
     let published = state.off_worker(|state| state.refresh_active_policies()).await?;
     let total = published.len();
 

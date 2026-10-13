@@ -12,6 +12,62 @@ use capsem_core::net::policy_config::{ActivePolicyFile, DetectionLevel, Security
 
 const WIKI_SERVER: &str = "[[mcp.servers]]\nname = \"wiki\"\nurl = \"https://wiki.example.invalid/mcp\"\n";
 
+#[tokio::test]
+async fn managed_host_policy_reload_refuses_invalid_inputs_and_restores_valid_metadata() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env, settings, _) = install_empty_settings_env(&dir);
+    let state = make_test_state();
+    let request = capsem_crypto::uuid_v4();
+    let registry = capsem_core::managed_sessions::Registry::open(&state.run_dir.join("managed-ownership")).unwrap();
+    registry
+        .close(
+            request,
+            &capsem_core::managed_sessions::Capability::from_bytes([0xaf; 32]),
+        )
+        .unwrap();
+    let mutation = state.policy_mutation.begin().await;
+    std::fs::write(
+        &settings,
+        "[managed_sessions]\nlease_seconds = 'policy-private-sentinel'\n",
+    )
+    .unwrap();
+    let error = crate::active_policy::push_policy_to_running_instances(&state, &mutation)
+        .await
+        .unwrap_err();
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(error.1, "managed lease policy invalid");
+    let app = build_service_router(Arc::clone(&state));
+    let claim = || {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri(format!("/vms/managed/{request}/claim"))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"ownership_token":"af".repeat(32)}).to_string()))
+            .unwrap()
+    };
+    let response = app.clone().oneshot(claim()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    std::fs::write(
+        &settings,
+        "[managed_sessions]\nlease_seconds = 120\nrenew_after_seconds = 30\n",
+    )
+    .unwrap();
+    assert_eq!(
+        crate::active_policy::push_policy_to_running_instances(&state, &mutation)
+            .await
+            .unwrap(),
+        0
+    );
+    drop(mutation);
+    let response = app.oneshot(claim()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    assert_eq!(body["state"], "closed");
+    assert_eq!(body["ownership"]["lease_seconds"], 120);
+    assert_eq!(body["ownership"]["renew_after_seconds"], 30);
+}
+
 /// A state whose settings.toml declares the `wiki` MCP server, with one
 /// running VM per id. Returns the state, each VM's session directory, and
 /// the guards that keep the settings redirect alive.
