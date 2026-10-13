@@ -580,13 +580,11 @@ async fn unresolved_selection_count_is_bounded() {
 
 #[tokio::test]
 async fn supported_mitm_burst_can_resolve_before_any_client_connects() {
-    const SUPPORTED_MITM_CLIENTS: u64 = 200;
-
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let (client, _publisher, authority, task) =
         start_broker(test_policy("policy-a", Some(listener.local_addr().unwrap()), vec![]));
 
-    for request_id in 1..=SUPPORTED_MITM_CLIENTS {
+    for request_id in 1..=UPSTREAM_GRANT_CAPACITY as u64 {
         assert_ne!(resolve_override(&client, request_id).await, 0);
     }
 
