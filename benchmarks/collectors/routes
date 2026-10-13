@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import psutil
+from helpers.benchmark_assets import clone_benchmark_assets
 from helpers.constants import ASSETS_DIR
 from helpers.debug_session import debug_session
 from helpers.gateway import GatewayInstance
@@ -207,14 +208,16 @@ def main() -> int:
         return 1
 
     service = ServiceInstance()
+    service.assets_dir = clone_benchmark_assets(
+        ASSETS_DIR, service.home_dir / "benchmark-assets"
+    )
     gateway = GatewayInstance(service.uds_path)
 
     metrics: dict[str, dict] = {}
     try:
-        seed_stopped_workspace(service.tmp_dir, ASSETS_DIR)
-        with redirect_stdout(sys.stderr):
-            service.start()
-            gateway.start()
+        seed_stopped_workspace(service.tmp_dir, service.assets_dir)
+        service.start()
+        gateway.start()
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
         targets = (
