@@ -520,7 +520,7 @@ pub(super) fn reload_activated_update_runtime(state: &ServiceState) -> Result<Up
         })?
         .replace(Arc::new(manifest));
     // Resume state is derived from the installed manifest (revoked pins).
-    state.persistent_resume_state_cache.lock().unwrap().clear();
+    state.persistent_resume_state_cache.clear();
 
     if selected_binary != state.current_version {
         info!(

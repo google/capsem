@@ -157,46 +157,6 @@ async fn stats_detail_has_typed_nullable_events_and_captured_bodies() {
     assert_eq!(value["interactions"]["items"][0]["content"]["kind"], "tool_call");
     assert_eq!(value["interactions"]["bodies"][0]["truncated"], true);
     assert!(value["interactions"]["bodies"][0].get("payload").is_none());
-    assert!(
-        state.stats_detail_response_cache.lock().unwrap().is_empty(),
-        "stats detail must use DB-owned reads without a service projection cache"
-    );
-}
-
-/// Cached ledger responses are keyed by VM id, route and the caller's paging,
-/// and nothing released them: the map grew for the service's lifetime across
-/// VM churn. A VM whose ledger handle is gone cannot serve a hit anyway.
-#[tokio::test]
-async fn unregistering_a_session_releases_its_cached_ledger_responses() {
-    let state = crate::tests::make_test_state();
-    {
-        let mut cache = state.stats_detail_response_cache.lock().unwrap();
-        for key in [
-            "box:security/latest:50",
-            "box:history/counts",
-            "other:security/latest:50",
-        ] {
-            cache.insert(
-                key.to_string(),
-                CachedLedgerResponse {
-                    db_epoch: 1,
-                    bytes: vec![b'{'],
-                },
-            );
-        }
-    }
-
-    state.unregister_session_db_handle("box");
-
-    let keys: Vec<String> = {
-        let cache = state.stats_detail_response_cache.lock().unwrap();
-        cache.keys().cloned().collect()
-    };
-    assert_eq!(
-        keys,
-        vec!["other:security/latest:50"],
-        "only the unregistered VM's responses are released"
-    );
 }
 
 #[tokio::test]

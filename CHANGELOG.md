@@ -58,7 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serve live and stopped-session inspection through coordinator-granted,
   role-bound ledger channels and bounded named operations, eliminating the
   service's per-session SQLite readers and closing ledger workers before a
-  session is deleted.
+  session is deleted. Ledger counter replies carry the DB-owned read-cache
+  epoch, while logger-owned query caches invalidate security rows after every
+  commit without a second service projection cache.
 
 - Give each VM owner one coordinator-minted, generation- and role-bound
   ledger channel and route its existing event writer through the supervised

@@ -1281,6 +1281,7 @@ dependencies = [
  "bytes",
  "capsem-api",
  "capsem-assets",
+ "capsem-cache",
  "capsem-config",
  "capsem-core",
  "capsem-credentials",

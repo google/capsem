@@ -192,12 +192,6 @@ pub(super) fn plugin_catalog() -> &'static BTreeMap<String, PluginCatalogEntry> 
 /// or corp set.
 pub(super) type EffectivePluginPolicy = (BTreeMap<String, SecurityPluginConfig>, BTreeSet<String>);
 
-#[derive(Default)]
-pub(super) struct PluginPolicyCache {
-    generation: u64,
-    policy: Option<Arc<EffectivePluginPolicy>>,
-}
-
 /// The effective plugin policy from the current files.
 fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
     let (settings, corp) = capsem_core::net::policy_config::load_policy_files()
@@ -213,43 +207,32 @@ fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
 
 impl ServiceState {
     pub(crate) fn invalidate_plugin_policy_cache(&self) {
-        let mut cache = self.plugin_policy_cache.lock().unwrap();
-        cache.generation = cache.generation.wrapping_add(1);
-        cache.policy = None;
-    }
-
-    fn cached_plugin_policy(&self) -> (u64, Option<Arc<EffectivePluginPolicy>>) {
-        let cache = self.plugin_policy_cache.lock().unwrap();
-        (cache.generation, cache.policy.clone())
-    }
-
-    fn publish_plugin_policy(
-        &self,
-        generation: u64,
-        policy: EffectivePluginPolicy,
-    ) -> Option<Arc<EffectivePluginPolicy>> {
-        let mut cache = self.plugin_policy_cache.lock().unwrap();
-        if cache.generation != generation {
-            return None;
-        }
-        if let Some(policy) = &cache.policy {
-            return Some(Arc::clone(policy));
-        }
-        let policy = Arc::new(policy);
-        cache.policy = Some(Arc::clone(&policy));
-        drop(cache);
-        Some(policy)
+        self.plugin_policy_cache.invalidate();
     }
 }
 
 async fn effective_plugin_policy_for(state: &Arc<ServiceState>) -> Result<Arc<EffectivePluginPolicy>, AppError> {
     loop {
-        let (generation, cached) = state.cached_plugin_policy();
-        if let Some(policy) = cached {
+        let lookup = state.plugin_policy_cache.lookup();
+        if let Some(policy) = lookup.value() {
             return Ok(policy);
         }
-        let policy = state.off_worker(|_| effective_plugin_policy()).await??;
-        if let Some(policy) = state.publish_plugin_policy(generation, policy) {
+        let started = std::time::Instant::now();
+        let policy = match state.off_worker(|_| effective_plugin_policy()).await {
+            Ok(Ok(policy)) => {
+                state
+                    .plugin_policy_cache
+                    .record_load(started.elapsed(), capsem_cache::LoadStatus::Success);
+                policy
+            }
+            Ok(Err(error)) | Err(error) => {
+                state
+                    .plugin_policy_cache
+                    .record_load(started.elapsed(), capsem_cache::LoadStatus::Error);
+                return Err(error);
+            }
+        };
+        if let Some(policy) = state.plugin_policy_cache.publish(lookup.generation(), policy) {
             return Ok(policy);
         }
     }

@@ -7,6 +7,7 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
+use capsem_cache::{BoundedCache, GenerationCache, IdentityCache, KeyedIdentityCache};
 use capsem_core::{
     mcp::ToolCacheEntry,
     net::policy_config::{DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction, SettingsFile},
@@ -247,7 +248,7 @@ pub struct ServiceState {
     /// Effective plugin settings loaded on the first plugin route read and
     /// invalidated by every service-owned policy edit or explicit reload.
     /// Hot plugin list polls must not parse settings and corp TOML per request.
-    plugin_policy_cache: Mutex<plugin_routes::PluginPolicyCache>,
+    plugin_policy_cache: GenerationCache<plugin_routes::EffectivePluginPolicy>,
     /// Logger-owned DB handle for the host ledger (`sessions/host.db`): host
     /// events and policy mutations. Routes call `write`; they must never open
     /// SQLite directly or hold a side `DbWriter`.
@@ -258,27 +259,23 @@ pub struct ServiceState {
     /// defunct persistent VMs. Hot list/status/info polls must not rescan the
     /// filesystem on every request.
     last_defunct_reconcile_ms: AtomicU64,
-    /// Session-ledger route bytes (security/detection latest, security status,
-    /// history processes/counts) keyed by VM id, route and paging, pinned to
-    /// the logger read-cache epoch, released when the VM's handle unregisters.
-    stats_detail_response_cache: Mutex<HashMap<String, CachedLedgerResponse>>,
     /// Container workloads being set up or running, by VM id.
     containers: container_setup::ContainerSetups,
     /// Session storage diagnostics cached by session directory. These values
     /// describe the rootfs image path/size and host filesystem for status/info
     /// routes; repeated polling must not stat the filesystem on every sample.
-    storage_diagnostics_cache: Mutex<HashMap<PathBuf, api::StorageDiagnostics>>,
+    storage_diagnostics_cache: BoundedCache<PathBuf, api::StorageDiagnostics>,
     /// Derived persistent VM resume state keyed by stable VM id. The
     /// fingerprint covers registry fields that affect status so route polling
     /// does not revalidate asset pins every sample.
-    persistent_resume_state_cache: Mutex<HashMap<String, CachedPersistentResumeState>>,
+    persistent_resume_state_cache: KeyedIdentityCache<String, String, (VmLifecycleState, bool, Option<String>)>,
     /// The installed manifest's status, rebuilt only when manifest.json or
     /// its metadata changes; `/status` polls it.
-    asset_manifest_cache: Mutex<Option<asset_routes::CachedManifestStatus>>,
+    asset_manifest_cache: IdentityCache<[asset_routes::ManifestFileIdentity; 2], api::AssetManifestStatus>,
     /// `/vms/list` lifecycle rows keyed by the in-memory lifecycle snapshot
     /// (uptime seconds included). Activity totals are read per poll from
     /// each ledger's cached counter snapshot, never cached here.
-    list_response_cache: Mutex<Option<CachedListResponse>>,
+    list_response_cache: IdentityCache<String, (ListResponse, Vec<PathBuf>)>,
     /// Coordinates launch admission and Apple VZ lifecycle edges. Cold starts
     /// and teardown take a VZ read guard; save/restore take a write guard.
     /// Blocking launch workers also retain admission through registration,
@@ -314,25 +311,6 @@ pub struct ServiceState {
     /// leave this empty.
     #[cfg(test)]
     _test_tempdir: Option<tempfile::TempDir>,
-}
-
-/// Serialized ledger route bytes and the logger generation they were read at.
-#[derive(Clone)]
-struct CachedLedgerResponse {
-    db_epoch: u64,
-    bytes: Vec<u8>,
-}
-
-#[derive(Clone)]
-struct CachedPersistentResumeState {
-    fingerprint: String,
-    state: (VmLifecycleState, bool, Option<String>),
-}
-
-#[derive(Clone)]
-struct CachedListResponse {
-    fingerprint: String,
-    listed: (ListResponse, Vec<PathBuf>),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -540,16 +518,10 @@ impl ServiceState {
     }
 
     fn storage_diagnostics_cached(&self, session_dir: &StdPath) -> Option<api::StorageDiagnostics> {
-        if let Some(cached) = self.storage_diagnostics_cache.lock().unwrap().get(session_dir).cloned() {
-            return Some(cached);
-        }
-
-        let diagnostics = storage_diagnostics(session_dir)?;
         self.storage_diagnostics_cache
-            .lock()
-            .unwrap()
-            .insert(session_dir.to_path_buf(), diagnostics.clone());
-        Some(diagnostics)
+            .get_or_try_insert_with(session_dir, || storage_diagnostics(session_dir).ok_or(()))
+            .ok()
+            .map(|diagnostics| (*diagnostics).clone())
     }
 
     fn next_job_id(&self) -> u64 {
@@ -760,21 +732,14 @@ impl ServiceState {
     ) -> (VmLifecycleState, bool, Option<String>) {
         let vm_id = persistent_entry_vm_id(entry);
         let fingerprint = persistent_resume_state_fingerprint(self, entry);
-        if let Some(cached) = self.persistent_resume_state_cache.lock().unwrap().get(&vm_id).cloned() {
-            if cached.fingerprint == fingerprint {
-                return cached.state;
-            }
+        if let Some(cached) = self.persistent_resume_state_cache.get(&vm_id, &fingerprint) {
+            return (*cached).clone();
         }
 
-        let state = self.persistent_entry_resume_state(entry);
-        self.persistent_resume_state_cache.lock().unwrap().insert(
-            vm_id,
-            CachedPersistentResumeState {
-                fingerprint,
-                state: state.clone(),
-            },
-        );
-        state
+        let resume_state = self.persistent_entry_resume_state(entry);
+        self.persistent_resume_state_cache
+            .publish(vm_id, fingerprint, resume_state.clone());
+        resume_state
     }
 }
 

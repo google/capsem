@@ -93,7 +93,7 @@ pub(super) async fn list_response(state: &Arc<ServiceState>) -> Result<ListRespo
             .sandboxes
             .iter()
             .zip(&session_dirs)
-            .map(|(info, session_dir)| ledger_routes::activity::counters_if_ready(&state, &info.id, session_dir)),
+            .map(|(info, session_dir)| ledger_routes::activity::counters_if_ready(state, &info.id, session_dir)),
     )
     .await;
     for (info, counters) in response.sandboxes.iter_mut().zip(counters) {
@@ -115,16 +115,14 @@ pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum:
 fn list_lifecycle(state: &ServiceState) -> (ListResponse, Vec<PathBuf>) {
     state.reconcile_persistent_defunct_from_logs();
     let fingerprint = list_response_fingerprint(state);
-    if let Some(cached) = state.list_response_cache.lock().unwrap().clone() {
-        if cached.fingerprint == fingerprint {
-            return cached.listed;
-        }
+    if let Some(cached) = state.list_response_cache.get(&fingerprint) {
+        return (*cached).clone();
     }
 
+    let started = std::time::Instant::now();
     let listed = build_list_response(state);
-    *state.list_response_cache.lock().unwrap() = Some(CachedListResponse {
-        fingerprint,
-        listed: listed.clone(),
-    });
-    listed
+    state
+        .list_response_cache
+        .record_load(started.elapsed(), capsem_cache::LoadStatus::Success);
+    (*state.list_response_cache.publish(fingerprint, listed)).clone()
 }
