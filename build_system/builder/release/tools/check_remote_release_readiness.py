@@ -28,7 +28,9 @@ from capsem_builder.release.tools.remote_ci_gate import (
 from ... import crypto as hashlib
 
 try:
-    hashlib.blake3()
+    from ... import crypto as blake3
+
+    blake3.require_blake3()
 except ModuleNotFoundError as error:
     BLAKE3_IMPORT_ERROR = error
 else:

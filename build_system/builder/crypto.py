@@ -12,11 +12,17 @@ import hmac as _hmac
 import re
 import secrets as _secrets
 import uuid as _uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
+from typing import Any, BinaryIO
 
-if TYPE_CHECKING:
-    from blake3 import blake3 as Blake3
+try:
+    from blake3 import blake3 as _blake3
+except ModuleNotFoundError as error:
+    _blake3 = None
+    _BLAKE3_IMPORT_ERROR = error
+else:
+    _BLAKE3_IMPORT_ERROR = None
 
 sha256 = _hashlib.sha256
 sha1 = _hashlib.sha1  # Protocol-specific handshake checks only.
@@ -29,21 +35,17 @@ token_urlsafe = _secrets.token_urlsafe
 uuid_v4 = _uuid.uuid4
 
 
-class Hasher(Protocol):
-    """Incremental digest contract shared by the accelerated bindings."""
-
-    def update(self, data: bytes | bytearray | memoryview, /) -> object: ...
-
-    def digest(self) -> bytes: ...
-
-    def hexdigest(self) -> str: ...
+def require_blake3() -> Callable[..., Any]:
+    """Return the optional BLAKE3 binding or preserve its import failure."""
+    if _blake3 is None:
+        assert _BLAKE3_IMPORT_ERROR is not None
+        raise _BLAKE3_IMPORT_ERROR
+    return _blake3
 
 
-def blake3(*args: Any, **kwargs: Any) -> Blake3:
-    """Load the SIMD binding only for BLAKE3; staged SHA verification is stdlib-only."""
-    from blake3 import blake3 as constructor
-
-    return constructor(*args, **kwargs)
+def blake3(*args: Any, **kwargs: Any) -> Any:
+    """Construct a BLAKE3 hasher without burdening SHA-only consumers."""
+    return require_blake3()(*args, **kwargs)
 
 
 def digest_file(path: Path, *, algorithm: str = "blake3") -> str:
