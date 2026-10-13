@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Normal VM exit persists its native retirement receipt before moving a named
+  session, preserving confirmed stop authority for resume after host reboot.
+
 - Registered VM launches release shutdown admission before ongoing exec or
   image setup, so workload duration does not hold the launch drain.
 

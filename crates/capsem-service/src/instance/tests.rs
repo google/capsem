@@ -87,6 +87,62 @@ fn selected_spawn_resume_requires_completed_original_generation_and_never_replay
     assert_eq!(contents["binding"], serde_json::to_value(current).unwrap());
 }
 
+#[tokio::test]
+async fn normal_native_exit_persists_retirement_before_next_host_boot_resume() {
+    let state = make_test_state();
+    let session = state.run_dir.join("sessions/receipt-vm");
+    std::fs::create_dir_all(&session).unwrap();
+    let generation = capsem_crypto::uuid_v4();
+    let binding = capsem_core::managed_sessions::VmBinding::new("receipt-vm".into(), generation).unwrap();
+    persist_spawn_identity(&session, binding.id(), generation).unwrap();
+    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "managed_sessions::tests::recovery_native_child_fixture",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("CAPSEM_TEST_RECOVERY_ROOT", &session)
+        .env("CAPSEM_TEST_RECOVERY_BINDING", serde_json::to_string(&binding).unwrap())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let (mut child, retirement) = state.retirements.spawn(binding.id(), generation, &mut command).unwrap();
+    let record_path = session.join("spawn-owner.json");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let record: serde_json::Value = serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+        if record["pid"].as_u64() == child.id().map(u64::from) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child admission was not published"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    drop(child.stdin.take());
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        binding.id().into(),
+        binding.id().into(),
+        Arc::clone(&state),
+        state.instance_socket_path(binding.id()).unwrap(),
+        session.clone(),
+        retirement,
+    );
+    reaper.await.unwrap();
+    let mut record: serde_json::Value = serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
+    assert_eq!(
+        record["retired"], true,
+        "normal stop must persist its native exit receipt"
+    );
+    record["scope"]["boot"] = serde_json::json!(capsem_crypto::uuid_v4().to_string());
+    std::fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+    persist_spawn_identity(&session, binding.id(), capsem_crypto::uuid_v4()).unwrap();
+}
+
 #[test]
 fn nil_selected_generation_refuses_provision_before_any_session_side_effect() {
     let state = make_test_state();

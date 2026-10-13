@@ -47,6 +47,14 @@ pub(crate) fn persist_spawn_identity(session_dir: &StdPath, id: &str, generation
     capsem_core::session::spawn_owner::prepare(session_dir, &binding, std::process::id())
 }
 
+/// Preserve confirmed native retirement before directory moves or host reboot.
+pub(crate) fn persist_native_exit(session_dir: &StdPath, id: &str, generation: uuid::Uuid) -> Result<()> {
+    let binding = capsem_core::managed_sessions::VmBinding::new(id.to_owned(), generation)?;
+    let mut fence = capsem_core::session::spawn_owner::fence(session_dir, &binding)?;
+    anyhow::ensure!(fence.confirm_exit()?, "original native VM exit is unconfirmed");
+    Ok(())
+}
+
 impl ServiceState {
     /// Remove a running instance record. The removal is the ownership token
     /// for teardown: of two callers racing to evict one VM, only one gets

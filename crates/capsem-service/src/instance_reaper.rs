@@ -40,6 +40,20 @@ pub(super) fn spawn_exit_reaper(
         };
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
 
+        // Native wait is positive exit authority. Persist the fenced receipt
+        // before moving a named session, so a later host boot can reprepare
+        // a new generation without interpreting an old numeric PID.
+        let receipt_id = id.clone();
+        let receipt_dir = session_dir.clone();
+        let receipt = state
+            .off_worker(move |_| crate::instance::persist_native_exit(&receipt_dir, &receipt_id, generation))
+            .await;
+        match receipt {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!(id, %error, "durable native exit receipt remains unconfirmed"),
+            Err(error) => warn!(id, error = %error.1, "native exit receipt worker interrupted"),
+        }
+
         // An ephemeral VM's removal from the instances map below is the
         // trigger for preserve_failed_session_dir; if `removed` is Some, the
         // child exited without an explicit service-side shutdown removing it.
