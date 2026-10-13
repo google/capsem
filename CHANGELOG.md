@@ -118,9 +118,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return complete tool schemas over authenticated IPC without receiving a
   cross-session cache-file grant.
 
-- Broker guest VirtioFS permission changes through the coordinator beneath
-  the session's guest share, keeping direct host permission syscalls denied
-  and attesting that authority before the VM owner publishes readiness.
+- Broker guest VirtioFS permission and timestamp changes through the
+  coordinator beneath the session's guest share, keeping direct host metadata
+  syscalls denied and refusing path traversal without following guest-controlled
+  links.
 
 - Restrict registered VM-owner service connections to private-name lookup and
   that owner's metrics route, preventing a compromised worker from invoking
@@ -194,6 +195,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep a confined proxy generation alive when an ordinary HTTP or DNS client
   disconnects, while still terminating it for unknown, stale or required
   capability closure events.
+
+- Reject an over-capacity HTTP or DNS attachment without terminating its
+  healthy confined proxy generation, so later traffic can proceed after
+  capacity becomes available.
 
 - Keep SQLite writer scratch state in memory so a confined VM owner can flush
   high-volume session-ledger bursts without ambient temporary-directory access.
