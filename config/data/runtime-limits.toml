@@ -11,9 +11,9 @@ traffic_grants_per_client = 3
 file_descriptors_per_client = 8
 
 [ledger]
-# A DNS query contributes its primary audit row plus its default-rule row.
-# Two persistent DNS sessions can overlap, and the same burst must remain
-# admissible while the ledger owner flushes the preceding rows to disk.
+# A DNS query contributes a primary row, a decision transition and a rule row.
+# Two persistent DNS sessions can overlap; two additional event slots per
+# client absorb the bounded handoff between protocol and SQLite batches.
 producer_events_per_network_client = 8
 # One transport exchange carries this many consecutive producer events. The
 # queue must be an exact multiple so a full burst drains without a tail shape.
