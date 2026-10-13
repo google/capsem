@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Last-member network departure and retirement commit atomically. Failed
+  retirement preserves the membership and address for retry instead of
+  leaving an empty active network that cleanup can no longer find.
+
 - Logger durability barriers report accepted operations rejected by SQLite
   during batch salvage, preventing failed registry writes from returning a
   successful flush while preserving valid rows in the same producer batch.

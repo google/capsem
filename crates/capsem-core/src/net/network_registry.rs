@@ -15,7 +15,9 @@
 use super::address_pool::AddressAllocator;
 use capsem_config::{PrivatePool, NETWORK_PREFIX_LEN};
 use capsem_foundation::paths::network_db_path_in;
-use capsem_logger::{network_db, DbHandle, MembershipState, NetworkMembership, NetworkRecord, WriteOp};
+use capsem_logger::{
+    network_db, DbHandle, MembershipState, NetworkDeparture, NetworkMembership, NetworkRecord, WriteOp,
+};
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
@@ -265,6 +267,11 @@ impl NetworkRegistry {
         self.networks.keys().filter_map(|id| self.summary(*id)).collect()
     }
 
+    /// Includes earlier successful departures when a later network failed.
+    pub fn retired_ids(&self) -> Vec<Uuid> {
+        self.retired.keys().copied().collect()
+    }
+
     pub fn summary(&self, id: Uuid) -> Option<NetworkSummary> {
         self.networks.get(&id).map(|entry| NetworkSummary {
             id,
@@ -444,10 +451,39 @@ impl NetworkRegistry {
     pub async fn vm_deleted(&mut self, vm_id: &str, now_unix_ms: i64) -> Result<Vec<Departure>, NetworkError> {
         let mut departures = Vec::new();
         for network in self.memberships_of(vm_id) {
-            self.detach(network, vm_id, now_unix_ms).await?;
-            let retired = self.members(network).is_some_and(|members| members.is_empty());
+            let entry = self.networks.get(&network).ok_or(NetworkError::NotFound(network))?;
+            let member = entry.members.get(vm_id).ok_or_else(|| NetworkError::NotAMember {
+                id: network,
+                vm_id: vm_id.into(),
+            })?;
+            let path = network_db_path_in(&self.root, &network.to_string());
+            let membership =
+                NetworkMembership::new(network, vm_id, member.address, MembershipState::Detached, now_unix_ms)
+                    .map_err(|error| database(&path, error))?;
+            let retired = entry.members.len() == 1;
+            let record = if retired {
+                Some(
+                    NetworkRecord::new(
+                        network,
+                        &entry.name,
+                        (entry.subnet.network(), entry.subnet.prefix_len()),
+                        entry.created_unix_ms,
+                    )
+                    .and_then(|record| record.retired(now_unix_ms))
+                    .map_err(|error| database(&path, error))?,
+                )
+            } else {
+                None
+            };
+            let departure = NetworkDeparture::new(membership, record).map_err(|error| database(&path, error))?;
+            write_durably(&entry.handle, &path, WriteOp::NetworkDeparture(departure)).await?;
             if retired {
-                self.retire(network, now_unix_ms).await?;
+                self.networks.remove(&network);
+                self.retired.insert(network, now_unix_ms);
+            } else if let Some(entry) = self.networks.get_mut(&network) {
+                if let Some(member) = entry.members.remove(vm_id) {
+                    entry.addresses.release(member.address);
+                }
             }
             departures.push(Departure { network, retired });
         }

@@ -7,6 +7,38 @@ fn root() -> (tempfile::TempDir, PathBuf) {
 }
 
 #[tokio::test]
+async fn failed_last_member_retirement_preserves_membership_for_delete_retry() {
+    let (_directory, path) = root();
+    let mut registry = NetworkRegistry::new(path.clone());
+    let network = registry.create("retry", 1000).await.unwrap();
+    let address = registry.attach(network.id, "vm", 1001).await.unwrap();
+    assert!(registry.vm_deleted("vm", 999).await.is_err());
+    assert_eq!(registry.address_of(network.id, "vm"), Some(address));
+    assert_eq!(registry.memberships_of("vm"), vec![network.id]);
+    let reader = registry.reader(network.id).unwrap();
+    let rows = reader
+        .query("SELECT state FROM network_members WHERE vm_id = ?1", &["vm".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&rows).unwrap()["rows"][0][0],
+        "declared"
+    );
+    let departed = registry.vm_deleted("vm", 1002).await.unwrap();
+    assert_eq!(
+        departed,
+        vec![Departure {
+            network: network.id,
+            retired: true
+        }]
+    );
+    assert!(registry.summary(network.id).is_none());
+    drop(reader);
+    drop(registry);
+    assert!(NetworkRegistry::load(path).await.unwrap().summary(network.id).is_none());
+}
+
+#[tokio::test]
 async fn names_are_unique_among_active_networks_and_reuse_makes_a_new_network() {
     let (_dir, root) = root();
     let mut registry = NetworkRegistry::new(root.clone());
