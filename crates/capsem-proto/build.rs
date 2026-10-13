@@ -47,16 +47,18 @@ fn write_runtime_limits() {
         .unwrap_or_else(|| {
             panic!("runtime limits: network.max_concurrent_clients must be an integer between 1 and 4096")
         });
-    let open_file_limit = config
+    let descriptors_per_client = config
         .get("network")
-        .and_then(|network| network.get("process_open_file_limit"))
+        .and_then(|network| network.get("file_descriptors_per_client"))
         .and_then(toml::Value::as_integer)
-        .filter(|value| (capacity * 2 + 64..=1_048_576).contains(value))
+        .filter(|value| (3..=64).contains(value))
         .unwrap_or_else(|| {
-            panic!(
-                "runtime limits: network.process_open_file_limit must cover two descriptors per client plus 64, and not exceed 1048576"
-            )
+            panic!("runtime limits: network.file_descriptors_per_client must be an integer between 3 and 64")
         });
+    let open_file_limit = capacity
+        .checked_mul(descriptors_per_client)
+        .filter(|value| *value <= 1_048_576)
+        .expect("runtime limits: derived network descriptor budget exceeds 1048576");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     std::fs::write(
         format!("{out_dir}/runtime_limits.rs"),

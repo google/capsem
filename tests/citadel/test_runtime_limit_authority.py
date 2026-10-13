@@ -37,7 +37,8 @@ REQUIRED_WIRING = {
         "../../config/data/runtime-limits.toml",
         'get("max_concurrent_clients")',
         "pub const NETWORK_CLIENT_CAPACITY: usize = {capacity}",
-        'get("process_open_file_limit")',
+        'get("file_descriptors_per_client")',
+        ".checked_mul(descriptors_per_client)",
         "pub const NETWORK_PROCESS_OPEN_FILE_LIMIT: u64 = {open_file_limit}",
     ),
     "crates/capsem-proto/src/lib.rs": (
@@ -74,12 +75,13 @@ def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:
         RUNTIME_LIMIT_RATIONALE
         + "\nnetwork.max_concurrent_clients must be an integer from 1 through 4096"
     )
-    open_file_limit = config.get("network", {}).get("process_open_file_limit")
-    assert type(open_file_limit) is int and 2 * capacity + 64 <= open_file_limit <= 1_048_576, (
+    descriptors_per_client = config.get("network", {}).get("file_descriptors_per_client")
+    assert type(descriptors_per_client) is int and 3 <= descriptors_per_client <= 64, (
         RUNTIME_LIMIT_RATIONALE
-        + "\nnetwork.process_open_file_limit must cover TCP and VSOCK descriptors "
-        "for every client plus runtime overhead"
+        + "\nnetwork.file_descriptors_per_client must cover TCP and VSOCK "
+        "descriptors plus runtime overhead"
     )
+    assert capacity * descriptors_per_client <= 1_048_576, RUNTIME_LIMIT_RATIONALE
 
     missing = []
     for relative_path, required_fragments in REQUIRED_WIRING.items():
