@@ -26,6 +26,11 @@ use guest_metadata::{ATIME_SECONDS_RANGE, PATH_RANGE, TIME_FLAGS_OFFSET};
 pub const UPSTREAM_GRANT_FRAME_SIZE: usize = 4480;
 /// A ledger response grants its storage and trusted-checkpoint channels.
 pub const UPSTREAM_GRANT_MAX_FDS: usize = 2;
+/// Per-worker descriptor and pending-selection ceiling.
+///
+/// Two hundred supported clients can briefly own both their current and
+/// replacement resources while asynchronous release messages drain.
+pub const UPSTREAM_GRANT_CAPACITY: usize = 512;
 /// DNS names are at most 253 wire-text bytes without a root dot.
 pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 /// Maximum relative path carried by a guest-share metadata request.
