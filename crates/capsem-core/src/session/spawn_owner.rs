@@ -16,7 +16,10 @@ const RECORD: &str = "spawn-owner.json";
 const LOCK: &str = "spawn-owner.lock";
 const LIMIT: u64 = 4096;
 
-#[derive(Serialize, Deserialize)]
+mod receipts;
+pub use receipts::RetirementStore;
+
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
     schema_version: u32,
@@ -80,7 +83,10 @@ impl SpawnFence {
             }
         }
         self.record.retired = true;
-        write(&self.root, &self.record)?;
+        if let Err(error) = write(&self.root, &self.record) {
+            self.record.retired = false;
+            return Err(error);
+        }
         Ok(true)
     }
 }
@@ -195,9 +201,13 @@ fn matching(root: &ContainedDir, binding: &VmBinding) -> Result<Record> {
 }
 
 fn read(root: &ContainedDir) -> Result<Option<Record>> {
+    read_named(root, RECORD)
+}
+
+fn read_named(root: &ContainedDir, name: &str) -> Result<Option<Record>> {
     // Reuse the Unix owner's single-link, private regular-file verification.
     // This read never appends or retains an old inode across publication.
-    let file = match root.open_existing_private_append(RECORD.as_ref()) {
+    let file = match root.open_existing_private_append(name.as_ref()) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),

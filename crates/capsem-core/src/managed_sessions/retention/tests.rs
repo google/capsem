@@ -4,6 +4,50 @@ use std::time::{Duration, Instant};
 const RETENTION: Duration = Duration::from_secs(86_400);
 
 #[test]
+fn native_receipts_survive_unresolved_cleanup_and_closed_tombstones_until_pruned() {
+    use crate::session::spawn_owner::{fence, prepare, RetirementStore};
+    let directory = tempfile::tempdir().unwrap();
+    let session = directory.path().join("session");
+    std::fs::create_dir(&session).unwrap();
+    let path = directory.path().join("ownership");
+    let store = Registry::open(&path).unwrap();
+    let receipts = RetirementStore::open(&directory.path().join("retired")).unwrap();
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([75; 32]);
+    let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
+        panic!()
+    };
+    let clock = LeaseClock::new(100, Instant::now());
+    store
+        .start_lease(&ticket, LeasePolicy::new(Duration::from_secs(10)).unwrap(), clock)
+        .unwrap();
+    store.begin_create(&ticket, clock).unwrap();
+    let binding = VmBinding::new("retained-vm".into(), capsem_crypto::uuid_v4()).unwrap();
+    store.prepare_spawn(&ticket, binding.clone(), clock).unwrap();
+    store.bind_created(&ticket, binding.clone(), clock).unwrap();
+    prepare(&session, &binding, std::process::id()).unwrap();
+    let mut retired = fence(&session, &binding).unwrap();
+    retired.confirm_exit().unwrap();
+    receipts.retain(&retired).unwrap();
+    drop(retired);
+    std::fs::remove_dir_all(&session).unwrap();
+    drop(store);
+    let store = Registry::open(&path).unwrap();
+    let (ticket, snapshot) = store.recover_interrupted(request).unwrap().unwrap();
+    assert_eq!(snapshot.state(), State::Unknown);
+    assert_eq!(store.prune_native_retirements(&receipts).unwrap(), 0);
+    assert!(receipts.contains(&binding).unwrap());
+    store.close(request, &cap).unwrap();
+    store.complete_cleanup(&ticket, &binding).unwrap();
+    assert_eq!(store.prune_native_retirements(&receipts).unwrap(), 0);
+    store
+        .prune_closed(RETENTION, LeaseClock::new(u64::MAX, Instant::now()))
+        .unwrap();
+    assert_eq!(store.prune_native_retirements(&receipts).unwrap(), 1);
+    assert!(!receipts.contains(&binding).unwrap());
+}
+
+#[test]
 fn completed_tombstone_retains_replay_protection_across_restart_and_clock_rollback() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("ownership");

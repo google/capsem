@@ -4,6 +4,18 @@ use super::*;
 use std::time::Duration;
 
 impl Registry {
+    /// Hold ownership admission across the reference inventory and receipt
+    /// deletion. A separately sampled inventory races newly prepared spawns.
+    pub fn prune_native_retirements(&self, store: &crate::session::spawn_owner::RetirementStore) -> Result<usize> {
+        let _lease = self.lease()?;
+        let references = self
+            .inventory_records()?
+            .into_iter()
+            .flat_map(|record| record.vm.into_iter().chain(record.spawn_intent))
+            .collect::<Vec<_>>();
+        store.prune_unreferenced(&references)
+    }
+
     pub fn prune_closed(&self, retention: Duration, clock: LeaseClock) -> Result<usize> {
         let retention_ms = u64::try_from(retention.as_millis()).context("managed retention duration overflow")?;
         ensure!(retention_ms > 0, "managed retention must be positive");

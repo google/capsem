@@ -234,6 +234,14 @@ impl Controller {
             .await
     }
 
+    pub async fn prune_native_retirements(&self, path: std::path::PathBuf) -> ControlResult<usize> {
+        self.io(move |registry| {
+            let store = crate::session::spawn_owner::RetirementStore::open(&path)?;
+            registry.prune_native_retirements(&store)
+        })
+        .await
+    }
+
     /// Trusted startup recovery after prior continuations have retired. This
     /// owns cleanup only; it never polls create or renews the old lease.
     pub async fn recover(&self, request: Uuid, effects: Arc<dyn Effects>) -> ControlResult<Snapshot> {
