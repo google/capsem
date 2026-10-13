@@ -11,7 +11,7 @@ mod telemetry;
 pub use bounded::BoundedCache;
 pub use keyed_identity::KeyedIdentityCache;
 pub use snapshot::{GenerationCache, GenerationLookup, IdentityCache};
-pub use telemetry::{CacheStats, LoadStatus};
+pub use telemetry::{CacheMetrics, CacheStats, LoadStatus};
 
 #[cfg(test)]
 mod tests;

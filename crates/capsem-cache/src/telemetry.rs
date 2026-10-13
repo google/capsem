@@ -34,14 +34,19 @@ struct Counters {
     entries: AtomicU64,
 }
 
+/// Uniform counters and exported metrics for a domain-specific cache.
+///
+/// Most callers should use the shared cache primitives, which record these
+/// automatically. A cache with domain-specific async or database locking can
+/// use this type while retaining its required freshness mechanics.
 #[derive(Clone)]
-pub(crate) struct CacheTelemetry {
+pub struct CacheMetrics {
     name: &'static str,
     counters: Arc<Counters>,
 }
 
-impl CacheTelemetry {
-    pub(crate) fn new(name: &'static str) -> Self {
+impl CacheMetrics {
+    pub fn new(name: &'static str) -> Self {
         let telemetry = Self {
             name,
             counters: Arc::default(),
@@ -50,29 +55,29 @@ impl CacheTelemetry {
         telemetry
     }
 
-    pub(crate) fn hit(&self) {
+    pub fn hit(&self) {
         self.counters.hits.fetch_add(1, Ordering::Relaxed);
         ::metrics::counter!(metric::CACHE_LOOKUPS_TOTAL, "cache" => self.name, "result" => "hit").increment(1);
     }
 
-    pub(crate) fn miss(&self) {
+    pub fn miss(&self) {
         self.counters.misses.fetch_add(1, Ordering::Relaxed);
         ::metrics::counter!(metric::CACHE_LOOKUPS_TOTAL, "cache" => self.name, "result" => "miss").increment(1);
     }
 
-    pub(crate) fn insertion(&self) {
+    pub fn insertion(&self) {
         self.mutation(&self.counters.insertions, "insert", 1);
     }
 
-    pub(crate) fn refresh(&self) {
+    pub fn refresh(&self) {
         self.mutation(&self.counters.refreshes, "refresh", 1);
     }
 
-    pub(crate) fn invalidate(&self, count: u64) {
+    pub fn invalidate(&self, count: u64) {
         self.mutation(&self.counters.invalidations, "invalidate", count);
     }
 
-    pub(crate) fn evict(&self) {
+    pub fn evict(&self) {
         self.mutation(&self.counters.evictions, "evict", 1);
     }
 
@@ -85,7 +90,7 @@ impl CacheTelemetry {
             .increment(count);
     }
 
-    pub(crate) fn load(&self, elapsed: Duration, status: LoadStatus) {
+    pub fn load(&self, elapsed: Duration, status: LoadStatus) {
         let status = match status {
             LoadStatus::Success => "success",
             LoadStatus::Error => {
@@ -97,13 +102,13 @@ impl CacheTelemetry {
             .record(elapsed.as_secs_f64() * 1000.0);
     }
 
-    pub(crate) fn set_entries(&self, entries: usize) {
+    pub fn set_entries(&self, entries: usize) {
         let entries = u64::try_from(entries).unwrap_or(u64::MAX);
         self.counters.entries.store(entries, Ordering::Relaxed);
         ::metrics::gauge!(metric::CACHE_ENTRIES, "cache" => self.name).set(entries as f64);
     }
 
-    pub(crate) fn snapshot(&self) -> CacheStats {
+    pub fn snapshot(&self) -> CacheStats {
         let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
         CacheStats {
             hits: load(&self.counters.hits),

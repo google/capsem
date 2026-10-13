@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use crate::telemetry::{CacheStats, CacheTelemetry, LoadStatus};
+use crate::telemetry::{CacheMetrics, CacheStats, LoadStatus};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -14,14 +14,14 @@ struct IdentityEntry<I, V> {
 
 pub struct IdentityCache<I, V> {
     entry: Mutex<Option<IdentityEntry<I, V>>>,
-    telemetry: CacheTelemetry,
+    telemetry: CacheMetrics,
 }
 
 impl<I: Eq, V> IdentityCache<I, V> {
     pub fn new(name: &'static str) -> Self {
         Self {
             entry: Mutex::new(None),
-            telemetry: CacheTelemetry::new(name),
+            telemetry: CacheMetrics::new(name),
         }
     }
 
@@ -104,7 +104,7 @@ impl<V> GenerationLookup<V> {
 
 pub struct GenerationCache<V> {
     state: Mutex<GenerationState<V>>,
-    telemetry: CacheTelemetry,
+    telemetry: CacheMetrics,
 }
 
 impl<V> GenerationCache<V> {
@@ -114,7 +114,7 @@ impl<V> GenerationCache<V> {
                 generation: 0,
                 value: None,
             }),
-            telemetry: CacheTelemetry::new(name),
+            telemetry: CacheMetrics::new(name),
         }
     }
 

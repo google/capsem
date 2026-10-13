@@ -6,10 +6,10 @@ use std::time::Instant;
 use quick_cache::sync::{Cache, GuardResult};
 use quick_cache::{DefaultHashBuilder, Equivalent, Lifecycle, UnitWeighter};
 
-use crate::telemetry::{CacheStats, CacheTelemetry, LoadStatus};
+use crate::telemetry::{CacheMetrics, CacheStats, LoadStatus};
 
 struct EvictionLifecycle<K, V> {
-    telemetry: CacheTelemetry,
+    telemetry: CacheMetrics,
     marker: PhantomData<fn(K, V)>,
 }
 
@@ -46,7 +46,7 @@ type Inner<K, V> = Cache<K, Arc<V>, UnitWeighter, DefaultHashBuilder, EvictionLi
 
 pub struct BoundedCache<K, V> {
     inner: Inner<K, V>,
-    telemetry: CacheTelemetry,
+    telemetry: CacheMetrics,
 }
 
 impl<K, V> BoundedCache<K, V>
@@ -55,7 +55,7 @@ where
 {
     pub fn new(name: &'static str, capacity: usize) -> Self {
         let capacity = capacity.max(1);
-        let telemetry = CacheTelemetry::new(name);
+        let telemetry = CacheMetrics::new(name);
         Self {
             inner: Cache::with(
                 capacity,
