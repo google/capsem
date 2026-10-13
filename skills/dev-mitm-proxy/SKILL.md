@@ -60,17 +60,26 @@ Guest curl -> iptables REDIRECT -> capsem-net-proxy (guest, port 10443)
 ## Cross-process network limits
 
 `config/data/runtime-limits.toml` owns the supported concurrent network-client
-ceiling. `capsem-proto/build.rs` validates that file and generates
-`NETWORK_CLIENT_CAPACITY`; TCP descriptor grants and both DNS sessions derive
-their capacities from that shared protocol constant.
+ceiling and its required multiples. `capsem-proto/build.rs` validates that file
+and generates the shared constants. DNS session capacity equals the client
+ceiling. HTTP descriptor-grant capacity multiplies it by
+`traffic_grants_per_client` because a pooled connection can be replaced before
+the retiring connection closes. The process descriptor floor multiplies it by
+`file_descriptors_per_client` and must cover both ends of every overlapping
+grant.
 
 Never add a numeric connection ceiling to the proxy, service broker, core DNS
 session, or guest DNS forwarder. A limit duplicated across those processes can
 make one stage admit work that the next stage sheds, which previously produced
-intermittent HTTP 502 responses under load. Change the config-owned value,
-exercise every consumer through the shared constant, and run the official
-HTTPS and DNS load benchmarks twice before and twice after the change. User
-overrides belong in the typed settings contract tracked by issue #349.
+intermittent HTTP 502 responses under load. The guest relay, VM owner, service
+broker and confined proxy must call
+`capsem_foundation::unix::process::ensure_open_file_limit` with the generated
+floor before accepting traffic; raising only one process leaves the same cliff
+at the next hop. Change the config-owned values, exercise every consumer
+through the generated constants, and run the official HTTPS and DNS load
+benchmarks twice before and twice after the change. Any traffic error or
+capacity refusal fails the run. User overrides belong in the typed settings
+contract tracked by issue #349.
 
 ## Content-Encoding: the systemic rule
 
