@@ -48,3 +48,8 @@ def test_fixture_makes_ledger_files_private(tmp_path: Path, monkeypatch) -> None
     session = tmp_path / "persistent" / stopped_workspace.VM_ID
     assert stat.S_IMODE((session / "session.db").stat().st_mode) == 0o600
     assert stat.S_IMODE((session / "session.db-archive.lock").stat().st_mode) == 0o600
+    assert {
+        stat.S_IMODE(path.stat().st_mode)
+        for path in (session / "session.bodies").rglob("*")
+        if path.is_file()
+    } == {0o600}

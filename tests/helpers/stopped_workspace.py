@@ -57,6 +57,8 @@ def seed_stopped_workspace(run_dir: Path, assets_dir: Path) -> None:
     archive_lock.chmod(0o600)
     bodies = shutil.copytree(fixture / "test.bodies", session / "session.bodies")
     bodies.chmod(0o700)
+    for path in bodies.rglob("*"):
+        path.chmod(0o700 if path.is_dir() else 0o600)
     entry = {
         "id": VM_ID,
         "name": VM_NAME,
