@@ -108,9 +108,9 @@ impl Hypervisor {
             cpus: options.cpus,
             ram_mb,
             env,
-            from: None,
             networks: options.networks.into_iter().map(|network| network.name).collect(),
             container,
+            ..Default::default()
         };
         let result = api::create_vm(
             &self.client.transport,
