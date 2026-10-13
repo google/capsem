@@ -78,7 +78,7 @@ where
         self.get_if(key, |_| true)
     }
 
-    pub(crate) fn get_if<Q>(&self, key: &Q, accept: impl FnOnce(&V) -> bool) -> Option<Arc<V>>
+    pub fn get_if<Q>(&self, key: &Q, accept: impl FnOnce(&V) -> bool) -> Option<Arc<V>>
     where
         Q: Equivalent<K> + Hash + ?Sized,
     {

@@ -126,6 +126,17 @@ fn bounded_cache_single_flights_loads_and_reports_errors() {
 }
 
 #[test]
+fn bounded_cache_treats_a_rejected_resident_value_as_a_miss() {
+    let cache = BoundedCache::new("expiring", 8);
+    cache.insert("answer", 41);
+
+    assert!(cache.get_if(&"answer", |value| *value == 42).is_none());
+    assert_eq!(cache.stats().hits, 0);
+    assert_eq!(cache.stats().misses, 1);
+    assert_eq!(cache.len(), 1, "the domain owner decides whether to remove it");
+}
+
+#[test]
 fn bounded_cache_computes_one_value_for_concurrent_misses() {
     let cache = Arc::new(BoundedCache::<String, usize>::new("single_flight", 8));
     let start = Arc::new(Barrier::new(8));
