@@ -622,14 +622,14 @@ pub(super) fn provision_response_for_running(state: &ServiceState, id: String) -
         )
     })?;
     let status = VmLifecycleState::Running;
-    let response = ProvisionResponse {
-        name: instance.name.clone(),
+    let response = ProvisionResponse::new(
         id,
+        instance.name.clone(),
         status,
-        persistent: instance.persistent,
-        can_resume: false,
-        available_actions: status.available_actions(false),
-    };
+        instance.persistent,
+        false,
+        status.available_actions(false),
+    );
     drop(instances);
     Ok(response)
 }

@@ -38,14 +38,9 @@ fn provision_request_with_env() {
 #[test]
 fn provision_request_env_omitted() {
     let r = ProvisionRequest {
-        name: None,
         ram_mb: Some(2048),
         cpus: Some(2),
-        persistent: false,
-        env: None,
-        from: None,
-        networks: Vec::new(),
-        container: None,
+        ..Default::default()
     };
     let json = serde_json::to_string(&r).unwrap();
     assert!(!json.contains("env"));
@@ -77,14 +72,14 @@ fn provision_request_image_is_not_a_clone_source() {
 
 #[test]
 fn provision_response_roundtrip() {
-    let r = ProvisionResponse {
-        id: "vm-123".into(),
-        name: "co-work1".into(),
-        status: VmLifecycleState::Running,
-        persistent: true,
-        can_resume: false,
-        available_actions: vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete],
-    };
+    let r = ProvisionResponse::new(
+        "vm-123".into(),
+        "co-work1".into(),
+        VmLifecycleState::Running,
+        true,
+        false,
+        vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete],
+    );
     let json = serde_json::to_string(&r).unwrap();
     // The VM owner's socket is host-local; the gateway relays this body to
     // remote clients, so it must never name one.
