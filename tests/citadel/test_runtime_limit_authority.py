@@ -12,9 +12,9 @@ CONFIG = ROOT / "config/data/runtime-limits.toml"
 
 RUNTIME_LIMIT_RATIONALE = """\
 The proxy, trusted upstream broker, host DNS session and guest DNS forwarder
-must admit the same supported client burst. A traffic connection that is being
-replaced overlaps the retiring connection, so descriptor grants must preserve
-the config-owned overlap multiple instead of equalling the client count. Local
+must admit the same supported client burst. A pooled traffic client can have an
+active, idle and retiring connection at once, so descriptor grants must
+preserve the config-owned overlap multiple instead of equalling the client count. Local
 numeric ceilings previously let one stage accept work that the next stage shed,
 producing intermittent HTTP 502 responses under load.
 config/data/runtime-limits.toml is the authority; capsem-proto generates the
@@ -94,10 +94,10 @@ def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:
         + "\nnetwork.max_concurrent_clients must be an integer from 1 through 4096"
     )
     traffic_grants_per_client = config.get("network", {}).get("traffic_grants_per_client")
-    assert type(traffic_grants_per_client) is int and 2 <= traffic_grants_per_client <= 4, (
+    assert type(traffic_grants_per_client) is int and 3 <= traffic_grants_per_client <= 4, (
         RUNTIME_LIMIT_RATIONALE
-        + "\nnetwork.traffic_grants_per_client must cover an active connection "
-        "and its replacement"
+        + "\nnetwork.traffic_grants_per_client must cover active, idle and "
+        "retiring pooled connections"
     )
     descriptors_per_client = config.get("network", {}).get("file_descriptors_per_client")
     assert type(descriptors_per_client) is int and 3 <= descriptors_per_client <= 64, (

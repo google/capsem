@@ -51,9 +51,9 @@ fn write_runtime_limits() {
         .get("network")
         .and_then(|network| network.get("traffic_grants_per_client"))
         .and_then(toml::Value::as_integer)
-        .filter(|value| (2..=4).contains(value))
+        .filter(|value| (3..=4).contains(value))
         .unwrap_or_else(|| {
-            panic!("runtime limits: network.traffic_grants_per_client must be an integer between 2 and 4")
+            panic!("runtime limits: network.traffic_grants_per_client must be an integer between 3 and 4")
         });
     let descriptors_per_client = config
         .get("network")
