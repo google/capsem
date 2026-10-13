@@ -14,6 +14,11 @@ mod pinned;
 #[cfg(target_os = "linux")]
 pub use pinned::ProcessHandle;
 
+#[cfg(target_os = "macos")]
+mod pinned_macos;
+#[cfg(target_os = "macos")]
+pub use pinned_macos::ProcessHandle;
+
 /// A positive process identifier representable by the host kernel ABI.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ProcessId(NonZeroI32);

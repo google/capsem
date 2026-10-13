@@ -136,3 +136,11 @@ reason = "seccomp(2) filter install with TSYNC; nix has no seccomp"
 [foundation.raw_calls."crates/capsem-foundation/src/unix/process/pinned.rs::syscall"]
 fingerprint = "e7b0fa754e405a0d00ed0808bf38b8c6bedae2df72a82154e0bbd61d42990c93"
 reason = "Linux pidfd_open and pidfd_send_signal retain original process identity across exit and PID reuse; pinned nix 0.29 provides no wrapper for either syscall"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/process/pinned_macos.rs::proc_pidinfo"]
+fingerprint = "33ed8bd6a7cea2e0bef25a259110c71112d2e9e0bcebaef0297bf64e85b8af63"
+reason = "Darwin combined native BSD status and immutable process identity including zombies; nix has no libproc query for this fixed ABI"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/process/pinned_macos.rs::dlsym"]
+fingerprint = "806c2d3062055d3c1bf7a97779715cbadc6d136ffae2fa2c59141886d0222b3e"
+reason = "Resolve Darwin's PID-version guarded signal API only when present; macOS 14 lacks it and must retain exit observation without raw PID fallback; nix has no libproc symbol wrapper"
