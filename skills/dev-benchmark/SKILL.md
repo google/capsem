@@ -36,6 +36,7 @@ this repo took before it existed was taken on an unqualified machine.
 | `report` | every subject and its trend |
 | `protocol`, `protocol-delta`, `delta` | the scenario engine: host-direct vs guest-through-Capsem |
 | `http-load` | duration-driven async HTTP load with pooled keep-alive connections and cold/warm latency |
+| `dns-load` | duration-driven async DNS load with one persistent UDP socket per logical client |
 
 Modules: `schema.rs` (the record), `stats.rs` (**all** statistics),
 `store.rs` (SQLite), `collector.rs` (the subprocess protocol), `machine.rs`
@@ -97,7 +98,11 @@ and warm latency separate so connection admission and TLS setup cannot be
 mistaken for steady-state request cost. Each logical client owns one HTTP
 client and reuses its keep-alive connection: a shared pool may open multiple
 connections per logical client under load and invalidate the requested
-concurrency. The host collector also reads the
+concurrency. DNS load follows the same rule: the guest wrapper delegates to
+`capsem-bench-rs dns-load`, and each logical client reuses one UDP socket for
+the entire level. A Python thread per client or a fresh socket per query
+measures scheduler and socket churn rather than the DNS path. The host
+collector also reads the
 fully flushed service log and rejects proxy traffic-descriptor refusals that
 the HTTP client retried internally; zero client errors alone is insufficient.
 
