@@ -223,7 +223,7 @@ async fn run_control(
                                         commitment,
                                         ledger_grant,
                                         Path::new("capability:session-ledger"),
-                                        1024,
+                                        capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY,
                                     )
                                 })
                                 .await
