@@ -38,6 +38,7 @@ impl Registry {
                 vm: None,
                 lease: None,
                 spawn_intent: None,
+                closed_wall_ms: None,
             },
         };
         record.state = match record.state {

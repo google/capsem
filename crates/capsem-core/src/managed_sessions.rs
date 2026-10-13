@@ -83,6 +83,8 @@ struct Record {
     lease: Option<LeaseFacts>,
     #[serde(default)]
     spawn_intent: Option<VmBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    closed_wall_ms: Option<u64>,
 }
 
 /// A service-proven VM identity. Generation must identify the actual spawn,
@@ -210,6 +212,7 @@ impl Registry {
             vm: None,
             lease: None,
             spawn_intent: None,
+            closed_wall_ms: None,
         };
         self.write(&record)?;
         Ok(Reservation::New(Ticket {
@@ -278,6 +281,10 @@ impl Registry {
             lease.validate()?;
         }
         ensure!(
+            record.closed_wall_ms.is_none() || record.state == State::Closed,
+            "managed completion timestamp requires confirmed cleanup"
+        );
+        ensure!(
             match record.state {
                 State::Reserved | State::Closed => record.vm.is_none(),
                 State::Active => record.vm.is_some(),
@@ -289,7 +296,11 @@ impl Registry {
     }
 
     fn write(&self, record: &Record) -> Result<()> {
-        let bytes = serde_json::to_vec(record)?;
+        let mut record = record.clone();
+        if record.state == State::Closed && record.closed_wall_ms.is_none() {
+            record.closed_wall_ms = Some(LeaseClock::now()?.wall_ms);
+        }
+        let bytes = serde_json::to_vec(&record)?;
         let temporary_name = format!(".pending-managed-{}", capsem_crypto::uuid_v4());
         let mut temporary = self.root.create_new_private_file(temporary_name.as_ref())?;
         let result = (|| -> Result<()> {
@@ -317,6 +328,7 @@ impl Registry {
 pub mod controller;
 mod leases;
 mod recovery;
+mod retention;
 mod transitions;
 
 #[cfg(test)]

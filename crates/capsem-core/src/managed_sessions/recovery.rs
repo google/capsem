@@ -4,8 +4,14 @@ impl Registry {
     /// Private startup inventory, never a capability or create authority.
     /// Every candidate must be valid before callers receive an inventory.
     pub fn recovery_inventory(&self) -> Result<Vec<Snapshot>> {
-        use capsem_foundation::unix::contained::EntryKind;
         let _lease = self.lease()?;
+        Ok(self.inventory_records()?.iter().map(Snapshot::from).collect())
+    }
+
+    /// Caller holds the registry lease. Validate all entries before an owner
+    /// can mutate any of them during recovery or retention.
+    pub(super) fn inventory_records(&self) -> Result<Vec<Record>> {
+        use capsem_foundation::unix::contained::EntryKind;
         let mut inventory = Vec::new();
         for entry in self.root.entries()? {
             ensure!(
@@ -30,9 +36,9 @@ impl Registry {
             let record = self
                 .read(request_id)?
                 .context("managed ownership disappeared during inventory")?;
-            inventory.push(Snapshot::from(&record));
+            inventory.push(record);
         }
-        inventory.sort_by_key(Snapshot::request);
+        inventory.sort_by_key(|record| record.request);
         Ok(inventory)
     }
 

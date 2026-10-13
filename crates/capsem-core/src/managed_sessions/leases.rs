@@ -22,7 +22,7 @@ impl LeasePolicy {
 /// Sampled by the trusted service, never from an HTTP request body.
 #[derive(Clone, Copy, Debug)]
 pub struct LeaseClock {
-    wall_ms: u64,
+    pub(super) wall_ms: u64,
     monotonic: Instant,
 }
 

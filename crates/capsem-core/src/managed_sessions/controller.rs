@@ -192,6 +192,11 @@ impl Controller {
         self.io(Registry::recovery_inventory).await
     }
 
+    pub async fn prune_closed(&self, retention: Duration) -> ControlResult<usize> {
+        self.io(move |registry| registry.prune_closed(retention, LeaseClock::now()?))
+            .await
+    }
+
     /// Trusted startup recovery after prior continuations have retired. This
     /// owns cleanup only; it never polls create or renews the old lease.
     pub async fn recover(&self, request: Uuid, effects: Arc<dyn Effects>) -> ControlResult<Snapshot> {
