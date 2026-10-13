@@ -97,6 +97,14 @@ fn write_runtime_limits() {
     if ledger_batch_capacity > ledger_queue_capacity || ledger_queue_capacity % ledger_batch_capacity != 0 {
         panic!("runtime limits: ledger producer queue must be an exact multiple of admission batch capacity");
     }
+    let ledger_coalesce_wait_microseconds = config
+        .get("ledger")
+        .and_then(|ledger| ledger.get("admission_coalesce_wait_microseconds"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (1..=10_000).contains(value))
+        .unwrap_or_else(|| {
+            panic!("runtime limits: ledger.admission_coalesce_wait_microseconds must be an integer between 1 and 10000")
+        });
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     std::fs::write(
         format!("{out_dir}/runtime_limits.rs"),
@@ -113,7 +121,9 @@ fn write_runtime_limits() {
              /// Per-producer security-event queue derived from supported clients.\n\
              pub const LEDGER_PRODUCER_QUEUE_CAPACITY: usize = {ledger_queue_capacity};\n\
              /// Consecutive producer events coalesced into one ledger exchange.\n\
-             pub const LEDGER_ADMISSION_BATCH_CAPACITY: usize = {ledger_batch_capacity};\n"
+             pub const LEDGER_ADMISSION_BATCH_CAPACITY: usize = {ledger_batch_capacity};\n\
+             /// Maximum wait for an immediate follower before admitting a singleton.\n\
+             pub const LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS: u64 = {ledger_coalesce_wait_microseconds};\n"
         ),
     )
     .expect("runtime limits: write generated constants");

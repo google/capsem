@@ -17,3 +17,6 @@ producer_events_per_network_client = 2
 # One transport exchange carries this many consecutive producer events. The
 # queue must be an exact multiple so a full burst drains without a tail shape.
 admission_batch_capacity = 64
+# A lone event waits briefly for its immediate followers. This is far below a
+# network round trip while avoiding singleton IPC under concurrent bursts.
+admission_coalesce_wait_microseconds = 100
