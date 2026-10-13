@@ -57,6 +57,21 @@ Guest curl -> iptables REDIRECT -> capsem-net-proxy (guest, port 10443)
 | `crates/capsem-core/src/net/sni.rs` | SNI parser for TLS ClientHello |
 | `crates/capsem-agent/src/net_proxy.rs` | Guest-side TCP-to-vsock relay |
 
+## Cross-process network limits
+
+`config/data/runtime-limits.toml` owns the supported concurrent network-client
+ceiling. `capsem-proto/build.rs` validates that file and generates
+`NETWORK_CLIENT_CAPACITY`; TCP descriptor grants and both DNS sessions derive
+their capacities from that shared protocol constant.
+
+Never add a numeric connection ceiling to the proxy, service broker, core DNS
+session, or guest DNS forwarder. A limit duplicated across those processes can
+make one stage admit work that the next stage sheds, which previously produced
+intermittent HTTP 502 responses under load. Change the config-owned value,
+exercise every consumer through the shared constant, and run the official
+HTTPS and DNS load benchmarks twice before and twice after the change. User
+overrides belong in the typed settings contract tracked by issue #349.
+
 ## Content-Encoding: the systemic rule
 
 The proxy MUST handle response decompression as a general capability. This is not optional, not per-feature.

@@ -198,6 +198,11 @@ struct FunctionCall {
 - **RwLock for caches**: Cert authority uses `RwLock<HashMap>` -- many readers, rare writers. Use `read()` first, upgrade to `write()` only on cache miss.
 - **Arc for shared state**: VM state, proxy config, and telemetry handles are `Arc`-wrapped for sharing across tasks.
 - **Per-connection tasks**: The MITM proxy spawns a new tokio task per connection. Each task owns its TLS state and upstream connection. No shared mutable state between connections.
+- **Config-owned cross-process ceilings**: Network concurrency is owned by
+  `config/data/runtime-limits.toml` and generated into `capsem-proto`. Import
+  the shared protocol constant in host and guest consumers; never duplicate a
+  numeric capacity in individual crates. See `/dev-mitm-proxy` for the load
+  proof required when it changes.
 
 ### Host-serialization locks for per-host critical sections
 
