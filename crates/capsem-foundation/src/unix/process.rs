@@ -9,6 +9,11 @@ use nix::unistd::Pid;
 
 use super::errno;
 
+#[cfg(target_os = "linux")]
+mod pinned;
+#[cfg(target_os = "linux")]
+pub use pinned::ProcessHandle;
+
 /// A positive process identifier representable by the host kernel ABI.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ProcessId(NonZeroI32);
