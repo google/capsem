@@ -67,15 +67,11 @@ def measured_routes() -> list[str]:
     return list(config["benchmark"]["routes"]["measured"])
 
 
-def request_path(pattern: str, live_session_id: str | None = None) -> str:
-    """Resolve the measured subject to a seeded, successful fixture URL."""
-    if pattern in LIVE_ROUTES and live_session_id is None:
-        raise ValueError(f"measured route requires a live owner fixture: {pattern}")
-    session_id = live_session_id if pattern in LIVE_ROUTES else VM_ID
-    path = BODY_URL if pattern == BODY_ROUTE else pattern.replace("/vms/{id}/", f"/vms/{session_id}/")
-    if "{" in path or "}" in path:
-        raise ValueError(f"measured route has no successful fixture: {pattern}")
-    return path
+def request_path(route: str) -> str:
+    """Resolve a configured route template against the stopped VM fixture."""
+    if route == BODY_ROUTE:
+        return BODY_URL
+    return route.replace("{id}", VM_ID)
 
 
 @dataclass(frozen=True)
@@ -175,22 +171,25 @@ def main() -> int:
                 cpu_processes={"gateway": gateway_proc, "downstream_service": service_proc},
             ),
         )
-        with ExitStack() as fixtures:
-            live_id = None
-            if LIVE_ROUTES.intersection(routes):
-                live_id = fixtures.enter_context(
-                    debug_session(service, service.home_dir / "route-registry", "route-live-owner")
-                )
-            requests = {path: request_path(path, live_id) for path in routes}
-            for path in routes:
-                url = requests[path]
-                for target in targets:
-                    print(f"{target.label} {path}", file=sys.stderr)
-                    latencies, cpu = sample_warm_route(target, url, samples)
-                    cold_latencies = sample_cold_route(target, url, samples)
-                    metrics[f"{target.label}.{path}.latency_ms"] = {
-                        "unit": "milliseconds",
-                        "samples": latencies,
+        for path in routes:
+            concrete_path = request_path(path)
+            for target in targets:
+                print(f"{target.label} {path}", file=sys.stderr)
+                latencies, cpu = sample_warm_route(target, concrete_path, samples)
+                cold_latencies = sample_cold_route(target, concrete_path, samples)
+                metrics[f"{target.label}.{path}.latency_ms"] = {
+                    "unit": "milliseconds",
+                    "samples": latencies,
+                }
+                metrics[f"{target.label}.{path}.cold_latency_ms"] = {
+                    "unit": "milliseconds",
+                    "samples": cold_latencies,
+                }
+                for process_name, cpu_seconds in cpu.items():
+                    suffix = "cpu_s" if process_name == target.label else f"{process_name}_cpu_s"
+                    metrics[f"{target.label}.{path}.{suffix}"] = {
+                        "unit": "seconds",
+                        "samples": [cpu_seconds],
                     }
                     metrics[f"{target.label}.{path}.cold_latency_ms"] = {
                         "unit": "milliseconds",

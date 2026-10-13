@@ -3018,7 +3018,6 @@ measured = [
     "/vms/{id}/credential-grants",
     "/vms/{id}/bodies/{event_id}",
     "/vms/{id}/status",
-    "/vms/{id}/exposures",
     "/vms/{id}/security/status",
     "/status",
     "/version",
@@ -3034,6 +3033,10 @@ measured = [
     "/update/status",
 ]
 unmeasured = [
+    # Exposure inventory is owned by a live VM process. The quick routes
+    # collector uses a stopped workspace so it can stay host-only; Ironbank's
+    # workload-surface fixture measures the real owner round trip.
+    "/vms/{id}/exposures",
     # Standalone proxy lifecycle mutations require a supervised worker fixture;
     # their functional acceptance owns successful create, lease, and teardown.
     "/proxies",
