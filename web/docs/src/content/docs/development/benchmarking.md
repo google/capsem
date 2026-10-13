@@ -39,6 +39,22 @@ comparison keeps such movement visible as `tiny` or `noisy`; only a material
 change outside the baseline operating envelope is a regression. Route health
 ceilings catch gross drift and are not evidence of a comparative speedup.
 
+### Control API routes (`routes`)
+
+The route collector measures each configured read-only route directly over the
+service UDS and through the authenticated TCP gateway. It records warm and cold
+sequential latency, then drives 512 requests through 16 kept-alive concurrent
+clients and records per-request latency, aggregate RPS, and CPU for every
+participating process. The quick lane uses 64 requests but is diagnostic only.
+
+The route inventory is derived from the registered service and gateway route
+tables. Every endpoint must be classified as measured, explicitly unmeasured,
+or internal. The generic load lane excludes mutations and routes that require
+external network state; their lifecycle or protocol owner supplies the safe
+fixture instead. This means `routes` provides RPS for every route in its
+measured class, rather than claiming that arbitrary mutations are safe to
+replay as a load test.
+
 ## Boot timing
 
 Boot timing is measured independently from `capsem-bench`. The guest init script (`capsem-init`) records the wall-clock duration of each boot stage using `/proc/uptime`. The PTY agent sends these measurements to the host over the vsock control channel, where they are displayed as an inline table with a proportional bar chart.
