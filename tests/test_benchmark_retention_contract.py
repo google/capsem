@@ -6,10 +6,10 @@ import importlib.util
 import json
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 from helpers.benchmark_ratchet import (
     BenchmarkCategory,
     BenchmarkMetric,
@@ -177,7 +177,7 @@ def test_shared_host_timing_ratchets_use_the_least_contended_sample() -> None:
 
     for metric in (
         BenchmarkMetric.LIFECYCLE_PROVISION,
-        BenchmarkMetric.LIFECYCLE_READY,
+        BenchmarkMetric.LIFECYCLE_STARTUP,
         BenchmarkMetric.LIFECYCLE_EXEC,
         BenchmarkMetric.LIFECYCLE_DELETE,
         BenchmarkMetric.FORK_DURATION,
@@ -190,6 +190,17 @@ def test_shared_host_timing_ratchets_use_the_least_contended_sample() -> None:
             baseline=baseline,
             factor=1.2,
         )
+
+
+def test_lifecycle_startup_metric_spans_create_and_ready_boundary() -> None:
+    document = {
+        "operations": {
+            "provision_ms": {"min": 40.0, "values": [40.0, 70.0, 50.0]},
+            "exec_ready_ms": {"min": 30.0, "values": [80.0, 30.0, 60.0]},
+        }
+    }
+
+    assert metric_value(document, BenchmarkMetric.LIFECYCLE_STARTUP) == 100.0
 
 
 def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> None:
@@ -224,7 +235,7 @@ def test_release_benchmarks_use_typed_evidence_instead_of_authored_limits() -> N
     categories = {
         BenchmarkCategory.LIFECYCLE: (
             BenchmarkMetric.LIFECYCLE_PROVISION,
-            BenchmarkMetric.LIFECYCLE_READY,
+            BenchmarkMetric.LIFECYCLE_STARTUP,
             BenchmarkMetric.LIFECYCLE_EXEC,
             BenchmarkMetric.LIFECYCLE_DELETE,
         ),

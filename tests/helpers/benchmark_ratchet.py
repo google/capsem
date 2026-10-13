@@ -26,11 +26,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import tomllib
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+import tomllib
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -92,7 +92,10 @@ class BenchmarkMetric(StrEnum):
     # can only make another sample slower. A real regression still raises every
     # floor. Image size is deterministic and therefore retains its maximum.
     LIFECYCLE_PROVISION = "operations.provision_ms.min"
-    LIFECYCLE_READY = "operations.exec_ready_ms.min"
+    # Provision returns once the VM owner has launched; exec-ready ends the
+    # same startup once the guest can run commands. Refactors may move work
+    # across that response boundary, so the stable capability is their sum.
+    LIFECYCLE_STARTUP = "operations.startup_ms.min"
     LIFECYCLE_EXEC = "operations.exec_ms.min"
     LIFECYCLE_DELETE = "operations.delete_ms.min"
     FORK_DURATION = "fork.fork_ms.min"
@@ -195,6 +198,16 @@ def _regression_config(project_root: Path) -> dict[str, Any]:
 
 
 def metric_value(document: dict[str, Any], metric: BenchmarkMetric) -> float:
+    if metric == BenchmarkMetric.LIFECYCLE_STARTUP:
+        operations = document["operations"]
+        if "startup_ms" in operations:
+            return float(operations["startup_ms"]["min"])
+        provision = operations["provision_ms"]
+        ready = operations["exec_ready_ms"]
+        if "values" in provision and "values" in ready:
+            pairs = zip(provision["values"], ready["values"], strict=True)
+            return float(min(create + exec_ready for create, exec_ready in pairs))
+        return float(provision["min"] + ready["min"])
     value: Any = document
     for component in metric.value.split("."):
         value = value[component]
