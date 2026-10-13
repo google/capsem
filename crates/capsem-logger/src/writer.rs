@@ -815,16 +815,14 @@ fn writer_loop(
             match rx.recv_timeout(interval.saturating_sub(last_disk_flush.elapsed())) {
                 Ok(message) => Some(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // A failed attempt retains its dirty rows but must not
-                    // keep receiving against an already-expired deadline.
-                    last_disk_flush = Instant::now();
-                    if let Err(error) = flush_dirty_tables_to_disk(
+                    if let Err(error) = flush_dirty_tables_to_disk_recorded(
                         &conn,
                         &mut dirty_tables,
                         &mut flush_watermarks,
                         db_path.as_deref(),
                         &mut bodies,
                         tally.counters(),
+                        dirty_ops,
                     ) {
                         warn!(error = %error, "db interval flush failed");
                     } else {
@@ -902,14 +900,14 @@ fn writer_loop(
             Err(format!("db rejected {rejected_ops} accepted write operations"))
         };
         if disk_flush_due {
-            last_disk_flush = Instant::now();
-            match flush_dirty_tables_to_disk(
+            match flush_dirty_tables_to_disk_recorded(
                 &conn,
                 &mut dirty_tables,
                 &mut flush_watermarks,
                 db_path.as_deref(),
                 &mut bodies,
                 tally.counters(),
+                dirty_ops,
             ) {
                 Ok(()) => {
                     dirty_ops = 0;
@@ -942,13 +940,14 @@ fn writer_loop(
 
     // The open block ends with its FINAL segment, committed by this flush.
     bodies.close_block();
-    if let Err(error) = flush_dirty_tables_to_disk(
+    if let Err(error) = flush_dirty_tables_to_disk_recorded(
         &conn,
         &mut dirty_tables,
         &mut flush_watermarks,
         db_path.as_deref(),
         &mut bodies,
         tally.counters(),
+        dirty_ops,
     ) {
         warn!(error = %error, "db shutdown dirty table flush failed");
         // There is no next flush to retry into, so the bodies still waiting
@@ -1044,6 +1043,37 @@ fn flush_dirty_tables_to_disk(
         "db disk flush completed"
     );
     Ok(())
+}
+
+fn flush_dirty_tables_to_disk_recorded(
+    conn: &Connection,
+    dirty_tables: &mut BTreeSet<&'static str>,
+    flush_watermarks: &mut schema::MemoryFlushWatermarks,
+    db_path: Option<&Path>,
+    bodies: &mut BodyArchive,
+    counters: &LedgerCounters,
+    pending_ops: usize,
+) -> rusqlite::Result<()> {
+    let table_count = dirty_tables.len();
+    let started = Instant::now();
+    let result = flush_dirty_tables_to_disk(conn, dirty_tables, flush_watermarks, db_path, bodies, counters);
+    let elapsed = started.elapsed();
+    let status = if result.is_ok() { "ok" } else { "error" };
+    tracing::debug!(
+        target: "capsem.db",
+        duration_ms = elapsed.as_secs_f64() * 1000.0,
+        pending_ops,
+        table_count,
+        status,
+        "db disk flush completed"
+    );
+    if elapsed >= DISK_FLUSH_INTERVAL {
+        warn!(
+            duration_ms = elapsed.as_secs_f64() * 1000.0,
+            pending_ops, table_count, status, "db disk flush exceeded its configured interval"
+        );
+    }
+    result
 }
 
 /// Execute through the connection's prepared-statement cache.
