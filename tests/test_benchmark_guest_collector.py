@@ -22,6 +22,14 @@ def collector() -> dict:
     return runpy.run_path(str(COLLECTOR))
 
 
+class ResourceSamplerStub:
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> dict:
+        return {}
+
+
 def test_guest_command_forwards_only_owned_benchmark_controls(monkeypatch) -> None:
     monkeypatch.setenv("CAPSEM_BENCH_CONCURRENCY", "1,8")
     monkeypatch.setenv("CAPSEM_BENCH_DURATION_S", "0.5")
@@ -145,6 +153,9 @@ def test_guest_result_preserves_zero_error_proof(monkeypatch, capsys) -> None:
     monkeypatch.setitem(
         main.__globals__, "wait_exec_ready", lambda *args, **kwargs: True
     )
+    monkeypatch.setitem(
+        main.__globals__, "process_tree_sampler", lambda service: ResourceSamplerStub()
+    )
     monkeypatch.setattr(sys, "argv", ["dns-load"])
 
     assert main() == 0
@@ -153,6 +164,7 @@ def test_guest_result_preserves_zero_error_proof(monkeypatch, capsys) -> None:
     assert result["metrics"] == {
         "concurrency_levels.0.error_ratio": {"unit": "ratio", "samples": [0.0]},
         "concurrency_levels.0.errors": {"unit": "count", "samples": [0]},
+        "concurrency_levels.0.requests": {"unit": "count", "samples": [500]},
         "concurrency_levels.0.rps": {"unit": "requests_per_second", "samples": [50.0]},
     }
     assert stopped == [True]
@@ -201,6 +213,9 @@ def test_guest_result_rejects_one_failed_request(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(helpers.mock_server, "stop_process", lambda proc: None)
     monkeypatch.setitem(
         main.__globals__, "wait_exec_ready", lambda *args, **kwargs: True
+    )
+    monkeypatch.setitem(
+        main.__globals__, "process_tree_sampler", lambda service: ResourceSamplerStub()
     )
     monkeypatch.setattr(sys, "argv", ["mitm-load"])
 

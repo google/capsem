@@ -30,7 +30,7 @@ Output schema:
         "p95_ms": 35.0,
         "p99_ms": 41.0,
         "p999_ms": 70.0,
-        "rss_peak_mb": 132.0
+        "response_body_bytes": 29616
       },
       ...
     ]
@@ -91,8 +91,8 @@ class _Session:
         try:
             self._connection.request("GET", self._path)
             response = self._connection.getresponse()
-            response.read()
-            return response.status
+            body = response.read()
+            return response.status, len(body)
         except Exception:
             self.close()
             raise
@@ -107,13 +107,13 @@ def _do_request(session):
     """Single HTTP GET; latency in ms, with non-2xx responses counted as errors."""
     start = time.monotonic()
     try:
-        status = session.get()
+        status, response_bytes = session.get()
         elapsed_ms = (time.monotonic() - start) * 1000
         error = None if 200 <= status < 300 else f"HTTP {status}"
-        return (elapsed_ms, status, error)
+        return (elapsed_ms, status, error, response_bytes)
     except (OSError, http.client.HTTPException) as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
-        return (elapsed_ms, 0, str(exc))
+        return (elapsed_ms, 0, str(exc), 0)
 
 
 def _drive_at_concurrency(url, concurrency, duration_s):
@@ -146,12 +146,16 @@ def _summarize(results, concurrency, duration_s):
     latencies = sorted(r[0] for r in results if r[2] is None)
     errors = sum(1 for r in results if r[2] is not None)
     error_distribution = Counter(r[2] for r in results if r[2] is not None)
+    response_body_bytes = sum(r[3] for r in results if r[2] is None)
     return summarize_load_level(
         latencies,
         errors,
         concurrency,
         duration_s,
-        extra={"error_distribution": dict(error_distribution)},
+        extra={
+            "error_distribution": dict(error_distribution),
+            "response_body_bytes": response_body_bytes,
+        },
     )
 
 

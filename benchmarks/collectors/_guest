@@ -33,11 +33,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import psutil
 from helpers.constants import (
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
 )
+from helpers.process_resources import ProcessTreeSampler
 from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
 # Units the guest reports, by the suffix its key carries.
@@ -85,6 +87,11 @@ def guest_cpus(mode: str, host_cpus: int | None = None) -> int:
 
 MITM_FIXTURE_HOST = "fixture.capsem.test"
 MITM_FIXTURE_TARGET = f"https://{MITM_FIXTURE_HOST}/tiny"
+
+
+def process_tree_sampler(service: ServiceInstance) -> ProcessTreeSampler:
+    """Measure the service and every confined per-VM descendant."""
+    return ProcessTreeSampler(psutil.Process(service.proc.pid))
 
 
 def mitm_fixture_corp_toml(ready: dict) -> str:
@@ -171,6 +178,10 @@ def load_quality_metrics(section: dict) -> dict[str, dict]:
             "unit": "ratio",
             "samples": [errors / total if total else 0.0],
         }
+        metrics[f"concurrency_levels.{index}.requests"] = {
+            "unit": "count",
+            "samples": [total],
+        }
     return metrics
 
 
@@ -209,15 +220,23 @@ def main() -> int:
             raise RuntimeError(f"{name} never became exec-ready")
 
         print(f"running capsem-bench {mode}", file=sys.stderr)
-        benchmark_result = client.post(
-            f"/vms/{name}/exec",
-            {
-                "target": "vm",
-                "command": guest_command(mode),
-                "timeout_secs": args.timeout,
-            },
-            timeout=args.timeout + 10,
-        )
+        resources = process_tree_sampler(service) if mode in LOAD_MODES else None
+        resource_metrics = {}
+        if resources is not None:
+            resources.start()
+        try:
+            benchmark_result = client.post(
+                f"/vms/{name}/exec",
+                {
+                    "target": "vm",
+                    "command": guest_command(mode),
+                    "timeout_secs": args.timeout,
+                },
+                timeout=args.timeout + 10,
+            )
+        finally:
+            if resources is not None:
+                resource_metrics = resources.stop()
         if not benchmark_result or benchmark_result.get("exit_code") != 0:
             raise RuntimeError(
                 f"capsem-bench {mode} failed: "
@@ -272,6 +291,7 @@ def main() -> int:
         if (unit := unit_for(key)) is not None
     }
     measured.update(load_quality_metrics(section))
+    measured.update(resource_metrics)
     if not measured:
         raise RuntimeError(
             f"capsem-bench {mode} reported {len(numbers)} numbers, none of which "

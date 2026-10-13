@@ -8,21 +8,22 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "guest" / "artifacts"))
 
 from capsem_bench import __main__ as bench_main
-from capsem_bench import load_harness, mitm_load
+from capsem_bench import dns_load, load_harness, mitm_load
 
 
 @pytest.mark.parametrize("status", [200, 204, 302, 403, 500])
 def test_mitm_load_counts_http_failures(status):
-    session = types.SimpleNamespace(get=lambda: status)
-    elapsed, observed_status, error = mitm_load._do_request(session)
+    session = types.SimpleNamespace(get=lambda: (status, 24))
+    elapsed, observed_status, error, response_bytes = mitm_load._do_request(session)
     assert elapsed >= 0
     assert observed_status == status
     assert error == (None if 200 <= status < 300 else f"HTTP {status}")
+    assert response_bytes == 24
 
 
 def test_mitm_load_excludes_failed_latency_and_reports_error_ratio():
     row = mitm_load._summarize(
-        [(5.0, 200, None), (100.0, 0, "timed out")],
+        [(5.0, 200, None, 24), (100.0, 0, "timed out", 0)],
         concurrency=2,
         duration_s=10,
     )
@@ -32,6 +33,7 @@ def test_mitm_load_excludes_failed_latency_and_reports_error_ratio():
     assert row["error_ratio"] == 0.5
     assert row["rps"] == 0.1
     assert row["p50_ms"] == 5.0
+    assert row["response_body_bytes"] == 24
     assert row["error_distribution"] == {"timed out": 1}
 
 
@@ -40,8 +42,8 @@ def test_mitm_load_rejects_one_failed_request(monkeypatch):
         mitm_load,
         "_drive_at_concurrency",
         lambda url, concurrency, duration_s: [
-            (5.0, 200, None),
-            (100.0, 0, "timed out"),
+            (5.0, 200, None, 24),
+            (100.0, 0, "timed out", 0),
         ],
     )
 
@@ -51,6 +53,17 @@ def test_mitm_load_rejects_one_failed_request(monkeypatch):
             concurrency_levels=[1],
             duration_s=1,
         )
+
+
+def test_dns_load_reports_application_wire_bytes() -> None:
+    row = dns_load._summarize(
+        [(1.0, 0, None, 40, 56), (2.0, 3, None, 40, 40)],
+        concurrency=2,
+        duration_s=1,
+    )
+
+    assert row["request_bytes"] == 80
+    assert row["response_bytes"] == 96
 
 
 class _StubConsole:

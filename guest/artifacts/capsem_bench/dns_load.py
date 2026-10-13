@@ -31,7 +31,8 @@ share machinery:
         "p95_ms": 3.4,
         "p99_ms": 5.6,
         "p999_ms": 12.0,
-        "rss_peak_mb": 12.0,
+        "request_bytes": 49360,
+        "response_bytes": 69104,
         "decision_distribution": {"denied": 1234}
       },
       ...
@@ -155,14 +156,14 @@ def _do_query(qname: str, qtype: int, timeout_s: float):
         elapsed_ms = (time.monotonic() - start) * 1000
         # Sanity: response id must match query id.
         if len(resp) >= 2 and (resp[0] << 8 | resp[1]) != qid:
-            return (elapsed_ms, 0, f"id mismatch: query=0x{qid:04x}")
-        return (elapsed_ms, _decode_rcode(resp), None)
+            return (elapsed_ms, 0, f"id mismatch: query=0x{qid:04x}", len(pkt), len(resp))
+        return (elapsed_ms, _decode_rcode(resp), None, len(pkt), len(resp))
     except TimeoutError:
         elapsed_ms = (time.monotonic() - start) * 1000
-        return (elapsed_ms, 0, "timeout")
+        return (elapsed_ms, 0, "timeout", len(pkt), 0)
     except OSError as exc:
         elapsed_ms = (time.monotonic() - start) * 1000
-        return (elapsed_ms, 0, str(exc))
+        return (elapsed_ms, 0, str(exc), len(pkt), 0)
     finally:
         sock.close()
 
@@ -195,7 +196,7 @@ def _summarize(results, concurrency, duration_s):
     latencies = [r[0] for r in results if r[2] is None]
     errors = sum(1 for r in results if r[2] is not None)
     decisions = {}
-    for _lat, rcode, err in results:
+    for _lat, rcode, err, _request_bytes, _response_bytes in results:
         if err is not None:
             decisions["transport_error"] = decisions.get("transport_error", 0) + 1
         else:
@@ -206,7 +207,11 @@ def _summarize(results, concurrency, duration_s):
         errors,
         concurrency,
         duration_s,
-        extra={"decision_distribution": decisions},
+        extra={
+            "decision_distribution": decisions,
+            "request_bytes": sum(row[3] for row in results),
+            "response_bytes": sum(row[4] for row in results),
+        },
     )
 
 
