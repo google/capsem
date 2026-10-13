@@ -391,3 +391,22 @@ async fn installed_grants_never_fall_back_to_a_direct_target() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn brokered_resolution_denial_survives_the_connection_boundary() {
+    let grants = TestGrants {
+        address: "127.0.0.1:9".parse().unwrap(),
+        next_id: AtomicU64::new(1),
+        selection_releases: Arc::new(AtomicUsize::new(0)),
+        stream_releases: Arc::new(AtomicUsize::new(0)),
+        policy_digests: Arc::new(Mutex::new(Vec::new())),
+    };
+    let target = UpstreamTarget::Unresolved("upstream TCP resolution denied: Capacity".into());
+
+    let error = match target.connect_with_grants(Some(&grants), "blake3:test").await {
+        Ok(_) => panic!("unresolved broker target connected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert_eq!(error.to_string(), "upstream TCP resolution denied: Capacity");
+}

@@ -331,6 +331,9 @@ impl UpstreamTarget {
             let (stream, pinned) = self.connect().await?;
             return Ok((GrantedTcpStream::new(stream, || {}), pinned));
         };
+        if let Self::Unresolved(error) = self {
+            return Err(io::Error::new(io::ErrorKind::NotFound, error.clone()));
+        }
         let Self::Granted {
             host,
             port,
