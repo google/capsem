@@ -439,7 +439,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
             }
         }
         info!("service shutting down, stopping VM processes and draining replies");
-        kill_all_vm_processes(&shutdown_state);
+        kill_all_vm_processes(&shutdown_state).await;
     })
     .await;
 
@@ -583,69 +583,34 @@ pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
 /// NOT orphan running guests. Without this, each service shutdown leaked one
 /// `capsem-process` per live VM, which in turn held Apple VZ memory -- making
 /// long test runs increasingly slow until boots timed out.
-pub(super) fn kill_all_vm_processes(state: &ServiceState) {
-    let pids_and_sockets: Vec<(u32, PathBuf, PathBuf, bool)> = {
-        let instances = state.instances.lock().unwrap();
-        instances
-            .values()
-            .map(|i| (i.pid, i.uds_path.clone(), i.session_dir.clone(), i.persistent))
-            .collect()
-    };
-    // Nothing to reap -- skip the grace sleep. `_ensure-service` only waits
-    // 500ms before respawning the service, so every unnecessary ms here
-    // widens the orphan-gateway race.
-    if pids_and_sockets.is_empty() {
-        return;
-    }
-    let mut signaled_any_vm = false;
-    let mut probe = process_control::ProcessProbe::new("probe-vm-during-service-shutdown");
-    for (pid, uds_path, session_dir, persistent) in &pids_and_sockets {
-        let pid = *pid;
-        if pid > 0 {
-            // SIGTERM first so capsem-process gets a chance to run its own cleanup
-            // (save state, unmount virtiofs). Graceful_shutdown is already holding
-            // the axum server open briefly so a short wait is acceptable.
-            process_control::send_or_log(pid, process_control::Signal::Terminate, "service-shutdown-vm");
-            signaled_any_vm = true;
-        }
-        let _ = std::fs::remove_file(uds_path);
-        remove_instance_sentinels(uds_path);
-        if !persistent {
-            let _ = std::fs::remove_dir_all(session_dir);
-        }
-    }
-    if !signaled_any_vm {
-        return;
-    }
-
-    // Bounded wait: poll for up to 2 seconds
-    let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(2);
-    let poll_interval = std::time::Duration::from_millis(100);
-
-    loop {
-        let survivors: Vec<u32> = pids_and_sockets
-            .iter()
-            .map(|(pid, _, _, _)| *pid)
-            .filter(|&pid| pid > 0 && probe.is_alive(pid))
-            .collect();
-
-        if survivors.is_empty() {
-            break;
-        }
-
-        if start.elapsed() >= timeout {
-            tracing::warn!(
-                count = survivors.len(),
-                "some VMs survived SIGTERM, escalating to SIGKILL"
-            );
-            for pid in survivors {
-                process_control::send_or_log(pid, process_control::Signal::Kill, "escalate-service-shutdown-vm");
+pub(super) async fn kill_all_vm_processes(state: &Arc<ServiceState>) {
+    let targets: Vec<_> = state
+        .instances
+        .lock()
+        .unwrap()
+        .values()
+        .map(|instance| (instance.id.clone(), instance.generation))
+        .collect();
+    for (id, generation) in targets {
+        match vm_lifecycle::shutdown_vm_process(state, &id, ShutdownMode::ServiceStop, Some(generation)).await {
+            Ok(Some((directory, false, _))) => {
+                if let Err(error) = state
+                    .off_worker(move |state| state.delete_session_dir(&directory))
+                    .await
+                    .and_then(|result| {
+                        result.map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+                    })
+                {
+                    tracing::warn!(id,error = %error.1,"service shutdown session cleanup failed");
+                }
             }
-            break;
+            Ok(_) => {}
+            Err(error) => tracing::warn!(
+                id,
+                status = error.0.as_u16(),
+                "service shutdown original child retirement failed"
+            ),
         }
-
-        std::thread::sleep(poll_interval);
     }
 }
 

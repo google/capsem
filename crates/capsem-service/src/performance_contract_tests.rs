@@ -1,5 +1,5 @@
 use super::asset_routes::asset_manifest_status;
-use super::{process_exit_poll_options, tests, PollOpts, ShutdownMode};
+use super::{tests, ShutdownMode};
 use std::sync::Arc;
 
 #[test]
@@ -22,17 +22,6 @@ fn asset_manifest_status_shares_warm_bytes_and_invalidates_same_size_edits() {
         !Arc::ptr_eq(&first, &changed),
         "same-size manifest byte edits must invalidate the cache"
     );
-}
-
-#[test]
-fn process_exit_poll_does_not_use_the_generic_exponential_backoff() {
-    let timeout = std::time::Duration::from_secs(1);
-    let exit = process_exit_poll_options(timeout);
-    let generic = PollOpts::new("generic", timeout);
-
-    assert_eq!(exit.timeout, timeout);
-    assert_eq!(exit.initial_delay, exit.max_delay);
-    assert!(exit.max_delay < generic.max_delay);
 }
 
 #[test]

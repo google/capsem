@@ -188,38 +188,55 @@ pub(super) async fn acquire_vz_host_lock(
     }
 }
 
-/// Wait for a process to exit, force-killing after timeout.
-/// Wait for a VM process to exit, SIGKILLing it if it outstays `timeout`.
-///
-/// Returns whether it left on its own. A caller that asked to retain state
-/// needs to know: everything the guest had not flushed when it was killed is
-/// gone, and reporting that stop as a success is how acknowledged writes went
-/// missing without a word.
-pub(super) async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) -> bool {
-    if pid == 0 {
-        return true;
+/// Await the original child owner, then force its exact unreaped child after timeout.
+/// The exit publication is separate from reaper filesystem retirement because
+/// suspend/restore can hold the lifecycle lock that retirement must acquire.
+pub(super) async fn wait_for_process_exit(
+    state: &ServiceState,
+    id: &str,
+    generation: uuid::Uuid,
+    timeout: std::time::Duration,
+) -> Result<bool, AppError> {
+    match tokio::time::timeout(timeout, state.retirements.wait_exit(id, generation)).await {
+        Ok(result) => return result.map_err(child_owner_error),
+        Err(_) => tracing::warn!(id, "original VM child did not exit within timeout"),
     }
-    let mut probe = process_control::ProcessProbe::new("wait-for-vm-process-exit");
-    if poll_until(process_exit_poll_options(timeout), || {
-        std::future::ready(probe.is_gone(pid).then_some(()))
-    })
-    .await
-    .is_ok()
-    {
-        return true;
-    }
-    tracing::warn!(pid, "VM process did not exit within timeout, sending SIGKILL");
-    process_control::send_or_log(pid, process_control::Signal::Kill, "vm-process-timeout-escalation");
-    if poll_until(
-        PollOpts::new("vm-process-sigkill", std::time::Duration::from_secs(2)),
-        || std::future::ready(probe.is_gone(pid).then_some(())),
+    signal_vm_process(state, id, generation, process_control::Signal::Kill).await?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        state.retirements.wait_exit(id, generation),
     )
     .await
-    .is_err()
-    {
-        tracing::error!(pid, "VM process survived SIGKILL");
-    }
-    false
+    .map_err(|_| {
+        AppError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "original VM child exit not confirmed".into(),
+        )
+    })?
+    .map_err(child_owner_error)?;
+    Ok(false)
+}
+
+pub(super) async fn signal_vm_process(
+    state: &ServiceState,
+    id: &str,
+    generation: uuid::Uuid,
+    signal: process_control::Signal,
+) -> Result<(), AppError> {
+    state
+        .retirements
+        .signal(id, generation, signal)
+        .await
+        .map_err(child_owner_error)?;
+    Ok(())
+}
+
+fn child_owner_error(error: anyhow::Error) -> AppError {
+    tracing::warn!(%error,"original VM child authority unavailable");
+    AppError(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "original VM child authority unavailable".into(),
+    )
 }
 
 /// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
@@ -297,6 +314,7 @@ pub(super) async fn shutdown_vm_process(
     // Claim before signalling. The watcher may already have claimed a process
     // which exited independently; otherwise this intentional shutdown owns
     // the record and the watcher must not preserve it as a crash.
+    state.retirements.is_live(id, generation).map_err(child_owner_error)?;
     let shutdown_claimed = claim_shutdown_instance(state, id, generation);
     if !shutdown_claimed {
         // A watcher or replacement owns this ID now. A stale observation has
@@ -331,22 +349,22 @@ pub(super) async fn shutdown_vm_process(
                     }
                 }
             }
-        } else if pid > 0 {
-            process_control::send_or_log(pid, process_control::Signal::Terminate, "vm-ipc-shutdown-fallback");
+        } else {
+            signal_vm_process(state, id, generation, process_control::Signal::Terminate).await?;
         }
-    } else if pid > 0 {
+    } else {
         // Destructive delete has no state to flush. SIGKILL also prevents the
         // ordinary signal handler from doing a full workspace reconciliation
         // whose output would be deleted immediately afterward.
-        process_control::send_or_log(pid, process_control::Signal::Kill, "discard-vm-process");
+        signal_vm_process(state, id, generation, process_control::Signal::Kill).await?;
     }
 
     tracing::debug!(id, shutdown_claimed, "shutdown_vm_process removing instance");
 
-    // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
+    // Await original child exit (owned SIGKILL fallback), then clean up
     // sockets. Synchronous: callers must not see "shutdown returned" while
     // the process is still alive (leak detector + suspend/resume rely on it).
-    let exited_cleanly = wait_for_process_exit(pid, mode.exit_timeout()).await;
+    let exited_cleanly = wait_for_process_exit(state, id, generation, mode.exit_timeout()).await?;
     if !exited_cleanly && mode.retains_state() {
         // The guest was killed mid-sync on a shutdown that promised to keep
         // its state. Whatever had not reached the disk is gone, and this is
@@ -397,7 +415,7 @@ pub(super) async fn handle_suspend(
     // The host-wide flock also serializes pytest-xdist service processes.
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
-    let (uds_path, pid) = {
+    let (uds_path, generation) = {
         let mut instances = state.instances.lock().unwrap();
         let i = instances
             .get_mut(&id)
@@ -408,7 +426,7 @@ pub(super) async fn handle_suspend(
                 "ephemeral VMs cannot be suspended (persist first)".into(),
             ));
         }
-        let result = (i.uds_path.clone(), i.pid);
+        let result = (i.uds_path.clone(), i.generation);
         drop(instances);
         result
     };
@@ -482,9 +500,8 @@ pub(super) async fn handle_suspend(
         // would leak a wedged Apple VZ instance (seen in the wild: 945
         // orphan temp dirs accumulated over one test run). SIGKILL the
         // child, reclaim the instance slot, and surface the error.
-        if pid > 0 {
-            process_control::send_or_log(pid, process_control::Signal::Kill, "failed-suspend-cleanup");
-        }
+        signal_vm_process(&state, &id, generation, process_control::Signal::Kill).await?;
+        wait_for_process_exit(&state, &id, generation, std::time::Duration::from_millis(500)).await?;
         tracing::warn!(id, outcome, "handle_suspend removing failed instance");
         state.instances.lock().unwrap().remove(&id);
         let _ = std::fs::remove_file(&uds_path);
@@ -496,7 +513,7 @@ pub(super) async fn handle_suspend(
     // released its VZ checkpoint and VirtioFS share before resume can spawn a
     // replacement. The helper bounds natural exit, then SIGKILLs and waits for
     // reaping instead of guessing that a fixed post-kill sleep was sufficient.
-    wait_for_process_exit(pid, std::time::Duration::from_millis(500)).await;
+    wait_for_process_exit(&state, &id, generation, std::time::Duration::from_millis(500)).await?;
 
     tracing::warn!(id, "handle_suspend (success) removing instance");
     state.instances.lock().unwrap().remove(&id);

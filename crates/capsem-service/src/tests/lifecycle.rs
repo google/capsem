@@ -523,43 +523,6 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
         .starts_with("checkpoint.vzsave.failed-restore-"));
 }
 
-#[tokio::test]
-async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    let vm_id = new_persistent_vm_id();
-    let session_dir = state.run_dir.join("persistent").join(&vm_id);
-    std::fs::create_dir_all(&session_dir).unwrap();
-    let uds_path = state.run_dir.join("instances").join(format!("{vm_id}.sock"));
-    std::fs::create_dir_all(uds_path.parent().unwrap()).unwrap();
-    std::fs::write(&uds_path, b"stale socket").unwrap();
-    std::fs::write(uds_path.with_extension("ready"), b"stale ready").unwrap();
-
-    state.instances.lock().unwrap().insert(
-        vm_id.clone(),
-        InstanceInfo {
-            id: vm_id.clone(),
-            name: "resume-vm".into(),
-            uds_path: uds_path.clone(),
-            session_dir,
-            pid: 0,
-            persistent: true,
-            ..test_instance()
-        },
-    );
-
-    stop_failed_restore_process_under_lock(&state, &vm_id).await;
-
-    assert!(
-        !state.instances.lock().unwrap().contains_key(&vm_id),
-        "failed warm restore must not remain registered before cold fallback"
-    );
-    assert!(!uds_path.exists(), "stale UDS socket should be removed");
-    assert!(
-        !uds_path.with_extension("ready").exists(),
-        "stale ready sentinel should be removed"
-    );
-}
-
 #[test]
 fn existing_resume_checkpoint_requires_completion_marker() {
     let (state, _dir) = make_test_state_with_tempdir();

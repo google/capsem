@@ -12,7 +12,6 @@ use capsem_core::{
     net::policy_config::{DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction, SettingsFile},
 };
 use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
-use capsem_foundation::poll::{poll_until, PollOpts};
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use capsem_service::errors::AppError;
 use clap::Parser;
@@ -267,7 +266,7 @@ pub struct ServiceState {
     /// each other of the resources each capsem-process needs to (a) let VZ
     /// tear down the guest, (b) run the DbWriter's WAL checkpoint on Drop,
     /// and (c) clean up the session UDS files. Under that contention a
-    /// single teardown can exceed `wait_for_process_exit`'s 1s fast-path
+    /// single teardown can exceed the configured original-child exit
     /// budget -- at which point the service SIGKILLs capsem-process mid-
     /// checkpoint, leaving a non-empty WAL and (in the worst case) orphaned
     /// sockets. Same serialization pattern as `lifecycle.vz`: one

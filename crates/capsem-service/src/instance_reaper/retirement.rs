@@ -1,8 +1,9 @@
 //! Generation-specific completion survives removal from the instance map.
 
 use anyhow::{ensure, Result};
+use capsem_foundation::unix::process::{self, ProcessId, Signal, SignalOutcome};
 use std::{collections::HashMap, sync::Mutex};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
 use uuid::Uuid;
 
 #[derive(Clone, Copy)]
@@ -14,12 +15,36 @@ enum Outcome {
 
 #[derive(Default)]
 pub(crate) struct Retirements {
-    entries: Mutex<HashMap<(String, Uuid), watch::Receiver<Outcome>>>,
+    entries: Mutex<HashMap<(String, Uuid), Entry>>,
+}
+
+#[derive(Clone)]
+struct Entry {
+    retired: watch::Receiver<Outcome>,
+    exited: watch::Receiver<Outcome>,
+    signals: mpsc::Sender<SignalRequest>,
+}
+
+struct SignalRequest {
+    signal: Signal,
+    reply: oneshot::Sender<std::io::Result<SignalOutcome>>,
+}
+
+impl Entry {
+    fn exited(&self) -> Result<Option<SignalOutcome>> {
+        match *self.exited.borrow() {
+            Outcome::Pending => Ok(None),
+            Outcome::Complete => Ok(Some(SignalOutcome::Gone)),
+            Outcome::Interrupted => anyhow::bail!("original child wait did not complete"),
+        }
+    }
 }
 
 pub(crate) struct Registration {
     generation: Uuid,
     result: watch::Sender<Outcome>,
+    exited: watch::Sender<Outcome>,
+    signals: mpsc::Receiver<SignalRequest>,
     completed: bool,
 }
 
@@ -30,11 +55,22 @@ impl Retirements {
         let key = (id.to_owned(), generation);
         ensure!(!entries.contains_key(&key), "generation retirement already registered");
         let (result, receiver) = watch::channel(Outcome::Pending);
-        entries.insert(key, receiver);
+        let (exited, exit_receiver) = watch::channel(Outcome::Pending);
+        let (signals, signal_receiver) = mpsc::channel(8);
+        entries.insert(
+            key,
+            Entry {
+                retired: receiver,
+                exited: exit_receiver,
+                signals,
+            },
+        );
         drop(entries);
         Ok(Registration {
             generation,
             result,
+            exited,
+            signals: signal_receiver,
             completed: false,
         })
     }
@@ -43,16 +79,63 @@ impl Retirements {
     /// idempotently observable for subsequent generation-bound reconciliation.
     pub(crate) async fn wait(&self, id: &str, generation: Uuid) -> Result<bool> {
         let key = (id.to_owned(), generation);
-        let Some(mut result) = self.entries.lock().unwrap().get(&key).cloned() else {
+        let Some(entry) = self.entries.lock().unwrap().get(&key).cloned() else {
             return Ok(false);
         };
-        loop {
-            let outcome = *result.borrow_and_update();
-            match outcome {
-                Outcome::Pending => result.changed().await?,
-                Outcome::Complete => return Ok(true),
-                Outcome::Interrupted => anyhow::bail!("original child reaper did not complete"),
+        wait(entry.retired).await
+    }
+
+    pub(crate) async fn wait_exit(&self, id: &str, generation: Uuid) -> Result<bool> {
+        let entry = self.entry(id, generation)?;
+        wait(entry.exited).await
+    }
+
+    pub(crate) fn is_live(&self, id: &str, generation: Uuid) -> Result<bool> {
+        Ok(self.entry(id, generation)?.exited()?.is_none())
+    }
+
+    fn entry(&self, id: &str, generation: Uuid) -> Result<Entry> {
+        self.entries
+            .lock()
+            .unwrap()
+            .get(&(id.to_owned(), generation))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("original child owner is unavailable"))
+    }
+
+    /// Commands go to the sole owner of the unreaped child, never a PID
+    /// supplied by an instance-map or process-table observation.
+    pub(crate) async fn signal(&self, id: &str, generation: Uuid, signal: Signal) -> Result<SignalOutcome> {
+        let entry = self.entry(id, generation)?;
+        if let Some(outcome) = entry.exited()? {
+            return Ok(outcome);
+        }
+        let (reply, result) = oneshot::channel();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            if entry.signals.send(SignalRequest { signal, reply }).await.is_err() {
+                return entry
+                    .exited()?
+                    .ok_or_else(|| anyhow::anyhow!("original child signal owner interrupted"));
             }
+            match result.await {
+                Ok(result) => Ok(result?),
+                Err(_) => entry
+                    .exited()?
+                    .ok_or_else(|| anyhow::anyhow!("original child signal owner interrupted")),
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("original child signal owner timed out"))?
+    }
+}
+
+async fn wait(mut result: watch::Receiver<Outcome>) -> Result<bool> {
+    loop {
+        let outcome = *result.borrow_and_update();
+        match outcome {
+            Outcome::Pending => result.changed().await?,
+            Outcome::Complete => return Ok(true),
+            Outcome::Interrupted => anyhow::bail!("original child reaper did not complete"),
         }
     }
 }
@@ -60,6 +143,42 @@ impl Retirements {
 impl Registration {
     pub(crate) fn generation(&self) -> Uuid {
         self.generation
+    }
+
+    pub(crate) async fn wait_child(
+        &mut self,
+        child: &mut tokio::process::Child,
+    ) -> std::io::Result<std::process::ExitStatus> {
+        let status = loop {
+            tokio::select! {
+                // An already exited child is reaped and published before any
+                // queued signal. Otherwise it remains unreaped while signaling:
+                // its PID cannot be reused until this task next polls wait().
+                biased;
+                status = child.wait() => break status,
+                Some(request) = self.signals.recv() => {
+                    let outcome = child.id().ok_or_else(|| std::io::Error::other("original child identity unavailable"))
+                        .and_then(ProcessId::try_from)
+                        .and_then(|pid| process::send_signal(pid,request.signal));
+                    let _ = request.reply.send(outcome);
+                }
+            }
+        };
+        self.exited.send_replace(if status.is_ok() {
+            Outcome::Complete
+        } else {
+            Outcome::Interrupted
+        });
+        self.signals.close();
+        while let Ok(request) = self.signals.try_recv() {
+            let outcome = if status.is_ok() {
+                Ok(SignalOutcome::Gone)
+            } else {
+                Err(std::io::Error::other("original child wait failed"))
+            };
+            let _ = request.reply.send(outcome);
+        }
+        status
     }
     pub(crate) fn complete(mut self) {
         self.completed = true;
@@ -72,5 +191,11 @@ impl Drop for Registration {
         if !self.completed {
             self.result.send_replace(Outcome::Interrupted);
         }
+        if matches!(*self.exited.borrow(), Outcome::Pending) {
+            self.exited.send_replace(Outcome::Interrupted);
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;

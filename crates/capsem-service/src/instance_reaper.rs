@@ -23,14 +23,14 @@ pub(super) fn spawn_exit_reaper(
     state: Arc<ServiceState>,
     uds_path: PathBuf,
     session_dir: PathBuf,
-    retirement: Registration,
+    mut retirement: Registration,
 ) -> tokio::task::JoinHandle<()> {
     let pid = child.id();
     // Registration precedes this call. Retain the spawn identity before the
     // task can be delayed across an exit/replacement or PID reuse.
     let generation = retirement.generation();
     tokio::spawn(async move {
-        let Ok(exit_status) = child.wait().await else {
+        let Ok(exit_status) = retirement.wait_child(&mut child).await else {
             return;
         };
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
