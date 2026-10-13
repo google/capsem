@@ -19,6 +19,8 @@ fn spawn_owner_records_original_pid_and_excludes_duplicate_boot_or_recovery() {
     let retired = fence(root.path(), &binding).unwrap();
     assert_eq!(retired.pid().unwrap().get(), std::process::id());
     assert_eq!(retired.parent().get(), parent);
+    let mut retired = retired;
+    assert!(!retired.confirm_exit().unwrap(), "a live PID is not an exit receipt");
     assert!(enter(root.path(), &binding, parent).is_err());
     drop(retired);
     assert!(enter(root.path(), &binding, parent).is_err());
@@ -34,11 +36,33 @@ fn spawn_owner_preboot_fence_is_durable_and_refuses_late_admission() {
     let retired = fence(root.path(), &binding).unwrap();
     assert!(retired.pid().is_none());
     drop(retired);
-    let reopened = fence(root.path(), &binding).unwrap();
+    let mut reopened = fence(root.path(), &binding).unwrap();
     assert!(reopened.pid().is_none());
+    assert!(reopened.confirm_exit().unwrap());
     drop(reopened);
     assert!(enter(root.path(), &binding, parent).is_err());
     assert!(prepare(root.path(), &binding, parent).is_err());
+    prepare(root.path(), &new_binding(), parent).unwrap();
+}
+
+#[test]
+fn spawn_owner_refuses_other_kernel_scope_before_admission_or_retirement() {
+    for field in ["boot", "namespace"] {
+        let directory = tempfile::tempdir().unwrap();
+        let binding = new_binding();
+        let parent = parent_process_id().unwrap().get();
+        prepare(directory.path(), &binding, parent).unwrap();
+        let file = directory.path().join(RECORD);
+        let mut record: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        record["scope"][field] = match field {
+            "boot" => serde_json::json!(capsem_crypto::uuid_v4().to_string()),
+            _ => serde_json::json!([0, 1]),
+        };
+        std::fs::write(&file, serde_json::to_vec(&record).unwrap()).unwrap();
+        assert!(enter(directory.path(), &binding, parent).is_err());
+        assert!(fence(directory.path(), &binding).is_err());
+        assert!(prepare(directory.path(), &new_binding(), parent).is_err());
+    }
 }
 
 #[test]
@@ -138,9 +162,18 @@ fn spawn_owner_subprocess_holds_native_lifetime_until_actual_exit() {
         fence(directory.path(), &binding).is_err(),
         "cross-process lifetime lock was bypassed"
     );
+    let handle = ProcessHandle::open(ProcessId::try_from(child.0.id()).unwrap()).unwrap();
     drop(child.0.stdin.take());
-    assert!(child.0.wait().unwrap().success());
-    let fenced = fence(directory.path(), &binding).unwrap();
+    assert!(handle
+        .wait_until_exit(std::time::Instant::now() + std::time::Duration::from_secs(2))
+        .unwrap());
+    let mut fenced = fence(directory.path(), &binding).unwrap();
     assert_eq!(fenced.pid().unwrap().get(), child.0.id());
+    assert!(fenced.confirm_exit().unwrap());
+    assert!(child.0.wait().unwrap().success());
     assert!(enter(directory.path(), &binding, std::process::id()).is_err());
+    drop(fenced);
+    assert!(fence(directory.path(), &binding).unwrap().confirm_exit().unwrap());
+    assert!(prepare(directory.path(), &binding, std::process::id()).is_err());
+    prepare(directory.path(), &new_binding(), std::process::id()).unwrap();
 }

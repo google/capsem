@@ -7,7 +7,7 @@ use anyhow::{ensure, Context, Result};
 use capsem_foundation::unix::{
     contained::ContainedDir,
     lock::{self, FileLock, LockAttempt, LockMode},
-    process::{parent_process_id, ProcessId},
+    process::{parent_process_id, probe, ProcessHandle, ProcessId, ProcessScope, ProcessState},
 };
 use serde::{Deserialize, Serialize};
 use std::{io::Read, path::Path};
@@ -24,6 +24,8 @@ struct Record {
     parent_pid: u32,
     pid: Option<u32>,
     fenced: bool,
+    scope: ProcessScope,
+    retired: bool,
 }
 
 /// Retain before acquiring any VM resources and drop after their retirement.
@@ -36,6 +38,7 @@ pub struct SpawnOwner {
 /// alone cannot acknowledge an existing process as closed.
 pub struct SpawnFence {
     _lock: FileLock,
+    root: ContainedDir,
     record: Record,
 }
 
@@ -47,6 +50,38 @@ impl SpawnFence {
     }
     pub fn parent(&self) -> ProcessId {
         ProcessId::try_from(self.record.parent_pid).expect("validated native parent")
+    }
+
+    /// Persist retirement only after the fenced preboot absence or a positive
+    /// kernel exit observation in the original boot and PID namespace. A live
+    /// replacement PID is never signalled and keeps the result unconfirmed.
+    pub fn confirm_exit(&mut self) -> Result<bool> {
+        if self.record.retired {
+            return Ok(true);
+        }
+        ensure!(
+            self.record.scope == ProcessScope::current()?,
+            "original kernel process scope changed"
+        );
+        if let Some(pid) = self.pid() {
+            if probe(pid)? != ProcessState::Gone {
+                match ProcessHandle::open(pid) {
+                    Ok(handle) if handle.has_exited()? => {}
+                    Ok(_) => return Ok(false),
+                    Err(error) => {
+                        // The original may have exited between probe and pin.
+                        // Preserve every error unless the kernel now confirms
+                        // that this scoped PID no longer exists.
+                        if probe(pid)? != ProcessState::Gone {
+                            return Err(error.into());
+                        }
+                    }
+                }
+            }
+        }
+        self.record.retired = true;
+        write(&self.root, &self.record)?;
+        Ok(true)
     }
 }
 
@@ -67,7 +102,7 @@ pub fn prepare(path: &Path, binding: &VmBinding, parent: u32) -> Result<()> {
             "spawn generation cannot be prepared again"
         );
         ensure!(
-            previous.fenced && previous.pid.is_none(),
+            previous.fenced && previous.retired,
             "previous native process retirement is unconfirmed"
         );
     } else {
@@ -76,17 +111,20 @@ pub fn prepare(path: &Path, binding: &VmBinding, parent: u32) -> Result<()> {
             "previous spawn owner protocol unavailable"
         );
     }
+    let scope = ProcessScope::current()?;
     // Both publications happen under the same lifetime lock. Interrupted
     // publication is uncertainty and cannot authorize an unmatched boot.
     super::write_spawn_identity(&root, binding)?;
     write(
         &root,
         &Record {
-            schema_version: 1,
+            schema_version: 2,
             binding: binding.clone(),
             parent_pid: parent,
             pid: None,
             fenced: false,
+            scope,
+            retired: false,
         },
     )
 }
@@ -97,6 +135,10 @@ pub fn enter(path: &Path, binding: &VmBinding, parent: u32) -> Result<SpawnOwner
     // which recovery could have fenced while admission waited.
     let root = ContainedDir::open_root(path)?;
     let mut record = matching(&root, binding)?;
+    ensure!(
+        record.scope == ProcessScope::current()?,
+        "original kernel process scope changed"
+    );
     ensure!(
         !record.fenced && record.pid.is_none(),
         "spawn generation boot admission retired or consumed"
@@ -114,11 +156,19 @@ pub fn fence(path: &Path, binding: &VmBinding) -> Result<SpawnFence> {
     let lock = acquire(path, false)?;
     let root = ContainedDir::open_root(path)?;
     let mut record = matching(&root, binding)?;
+    ensure!(
+        record.retired || record.scope == ProcessScope::current()?,
+        "original kernel process scope changed"
+    );
     if !record.fenced {
         record.fenced = true;
         write(&root, &record)?;
     }
-    Ok(SpawnFence { _lock: lock, record })
+    Ok(SpawnFence {
+        _lock: lock,
+        root,
+        record,
+    })
 }
 
 fn acquire(path: &Path, create: bool) -> Result<FileLock> {
@@ -160,7 +210,9 @@ fn read(root: &ContainedDir) -> Result<Option<Record>> {
     file.take(LIMIT + 1).read_to_end(&mut bytes)?;
     ensure!(bytes.len() as u64 <= LIMIT, "spawn owner record grew during read");
     let record: Record = serde_json::from_slice(&bytes).context("invalid spawn owner record")?;
-    ensure!(record.schema_version == 1, "unsupported spawn owner protocol");
+    ensure!(record.schema_version == 2, "unsupported spawn owner protocol");
+    record.scope.validate()?;
+    ensure!(!record.retired || record.fenced, "unfenced spawn retirement record");
     validate_binding(&record.binding)?;
     validate_parent(record.parent_pid)?;
     if let Some(pid) = record.pid {
