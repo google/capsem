@@ -21,3 +21,8 @@ admission_batch_capacity = 64
 # A lone event waits briefly for its immediate followers. This is far below a
 # network round trip while avoiding singleton IPC under concurrent bursts.
 admission_coalesce_wait_microseconds = 100
+# A fail-closed network action waits at most one second for admission. Flush
+# often enough that copying preceding memory rows cannot consume that budget.
+disk_flush_interval_milliseconds = 1000
+# A burst also flushes before the timer at this exact batch multiple.
+disk_flush_max_pending_events = 1048576

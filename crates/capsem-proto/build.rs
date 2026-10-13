@@ -105,6 +105,23 @@ fn write_runtime_limits() {
         .unwrap_or_else(|| {
             panic!("runtime limits: ledger.admission_coalesce_wait_microseconds must be an integer between 1 and 10000")
         });
+    let ledger_disk_flush_interval_milliseconds = config
+        .get("ledger")
+        .and_then(|ledger| ledger.get("disk_flush_interval_milliseconds"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (100..=5_000).contains(value))
+        .unwrap_or_else(|| {
+            panic!("runtime limits: ledger.disk_flush_interval_milliseconds must be an integer between 100 and 5000")
+        });
+    let ledger_disk_flush_max_pending_events = config
+        .get("ledger")
+        .and_then(|ledger| ledger.get("disk_flush_max_pending_events"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (ledger_batch_capacity..=10_000_000).contains(value))
+        .filter(|value| value % ledger_batch_capacity == 0)
+        .unwrap_or_else(|| {
+            panic!("runtime limits: ledger.disk_flush_max_pending_events must be a batch multiple between the batch capacity and 10000000")
+        });
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     std::fs::write(
         format!("{out_dir}/runtime_limits.rs"),
@@ -123,7 +140,11 @@ fn write_runtime_limits() {
              /// Consecutive producer events coalesced into one ledger exchange.\n\
              pub const LEDGER_ADMISSION_BATCH_CAPACITY: usize = {ledger_batch_capacity};\n\
              /// Maximum wait for an immediate follower before admitting a singleton.\n\
-             pub const LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS: u64 = {ledger_coalesce_wait_microseconds};\n"
+             pub const LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS: u64 = {ledger_coalesce_wait_microseconds};\n\
+             /// Maximum time accepted rows stay only in the memory schema.\n\
+             pub const LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS: u64 = {ledger_disk_flush_interval_milliseconds};\n\
+             /// Pending events that force a disk flush before the timer.\n\
+             pub const LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS: usize = {ledger_disk_flush_max_pending_events};\n"
         ),
     )
     .expect("runtime limits: write generated constants");
