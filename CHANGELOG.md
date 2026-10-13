@@ -177,10 +177,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime budget. Linux shells commonly supplied only 1,024 descriptors while
   each relayed connection needs both a TCP and a VSOCK descriptor.
 
-- The confined HTTP proxy admits 512 concurrent clients instead of closing
-  excess TLS handshakes when its descriptor grant bound is reached. The trusted
-  upstream broker and DNS sessions derive their ceilings from that same limit
-  instead of intermittently returning 502 or SERVFAIL during a resolve burst.
+- The confined HTTP proxy admits 512 concurrent clients plus one replacement
+  grant per client instead of closing handoffs while a pooled connection
+  retires. Network-facing host processes raise their descriptor floor from the
+  same runtime budget, and the trusted upstream broker and DNS sessions derive
+  their ceilings from that config instead of intermittently returning 502 or
+  SERVFAIL during a resolve burst.
 
 - Multiplexed DNS sessions admit the dual-stack query burst from 512 concurrent
   clients instead of shedding valid A or AAAA lookups as SERVFAIL.

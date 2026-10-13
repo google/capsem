@@ -15,7 +15,7 @@ use capsem_core::net::proxy_engine::{
 };
 use capsem_foundation::ipc_channel;
 use capsem_foundation::unix::worker_sandbox::{Policy, Role};
-use capsem_foundation::unix::{fd, router_channel};
+use capsem_foundation::unix::{fd, process::ensure_open_file_limit, router_channel};
 use capsem_logger::WriteOp;
 use capsem_proto::proxy_control::{
     decode_proxy_control_request, encode_proxy_control_event, ProxyCapability, ProxyChannelCloseReason,
@@ -24,6 +24,7 @@ use capsem_proto::proxy_control::{
 };
 use capsem_proto::proxy_policy::{ProxyPolicyRequest, ProxyPolicyResponse};
 use capsem_proto::upstream_grant::UPSTREAM_GRANT_CAPACITY;
+use capsem_proto::NETWORK_PROCESS_OPEN_FILE_LIMIT;
 use clap::Parser;
 use tokio::task::{JoinError, JoinSet};
 
@@ -60,6 +61,10 @@ fn main() -> Result<()> {
         capsem_foundation::unix::process::clear_inherited_environment();
         fd::close_inherited_descriptors()?;
     }
+    ensure_open_file_limit(NETWORK_PROCESS_OPEN_FILE_LIMIT)?;
+    let args = Args::parse();
+    capsem_foundation::telemetry::install_in_band_trace_id(trace_id_from_generation(args.generation))
+        .map_err(anyhow::Error::msg)?;
     let _telemetry = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-proxy",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
