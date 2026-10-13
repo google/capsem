@@ -10,6 +10,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))
         .route("/system/status", get(handle_system_status))
+        .route("/internal/gateway/status", get(handle_gateway_status))
         .route("/update/check", post(handle_update_check))
         .route("/update/apply", post(handle_update_apply))
         .route(
@@ -226,6 +227,32 @@ pub(super) async fn handle_system_status(
         corp: corp_info_value()?,
         updates,
     }))
+}
+
+#[derive(Serialize)]
+struct GatewayStatusResponse {
+    #[serde(flatten)]
+    list: api::ListResponse,
+    assets: api::AssetStatus,
+    updates: api::UpdateStatusResponse,
+}
+
+/// One service snapshot for the gateway's polled overview. Keeping the three
+/// sections in one HTTP exchange avoids tripling broker and parser work while
+/// preserving a fresh `/vms/list` read for every gateway status refresh.
+async fn handle_gateway_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<GatewayStatusResponse>, AppError> {
+    let list = sandbox_info::list_response(&state).await?;
+    let (assets, updates) = state
+        .off_worker(|state| {
+            Ok::<_, AppError>((
+                asset_routes::asset_status(&state)?,
+                asset_routes::update_status_response(&state),
+            ))
+        })
+        .await??;
+    Ok(Json(GatewayStatusResponse { list, assets, updates }))
 }
 
 pub(super) fn read_installed_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {

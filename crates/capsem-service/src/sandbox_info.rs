@@ -82,13 +82,10 @@ pub(super) fn build_list_response(state: &ServiceState) -> (ListResponse, Vec<Pa
     (ListResponse { sandboxes }, session_dirs)
 }
 
-pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
+pub(super) async fn list_response(state: &Arc<ServiceState>) -> Result<ListResponse, AppError> {
     // The fingerprint stats and hashes files for every inactive entry; the
     // UI polls this route, so it runs off the worker as one unit.
-    let (mut response, session_dirs) = match state.off_worker(|state| list_lifecycle(&state)).await {
-        Ok(listed) => listed,
-        Err(error) => return error.into_response(),
-    };
+    let (mut response, session_dirs) = state.off_worker(|state| list_lifecycle(&state)).await?;
     // Every VM's totals, from each ledger handle's memory: no reader round
     // trip and no SQLite read per poll.
     let counters = futures::future::join_all(
@@ -104,6 +101,14 @@ pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum:
             ledger_routes::activity::apply_totals(info, &counters);
         }
     }
+    Ok(response)
+}
+
+pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
+    let response = match list_response(&state).await {
+        Ok(response) => response,
+        Err(error) => return error.into_response(),
+    };
     json_bytes_response(Bytes::from(serde_json::to_vec(&response).unwrap_or_default()))
 }
 
