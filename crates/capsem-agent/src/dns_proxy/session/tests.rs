@@ -339,11 +339,11 @@ async fn in_flight_cap_sheds_without_blocking() {
 }
 
 #[tokio::test]
-async fn two_hundred_dual_stack_clients_fit_without_shedding() {
+async fn supported_dual_stack_client_burst_fits_without_shedding() {
     let connect = fake_host(|mut host| while read_frame(&mut host).is_some() {});
     let forwarder = Arc::new(DnsForwarder::new(DNS_SESSIONS, connect));
     let mut waiting = Vec::new();
-    for i in 0..400u16 {
+    for i in 0..u16::try_from(DNS_SESSION_MAX_IN_FLIGHT * DNS_SESSIONS).unwrap() {
         let forwarder = Arc::clone(&forwarder);
         waiting.push(tokio::spawn(async move {
             forwarder.forward_query(query(i, "dual-stack.example"), "udp").await
@@ -355,7 +355,12 @@ async fn two_hundred_dual_stack_clients_fit_without_shedding() {
         waiting.iter().all(|task| !task.is_finished()),
         "a supported query was shed"
     );
-    assert!(forwarder.sessions.iter().all(|session| session.in_flight() == 200));
+    assert!(
+        forwarder
+            .sessions
+            .iter()
+            .all(|session| session.in_flight() == DNS_SESSION_MAX_IN_FLIGHT)
+    );
     for task in waiting {
         task.abort();
     }
