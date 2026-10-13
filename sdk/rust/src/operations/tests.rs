@@ -60,6 +60,8 @@ operation!(attach_network_member, "attachNetworkMember", AttachNetworkMemberPara
 operation!(detach_network_member, "detachNetworkMember", DetachNetworkMemberParams);
 operation!(get_network_logs, "getNetworkLogs", GetNetworkLogsParams);
 operation!(create_vm, "createVm", CreateVmParams);
+operation!(claim_managed_session, "claimManagedSession", ClaimManagedSessionParams);
+operation!(close_managed_session, "closeManagedSession", CloseManagedSessionParams);
 operation!(list_vms, "listVms");
 operation!(delete_vm, "deleteVm", DeleteVmParams);
 operation!(exec_vm, "execVm", ExecVmParams);

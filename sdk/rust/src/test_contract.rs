@@ -49,6 +49,8 @@ fn sample(schema: &Value, full: bool) -> Value {
         "array" => json!([]), // Recursive file children remain bounded.
         "string" if schema["enum"].is_array() => schema["enum"][0].clone(),
         "string" if schema["format"] == "ipv4" => json!("10.128.0.2"),
+        "string" if schema["format"] == "uuid" => json!("fc120782-2272-4b3d-a2e6-a26ee2f8ab61"),
+        "string" if schema["pattern"] == "^[0-9a-f]{64}$" => json!("af".repeat(32)),
         "string" => json!("sample /?&é"),
         "integer" => json!(3),
         "number" => json!(3.5),
