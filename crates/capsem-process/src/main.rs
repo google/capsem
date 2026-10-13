@@ -577,9 +577,9 @@ async fn run_async_main_loop(
         .await
         .context("acquire supervised session ledger")?;
     let ledger_path = session_dir.join("session.db");
-    // 1024 queued events: a guest resolving and fetching in parallel enqueues
-    // several rows per request, and a full queue makes every producer sleep
-    // in 5 ms steps on its reply path (see `DbWriter::send_with_backpressure`).
+    // The config-owned queue covers the supported concurrent network burst.
+    // A full queue makes every producer sleep in 5 ms steps on its reply path
+    // (see `DbWriter::send_with_backpressure`).
     // The logical path is diagnostic identity only; the descriptor selects
     // the worker that exclusively owns and opens the database.
     let db = Arc::new(
@@ -589,7 +589,7 @@ async fn run_async_main_loop(
                 commitment_stream,
                 ledger_grant,
                 &ledger_path,
-                1024,
+                capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY,
             )
         })
         .await
