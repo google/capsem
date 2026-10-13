@@ -5,6 +5,7 @@ mod ipc;
 mod job_store;
 mod mcp_runtime;
 mod metric_export;
+mod owner;
 mod private_names;
 mod private_seats;
 mod runtime_config;
@@ -73,6 +74,12 @@ pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
 struct Args {
     #[arg(long)]
     id: String,
+    /// Original service parent; required by owner admission before VM boot.
+    #[arg(long)]
+    parent_pid: Option<u32>,
+    /// Original service-issued spawn UUID, checked against host-only metadata.
+    #[arg(long)]
+    spawn_generation: Option<String>,
     /// Trusted host-side identity; independent of guest environment overrides.
     #[arg(long)]
     vm_name: Option<String>,
@@ -208,6 +215,7 @@ fn main() -> Result<()> {
         default_filter: "info",
     })?;
     let args = Args::parse();
+    owner::enroll(&args)?;
 
     // Root span shared across the whole capsem-process run: every
     // subsequent log line inherits `vm_id` and `trace_id` as structured

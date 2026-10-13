@@ -1,0 +1,44 @@
+//! Admit only the original service-issued process generation, then bind the
+//! VM owner's lifetime to that service before preparing any VM resources.
+use crate::Args;
+use anyhow::{ensure, Context, Result};
+use capsem_core::managed_sessions::VmBinding;
+use capsem_foundation::unix::contained::ContainedDir;
+use std::path::Path;
+
+pub(crate) fn enroll(args: &Args) -> Result<()> {
+    validate(
+        &args.id,
+        args.spawn_generation.as_deref(),
+        args.parent_pid,
+        &args.session_dir,
+    )?;
+    // Recheck the actual parent while arming: it may have disappeared during
+    // metadata validation. The existing guard terminates even on SIGKILL/OOM.
+    capsem_guard::watch_parent_or_exit(args.parent_pid).context("VM service parent unavailable")
+}
+
+fn validate(id: &str, generation: Option<&str>, parent: Option<u32>, directory: &Path) -> Result<()> {
+    ensure!(
+        parent.is_some_and(capsem_guard::parent_is_expected),
+        "VM service parent unavailable"
+    );
+    let generation = generation.context("VM spawn generation unavailable")?;
+    let expected = VmBinding::new(
+        id.to_owned(),
+        generation.parse().context("invalid VM spawn generation")?,
+    )?;
+    ensure!(
+        expected.generation().to_string() == generation,
+        "noncanonical VM spawn generation"
+    );
+    let directory = ContainedDir::open_root(directory)?;
+    ensure!(
+        capsem_core::session::read_spawn_identity(&directory)?.as_ref() == Some(&expected),
+        "VM trusted spawn identity changed"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

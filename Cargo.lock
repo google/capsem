@@ -1128,6 +1128,7 @@ dependencies = [
  "capsem-assets",
  "capsem-core",
  "capsem-foundation",
+ "capsem-guard",
  "capsem-logger",
  "capsem-proto",
  "capsem-telemetry",

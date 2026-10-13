@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- VM processes verify their original service parent and trusted spawn
+  generation before boot, and terminate when that service disappears.
+
 - Linux startup pins original orphan processes and verifies fresh native
   arguments before signalling. TERM/KILL and exit waits retain those handles;
   uncertain identity or exit refuses startup before stale socket removal.
