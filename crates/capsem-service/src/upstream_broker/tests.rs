@@ -549,10 +549,10 @@ async fn unresolved_selection_count_is_bounded() {
     let (client, _publisher, authority, task) =
         start_broker(test_policy("policy-a", Some(listener.local_addr().unwrap()), vec![]));
     let mut selections = Vec::new();
-    for request_id in 1..=MAX_SELECTIONS as u64 {
+    for request_id in 1..=UPSTREAM_GRANT_CAPACITY as u64 {
         selections.push(resolve_override(&client, request_id).await);
     }
-    let request_id = MAX_SELECTIONS as u64 + 1;
+    let request_id = UPSTREAM_GRANT_CAPACITY as u64 + 1;
     let (response, fds) = client
         .request(&UpstreamGrantRequest::ResolveTcp {
             request_id,
@@ -575,6 +575,21 @@ async fn unresolved_selection_count_is_bounded() {
         })
         .await;
     assert_ne!(resolve_override(&client, request_id + 1).await, 0);
+    stop_broker(authority, task).await;
+}
+
+#[tokio::test]
+async fn supported_mitm_burst_can_resolve_before_any_client_connects() {
+    const SUPPORTED_MITM_CLIENTS: u64 = 200;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (client, _publisher, authority, task) =
+        start_broker(test_policy("policy-a", Some(listener.local_addr().unwrap()), vec![]));
+
+    for request_id in 1..=SUPPORTED_MITM_CLIENTS {
+        assert_ne!(resolve_override(&client, request_id).await, 0);
+    }
+
     stop_broker(authority, task).await;
 }
 
@@ -829,11 +844,12 @@ async fn active_descriptor_capacity_is_bounded_and_recovers_after_release() {
     let upstream = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let (client, _publisher, authority, task) =
         start_broker(test_policy("policy-a", None, vec![upstream.local_addr().unwrap()]));
-    let mut descriptors = Vec::with_capacity(MAX_ACTIVE_GRANTS);
-    let mut grant_ids = Vec::with_capacity(MAX_ACTIVE_GRANTS);
-    for request_id in 1..=MAX_ACTIVE_GRANTS as u64 {
-        let (response, mut fds) = client
-            .request(&UpstreamGrantRequest::OpenDns {
+    let mut grant_ids = Vec::with_capacity(UPSTREAM_GRANT_CAPACITY);
+    for request_id in 1..=UPSTREAM_GRANT_CAPACITY as u64 {
+        let request = if request_id == 1 {
+            UpstreamGrantRequest::OpenLoopbackListener { request_id, port: 0 }
+        } else {
+            UpstreamGrantRequest::OpenDns {
                 request_id,
                 upstream_index: 0,
             })
@@ -843,10 +859,10 @@ async fn active_descriptor_capacity_is_bounded_and_recovers_after_release() {
         };
         client.send(&UpstreamGrantRequest::Adopted { grant_id }).await;
         grant_ids.push(grant_id);
-        descriptors.push(fds.pop().unwrap());
+        drop(fds.pop().unwrap());
     }
 
-    let denied_id = MAX_ACTIVE_GRANTS as u64 + 1;
+    let denied_id = UPSTREAM_GRANT_CAPACITY as u64 + 1;
     let (response, fds) = client
         .request(&UpstreamGrantRequest::OpenDns {
             request_id: denied_id,
@@ -867,7 +883,6 @@ async fn active_descriptor_capacity_is_bounded_and_recovers_after_release() {
             .send(&UpstreamGrantRequest::Release { resource_id: grant_id })
             .await;
     }
-    drop(descriptors);
     let (response, mut fds) = client
         .request(&UpstreamGrantRequest::OpenDns {
             request_id: denied_id + 1,

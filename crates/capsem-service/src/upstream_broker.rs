@@ -26,7 +26,7 @@ use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::upstream_grant::{
     decode_upstream_grant_request, encode_upstream_grant_response, GuestFileTime, ProxyTrafficService,
     UpstreamDescriptorKind, UpstreamGrantDenial, UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol,
-    UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
+    UPSTREAM_GRANT_CAPACITY, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
@@ -34,8 +34,6 @@ use tracing::{debug, warn};
 use crate::instance::WorkerGrant;
 use crate::ledger_worker::{LedgerClient, LedgerWorkers};
 
-const MAX_SELECTIONS: usize = 64;
-const MAX_ACTIVE_GRANTS: usize = 256;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -314,7 +312,7 @@ async fn run(
                 } => {
                     let current = Arc::clone(&policy);
                     selections.retain(|_, selection: &mut Selection| selection.policy_digest == current.digest);
-                    if selections.len() >= MAX_SELECTIONS {
+                    if selections.len() >= UPSTREAM_GRANT_CAPACITY {
                         send_denied(&responses, request_id, UpstreamGrantDenial::Capacity).await?;
                         continue;
                     }
@@ -378,7 +376,7 @@ async fn run(
                     request_id,
                     selection_id,
                 } => {
-                    if active.len() >= MAX_ACTIVE_GRANTS {
+                    if active.len() + listeners.len() >= UPSTREAM_GRANT_CAPACITY {
                         send_denied(&responses, request_id, UpstreamGrantDenial::Capacity).await?;
                         continue;
                     }
@@ -447,7 +445,7 @@ async fn run(
                     request_id,
                     upstream_index,
                 } => {
-                    if active.len() >= MAX_ACTIVE_GRANTS {
+                    if active.len() + listeners.len() >= UPSTREAM_GRANT_CAPACITY {
                         send_denied(&responses, request_id, UpstreamGrantDenial::Capacity).await?;
                         continue;
                     }
@@ -516,6 +514,50 @@ async fn run(
                     )
                     .await?;
                     awaiting_adoption = Some(AwaitingAdoption::Upstream(grant_id));
+                }
+                UpstreamGrantRequest::OpenLoopbackListener { request_id, port } => {
+                    if active.len() + listeners.len() >= UPSTREAM_GRANT_CAPACITY {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::Capacity).await?;
+                        continue;
+                    }
+                    let listener = match std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)) {
+                        Ok(listener) => listener,
+                        Err(error) => {
+                            warn!(port, %error, "loopback listener grant bind failed");
+                            send_denied(&responses, request_id, UpstreamGrantDenial::BindFailed).await?;
+                            continue;
+                        }
+                    };
+                    let bound_port = listener
+                        .local_addr()
+                        .map_err(|error| format!("read granted loopback listener address: {error}"))?
+                        .port();
+                    let descriptor: OwnedFd = listener.into();
+                    let grant_id = allocate_id(&mut next_resource_id)?;
+                    listeners.insert(
+                        grant_id,
+                        ActiveListenerGrant {
+                            descriptor: Some(descriptor),
+                            adopted: false,
+                        },
+                    );
+                    let descriptor = &listeners
+                        .get(&grant_id)
+                        .ok_or("new listener grant disappeared")?
+                        .descriptor
+                        .as_ref()
+                        .ok_or("new listener grant lost its descriptor")?;
+                    send_response(
+                        &responses,
+                        &UpstreamGrantResponse::LoopbackListenerGranted {
+                            request_id,
+                            grant_id,
+                            port: bound_port,
+                        },
+                        Some(descriptor),
+                    )
+                    .await?;
+                    awaiting_adoption = Some(AwaitingAdoption::Listener(grant_id));
                 }
                 UpstreamGrantRequest::Adopted { grant_id } => {
                     if awaiting_adoption == Some(AwaitingAdoption::Ledger(grant_id)) {
