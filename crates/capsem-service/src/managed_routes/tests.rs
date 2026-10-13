@@ -11,7 +11,7 @@ async fn failed_managed_http_create_remains_owned_until_awaited_close_and_cannot
     let state = crate::tests::make_test_state();
     let app = build_service_router(Arc::clone(&state));
     let token = "af".repeat(32);
-    // The actual service adapter has no installed VM assets or process binary in this
+    // The actual service adapter has no installed runtime assets or process in this
     // fixture. Its failure must retire under ownership rather than fall back
     // to ordinary provisioning or lose the close handle.
     let create = json!({"managed": {"request_id": REQUEST, "ownership_token": token}});
