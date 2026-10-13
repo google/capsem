@@ -13,7 +13,9 @@ use capsem_core::{
     net::policy_config::{DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction, SettingsFile},
 };
 use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
+use capsem_foundation::unix::process::ensure_open_file_limit;
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
+use capsem_proto::NETWORK_PROCESS_OPEN_FILE_LIMIT;
 use capsem_service::errors::AppError;
 use clap::Parser;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -745,6 +747,7 @@ impl ServiceState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    ensure_open_file_limit(NETWORK_PROCESS_OPEN_FILE_LIMIT)?;
     run_service().await
 }
 
