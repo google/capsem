@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test]
 async fn overview_never_treats_an_error_response_as_authoritative_data() {
     let mock = axum::Router::new().route(
-        "/vms/list",
+        "/internal/gateway/status",
         axum::routing::get(|| async {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -22,21 +22,18 @@ async fn overview_never_treats_an_error_response_as_authoritative_data() {
 
 #[tokio::test]
 async fn overview_includes_update_availability_and_running_binary_version() {
-    let mock = axum::Router::new()
-        .route(
-            "/vms/list",
-            axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
-        )
-        .route(
-            "/update/status",
-            axum::routing::get(|| async {
-                let track = serde_json::json!({"current":"0.6.3", "latest":"0.6.4", "update_available":true,
+    let mock = axum::Router::new().route(
+        "/internal/gateway/status",
+        axum::routing::get(|| async {
+            let track = serde_json::json!({"current":"0.6.3", "latest":"0.6.4", "update_available":true,
                 "state":"update_available", "compatibility":"compatible"});
-                axum::Json(serde_json::json!({"stale":false, "binary":track, "assets":track,
+            axum::Json(serde_json::json!({"sandboxes": [], "updates": {
+                "stale":false, "binary":track, "assets":track,
                 "images":track, "supply_chain":{"manifest":{"path":"manifest.json"}, "channel_index":{},
-                    "host_sbom":{"name":"host"}, "vm_obom":{"name":"vm"}, "attestations":[]}}))
-            }),
-        );
+                    "host_sbom":{"name":"host"}, "vm_obom":{"name":"vm"}, "attestations":[]}
+            }}))
+        }),
+    );
     let (path, handle, _dir) = mock_uds(mock).await;
     let info = fetch_status(&test_app_state(&path)).await;
     let updates = info.updates.expect("the overview must include the update response");
@@ -151,7 +148,7 @@ fn list_response_handles_missing_optional_fields() {
 #[tokio::test]
 async fn fetch_status_preserves_session_available_actions() {
     let mock = axum::Router::new().route(
-        "/vms/list",
+        "/internal/gateway/status",
         axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
@@ -205,7 +202,7 @@ async fn concurrent_polls_share_reads_and_report_each_transition_once() {
     let hits = Arc::new(AtomicUsize::new(0));
     let hits_for_mock = Arc::clone(&hits);
     let mock = axum::Router::new().route(
-        "/vms/list",
+        "/internal/gateway/status",
         axum::routing::get(move || {
             let hits = Arc::clone(&hits_for_mock);
             async move {
@@ -329,7 +326,7 @@ async fn uds_get_times_out_while_reading_a_stalled_body() {
 
     let result = tokio::time::timeout(
         Duration::from_secs(6),
-        uds_get(&test_app_state(&path).service_client, "/vms/list"),
+        uds_get(&test_app_state(&path).service_client, "/internal/gateway/status"),
     )
     .await
     .expect("uds_get must enforce its own five-second deadline");
@@ -341,12 +338,12 @@ async fn uds_get_times_out_while_reading_a_stalled_body() {
 #[tokio::test]
 async fn uds_get_rejects_an_oversized_status_body() {
     let mock = axum::Router::new().route(
-        "/vms/list",
+        "/internal/gateway/status",
         axum::routing::get(|| async { Bytes::from(vec![b'x'; STATUS_RESPONSE_MAX_BODY_SIZE + 1]) }),
     );
     let (path, handle, _dir) = mock_uds(mock).await;
 
-    let error = uds_get(&test_app_state(&path).service_client, "/vms/list")
+    let error = uds_get(&test_app_state(&path).service_client, "/internal/gateway/status")
         .await
         .unwrap_err();
 
@@ -362,7 +359,7 @@ fn status_reads_are_bounded_to_five_seconds() {
 #[tokio::test]
 async fn fetch_status_empty_vm_list() {
     let mock = axum::Router::new().route(
-        "/vms/list",
+        "/internal/gateway/status",
         axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
     );
     let (path, h, _d) = mock_uds(mock).await;
@@ -382,15 +379,12 @@ async fn fetch_status_empty_vm_list() {
 
 #[tokio::test]
 async fn fetch_status_preserves_asset_status_and_manifest_provenance() {
-    let mock = axum::Router::new()
-        .route(
-            "/vms/list",
-            axum::routing::get(|| async { axum::Json(serde_json::json!({"sandboxes": []})) }),
-        )
-        .route(
-            "/assets/status",
-            axum::routing::get(|| async {
-                axum::Json(serde_json::json!({
+    let mock = axum::Router::new().route(
+        "/internal/gateway/status",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "sandboxes": [],
+                "assets": {
                     "ready": false,
                     "downloading": false,
                     "current_arch": "arm64",
@@ -408,9 +402,10 @@ async fn fetch_status_preserves_asset_status_and_manifest_provenance() {
                         "validation_status": "valid",
                         "refresh_policy": "24h"
                     }
-                }))
-            }),
-        );
+                }
+            }))
+        }),
+    );
     let (path, h, _d) = mock_uds(mock).await;
 
     let resp = fetch_status(&test_app_state(&path)).await;
@@ -428,65 +423,35 @@ async fn fetch_status_preserves_asset_status_and_manifest_provenance() {
 }
 
 #[tokio::test]
-async fn fetch_status_reads_its_authoritative_inputs_concurrently() {
-    let both_requests = Arc::new(tokio::sync::Barrier::new(2));
-    let list_request = both_requests.clone();
-    let assets_request = both_requests.clone();
-    let mock = axum::Router::new()
-        .route(
-            "/vms/list",
-            axum::routing::get(move || {
-                let request = list_request.clone();
-                async move {
-                    request.wait().await;
-                    axum::Json(serde_json::json!({"sandboxes": []}))
-                }
-            }),
-        )
-        .route(
-            "/assets/status",
-            axum::routing::get(move || {
-                let request = assets_request.clone();
-                async move {
-                    request.wait().await;
-                    axum::Json(serde_json::json!({
-                    "ready": false,
-                    "downloading": false,
-                    "current_arch": "arm64",
-                    "asset_version": "2026.0613.1",
-                    "assets": [
-                        {"kind": "kernel", "name": "vmlinuz", "path": "/a/vmlinuz", "status": "present", "expected_hash": "11"},
-                        {"kind": "rootfs", "name": "rootfs.erofs", "path": "/a/rootfs.erofs", "status": "missing", "expected_hash": "22"}
-                    ],
-                    "errors": ["missing rootfs.erofs"],
-                    "manifest": {
-                        "origin": "package",
-                        "path": "/Users/test/.capsem/assets/manifest.json",
-                        "origin_source": "file:///tmp/corp/manifest.json",
-                        "blake3": "0123456789abcdef",
-                        "validation_status": "valid",
-                        "refresh_policy": "24h"
-                    }
-                }))
-                }
-            }),
-        );
+async fn fetch_status_reads_one_combined_service_snapshot() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let requests = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&requests);
+    let mock = axum::Router::new().route(
+        "/internal/gateway/status",
+        axum::routing::get(move || {
+            let counted = Arc::clone(&counted);
+            async move {
+                counted.fetch_add(1, Ordering::SeqCst);
+                axum::Json(serde_json::json!({"sandboxes": []}))
+            }
+        }),
+    );
     let (path, h, _d) = mock_uds(mock).await;
 
-    let response = tokio::time::timeout(Duration::from_secs(1), fetch_status(&test_app_state(&path)))
-        .await
-        .expect("independent authoritative status reads must be in flight together");
+    let response = fetch_status(&test_app_state(&path)).await;
 
     assert_eq!(response.service, ServiceAvailability::Running);
     assert_eq!(response.vm_count, 0);
-    assert_eq!(response.assets.unwrap().current_arch, "arm64");
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
     h.abort();
 }
 
 #[tokio::test]
 async fn fetch_status_ignores_retired_global_asset_health() {
     let mock = axum::Router::new().route(
-        "/vms/list",
+        "/internal/gateway/status",
         axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [],
@@ -514,7 +479,7 @@ async fn fetch_status_ignores_retired_global_asset_health() {
 #[tokio::test]
 async fn fetch_status_multiple_vms() {
     let mock = axum::Router::new()
-        .route("/vms/list", axum::routing::get(|| async {
+        .route("/internal/gateway/status", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
                     {"id": "vm1", "name": "dev", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
@@ -551,7 +516,10 @@ async fn fetch_status_service_unavailable() {
 
 #[tokio::test]
 async fn fetch_status_malformed_list_json() {
-    let mock = axum::Router::new().route("/vms/list", axum::routing::get(|| async { "not json at all" }));
+    let mock = axum::Router::new().route(
+        "/internal/gateway/status",
+        axum::routing::get(|| async { "not json at all" }),
+    );
     let (path, h, _d) = mock_uds(mock).await;
 
     let state = test_app_state(&path);
@@ -567,7 +535,7 @@ async fn status_does_not_hide_a_new_vm_behind_the_previous_snapshot() {
     let counter = Arc::new(AtomicUsize::new(0));
     let c = counter.clone();
     let mock = axum::Router::new().route(
-        "/vms/list",
+        "/internal/gateway/status",
         axum::routing::get(move || {
             let c = c.clone();
             async move {
@@ -627,7 +595,7 @@ async fn status_does_not_hide_a_new_vm_behind_the_previous_snapshot() {
 #[tokio::test]
 async fn fetch_status_counts_suspended_vms() {
     let mock = axum::Router::new()
-        .route("/vms/list", axum::routing::get(|| async {
+        .route("/internal/gateway/status", axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [
                     {"id": "vm1", "pid": 100, "status": "Running", "persistent": true, "ram_mb": 2048, "cpus": 2, "available_actions": ["pause", "stop", "fork", "delete"]},
@@ -701,7 +669,7 @@ async fn fetch_status_forwards_the_boot_error_of_a_defunct_session() {
     // session. Dropping `last_error` here leaves every downstream surface
     // with nothing to say but "not resumable".
     let mock = axum::Router::new().route(
-        "/vms/list",
+        "/internal/gateway/status",
         axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [{
@@ -739,7 +707,7 @@ fn vm_summary_omits_last_error_for_a_healthy_session() {
 #[tokio::test]
 async fn fetch_status_passes_through_telemetry() {
     let mock = axum::Router::new().route(
-        "/vms/list",
+        "/internal/gateway/status",
         axum::routing::get(|| async {
             axum::Json(serde_json::json!({
                 "sandboxes": [{

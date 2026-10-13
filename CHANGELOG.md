@@ -170,6 +170,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gateway `/status` reads VM, asset and update state in one coordinator
+  snapshot, cutting service CPU for the polled overview without caching stale
+  VM lifecycle state.
+
+- Confined Linux VM owners retain ioctl authority only for their KVM and
+  vhost devices, and prepare saved-publication state before confinement, so
+  VMs boot without reopening authority to the session root or ordinary files.
+
+- Persistent VMs that crash during creation report their `process.log` tail
+  even when the child reaper has not yet cached it in the registry.
+
+- Confined macOS ledger and proxy workers now distinguish private unnamed
+  socketpairs from external endpoint authority during readiness attestation,
+  allowing worker-internal channels while Seatbelt continues to deny bind,
+  listen and connect operations.
+
+- OCI cache inventory no longer watches the flock-only control directory or
+  its files, preventing macOS from invalidating observations on the inventory's
+  own lock probes.
+
 - The authenticated gateway forwards standalone proxy create, heartbeat and
   stop operations instead of returning 404 for documented SDK endpoints.
 
