@@ -35,6 +35,43 @@ fn identity_cache_counts_hits_refreshes_and_invalidations() {
 }
 
 #[test]
+fn keyed_identity_cache_bounds_entries_and_refreshes_by_identity() {
+    let cache = KeyedIdentityCache::new("persistent_resume", 16);
+
+    assert!(cache.get(&"box", &"v1").is_none());
+    let first = cache.publish("box", "v1", String::from("ready"));
+    let hit = cache.get(&"box", &"v1").expect("published value");
+    assert!(Arc::ptr_eq(&first, &hit));
+
+    let refreshed = cache.publish("box", "v2", String::from("stopped"));
+    assert_eq!(&*refreshed, "stopped");
+    assert!(cache.get(&"box", &"v1").is_none());
+    assert_eq!(cache.stats().evictions, 0, "refresh is not an eviction");
+    assert_eq!(cache.remove(&"box").as_deref(), Some(&String::from("stopped")));
+
+    assert_eq!(
+        cache.stats(),
+        CacheStats {
+            hits: 1,
+            misses: 2,
+            insertions: 1,
+            refreshes: 1,
+            invalidations: 1,
+            evictions: 0,
+            load_errors: 0,
+            entries: 0,
+        }
+    );
+
+    let bounded = KeyedIdentityCache::new("bounded_identity", 2);
+    for key in 0..32 {
+        bounded.publish(key, key, key * 10);
+    }
+    assert!(bounded.len() <= 2, "resident identity entries must remain bounded");
+    assert!(bounded.stats().evictions > 0);
+}
+
+#[test]
 fn generation_cache_rejects_a_load_started_before_invalidation() {
     let cache = GenerationCache::new("plugin_policy");
     let stale = cache.lookup();

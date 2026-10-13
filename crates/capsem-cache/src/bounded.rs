@@ -13,6 +13,16 @@ struct EvictionLifecycle<K, V> {
     marker: PhantomData<fn(K, V)>,
 }
 
+struct EvictionState {
+    count: bool,
+}
+
+impl Default for EvictionState {
+    fn default() -> Self {
+        Self { count: true }
+    }
+}
+
 impl<K, V> Clone for EvictionLifecycle<K, V> {
     fn clone(&self) -> Self {
         Self {
@@ -23,10 +33,12 @@ impl<K, V> Clone for EvictionLifecycle<K, V> {
 }
 
 impl<K, V> Lifecycle<K, Arc<V>> for EvictionLifecycle<K, V> {
-    type RequestState = ();
+    type RequestState = EvictionState;
 
-    fn on_evict(&self, _state: &mut Self::RequestState, _key: K, _value: Arc<V>) {
-        self.telemetry.evict();
+    fn on_evict(&self, state: &mut Self::RequestState, _key: K, _value: Arc<V>) {
+        if state.count {
+            self.telemetry.evict();
+        }
     }
 }
 
@@ -63,7 +75,14 @@ where
     where
         Q: Equivalent<K> + Hash + ?Sized,
     {
-        let value = self.inner.get(key);
+        self.get_if(key, |_| true)
+    }
+
+    pub(crate) fn get_if<Q>(&self, key: &Q, accept: impl FnOnce(&V) -> bool) -> Option<Arc<V>>
+    where
+        Q: Equivalent<K> + Hash + ?Sized,
+    {
+        let value = self.inner.get(key).filter(|value| accept(value));
         if value.is_some() {
             self.telemetry.hit();
         } else {
@@ -72,13 +91,29 @@ where
         value
     }
 
+    pub(crate) fn peek<Q>(&self, key: &Q) -> Option<Arc<V>>
+    where
+        Q: Equivalent<K> + Hash + ?Sized,
+    {
+        self.inner.get(key)
+    }
+
     pub fn insert(&self, key: K, value: V) -> Arc<V> {
-        let replacing = self.inner.peek(&key).is_some();
         let value = Arc::new(value);
-        self.inner.insert(key, Arc::clone(&value));
-        if replacing {
-            self.telemetry.refresh();
+        if self.inner.peek(&key).is_some() {
+            let mut lifecycle = EvictionState { count: false };
+            match self
+                .inner
+                .replace_with_lifecycle(key, Arc::clone(&value), false, &mut lifecycle)
+            {
+                Ok(()) => self.telemetry.refresh(),
+                Err((key, value)) => {
+                    self.inner.insert(key, value);
+                    self.telemetry.insertion();
+                }
+            }
         } else {
+            self.inner.insert(key, Arc::clone(&value));
             self.telemetry.insertion();
         }
         self.telemetry.set_entries(self.inner.len());
