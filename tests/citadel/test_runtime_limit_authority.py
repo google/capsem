@@ -88,6 +88,7 @@ REQUIRED_WIRING = {
         "ReserveBatch",
         "AdmitBatch",
     ),
+    "crates/capsem-logger/src/db.rs": ("LEDGER_PRODUCER_QUEUE_CAPACITY",),
     "crates/capsem-core/src/net/dns/session/mod.rs": ("DNS_SESSION_MAX_IN_FLIGHT",),
     "crates/capsem-agent/src/dns_proxy/session.rs": ("DNS_SESSION_MAX_IN_FLIGHT",),
     "crates/capsem-agent/src/net_proxy.rs": (
