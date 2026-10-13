@@ -105,3 +105,42 @@ async fn owned_signal_outlives_its_waiter_and_requires_the_original_generation()
     registration.complete();
     assert!(owner.wait_exit("vm", generation).await.unwrap());
 }
+
+#[tokio::test]
+async fn observed_native_spawn_failure_has_positive_no_child_retirement() {
+    let owner = Retirements::default();
+    let generation = capsem_crypto::uuid_v4();
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = tokio::process::Command::new(directory.path().join("missing-binary"));
+    let mut unrelated = sleeper();
+    assert!(owner.spawn("failed", generation, &mut command).is_err());
+    assert!(owner.wait_exit("failed", generation).await.unwrap());
+    assert!(owner.wait("failed", generation).await.unwrap());
+    assert!(!owner.is_live("failed", generation).unwrap());
+    assert_eq!(
+        owner.signal("failed", generation, Signal::Kill).await.unwrap(),
+        SignalOutcome::Gone
+    );
+    assert!(unrelated.try_wait().unwrap().is_none());
+    unrelated.kill().await.unwrap();
+}
+
+#[tokio::test]
+async fn post_spawn_failure_reaps_owned_child_before_publishing_retirement() {
+    let owner = Retirements::default();
+    let generation = capsem_crypto::uuid_v4();
+    let mut command = tokio::process::Command::new("sleep");
+    command.arg("30").env_clear().kill_on_drop(true);
+    let (child, registration) = owner.spawn("failed", generation, &mut command).unwrap();
+    let mut unrelated = sleeper();
+    let reaper = crate::instance_reaper::kill_and_reap(child, registration);
+    tokio::time::timeout(Duration::from_secs(1), reaper)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(owner.wait_exit("failed", generation).await.unwrap());
+    assert!(owner.wait("failed", generation).await.unwrap());
+    assert!(!owner.is_live("failed", generation).unwrap());
+    assert!(unrelated.try_wait().unwrap().is_none());
+    unrelated.kill().await.unwrap();
+}

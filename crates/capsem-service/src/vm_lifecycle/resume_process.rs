@@ -139,14 +139,13 @@ impl ServiceState {
 
         let generation = capsem_crypto::uuid_v4();
         crate::instance::persist_spawn_identity(&entry.session_dir, &vm_id, generation)?;
-        let retirement = self.retirements.register(&vm_id, generation)?;
         let process_spawn_span = tracing::debug_span!(
             target: "capsem.launch",
             capsem_foundation::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
             boot_mode = "resume",
             status = tracing::field::Empty,
         );
-        let child = match process_spawn_span.in_scope(|| {
+        let (child, retirement) = match process_spawn_span.in_scope(|| {
             child_cmd
                 .env(
                     "RUST_LOG",
@@ -190,8 +189,8 @@ impl ServiceState {
                 .arg("--service-socket")
                 .arg(&self.service_socket)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
-                .stderr(std::process::Stdio::from(process_log_file))
-                .spawn()
+                .stderr(std::process::Stdio::from(process_log_file));
+            self.retirements.spawn(&vm_id, generation, &mut child_cmd)
         }) {
             Ok(child) => {
                 process_spawn_span.record("status", "ok");
@@ -199,7 +198,7 @@ impl ServiceState {
             }
             Err(error) => {
                 process_spawn_span.record("status", "error");
-                return Err(anyhow::Error::new(error).context("failed to spawn capsem-process"));
+                return Err(error.context("failed to spawn capsem-process"));
             }
         };
 
@@ -208,7 +207,7 @@ impl ServiceState {
 
         if session_db_path_for_session_dir(&entry.session_dir).exists() {
             if let Err(error) = self.register_session_db_handle(&vm_id, &entry.session_dir) {
-                instance_reaper::kill_and_reap(child);
+                let _reaper = instance_reaper::kill_and_reap(child, retirement);
                 return Err(error);
             }
         } else {

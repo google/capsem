@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failed VM launches retain original child retirement authority. Observed
+  native spawn failures prove no child exists; failures after spawn kill and
+  reap that child before publishing retirement to managed cleanup.
+
 - Managed startup recovery closes durable reservations that never prepared a
   VM target, preserving capability authentication without replaying creation.
 

@@ -159,7 +159,6 @@ impl ServiceState {
         info!(process_binary = %self.process_binary.display(), exists = self.process_binary.exists(), "checking process_binary");
 
         crate::instance::persist_spawn_identity(&session_dir, id, generation)?;
-        let retirement = self.retirements.register(id, generation)?;
         info!(id, version, asset_version = %resolved.asset_version, "spawning capsem-process");
 
         let mut child_cmd = tokio::process::Command::new(&self.process_binary);
@@ -217,7 +216,7 @@ impl ServiceState {
             boot_mode = "provision",
             status = tracing::field::Empty,
         );
-        let mut child = match process_spawn_span.in_scope(|| {
+        let (child, retirement) = match process_spawn_span.in_scope(|| {
             child_cmd
                 .env(
                     "RUST_LOG",
@@ -261,8 +260,8 @@ impl ServiceState {
                 .arg("--service-socket")
                 .arg(&self.service_socket)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
-                .stderr(std::process::Stdio::from(process_log_file))
-                .spawn()
+                .stderr(std::process::Stdio::from(process_log_file));
+            self.retirements.spawn(id, generation, &mut child_cmd)
         }) {
             Ok(child) => {
                 process_spawn_span.record("status", "ok");
@@ -270,7 +269,7 @@ impl ServiceState {
             }
             Err(error) => {
                 process_spawn_span.record("status", "error");
-                return Err(anyhow::Error::new(error).context("failed to spawn capsem-process"));
+                return Err(error.context("failed to spawn capsem-process"));
             }
         };
 
@@ -290,7 +289,7 @@ impl ServiceState {
             ..Default::default()
         };
         if let Err(error) = tokio::runtime::Handle::current().block_on(self.record_host_session_created(id, created)) {
-            let _ = child.start_kill();
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
             return Err(error.context("failed to record the session in the host ledger"));
         }
 
@@ -320,7 +319,7 @@ impl ServiceState {
                 env: env.clone(),
             });
             if let Err(error) = registration {
-                instance_reaper::kill_and_reap(child);
+                let _reaper = instance_reaper::kill_and_reap(child, retirement);
                 return Err(error);
             }
         }

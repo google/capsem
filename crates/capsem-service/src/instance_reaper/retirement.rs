@@ -49,6 +49,25 @@ pub(crate) struct Registration {
 }
 
 impl Retirements {
+    /// All fallible command preparation precedes this call. Register directly
+    /// before spawn so a native spawn error is positive evidence of no child.
+    pub(crate) fn spawn(
+        &self,
+        id: &str,
+        generation: Uuid,
+        command: &mut tokio::process::Command,
+    ) -> Result<(tokio::process::Child, Registration)> {
+        let registration = self.register(id, generation)?;
+        match command.spawn() {
+            Ok(child) => Ok((child, registration)),
+            Err(error) => {
+                registration.exited.send_replace(Outcome::Complete);
+                registration.complete();
+                Err(error.into())
+            }
+        }
+    }
+
     pub(crate) fn register(&self, id: &str, generation: Uuid) -> Result<Registration> {
         ensure!(!generation.is_nil(), "retirement generation is nil");
         let mut entries = self.entries.lock().unwrap();

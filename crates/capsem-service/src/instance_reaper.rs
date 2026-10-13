@@ -4,11 +4,16 @@ use super::*;
 mod retirement;
 pub(crate) use retirement::{Registration, Retirements};
 
-pub(super) fn kill_and_reap(mut child: tokio::process::Child) {
+pub(super) fn kill_and_reap(
+    mut child: tokio::process::Child,
+    mut retirement: Registration,
+) -> tokio::task::JoinHandle<()> {
     let _ = child.start_kill();
     tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
+        if retirement.wait_child(&mut child).await.is_ok() {
+            retirement.complete();
+        }
+    })
 }
 
 /// The one child reaper: every `capsem-process` exit, from a fresh provision
