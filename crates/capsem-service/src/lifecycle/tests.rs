@@ -105,3 +105,40 @@ fn typed_denials_explain_the_required_action() {
         assert_eq!(reason.to_string(), message);
     }
 }
+
+#[tokio::test]
+async fn shutdown_seals_admission_and_joins_previously_admitted_workers() {
+    let lifecycle = Arc::new(VmLifecycle::default());
+    let first = lifecycle.admit().unwrap();
+    let second = lifecycle.admit().unwrap();
+    lifecycle.begin_shutdown();
+    assert!(matches!(lifecycle.admit(), Err(RestartDenied::AlreadyRequested)));
+    let drained = {
+        let lifecycle = lifecycle.clone();
+        tokio::spawn(async move { lifecycle.wait_for_launches().await })
+    };
+    tokio::task::yield_now().await;
+    assert!(!drained.is_finished());
+    drop(first);
+    tokio::task::yield_now().await;
+    assert!(!drained.is_finished(), "one launch is still owned");
+    drop(second);
+    tokio::time::timeout(std::time::Duration::from_secs(1), drained)
+        .await
+        .unwrap()
+        .unwrap();
+    lifecycle.begin_shutdown();
+    lifecycle.wait_for_launches().await;
+    assert!(matches!(lifecycle.admit(), Err(RestartDenied::AlreadyRequested)));
+}
+
+#[tokio::test]
+async fn shutdown_drain_observes_launch_completion_before_it_starts_waiting() {
+    let lifecycle = VmLifecycle::default();
+    let worker = lifecycle.admit().unwrap();
+    lifecycle.begin_shutdown();
+    drop(worker);
+    tokio::time::timeout(std::time::Duration::from_secs(1), lifecycle.wait_for_launches())
+        .await
+        .unwrap();
+}

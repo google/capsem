@@ -6,6 +6,7 @@ use std::sync::Mutex;
 pub struct VmLifecycle {
     pub vz: tokio::sync::RwLock<()>,
     admission: Mutex<Admission>,
+    launches_finished: tokio::sync::Notify,
 }
 
 #[derive(Default)]
@@ -34,6 +35,24 @@ impl std::fmt::Display for RestartDenied {
 impl std::error::Error for RestartDenied {}
 
 impl VmLifecycle {
+    /// Seal admission before observing children for service-wide teardown.
+    /// Existing workers keep their permits until registration is published.
+    pub fn begin_shutdown(&self) {
+        self.admission.lock().unwrap().restarting = true;
+    }
+
+    pub async fn wait_for_launches(&self) {
+        loop {
+            let finished = self.launches_finished.notified();
+            tokio::pin!(finished);
+            finished.as_mut().enable();
+            if self.admission.lock().unwrap().launching == 0 {
+                return;
+            }
+            finished.await;
+        }
+    }
+
     /// Keep this permit in the blocking worker through instance registration.
     /// It must not live only in the HTTP future, which can be cancelled.
     pub fn admit(&self) -> Result<LaunchPermit<'_>, RestartDenied> {
@@ -70,7 +89,13 @@ pub struct LaunchPermit<'a>(&'a VmLifecycle);
 
 impl Drop for LaunchPermit<'_> {
     fn drop(&mut self) {
-        self.0.admission.lock().unwrap().launching -= 1;
+        let mut admission = self.0.admission.lock().unwrap();
+        admission.launching -= 1;
+        let drained = admission.launching == 0;
+        drop(admission);
+        if drained {
+            self.0.launches_finished.notify_waiters();
+        }
     }
 }
 

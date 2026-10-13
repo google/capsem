@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Service shutdown seals launch admission and joins already admitted workers
+  before selecting children for teardown, including cancelled HTTP callers.
+
 - Managed ownership stops renewing after ordinary stop/delete or loss of its
   original VM spawn. Authenticated claims join the existing cleanup barrier;
   changed spawns and failed cleanup cannot regain active ownership.

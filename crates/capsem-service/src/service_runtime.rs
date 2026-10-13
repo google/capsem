@@ -584,6 +584,8 @@ pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
 /// `capsem-process` per live VM, which in turn held Apple VZ memory -- making
 /// long test runs increasingly slow until boots timed out.
 pub(super) async fn kill_all_vm_processes(state: &Arc<ServiceState>) {
+    state.lifecycle.begin_shutdown();
+    state.lifecycle.wait_for_launches().await;
     let targets: Vec<_> = state
         .instances
         .lock()

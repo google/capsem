@@ -72,6 +72,7 @@ async fn vm_shutdown_without_original_child_authority_cannot_acknowledge_exit() 
 #[tokio::test]
 async fn service_shutdown_uses_original_child_owner_before_removing_session_bytes() {
     let (state, _dir) = make_test_state_with_tempdir();
+    let launch = state.lifecycle.admit().unwrap();
     let id = "service-owned-shutdown";
     let session = state.run_dir.join("sessions").join(id);
     std::fs::create_dir_all(&session).unwrap();
@@ -86,6 +87,17 @@ async fn service_shutdown_uses_original_child_owner_before_removing_session_byte
         .kill_on_drop(true)
         .spawn()
         .unwrap();
+    let shutdown = {
+        let state = state.clone();
+        tokio::spawn(async move { kill_all_vm_processes(&state).await })
+    };
+    capsem_foundation::poll::poll_until(
+        capsem_foundation::poll::PollOpts::new("shutdown-seals-admission", std::time::Duration::from_secs(1)),
+        || std::future::ready(state.lifecycle.admit().is_err().then_some(())),
+    )
+    .await
+    .unwrap();
+    assert!(!shutdown.is_finished(), "shutdown missed the admitted original worker");
     insert_fake_instance_with_session_dir(&state, id, unrelated.id().unwrap(), session.clone());
     let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
     let registration = state.retirements.register(id, generation).unwrap();
@@ -98,8 +110,10 @@ async fn service_shutdown_uses_original_child_owner_before_removing_session_byte
         session.clone(),
         registration,
     );
-    tokio::time::timeout(std::time::Duration::from_secs(4), kill_all_vm_processes(&state))
+    drop(launch);
+    tokio::time::timeout(std::time::Duration::from_secs(4), shutdown)
         .await
+        .unwrap()
         .unwrap();
     assert!(
         unrelated.try_wait().unwrap().is_none(),
