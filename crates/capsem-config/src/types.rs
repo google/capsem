@@ -434,6 +434,9 @@ pub struct SettingsFile {
     /// Which OCI images may be fetched and which may run (`[images]`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<ImagePolicyConfig>,
+    /// Finite service-owned lifetimes for SDK-managed ephemeral sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_sessions: Option<crate::ManagedSessionPolicy>,
 }
 
 /// Image policy as written: selectors are checked and normalized where the
@@ -486,6 +489,9 @@ impl SettingsFile {
             mcp.validate("settings")?;
         }
         self.network.validate()?;
+        if let Some(policy) = &self.managed_sessions {
+            policy.validate()?;
+        }
         Ok(())
     }
 }

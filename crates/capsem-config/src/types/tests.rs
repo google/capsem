@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn managed_policy_defaults_are_finite_and_corporate_limits_cannot_be_extended() {
+    let defaults = crate::ManagedSessionPolicy::resolve(None, None).unwrap();
+    assert_eq!(defaults.lease_seconds, 300);
+    assert_eq!(defaults.renew_after_seconds, 60);
+    assert_eq!(defaults.tombstone_seconds, 86_400);
+    let user: SettingsFile =
+        toml::from_str("[managed_sessions]\nlease_seconds = 900\nrenew_after_seconds = 120\ntombstone_seconds = 10\n")
+            .unwrap();
+    let corp: SettingsFile = toml::from_str(
+        "[managed_sessions]\nlease_seconds = 180\nrenew_after_seconds = 30\ntombstone_seconds = 172800\n",
+    )
+    .unwrap();
+    let narrowed =
+        crate::ManagedSessionPolicy::resolve(user.managed_sessions.as_ref(), corp.managed_sessions.as_ref()).unwrap();
+    assert_eq!(narrowed.lease_seconds, 180);
+    assert_eq!(narrowed.renew_after_seconds, 30);
+    assert_eq!(narrowed.tombstone_seconds, 172_800);
+    assert_eq!(
+        toml::from_str::<SettingsFile>(&toml::to_string(&user).unwrap()).unwrap(),
+        user
+    );
+}
+
+#[test]
+fn managed_policy_rejects_unbounded_invalid_and_unknown_settings() {
+    for fields in [
+        "lease_seconds = 0",
+        "renew_after_seconds = 0",
+        "tombstone_seconds = 0",
+        "lease_seconds = 60",
+        "renew_after_seconds = 300",
+    ] {
+        let file: SettingsFile = toml::from_str(&format!("[managed_sessions]\n{fields}\n")).unwrap();
+        assert!(file.validate_metadata_contract().is_err(), "{fields}");
+    }
+    for fields in [
+        "lease_seconds = -1",
+        "lease_seconds = 4294967296",
+        "client_lease_seconds = 600",
+    ] {
+        assert!(
+            toml::from_str::<SettingsFile>(&format!("[managed_sessions]\n{fields}\n")).is_err(),
+            "{fields}"
+        );
+    }
+}
+
+#[test]
 fn router_budgets_are_explicit_and_bounded() {
     let configured: NetworkConfig =
         toml::from_str("[router.expose]\nconnections = 4\nsetups = 2\nrate_per_second = 8\nburst = 2\n")

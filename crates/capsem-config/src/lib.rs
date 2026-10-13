@@ -6,6 +6,7 @@
 
 mod condition;
 mod lint;
+mod managed_sessions;
 pub mod mcp;
 pub mod model;
 pub mod private_pool;
@@ -19,6 +20,7 @@ mod types;
 mod validation;
 
 pub use lint::*;
+pub use managed_sessions::ManagedSessionPolicy;
 pub use private_pool::{PrivatePool, NETWORK_PREFIX_LEN};
 pub use provider_profile::*;
 pub use resolver::*;
