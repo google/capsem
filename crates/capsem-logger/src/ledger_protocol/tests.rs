@@ -60,6 +60,37 @@ async fn request_round_trips_over_the_landed_bounded_channel() {
 }
 
 #[test]
+fn admission_batch_is_bounded_and_correlated_as_one_reply() {
+    let LedgerCommand::Admit { event, commitment } = file_write() else {
+        unreachable!()
+    };
+    let admission = LedgerAdmission::new(*event, commitment);
+    LedgerCommand::AdmitBatch {
+        admissions: vec![admission.clone(), admission],
+    }
+    .validate()
+    .unwrap();
+    assert_eq!(
+        LedgerCommand::AdmitBatch { admissions: vec![] }.validate(),
+        Err(LedgerProtocolError::InvalidOperation)
+    );
+    LedgerReply::AcceptedBatch {
+        first_admission_id: 41,
+        through_admission_id: 42,
+        accepted: 2,
+    }
+    .validate()
+    .unwrap();
+    assert!(LedgerReply::AcceptedBatch {
+        first_admission_id: 41,
+        through_admission_id: 43,
+        accepted: 2,
+    }
+    .validate()
+    .is_err());
+}
+
+#[test]
 fn roles_admit_only_their_operation_classes() {
     for (role, operation) in [
         (LedgerClientRole::VmOwner, file_write()),

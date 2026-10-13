@@ -9,7 +9,8 @@ use capsem_proto::ledger::{
 
 use super::*;
 use crate::ledger_protocol::{
-    LedgerClientMessage, LedgerCommand, LedgerQuery, LedgerReply, LedgerServerMessage, LedgerTimelineLayer,
+    LedgerAdmission, LedgerClientMessage, LedgerCommand, LedgerQuery, LedgerReply, LedgerServerMessage,
+    LedgerTimelineLayer,
 };
 use crate::{Decision, NetEvent, WriteOp};
 
@@ -101,6 +102,74 @@ fn prepared_server_holds_writer_authority_until_workers_start() {
     let server = prepared.start();
     drop(server);
     drop(LedgerServer::prepare_with_codecs(&database, capsem_archive::ArchiveCodecs::default()).unwrap());
+}
+
+#[tokio::test]
+async fn admission_batch_gets_one_contiguous_acceptance_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("session.db");
+    let server = Arc::new(LedgerServer::open(&database).unwrap());
+    let producer_grant = grant(LedgerClientRole::VmOwner);
+    let (producer, replies, task) = connect(Arc::clone(&server), producer_grant).await;
+    let mut first = body_event(Vec::new());
+    let WriteOp::NetEvent(first_event) = &mut first else {
+        unreachable!()
+    };
+    first_event.event_id = Some("0123456789ac".into());
+    first_event.domain = "first.test".into();
+    let first_commitment = capsem_proto::ledger_commitment::LedgerCommitment::new(
+        producer_grant,
+        1,
+        1,
+        first.kind(),
+        crate::writer::commitment_event_hash(&first).unwrap(),
+        capsem_proto::ledger_commitment::ZERO_COMMITMENT_HASH,
+    )
+    .unwrap();
+    let mut second = body_event(Vec::new());
+    let WriteOp::NetEvent(second_event) = &mut second else {
+        unreachable!()
+    };
+    second_event.event_id = Some("0123456789ad".into());
+    second_event.domain = "second.test".into();
+    let second_commitment = capsem_proto::ledger_commitment::LedgerCommitment::new(
+        producer_grant,
+        2,
+        2,
+        second.kind(),
+        crate::writer::commitment_event_hash(&second).unwrap(),
+        first_commitment.commitment_hash(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        request(
+            &producer,
+            &replies,
+            1,
+            LedgerCommand::AdmitBatch {
+                admissions: vec![
+                    LedgerAdmission::new(first, first_commitment),
+                    LedgerAdmission::new(second, second_commitment),
+                ],
+            },
+        )
+        .await,
+        LedgerReply::AcceptedBatch {
+            first_admission_id: 1,
+            through_admission_id: 2,
+            accepted: 2,
+        }
+    ));
+    assert!(matches!(
+        request(&producer, &replies, 2, LedgerCommand::Flush).await,
+        LedgerReply::Durable {
+            through_admission_id: 2
+        }
+    ));
+    drop(producer);
+    drop(replies);
+    assert_eq!(task.await.unwrap().unwrap(), LedgerClientExit::Disconnected);
 }
 
 #[tokio::test]

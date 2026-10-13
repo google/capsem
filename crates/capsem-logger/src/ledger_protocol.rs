@@ -31,6 +31,44 @@ const MAX_EVENT_ID_BYTES: usize = 12;
 const MAX_TIMESTAMP_BYTES: usize = 64;
 const SNAPSHOT_ID_BYTES: usize = 16;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LedgerAdmission {
+    event: Box<WriteOp>,
+    commitment: LedgerCommitment,
+}
+
+impl LedgerAdmission {
+    pub fn new(event: WriteOp, commitment: LedgerCommitment) -> Self {
+        Self {
+            event: Box::new(event),
+            commitment,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), LedgerProtocolError> {
+        self.commitment
+            .validate()
+            .map_err(|_| LedgerProtocolError::InvalidOperation)?;
+        let (event_hash, event_bytes) = crate::writer::commitment_event_fingerprint(&self.event)
+            .map_err(|_| LedgerProtocolError::InvalidOperation)?;
+        if self.commitment.event_kind() != self.event.kind() || self.commitment.event_hash() != event_hash {
+            return Err(LedgerProtocolError::InvalidOperation);
+        }
+        if event_bytes > MAX_LEDGER_OPERATION_BYTES - MAX_ADMIT_METADATA_BYTES {
+            return Err(LedgerProtocolError::OperationTooLarge);
+        }
+        Ok(())
+    }
+
+    pub fn into_parts(self) -> (WriteOp, LedgerCommitment) {
+        (*self.event, self.commitment)
+    }
+
+    pub fn commitment(&self) -> &LedgerCommitment {
+        &self.commitment
+    }
+}
+
 pub type LedgerResponse = capsem_proto::ledger::LedgerResponse<LedgerReply>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +94,9 @@ pub enum LedgerCommand {
         event: Box<WriteOp>,
         commitment: LedgerCommitment,
     },
+    AdmitBatch {
+        admissions: Vec<LedgerAdmission>,
+    },
     /// Make every accepted event through the returned admission id durable.
     Flush,
     Query {
@@ -80,7 +121,7 @@ pub enum LedgerCommand {
 impl LedgerOperation for LedgerCommand {
     fn capability(&self) -> LedgerCapability {
         match self {
-            Self::Admit { .. } => LedgerCapability::Admit,
+            Self::Admit { .. } | Self::AdmitBatch { .. } => LedgerCapability::Admit,
             Self::Flush => LedgerCapability::Flush,
             Self::Query { .. } | Self::ReadBodies { .. } | Self::Counters => LedgerCapability::Read,
             Self::Retain { .. } => LedgerCapability::Retain,
@@ -105,6 +146,14 @@ impl LedgerOperation for LedgerCommand {
                     return Err(LedgerProtocolError::OperationTooLarge);
                 }
                 return Ok(());
+            }
+            Self::AdmitBatch { admissions } => {
+                if admissions.is_empty() || admissions.len() > capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY {
+                    return Err(LedgerProtocolError::InvalidOperation);
+                }
+                for admission in admissions {
+                    admission.validate()?;
+                }
             }
             Self::Query { query } => query.validate()?,
             Self::ReadBodies { event_id } if !valid_event_id(event_id) => {
@@ -289,6 +338,11 @@ pub enum LedgerReply {
     Accepted {
         admission_id: u64,
     },
+    AcceptedBatch {
+        first_admission_id: u64,
+        through_admission_id: u64,
+        accepted: u16,
+    },
     Durable {
         through_admission_id: u64,
     },
@@ -328,6 +382,16 @@ impl LedgerReply {
     pub fn validate(&self) -> Result<(), LedgerProtocolError> {
         let valid = match self {
             Self::Accepted { admission_id } => *admission_id != 0,
+            Self::AcceptedBatch {
+                first_admission_id,
+                through_admission_id,
+                accepted,
+            } => {
+                *first_admission_id != 0
+                    && usize::from(*accepted) <= capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY
+                    && *accepted != 0
+                    && first_admission_id.checked_add(u64::from(*accepted) - 1) == Some(*through_admission_id)
+            }
             Self::Durable { .. } | Self::Counters { .. } | Self::BodiesComplete | Self::Retained { .. } => true,
             Self::Query { sets } => {
                 sets.len() <= MAX_LEDGER_RESULT_SETS && sets.iter().all(|rows| rows.validate().is_ok())

@@ -8,12 +8,12 @@ use std::time::Duration;
 use capsem_foundation::ipc_channel;
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerHello, LedgerOutcome, LedgerRequest};
 use capsem_proto::ledger_commitment::{
-    CommitmentClientMessage, CommitmentCommand, CommitmentReply, CommitmentServerMessage, LedgerCommitment,
-    ZERO_COMMITMENT_HASH,
+    CommitmentClientMessage, CommitmentCommand, CommitmentReply, CommitmentReservation, CommitmentServerMessage,
+    LedgerCommitment, MAX_COMMITMENTS_PER_CHECKPOINT, ZERO_COMMITMENT_HASH,
 };
 use tokio::sync::oneshot;
 
-use crate::ledger_protocol::{LedgerClientMessage, LedgerCommand, LedgerReply, LedgerServerMessage};
+use crate::ledger_protocol::{LedgerAdmission, LedgerClientMessage, LedgerCommand, LedgerReply, LedgerServerMessage};
 use crate::{RetainOutcome, WriteOp};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -65,17 +65,17 @@ enum RemoteMessage {
 }
 
 enum AdmissionMessage {
-    Operation {
-        message: RemoteMessage,
-        commitment: Option<LedgerCommitment>,
+    Operations {
+        messages: Vec<RemoteMessage>,
+        commitments: Vec<LedgerCommitment>,
     },
     Shutdown,
 }
 
 enum AdmissionResult {
-    Operation {
-        message: RemoteMessage,
-        commitment: Option<LedgerCommitment>,
+    Operations {
+        messages: Vec<RemoteMessage>,
+        commitments: Vec<LedgerCommitment>,
         result: Result<LedgerReply, String>,
     },
     Shutdown(Result<LedgerReply, String>),
@@ -304,6 +304,7 @@ fn run(
 
     let mut commitments = CommitmentState::new(commitment_sender, commitment_receiver, grant);
     let mut failure = None;
+    let mut deferred = None;
     loop {
         while let Ok(result) = result_rx.try_recv() {
             if let Err(error) = apply_admission_result(&runtime, &mut commitments, result) {
@@ -314,7 +315,10 @@ fn run(
         if failure.is_some() {
             break;
         }
-        let message = match messages.recv_timeout(Duration::from_millis(1)) {
+        let message = match deferred
+            .take()
+            .map_or_else(|| messages.recv_timeout(Duration::from_millis(1)), Ok)
+        {
             Ok(message) => message,
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -347,28 +351,63 @@ fn run(
                 return;
             }
         };
-        let commitment = if let RemoteMessage::Admit { event, .. } = &message {
+        let mut batch = vec![message];
+        if matches!(batch.first(), Some(RemoteMessage::Admit { .. })) {
+            while batch.len() < capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY {
+                match messages.try_recv() {
+                    Ok(message @ RemoteMessage::Admit { .. }) => batch.push(message),
+                    Ok(message) => {
+                        deferred = Some(message);
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Empty) if batch.len() == 1 => {
+                        match messages.recv_timeout(Duration::from_micros(
+                            capsem_proto::LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS,
+                        )) {
+                            Ok(message @ RemoteMessage::Admit { .. }) => batch.push(message),
+                            Ok(message) => {
+                                deferred = Some(message);
+                                break;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+        let reserved = if matches!(batch.first(), Some(RemoteMessage::Admit { .. })) {
+            let events = batch
+                .iter()
+                .map(|message| match message {
+                    RemoteMessage::Admit { event, .. } => event.as_ref(),
+                    _ => unreachable!("admission batch contains only events"),
+                })
+                .collect::<Vec<_>>();
             match runtime.block_on(async {
-                tokio::time::timeout(OPERATION_TIMEOUT, commitments.reserve(event))
+                tokio::time::timeout(OPERATION_TIMEOUT, commitments.reserve_batch(&events))
                     .await
                     .map_err(|_| "ledger commitment reservation timed out".to_string())?
             }) {
-                Ok(commitment) => Some(commitment),
+                Ok(commitments) => commitments,
                 Err(error) => {
-                    finish(message, Err(error.clone()));
+                    finish_all(batch, Err(error.clone()));
                     failure = Some(error);
                     break;
                 }
             }
         } else {
-            None
+            Vec::new()
         };
-        if let Err(error) = admission_tx.send(AdmissionMessage::Operation { message, commitment }) {
-            let AdmissionMessage::Operation { message, .. } = error.0 else {
+        if let Err(error) = admission_tx.send(AdmissionMessage::Operations {
+            messages: batch,
+            commitments: reserved,
+        }) {
+            let AdmissionMessage::Operations { messages, .. } = error.0 else {
                 unreachable!("only operation messages are sent here")
             };
             let reason = "ledger admission stage stopped".to_string();
-            finish(message, Err(reason.clone()));
+            finish_all(messages, Err(reason.clone()));
             failure = Some(reason);
             break;
         }
@@ -425,11 +464,11 @@ fn admission_run(
     let mut request_id = 1_u64;
     while let Ok(message) = messages.recv() {
         let (result, response) = match message {
-            AdmissionMessage::Operation { message, commitment } => {
+            AdmissionMessage::Operations { messages, commitments } => {
                 let result = runtime.block_on(async {
                     tokio::time::timeout(
                         OPERATION_TIMEOUT,
-                        dispatch_admission(&sender, &receiver, request_id, &message, commitment.as_ref()),
+                        dispatch_admissions(&sender, &receiver, request_id, &messages, &commitments),
                     )
                     .await
                     .map_err(|_| "ledger client operation timed out".to_string())?
@@ -437,9 +476,9 @@ fn admission_run(
                 let failed = result.is_err();
                 (
                     failed,
-                    AdmissionResult::Operation {
-                        message,
-                        commitment,
+                    AdmissionResult::Operations {
+                        messages,
+                        commitments,
                         result,
                     },
                 )
@@ -567,37 +606,58 @@ impl CommitmentState {
         }
     }
 
-    async fn reserve(&mut self, event: &WriteOp) -> Result<LedgerCommitment, String> {
-        let producer_sequence = self
+    async fn reserve_batch(&mut self, events: &[&WriteOp]) -> Result<Vec<LedgerCommitment>, String> {
+        if events.is_empty() || events.len() > capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY {
+            return Err("ledger commitment reservation batch is empty or exceeds its bound".into());
+        }
+        let first_producer_sequence = self
             .producer_sequence
             .checked_add(1)
             .ok_or_else(|| "ledger producer sequence exhausted".to_string())?;
-        let event_hash = super::operation::commitment_event_hash(event)?;
+        let reservations = events
+            .iter()
+            .map(|event| {
+                CommitmentReservation::new(event.kind(), super::operation::commitment_event_hash(event)?)
+                    .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let reply = self
-            .request(CommitmentCommand::Reserve {
-                producer_sequence,
-                event_kind: event.kind().to_string(),
-                event_hash,
+            .request(CommitmentCommand::ReserveBatch {
+                first_producer_sequence,
                 previous_hash: self.previous_hash,
+                reservations: reservations.clone(),
             })
             .await?;
-        let CommitmentReply::Reserved { global_sequence } = reply else {
+        let CommitmentReply::ReservedBatch { global_sequences } = reply else {
             return Err(format!(
-                "ledger commitment coordinator returned {reply:?} for reservation"
+                "ledger commitment coordinator returned {reply:?} for reservation batch"
             ));
         };
-        let commitment = LedgerCommitment::new(
-            self.grant,
-            producer_sequence,
-            global_sequence,
-            event.kind(),
-            event_hash,
-            self.previous_hash,
-        )
-        .map_err(|error| error.to_string())?;
-        self.producer_sequence = producer_sequence;
-        self.previous_hash = commitment.commitment_hash();
-        Ok(commitment)
+        if global_sequences.len() != reservations.len() {
+            return Err("ledger commitment coordinator returned the wrong batch length".into());
+        }
+        let mut producer_sequence = first_producer_sequence;
+        let mut previous_hash = self.previous_hash;
+        let mut commitments = Vec::with_capacity(events.len());
+        for (reservation, global_sequence) in reservations.into_iter().zip(global_sequences) {
+            let commitment = LedgerCommitment::new(
+                self.grant,
+                producer_sequence,
+                global_sequence,
+                reservation.event_kind(),
+                reservation.event_hash(),
+                previous_hash,
+            )
+            .map_err(|error| error.to_string())?;
+            previous_hash = commitment.commitment_hash();
+            commitments.push(commitment);
+            producer_sequence = producer_sequence
+                .checked_add(1)
+                .ok_or_else(|| "ledger producer sequence exhausted".to_string())?;
+        }
+        self.producer_sequence = producer_sequence - 1;
+        self.previous_hash = previous_hash;
+        Ok(commitments)
     }
 
     async fn anchor_through(&mut self, through_admission_id: u64) -> Result<(), String> {
@@ -624,20 +684,32 @@ impl CommitmentState {
     }
 }
 
-async fn dispatch_admission(
+async fn dispatch_admissions(
     sender: &ClientSender,
     receiver: &ClientReceiver,
     request_id: u64,
-    message: &RemoteMessage,
-    commitment: Option<&LedgerCommitment>,
+    messages: &[RemoteMessage],
+    commitments: &[LedgerCommitment],
 ) -> Result<LedgerReply, String> {
-    let command = match message {
-        RemoteMessage::Admit { event, .. } => LedgerCommand::Admit {
-            event: event.clone(),
-            commitment: commitment.cloned().expect("admission was reserved before dispatch"),
-        },
-        RemoteMessage::Flush { .. } => LedgerCommand::Flush,
-        RemoteMessage::Retain { cutoff, .. } => LedgerCommand::Retain { cutoff: cutoff.clone() },
+    let command = match messages {
+        [RemoteMessage::Flush { .. }] if commitments.is_empty() => LedgerCommand::Flush,
+        [RemoteMessage::Retain { cutoff, .. }] if commitments.is_empty() => {
+            LedgerCommand::Retain { cutoff: cutoff.clone() }
+        }
+        _ if messages.len() == commitments.len() && !messages.is_empty() => {
+            let admissions = messages
+                .iter()
+                .zip(commitments)
+                .map(|(message, commitment)| {
+                    let RemoteMessage::Admit { event, .. } = message else {
+                        return Err("ledger admission batch contains a barrier".to_string());
+                    };
+                    Ok(LedgerAdmission::new(event.as_ref().clone(), commitment.clone()))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            LedgerCommand::AdmitBatch { admissions }
+        }
+        _ => return Err("ledger operation batch has inconsistent commitments".into()),
     };
     sender
         .send(LedgerClientMessage::Request {
@@ -672,14 +744,14 @@ async fn flush_admissions(
     receiver: &ClientReceiver,
     request_id: u64,
 ) -> Result<LedgerReply, String> {
-    dispatch_admission(
+    dispatch_admissions(
         sender,
         receiver,
         request_id,
-        &RemoteMessage::Flush {
+        &[RemoteMessage::Flush {
             reply: oneshot::channel().0,
-        },
-        None,
+        }],
+        &[],
     )
     .await
 }
@@ -689,20 +761,33 @@ fn apply_admission_result(
     commitments: &mut CommitmentState,
     result: AdmissionResult,
 ) -> Result<(), String> {
-    let AdmissionResult::Operation {
-        message,
-        commitment,
+    let AdmissionResult::Operations {
+        messages,
+        commitments: reserved,
         result,
     } = result
     else {
         return Err("ledger admission stage sent an unexpected shutdown result".into());
     };
-    let result = match (result, commitment) {
-        (Ok(LedgerReply::Accepted { admission_id }), Some(commitment)) => {
-            commitments.pending.push((admission_id, commitment));
-            Ok(LedgerReply::Accepted { admission_id })
+    let result = match (result, reserved.as_slice()) {
+        (
+            Ok(LedgerReply::AcceptedBatch {
+                first_admission_id,
+                through_admission_id,
+                accepted,
+            }),
+            reserved,
+        ) if usize::from(accepted) == reserved.len() => {
+            commitments
+                .pending
+                .extend((first_admission_id..=through_admission_id).zip(reserved.iter().cloned()));
+            Ok(LedgerReply::AcceptedBatch {
+                first_admission_id,
+                through_admission_id,
+                accepted,
+            })
         }
-        (Ok(LedgerReply::Durable { through_admission_id }), None) => {
+        (Ok(LedgerReply::Durable { through_admission_id }), []) => {
             runtime.block_on(async {
                 tokio::time::timeout(OPERATION_TIMEOUT, commitments.anchor_through(through_admission_id))
                     .await
@@ -710,12 +795,12 @@ fn apply_admission_result(
             })?;
             Ok(LedgerReply::Durable { through_admission_id })
         }
-        (Ok(reply @ LedgerReply::Retained { .. }), None) => Ok(reply),
+        (Ok(reply @ LedgerReply::Retained { .. }), []) => Ok(reply),
         (Ok(reply), _) => Err(format!("ledger returned {reply:?} for the staged operation")),
         (Err(error), _) => Err(error),
     };
     let failed = result.as_ref().err().cloned();
-    finish(message, result);
+    finish_all(messages, result);
     failed.map_or(Ok(()), Err)
 }
 
@@ -736,10 +821,10 @@ fn apply_shutdown_result(
 
 fn fail_admission_message(message: AdmissionMessage, results: &mpsc::Sender<AdmissionResult>, reason: &str) {
     match message {
-        AdmissionMessage::Operation { message, commitment } => {
-            let _ = results.send(AdmissionResult::Operation {
-                message,
-                commitment,
+        AdmissionMessage::Operations { messages, commitments } => {
+            let _ = results.send(AdmissionResult::Operations {
+                messages,
+                commitments,
                 result: Err(reason.into()),
             });
         }
@@ -750,8 +835,14 @@ fn fail_admission_message(message: AdmissionMessage, results: &mpsc::Sender<Admi
 }
 
 fn fail_admission_result(result: AdmissionResult, reason: &str) {
-    if let AdmissionResult::Operation { message, .. } = result {
-        finish(message, Err(reason.into()));
+    if let AdmissionResult::Operations { messages, .. } = result {
+        finish_all(messages, Err(reason.into()));
+    }
+}
+
+fn finish_all(messages: Vec<RemoteMessage>, result: Result<LedgerReply, String>) {
+    for message in messages {
+        finish(message, result.clone());
     }
 }
 
@@ -759,7 +850,7 @@ fn finish(message: RemoteMessage, result: Result<LedgerReply, String>) {
     match message {
         RemoteMessage::Admit { reply, .. } => {
             let result = result.and_then(|reply| match reply {
-                LedgerReply::Accepted { .. } => Ok(()),
+                LedgerReply::Accepted { .. } | LedgerReply::AcceptedBatch { .. } => Ok(()),
                 reply => Err(format!("ledger returned {reply:?} for admission")),
             });
             if let Some(reply) = reply {
@@ -840,6 +931,42 @@ pub(crate) fn test_commitment_channel(
                             message: error.to_string(),
                         },
                     }
+                }
+                CommitmentCommand::ReserveBatch {
+                    first_producer_sequence,
+                    previous_hash,
+                    reservations,
+                } => {
+                    let mut previous_hash = previous_hash;
+                    let mut sequences = Vec::with_capacity(reservations.len());
+                    let mut failed = None;
+                    for (producer_sequence, reservation) in (first_producer_sequence..).zip(reservations) {
+                        global_sequence += 1;
+                        match LedgerCommitment::new(
+                            grant,
+                            producer_sequence,
+                            global_sequence,
+                            reservation.event_kind(),
+                            reservation.event_hash(),
+                            previous_hash,
+                        ) {
+                            Ok(commitment) => {
+                                previous_hash = commitment.commitment_hash();
+                                pending.push(commitment);
+                                sequences.push(global_sequence);
+                            }
+                            Err(error) => {
+                                failed = Some(error.to_string());
+                                break;
+                            }
+                        }
+                    }
+                    failed.map_or(
+                        CommitmentReply::ReservedBatch {
+                            global_sequences: sequences,
+                        },
+                        |message| CommitmentReply::Failed { message },
+                    )
                 }
                 CommitmentCommand::Cancel { global_sequence } => {
                     if pending.last().map(LedgerCommitment::global_sequence) == Some(global_sequence) {

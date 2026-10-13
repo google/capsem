@@ -144,12 +144,10 @@ async fn descriptor_writer_preserves_blocking_and_try_admission_order() {
 }
 
 #[tokio::test]
-async fn the_next_commitment_reservation_overlaps_the_previous_admission() {
+async fn consecutive_admissions_share_one_commitment_and_ledger_exchange() {
     let grant = LedgerChannelGrant::new(LedgerGeneration::new([8; 16]), 12, LedgerClientRole::VmOwner).unwrap();
     let (ledger_client, ledger_server) = UnixStream::pair().unwrap();
     let (commitment_client, commitment_server) = UnixStream::pair().unwrap();
-    let second_reserved = Arc::new(tokio::sync::Notify::new());
-    let commitment_signal = Arc::clone(&second_reserved);
     let commitment_task = tokio::spawn(async move {
         let (responses, requests) = capsem_foundation::ipc_channel::channel_from_std::<
             CommitmentServerMessage,
@@ -166,35 +164,36 @@ async fn the_next_commitment_reservation_overlaps_the_previous_admission() {
             })
             .await
             .unwrap();
-        let mut sequence = 0_u64;
         let mut pending = Vec::new();
         loop {
             let CommitmentClientMessage::Request { request_id, command } = requests.recv().await.unwrap() else {
                 panic!("unexpected repeated commitment hello")
             };
             let reply = match command {
-                capsem_proto::ledger_commitment::CommitmentCommand::Reserve {
-                    producer_sequence,
-                    event_kind,
-                    event_hash,
+                capsem_proto::ledger_commitment::CommitmentCommand::ReserveBatch {
+                    first_producer_sequence,
                     previous_hash,
+                    reservations,
                 } => {
-                    sequence += 1;
-                    let commitment = LedgerCommitment::new(
-                        grant,
-                        producer_sequence,
-                        sequence,
-                        event_kind,
-                        event_hash,
-                        previous_hash,
-                    )
-                    .unwrap();
-                    pending.push(commitment);
-                    if sequence == 2 {
-                        commitment_signal.notify_one();
+                    assert_eq!(first_producer_sequence, 1);
+                    assert_eq!(reservations.len(), 2);
+                    let mut previous_hash = previous_hash;
+                    for (index, reservation) in reservations.into_iter().enumerate() {
+                        let sequence = u64::try_from(index + 1).unwrap();
+                        let commitment = LedgerCommitment::new(
+                            grant,
+                            sequence,
+                            sequence,
+                            reservation.event_kind(),
+                            reservation.event_hash(),
+                            previous_hash,
+                        )
+                        .unwrap();
+                        previous_hash = commitment.commitment_hash();
+                        pending.push(commitment);
                     }
-                    CommitmentReply::Reserved {
-                        global_sequence: sequence,
+                    CommitmentReply::ReservedBatch {
+                        global_sequences: vec![1, 2],
                     }
                 }
                 capsem_proto::ledger_commitment::CommitmentCommand::Anchor { commitments } => {
@@ -208,7 +207,7 @@ async fn the_next_commitment_reservation_overlaps_the_previous_admission() {
                 .send(CommitmentServerMessage::Response { request_id, reply })
                 .await
                 .unwrap();
-            if sequence == 2 && pending.is_empty() {
+            if pending.is_empty() {
                 return;
             }
         }
@@ -227,28 +226,27 @@ async fn the_next_commitment_reservation_overlaps_the_previous_admission() {
             })
             .await
             .unwrap();
-        for admission_id in 1..=2 {
-            let LedgerClientMessage::Request { request } = requests.recv().await.unwrap() else {
-                panic!("unexpected repeated ledger hello")
-            };
-            assert!(matches!(
-                request.operation(),
-                crate::ledger_protocol::LedgerCommand::Admit { .. }
-            ));
-            if admission_id == 1 {
-                second_reserved.notified().await;
-            }
-            responses
-                .send(LedgerServerMessage::Response {
-                    response: LedgerResponse::success(
-                        request.request_id(),
-                        crate::ledger_protocol::LedgerReply::Accepted { admission_id },
-                    )
-                    .unwrap(),
-                })
-                .await
-                .unwrap();
-        }
+        let LedgerClientMessage::Request { request } = requests.recv().await.unwrap() else {
+            panic!("unexpected repeated ledger hello")
+        };
+        let crate::ledger_protocol::LedgerCommand::AdmitBatch { admissions } = request.operation() else {
+            panic!("expected one admission batch")
+        };
+        assert_eq!(admissions.len(), 2);
+        responses
+            .send(LedgerServerMessage::Response {
+                response: LedgerResponse::success(
+                    request.request_id(),
+                    crate::ledger_protocol::LedgerReply::AcceptedBatch {
+                        first_admission_id: 1,
+                        through_admission_id: 2,
+                        accepted: 2,
+                    },
+                )
+                .unwrap(),
+            })
+            .await
+            .unwrap();
         let LedgerClientMessage::Request { request } = requests.recv().await.unwrap() else {
             panic!("unexpected repeated ledger hello")
         };
@@ -282,12 +280,8 @@ async fn the_next_commitment_reservation_overlaps_the_previous_admission() {
     .unwrap()
     .unwrap();
 
-    let (first, second) = tokio::join!(
-        writer.write_checked(event_with_id("one.example", "0123456789ae")),
-        writer.write_checked(event_with_id("two.example", "0123456789af")),
-    );
-    first.unwrap();
-    second.unwrap();
+    assert!(writer.try_write(event_with_id("one.example", "0123456789ae")));
+    assert!(writer.try_write(event_with_id("two.example", "0123456789af")));
     writer.flush_checked().await.unwrap();
     commitment_task.await.unwrap();
     ledger_task.await.unwrap();

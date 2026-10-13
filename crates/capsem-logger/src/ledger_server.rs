@@ -140,6 +140,60 @@ impl LedgerServer {
                     Err(error) => Err(error),
                 }
             }
+            LedgerCommand::AdmitBatch { admissions } => {
+                let accepted = {
+                    let mut admission_state = self.admission.lock().await;
+                    let first_admission_id = admission_state
+                        .last_accepted
+                        .checked_add(1)
+                        .ok_or_else(|| "ledger admission id exhausted".to_string());
+                    let validated = admissions.iter().try_for_each(|admission| {
+                        admission.commitment().validate_grant(grant).map_err(|e| e.to_string())
+                    });
+                    match (first_admission_id, validated) {
+                        (Ok(first_admission_id), Ok(())) => {
+                            let count = u16::try_from(admissions.len())
+                                .map_err(|_| "ledger admission batch count exceeds u16".to_string());
+                            match count {
+                                Ok(count) => {
+                                    let mut failure = None;
+                                    for admission in admissions {
+                                        let (event, commitment) = admission.into_parts();
+                                        if let Err(error) = self.db.write_committed(event, commitment).await {
+                                            failure = Some(storage(error));
+                                            break;
+                                        }
+                                        admission_state.last_accepted = admission_state
+                                            .last_accepted
+                                            .checked_add(1)
+                                            .ok_or_else(|| "ledger admission id exhausted".to_string())?;
+                                    }
+                                    let through_admission_id = admission_state.last_accepted;
+                                    drop(admission_state);
+                                    failure.map_or_else(|| Ok((first_admission_id, through_admission_id, count)), Err)
+                                }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        (Err(error), _) | (_, Err(error)) => Err(error),
+                    }
+                };
+                match accepted {
+                    Ok((first_admission_id, through_admission_id, accepted)) => {
+                        send_success(
+                            sender,
+                            request_id,
+                            LedgerReply::AcceptedBatch {
+                                first_admission_id,
+                                through_admission_id,
+                                accepted,
+                            },
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             LedgerCommand::Flush => {
                 // The lock orders the writer enqueue and this barrier against
                 // every client, so the returned id cannot name a later write.
