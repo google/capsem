@@ -68,10 +68,10 @@ fn each_traffic_capability_keeps_its_full_bounded_capacity() {
 }
 
 #[test]
-fn http_capacity_covers_every_client_and_one_replacement() {
+fn http_capacity_covers_active_idle_and_retiring_connections() {
     assert!(
-        UPSTREAM_GRANT_CAPACITY - capsem_proto::NETWORK_CLIENT_CAPACITY >= capsem_proto::NETWORK_CLIENT_CAPACITY,
-        "traffic capacity must reserve a replacement for every supported client"
+        UPSTREAM_GRANT_CAPACITY - capsem_proto::NETWORK_CLIENT_CAPACITY >= capsem_proto::NETWORK_CLIENT_CAPACITY * 2,
+        "traffic capacity must reserve idle and retiring grants for every active client"
     );
     let active = (1..UPSTREAM_GRANT_CAPACITY as u64).collect::<Vec<_>>();
     let grants = BTreeMap::from([(ProxyCapability::HttpTraffic, active.clone())]);
@@ -81,7 +81,7 @@ fn http_capacity_covers_every_client_and_one_replacement() {
     assert_eq!(
         grant_rejection(&grants, &grant_ids, ProxyCapability::HttpTraffic, replacement),
         None,
-        "every supported client may overlap its retiring connection"
+        "the complete pooled lifecycle fits before the configured bound"
     );
 }
 
