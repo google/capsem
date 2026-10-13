@@ -70,6 +70,24 @@ fn selected_spawn_generation_is_durable_and_corruption_cannot_be_overwritten() {
 }
 
 #[test]
+fn selected_spawn_resume_requires_completed_original_generation_and_never_replays() {
+    let root = tempfile::tempdir().unwrap();
+    let first = capsem_crypto::uuid_v4();
+    persist_spawn_identity(root.path(), "selected-vm", first).unwrap();
+    let binding = capsem_core::managed_sessions::VmBinding::new("selected-vm".into(), first).unwrap();
+    let record = root.path().join("spawn-owner.json");
+    assert!(record.exists(), "launch must prepare a durable admission witness");
+    let second = capsem_crypto::uuid_v4();
+    persist_spawn_identity(root.path(), "selected-vm", second).unwrap();
+    assert!(capsem_core::session::spawn_owner::enter(root.path(), &binding, std::process::id()).is_err());
+    assert!(persist_spawn_identity(root.path(), "selected-vm", second).is_err());
+    let current = capsem_core::managed_sessions::VmBinding::new("selected-vm".into(), second).unwrap();
+    let contents: serde_json::Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    assert_eq!(contents["parent_pid"], std::process::id());
+    assert_eq!(contents["binding"], serde_json::to_value(current).unwrap());
+}
+
+#[test]
 fn nil_selected_generation_refuses_provision_before_any_session_side_effect() {
     let state = make_test_state();
     let result = state.provision_sandbox_generation(

@@ -1,6 +1,111 @@
 use super::*;
 use crate::tests::make_test_state;
 
+#[test]
+fn recovery_native_child_fixture() {
+    use std::io::Read;
+    let Ok(path) = std::env::var("CAPSEM_TEST_RECOVERY_ROOT") else {
+        return;
+    };
+    let binding: VmBinding = serde_json::from_str(&std::env::var("CAPSEM_TEST_RECOVERY_BINDING").unwrap()).unwrap();
+    let parent = capsem_foundation::unix::process::parent_process_id().unwrap().get();
+    let _owner = capsem_core::session::spawn_owner::enter(std::path::Path::new(&path), &binding, parent).unwrap();
+    std::io::stdin().read_to_end(&mut Vec::new()).unwrap();
+}
+
+#[tokio::test]
+async fn recovery_fences_preboot_and_awaits_original_native_exit_before_closing() {
+    use capsem_core::managed_sessions::{Capability, LeaseClock, LeasePolicy, Registry, Reservation, State};
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    for admitted in [false, true] {
+        let state = make_test_state();
+        let root = tempfile::tempdir().unwrap();
+        let registry = Registry::open(&root.path().join("ownership")).unwrap();
+        let request = capsem_crypto::uuid_v4();
+        let cap = Capability::from_bytes([61; 32]);
+        let Reservation::New(ticket) = registry.reserve(request, &cap).unwrap() else {
+            panic!()
+        };
+        let clock = LeaseClock::new(100, std::time::Instant::now());
+        registry
+            .start_lease(
+                &ticket,
+                LeasePolicy::new(std::time::Duration::from_secs(10)).unwrap(),
+                clock,
+            )
+            .unwrap();
+        registry.begin_create(&ticket, clock).unwrap();
+        let binding = VmBinding::new(new_persistent_vm_id(), capsem_crypto::uuid_v4()).unwrap();
+        registry.prepare_spawn(&ticket, binding.clone(), clock).unwrap();
+        let snapshot = registry.inspect(request, &cap).unwrap().unwrap();
+        let grants = Arc::new(ControlledGrants {
+            fail: false.into(),
+            calls: 0.into(),
+        });
+        let adapter =
+            ManagedLifecycle::for_recovery(Arc::clone(&state), &snapshot, Arc::new(Arc::clone(&grants))).unwrap();
+        let session = state.run_dir.join("sessions").join(binding.id());
+        std::fs::create_dir_all(&session).unwrap();
+        crate::instance::persist_spawn_identity(&session, binding.id(), binding.generation()).unwrap();
+        let owner = capsem_core::managed_sessions::controller::Controller::new(
+            registry,
+            capsem_core::managed_sessions::controller::EffectBounds::new(
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_secs(2),
+            )
+            .unwrap(),
+        );
+        if admitted {
+            let mut child = Child(
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "managed_sessions::tests::recovery_native_child_fixture",
+                        "--nocapture",
+                    ])
+                    .env_clear()
+                    .env("CAPSEM_TEST_RECOVERY_ROOT", &session)
+                    .env("CAPSEM_TEST_RECOVERY_BINDING", serde_json::to_string(&binding).unwrap())
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let record: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(session.join("spawn-owner.json")).unwrap()).unwrap();
+                if record["pid"].as_u64() == Some(u64::from(child.0.id())) {
+                    break;
+                }
+                assert!(std::time::Instant::now() < deadline, "child witness not published");
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            assert!(owner.recover(request, Arc::new(adapter.clone())).await.is_err());
+            assert_eq!(
+                owner.inspect(request, cap.clone()).await.unwrap().unwrap().state(),
+                State::Unknown
+            );
+            assert!(session.exists());
+            assert_eq!(grants.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+            child.0.kill().unwrap();
+            child.0.wait().unwrap();
+        }
+        assert_eq!(
+            owner.recover(request, Arc::new(adapter)).await.unwrap().state(),
+            State::Closed
+        );
+        assert!(!session.exists());
+        assert_eq!(grants.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+}
+
 struct ControlledGrants {
     fail: std::sync::atomic::AtomicBool,
     calls: std::sync::atomic::AtomicUsize,
@@ -149,7 +254,8 @@ async fn recovery_adapter_keeps_untracked_original_child_unknown_and_preserves_s
     adapter.scope(&ticket).unwrap();
     let session = state.run_dir.join("sessions").join(binding.id());
     std::fs::create_dir_all(&session).unwrap();
-    crate::instance::persist_spawn_identity(&session, binding.id(), binding.generation()).unwrap();
+    let directory = capsem_foundation::unix::contained::ContainedDir::open_root(&session).unwrap();
+    capsem_core::session::write_spawn_identity(&directory, &binding).unwrap();
     let owner = capsem_core::managed_sessions::controller::Controller::new(
         registry,
         capsem_core::managed_sessions::controller::EffectBounds::new(

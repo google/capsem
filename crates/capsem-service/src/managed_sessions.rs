@@ -288,16 +288,27 @@ impl ManagedLifecycle {
         )
         .await
         .map_err(app_error)?;
-        if stopped.is_none() {
-            anyhow::ensure!(
-                self.state.retirements.wait(binding.id(), binding.generation()).await?,
-                "managed child retirement is unknown"
-            );
+        if stopped.is_none() && !self.state.retirements.wait(binding.id(), binding.generation()).await? {
+            self.confirm_native_exit(binding.clone()).await?;
         }
         self.state.containers.cancel_and_wait(binding.id()).await;
         self.grants.revoke(ticket, binding.clone()).await?;
         network_routes::vm_deleted_checked(&self.state, binding.id()).await?;
         self.remove_session(binding, true).await
+    }
+
+    async fn confirm_native_exit(&self, binding: VmBinding) -> Result<()> {
+        let confirmed = self
+            .state
+            .off_worker(move |state| {
+                let directory = state.run_dir.join("sessions").join(binding.id());
+                let mut fence = capsem_core::session::spawn_owner::fence(&directory, &binding)?;
+                fence.confirm_exit()
+            })
+            .await
+            .map_err(app_error)??;
+        anyhow::ensure!(confirmed, "managed original native child exit is unconfirmed");
+        Ok(())
     }
 
     async fn remove_session(&self, binding: VmBinding, require_identity: bool) -> Result<()> {
@@ -374,11 +385,10 @@ impl Effects for ManagedLifecycle {
                     return Ok(Some(intent));
                 }
                 let retired = owner.state.retirements.wait(intent.id(), intent.generation()).await?;
-                if !retired {
+                if !retired && owned_continuation {
                     // The service producer registers retirement before spawn.
                     // With its owned continuation finished, no registration
                     // proves that this exact new target never spawned a child.
-                    anyhow::ensure!(owned_continuation, "managed absence requires original child authority");
                     owner.grants.revoke(ticket, intent.clone()).await?;
                     network_routes::vm_deleted_checked(&owner.state, intent.id()).await?;
                     owner.remove_session(intent, false).await?;

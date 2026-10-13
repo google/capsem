@@ -37,7 +37,14 @@ mod tests;
 pub(crate) fn persist_spawn_identity(session_dir: &StdPath, id: &str, generation: uuid::Uuid) -> Result<()> {
     let binding = capsem_core::managed_sessions::VmBinding::new(id.to_owned(), generation)?;
     let session = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?;
-    capsem_core::session::write_spawn_identity(&session, &binding)
+    if let Some(previous) = capsem_core::session::read_spawn_identity(&session)? {
+        anyhow::ensure!(previous.id() == id, "previous VM spawn owner changed");
+        if previous != binding {
+            let mut fence = capsem_core::session::spawn_owner::fence(session_dir, &previous)?;
+            anyhow::ensure!(fence.confirm_exit()?, "previous native VM exit is unconfirmed");
+        }
+    }
+    capsem_core::session::spawn_owner::prepare(session_dir, &binding, std::process::id())
 }
 
 impl ServiceState {

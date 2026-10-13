@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- VM boot admission retains an exclusive generation lifetime fence. Service
+  restart cleanup confirms exit in the original kernel boot and PID namespace
+  before retiring grants and session bytes; delayed children cannot replay boot.
+
 - Startup retirement verifies loss of the original service parent and uses
   stable native identity on Linux and Mac. Hosts without guarded signals await
   the owner's parent-loss exit and refuse unconfirmed retirement.
