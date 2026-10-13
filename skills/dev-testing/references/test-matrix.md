@@ -13,7 +13,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | Crate | Role | CI macOS | CI Linux | Fast source | Full |
 |-------|------|:--------:|:--------:|:-----------:|:----:|
 | `capsem-foundation` | Host primitives | Yes | Compile/no-run | Clippy | Yes |
-| `capsem-crypto` | Cryptographic primitives and integrity verification; speed measured by `capsem-bench` | Yes | Compile/no-run | Clippy | Yes |
+| `capsem-cache` | Bounded observable cache primitives | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-archive` | Session body archive | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-crypto` | Cryptographic providers and primitives | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-ledger` | Confined ledger and archive codec worker | Yes | Subprocess | Clippy | Yes |

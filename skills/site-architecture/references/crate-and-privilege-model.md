@@ -11,10 +11,9 @@ Sharing alone is not a reason to put code in `capsem-core`.
 
 - **`capsem-foundation`**: dependency-light host primitives: paths, UDS HTTP,
   polling, telemetry/log setup, and IPC handshakes.
-- **`capsem-crypto`**: first-party Rust cryptographic operations: accelerated
-  hashes and bounded integrity verification, randomness, TLS key/provider
-  selection, JWT verification and secret primitives. Speed measurements belong
-  in the existing `capsem-bench` harness, not a separate benchmark crate.
+- **`capsem-cache`**: bounded cache storage, concurrency-safe freshness
+  publication, and uniform hit/miss/load/eviction telemetry. Domain owners
+  supply content identities, generations, and TTL policy.
 - **`capsem-archive`**: block-compressed body archive for session ledgers.
   Pure Rust (`miniz_oxide`); SQLite keeps the index, this crate keeps the
   bytes, and every block is blake3-verified before a body is returned.

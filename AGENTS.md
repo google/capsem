@@ -42,6 +42,7 @@ See `/dev-just` for the full recipe reference and dependency chains.
 
 ```
 crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
+crates/capsem-cache/           Bounded cache primitives, freshness publication, and cache telemetry
 crates/capsem-crypto/          Accelerated hashes, randomness, TLS keys, JWT verification, secrets
 crates/capsem-archive/  Block-compressed body archive for session ledgers (pure Rust)
 crates/capsem-ledger/           Confined session-ledger worker and archive codec executor

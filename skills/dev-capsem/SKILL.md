@@ -28,7 +28,7 @@ then lead with a recommendation. The full contract is
 | Crate | What | Key modules |
 |-------|------|-------------|
 | `capsem-foundation` | Dependency-light host primitives shared across product crates. | `paths.rs`, `uds.rs`, `poll.rs`, `telemetry.rs`, `log_layer.rs`, `ipc_handshake.rs` |
-| `capsem-crypto` | Accelerated hashes, integrity verification, randomness, TLS keys, JWT verification and secret primitives. | `verify.rs`, `random.rs`, `tls.rs`, `jwt.rs`, `secrets.rs` |
+| `capsem-cache` | Bounded observable cache mechanics; callers own freshness policy. | `bounded.rs`, `snapshot.rs`, `telemetry.rs` |
 | `capsem-archive` | Append-only, block-compressed body archive for one session ledger. | `format.rs`, `writer.rs`, `reader.rs` |
 | `capsem-crypto` | Central owner of hashing, randomness, TLS providers, signatures, and secret handling. | `lib.rs`, `random.rs`, `tls.rs`, `verify.rs` |
 | `capsem-ledger` | Confined session-ledger worker and archive codec executor. | `main.rs`, `codec.rs` |

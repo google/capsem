@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 HOT_DEV_OPTIMIZED_PACKAGES = {
     "blake3",
     "sha2",
+    "capsem-cache",
     "capsem-crypto",
     "blake2b_simd",
     "blake2s_simd",
@@ -28,9 +29,7 @@ HOT_DEV_OPTIMIZED_PACKAGES = {
     "memchr",
     "itoa",
     "ryu",
-    "rusqlite",
-    "libsqlite3-sys",
-    "capsem-logger",
+    "quick_cache",
 }
 
 RATIONALE = """\

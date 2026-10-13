@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/capsem-cache",
     "crates/capsem-crypto",
     "sdk/rust",
     "crates/capsem-api",
@@ -60,6 +61,12 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.capsem-crypto]
+opt-level = 3
+
+[profile.dev.package.capsem-cache]
+opt-level = 3
+
+[profile.dev.package.quick_cache]
 opt-level = 3
 
 [profile.dev.package.blake2b_simd]
