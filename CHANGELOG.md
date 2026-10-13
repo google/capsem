@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Protocol throughput benchmarks explicitly identify guest execution and reject
+  host/guest comparisons with incorrect execution labels.
+
 - The shared gateway OpenAPI contract correctly declares network creation's
   existing HTTP 201 response, with matching generated SDK contracts.
 

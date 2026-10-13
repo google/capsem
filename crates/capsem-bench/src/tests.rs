@@ -232,6 +232,10 @@ fn guest_protocol_command_uses_one_capsem_bench_invocation() {
         "tiny_http,mcp_tool_call,dns_local_nxdomain",
     );
     assert!(command.starts_with("capsem-bench-rs protocol "), "{command}");
+    assert!(
+        command.contains("--lane guest_capsem"),
+        "guest execution must not be labeled host_direct: {command}"
+    );
     assert!(command.contains("--base-url http://127.0.0.1:3713"));
     assert!(command.contains("--dns-udp-addr 127.0.0.1:3713"));
     assert!(command.contains("--requests 50000"));
@@ -373,6 +377,8 @@ fn build_delta_report_keeps_inline_artifact_identity() {
     assert_eq!(delta.guest_artifact, "guest:inline");
     assert_eq!(delta.host_lane, "host_direct");
     assert_eq!(delta.guest_lane, "guest_capsem");
+    guest.mock_server_protocol.lane = "host_direct".to_string();
+    assert!(build_delta_report("host:inline".to_string(), "guest:inline".to_string(), &host, &guest).is_err());
 }
 
 // ── JSON extraction from guest command output ──────────────────────
