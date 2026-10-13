@@ -11,40 +11,64 @@ from capsem_bench import __main__ as bench_main
 from capsem_bench import dns_load, load_harness, mitm_load
 
 
-@pytest.mark.parametrize("status", [200, 204, 302, 403, 500])
-def test_mitm_load_counts_http_failures(status):
-    session = types.SimpleNamespace(get=lambda: (status, 24))
-    elapsed, observed_status, error, response_bytes = mitm_load._do_request(session)
-    assert elapsed >= 0
-    assert observed_status == status
-    assert error == (None if 200 <= status < 300 else f"HTTP {status}")
-    assert response_bytes == 24
+def test_mitm_load_delegates_to_async_rust_driver(monkeypatch):
+    calls = []
+    row = {
+        "concurrency": 2,
+        "duration_s": 1.0,
+        "total_requests": 4,
+        "errors": 0,
+    }
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps(row), stderr="")
+
+    monkeypatch.setattr(mitm_load.subprocess, "run", run)
+
+    assert mitm_load._drive_at_concurrency("https://fixture.test/tiny", 2, 1) == row
+    assert calls == [
+        (
+            [
+                mitm_load.RUST_BENCH,
+                "http-load",
+                "--target",
+                "https://fixture.test/tiny",
+                "--concurrency",
+                "2",
+                "--duration-s",
+                "1",
+            ],
+            {"check": False, "capture_output": True, "text": True},
+        )
+    ]
 
 
-def test_mitm_load_excludes_failed_latency_and_reports_error_ratio():
-    row = mitm_load._summarize(
-        [(5.0, 200, None, 24), (100.0, 0, "timed out", 0)],
-        concurrency=2,
-        duration_s=10,
+def test_mitm_load_rejects_starved_driver(monkeypatch):
+    row = {"concurrency": 512, "total_requests": 91, "errors": 0}
+    monkeypatch.setattr(
+        mitm_load.subprocess,
+        "run",
+        lambda *args, **kwargs: types.SimpleNamespace(
+            returncode=0, stdout=json.dumps(row), stderr=""
+        ),
     )
 
-    assert row["total_requests"] == 2
-    assert row["errors"] == 1
-    assert row["error_ratio"] == 0.5
-    assert row["rps"] == 0.1
-    assert row["p50_ms"] == 5.0
-    assert row["response_body_bytes"] == 24
-    assert row["error_distribution"] == {"timed out": 1}
+    with pytest.raises(RuntimeError, match="91 of 512 client loops"):
+        mitm_load._drive_at_concurrency("https://fixture.test/tiny", 512, 10)
 
 
 def test_mitm_load_rejects_one_failed_request(monkeypatch):
     monkeypatch.setattr(
         mitm_load,
         "_drive_at_concurrency",
-        lambda url, concurrency, duration_s: [
-            (5.0, 200, None, 24),
-            (100.0, 0, "timed out", 0),
-        ],
+        lambda url, concurrency, duration_s: {
+            "concurrency": 1,
+            "duration_s": 1.0,
+            "total_requests": 2,
+            "errors": 1,
+            "error_distribution": {"timed out": 1},
+        },
     )
 
     with pytest.raises(RuntimeError, match="1 of 2 requests failed"):

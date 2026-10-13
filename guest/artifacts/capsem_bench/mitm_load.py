@@ -40,19 +40,14 @@ CI gate (T5): >2x p99 regression vs. baseline at any concurrency
 level fails the build.
 """
 
-import http.client
+import json
 import os
-import ssl
-import time
-from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlsplit
+import subprocess
 
 from .helpers import console
 from .load_harness import (
     DurationLoadConfig,
     render_load_table,
-    summarize_load_level,
 )
 
 # Served by capsem-mock-server through the benchmark collector's corp config
@@ -60,103 +55,43 @@ from .load_harness import (
 DEFAULT_TARGET = "https://fixture.capsem.test/tiny"
 DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
-
-
-class _Session:
-    """One keep-alive connection per worker, reopened after a failure.
-
-    The standard library rather than `requests`: the runtime carries no pip
-    packages, and a pooled session per worker is all the measurement needs.
-    """
-
-    def __init__(self, url):
-        parts = urlsplit(url)
-        self._https = parts.scheme == "https"
-        self._host = parts.hostname
-        self._port = parts.port
-        self._path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
-        self._context = ssl.create_default_context() if self._https else None
-        self._connection = None
-
-    def _connect(self):
-        if self._https:
-            return http.client.HTTPSConnection(
-                self._host, self._port, timeout=30, context=self._context
-            )
-        return http.client.HTTPConnection(self._host, self._port, timeout=30)
-
-    def get(self):
-        if self._connection is None:
-            self._connection = self._connect()
-        try:
-            self._connection.request("GET", self._path)
-            response = self._connection.getresponse()
-            body = response.read()
-            return response.status, len(body)
-        except Exception:
-            self.close()
-            raise
-
-    def close(self):
-        if self._connection is not None:
-            self._connection.close()
-            self._connection = None
-
-
-def _do_request(session):
-    """Single HTTP GET; latency in ms, with non-2xx responses counted as errors."""
-    start = time.monotonic()
-    try:
-        status, response_bytes = session.get()
-        elapsed_ms = (time.monotonic() - start) * 1000
-        error = None if 200 <= status < 300 else f"HTTP {status}"
-        return (elapsed_ms, status, error, response_bytes)
-    except (OSError, http.client.HTTPException) as exc:
-        elapsed_ms = (time.monotonic() - start) * 1000
-        return (elapsed_ms, 0, str(exc), 0)
+RUST_BENCH = "/usr/local/bin/capsem-bench-rs"
 
 
 def _drive_at_concurrency(url, concurrency, duration_s):
-    """Spawn `concurrency` workers, each looping `duration_s`.
-
-    Each worker holds its own keep-alive connection so connection reuse
-    matches a real client. Returns a list of (latency_ms, status, error)
-    tuples.
-    """
-    deadline = time.monotonic() + duration_s
-
-    def worker():
-        session = _Session(url)
-        out = []
-        while time.monotonic() < deadline:
-            out.append(_do_request(session))
-        session.close()
-        return out
-
-    all_results = []
-    with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futures = [pool.submit(worker) for _ in range(concurrency)]
-        for fut in as_completed(futures):
-            all_results.extend(fut.result())
-    return all_results
-
-
-def _summarize(results, concurrency, duration_s):
-    """Build the JSON-shaped row for this concurrency level."""
-    latencies = sorted(r[0] for r in results if r[2] is None)
-    errors = sum(1 for r in results if r[2] is not None)
-    error_distribution = Counter(r[2] for r in results if r[2] is not None)
-    response_body_bytes = sum(r[3] for r in results if r[2] is None)
-    return summarize_load_level(
-        latencies,
-        errors,
-        concurrency,
-        duration_s,
-        extra={
-            "error_distribution": dict(error_distribution),
-            "response_body_bytes": response_body_bytes,
-        },
+    """Run the async Rust load engine and validate that every client ran."""
+    completed = subprocess.run(
+        [
+            RUST_BENCH,
+            "http-load",
+            "--target",
+            url,
+            "--concurrency",
+            str(concurrency),
+            "--duration-s",
+            str(duration_s),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    if completed.returncode:
+        raise RuntimeError(
+            f"mitm-load: Rust load engine exited {completed.returncode}: "
+            f"{completed.stderr[-2000:].strip()}"
+        )
+    try:
+        row = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("mitm-load: Rust load engine returned invalid JSON") from exc
+    if row.get("concurrency") != concurrency:
+        raise RuntimeError("mitm-load: Rust load engine reported the wrong concurrency")
+    if row.get("total_requests", 0) < concurrency:
+        raise RuntimeError(
+            f"mitm-load: only {row.get('total_requests', 0)} of {concurrency} "
+            "client loops made a request; the load generator was starved"
+        )
+    return row
 
 
 def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
@@ -178,8 +113,7 @@ def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
     rows = []
     for c in config.concurrency_levels:
         console.print(f"  concurrency={c} ...")
-        results = _drive_at_concurrency(target, c, config.duration_s)
-        row = _summarize(results, c, config.duration_s)
+        row = _drive_at_concurrency(target, c, config.duration_s)
         if row["errors"]:
             raise RuntimeError(
                 f"mitm-load: {row['errors']} of {row['total_requests']} requests failed "
@@ -189,7 +123,7 @@ def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
         rows.append(row)
 
     out = {
-        "version": "1.0",
+        "version": "1.1",
         "target": target,
         "concurrency_levels": rows,
     }
