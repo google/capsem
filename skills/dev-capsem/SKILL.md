@@ -30,6 +30,7 @@ then lead with a recommendation. The full contract is
 | `capsem-foundation` | Dependency-light host primitives shared across product crates. | `paths.rs`, `uds.rs`, `poll.rs`, `telemetry.rs`, `log_layer.rs`, `ipc_handshake.rs` |
 | `capsem-crypto` | Accelerated hashes, integrity verification, randomness, TLS keys, JWT verification and secret primitives. | `verify.rs`, `random.rs`, `tls.rs`, `jwt.rs`, `secrets.rs` |
 | `capsem-archive` | Append-only, block-compressed body archive for one session ledger. | `format.rs`, `writer.rs`, `reader.rs` |
+| `capsem-crypto` | Central owner of hashing, randomness, TLS providers, signatures, and secret handling. | `lib.rs`, `random.rs`, `tls.rs`, `verify.rs` |
 | `capsem-ledger` | Confined session-ledger worker and archive codec executor. | `main.rs`, `codec.rs` |
 | `capsem-telemetry` | Single owner of every `metrics`-facade metric name, kind, unit, and description. Emitters import names from here. | `lib.rs` (`MetricSpec`, `describe_all`), `db.rs`, `dns.rs`, `mitm.rs`, `security.rs`, `virtio_blk.rs` |
 | `capsem-assets` | VM asset lifecycle and manifest compatibility. | `asset_manager.rs`, `manifest_compat.rs` |

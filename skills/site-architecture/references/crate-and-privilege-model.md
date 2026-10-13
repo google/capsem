@@ -18,6 +18,8 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-archive`**: block-compressed body archive for session ledgers.
   Pure Rust (`miniz_oxide`); SQLite keeps the index, this crate keeps the
   bytes, and every block is blake3-verified before a body is returned.
+- **`capsem-crypto`**: central owner of hashing, randomness, TLS providers,
+  signatures, constant-time verification, and secret handling.
 - **`capsem-ledger`**: confined session-ledger worker and the sole runtime
   executor of body archive codecs.
 - **`capsem-telemetry`**: the one owner of every `metrics`-facade metric name,

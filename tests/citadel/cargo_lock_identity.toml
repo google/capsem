@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "a785685eb97e924552398310bf5ba73d7d924b6150dbf10c74ef349ac1032a2f"
-reason = "The 0.7 security review replaces archived serde_yaml and unsafe-libyaml with the maintained safe-Rust serde-saphyr parser. The host and sealed guest cohort will be rebuilt and qualified together."
+sha256 = "9c77a9aa03c2ef6a6537b0903ea60c0bc7b3ac62c4ee0ca9b2511237d9cea58e"
+reason = "The merged 0.7 line centralizes cryptographic dependencies in capsem-crypto while #206 adds isolated ledger and archive codecs; the host and sealed guest cohort will be rebuilt and qualified together."
