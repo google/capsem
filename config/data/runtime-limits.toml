@@ -11,9 +11,10 @@ traffic_grants_per_client = 3
 file_descriptors_per_client = 8
 
 [ledger]
-# Each of the two persistent DNS sessions can have one audit row per client
-# waiting for the ledger producer. The queue is derived from the network cap.
-producer_events_per_network_client = 2
+# A DNS query contributes its primary audit row plus its default-rule row.
+# Two persistent DNS sessions can overlap, and the same burst must remain
+# admissible while the ledger owner flushes the preceding rows to disk.
+producer_events_per_network_client = 8
 # One transport exchange carries this many consecutive producer events. The
 # queue must be an exact multiple so a full burst drains without a tail shape.
 admission_batch_capacity = 64
