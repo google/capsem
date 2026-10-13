@@ -1,3 +1,4 @@
+mod aggregator;
 mod cables;
 mod helpers;
 mod ipc;
@@ -27,6 +28,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info, warn};
 
+use aggregator::{aggregator_log_path, resolve_mcp_aggregator_binary, spawn_mcp_aggregator};
 use job_store::JobStore;
 use mcp_runtime::{GuestExposureTools, McpRuntime};
 use owner_sandbox::{attest_owner, confine_owner, prepare_owner_sandbox_attestation};
@@ -186,15 +188,6 @@ fn generate_trace_id() -> String {
         .wrapping_add(pid)
         .wrapping_add(bump.wrapping_mul(0x94d049bb133111eb));
     format!("{mixed:016x}")
-}
-
-/// Path to the aggregator's dedicated stderr log within a VM's session
-/// directory. Kept out of `process.log` so the parent's JSON tracing
-/// stream isn't polluted by child text tracing (the two used to mix
-/// because `Stdio::inherit()` forwarded the aggregator's stderr
-/// straight into the parent's log sink).
-fn aggregator_log_path(session_dir: &Path) -> PathBuf {
-    session_dir.join("mcp-aggregator.stderr.log")
 }
 
 const OWNER_CHECKPOINT_FILE: &str = "checkpoint.vzsave";
@@ -851,101 +844,6 @@ async fn run_async_main_loop(
             }
         });
     }
-}
-
-/// Spawn the isolated MCP aggregator subprocess and return a client handle.
-///
-/// The subprocess manages connections to external MCP servers. It communicates
-/// via length-prefixed MessagePack frames on stdin/stdout.
-///
-/// Frame format: [4 bytes big-endian payload length] [N bytes msgpack]
-async fn spawn_mcp_aggregator(
-    servers: &[capsem_proto::mcp_contracts::McpServerDef],
-    session_dir: &Path,
-    vm_id: &str,
-    trace_id: &str,
-    aggregator_bin: PathBuf,
-    stderr_file: std::fs::File,
-) -> Result<capsem_proto::mcp_aggregator::AggregatorClient> {
-    use capsem_proto::mcp_aggregator::*;
-
-    let (client, rx) = AggregatorClient::channel(64);
-
-    let log_path = aggregator_log_path(session_dir);
-
-    info!(
-        bin = %aggregator_bin.display(),
-        servers = servers.len(),
-        log = %log_path.display(),
-        "spawning MCP aggregator"
-    );
-
-    let mut cmd = tokio::process::Command::new(&aggregator_bin);
-    // W4: include CAPSEM_VM_ID, CAPSEM_TRACE_ID, TRACEPARENT, TRACESTATE.
-    // Caller already has `trace_id` from the root span; we re-derive via
-    // child_trace_env so the aggregator inherits this process's parent
-    // traceparent verbatim instead of getting a freshly-synthesized one.
-    for (k, v) in capsem_foundation::telemetry::child_trace_env(vm_id) {
-        cmd.env(k, v);
-    }
-    // Keep the pre-W4 CAPSEM_TRACE_ID override path so callers that
-    // pass an explicit trace_id (the root span's value) still win over
-    // the env-derived id. Belt-and-suspenders for the aggregator's
-    // structured root span.
-    cmd.env("CAPSEM_TRACE_ID", trace_id);
-    let mut child = cmd
-        .arg("--parent-pid")
-        .arg(std::process::id().to_string())
-        .arg("--lock-path")
-        .arg(session_dir.join("mcp-aggregator.lock"))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::from(stderr_file))
-        .spawn()?;
-
-    let mut child_stdin = child.stdin.take().unwrap();
-    let child_stdout = child.stdout.take().unwrap();
-
-    // Send server definitions as the first frame.
-    let defs_vec = servers.to_vec();
-    write_frame(&mut child_stdin, &defs_vec).await?;
-
-    let inflight = capsem_core::mcp::aggregator_driver::spawn(rx, child_stdin, child_stdout);
-
-    // Monitor child process.
-    tokio::spawn(async move {
-        info!("aggregator monitor task started");
-        match child.wait().await {
-            Ok(status) => info!(status = %status, "aggregator subprocess exited"),
-            Err(e) => error!(error = %e, "failed to wait on aggregator"),
-        }
-        inflight.close();
-    });
-
-    Ok(client)
-}
-
-fn resolve_mcp_aggregator_binary(exe_path: &Path) -> Result<PathBuf> {
-    let bin_dir = exe_path.parent().unwrap_or(std::path::Path::new("."));
-    let mut candidates = vec![bin_dir.join("capsem-mcp-aggregator")];
-    if bin_dir.file_name().and_then(|name| name.to_str()) == Some("deps") {
-        if let Some(target_debug) = bin_dir.parent() {
-            candidates.push(target_debug.join("capsem-mcp-aggregator"));
-        }
-    }
-
-    for candidate in &candidates {
-        if candidate.exists() {
-            return Ok(candidate.clone());
-        }
-    }
-
-    let searched = candidates
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    anyhow::bail!("required MCP aggregator binary capsem-mcp-aggregator is missing; searched: {searched}")
 }
 
 #[cfg(test)]
