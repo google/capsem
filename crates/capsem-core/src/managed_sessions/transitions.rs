@@ -26,10 +26,7 @@ impl Registry {
         let _lease = self.lease()?;
         let mut record = match self.read(request)? {
             Some(record) => {
-                ensure!(
-                    capsem_crypto::blake3::Hash::from(record.capability_hash) == capability.hash(request),
-                    "managed capability mismatch"
-                );
+                record.authenticate(capability)?;
                 record
             }
             None => Record {

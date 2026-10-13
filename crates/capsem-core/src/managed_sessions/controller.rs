@@ -43,6 +43,10 @@ impl EffectBounds {
 /// credential-bearing upstream diagnostics.
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 pub enum Failure {
+    #[error("managed ownership capability denied")]
+    Forbidden,
+    #[error("managed request not found")]
+    NotFound,
     #[error("managed ownership store unavailable")]
     StoreUnavailable,
     #[error("managed request already registered; recover ownership instead")]
@@ -69,6 +73,7 @@ struct Inner {
 
 struct Work {
     recovering: bool,
+    capability_hash: Option<capsem_crypto::blake3::Hash>,
     ticket: std::sync::Mutex<Option<Ticket>>,
     binding: std::sync::Mutex<Option<VmBinding>>,
     effects: Arc<dyn Effects>,
@@ -145,6 +150,7 @@ impl Controller {
     ) -> ControlResult<Snapshot> {
         let work = Arc::new(Work {
             recovering: false,
+            capability_hash: Some(capability.hash(request)),
             ticket: std::sync::Mutex::new(None),
             binding: std::sync::Mutex::new(None),
             effects,
@@ -155,7 +161,16 @@ impl Controller {
         });
         {
             let mut works = self.0.works.lock().await;
-            if works.contains_key(&request) {
+            if let Some(existing) = works.get(&request) {
+                let existing_hash = existing.capability_hash;
+                drop(works);
+                if let Some(hash) = existing_hash {
+                    if hash != capability.hash(request) {
+                        return Err(Failure::Forbidden);
+                    }
+                } else {
+                    self.inspect(request, capability).await?.ok_or(Failure::NotFound)?;
+                }
                 return Err(Failure::DuplicateRequest);
             }
             works.insert(request, Arc::clone(&work));
@@ -195,6 +210,7 @@ impl Controller {
         }
         let work = Arc::new(Work {
             recovering: true,
+            capability_hash: None,
             ticket: std::sync::Mutex::new(None),
             binding: std::sync::Mutex::new(None),
             effects,
@@ -259,7 +275,7 @@ impl Controller {
         let snapshot = self
             .inspect(request, capability.clone())
             .await?
-            .ok_or(Failure::RecoveryPending)?;
+            .ok_or(Failure::NotFound)?;
         if !matches!(snapshot.state, State::Reserved | State::Creating | State::Active) {
             return Ok(snapshot);
         }
@@ -314,14 +330,18 @@ impl Controller {
         })
         .await
         .map_err(|_| Failure::StoreUnavailable)?
-        .map_err(|_| Failure::StoreUnavailable)
+        .map_err(|error| match error.downcast_ref::<Rejection>() {
+            Some(Rejection::Forbidden) => Failure::Forbidden,
+            Some(Rejection::DuplicateRequest) => Failure::DuplicateRequest,
+            None => Failure::StoreUnavailable,
+        })
     }
 
     async fn create_worker(&self, request: Uuid, capability: Capability, policy: LeasePolicy, work: Arc<Work>) {
         let admission = self
             .io(move |registry| {
                 let Reservation::New(ticket) = registry.reserve(request, &capability)? else {
-                    anyhow::bail!("managed duplicate reservation");
+                    return Err(Rejection::DuplicateRequest.into());
                 };
                 registry.start_lease(&ticket, policy, LeaseClock::now()?)?;
                 ensure!(

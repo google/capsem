@@ -53,10 +53,7 @@ impl Registry {
         let Some(record) = self.read(request)? else {
             return Ok(None);
         };
-        ensure!(
-            capsem_crypto::blake3::Hash::from(record.capability_hash) == capability.hash(request),
-            "managed capability mismatch"
-        );
+        record.authenticate(capability)?;
         Ok(Some(Snapshot::from(&record)))
     }
 

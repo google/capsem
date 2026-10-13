@@ -320,6 +320,78 @@ fn effects(fixture: &Arc<Fixture>) -> Arc<dyn Effects> {
 }
 
 #[tokio::test]
+async fn ownership_denials_are_typed_and_cannot_retire_a_live_generation() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = controller(&root.path().join("ownership"));
+    let fixture = Fixture::new();
+    let request = capsem_crypto::uuid_v4();
+    let capability = Capability::from_bytes([91; 32]);
+    let wrong = Capability::from_bytes([92; 32]);
+    let policy = LeasePolicy::new(Duration::from_secs(10)).unwrap();
+    fixture.create_release.add_permits(1);
+    let created = owner
+        .create(request, capability.clone(), policy, effects(&fixture))
+        .await
+        .unwrap();
+    for denial in [
+        owner.claim(request, wrong.clone()).await.unwrap_err(),
+        owner.close(request, wrong.clone()).await.unwrap_err(),
+        owner
+            .create(request, wrong.clone(), policy, effects(&fixture))
+            .await
+            .unwrap_err(),
+    ] {
+        assert!(matches!(denial, Failure::Forbidden), "{denial:?}");
+    }
+    assert!(matches!(
+        owner
+            .create(request, capability.clone(), policy, effects(&fixture))
+            .await,
+        Err(Failure::DuplicateRequest)
+    ));
+    assert_eq!(
+        owner.claim(request, capability.clone()).await.unwrap().generation(),
+        created.generation()
+    );
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.cancelled.available_permits(), 0);
+    fixture.cleanup_release.add_permits(1);
+    assert_eq!(
+        owner.close(request, capability.clone()).await.unwrap().state(),
+        State::Closed
+    );
+    // Terminal records still authenticate and reject late replay after the
+    // in-memory continuation has retired.
+    assert!(matches!(
+        owner.create(request, wrong, policy, effects(&fixture)).await,
+        Err(Failure::Forbidden)
+    ));
+    assert!(matches!(
+        owner.create(request, capability, policy, effects(&fixture)).await,
+        Err(Failure::DuplicateRequest)
+    ));
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn unknown_claim_and_broken_store_have_distinct_nonsecret_errors() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ownership");
+    let owner = controller(&path);
+    let request = capsem_crypto::uuid_v4();
+    let capability = Capability::from_bytes([93; 32]);
+    assert!(matches!(
+        owner.claim(request, capability.clone()).await,
+        Err(Failure::NotFound)
+    ));
+    std::fs::write(path.join(format!("{request}.json")), b"corrupt-private-record-secret").unwrap();
+    let failure = owner.claim(request, capability).await.unwrap_err();
+    assert!(matches!(failure, Failure::StoreUnavailable));
+    assert_eq!(failure.to_string(), "managed ownership store unavailable");
+}
+
+#[tokio::test]
 async fn disconnected_create_and_concurrent_close_share_one_awaited_cleanup() {
     let root = tempfile::tempdir().unwrap();
     let owner = controller(&root.path().join("ownership"));

@@ -10,7 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["tls", "random"] }
+capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["tls", "random", "secrets"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

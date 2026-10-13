@@ -19,17 +19,17 @@ use uuid::Uuid;
 
 /// An opaque 256-bit ownership secret. It is never serialized or logged.
 #[derive(Clone)]
-pub struct Capability([u8; 32]);
+pub struct Capability(capsem_crypto::secrets::Zeroizing<[u8; 32]>);
 
 impl Capability {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
+        Self(capsem_crypto::secrets::Zeroizing::new(bytes))
     }
 
     fn hash(&self, request: Uuid) -> capsem_crypto::blake3::Hash {
         let mut hash = capsem_crypto::blake3::Hasher::new_derive_key("capsem managed session capability v1");
         hash.update(request.as_bytes());
-        hash.update(&self.0);
+        hash.update(self.0.as_ref());
         hash.finalize()
     }
 }
@@ -37,6 +37,24 @@ impl Capability {
 impl fmt::Debug for Capability {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("Capability([REDACTED])")
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum Rejection {
+    #[error("managed ownership capability denied")]
+    Forbidden,
+    #[error("managed request already registered; recover ownership instead")]
+    DuplicateRequest,
+}
+
+impl Record {
+    fn authenticate(&self, capability: &Capability) -> Result<()> {
+        // BLAKE3 Hash equality compares the fixed-size hashes in constant time.
+        if capsem_crypto::blake3::Hash::from(self.capability_hash) != capability.hash(self.request) {
+            return Err(Rejection::Forbidden.into());
+        }
+        Ok(())
     }
 }
 
@@ -180,11 +198,7 @@ impl Registry {
         ensure!(!request.is_nil(), "managed request identity is nil");
         let _lease = self.lease()?;
         if let Some(record) = self.read(request)? {
-            // capsem_crypto::blake3::Hash equality is constant-time for these 32-byte hashes.
-            ensure!(
-                capsem_crypto::blake3::Hash::from(record.capability_hash) == capability.hash(request),
-                "managed capability mismatch"
-            );
+            record.authenticate(capability)?;
             return Ok(Reservation::Existing(Snapshot::from(&record)));
         }
         let record = Record {

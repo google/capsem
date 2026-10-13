@@ -100,10 +100,7 @@ impl Registry {
     pub fn renew_lease(&self, request: Uuid, capability: &Capability, clock: LeaseClock) -> Result<Snapshot> {
         let _lease = self.lease()?;
         let mut record = self.read(request)?.context("managed reservation is missing")?;
-        ensure!(
-            capsem_crypto::blake3::Hash::from(record.capability_hash) == capability.hash(request),
-            "managed capability mismatch"
-        );
+        record.authenticate(capability)?;
         let mut deadlines = self.runtime_deadlines()?;
         if !matches!(record.state, State::Reserved | State::Creating | State::Active) {
             deadlines.remove(&request);
