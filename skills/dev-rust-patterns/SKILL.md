@@ -201,8 +201,11 @@ struct FunctionCall {
 - **Config-owned cross-process ceilings**: Network concurrency is owned by
   `config/data/runtime-limits.toml` and generated into `capsem-proto`. Import
   the shared protocol constant in host and guest consumers; never duplicate a
-  numeric capacity in individual crates. See `/dev-mitm-proxy` for the load
-  proof required when it changes.
+  numeric capacity in individual crates. Ledger queue and batch capacities
+  derive from the same supported-client ceiling, and bounded coalescing waits
+  use the generated duration rather than a local sleep literal. Extend the
+  runtime-limit Citadel guard for every new consumer. See `/dev-mitm-proxy` for
+  the load proof required when a limit changes.
 
 ### Host-serialization locks for per-host critical sections
 

@@ -105,6 +105,12 @@ measures scheduler and socket churn rather than the DNS path. The host
 collector also reads the
 fully flushed service log and rejects proxy traffic-descriptor refusals that
 the HTTP client retried internally; zero client errors alone is insufficient.
+The DNS lane likewise rejects audit refusals and SERVFAIL responses. When DNS
+RPS flattens or errors rise with concurrency, correlate the failed level with
+the proxy log before raising a socket cap: synchronous ledger commitment and
+admission exchanges can make the audit queue the real bottleneck. Changes to
+that path belong in the shared benchmark lane and must keep its strict error
+gate; do not replace it with a one-off load script.
 
 Guest load collectors sample the complete Capsem process tree. Report CPU,
 file descriptors, RSS, and, where the platform exposes them, PSS and USS for
