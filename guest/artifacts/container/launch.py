@@ -672,7 +672,6 @@ def verified_blob(share, digest, size=None, limit=None, destination=None, integr
     if size is not None and not (type(size) is int and size >= 0):
         raise ValueError(f"refusing OCI blob size {size!r} for {digest}")
     hexdigest = digest.removeprefix("sha256:")
-    hasher = hashlib.sha256() if integrity is None else None
     count = 0
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
     with os.fdopen(os.open(share / hexdigest, flags), "rb") as source:
@@ -690,6 +689,7 @@ def verified_blob(share, digest, size=None, limit=None, destination=None, integr
             source.seek(0)
             yield source, size
             return
+        hasher = hashlib.sha256()
         output_context = (
             destination.open("xb") if destination is not None else contextlib.nullcontext()
         )
