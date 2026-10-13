@@ -2,11 +2,12 @@ import {Client} from './client.js';
 import {Debug} from './debug.js';
 import {Images} from './images.js';
 import {Credentials} from './credentials.js';
+import {ManagedSession} from './managed.js';
 import {registryAccess} from './registry.js';
 import {commandDeadlineMs, createDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
-import type {CreateOptions, HostLogOptions, RunOptions, VmSelector} from './options.js';
+import type {CreateOptions, ManagedCreateOptions, HostLogOptions, RunOptions, VmSelector} from './options.js';
 import {Transport, type CallOptions, type TransportOptions} from './transport.js';
 import {Mcp, Networks} from './resources.js';
 import {VM} from './vm.js';
@@ -45,32 +46,16 @@ export class Hypervisor extends Client {
     return new VM(this.transport, selector);
   }
   async create(options: CreateOptions = {}): Promise<VM> {
-    if (options.cpus !== undefined && (!Number.isSafeInteger(options.cpus) || options.cpus < 1)) {
-      throw new TypeError('cpus must be positive');
-    }
-    if (options.image === undefined && (options.command !== undefined || options.registry !== undefined)) {
-      throw new TypeError('Container command and registry require an image');
-    }
-    if (options.image !== undefined && (typeof options.image !== 'string' || !options.image)) {
-      throw new TypeError('Image must be a nonempty string');
-    }
-    const ram_mb = memoryMb(options.memory);
-    const registry = registryAccess(options.registry);
-    const container = options.image === undefined ? undefined : {
-      image: options.image,
-      args: [...(options.command ?? [])],
-      env: options.env ?? {},
-      ...(registry === undefined ? {} : {registry}),
-      attach: false,
-    };
-    const response = await api.createVm(this.transport, {body: {
-      name: options.name || null, persistent: Boolean(options.name),
-      cpus: options.cpus ?? null, ram_mb,
-      env: container === undefined ? options.env ?? null : null,
-      networks: (options.networks ?? []).map(network => network.name),
-      ...(container === undefined ? {} : {container}),
-    }}, {...options, timeoutMs: options.timeoutMs ?? createDeadlineMs(this.transport.timeoutMs)});
-    return VM.bind(this.transport, response.id, response.name, container !== undefined);
+    const body = provisionRequest(options);
+    const response = await api.createVm(this.transport, {body}, {...options, timeoutMs: options.timeoutMs ?? createDeadlineMs(this.transport.timeoutMs)});
+    return VM.bind(this.transport, response.id, response.name, body.container !== undefined);
+  }
+  async managed(options: ManagedCreateOptions = {}): Promise<ManagedSession> {
+    if (options.name !== undefined) throw new TypeError('Managed sessions must be unnamed');
+    return ManagedSession.open(this.transport, provisionRequest(options), options);
+  }
+  async withManaged<T>(options: ManagedCreateOptions, work: (vm: VM, signal: AbortSignal) => Promise<T>): Promise<T> {
+    return (await this.managed(options)).run(work);
   }
   async log(options: HostLogOptions = {}): Promise<models.HostLogsResponse> {
     return api.getHypervisorLogs(this.transport, {...options, name: options.source ?? models.HostLogSource.SERVICE}, options);
@@ -91,4 +76,32 @@ export class Hypervisor extends Client {
   async restart(options: CallOptions = {}): Promise<models.RestartResponse> {
     return api.restartHypervisor(this.transport, options);
   }
+}
+
+function provisionRequest(options: CreateOptions): models.ProvisionRequest {
+  if (options.cpus !== undefined && (!Number.isSafeInteger(options.cpus) || options.cpus < 1)) {
+    throw new TypeError('cpus must be positive');
+  }
+  if (options.image === undefined && (options.command !== undefined || options.registry !== undefined)) {
+    throw new TypeError('Container command and registry require an image');
+  }
+  if (options.image !== undefined && (typeof options.image !== 'string' || !options.image)) {
+    throw new TypeError('Image must be a nonempty string');
+  }
+  const ram_mb = memoryMb(options.memory);
+  const registry = registryAccess(options.registry);
+  const container = options.image === undefined ? undefined : {
+    image: options.image,
+    args: [...(options.command ?? [])],
+    env: options.env ?? {},
+    ...(registry === undefined ? {} : {registry}),
+    attach: false,
+  };
+  return {
+    name: options.name || null, persistent: Boolean(options.name),
+    cpus: options.cpus ?? null, ram_mb,
+    env: container === undefined ? options.env ?? null : null,
+    networks: (options.networks ?? []).map(network => network.name),
+    ...(container === undefined ? {} : {container}),
+  };
 }

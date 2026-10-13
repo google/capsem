@@ -1,5 +1,27 @@
 # Capsem TypeScript SDK
 
+Use a managed scope to create an ephemeral VM and await its cleanup:
+
+```ts
+import {Hypervisor} from '@capsem/sdk';
+
+const hv = new Hypervisor(url, token);
+try {
+  await hv.withManaged({image: 'docker.io/library/busybox:latest'}, async (vm, signal) => {
+    console.log(await vm.exec('echo hello', {signal}));
+  });
+} finally { hv.close(); }
+```
+
+`withManaged` creates once, renews the service's finite ownership lease, and
+awaits the original generation's close on success, failure or caller abort.
+The callback's signal also aborts on lease loss; pass it to cancellable work.
+Cleanup uses an independent request so caller abort cannot skip the close
+barrier. `await hv.managed(options)` returns a handle for explicit `run` or
+`close`; a failed close is raised and another explicit `close()` can retry.
+Keep the Hypervisor connection open until cleanup finishes. Ordinary named,
+attached and forked VM handles retain connection-only `close()` behavior.
+
 Image catalog and prefetch use the service's admission policy:
 
 ```ts

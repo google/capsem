@@ -117,6 +117,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TypeScript SDK managed scopes renew finite ownership and await cleanup
+  through caller abort, lease failure and uncertain creation without replay.
+
 - Python SDK managed scopes renew finite ownership leases and await the
   original session's cleanup on exit, failure and cancellation without replaying create.
 
