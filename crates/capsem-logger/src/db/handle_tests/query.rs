@@ -270,7 +270,7 @@ async fn external_reader_query_many_does_not_cache_across_external_writes() {
     );
 }
 
-// Service routes cache response bytes on `read_cache_epoch`. For an external
+// The logger's query cache is keyed by `read_cache_epoch`. For an external
 // reader the epoch is only honest if every disk sync that observed another
 // connection's commit advances it -- `ready()` and plain queries alike.
 // Otherwise a query that happened to absorb the commit leaves the epoch where
@@ -386,11 +386,11 @@ async fn db_handle_query_many_result_from_before_an_invalidation_is_not_cached()
     db.invalidate_read_cache();
     db.store_query_many_cache(epoch_before, key.clone(), stale);
     assert!(
-        db.inner.query_many_cache.lock().unwrap().is_empty(),
+        db.inner.query_many_cache.is_empty(),
         "a result older than the last invalidation must not be cached"
     );
 
     let epoch_now = db.read_cache_epoch(ReadCacheDomain::All);
     db.store_query_many_cache(epoch_now, key, vec![DbQueryJson::from("{}".to_string())]);
-    assert!(!db.inner.query_many_cache.lock().unwrap().is_empty());
+    assert!(!db.inner.query_many_cache.is_empty());
 }

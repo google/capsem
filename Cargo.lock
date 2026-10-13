@@ -1070,6 +1070,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "capsem-archive",
+ "capsem-cache",
  "capsem-crypto",
  "capsem-foundation",
  "capsem-proto",

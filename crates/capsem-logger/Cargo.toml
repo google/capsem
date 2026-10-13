@@ -13,6 +13,7 @@ authors.workspace = true
 capsem-crypto = { path = "../capsem-crypto", features = ["random"] }
 anyhow = { workspace = true }
 capsem-archive = { path = "../capsem-archive" }
+capsem-cache = { path = "../capsem-cache" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
 capsem-telemetry = { path = "../capsem-telemetry" }
