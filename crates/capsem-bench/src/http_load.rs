@@ -61,17 +61,14 @@ pub(crate) async fn run(args: Args) -> Result<Report> {
         bail!("--target must start with http:// or https://");
     }
 
-    let client = Client::builder()
-        .danger_accept_invalid_certs(true)
-        .pool_max_idle_per_host(args.concurrency)
-        .timeout(timeout)
-        .build()
-        .context("build pooled HTTP load client")?;
+    let clients = (0..args.concurrency)
+        .map(|_| build_client(timeout))
+        .collect::<Result<Vec<_>>>()?;
     let started = Instant::now();
     let deadline = started + duration;
     let mut tasks = tokio::task::JoinSet::new();
-    for _ in 0..args.concurrency {
-        tasks.spawn(drive_client(client.clone(), target.clone(), deadline));
+    for client in clients {
+        tasks.spawn(drive_client(client, target.clone(), deadline));
     }
 
     let mut samples = Vec::new();
@@ -79,6 +76,15 @@ pub(crate) async fn run(args: Args) -> Result<Report> {
         samples.extend(result.context("HTTP load task panicked")?);
     }
     Ok(summarize(samples, args.concurrency, duration, started.elapsed()))
+}
+
+fn build_client(timeout: Duration) -> Result<Client> {
+    Client::builder()
+        .danger_accept_invalid_certs(true)
+        .pool_max_idle_per_host(1)
+        .timeout(timeout)
+        .build()
+        .context("build logical HTTP load client")
 }
 
 fn validate(args: &Args) -> Result<()> {
