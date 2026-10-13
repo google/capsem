@@ -137,3 +137,39 @@ fn startup_orphan_selection_does_not_adopt_current_service_children() {
     assert!(pinned.unwrap().is_empty());
     assert!(survived);
 }
+
+#[test]
+fn startup_orphan_selection_refuses_owner_still_parented_to_original_service() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut parent = Command::new("bash")
+        .args(["-c", "bash -c 'exec -a capsem-process bash -c \"$1\" -- --session-dir \"$2\" --parent-pid \"$PPID\"' -- 'printf \"%s\\n\" \"$$\"; read -r' \"$1\" <&0 & read -r", "--"])
+        .arg(directory.path().join("sessions/original"))
+        .env_clear().env("PATH", "/usr/bin:/bin")
+        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let input = parent.stdin.take().unwrap();
+    let output = parent.stdout.take().unwrap();
+    assert!(fd::wait_readable(output.as_fd(), Duration::from_secs(2)).unwrap());
+    let mut ready = String::new();
+    BufReader::new(output).read_line(&mut ready).unwrap();
+    let pid = ready.trim().parse().unwrap();
+    let child = Orphan {
+        handle: ProcessHandle::open(ProcessId::try_from(pid).unwrap()).unwrap(),
+        pid,
+        _input: input,
+    };
+    let observed = capsem_foundation::proctable::processes()
+        .unwrap()
+        .into_iter()
+        .find(|process| process.pid == pid)
+        .unwrap();
+    assert_eq!(observed.parent_pid, parent.id());
+    let pinned = pin_candidates(&[observed], directory.path());
+    let survived = !child.handle.has_exited().unwrap();
+    parent.kill().unwrap();
+    parent.wait().unwrap();
+    assert!(
+        pinned.is_err(),
+        "startup adopted an owner whose original service is alive"
+    );
+    assert!(survived);
+}

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Startup retirement verifies loss of the original service parent and uses
+  stable native identity on Linux and Mac. Hosts without guarded signals await
+  the owner's parent-loss exit and refuse unconfirmed retirement.
+
 - Fresh and resumed VM launches carry the service's original PID and exact
   spawn generation into process lifetime and boot admission.
 
