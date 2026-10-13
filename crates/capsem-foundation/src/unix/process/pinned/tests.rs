@@ -28,6 +28,7 @@ fn pinned_process_wait_is_finite_and_never_signals_a_live_process() {
 
     let mut child = sleeper();
     let handle = ProcessHandle::open(ProcessId::try_from(child.0.id()).unwrap()).unwrap();
+    assert_eq!(handle.pid().get(), child.0.id());
     let flags = fcntl(handle.as_raw_fd(), FcntlArg::F_GETFD).unwrap();
     assert!(FdFlag::from_bits_retain(flags).contains(FdFlag::FD_CLOEXEC));
     assert!(!handle.has_exited().unwrap());

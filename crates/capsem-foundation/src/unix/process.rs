@@ -8,6 +8,8 @@ use nix::sys::signal::{kill, killpg, Signal as NixSignal};
 use nix::unistd::Pid;
 
 use super::errno;
+mod scope;
+pub use scope::ProcessScope;
 
 #[cfg(target_os = "linux")]
 mod pinned;

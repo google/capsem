@@ -144,3 +144,7 @@ reason = "Darwin combined native BSD status and immutable process identity inclu
 [foundation.raw_calls."crates/capsem-foundation/src/unix/process/pinned_macos.rs::dlsym"]
 fingerprint = "806c2d3062055d3c1bf7a97779715cbadc6d136ffae2fa2c59141886d0222b3e"
 reason = "Resolve Darwin's PID-version guarded signal API only when present; macOS 14 lacks it and must retain exit observation without raw PID fallback; nix has no libproc symbol wrapper"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/process/scope.rs::sysctlbyname"]
+fingerprint = "017ea7709880405f8f0ef6262209e68cb7250c7c308852bdd237dbe936d36771"
+reason = "Read Darwin's bounded kernel boot-session UUID so durable process witnesses cannot cross reboot; nix has no Darwin named sysctl wrapper"

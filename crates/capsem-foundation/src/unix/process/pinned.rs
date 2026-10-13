@@ -13,7 +13,10 @@ use std::{
 };
 
 /// Kernel handle for one original process, retained after exit and PID reuse.
-pub struct ProcessHandle(OwnedFd);
+pub struct ProcessHandle {
+    fd: OwnedFd,
+    pid: ProcessId,
+}
 
 impl ProcessHandle {
     pub fn open(pid: ProcessId) -> io::Result<Self> {
@@ -23,13 +26,20 @@ impl ProcessHandle {
             // success returns a fresh descriptor owned exclusively by this call.
             let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid.get() as libc::pid_t, 0u32) };
             if raw >= 0 {
-                return Ok(Self(unsafe { OwnedFd::from_raw_fd(raw as RawFd) }));
+                return Ok(Self {
+                    fd: unsafe { OwnedFd::from_raw_fd(raw as RawFd) },
+                    pid,
+                });
             }
             let error = io::Error::last_os_error();
             if error.kind() != io::ErrorKind::Interrupted {
                 return Err(error);
             }
         }
+    }
+
+    pub fn pid(&self) -> ProcessId {
+        self.pid
     }
 
     /// Signal the pinned process; a stale handle never targets its reused PID.
@@ -105,13 +115,13 @@ impl ProcessHandle {
 
 impl AsRawFd for ProcessHandle {
     fn as_raw_fd(&self) -> RawFd {
-        self.0.as_raw_fd()
+        self.fd.as_raw_fd()
     }
 }
 
 impl AsFd for ProcessHandle {
     fn as_fd(&self) -> BorrowedFd<'_> {
-        self.0.as_fd()
+        self.fd.as_fd()
     }
 }
 

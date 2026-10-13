@@ -70,6 +70,9 @@ pub struct ProcessHandle {
 }
 
 impl ProcessHandle {
+    pub fn pid(&self) -> ProcessId {
+        self.pid
+    }
     pub fn open(pid: ProcessId) -> io::Result<Self> {
         let info = read_info(pid)?;
         let mut token = AuditToken([0; 8]);
