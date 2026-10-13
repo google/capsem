@@ -124,6 +124,15 @@ where
     where
         Q: Equivalent<K> + Hash + ToOwned<Owned = K> + ?Sized,
     {
+        // The guarded lookup coordinates misses, but its waiter bookkeeping is
+        // unnecessary on the overwhelmingly common resident path. Keep hits
+        // on quick_cache's concurrent read path and acquire a load guard only
+        // after an observed miss. A racing insert is still returned by the
+        // guarded lookup below, preserving exact single-flight behavior.
+        if let Some(value) = self.inner.get(key) {
+            self.telemetry.hit();
+            return Ok(value);
+        }
         match self.inner.get_value_or_guard(key, None) {
             GuardResult::Value(value) => {
                 self.telemetry.hit();
