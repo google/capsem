@@ -238,3 +238,59 @@ def test_guest_result_rejects_one_failed_request(monkeypatch, tmp_path) -> None:
     assert "requests failed at concurrency [200]" in message
     assert '"resources.total.cpu_seconds": 12.5' in message
     assert '"resources.total.peak_rss_bytes": 1048576' in message
+
+
+def test_guest_command_failure_preserves_resource_pressure(monkeypatch, tmp_path) -> None:
+    client = SimpleNamespace(
+        post=lambda route, *args, **kwargs: (
+            {"id": "bench-test-vm"}
+            if route == "/vms/create"
+            else {"exit_code": 1, "stderr": "load failed"}
+        ),
+        delete=lambda *args: None,
+    )
+    main = collector()["main"]
+    monkeypatch.setitem(
+        main.__globals__,
+        "ServiceInstance",
+        lambda: SimpleNamespace(
+            client=lambda: client,
+            start=lambda: None,
+            stop=lambda: None,
+            tmp_dir=tmp_path,
+        ),
+    )
+    import helpers.mock_server
+
+    monkeypatch.setattr(
+        helpers.mock_server,
+        "start_mock_server",
+        lambda: (
+            object(),
+            {"dns_udp_addr": "127.0.0.1:41000", "http_addr": "127.0.0.1:3713"},
+        ),
+    )
+    monkeypatch.setattr(helpers.mock_server, "stop_process", lambda proc: None)
+    monkeypatch.setitem(
+        main.__globals__, "wait_exec_ready", lambda *args, **kwargs: True
+    )
+
+    class FailedRunSampler(ResourceSamplerStub):
+        def stop(self) -> dict:
+            return {
+                "resources.total.cpu_seconds": {
+                    "unit": "seconds",
+                    "samples": [8.75],
+                }
+            }
+
+    monkeypatch.setitem(
+        main.__globals__, "process_tree_sampler", lambda service: FailedRunSampler()
+    )
+    monkeypatch.setattr(sys, "argv", ["mitm-load"])
+
+    with pytest.raises(RuntimeError) as failure:
+        main()
+    message = str(failure.value)
+    assert "capsem-bench mitm-load failed: exit=1" in message
+    assert '"resources.total.cpu_seconds": 8.75' in message

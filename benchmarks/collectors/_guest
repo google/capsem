@@ -250,7 +250,8 @@ def main() -> int:
             raise RuntimeError(
                 f"capsem-bench {mode} failed: "
                 f"exit={None if not benchmark_result else benchmark_result.get('exit_code')}\n"
-                f"response={json.dumps(benchmark_result)[:1000]}"
+                f"response={json.dumps(benchmark_result)[:1000]}\n"
+                f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}"
             )
 
         artifact_result = client.post(
