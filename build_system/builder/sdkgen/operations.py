@@ -74,11 +74,13 @@ class Operation(Strict):
     description: str | None = None
     parameters: list[Parameter] = Field(default_factory=list)
     request_body: RequestBody | None = Field(default=None, alias="requestBody")
-    responses: dict[Literal["200", "202", "default"], Response]
+    responses: dict[Literal["200", "201", "202", "default"], Response]
 
     @property
-    def success_status(self) -> Literal["200", "202"]:
-        return "200" if "200" in self.responses else "202"
+    def success_status(self) -> Literal["200", "201", "202"]:
+        if "200" in self.responses:
+            return "200"
+        return "201" if "201" in self.responses else "202"
 
     @property
     def success(self) -> Response:
@@ -116,7 +118,7 @@ def _validate(route: Route, names: set[str]) -> None:
             parameter.location != "query" or parameter.style != "form" or parameter.explode is not False
         ):
             raise ValueError("array parameters require explicit comma-separated form encoding")
-    if set(operation.responses) not in ({"200", "default"}, {"202", "default"}):
+    if set(operation.responses) not in ({"200", "default"}, {"201", "default"}, {"202", "default"}):
         raise ValueError("operation requires typed success and default error responses")
     success = operation.success
     if success.media_type != "application/json" and not is_binary_media_type(success.media_type):

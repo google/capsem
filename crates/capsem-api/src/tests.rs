@@ -296,6 +296,12 @@ fn exec_output_roundtrips_utf8_and_arbitrary_bytes() {
 #[test]
 fn openapi_describes_network_mutations_and_both_member_path_parameters() {
     let document = serde_json::to_value(crate::openapi()).unwrap();
+    let responses = &document["paths"]["/networks"]["post"]["responses"];
+    assert!(responses.get("200").is_none(), "network creation returns 201 Created");
+    assert_eq!(
+        responses["201"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/NetworkInfo"
+    );
     let paths = &document["paths"];
     assert_eq!(paths["/networks"]["post"]["operationId"], "createNetwork");
     assert_eq!(paths["/networks"]["get"]["operationId"], "listNetworks");

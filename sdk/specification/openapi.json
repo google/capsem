@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "3.1.0"
+    "version": "3.1.1"
   },
   "paths": {
     "/assets/status": {
@@ -526,7 +526,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Success",
             "content": {
               "application/json": {

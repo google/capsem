@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The shared gateway OpenAPI contract correctly declares network creation's
+  existing HTTP 201 response, with matching generated SDK contracts.
+
 - Managed close retains original exit and grant authority when network cleanup
   fails. Already-retired switches are awaited even if another departure fails;
   a retry completes networking before session deletion and ownership closure.

@@ -95,7 +95,7 @@ struct Document {
 /// force every generated SDK to be regenerated, and an SDK built against the
 /// contract keeps working across binary releases. Raise it when the contract
 /// changes in a way clients must notice.
-pub const CONTRACT_VERSION: &str = "3.1.0";
+pub const CONTRACT_VERSION: &str = "3.1.1";
 
 impl Document {
     fn schema<T: ToSchema>(&mut self) -> Ref {
@@ -160,8 +160,12 @@ impl Document {
     }
 
     fn post<Q: ToSchema, T: ToSchema>(&mut self, path: &str, id: &str) {
+        self.post_status::<Q, T>(path, id, "200");
+    }
+
+    fn post_status<Q: ToSchema, T: ToSchema>(&mut self, path: &str, id: &str, status: &str) {
         let request = self.schema::<Q>();
-        let operation = self.operation::<T>(path, id).request_body(Some(
+        let operation = self.operation_status::<T>(path, id, status).request_body(Some(
             RequestBodyBuilder::new()
                 .required(Some(Required::True))
                 .content("application/json", Content::new(Some(request)))
@@ -200,7 +204,7 @@ impl Document {
 
     fn networks(&mut self) {
         self.get::<NetworkListResponse>("/networks", "listNetworks");
-        self.post::<CreateNetworkRequest, NetworkInfo>("/networks", "createNetwork");
+        self.post_status::<CreateNetworkRequest, NetworkInfo>("/networks", "createNetwork", "201");
         self.get::<NetworkInfo>("/networks/{id}", "getNetwork");
 
         let delete = self.operation::<VmActionResponse>("/networks/{id}", "deleteNetwork");
