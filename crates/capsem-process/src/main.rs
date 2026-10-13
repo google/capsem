@@ -15,8 +15,10 @@ use anyhow::{Context, Result};
 use capsem_core::fs_monitor::FsMonitor;
 use capsem_core::net::upstream_grant::{adopt_inherited, UpstreamGrantClient};
 use capsem_core::{prepare_vm, BootOptions, VirtioFsShare, VsockConnection};
+use capsem_foundation::unix::process::ensure_open_file_limit;
 use capsem_logger::DbWriter;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use capsem_proto::NETWORK_PROCESS_OPEN_FILE_LIMIT;
 use clap::Parser;
 use std::os::fd::AsFd as _;
 use std::os::unix::fs::PermissionsExt as _;
@@ -251,6 +253,7 @@ fn main() -> Result<()> {
     // SAFETY: process entry precedes argument parsing, telemetry, descriptor
     // owners and runtime threads. Broker grants will be named here explicitly.
     unsafe { capsem_foundation::unix::fd::close_inherited_descriptors()? };
+    ensure_open_file_limit(NETWORK_PROCESS_OPEN_FILE_LIMIT)?;
     let upstream_socket =
         adopt_inherited(std::io::stdin().as_fd()).context("adopt inherited upstream grant channel")?;
     let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
