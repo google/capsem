@@ -221,6 +221,10 @@ pub const VSOCK_PORT_AUDIT: u32 = 5006;
 /// listener forwards each DNS query to the host's hickory-backed handler
 /// over an `rmp-serde` length-framed envelope.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
+/// Queries admitted concurrently on each multiplexed guest/host DNS session.
+/// Two sessions cover the supported burst from 200 dual-stack clients while
+/// keeping descriptor, task and response-queue growth bounded.
+pub const DNS_SESSION_MAX_IN_FLIGHT: usize = 256;
 /// Guest-initiated data connections for explicitly published container TCP ports.
 pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
 /// Network cables: each guest `capsem-tun` pumps one cable's ethernet frames
