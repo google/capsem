@@ -4,6 +4,8 @@ use tower::ServiceExt;
 
 const REQUEST: &str = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61";
 
+mod convergence;
+
 #[tokio::test]
 async fn failed_managed_http_create_remains_owned_until_awaited_close_and_cannot_replay() {
     let state = crate::tests::make_test_state();
@@ -28,11 +30,20 @@ async fn failed_managed_http_create_remains_owned_until_awaited_close_and_cannot
 }
 
 async fn post(app: &Router, path: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    request_json(app, path, "POST", body).await
+}
+
+async fn request_json(
+    app: &Router,
+    path: &str,
+    method: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
     let response = app
         .clone()
         .oneshot(
             axum::http::Request::builder()
-                .method("POST")
+                .method(method)
                 .uri(path)
                 .header("content-type", "application/json")
                 .body(Body::from(body.to_string()))

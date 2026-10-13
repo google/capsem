@@ -324,6 +324,10 @@ impl ManagedLifecycle {
 }
 
 impl Effects for ManagedLifecycle {
+    fn is_live(&self, binding: &VmBinding) -> Result<bool> {
+        anyhow::ensure!(*binding == self.binding, "managed liveness target changed");
+        self.matching_instance(binding)
+    }
     fn create(&self, ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding> {
         let owner = self.clone();
         Box::pin(async move {
