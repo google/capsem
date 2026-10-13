@@ -107,13 +107,12 @@ fn linux_device_grant_preserves_kvm_ioctls() {
     if !kvm.exists() {
         return;
     }
-    let status = Command::new(std::env::current_exe().unwrap())
+    let status = crate::isolated_test_command(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "unix::worker_sandbox::tests::linux_kvm_device_child",
             "--nocapture",
         ])
-        .env_clear()
         .env("WORKER_SANDBOX_KVM", kvm)
         .status()
         .unwrap();
@@ -183,13 +182,12 @@ fn linux_policy_preserves_grants_and_denies_ambient_authority() {
     let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
     let (socket, _) = listener.accept().unwrap();
 
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let mut child = crate::isolated_test_command(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "unix::worker_sandbox::tests::linux_sandbox_child",
             "--nocapture",
         ])
-        .env_clear()
         .env("WORKER_SANDBOX_ALLOWED", &allowed)
         .env("WORKER_SANDBOX_READONLY", &readonly)
         .env("WORKER_SANDBOX_DENIED", &denied)
@@ -290,13 +288,12 @@ fn macos_policy_preserves_grants_and_denies_ambient_authority() {
     let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
     let (socket, _) = listener.accept().unwrap();
 
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let mut child = crate::isolated_test_command(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "unix::worker_sandbox::tests::macos_sandbox_child",
             "--nocapture",
         ])
-        .env_clear()
         .env("WORKER_SANDBOX_ALLOWED", &allowed)
         .env("WORKER_SANDBOX_READONLY", &readonly)
         .env("WORKER_SANDBOX_DENIED", &denied)

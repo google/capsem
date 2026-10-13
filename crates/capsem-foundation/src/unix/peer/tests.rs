@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::os::fd::AsFd;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 fn current() -> PeerIdentity {
@@ -31,9 +31,8 @@ fn a_same_uid_child_cannot_claim_the_parent_process_identity() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("peer.sock");
     let listener = UnixListener::bind(&path).unwrap();
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let mut child = crate::isolated_test_command(std::env::current_exe().unwrap())
         .args(["--exact", "unix::peer::tests::connecting_child", "--nocapture"])
-        .env_clear()
         .env("CAPSEM_PEER_TEST_SOCKET", &path)
         .stdin(Stdio::null())
         .spawn()

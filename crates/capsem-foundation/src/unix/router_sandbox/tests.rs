@@ -26,9 +26,8 @@ fn confinement_denies_ambient_authority_but_preserves_inherited_tcp() {
         std::fs::copy(executable, &child).unwrap();
         child
     };
-    let mut child = Command::new(executable)
+    let mut child = crate::isolated_test_command(executable)
         .args(["--exact", "unix::router_sandbox::tests::sandbox_child", "--nocapture"])
-        .env_clear()
         .env("ROUTER_SANDBOX_TEST", &secret)
         .env("ROUTER_CONTROL_TEST", &control)
         .env("ROUTER_PORT_TEST", port.to_string())

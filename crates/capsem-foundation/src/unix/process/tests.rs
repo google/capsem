@@ -57,13 +57,12 @@ fn current_identity_is_numeric_and_has_a_parent() {
 
 #[test]
 fn inherited_environment_is_erased_in_an_isolated_process() {
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let status = crate::isolated_test_command(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "unix::process::tests::clear_inherited_environment_child",
             "--nocapture",
         ])
-        .env_clear()
         .env("CAPSEM_ENV_SECRET", "must-not-survive")
         .status()
         .unwrap();
