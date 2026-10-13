@@ -5,15 +5,18 @@ from __future__ import annotations
 import http.client
 import json
 import secrets
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import psutil
 import pytest
 from helpers.gateway import TcpHttpClient
 from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
 
+from tests.fixtures.oci.registry import grant_exact, registry
 from tests.ironbank.test_managed_sessions import assert_retired, gateway
 
 
@@ -93,6 +96,59 @@ def test_managed_close_retires_sole_switch_and_preserves_shared_named_vm() -> No
         assert client.get("/networks")["networks"] == []
     finally:
         service.stop()
+
+
+@pytest.mark.integration
+def test_close_cancels_in_flight_image_setup_and_lost_create_caller(tmp_path: Path) -> None:
+    service = ServiceInstance()
+    request_id, capability = str(uuid.uuid4()), secrets.token_hex(32)
+    entered, release = threading.Event(), threading.Event()
+
+    def hold_manifest(path: str) -> None:
+        if "/manifests/" in path:
+            entered.set()
+            assert release.wait(30), "fixture manifest response was not released"
+
+    with registry(tmp_path, before_response=hold_manifest) as (reference, certificate, requests):
+        grant_exact(service.home_dir, reference)
+        try:
+            service.start()
+            client = gateway(service)
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", int(client.base_url.rsplit(":", 1)[1]), timeout=10,
+            )
+            try:
+                connection.request("POST", "/vms/create", json.dumps({
+                    "cpus": 4, "ram_mb": 12288,
+                    "container": {"image": reference, "registry": {"ca_pem": certificate.read_text()}},
+                    "managed": {"request_id": request_id, "ownership_token": capability},
+                }), headers={"Content-Type": "application/json", "Authorization": f"Bearer {client.token}"})
+                assert entered.wait(10), "the real managed setup never requested the pinned manifest"
+            finally:
+                connection.close()
+            status, pending = client.call_json("POST", f"/vms/managed/{request_id}/claim", {
+                "ownership_token": capability,
+            })
+            assert status == 200 and pending["state"] == "pending", pending
+            generation = pending["ownership"]["generation"]
+            status, closed = client.call_json("POST", f"/vms/managed/{request_id}/close", {
+                "ownership_token": capability, "outcome": "cancelled",
+            }, timeout=10)
+            assert status == 200 and closed["state"] == "closed", closed
+            assert closed["generation"] == generation
+            assert client.get("/vms/list")["sandboxes"] == []
+            assert service.proc is not None
+            assert not any(process.name() == "capsem-process"
+                           for process in psutil.Process(service.proc.pid).children())
+            release.set()
+            assert requests.count(f"/v2/library/redis/manifests/{reference.split('@', 1)[1]}") == 1
+            assert client.call_json("POST", f"/vms/managed/{request_id}/close", {
+                "ownership_token": capability, "outcome": "cancelled",
+            }) == (200, closed)
+            assert client.get("/vms/list")["sandboxes"] == []
+        finally:
+            release.set()
+            service.stop()
 
 
 @pytest.mark.integration

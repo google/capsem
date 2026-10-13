@@ -76,7 +76,7 @@ def grant_exact(home: Path, reference: str, *, catalog=None, certificate=None) -
 
 
 @contextlib.contextmanager
-def registry(directory, *, image_config=None, image="redis", artifacts=None):
+def registry(directory, *, image_config=None, image="redis", artifacts=None, before_response=None):
     pin = native_pin(image=image)
     metadata = json.loads((IMAGE / f"{image}-image.json").read_text())
     assert all(metadata[key] == value for key, value in pin.items())
@@ -109,7 +109,7 @@ def registry(directory, *, image_config=None, image="redis", artifacts=None):
         },
         sort_keys=True,
     ).encode()
-    with serve(directory, image, manifest, media, blobs.get, artifacts) as served:
+    with serve(directory, image, manifest, media, blobs.get, artifacts, before_response=before_response) as served:
         yield served
 
 
@@ -153,20 +153,27 @@ def publish_catalog(artifacts, repository, tag, entries, channel="stable"):
 
 
 @contextlib.contextmanager
-def serve(directory, image, manifest, media, fetch, artifacts=None):
+def serve(directory, image, manifest, media, fetch, artifacts=None, *, before_response=None):
     """A TLS registry on localhost serving one manifest and the blobs `fetch`
     finds; yields (pinned reference, CA certificate, requested paths).
 
     `artifacts` maps further paths to (body, media type) and is read on every
     request, so a test can publish into it once it knows the registry's
-    address (see `publish_catalog`)."""
+    address (see `publish_catalog`). `before_response` can hold a real request
+    at an explicit upstream handshake for cancellation acceptance."""
     artifacts = {} if artifacts is None else artifacts
     digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
     requests = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        def handle(self):
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
+                super().handle()
+
         def do_GET(self):
             requests.append(self.path)
+            if before_response is not None:
+                before_response(self.path)
             if self.path in artifacts:
                 body, kind = artifacts[self.path]
             elif self.path == "/v2/":
