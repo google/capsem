@@ -839,6 +839,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "capsem-foundation",
+ "capsem-proto",
  "clap",
  "futures",
  "reqwest 0.12.28",

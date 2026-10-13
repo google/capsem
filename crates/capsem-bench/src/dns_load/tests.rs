@@ -41,3 +41,39 @@ async fn logical_clients_reuse_one_udp_socket_each() {
         "one logical client opened more than one UDP socket"
     );
 }
+
+#[test]
+fn servfail_is_a_failed_request_not_a_successful_decision() {
+    let report = summarize(
+        vec![
+            RequestSample {
+                status: 2,
+                size: 40,
+                latency_ms: 2.0,
+                attempts: 1,
+                error: None,
+                required_text_present: false,
+                secret_shaped_fixture_seen: false,
+            },
+            RequestSample {
+                status: 3,
+                size: 40,
+                latency_ms: 3.0,
+                attempts: 1,
+                error: None,
+                required_text_present: false,
+                secret_shaped_fixture_seen: false,
+            },
+        ],
+        2,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        40,
+    );
+
+    assert_eq!(report.errors, 1);
+    assert_eq!(report.error_distribution["SERVFAIL"], 1);
+    assert_eq!(report.decision_distribution["error"], 1);
+    assert_eq!(report.decision_distribution["denied"], 1);
+    assert_eq!(report.rps, 1.0);
+}

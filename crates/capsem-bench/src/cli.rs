@@ -24,6 +24,8 @@ pub(crate) enum Command {
     HttpLoad(crate::http_load::Args),
     /// Drive sustained DNS load with async UDP clients.
     DnsLoad(crate::dns_load::Args),
+    /// Print the config-owned capacities used to shape load curves.
+    RuntimeLimits,
     /// Run deterministic protocol scenarios against capsem-mock-server.
     Protocol(ProtocolArgs),
     /// Run host-direct and guest-through-Capsem protocol lanes, then report delta.

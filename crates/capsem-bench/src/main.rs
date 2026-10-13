@@ -16,6 +16,7 @@ mod protocol_record;
 #[path = "stats/rates.rs"]
 mod rates;
 mod redis;
+mod runtime_limits;
 mod scenarios;
 #[cfg(feature = "host")]
 mod schema;
@@ -66,6 +67,7 @@ async fn main() -> Result<()> {
         Command::Ping(args) => println!("{}", serde_json::to_string(&ping::run(args).await?)?),
         Command::HttpLoad(args) => println!("{}", serde_json::to_string(&http_load::run(args).await?)?),
         Command::DnsLoad(args) => println!("{}", serde_json::to_string(&dns_load::run(args).await?)?),
+        Command::RuntimeLimits => println!("{}", serde_json::to_string(&runtime_limits::report())?),
         Command::Protocol(args) => {
             #[cfg(feature = "host")]
             let destination = args.record.clone();

@@ -118,11 +118,14 @@ fn summarize(
     request_size: usize,
 ) -> Report {
     let total_requests = samples.len();
-    let errors = samples.iter().filter(|sample| sample.error.is_some()).count();
+    let errors = samples
+        .iter()
+        .filter(|sample| sample.error.is_some() || sample.status == 2)
+        .count();
     let successful = total_requests - errors;
     let mut latencies = samples
         .iter()
-        .filter(|sample| sample.error.is_none())
+        .filter(|sample| sample.error.is_none() && sample.status != 2)
         .map(|sample| sample.latency_ms)
         .collect::<Vec<_>>();
     let mut decision_distribution = BTreeMap::new();
@@ -131,10 +134,12 @@ fn summarize(
         if let Some(error) = &sample.error {
             *error_distribution.entry(error.clone()).or_insert(0) += 1;
             *decision_distribution.entry("transport_error".to_string()).or_insert(0) += 1;
+        } else if sample.status == 2 {
+            *error_distribution.entry("SERVFAIL".to_string()).or_insert(0) += 1;
+            *decision_distribution.entry("error".to_string()).or_insert(0) += 1;
         } else {
             let decision = match sample.status {
                 0 => "allowed".to_string(),
-                2 => "error".to_string(),
                 3 => "denied".to_string(),
                 status => format!("rcode_{status}"),
             };
