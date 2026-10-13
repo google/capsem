@@ -467,8 +467,8 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Parse `ps -ax -o pid=,command=` output and return the PIDs of every
-/// `capsem-process` instance whose `--session-dir` lives inside `run_dir`.
+/// Select exact capsem-process argument vectors with a session directly
+/// inside this run root. Diagnostic command strings are not ownership data.
 ///
 /// A SIGKILL to capsem-service (crash, OOM, `svc.proc.kill()` in recovery
 /// tests) does not propagate to children, so every per-VM `capsem-process`
@@ -477,30 +477,43 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
 /// the same run_dir it must reap these orphans or the host accumulates
 /// wedged Apple VZ instances and leaked vsock ports.
 ///
-/// Matches on the `--session-dir <run_dir>/` prefix because the spawn-side
+/// Matches the exact `--session-dir` argument because the spawn-side
 /// always writes the absolute session dir as `<run_dir>/sessions/<id>` or
 /// `<run_dir>/persistent/<id>`. Pure -- no side effects -- so the matching
 /// is unit-testable without spawning real processes.
-pub(super) fn find_orphan_capsem_pids(ps_output: &str, run_dir: &std::path::Path) -> Vec<i32> {
-    let run_dir_str = run_dir.display().to_string();
-    let marker = format!("--session-dir {run_dir_str}");
-    let mut pids = Vec::new();
-    for line in ps_output.lines() {
-        let line = line.trim_start();
-        if !line.contains("capsem-process") {
-            continue;
-        }
-        if !line.contains(&marker) {
-            continue;
-        }
-        let Some((pid_str, _)) = line.split_once(char::is_whitespace) else {
-            continue;
-        };
-        if let Ok(pid) = pid_str.parse::<i32>() {
-            pids.push(pid);
-        }
-    }
-    pids
+pub(super) fn find_orphan_capsem_pids(
+    processes: &[capsem_foundation::proctable::Process],
+    run_dir: &std::path::Path,
+) -> Vec<i32> {
+    use std::ffi::OsStr;
+    use std::path::Component;
+    processes
+        .iter()
+        .filter_map(|process| {
+            if std::path::Path::new(process.argv.first()?).file_name() != Some(OsStr::new("capsem-process")) {
+                return None;
+            }
+            let mut arguments = process.argv.iter().skip(1);
+            let mut directory = None;
+            while let Some(argument) = arguments.next() {
+                if argument == "--session-dir" {
+                    if directory.is_some() {
+                        return None;
+                    }
+                    directory = Some(std::path::Path::new(arguments.next()?));
+                }
+            }
+            let directory = directory?;
+            let relative = directory.strip_prefix(run_dir).ok()?;
+            let mut components = relative.components();
+            match (components.next(), components.next(), components.next()) {
+                (Some(Component::Normal(root)), Some(Component::Normal(_)), None)
+                    if root == "sessions" || root == "persistent" => {}
+                _ => return None,
+            }
+            i32::try_from(process.pid).ok().filter(|pid| *pid > 0)
+        })
+        .collect()
 }
 
 /// Reap `capsem-process` orphans from a prior service run that shared this
@@ -509,7 +522,7 @@ pub(super) fn find_orphan_capsem_pids(ps_output: &str, run_dir: &std::path::Path
 /// SIGTERM -> 2s poll -> SIGKILL. An unreadable table is reported; no matching
 /// process is ordinary and silent.
 pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
-    let table = match capsem_foundation::proctable::running_processes() {
+    let table = match capsem_foundation::proctable::processes() {
         Ok(table) => table,
         // Loudly. This used to shell out to `ps` and return silently when the
         // spawn failed, which is indistinguishable from finding no orphans --

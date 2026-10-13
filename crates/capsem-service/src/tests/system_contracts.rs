@@ -153,7 +153,7 @@ fn find_orphan_capsem_pids_matches_capsem_process_under_run_dir() {
   1502 /path/to/cache/target/cargo/debug/capsem-process --env CAPSEM_VM_ID=orphan --id orphan --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan --uds-path /tmp/capsem/abc.sock
   1742 /path/to/cache/target/cargo/debug/capsem-process --id victim --session-dir /var/folders/XY/T/capsem-test-abc/persistent/victim --uds-path /tmp/capsem/def.sock
 ";
-    let pids = find_orphan_capsem_pids(ps, &run_dir);
+    let pids = find_orphan_capsem_pids(&process_fixture(ps), &run_dir);
     assert_eq!(pids, vec![1502, 1742]);
 }
 
@@ -164,7 +164,7 @@ fn find_orphan_capsem_pids_skips_processes_for_other_run_dirs() {
   1502 /path/to/cache/target/cargo/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-other/sessions/foo
   1742 /path/to/cache/target/cargo/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-mine/sessions/bar
 ";
-    let pids = find_orphan_capsem_pids(ps, &run_dir);
+    let pids = find_orphan_capsem_pids(&process_fixture(ps), &run_dir);
     assert_eq!(pids, vec![1742], "must not match neighbouring test run dirs");
 }
 
@@ -176,8 +176,12 @@ fn find_orphan_capsem_pids_skips_non_capsem_process_binaries() {
   99 /bin/cargo build --manifest-path /var/folders/XY/T/capsem-test-abc/Cargo.toml
   1502 /path/to/cache/target/cargo/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan
 ";
-    let pids = find_orphan_capsem_pids(ps, &run_dir);
-    assert_eq!(pids, vec![1502], "match must require 'capsem-process' in the line");
+    let pids = find_orphan_capsem_pids(&process_fixture(ps), &run_dir);
+    assert_eq!(
+        pids,
+        vec![1502],
+        "match must require the exact capsem-process executable argument"
+    );
 }
 
 #[test]
@@ -187,8 +191,81 @@ fn find_orphan_capsem_pids_returns_empty_on_no_match() {
   1 /sbin/launchd
   42 /usr/bin/bash
 ";
-    let pids = find_orphan_capsem_pids(ps, &run_dir);
+    let pids = find_orphan_capsem_pids(&process_fixture(ps), &run_dir);
     assert!(pids.is_empty());
+}
+
+#[test]
+fn orphan_selection_cannot_target_neighbouring_roots_or_incidental_command_text() {
+    let run_dir = PathBuf::from("/tmp/capsem-owned");
+    let table = "\
+  41 /usr/bin/capsem-process --session-dir /tmp/capsem-owned-neighbour/sessions/other
+  42 /bin/echo capsem-process --session-dir /tmp/capsem-owned/sessions/other
+  43 /usr/bin/capsem-process-helper --session-dir /tmp/capsem-owned/sessions/other
+  44 /usr/bin/capsem-process --env FAKE=--session-dir /tmp/capsem-owned/sessions/other
+  45 /usr/bin/capsem-process --session-dir /tmp/capsem-owned/sessions/../other
+  46 /usr/bin/capsem-process --session-dir /tmp/capsem-owned/sessions/mine
+";
+    assert_eq!(
+        find_orphan_capsem_pids(&process_fixture(table), &run_dir),
+        vec![46],
+        "startup must retain neighbouring and unrelated workloads"
+    );
+}
+
+#[test]
+fn orphan_selection_preserves_argument_boundaries_and_spaceful_paths() {
+    use capsem_foundation::proctable::Process;
+    let run_dir = PathBuf::from("/tmp/capsem owned");
+    let process = |pid, argv: &[&str]| Process::from_argv(pid, 1, argv.iter().map(Into::into).collect());
+    let table = [
+        process(
+            51,
+            &[
+                "/tmp/installed bin/capsem-process",
+                "--session-dir",
+                "/tmp/capsem owned/sessions/mine",
+            ],
+        ),
+        process(
+            52,
+            &[
+                "capsem-process",
+                "--env",
+                "FAKE=--session-dir /tmp/capsem owned/sessions/mine",
+            ],
+        ),
+        process(
+            53,
+            &[
+                "capsem-process",
+                "--session-dir",
+                "/tmp/capsem owned/sessions/mine",
+                "--session-dir",
+                "/tmp/other/persistent/vm",
+            ],
+        ),
+        process(54, &["capsem-process", "--session-dir", "/tmp/capsem owned/sessions"]),
+        process(
+            55,
+            &[
+                "capsem-process",
+                "--session-dir",
+                "/tmp/capsem owned/persistent/mine/deeper",
+            ],
+        ),
+    ];
+    let incomplete = process(
+        56,
+        &[
+            "capsem-process",
+            "--session-dir",
+            "/tmp/capsem owned/sessions/mine",
+            "--session-dir",
+        ],
+    );
+    assert!(find_orphan_capsem_pids(&[incomplete], &run_dir).is_empty());
+    assert_eq!(find_orphan_capsem_pids(&table, &run_dir), vec![51]);
 }
 
 #[tokio::test]
@@ -245,4 +322,19 @@ async fn fake_vm_mutation_routes_are_not_mounted() {
             "{uri} must stay unmounted until the VM mutation persists or performs a real operation"
         );
     }
+}
+
+fn process_fixture(table: &str) -> Vec<capsem_foundation::proctable::Process> {
+    table
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            Some(capsem_foundation::proctable::Process::from_argv(
+                pid,
+                1,
+                fields.map(Into::into).collect(),
+            ))
+        })
+        .collect()
 }

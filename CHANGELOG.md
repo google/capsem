@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Service startup orphan selection preserves native argument boundaries and
+  requires one session path directly under its own run roots. Neighbouring
+  root prefixes, incidental command text, duplicate options and traversal
+  targets cannot select unrelated workloads.
+
 - Managed VM expiry and authenticated close retire the original trusted
   effects even when ownership storage is missing or corrupt. Failed persistence
   cannot acknowledge a replacement generation as closed.
