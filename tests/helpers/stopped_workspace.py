@@ -49,8 +49,12 @@ def seed_stopped_workspace(run_dir: Path, assets_dir: Path) -> None:
     (workspace / "modified.txt").write_text("after\n")
     (workspace / "created.txt").write_text("created\n")
     fixture = Path(__file__).resolve().parents[1] / "fixtures" / "session"
-    shutil.copy2(fixture / "test.db", session / "session.db")
-    shutil.copy2(fixture / "test.db-archive.lock", session / "session.db-archive.lock")
+    database = shutil.copy2(fixture / "test.db", session / "session.db")
+    database.chmod(0o600)
+    archive_lock = shutil.copy2(
+        fixture / "test.db-archive.lock", session / "session.db-archive.lock"
+    )
+    archive_lock.chmod(0o600)
     bodies = shutil.copytree(fixture / "test.bodies", session / "session.bodies")
     bodies.chmod(0o700)
     entry = {

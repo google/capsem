@@ -19,8 +19,14 @@ def test_fixture_never_replaces_an_existing_registry(tmp_path: Path) -> None:
     assert not (tmp_path / "persistent").exists()
 
 
-def test_fixture_makes_body_archive_private(tmp_path: Path, monkeypatch) -> None:
+def test_fixture_makes_ledger_files_private(tmp_path: Path, monkeypatch) -> None:
+    real_copy2 = stopped_workspace.shutil.copy2
     real_copytree = stopped_workspace.shutil.copytree
+
+    def permissive_copy2(source: Path, destination: Path) -> Path:
+        copied = Path(real_copy2(source, destination))
+        copied.chmod(0o644)
+        return copied
 
     def permissive_copytree(source: Path, destination: Path) -> Path:
         copied = real_copytree(source, destination)
@@ -28,6 +34,7 @@ def test_fixture_makes_body_archive_private(tmp_path: Path, monkeypatch) -> None
         return copied
 
     monkeypatch.setattr(stopped_workspace, "manifest_asset_pins", lambda _assets: {})
+    monkeypatch.setattr(stopped_workspace.shutil, "copy2", permissive_copy2)
     monkeypatch.setattr(stopped_workspace.shutil, "copytree", permissive_copytree)
 
     seed_stopped_workspace(tmp_path, tmp_path / "assets")
@@ -38,3 +45,6 @@ def test_fixture_makes_body_archive_private(tmp_path: Path, monkeypatch) -> None
         .st_mode
     )
     assert mode == 0o700
+    session = tmp_path / "persistent" / stopped_workspace.VM_ID
+    assert stat.S_IMODE((session / "session.db").stat().st_mode) == 0o600
+    assert stat.S_IMODE((session / "session.db-archive.lock").stat().st_mode) == 0o600
