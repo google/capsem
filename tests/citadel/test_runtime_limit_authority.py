@@ -20,10 +20,11 @@ See skills/dev-mitm-proxy/SKILL.md under Cross-process network limits.
 """
 
 NUMERIC_CONSTANT = re.compile(
-    r"\b(?:pub(?:\([^)]*\))?\s+)?const\s+([A-Z][A-Z0-9_]*)\s*:\s*usize\s*=\s*(\d+)\s*;"
+    r"\b(?:pub(?:\([^)]*\))?\s+)?const\s+([A-Z][A-Z0-9_]*)\s*:\s*(?:usize|u64)\s*=\s*(\d+)\s*;"
 )
 CONFIG_OWNED_NAMES = {
     "NETWORK_CLIENT_CAPACITY",
+    "NETWORK_PROCESS_OPEN_FILE_LIMIT",
     "DNS_SESSION_MAX_IN_FLIGHT",
     "UPSTREAM_GRANT_CAPACITY",
     "TRAFFIC_GRANT_CAPACITY",
@@ -36,6 +37,8 @@ REQUIRED_WIRING = {
         "../../config/data/runtime-limits.toml",
         'get("max_concurrent_clients")',
         "pub const NETWORK_CLIENT_CAPACITY: usize = {capacity}",
+        'get("process_open_file_limit")',
+        "pub const NETWORK_PROCESS_OPEN_FILE_LIMIT: u64 = {open_file_limit}",
     ),
     "crates/capsem-proto/src/lib.rs": (
         'include!(concat!(env!("OUT_DIR"), "/runtime_limits.rs"))',
@@ -48,6 +51,10 @@ REQUIRED_WIRING = {
     "crates/capsem-service/src/upstream_broker.rs": ("UPSTREAM_GRANT_CAPACITY",),
     "crates/capsem-core/src/net/dns/session/mod.rs": ("DNS_SESSION_MAX_IN_FLIGHT",),
     "crates/capsem-agent/src/dns_proxy/session.rs": ("DNS_SESSION_MAX_IN_FLIGHT",),
+    "crates/capsem-agent/src/net_proxy.rs": (
+        "NETWORK_PROCESS_OPEN_FILE_LIMIT",
+        "ensure_open_file_limit",
+    ),
 }
 
 
@@ -66,6 +73,12 @@ def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:
     assert type(capacity) is int and 1 <= capacity <= 4096, (
         RUNTIME_LIMIT_RATIONALE
         + "\nnetwork.max_concurrent_clients must be an integer from 1 through 4096"
+    )
+    open_file_limit = config.get("network", {}).get("process_open_file_limit")
+    assert type(open_file_limit) is int and 2 * capacity + 64 <= open_file_limit <= 1_048_576, (
+        RUNTIME_LIMIT_RATIONALE
+        + "\nnetwork.process_open_file_limit must cover TCP and VSOCK descriptors "
+        "for every client plus runtime overhead"
     )
 
     missing = []
@@ -93,6 +106,7 @@ def test_numeric_local_ceiling_is_rejected_adversarially() -> None:
         {
             "upstream_broker.rs": "const MAX_ACTIVE_GRANTS: usize = 256;",
             "dns/session.rs": "pub const DNS_SESSION_MAX_IN_FLIGHT: usize = 512;",
+            "net_proxy.rs": "const NETWORK_PROCESS_OPEN_FILE_LIMIT: u64 = 4096;",
         }
     )
-    assert len(violations) == 2, RUNTIME_LIMIT_RATIONALE
+    assert len(violations) == 3, RUNTIME_LIMIT_RATIONALE
