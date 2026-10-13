@@ -994,16 +994,17 @@ fn flush_dirty_tables_to_disk(
     db_path: Option<&Path>,
     bodies: &mut BodyArchive,
     counters: &LedgerCounters,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<FlushTimings> {
     if dirty_tables.is_empty() && !bodies.has_work() {
-        return Ok(());
+        return Ok(FlushTimings::default());
     }
     let started = Instant::now();
     // Bytes before index: the segment reaches the archive file here, and the
     // rows that name it are inserted in the transaction below. A crash in
     // between costs unreferenced bytes, never a row pointing past EOF.
+    let started = Instant::now();
     bodies.flush_segment();
-    let archive_finished = Instant::now();
+    let archive_ms = started.elapsed().as_secs_f64() * 1000.0;
     let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
     let tx = conn.unchecked_transaction()?;
     bodies.commit_index_rows(&tx)?;
@@ -1016,14 +1017,18 @@ fn flush_dirty_tables_to_disk(
             "injected disk flush failure before copy".to_string(),
         ));
     }
+    let started = Instant::now();
     let advanced_watermarks = schema::with_memory_schema_lock(|| {
         schema::flush_memory_tables_to_disk(&tx, tables.iter().copied(), flush_watermarks)
     })?;
-    let tables_finished = Instant::now();
+    let table_copy_ms = started.elapsed().as_secs_f64() * 1000.0;
     // The snapshot lands with the rows it counts, or neither does.
+    let started = Instant::now();
     counters::store(&tx, counters)?;
+    let counter_snapshot_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let started = Instant::now();
     tx.commit()?;
-    let commit_finished = Instant::now();
+    let commit_ms = started.elapsed().as_secs_f64() * 1000.0;
     // Only now are the written segments indexed: anything above this line rolls
     // the transaction back, and the next flush retries both halves together.
     bodies.index_rows_committed();
@@ -1032,17 +1037,20 @@ fn flush_dirty_tables_to_disk(
         schema::record_sqlite_mmap_telemetry(conn, path, "writer", "flush");
     }
     dirty_tables.clear();
-    tracing::debug!(
-        target: "capsem.db",
-        duration_ms = started.elapsed().as_secs_f64() * 1000.0,
-        archive_ms = archive_finished.duration_since(started).as_secs_f64() * 1000.0,
-        index_ms = index_finished.duration_since(archive_finished).as_secs_f64() * 1000.0,
-        tables_ms = tables_finished.duration_since(index_finished).as_secs_f64() * 1000.0,
-        commit_ms = commit_finished.duration_since(tables_finished).as_secs_f64() * 1000.0,
-        tables = tables.len(),
-        "db disk flush completed"
-    );
-    Ok(())
+    Ok(FlushTimings {
+        archive_ms,
+        table_copy_ms,
+        counter_snapshot_ms,
+        commit_ms,
+    })
+}
+
+#[derive(Default)]
+struct FlushTimings {
+    archive_ms: f64,
+    table_copy_ms: f64,
+    counter_snapshot_ms: f64,
+    commit_ms: f64,
 }
 
 fn flush_dirty_tables_to_disk_recorded(
@@ -1059,9 +1067,18 @@ fn flush_dirty_tables_to_disk_recorded(
     let result = flush_dirty_tables_to_disk(conn, dirty_tables, flush_watermarks, db_path, bodies, counters);
     let elapsed = started.elapsed();
     let status = if result.is_ok() { "ok" } else { "error" };
+    let timings = result.as_ref().ok();
+    let archive_ms = timings.map_or(0.0, |timings| timings.archive_ms);
+    let table_copy_ms = timings.map_or(0.0, |timings| timings.table_copy_ms);
+    let counter_snapshot_ms = timings.map_or(0.0, |timings| timings.counter_snapshot_ms);
+    let commit_ms = timings.map_or(0.0, |timings| timings.commit_ms);
     tracing::debug!(
         target: "capsem.db",
         duration_ms = elapsed.as_secs_f64() * 1000.0,
+        archive_ms,
+        table_copy_ms,
+        counter_snapshot_ms,
+        commit_ms,
         pending_ops,
         table_count,
         status,
@@ -1070,10 +1087,17 @@ fn flush_dirty_tables_to_disk_recorded(
     if elapsed >= DISK_FLUSH_INTERVAL {
         warn!(
             duration_ms = elapsed.as_secs_f64() * 1000.0,
-            pending_ops, table_count, status, "db disk flush exceeded its configured interval"
+            archive_ms,
+            table_copy_ms,
+            counter_snapshot_ms,
+            commit_ms,
+            pending_ops,
+            table_count,
+            status,
+            "db disk flush exceeded its configured interval"
         );
     }
-    result
+    result.map(|_| ())
 }
 
 /// Execute through the connection's prepared-statement cache.
