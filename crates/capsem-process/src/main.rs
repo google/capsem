@@ -215,7 +215,9 @@ fn main() -> Result<()> {
         default_filter: "info",
     })?;
     let args = Args::parse();
-    owner::enroll(&args)?;
+    // Declared before VM/runtime resources, so normal teardown releases the
+    // generation lifetime fence last. SIGKILL still needs native exit proof.
+    let _spawn_owner = owner::enroll(&args)?;
 
     // Root span shared across the whole capsem-process run: every
     // subsequent log line inherits `vm_id` and `trace_id` as structured

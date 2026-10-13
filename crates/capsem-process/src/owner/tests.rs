@@ -5,6 +5,22 @@ use capsem_foundation::unix::{contained::ContainedDir, process::parent_process_i
 const GENERATION: &str = "2f2dceea-1a8b-41fd-b58a-9129d2540181";
 
 #[test]
+fn vm_owner_admission_holds_generation_lock_and_refuses_fenced_replay() {
+    let root = tempfile::tempdir().unwrap();
+    let parent = parent_process_id().unwrap().get();
+    let binding = VmBinding::new("vm".into(), GENERATION.parse().unwrap()).unwrap();
+    capsem_core::session::spawn_owner::prepare(root.path(), &binding, parent).unwrap();
+    let owner = admit("vm", Some(GENERATION), Some(parent), root.path()).unwrap();
+    assert!(admit("vm", Some(GENERATION), Some(parent), root.path()).is_err());
+    assert!(capsem_core::session::spawn_owner::fence(root.path(), &binding).is_err());
+    drop(owner);
+    let mut fenced = capsem_core::session::spawn_owner::fence(root.path(), &binding).unwrap();
+    assert!(!fenced.confirm_exit().unwrap());
+    drop(fenced);
+    assert!(admit("vm", Some(GENERATION), Some(parent), root.path()).is_err());
+}
+
+#[test]
 fn vm_owner_admission_requires_actual_parent_and_exact_trusted_spawn_metadata() {
     let root = tempfile::tempdir().unwrap();
     let parent = parent_process_id().unwrap().get();

@@ -6,8 +6,8 @@ use capsem_core::managed_sessions::VmBinding;
 use capsem_foundation::unix::contained::ContainedDir;
 use std::path::Path;
 
-pub(crate) fn enroll(args: &Args) -> Result<()> {
-    validate(
+pub(crate) fn enroll(args: &Args) -> Result<capsem_core::session::spawn_owner::SpawnOwner> {
+    let owner = admit(
         &args.id,
         args.spawn_generation.as_deref(),
         args.parent_pid,
@@ -15,10 +15,21 @@ pub(crate) fn enroll(args: &Args) -> Result<()> {
     )?;
     // Recheck the actual parent while arming: it may have disappeared during
     // metadata validation. The existing guard terminates even on SIGKILL/OOM.
-    capsem_guard::watch_parent_or_exit(args.parent_pid).context("VM service parent unavailable")
+    capsem_guard::watch_parent_or_exit(args.parent_pid).context("VM service parent unavailable")?;
+    Ok(owner)
 }
 
-fn validate(id: &str, generation: Option<&str>, parent: Option<u32>, directory: &Path) -> Result<()> {
+fn admit(
+    id: &str,
+    generation: Option<&str>,
+    parent: Option<u32>,
+    directory: &Path,
+) -> Result<capsem_core::session::spawn_owner::SpawnOwner> {
+    let binding = validate(id, generation, parent, directory)?;
+    capsem_core::session::spawn_owner::enter(directory, &binding, parent.context("VM service parent unavailable")?)
+}
+
+fn validate(id: &str, generation: Option<&str>, parent: Option<u32>, directory: &Path) -> Result<VmBinding> {
     ensure!(
         parent.is_some_and(capsem_guard::parent_is_expected),
         "VM service parent unavailable"
@@ -37,7 +48,7 @@ fn validate(id: &str, generation: Option<&str>, parent: Option<u32>, directory: 
         capsem_core::session::read_spawn_identity(&directory)?.as_ref() == Some(&expected),
         "VM trusted spawn identity changed"
     );
-    Ok(())
+    Ok(expected)
 }
 
 #[cfg(test)]
