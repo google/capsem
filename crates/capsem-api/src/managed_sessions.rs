@@ -44,8 +44,8 @@ impl<'de> Deserialize<'de> for ManagedOwnershipToken {
     }
 }
 
-fn deserialize_request_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
-    let value = String::deserialize(deserializer)?;
+/// The managed wire identity rule, shared by deserializers and SDK generation checks.
+pub fn validate_managed_request_id(value: &str) -> Result<(), &'static str> {
     let bytes = value.as_bytes();
     if bytes.len() != 36
         || bytes[14] != b'4'
@@ -58,10 +58,14 @@ fn deserialize_request_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<
             }
         })
     {
-        return Err(serde::de::Error::custom(
-            "managed request id must be a canonical UUIDv4",
-        ));
+        return Err("managed request id must be a canonical UUIDv4");
     }
+    Ok(())
+}
+
+fn deserialize_request_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    validate_managed_request_id(&value).map_err(serde::de::Error::custom)?;
     Ok(value)
 }
 

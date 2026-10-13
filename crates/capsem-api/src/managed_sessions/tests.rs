@@ -4,6 +4,22 @@ use serde_json::json;
 const REQUEST: &str = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61";
 
 #[test]
+fn canonical_managed_identity_validation_is_shared_without_echoing_input() {
+    assert!(validate_managed_request_id(REQUEST).is_ok());
+    for value in [
+        "",
+        "private-invalid-identity",
+        "FC120782-2272-4B3D-A2E6-A26EE2F8AB61",
+        "fc120782-2272-1b3d-a2e6-a26ee2f8ab61",
+        "fc120782-2272-4b3d-02e6-a26ee2f8ab61",
+        "00000000-0000-0000-0000-000000000000",
+    ] {
+        let error = validate_managed_request_id(value).unwrap_err();
+        assert_eq!(error, "managed request id must be a canonical UUIDv4");
+    }
+}
+
+#[test]
 fn optional_managed_create_is_validated_redacted_and_preserves_ordinary_wire_defaults() {
     let secret = "af".repeat(32);
     let wire = json!({"managed": {"request_id": REQUEST, "ownership_token": secret}, "persistent": false});
