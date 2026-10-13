@@ -56,6 +56,41 @@ fn current_identity_is_numeric_and_has_a_parent() {
 }
 
 #[test]
+fn open_file_limit_is_raised_in_an_isolated_process() {
+    let status = crate::isolated_test_command(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "unix::process::tests::raise_open_file_limit_child",
+            "--nocapture",
+        ])
+        .env("CAPSEM_RLIMIT_TEST_CHILD", "1")
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn raise_open_file_limit_child() {
+    if std::env::var_os("CAPSEM_RLIMIT_TEST_CHILD").is_none() {
+        return;
+    }
+    use nix::sys::resource::{getrlimit, setrlimit, Resource};
+
+    let (_, hard) = getrlimit(Resource::RLIMIT_NOFILE).unwrap();
+    let target = hard.min(4_096);
+    assert!(target > 128, "test environment needs a usable descriptor hard limit");
+    setrlimit(Resource::RLIMIT_NOFILE, 128, hard).unwrap();
+
+    ensure_open_file_limit(target).unwrap();
+
+    assert_eq!(getrlimit(Resource::RLIMIT_NOFILE).unwrap(), (target, hard));
+
+    setrlimit(Resource::RLIMIT_NOFILE, 128, 256).unwrap();
+    let error = ensure_open_file_limit(4_096).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+}
+
+#[test]
 fn inherited_environment_is_erased_in_an_isolated_process() {
     let status = crate::isolated_test_command(std::env::current_exe().unwrap())
         .args([

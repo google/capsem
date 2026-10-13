@@ -4,6 +4,7 @@ use std::io;
 use std::num::NonZeroI32;
 
 use nix::errno::Errno;
+use nix::sys::resource::{getrlimit, setrlimit, Resource};
 use nix::sys::signal::{kill, killpg, Signal as NixSignal};
 use nix::unistd::Pid;
 
@@ -151,6 +152,27 @@ pub fn load_average() -> Option<f64> {
     // for the call; getloadavg does not retain its pointer.
     let observed = unsafe { libc::getloadavg(load.as_mut_ptr(), 1) };
     (observed == 1).then_some(load[0])
+}
+
+/// Ensure this process can hold at least `minimum` file descriptors.
+///
+/// The hard limit remains unchanged. A host policy whose hard limit cannot
+/// satisfy the requested product bound is reported rather than silently
+/// advertising concurrency the process cannot sustain.
+pub fn ensure_open_file_limit(minimum: u64) -> io::Result<()> {
+    let minimum = nix::sys::resource::rlim_t::try_from(minimum)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "open-file limit is not representable"))?;
+    let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE).map_err(errno::io)?;
+    if soft >= minimum {
+        return Ok(());
+    }
+    if hard < minimum {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("open-file hard limit {hard} is below required minimum {minimum}"),
+        ));
+    }
+    setrlimit(Resource::RLIMIT_NOFILE, minimum, hard).map_err(errno::io)
 }
 
 /// The current process's parent, or `None` for an unrepresentable kernel value.
