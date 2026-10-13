@@ -63,8 +63,9 @@ Guest curl -> iptables REDIRECT -> capsem-net-proxy (guest, port 10443)
 ceiling and its required multiples. `capsem-proto/build.rs` validates that file
 and generates the shared constants. DNS session capacity equals the client
 ceiling. HTTP descriptor-grant capacity multiplies it by
-`traffic_grants_per_client` because a pooled connection can be replaced before
-the retiring connection closes. The process descriptor floor multiplies it by
+`traffic_grants_per_client` because a pool can hold active and idle connections
+while a retiring connection is still closing. The process descriptor floor
+multiplies it by
 `file_descriptors_per_client` and must cover both ends of every overlapping
 grant.
 
