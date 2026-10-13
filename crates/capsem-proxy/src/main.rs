@@ -23,6 +23,7 @@ use capsem_proto::proxy_control::{
     PROXY_CONTROL_MAX_FDS,
 };
 use capsem_proto::proxy_policy::{ProxyPolicyRequest, ProxyPolicyResponse};
+use capsem_proto::upstream_grant::UPSTREAM_GRANT_CAPACITY;
 use clap::Parser;
 use tokio::task::{JoinError, JoinSet};
 
@@ -32,10 +33,6 @@ mod metric_client;
 mod private_names_client;
 
 const CONTROL_QUEUE_CAPACITY: usize = 16;
-// The supported 200-client load can transiently own twice as many descriptors:
-// pooled connections are replaced before their asynchronous close is observed.
-// Retain bounded headroom above that overlap without admitting unbounded FDs.
-const TRAFFIC_GRANT_LIMIT: usize = 512;
 const CONTROL_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 type ControlSender = router_channel::DescriptorSender<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
@@ -387,7 +384,7 @@ fn grant_rejection(
     }
     let current = grants.get(&capability).map_or(0, Vec::len);
     if is_traffic(capability) {
-        (current >= TRAFFIC_GRANT_LIMIT).then_some(ProxyControlRejection::Capacity)
+        (current >= UPSTREAM_GRANT_CAPACITY).then_some(ProxyControlRejection::Capacity)
     } else {
         (current != 0).then_some(ProxyControlRejection::DuplicateCapability)
     }

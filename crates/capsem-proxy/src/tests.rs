@@ -51,10 +51,10 @@ fn each_traffic_capability_keeps_its_full_bounded_capacity() {
         grants.insert(capability, vec![grant_id]);
         grant_ids.insert(grant_id);
     }
-    let http = (100..100 + TRAFFIC_GRANT_LIMIT as u64).collect::<Vec<_>>();
+    let http = (100..100 + UPSTREAM_GRANT_CAPACITY as u64).collect::<Vec<_>>();
     grant_ids.extend(http.iter().copied());
     grants.insert(ProxyCapability::HttpTraffic, http);
-    let next_grant = 100 + TRAFFIC_GRANT_LIMIT as u64;
+    let next_grant = 100 + UPSTREAM_GRANT_CAPACITY as u64;
 
     assert_eq!(
         grant_rejection(&grants, &grant_ids, ProxyCapability::HttpTraffic, next_grant),
