@@ -217,7 +217,17 @@ role:
 The VM owner and proxy use `DbWriter` as a remote typed client; a diagnostic
 path in that object does not grant filesystem authority. Service routes also
 query through a ledger client, including after the VM stops. A missing table or
-column is a schema error, and a flush is the read-after-write barrier.
+column is a schema error, and a flush is the read-after-write barrier. Reader
+counter replies carry the ledger handle's DB-owned cache epoch. Logger-owned
+bounded query caches use that epoch and invalidate after commits or worker
+reconnects; the service does not retain another serialized route cache. See
+[Runtime Caching](/architecture/runtime-caching/).
+
+Snapshot and retention work stays inside the ledger worker's one session
+directory. New lock and archive-generation files are opened at their final
+owner-only modes; the worker has no `chmod` or ownership-changing authority.
+A fork copies a coherent staged snapshot through descriptor-contained tree
+operations, then removes the staging directory.
 
 Producers also receive a separate connected channel to the service's trusted
 commitment authority. Before admission, that authority assigns one global

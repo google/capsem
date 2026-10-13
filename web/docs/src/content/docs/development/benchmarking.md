@@ -5,23 +5,39 @@ sidebar:
   order: 30
 ---
 
-Capsem includes `capsem-bench`, a Python benchmarking tool that runs inside the VM. It outputs rich tables to stderr for humans and saves structured JSON to `/tmp/capsem-benchmark.json` for machine consumption.
+Capsem's benchmark control plane is the Rust `capsem-bench-rs` binary. The gate
+runs small collectors that emit raw samples; the binary alone computes
+statistics and records versioned results in
+`cache/target/tests/benchmarks/benchmarks.db`. Host routes, Criterion targets,
+VM lifecycle, protocol, storage, and load tests therefore share one schema and
+comparison policy.
 
 ## Running benchmarks
 
 ```bash
-just bench                          # All benchmarks in VM (~2 min)
-just exec "capsem-bench disk"        # Disk I/O only
-just exec "capsem-bench rootfs"      # Rootfs reads only
-just exec "capsem-bench storage"     # Rootfs/workspace/tmpfs/overlay split
-just exec "capsem-bench startup"     # CLI cold-start only
-just exec "capsem-bench http"        # HTTP through proxy
-just exec "capsem-bench throughput"  # 100MB download
-just exec "capsem-bench mitm-load 64 5"  # MITM proxy concurrency/load test
-just exec "capsem-bench mcp-load 64 5"   # Guest MCP endpoint concurrency/load test
-just exec "capsem-bench dns-load 64 5"   # DNS proxy concurrency/load test
-just full-test                      # Full validation including benchmarks
+just bench-quick                    # Host-only development loop; never evidence
+just bench                          # Every dimension with a collector
+just bench routes criterion         # Selected dimensions
+just bench-slow routes              # Rebuild stale VM assets, then measure
+just bench-report                   # Subjects, inputs, and stored trends
 ```
+
+Use `capsem-bench-rs doctor` when a number is surprising. A measurement from an
+unqualified or busy machine remains diagnostic data.
+
+### Before and after comparisons
+
+Performance claims require two unchanged baseline runs and two candidate runs.
+`capsem-bench-rs compare` combines the latest two authoritative runs from each
+store by default, then judges every metric against observed baseline variance
+and the configured minimum time resolution. Dimension and architecture must
+match. A quick run is recorded for visibility but is never selected as
+evidence.
+
+Low single-digit route-latency movement is normally scheduler noise. The
+comparison keeps such movement visible as `tiny` or `noisy`; only a material
+change outside the baseline operating envelope is a regression. Route health
+ceilings catch gross drift and are not evidence of a comparative speedup.
 
 ## Boot timing
 
