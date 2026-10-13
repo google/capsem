@@ -35,6 +35,7 @@ this repo took before it existed was taken on an unqualified machine.
 | `verify` | ratchet a run against evidence; refuses on an unfit machine |
 | `report` | every subject and its trend |
 | `protocol`, `protocol-delta`, `delta` | the scenario engine: host-direct vs guest-through-Capsem |
+| `http-load` | duration-driven async HTTP load with pooled keep-alive connections and cold/warm latency |
 
 Modules: `schema.rs` (the record), `stats.rs` (**all** statistics),
 `store.rs` (SQLite), `collector.rs` (the subprocess protocol), `machine.rs`
@@ -86,6 +87,21 @@ read their mode from `argv[0]` and drive the modules in
 `guest/artifacts/capsem_bench/`. `criterion` derives its targets from the Cargo
 manifests and reads raw per-iteration nanoseconds out of Criterion's
 `sample.json`, so a new `[[bench]]` target is measured without editing it.
+
+Load generation is part of the measurement system. Do not use one blocking
+thread per client: scheduler starvation can make a high-concurrency run issue
+fewer requests than its requested concurrency. The guest MITM lane delegates
+to `capsem-bench-rs http-load`; every client loop must attempt at least one
+request, and fewer total attempts than clients invalidates the run. Keep cold
+and warm latency separate so connection admission and TLS setup cannot be
+mistaken for steady-state request cost.
+
+Guest load collectors sample the complete Capsem process tree. Report CPU,
+file descriptors, RSS, and, where the platform exposes them, PSS and USS for
+the total tree and each named component. Use PSS when estimating many-VM host
+capacity because summing RSS counts shared pages once per process; use USS to
+show the memory that disappears with that process. Compare two unchanged runs
+before and two changed runs after any performance work.
 
 ## Is the move real?
 
