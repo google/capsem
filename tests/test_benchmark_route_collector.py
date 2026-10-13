@@ -7,11 +7,15 @@ import threading
 import time
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG = gate_config.load(PROJECT_ROOT)
+COLLECTOR = CONFIG.path(CONFIG.benchmark.run.collectors) / "routes"
 
 
 def _collector() -> dict:
-    return runpy.run_path(str(PROJECT_ROOT / "benchmarks" / "collectors" / "routes"))
+    return runpy.run_path(str(COLLECTOR))
 
 
 def test_every_measured_route_resolves_to_a_concrete_fixture_request() -> None:
