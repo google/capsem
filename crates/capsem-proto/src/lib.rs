@@ -217,13 +217,9 @@ pub const VSOCK_PORT_LIFECYCLE: u32 = 5004;
 pub const VSOCK_PORT_EXEC: u32 = 5005;
 /// vsock port for kernel audit stream (execve events from auditd via guest agent).
 pub const VSOCK_PORT_AUDIT: u32 = 5006;
-/// vsock port for the DNS proxy (T3): the guest agent's `capsem-dns-proxy`
-/// listener forwards each DNS query to the host's hickory-backed handler
-/// over an `rmp-serde` length-framed envelope.
+/// vsock port for the guest-to-host, length-framed DNS proxy.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
-/// Queries admitted concurrently on each multiplexed guest/host DNS session.
-/// Two sessions cover the supported burst from 200 dual-stack clients while
-/// keeping descriptor, task and response-queue growth bounded.
+/// Per-session bound covering the burst from 200 dual-stack clients.
 pub const DNS_SESSION_MAX_IN_FLIGHT: usize = 256;
 /// Guest-initiated data connections for explicitly published container TCP ports.
 pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
