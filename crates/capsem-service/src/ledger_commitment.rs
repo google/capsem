@@ -13,8 +13,8 @@ use capsem_proto::ledger::{LedgerChannelGrant, LedgerWelcome};
 #[cfg(test)]
 use capsem_proto::ledger_commitment::ZERO_COMMITMENT_HASH;
 use capsem_proto::ledger_commitment::{
-    CommitmentClientMessage, CommitmentCommand, CommitmentReply, CommitmentServerMessage, LedgerCommitment,
-    MAX_COMMITMENTS_PER_CHECKPOINT,
+    CommitmentClientMessage, CommitmentCommand, CommitmentReply, CommitmentReservation, CommitmentServerMessage,
+    LedgerCommitment, MAX_COMMITMENTS_PER_CHECKPOINT,
 };
 use serde::{Deserialize, Serialize};
 
@@ -96,6 +96,26 @@ impl CommitmentAuthority {
         event_hash: [u8; 32],
         previous_hash: [u8; 32],
     ) -> Result<u64> {
+        let reservation = CommitmentReservation::new(event_kind, event_hash)?;
+        let mut sequences = self
+            .reserve_batch(grant, producer_sequence, previous_hash, vec![reservation])
+            .await?;
+        Ok(sequences.pop().expect("one reservation returns one sequence"))
+    }
+
+    async fn reserve_batch(
+        &self,
+        grant: LedgerChannelGrant,
+        first_producer_sequence: u64,
+        previous_hash: [u8; 32],
+        reservations: Vec<CommitmentReservation>,
+    ) -> Result<Vec<u64>> {
+        if reservations.is_empty() || reservations.len() > capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY {
+            bail!("commitment reservation batch is empty or exceeds its bound");
+        }
+        for reservation in &reservations {
+            reservation.validate()?;
+        }
         let key = ProducerKey::from_grant(grant);
         let mut state = self.state.lock().await;
         let tail = state.pending.get(&key).and_then(|pending| pending.last()).map_or_else(
@@ -105,28 +125,39 @@ impl CommitmentAuthority {
                 hash: commitment.commitment_hash(),
             },
         );
-        if producer_sequence != tail.sequence.checked_add(1).context("producer sequence exhausted")?
+        if first_producer_sequence != tail.sequence.checked_add(1).context("producer sequence exhausted")?
             || previous_hash != tail.hash
         {
             bail!("producer commitment does not extend its trusted tail");
         }
-        let global_sequence = state
-            .next_global_sequence
-            .checked_add(1)
-            .context("global commitment sequence exhausted")?;
-        let commitment = LedgerCommitment::new(
-            grant,
-            producer_sequence,
-            global_sequence,
-            event_kind,
-            event_hash,
-            previous_hash,
-        )?;
+        let mut producer_sequence = first_producer_sequence;
+        let mut global_sequence = state.next_global_sequence;
+        let mut previous_hash = previous_hash;
+        let mut commitments = Vec::with_capacity(reservations.len());
+        let mut global_sequences = Vec::with_capacity(reservations.len());
+        for reservation in reservations {
+            global_sequence = global_sequence
+                .checked_add(1)
+                .context("global commitment sequence exhausted")?;
+            let commitment = LedgerCommitment::new(
+                grant,
+                producer_sequence,
+                global_sequence,
+                reservation.event_kind(),
+                reservation.event_hash(),
+                previous_hash,
+            )?;
+            previous_hash = commitment.commitment_hash();
+            commitments.push(commitment);
+            global_sequences.push(global_sequence);
+            producer_sequence = producer_sequence
+                .checked_add(1)
+                .context("producer sequence exhausted")?;
+        }
         state.next_global_sequence = global_sequence;
-        state.global_sequences.insert(global_sequence);
-        state.pending.entry(key).or_default().push(commitment);
-        drop(state);
-        Ok(global_sequence)
+        state.global_sequences.extend(global_sequences.iter().copied());
+        state.pending.entry(key).or_default().extend(commitments);
+        Ok(global_sequences)
     }
 
     async fn cancel(&self, grant: LedgerChannelGrant, global_sequence: u64) -> Result<()> {
@@ -360,6 +391,14 @@ async fn serve_requests(
                 .reserve(grant, producer_sequence, event_kind, event_hash, previous_hash)
                 .await
                 .map(|global_sequence| CommitmentReply::Reserved { global_sequence }),
+            CommitmentCommand::ReserveBatch {
+                first_producer_sequence,
+                previous_hash,
+                reservations,
+            } => authority
+                .reserve_batch(grant, first_producer_sequence, previous_hash, reservations)
+                .await
+                .map(|global_sequences| CommitmentReply::ReservedBatch { global_sequences }),
             CommitmentCommand::Cancel { global_sequence } => authority
                 .cancel(grant, global_sequence)
                 .await
