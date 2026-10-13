@@ -34,14 +34,8 @@ fn container_spec_debug_never_prints_credentials_args_or_env_values() {
         "env names stay visible for diagnosis: {debug}"
     );
     let request = ProvisionRequest {
-        name: None,
-        ram_mb: None,
-        cpus: None,
-        persistent: false,
-        env: None,
-        from: None,
-        networks: Vec::new(),
         container: Some(private_spec()),
+        ..Default::default()
     };
     assert!(!format!("{request:?}").contains("registry-secret"));
 }

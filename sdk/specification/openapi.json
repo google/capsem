@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "3.0.0"
+    "version": "3.1.0"
   },
   "paths": {
     "/assets/status": {
@@ -1284,6 +1284,110 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/managed/{request_id}/claim": {
+      "post": {
+        "operationId": "claimManagedSession",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedSessionClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSessionClaimResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/managed/{request_id}/close": {
+      "post": {
+        "operationId": "closeManagedSession",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedSessionCloseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSessionCloseResponse"
                 }
               }
             }
@@ -4957,6 +5061,209 @@
           }
         }
       },
+      "ManagedSessionClaimRequest": {
+        "type": "object",
+        "required": [
+          "ownership_token"
+        ],
+        "properties": {
+          "ownership_token": {
+            "type": "string",
+            "writeOnly": true,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionClaimResponse": {
+        "type": "object",
+        "required": [
+          "ownership",
+          "state"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagedSessionFailure"
+              }
+            ]
+          },
+          "ownership": {
+            "$ref": "#/components/schemas/ManagedSessionOwnership"
+          },
+          "session": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProvisionResponse"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ManagedSessionState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionCloseRequest": {
+        "type": "object",
+        "required": [
+          "ownership_token",
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/ManagedSessionOutcome"
+          },
+          "ownership_token": {
+            "type": "string",
+            "writeOnly": true,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionCloseResponse": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "generation",
+          "state",
+          "evidence_retained"
+        ],
+        "properties": {
+          "evidence_retained": {
+            "type": "boolean"
+          },
+          "generation": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ManagedSessionClosedState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionClosedState": {
+        "type": "string",
+        "enum": [
+          "closed"
+        ]
+      },
+      "ManagedSessionCreate": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "ownership_token"
+        ],
+        "properties": {
+          "ownership_token": {
+            "type": "string",
+            "writeOnly": true,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionErrorCode": {
+        "type": "string",
+        "enum": [
+          "invalid_request",
+          "forbidden",
+          "not_found",
+          "duplicate_request",
+          "expired",
+          "creation_failed",
+          "cleanup_failed",
+          "recovery_pending",
+          "store_unavailable"
+        ]
+      },
+      "ManagedSessionFailure": {
+        "type": "object",
+        "required": [
+          "code",
+          "error"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ManagedSessionErrorCode"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionOutcome": {
+        "type": "string",
+        "enum": [
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "ManagedSessionOwnership": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "generation",
+          "expires_at",
+          "lease_seconds",
+          "renew_after_seconds"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "string"
+          },
+          "lease_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "renew_after_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "active",
+          "closing",
+          "closed",
+          "failed"
+        ]
+      },
       "MaterialClass": {
         "type": "string",
         "enum": [
@@ -5713,6 +6020,17 @@
             ],
             "description": "Sandbox to clone state from. If provided, the new sandbox's session will\nbe cloned from this existing persistent sandbox."
           },
+          "managed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagedSessionCreate",
+                "description": "Optional finite ownership for an unnamed ephemeral SDK session."
+              }
+            ]
+          },
           "name": {
             "type": [
               "string",
@@ -5765,6 +6083,16 @@
           },
           "name": {
             "type": "string"
+          },
+          "ownership": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagedSessionOwnership"
+              }
+            ]
           },
           "persistent": {
             "type": "boolean"

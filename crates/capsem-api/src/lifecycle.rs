@@ -63,6 +63,9 @@ pub struct ProvisionRequest {
     /// OCI image the service pulls, stages and starts as this VM's workload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container: Option<crate::ContainerSpec>,
+    /// Optional finite ownership for an unnamed ephemeral SDK session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<crate::ManagedSessionCreate>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -89,6 +92,8 @@ pub struct ProvisionResponse {
     #[serde(default)]
     pub can_resume: bool,
     pub available_actions: Vec<VmAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<crate::ManagedSessionOwnership>,
 }
 
 impl ProvisionResponse {
@@ -107,6 +112,7 @@ impl ProvisionResponse {
             persistent,
             can_resume,
             available_actions,
+            ownership: None,
         }
     }
 }

@@ -4,6 +4,45 @@ use serde_json::json;
 const REQUEST: &str = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61";
 
 #[test]
+fn optional_managed_create_is_validated_redacted_and_preserves_ordinary_wire_defaults() {
+    let secret = "af".repeat(32);
+    let wire = json!({"managed": {"request_id": REQUEST, "ownership_token": secret}, "persistent": false});
+    let create: crate::ProvisionRequest = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&create).unwrap()["managed"], wire["managed"]);
+    assert!(!format!("{create:?}").contains(&secret));
+    assert!(serde_json::from_value::<crate::ProvisionRequest>(json!({
+        "managed": {"request_id": "invalid", "ownership_token": secret}
+    }))
+    .is_err());
+    let ordinary: crate::ProvisionRequest = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(
+        serde_json::to_value(ordinary).unwrap(),
+        json!({"name": null, "persistent": false})
+    );
+}
+
+#[test]
+fn provision_response_roundtrips_optional_nonsecret_ownership_metadata() {
+    let wire = json!({
+        "id": "vm-1", "name": "vm-1", "status": "Running", "persistent": false,
+        "can_resume": false, "available_actions": ["stop"],
+        "ownership": {"request_id": REQUEST, "generation": REQUEST,
+            "expires_at": "2026-10-13T20:00:00Z", "lease_seconds": 300, "renew_after_seconds": 60}
+    });
+    let response: crate::ProvisionResponse = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(response).unwrap(), wire);
+    let ordinary = crate::ProvisionResponse::new(
+        "vm-1".into(),
+        "vm-1".into(),
+        crate::VmLifecycleState::Running,
+        false,
+        false,
+        vec![crate::VmAction::Stop],
+    );
+    assert!(serde_json::to_value(ordinary).unwrap().get("ownership").is_none());
+}
+
+#[test]
 fn managed_requests_redact_secrets_but_keep_the_explicit_wire_body() {
     let secret = "af".repeat(32);
     let create: ManagedSessionCreate =

@@ -17,6 +17,14 @@ pub fn openapi() -> OpenApi {
     doc.add("/restart", HttpMethod::Post, restart);
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
+    doc.post::<ManagedSessionClaimRequest, ManagedSessionClaimResponse>(
+        "/vms/managed/{request_id}/claim",
+        "claimManagedSession",
+    );
+    doc.post::<ManagedSessionCloseRequest, ManagedSessionCloseResponse>(
+        "/vms/managed/{request_id}/close",
+        "closeManagedSession",
+    );
     doc.post::<RunRequest, ExecResponse>("/run", "runVm");
     doc.post::<PurgeRequest, PurgeResponse>("/purge", "purgeVms");
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
@@ -87,7 +95,7 @@ struct Document {
 /// force every generated SDK to be regenerated, and an SDK built against the
 /// contract keeps working across binary releases. Raise it when the contract
 /// changes in a way clients must notice.
-pub const CONTRACT_VERSION: &str = "3.0.0";
+pub const CONTRACT_VERSION: &str = "3.1.0";
 
 impl Document {
     fn schema<T: ToSchema>(&mut self) -> Ref {
