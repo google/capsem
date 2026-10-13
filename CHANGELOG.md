@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Fresh and resumed VM launches carry the service's original PID and exact
+  spawn generation into process lifetime and boot admission.
+
 - VM processes verify their original service parent and trusted spawn
   generation before boot, and terminate when that service disappears.
 
