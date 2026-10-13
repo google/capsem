@@ -3120,6 +3120,14 @@ unmeasured = [
     "/vms/{id}/timeline",
 ]
 
+# Concurrent kept-alive clients exercise the same measured read-only routes as
+# the latency lane. This catches cache lock and single-flight contention while
+# keeping mutations and network-bound catalog reads out of an RPS claim.
+[benchmark.route_load]
+concurrency = 16
+requests = 512
+quick_requests = 64
+
 # Release-blocking route ceilings and the margin they must retain. The budget
 # library classifies a route once and resolves both transports from this
 # inventory; test code owns no timing literals. CPU is authored for

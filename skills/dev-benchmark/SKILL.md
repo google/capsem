@@ -122,6 +122,12 @@ in no class, a duplicate classification, an unexplained internal route, or
 service/gateway topology drift. `unmeasured` is debt that may only shrink;
 `internal` is a one-entry ratchet, not an easy exemption for new routes.
 
+For every route in `measured`, the `routes` collector records sequential warm
+and cold latency plus a 16-client kept-alive load window for both the service
+UDS and authenticated gateway. The load window emits raw concurrent latency,
+aggregate RPS, and CPU samples. Mutation and external-state routes remain in
+the explicit debt inventory until their owning fixture can replay them safely.
+
 ## Benchmarks that are still pytest
 
 Not yet migrated; they remain the gate for their paths.

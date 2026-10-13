@@ -26,8 +26,10 @@ Prints raw per-request milliseconds plus service and gateway CPU deltas;
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import sys
+import threading
 import time
 from collections.abc import Callable
 from contextlib import ExitStack, redirect_stdout
@@ -67,6 +69,11 @@ def measured_routes() -> list[str]:
     return list(config["benchmark"]["routes"]["measured"])
 
 
+def route_load_config() -> dict[str, int]:
+    config = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
+    return dict(config["benchmark"]["route_load"])
+
+
 def request_path(route: str) -> str:
     """Resolve a configured route template against the stopped VM fixture."""
     if route == BODY_ROUTE:
@@ -86,22 +93,31 @@ def request(transport: Transport, target: Target, path: str) -> None:
     """Require one successful JSON response."""
     status, _, body = transport.request("GET", path, headers=target.headers)
     if not 200 <= status < 300:
-        raise RuntimeError(f"{target.label} {path} returned HTTP {status}: {body[:500]!r}")
+        raise RuntimeError(
+            f"{target.label} {path} returned HTTP {status}: {body[:500]!r}"
+        )
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as error:
-        raise RuntimeError(f"{target.label} {path} returned non-JSON: {body[:500]!r}") from error
+        raise RuntimeError(
+            f"{target.label} {path} returned non-JSON: {body[:500]!r}"
+        ) from error
     if path == BODY_URL:
         assert_event_bodies(payload)
 
 
-def sample_warm_route(target: Target, path: str, samples: int) -> tuple[list[float], dict[str, float]]:
+def sample_warm_route(
+    target: Target, path: str, samples: int
+) -> tuple[list[float], dict[str, float]]:
     """Raw kept-alive latency and every participating process's CPU."""
     transport = target.transport_factory()
     try:
         for _ in range(WARMUP):
             request(transport, target, path)
-        before = {name: process_cpu_seconds(proc) for name, proc in target.cpu_processes.items()}
+        before = {
+            name: process_cpu_seconds(proc)
+            for name, proc in target.cpu_processes.items()
+        }
         latencies = []
         for _ in range(samples):
             started = time.perf_counter()
@@ -130,6 +146,47 @@ def sample_cold_route(target: Target, path: str, samples: int) -> list[float]:
     return latencies
 
 
+def sample_concurrent_route(
+    target: Target, path: str, samples: int, concurrency: int
+) -> tuple[list[float], dict[str, float], float]:
+    """Raw latency, CPU and RPS with one kept-alive connection per worker."""
+    workers = min(samples, concurrency)
+    barrier = threading.Barrier(workers + 1)
+
+    def worker(count: int) -> list[float]:
+        transport = target.transport_factory()
+        try:
+            request(transport, target, path)
+            barrier.wait(timeout=30)
+            measured = []
+            for _ in range(count):
+                started = time.perf_counter()
+                request(transport, target, path)
+                measured.append((time.perf_counter() - started) * 1000.0)
+            return measured
+        finally:
+            transport.close()
+
+    counts = [
+        samples // workers + int(index < samples % workers) for index in range(workers)
+    ]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(worker, count) for count in counts]
+        before = {
+            name: process_cpu_seconds(proc)
+            for name, proc in target.cpu_processes.items()
+        }
+        started = time.perf_counter()
+        barrier.wait(timeout=30)
+        latencies = [latency for future in futures for latency in future.result()]
+        elapsed = time.perf_counter() - started
+    cpu = {
+        name: float(process_cpu_seconds(proc) - before[name])
+        for name, proc in target.cpu_processes.items()
+    }
+    return latencies, cpu, samples / elapsed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quick", action="store_true", help="fewer samples per route")
@@ -137,6 +194,9 @@ def main() -> int:
     args = parser.parse_args()
 
     samples = args.samples if args.samples is not None else (16 if args.quick else 128)
+    load = route_load_config()
+    load_samples = load["quick_requests"] if args.quick else load["requests"]
+    concurrency = load["concurrency"]
     routes = measured_routes()
     if not routes:
         print(
@@ -166,9 +226,14 @@ def main() -> int:
             ),
             Target(
                 label="gateway",
-                transport_factory=lambda: Transport(host="127.0.0.1", port=gateway.port),
+                transport_factory=lambda: Transport(
+                    host="127.0.0.1", port=gateway.port
+                ),
                 headers={"Authorization": f"Bearer {gateway.token}"},
-                cpu_processes={"gateway": gateway_proc, "downstream_service": service_proc},
+                cpu_processes={
+                    "gateway": gateway_proc,
+                    "downstream_service": service_proc,
+                },
             ),
         )
         for path in routes:
@@ -186,7 +251,32 @@ def main() -> int:
                     "samples": cold_latencies,
                 }
                 for process_name, cpu_seconds in cpu.items():
-                    suffix = "cpu_s" if process_name == target.label else f"{process_name}_cpu_s"
+                    suffix = (
+                        "cpu_s"
+                        if process_name == target.label
+                        else f"{process_name}_cpu_s"
+                    )
+                    metrics[f"{target.label}.{path}.{suffix}"] = {
+                        "unit": "seconds",
+                        "samples": [cpu_seconds],
+                    }
+                concurrent_latencies, concurrent_cpu, rps = sample_concurrent_route(
+                    target, concrete_path, load_samples, concurrency
+                )
+                metrics[f"{target.label}.{path}.concurrent_latency_ms"] = {
+                    "unit": "milliseconds",
+                    "samples": concurrent_latencies,
+                }
+                metrics[f"{target.label}.{path}.concurrent_rps"] = {
+                    "unit": "requests_per_second",
+                    "samples": [rps],
+                }
+                for process_name, cpu_seconds in concurrent_cpu.items():
+                    suffix = (
+                        "concurrent_cpu_s"
+                        if process_name == target.label
+                        else f"concurrent_{process_name}_cpu_s"
+                    )
                     metrics[f"{target.label}.{path}.{suffix}"] = {
                         "unit": "seconds",
                         "samples": [cpu_seconds],

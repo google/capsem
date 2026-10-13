@@ -29,6 +29,14 @@ class RouteCoverageConfig(Strict):
     internal: dict[str, str]
 
 
+class RouteLoadConfig(Strict):
+    """Concurrent request window applied to every measured read-only route."""
+
+    concurrency: PositiveInt
+    requests: PositiveInt
+    quick_requests: PositiveInt
+
+
 class RouteBudgetConfig(Strict):
     """Actual ceilings for one route class and one transport."""
 
@@ -161,6 +169,7 @@ class BenchmarkGatesConfig(Strict):
 
 class BenchmarkConfig(Strict):
     routes: RouteCoverageConfig
+    route_load: RouteLoadConfig
     route_health: RouteHealthConfig
     run: BenchmarkRunConfig
     gates: BenchmarkGatesConfig
