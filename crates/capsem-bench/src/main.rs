@@ -5,6 +5,7 @@ mod collector;
 mod commands;
 #[cfg(feature = "host")]
 mod comparison;
+mod dns_load;
 mod http_load;
 #[cfg(feature = "host")]
 mod machine;
@@ -64,6 +65,7 @@ async fn main() -> Result<()> {
         Command::Udp(args) => println!("{}", serde_json::to_string(&udp::run(args).await?)?),
         Command::Ping(args) => println!("{}", serde_json::to_string(&ping::run(args).await?)?),
         Command::HttpLoad(args) => println!("{}", serde_json::to_string(&http_load::run(args).await?)?),
+        Command::DnsLoad(args) => println!("{}", serde_json::to_string(&dns_load::run(args).await?)?),
         Command::Protocol(args) => {
             #[cfg(feature = "host")]
             let destination = args.record.clone();

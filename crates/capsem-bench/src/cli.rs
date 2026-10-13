@@ -22,6 +22,8 @@ pub(crate) enum Command {
     Ping(crate::ping::Args),
     /// Drive sustained HTTP load with pooled async clients.
     HttpLoad(crate::http_load::Args),
+    /// Drive sustained DNS load with async UDP clients.
+    DnsLoad(crate::dns_load::Args),
     /// Run deterministic protocol scenarios against capsem-mock-server.
     Protocol(ProtocolArgs),
     /// Run host-direct and guest-through-Capsem protocol lanes, then report delta.

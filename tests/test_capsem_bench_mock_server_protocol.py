@@ -79,15 +79,81 @@ def test_mitm_load_rejects_one_failed_request(monkeypatch):
         )
 
 
-def test_dns_load_reports_application_wire_bytes() -> None:
-    row = dns_load._summarize(
-        [(1.0, 0, None, 40, 56), (2.0, 3, None, 40, 40)],
-        concurrency=2,
-        duration_s=1,
+def test_dns_load_delegates_to_async_rust_driver(monkeypatch):
+    calls = []
+    row = {
+        "concurrency": 2,
+        "duration_s": 1.0,
+        "total_requests": 4,
+        "errors": 0,
+        "request_bytes": 160,
+        "response_bytes": 224,
+    }
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps(row), stderr="")
+
+    monkeypatch.setattr(dns_load.subprocess, "run", run)
+
+    assert dns_load._drive_at_concurrency("fixture.test", 1, 2, 1, 5) == row
+    assert calls == [
+        (
+            [
+                dns_load.RUST_BENCH,
+                "dns-load",
+                "--target",
+                "127.0.0.1:53",
+                "--qname",
+                "fixture.test",
+                "--qtype",
+                "1",
+                "--concurrency",
+                "2",
+                "--duration-s",
+                "1",
+                "--timeout-ms",
+                "5000",
+            ],
+            {"check": False, "capture_output": True, "text": True},
+        )
+    ]
+
+
+def test_dns_load_rejects_starved_driver(monkeypatch):
+    row = {"concurrency": 512, "total_requests": 91, "errors": 0}
+    monkeypatch.setattr(
+        dns_load.subprocess,
+        "run",
+        lambda *args, **kwargs: types.SimpleNamespace(
+            returncode=0, stdout=json.dumps(row), stderr=""
+        ),
     )
 
-    assert row["request_bytes"] == 80
-    assert row["response_bytes"] == 96
+    with pytest.raises(RuntimeError, match="91 of 512 client loops"):
+        dns_load._drive_at_concurrency("fixture.test", 1, 512, 10, 5)
+
+
+def test_dns_load_rejects_one_failed_request(monkeypatch):
+    monkeypatch.setattr(
+        dns_load,
+        "_drive_at_concurrency",
+        lambda qname, qtype, concurrency, duration_s, timeout_s: {
+            "concurrency": 1,
+            "duration_s": 1.0,
+            "total_requests": 2,
+            "errors": 1,
+            "error_distribution": {"timed out": 1},
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="1 of 2 requests failed"):
+        dns_load.dns_load_bench(
+            qname="fixture.test",
+            qtype=1,
+            concurrency_levels=[1],
+            duration_s=1,
+        )
 
 
 class _StubConsole:
