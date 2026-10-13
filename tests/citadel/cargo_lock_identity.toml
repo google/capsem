@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "1244c8d979bae073f6563e38744a98da2340ad05629c4651cedd00162976f6e2"
-reason = "User-requested capsem-crypto extraction and all-Rust retrofit: first-party hashes, entropy, TLS keys, JWT verification and secret primitives use the owned crate; BLAKE2b/BLAKE2s SIMD 1.0.5 support comparisons in the normal benchmark harness. Existing registry versions and workspace 0.7.0 remain unchanged; unused rand_chacha 0.3.1 retired. The approved managed-session API adds capsem-api -> capsem-crypto secrets for zeroizing request capabilities, with no new registry package/version."
+sha256 = "ac5cf2c81eaf95772a3865e9e55e88f8f60728123cb103aef98ea010874e15bf"
+reason = "User-requested capsem-crypto extraction and all-Rust retrofit: first-party hashes, entropy, TLS keys, JWT verification and secret primitives use the owned crate; BLAKE2b/BLAKE2s SIMD 1.0.5 support comparisons in the normal benchmark harness. Existing registry versions and workspace 0.7.0 remain unchanged; unused rand_chacha 0.3.1 retired. The approved managed-session API adds capsem-api -> capsem-crypto secrets for zeroizing request capabilities, with no new registry package/version. Rust managed scopes add SDK edges to existing capsem-crypto random/secrets, futures, humantime and tokio-util rt; no registry version moves."

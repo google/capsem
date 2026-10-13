@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Rust SDK provides managed ephemeral scopes with finite renewal,
+  cancellation-surviving cleanup, original-generation validation and explicit
+  retry authority when the service cannot confirm closure.
+
 - Preview and app-surface routes validate VM identifiers using the same rule
   as the service and streaming gateway, rejecting malformed leading characters.
 

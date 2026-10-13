@@ -3,6 +3,32 @@
 Typed async clients for the HTTP gateway. Supply its URL and bearer token
 explicitly; the SDK does not discover local services or run host commands.
 
+`hv.with_managed(options, callback).await` creates one unnamed ephemeral VM,
+renews its finite service lease, and awaits original-generation cleanup before
+returning the callback result or error. The callback receives a VM and a
+`CancellationToken`. Renewal failure and expiry stop the callback and cancel
+that token. Names are refused before any request; existing and forked handles
+keep their ordinary lifetime.
+
+```rust,no_run
+use capsem_sdk::{CreateOptions, Hypervisor, Result};
+async fn owned_job(hv: &Hypervisor) -> Result<()> {
+    hv.with_managed(CreateOptions::default(), |vm, cancel| async move {
+        tokio::select! {
+            result = vm.exec("echo hello", Some(60)) => { result?; Ok(()) },
+            () = cancel.cancelled() => Err(capsem_sdk::Error::Cancelled),
+        }
+    }).await
+}
+```
+
+Dropping the caller future signals cancellation while an owned task continues
+cleanup on the running Tokio runtime. A runtime or process crash ends renewal;
+the service owns expiry. Uncertain create replies are closed without replay.
+`Error::ManagedCleanup { session, .. }` retains a redacted recovery handle:
+call `session.close(outcome).await` to retry explicitly. A failed close never
+claims closure and never automatically retries the mutation.
+
 `hv.images().list(false).await?` lists registry catalog entries with compatible
 pins and service-owned disk observations (`unknown`, `missing`, `partial`,
 `ready`). Pass `true` to refresh the registry catalog. Disk readiness remains

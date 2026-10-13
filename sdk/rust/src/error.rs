@@ -5,6 +5,15 @@ pub enum Error {
     VmLookup { name: String, matches: usize },
     #[error("invalid SDK input: {0}")]
     InvalidInput(&'static str),
+    #[error("managed session cancelled")]
+    Cancelled,
+    #[error("managed session failed: {0}")]
+    Managed(&'static str),
+    #[error("managed cleanup failed: {source}; explicit close retry is available")]
+    ManagedCleanup {
+        source: Box<Error>,
+        session: Box<crate::ManagedSession>,
+    },
     #[error("gateway request failed: {0}")]
     Transport(#[from] reqwest::Error),
     #[error("gateway returned HTTP {status}")]
