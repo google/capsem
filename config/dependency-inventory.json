@@ -732,11 +732,11 @@
   "build_script": true,
   "dependencies": [
    "anyhow",
-   "blake3",
    "bytes",
    "capsem-api",
    "capsem-assets",
    "capsem-core",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-proto",
    "clap",
@@ -752,7 +752,6 @@
    "semver",
    "serde",
    "serde_json",
-   "sha2",
    "tar",
    "tempfile",
    "tokio",
@@ -766,16 +765,15 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
-   "blake3",
    "capsem-assets",
    "capsem-core",
+   "capsem-crypto",
    "clap",
    "flate2",
    "reqwest",
    "semver",
    "serde",
    "serde_json",
-   "sha2",
    "tar",
    "tempfile",
    "time",
@@ -786,6 +784,7 @@
  "capsem-agent": {
   "build_script": false,
   "dependencies": [
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-guard",
    "capsem-proto",
@@ -801,6 +800,7 @@
   "build_script": false,
   "dependencies": [
    "base64",
+   "capsem-crypto",
    "serde",
    "serde_json",
    "utoipa"
@@ -828,7 +828,7 @@
  "capsem-archive": {
   "build_script": false,
   "dependencies": [
-   "blake3",
+   "capsem-crypto",
    "capsem-foundation",
    "flate2",
    "miniz_oxide",
@@ -842,14 +842,13 @@
   "dependencies": [
    "anyhow",
    "axum",
-   "blake3",
+   "capsem-crypto",
    "capsem-foundation",
    "futures",
    "oci-client",
    "reqwest",
    "serde",
    "serde_json",
-   "sha2",
    "tempfile",
    "tokio",
    "toml",
@@ -872,6 +871,14 @@
    "tokio"
   ]
  },
+ "capsem-cache": {
+  "build_script": false,
+  "dependencies": [
+   "capsem-telemetry",
+   "metrics",
+   "quick_cache"
+  ]
+ },
  "capsem-config": {
   "build_script": false,
   "dependencies": [
@@ -890,12 +897,13 @@
    "anyhow",
    "async-compression",
    "axum",
-   "blake3",
    "block2",
    "bytes",
    "capsem-assets",
+   "capsem-cache",
    "capsem-config",
    "capsem-credentials",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-logger",
    "capsem-proto",
@@ -915,7 +923,6 @@
    "hyper-util",
    "io-uring",
    "libc",
-   "lru",
    "metrics",
    "metrics-util",
    "nix",
@@ -924,7 +931,6 @@
    "objc2-virtualization",
    "pin-project-lite",
    "proptest",
-   "rcgen",
    "regex",
    "reqwest",
    "rmcp",
@@ -954,32 +960,50 @@
   "dependencies": [
    "base64",
    "bytes",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-proto",
    "futures",
-   "getrandom",
    "http-body-util",
    "hyper",
    "hyper-util",
-   "jsonwebtoken",
    "reqwest",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tokio",
+   "tracing",
+   "url"
+  ]
+ },
+ "capsem-crypto": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "aws-lc-rs",
+   "blake2b_simd",
+   "blake2s_simd",
+   "blake3",
+   "getrandom",
+   "jsonwebtoken",
+   "rand",
+   "rcgen",
    "ring",
+   "rustls",
    "serde",
    "serde_json",
    "sha2",
    "signature",
    "subtle",
-   "tempfile",
-   "tokio",
-   "tracing",
-   "url",
+   "time",
+   "uuid",
    "zeroize"
   ]
  },
  "capsem-foundation": {
   "build_script": false,
   "dependencies": [
-   "blake3",
+   "capsem-crypto",
    "capsem-proto",
    "libc",
    "nix",
@@ -1000,6 +1024,7 @@
    "axum",
    "bytes",
    "capsem-api",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-guard",
    "capsem-proto",
@@ -1009,10 +1034,8 @@
    "http-body-util",
    "hyper",
    "hyper-util",
-   "rand",
    "serde",
    "serde_json",
-   "sha2",
    "tempfile",
    "tokio",
    "tokio-tungstenite",
@@ -1053,8 +1076,9 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
-   "blake3",
    "capsem-archive",
+   "capsem-cache",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-proto",
    "capsem-telemetry",
@@ -1069,7 +1093,6 @@
    "serde",
    "serde_bytes",
    "serde_json",
-   "sha2",
    "tempfile",
    "tokio",
    "tracing",
@@ -1123,6 +1146,7 @@
    "anyhow",
    "base64",
    "bytes",
+   "capsem-crypto",
    "capsem-guard",
    "clap",
    "flate2",
@@ -1130,12 +1154,10 @@
    "http-body-util",
    "hyper",
    "hyper-util",
-   "rcgen",
    "reqwest",
    "rustls",
    "serde",
    "serde_json",
-   "sha1",
    "tempfile",
    "tokio",
    "tokio-rustls",
@@ -1181,7 +1203,7 @@
   "build_script": true,
   "dependencies": [
    "anyhow",
-   "blake3",
+   "capsem-crypto",
    "quote",
    "rmp-serde",
    "serde",
@@ -1249,13 +1271,14 @@
    "async-trait",
    "axum",
    "base64",
-   "blake3",
    "bytes",
    "capsem-api",
    "capsem-assets",
+   "capsem-cache",
    "capsem-config",
    "capsem-core",
    "capsem-credentials",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-guard",
    "capsem-logger",
@@ -1271,7 +1294,6 @@
    "opentelemetry",
    "opentelemetry-http",
    "opentelemetry_sdk",
-   "rand",
    "reqwest",
    "rmp-serde",
    "rusqlite",
@@ -1286,8 +1308,7 @@
    "tower",
    "tower-http",
    "tracing",
-   "uuid",
-   "zeroize"
+   "uuid"
   ]
  },
  "capsem-telemetry": {
@@ -5088,6 +5109,21 @@
    "serde_derive",
    "tokio",
    "tokio-test"
+  ]
+ },
+ "quick_cache": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "crossbeam-utils",
+   "equivalent",
+   "foldhash",
+   "hashbrown",
+   "parking_lot",
+   "rand",
+   "rand_distr",
+   "shuttle",
+   "tokio"
   ]
  },
  "quinn": {
