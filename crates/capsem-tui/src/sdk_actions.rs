@@ -23,7 +23,6 @@ pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &Con
                     ram_mb: None,
                     cpus: None,
                     env: None,
-                    from: None,
                     networks: Vec::new(),
                     container: image.as_ref().map(|image| capsem_sdk::models::ContainerSpec {
                         image: image.clone(),
@@ -32,6 +31,7 @@ pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &Con
                         registry: None,
                         attach: false,
                     }),
+                    ..Default::default()
                 },
             };
             let vm = api::create_vm(transport, &input, CallOptions::default()).await?;
