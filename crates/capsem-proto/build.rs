@@ -47,6 +47,16 @@ fn write_runtime_limits() {
         .unwrap_or_else(|| {
             panic!("runtime limits: network.max_concurrent_clients must be an integer between 1 and 4096")
         });
+    let open_file_limit = config
+        .get("network")
+        .and_then(|network| network.get("process_open_file_limit"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (capacity * 2 + 64..=1_048_576).contains(value))
+        .unwrap_or_else(|| {
+            panic!(
+                "runtime limits: network.process_open_file_limit must cover two descriptors per client plus 64, and not exceed 1048576"
+            )
+        });
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     std::fs::write(
         format!("{out_dir}/runtime_limits.rs"),
@@ -55,7 +65,9 @@ fn write_runtime_limits() {
              ///\n\
              /// TCP descriptor grants and each of the two DNS sessions derive\n\
              /// their bounds from this one config-owned value.\n\
-             pub const NETWORK_CLIENT_CAPACITY: usize = {capacity};\n"
+             pub const NETWORK_CLIENT_CAPACITY: usize = {capacity};\n\
+             /// Minimum descriptor budget for a network-facing process.\n\
+             pub const NETWORK_PROCESS_OPEN_FILE_LIMIT: u64 = {open_file_limit};\n"
         ),
     )
     .expect("runtime limits: write generated constants");

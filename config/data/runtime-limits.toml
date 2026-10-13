@@ -3,3 +3,6 @@
 
 [network]
 max_concurrent_clients = 512
+# Each intercepted client consumes a guest TCP descriptor and a VSOCK
+# descriptor. Leave room for listeners, the Tokio reactor, DNS, and control.
+process_open_file_limit = 4096
