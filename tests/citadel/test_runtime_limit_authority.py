@@ -58,6 +58,10 @@ REQUIRED_WIRING = {
         "pub const LEDGER_ADMISSION_BATCH_CAPACITY: usize = {ledger_batch_capacity}",
         'get("admission_coalesce_wait_microseconds")',
         "pub const LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS: u64 = {ledger_coalesce_wait_microseconds}",
+        'get("disk_flush_interval_milliseconds")',
+        "pub const LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS: u64 = {ledger_disk_flush_interval_milliseconds}",
+        'get("disk_flush_max_pending_events")',
+        "pub const LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS: usize = {ledger_disk_flush_max_pending_events}",
     ),
     "crates/capsem-proto/src/lib.rs": (
         'include!(concat!(env!("OUT_DIR"), "/runtime_limits.rs"))',
@@ -91,6 +95,10 @@ REQUIRED_WIRING = {
     "crates/capsem-logger/src/db.rs": (
         "LEDGER_PRODUCER_QUEUE_CAPACITY",
         "LEDGER_ADMISSION_BATCH_CAPACITY",
+    ),
+    "crates/capsem-logger/src/writer.rs": (
+        "LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS",
+        "LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS",
     ),
     "crates/capsem-core/src/net/dns/session/mod.rs": ("DNS_SESSION_MAX_IN_FLIGHT",),
     "crates/capsem-agent/src/dns_proxy/session.rs": ("DNS_SESSION_MAX_IN_FLIGHT",),
@@ -174,6 +182,21 @@ def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:
     assert (
         type(coalesce_wait_microseconds) is int
         and 1 <= coalesce_wait_microseconds <= 10_000
+    ), RUNTIME_LIMIT_RATIONALE
+    disk_flush_interval_milliseconds = config.get("ledger", {}).get(
+        "disk_flush_interval_milliseconds"
+    )
+    assert (
+        type(disk_flush_interval_milliseconds) is int
+        and 100 <= disk_flush_interval_milliseconds <= 5_000
+    ), RUNTIME_LIMIT_RATIONALE
+    disk_flush_max_pending_events = config.get("ledger", {}).get(
+        "disk_flush_max_pending_events"
+    )
+    assert (
+        type(disk_flush_max_pending_events) is int
+        and admission_batch_capacity <= disk_flush_max_pending_events <= 10_000_000
+        and disk_flush_max_pending_events % admission_batch_capacity == 0
     ), RUNTIME_LIMIT_RATIONALE
 
     missing = []
