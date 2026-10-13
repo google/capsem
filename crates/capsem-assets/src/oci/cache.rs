@@ -179,7 +179,13 @@ impl BlobCache {
     /// Fixed lock stripes bound lock-file growth while coalescing equal blobs.
     pub(super) async fn lease(&self, digest: &str) -> Result<FileLock> {
         let hex = digest_hex(digest)?;
-        lock(self.root.join("locks").join(format!("{}.lock", &hex[..2]))).await
+        lock_with_timeout(
+            self.root.join("locks").join(format!("{}.lock", &hex[..2])),
+            LockAccess::Prepare,
+            LockMode::Exclusive,
+            lock_timeout(LockScope::BlobStripe),
+        )
+        .await
     }
 
     /// Shared for the complete image/layout lifetime, separate from blob
@@ -216,7 +222,18 @@ impl BlobCache {
         self.root.join(&self.policy.mutation_locks[0])
     }
 
+    #[cfg(test)]
     pub(super) async fn copy_hit(&self, digest: &str, size: u64, destination: &Path) -> Result<bool> {
+        self.copy_hit_with_lease(digest, size, destination, &mut None).await
+    }
+
+    pub(super) async fn copy_hit_with_lease(
+        &self,
+        digest: &str,
+        size: u64,
+        destination: &Path,
+        stripe_lease: &mut Option<FileLock>,
+    ) -> Result<bool> {
         let lease = self.lookup_lease().await?;
         let cache = self.clone();
         let hex = self.entry_name(digest)?;
@@ -238,6 +255,7 @@ impl BlobCache {
         let Some(file) = opened else {
             return Ok(false);
         };
+        *stripe_lease = None;
         let destination = destination.to_owned();
         let digest = digest.to_owned();
         // Holding the opened file is enough: pruning may unlink its name but
@@ -476,11 +494,26 @@ impl BlobCache {
     }
 }
 
+const CACHE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Clone, Copy)]
 enum LockAccess {
     Prepare,
     Read,
     Existing,
+}
+
+#[derive(Clone, Copy)]
+enum LockScope {
+    BlobStripe,
+    Cache,
+}
+
+fn lock_timeout(scope: LockScope) -> Duration {
+    match scope {
+        LockScope::BlobStripe => super::PULL_TIMEOUT,
+        LockScope::Cache => CACHE_LOCK_TIMEOUT,
+    }
 }
 
 async fn lock(path: PathBuf) -> Result<FileLock> {
@@ -492,7 +525,11 @@ async fn read_lock(path: PathBuf) -> Result<FileLock> {
 }
 
 async fn lock_with(path: PathBuf, access: LockAccess, mode: LockMode) -> Result<FileLock> {
-    poll_until(PollOpts::new("oci-cache-lock", Duration::from_secs(30)), || {
+    lock_with_timeout(path, access, mode, lock_timeout(LockScope::Cache)).await
+}
+
+async fn lock_with_timeout(path: PathBuf, access: LockAccess, mode: LockMode, timeout: Duration) -> Result<FileLock> {
+    poll_until(PollOpts::new("oci-cache-lock", timeout), || {
         let path = path.clone();
         async move {
             match tokio::task::spawn_blocking(move || {
