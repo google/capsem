@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
+from helpers import stopped_workspace
 from helpers.stopped_workspace import seed_stopped_workspace
 
 
@@ -15,3 +17,24 @@ def test_fixture_never_replaces_an_existing_registry(tmp_path: Path) -> None:
         seed_stopped_workspace(tmp_path, tmp_path / "assets")
     assert registry.read_text() == "existing registry"
     assert not (tmp_path / "persistent").exists()
+
+
+def test_fixture_makes_body_archive_private(tmp_path: Path, monkeypatch) -> None:
+    real_copytree = stopped_workspace.shutil.copytree
+
+    def permissive_copytree(source: Path, destination: Path) -> Path:
+        copied = real_copytree(source, destination)
+        copied.chmod(0o755)
+        return copied
+
+    monkeypatch.setattr(stopped_workspace, "manifest_asset_pins", lambda _assets: {})
+    monkeypatch.setattr(stopped_workspace.shutil, "copytree", permissive_copytree)
+
+    seed_stopped_workspace(tmp_path, tmp_path / "assets")
+
+    mode = stat.S_IMODE(
+        (tmp_path / "persistent" / stopped_workspace.VM_ID / "session.bodies")
+        .stat()
+        .st_mode
+    )
+    assert mode == 0o700
