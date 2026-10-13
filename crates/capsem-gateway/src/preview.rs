@@ -559,11 +559,7 @@ pub(crate) async fn service_json<T: serde::de::DeserializeOwned>(
 }
 
 pub(crate) fn safe_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    capsem_api::validate_name("VM id", value).is_ok()
 }
 
 fn safe_dns_label(value: &str) -> bool {
