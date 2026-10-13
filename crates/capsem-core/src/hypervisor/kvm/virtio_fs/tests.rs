@@ -5,7 +5,6 @@ use crate::hypervisor::kvm::virtio_queue::VirtqDesc;
 use std::collections::BTreeMap;
 use std::io::{Seek, SeekFrom};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -123,40 +122,6 @@ fn host_file_type(metadata: &std::fs::Metadata) -> u32 {
     metadata.mode() & MASK
 }
 
-struct LocalMetadataAuthority(PathBuf);
-
-impl crate::GuestMetadataAuthority for LocalMetadataAuthority {
-    fn set_mode(&self, relative_path: &[u8], mode: u16) -> std::io::Result<()> {
-        let root = capsem_foundation::unix::contained::ContainedDir::open_root(&self.0)?;
-        root.set_relative_mode(Path::new(std::ffi::OsStr::from_bytes(relative_path)), u32::from(mode))
-    }
-
-    fn set_times(
-        &self,
-        relative_path: &[u8],
-        atime: capsem_proto::upstream_grant::GuestFileTime,
-        mtime: capsem_proto::upstream_grant::GuestFileTime,
-    ) -> std::io::Result<()> {
-        use capsem_foundation::unix::contained::FileTimeSpec;
-        use capsem_proto::upstream_grant::GuestFileTime;
-        let convert = |value| match value {
-            GuestFileTime::Omit => FileTimeSpec::Omit,
-            GuestFileTime::Now => FileTimeSpec::Now,
-            GuestFileTime::Exact { seconds, nanoseconds } => FileTimeSpec::Exact { seconds, nanoseconds },
-        };
-        let root = capsem_foundation::unix::contained::ContainedDir::open_root(&self.0)?;
-        root.set_relative_times(
-            Path::new(std::ffi::OsStr::from_bytes(relative_path)),
-            convert(atime),
-            convert(mtime),
-        )
-    }
-}
-
-fn metadata_authority(dir: &Path) -> Arc<dyn crate::GuestMetadataAuthority> {
-    Arc::new(LocalMetadataAuthority(dir.to_path_buf()))
-}
-
 /// Helper: create a FuseProcessor for testing (no queues needed).
 pub(super) fn test_processor(dir: &Path) -> FuseProcessor {
     FuseProcessor {
@@ -164,7 +129,7 @@ pub(super) fn test_processor(dir: &Path) -> FuseProcessor {
         read_only: false,
         inodes: InodeTable::new(dir).unwrap(),
         file_handles: FileHandleTable::new(),
-        metadata_authority: Some(metadata_authority(dir)),
+        metadata_authority: Some(super::metadata_tests::metadata_authority(dir)),
     }
 }
 
@@ -173,7 +138,7 @@ pub(super) fn test_device(dir: &Path) -> VirtioFsDevice {
         "capsem",
         dir,
         false,
-        Some(metadata_authority(dir)),
+        Some(super::metadata_tests::metadata_authority(dir)),
         -1,
         Arc::new(AtomicU32::new(0)),
     )
@@ -890,7 +855,7 @@ fn virtiofs_device_restore_rejects_tag_and_read_only_identity_mismatch() {
         "other",
         &dir,
         false,
-        Some(metadata_authority(&dir)),
+        Some(super::metadata_tests::metadata_authority(&dir)),
         -1,
         Arc::new(AtomicU32::new(0)),
     )
@@ -1044,76 +1009,6 @@ fn setattr_chmod() {
 
     let perms = std::fs::metadata(dir.join("f.txt")).unwrap().permissions();
     assert_eq!(perms.mode() & 0o777, 0o755);
-}
-
-#[test]
-fn setattr_timestamps_use_the_metadata_authority() {
-    let dir = temp_share("setattr-times");
-    let path = dir.join("f.txt");
-    std::fs::write(&path, b"x").unwrap();
-    let mut proc = test_processor(&dir);
-    let ino = lookup(&mut proc, 1, "f.txt").unwrap();
-    let attr_in = FuseSetAttrIn {
-        valid: FATTR_ATIME | FATTR_MTIME,
-        padding: 0,
-        fh: 0,
-        size: 0,
-        lock_owner: 0,
-        atime: 1_234_567,
-        mtime: 2_345_678,
-        ctime: 0,
-        atimensec: 123_456_789,
-        mtimensec: 987_654_321,
-        ctimensec: 0,
-        mode: 0,
-        unused4: 0,
-        uid: 0,
-        gid: 0,
-        unused5: 0,
-    };
-
-    let h = make_header(FUSE_SETATTR, ino, 4);
-    let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&attr_in)));
-
-    assert_eq!(response_error(&resp), 0);
-    let metadata = std::fs::metadata(path).unwrap();
-    assert_eq!((metadata.atime(), metadata.atime_nsec()), (1_234_567, 123_456_789));
-    assert_eq!((metadata.mtime(), metadata.mtime_nsec()), (2_345_678, 987_654_321));
-}
-
-#[test]
-fn setattr_timestamps_never_fall_back_to_owner_authority() {
-    let dir = temp_share("setattr-times-no-broker");
-    let path = dir.join("f.txt");
-    std::fs::write(&path, b"x").unwrap();
-    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
-    let mut proc = test_processor(&dir);
-    proc.metadata_authority = None;
-    let ino = lookup(&mut proc, 1, "f.txt").unwrap();
-    let attr_in = FuseSetAttrIn {
-        valid: FATTR_MTIME_NOW,
-        padding: 0,
-        fh: 0,
-        size: 0,
-        lock_owner: 0,
-        atime: 0,
-        mtime: 0,
-        ctime: 0,
-        atimensec: 0,
-        mtimensec: 0,
-        ctimensec: 0,
-        mode: 0,
-        unused4: 0,
-        uid: 0,
-        gid: 0,
-        unused5: 0,
-    };
-
-    let h = make_header(FUSE_SETATTR, ino, 5);
-    let resp = proc.handle_request(&build_request(&h, fuse::as_bytes(&attr_in)));
-
-    assert_eq!(response_error(&resp), -libc::EPERM);
-    assert_eq!(std::fs::metadata(path).unwrap().modified().unwrap(), before);
 }
 
 #[test]

@@ -716,6 +716,9 @@ impl VirtioDevice for VirtioFsDevice {
 #[path = "tests/containment.rs"]
 mod containment_tests;
 #[cfg(test)]
+#[path = "tests/metadata.rs"]
+mod metadata_tests;
+#[cfg(test)]
 #[path = "tests/ownership.rs"]
 mod ownership_tests;
 #[cfg(test)]
