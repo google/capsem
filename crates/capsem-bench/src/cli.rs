@@ -98,6 +98,9 @@ pub(crate) struct CompareArgs {
     pub(crate) baseline: PathBuf,
     pub(crate) current: PathBuf,
     pub(crate) dimension: String,
+    /// Most recent authoritative runs to combine on each side.
+    #[arg(long, default_value_t = 2)]
+    pub(crate) runs: usize,
     #[command(flatten)]
     pub(crate) thresholds: Thresholds,
 }

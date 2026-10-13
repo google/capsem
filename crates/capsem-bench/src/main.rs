@@ -105,6 +105,7 @@ async fn main() -> Result<()> {
                 &args.current,
                 dimension,
                 std::env::consts::ARCH,
+                args.runs,
                 args.thresholds,
             );
         }
