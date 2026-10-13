@@ -27,16 +27,7 @@ async fn provision_leaves_resources_to_the_service_when_unset() {
         200,
         json!({"id": "vm-1", "name": "vm-1", "status": "Running", "available_actions": []}),
     );
-    let request = ProvisionRequest {
-        name: None,
-        ram_mb: None,
-        cpus: None,
-        persistent: false,
-        env: None,
-        from: None,
-        networks: vec![],
-        container: None,
-    };
+    let request = ProvisionRequest::default();
     assert_eq!(provision(&service.client, &request).await.unwrap().id, "vm-1");
     let body = service.find("POST", "/vms/create")[0].json();
     assert!(

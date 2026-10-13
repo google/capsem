@@ -143,9 +143,9 @@ async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) 
         cpus: args.cpu,
         persistent: false,
         env: None,
-        from: None,
         networks: args.network.clone(),
         container: Some(workload.spec(true).await?),
+        ..Default::default()
     };
     // Signals stay queued while the create request returns the VM to destroy.
     let vm = container_image::provision(client, &request).await?;

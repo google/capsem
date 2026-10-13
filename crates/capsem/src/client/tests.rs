@@ -317,8 +317,8 @@ fn provision_request_serde() {
         persistent: true,
         env: None,
         from: None,
-        networks: Vec::new(),
         container: None,
+        ..Default::default()
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: ProvisionRequest = serde_json::from_str(&json).unwrap();
@@ -339,8 +339,8 @@ fn provision_request_with_env() {
         persistent: true,
         env: Some(env),
         from: None,
-        networks: Vec::new(),
         container: None,
+        ..Default::default()
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("FOO"));
@@ -357,8 +357,8 @@ fn provision_request_env_omitted_when_none() {
         persistent: false,
         env: None,
         from: None,
-        networks: Vec::new(),
         container: None,
+        ..Default::default()
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("env"));
@@ -374,8 +374,8 @@ fn provision_request_omits_unset_resources_for_the_service_defaults() {
         persistent: false,
         env: None,
         from: None,
-        networks: Vec::new(),
         container: None,
+        ..Default::default()
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(json.get("ram_mb").is_none() && json.get("cpus").is_none(), "{json}");
@@ -390,8 +390,8 @@ fn provision_request_with_from() {
         persistent: false,
         env: None,
         from: Some("my-sandbox".into()),
-        networks: Vec::new(),
         container: None,
+        ..Default::default()
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(json.contains("my-sandbox"));
@@ -408,8 +408,8 @@ fn provision_request_from_omitted_when_none() {
         persistent: false,
         env: None,
         from: None,
-        networks: Vec::new(),
         container: None,
+        ..Default::default()
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("from"));

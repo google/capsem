@@ -36,23 +36,25 @@ pub(super) struct CreateArgs {
 pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> {
     let persistent = args.name.is_some() || args.from.is_some();
     let workload = Workload::of(&args.image, &args.env)?;
-    let request = ProvisionRequest {
+    // Resolve the environment before reading the image's registry inputs.
+    let env = match workload {
+        None => client::parse_env_vars(&args.env)?,
+        Some(_) => None,
+    };
+    let mut request = ProvisionRequest {
         name: args.name.clone(),
         ram_mb: ram_mb(args.ram),
         cpus: args.cpu,
         persistent,
-        // With an image, the environment is the container's.
-        env: match workload {
-            None => client::parse_env_vars(&args.env)?,
-            Some(_) => None,
-        },
         from: args.from.clone(),
         networks: args.network.clone(),
         container: match &workload {
             Some(workload) => Some(workload.spec(false).await?),
             None => None,
         },
+        ..Default::default()
     };
+    request.env = env;
     let vm = container_image::provision(client, &request).await?;
     if let Some(workload) = &workload {
         start_image(client, &vm, workload).await?;
