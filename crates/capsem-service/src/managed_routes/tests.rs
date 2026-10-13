@@ -127,3 +127,50 @@ async fn managed_http_invalid_secrets_and_non_ephemeral_requests_fail_before_eff
     }
     assert!(state.instances.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn startup_recovery_closes_unprepared_reservations_without_replaying_creation() {
+    use crate::managed_routes::Runtime;
+    use capsem_core::managed_sessions::{Capability, LeaseClock, LeasePolicy, Registry, Reservation};
+    use std::time::Duration;
+    for creating in [false, true] {
+        let state = crate::tests::make_test_state();
+        let request = uuid::Uuid::parse_str(REQUEST).unwrap();
+        let token = Capability::from_bytes([0xaf; 32]);
+        let registry = Registry::open(&state.run_dir.join("managed-ownership")).unwrap();
+        let Reservation::New(ticket) = registry.reserve(request, &token).unwrap() else {
+            panic!("fixture reservation already exists")
+        };
+        if creating {
+            let clock = LeaseClock::new(100, std::time::Instant::now());
+            registry
+                .start_lease(&ticket, LeasePolicy::new(Duration::from_secs(300)).unwrap(), clock)
+                .unwrap();
+            registry.begin_create(&ticket, clock).unwrap();
+        }
+        drop(registry);
+        tokio::time::timeout(Duration::from_secs(2), Runtime::recover_pending(state.clone()))
+            .await
+            .unwrap();
+        let app = build_service_router(state.clone());
+        let claim = format!("/vms/managed/{REQUEST}/claim");
+        let (status, closed) = post(&app, &claim, json!({"ownership_token":"af".repeat(32)})).await;
+        assert_eq!(status, StatusCode::OK, "{closed}");
+        assert_eq!(closed["state"], "closed", "creating={creating}");
+        assert_eq!(closed["ownership"]["generation"], ticket.generation().to_string());
+        assert!(closed.get("session").is_none());
+        assert!(state.instances.lock().unwrap().is_empty());
+        assert!(!state.run_dir.join("sessions").exists());
+        let (status, denied) = post(&app, &claim, json!({"ownership_token":"ab".repeat(32)})).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(denied["code"], "forbidden");
+        let (status, replay) = post(
+            &app,
+            "/vms/create",
+            json!({"managed":{"request_id":REQUEST,"ownership_token":"af".repeat(32)}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{replay}");
+        assert_eq!(replay["code"], "duplicate_request");
+    }
+}

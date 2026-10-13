@@ -39,32 +39,9 @@ impl Runtime {
     }
 
     pub(crate) fn start_maintenance(state: Arc<ServiceState>) {
+        tokio::spawn(Self::recover_pending(Arc::clone(&state)));
         tokio::spawn(async move {
             let runtime = &state.managed;
-            // Recovery is cleanup-only. Missing original child authority must
-            // remain pending rather than manufacturing an absence barrier.
-            match runtime.controller.recovery_inventory().await {
-                Ok(inventory) => {
-                    for snapshot in inventory {
-                        if snapshot.state() == OwnershipState::Closed {
-                            continue;
-                        }
-                        if let Ok(effects) = managed_sessions::ManagedLifecycle::for_recovery_with_broker(
-                            Arc::clone(&state),
-                            &snapshot,
-                            Arc::clone(&runtime.grants),
-                        ) {
-                            let controller = runtime.controller.clone();
-                            tokio::spawn(async move {
-                                if let Err(error) = controller.recover(snapshot.request(), Arc::new(effects)).await {
-                                    warn!(%error, "managed startup cleanup remains pending");
-                                }
-                            });
-                        }
-                    }
-                }
-                Err(error) => warn!(%error, "managed startup inventory unavailable"),
-            }
             let mut interval =
                 tokio::time::interval(Duration::from_secs(u64::from(runtime.policy.renew_after_seconds)));
             loop {
@@ -78,6 +55,39 @@ impl Runtime {
                 }
             }
         });
+    }
+
+    async fn recover_pending(state: Arc<ServiceState>) {
+        let runtime = &state.managed;
+        let inventory = match runtime.controller.recovery_inventory().await {
+            Ok(inventory) => inventory,
+            Err(error) => {
+                warn!(%error, "managed startup inventory unavailable");
+                return;
+            }
+        };
+        let mut workers = tokio::task::JoinSet::new();
+        for snapshot in inventory {
+            if snapshot.state() == OwnershipState::Closed {
+                continue;
+            }
+            match managed_sessions::recovery::effects(Arc::clone(&state), &snapshot, Arc::clone(&runtime.grants)) {
+                Ok(effects) => {
+                    let controller = runtime.controller.clone();
+                    workers.spawn(async move {
+                        if let Err(error) = controller.recover(snapshot.request(), effects).await {
+                            warn!(%error, "managed startup cleanup remains pending");
+                        }
+                    });
+                }
+                Err(_) => warn!(request = %snapshot.request(), "managed startup target cannot be adopted"),
+            }
+        }
+        while let Some(result) = workers.join_next().await {
+            if let Err(error) = result {
+                warn!(%error, "managed startup cleanup worker interrupted");
+            }
+        }
     }
 }
 

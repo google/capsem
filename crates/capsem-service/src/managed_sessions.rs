@@ -10,6 +10,7 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 mod grants;
+pub(super) mod recovery;
 
 /// Mandatory broker authority supplied by the service, never inferred from
 /// the ownership capability. Failure leaves managed close pending.

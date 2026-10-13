@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Managed startup recovery closes durable reservations that never prepared a
+  VM target, preserving capability authentication without replaying creation.
+
 - Service shutdown seals launch admission and joins already admitted workers
   before selecting children for teardown, including cancelled HTTP callers.
 
