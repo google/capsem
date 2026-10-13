@@ -555,6 +555,13 @@ async fn the_catalog_is_read_at_most_every_thirty_minutes_or_on_demand() {
     let (status, _) = fx.call(axum::http::Method::GET, "/images?refresh=true", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(fx.reads(), 3, "refresh reads it now");
+    let stats = fx.state.containers.catalog.metrics.snapshot();
+    assert_eq!(stats.hits, 3);
+    assert_eq!(stats.misses, 3);
+    assert_eq!(stats.insertions, 1);
+    assert_eq!(stats.refreshes, 2);
+    assert_eq!(stats.load_errors, 0);
+    assert_eq!(stats.entries, 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -578,6 +585,9 @@ async fn a_failed_read_keeps_the_last_good_catalog_and_waits_before_retrying() {
     tokio::time::advance(CATALOG_RETRY + Duration::from_secs(1)).await;
     fx.list().await;
     assert_eq!(fx.reads(), 3);
+    let stats = fx.state.containers.catalog.metrics.snapshot();
+    assert_eq!(stats.load_errors, 2);
+    assert_eq!(stats.entries, 1);
 }
 
 #[tokio::test]

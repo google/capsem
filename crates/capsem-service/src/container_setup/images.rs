@@ -23,6 +23,7 @@ use capsem_api::{
     CatalogInfo, ImageCacheState, ImageInfo, ImageListQuery, ImageListResponse, ImagePullRequest, ImagePullResponse,
 };
 use capsem_assets::oci::{is_catalog_name, Catalog, Digest, ImageReference, ResolvedImage, RUNTIME_CONTRACT};
+use capsem_cache::{CacheMetrics, LoadStatus};
 use capsem_core::container::admission::{CatalogSource, ImagePolicy};
 use std::collections::BTreeSet;
 use tokio::time::{Duration, Instant};
@@ -51,9 +52,18 @@ struct CatalogSlot {
 
 /// The last good catalog. The async lock makes concurrent requests share one
 /// read instead of each asking the registry.
-#[derive(Default)]
 pub(crate) struct CatalogCache {
     slot: tokio::sync::Mutex<CatalogSlot>,
+    metrics: CacheMetrics,
+}
+
+impl Default for CatalogCache {
+    fn default() -> Self {
+        Self {
+            slot: tokio::sync::Mutex::new(CatalogSlot::default()),
+            metrics: CacheMetrics::new("service.image_catalog"),
+        }
+    }
 }
 
 impl CatalogCache {
@@ -77,14 +87,22 @@ impl CatalogCache {
         if !refresh {
             if let Some((loaded, read)) = &last {
                 if now.duration_since(*read) < CATALOG_REFRESH {
+                    self.metrics.hit();
                     return Some(loaded.clone());
                 }
             }
             if matches!(&slot.failed, Some((failed, at)) if failed == source && now.duration_since(*at) < CATALOG_RETRY)
             {
+                if last.is_some() {
+                    self.metrics.hit();
+                } else {
+                    self.metrics.miss();
+                }
                 return last.map(|(loaded, _)| loaded);
             }
         }
+        self.metrics.miss();
+        let load_started = Instant::now();
         let read = match images.fetch_catalog(source.clone(), parent.to_owned()).await {
             Ok((digest, catalog)) => {
                 info!(catalog = %source.reference, digest = %digest, "read the image catalog");
@@ -93,8 +111,16 @@ impl CatalogCache {
                     digest,
                     catalog: Arc::new(catalog),
                 };
+                let refresh = slot.good.is_some();
                 slot.good = Some((loaded.clone(), now));
                 slot.failed = None;
+                self.metrics.load(load_started.elapsed(), LoadStatus::Success);
+                if refresh {
+                    self.metrics.refresh();
+                } else {
+                    self.metrics.insertion();
+                }
+                self.metrics.set_entries(1);
                 Some(loaded)
             }
             Err(error) => {
@@ -105,6 +131,7 @@ impl CatalogCache {
                     "image catalog read failed; keeping the last good catalog"
                 );
                 slot.failed = Some((source.clone(), now));
+                self.metrics.load(load_started.elapsed(), LoadStatus::Error);
                 last.map(|(loaded, _)| loaded)
             }
         };
