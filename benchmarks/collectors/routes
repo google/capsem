@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 """Measure HTTP route latency and per-request CPU, direct and via the gateway.
 
-53 of the 101 service routes had no timing signal of any kind. This measures
-routes with isolated stopped-workspace fixtures, both to the service and through
-the gateway, so the proxy hop's cost is a number rather than a guess. Managed
-lifecycle POSTs use an idempotently closed tombstone.
+Routes come from `[benchmark.routes] measured` in `config/gate.toml`. Citadel
+requires every registered route to be measured, recorded as debt, or identified
+as an internal control route.
 
-Which routes are measured comes from `[benchmark.routes] measured` in
-`config/gate.toml`, and the fast Citadel guard at
-`tests/citadel/test_bench_route_coverage.py` requires every registered route
-to be measured, explicitly recorded as measurement debt, or identified as a
-reasoned internal service-only control route. Moving a route from debt to
-measured is what adding coverage looks like.
-
-The primary latency series uses a kept-alive connection, matching the UI and
-the gateway's pooled service client. A separate cold series includes socket
-setup so connection regressions remain visible without contaminating route
-execution. Every response must be successful JSON; a fast error is a failed
-benchmark, not an excellent latency result.
-
-Prints raw per-request milliseconds plus service and gateway CPU deltas;
-`capsem-bench` computes every statistic.
+Warm latency reuses connections like the UI and gateway pool; cold latency
+includes setup. Every response must be successful JSON. Managed lifecycle
+POSTs use an idempotently closed tombstone. Prints raw milliseconds plus service
+and gateway CPU deltas; `capsem-bench` computes every statistic.
 """
 
 from __future__ import annotations
@@ -38,9 +26,7 @@ from pathlib import Path
 
 import tomllib
 
-# Both, because the test helpers import each other as `helpers.*` and the
-# repository scripts as `scripts.*`; pytest puts the rootdir on the path and a
-# collector run outside pytest has to do the same.
+# Match pytest's roots for helpers that import `helpers.*` and `scripts.*`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -88,10 +74,8 @@ def request_input(path: str) -> tuple[str, bytes | None]:
     if path.endswith("/claim"):
         return "POST", json.dumps({"ownership_token": MANAGED_TOKEN}).encode()
     if path.endswith("/close"):
-        return "POST", json.dumps({
-            "ownership_token": MANAGED_TOKEN,
-            "outcome": "cancelled",
-        }).encode()
+        payload = {"ownership_token": MANAGED_TOKEN, "outcome": "cancelled"}
+        return "POST", json.dumps(payload).encode()
     return "GET", None
 
 
