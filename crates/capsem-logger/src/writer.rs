@@ -78,8 +78,8 @@ const DEFAULT_BATCH_CAPACITY: usize = 10_000;
 /// spent its accept path waiting on ten disk flushes and was accepted 3-4x
 /// slower (see `benches/db_read_write_micro.rs`), where the whole point of
 /// the memory schema is that accepting a row never waits on the disk.
-const DISK_FLUSH_THRESHOLD_OPS: usize = 1_000_000;
-const DISK_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
+const DISK_FLUSH_THRESHOLD_OPS: usize = capsem_proto::LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS;
+const DISK_FLUSH_INTERVAL: Duration = Duration::from_millis(capsem_proto::LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS);
 
 #[derive(Clone, Copy)]
 struct WriterSchedule {

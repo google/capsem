@@ -275,7 +275,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ledger producers coalesce bounded consecutive security events into one
   commitment reservation, admission exchange and SQLite transaction, avoiding
   per-row scheduling and audit backpressure during concurrent DNS and gateway
-  traffic. Their config-derived queues absorb bounded handoff bursts.
+  traffic. Their config-derived queues absorb bounded handoff bursts, and a
+  one-second disk flush interval keeps each durable copy inside the fail-closed
+  network admission budget.
 
 - Runtime memory caches use one bounded, concurrent implementation with
   uniform hit, miss, mutation, load-time and entry metrics. DNS retains its
