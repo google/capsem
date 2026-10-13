@@ -172,6 +172,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sustain the configured 512 concurrent intercepted connections in the guest
+  network relay by raising its inherited descriptor limit to the centralized
+  runtime budget. Linux shells commonly supplied only 1,024 descriptors while
+  each relayed connection needs both a TCP and a VSOCK descriptor.
+
 - The confined HTTP proxy admits 512 concurrent clients instead of closing
   excess TLS handshakes when its descriptor grant bound is reached. The trusted
   upstream broker and DNS sessions derive their ceilings from that same limit
