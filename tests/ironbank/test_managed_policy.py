@@ -49,6 +49,10 @@ def test_live_managed_policy_reloads_retire_original_native_owner(invalid: bool)
             }}
             status, rejected = client.call_json("POST", "/vms/create", denied_request)
             assert status == 500 and rejected["code"] == "store_unavailable", rejected
+            status, rejected = client.call_json("POST", f"/vms/managed/{request_id}/claim", {
+                "ownership_token": capability,
+            })
+            assert status == 500 and rejected["code"] == "store_unavailable", rejected
         else:
             write_policy(service, 6, 1)
             status, reloaded = client.call_json("POST", "/corp/reload", {})
