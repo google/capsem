@@ -219,8 +219,14 @@ pub const VSOCK_PORT_EXEC: u32 = 5005;
 pub const VSOCK_PORT_AUDIT: u32 = 5006;
 /// vsock port for the guest-to-host, length-framed DNS proxy.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
-/// Per-session bound covering the burst from 200 dual-stack clients.
-pub const DNS_SESSION_MAX_IN_FLIGHT: usize = 256;
+/// Supported concurrent network-client ceiling for one VM.
+///
+/// TCP descriptor grants and each of the two DNS sessions derive their bounds
+/// from this one value so one path cannot shed a burst another path admits.
+pub const NETWORK_CLIENT_CAPACITY: usize = 512;
+/// Per-session DNS bound. Two sessions cover the A+AAAA burst from every
+/// supported concurrent client without shedding either address family.
+pub const DNS_SESSION_MAX_IN_FLIGHT: usize = NETWORK_CLIENT_CAPACITY;
 /// Guest-initiated data connections for explicitly published container TCP ports.
 pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
 /// Network cables: each guest `capsem-tun` pumps one cable's ethernet frames

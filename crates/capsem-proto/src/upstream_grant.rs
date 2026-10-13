@@ -28,9 +28,8 @@ pub const UPSTREAM_GRANT_FRAME_SIZE: usize = 4480;
 pub const UPSTREAM_GRANT_MAX_FDS: usize = 2;
 /// Per-worker descriptor and pending-selection ceiling.
 ///
-/// Two hundred supported clients can briefly own both their current and
-/// replacement resources while asynchronous release messages drain.
-pub const UPSTREAM_GRANT_CAPACITY: usize = 512;
+/// The proxy and trusted broker share the public network-client ceiling.
+pub const UPSTREAM_GRANT_CAPACITY: usize = crate::NETWORK_CLIENT_CAPACITY;
 /// DNS names are at most 253 wire-text bytes without a root dot.
 pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 /// Maximum relative path carried by a guest-share metadata request.

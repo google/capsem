@@ -172,13 +172,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The confined HTTP proxy admits the supported 200-client concurrent load plus
-  connection-replacement overlap instead of closing excess TLS handshakes when
-  its descriptor grant bound is reached. The trusted upstream broker uses the
-  same bound for pending selections and live sockets instead of intermittently
-  returning 502 responses during a resolve burst.
+- The confined HTTP proxy admits 512 concurrent clients instead of closing
+  excess TLS handshakes when its descriptor grant bound is reached. The trusted
+  upstream broker and DNS sessions derive their ceilings from that same limit
+  instead of intermittently returning 502 or SERVFAIL during a resolve burst.
 
-- Multiplexed DNS sessions admit the dual-stack query burst from 200 concurrent
+- Multiplexed DNS sessions admit the dual-stack query burst from 512 concurrent
   clients instead of shedding valid A or AAAA lookups as SERVFAIL.
 
 - Gateway `/status` reads VM, asset and update state in one coordinator
