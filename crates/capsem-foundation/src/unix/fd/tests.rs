@@ -8,6 +8,7 @@ use super::{duplicate, retry_eintr, set_nonblocking, shutdown, wait_readable, So
 use nix::errno::Errno;
 
 #[test]
+#[cfg(target_os = "linux")]
 fn counter_signals_are_owned_and_accumulate_completions() {
     use nix::sys::eventfd::{EfdFlags, EventFd};
     let counter = EventFd::from_flags(EfdFlags::EFD_CLOEXEC | EfdFlags::EFD_NONBLOCK).unwrap();
