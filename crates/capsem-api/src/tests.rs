@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn provision_response_constructor_preserves_the_supplied_lifecycle_and_actions() {
+    let response = ProvisionResponse::new(
+        "vm-id".into(),
+        "named".into(),
+        VmLifecycleState::Suspended,
+        true,
+        true,
+        vec![VmAction::Delete],
+    );
+    assert_eq!(
+        serde_json::to_value(response).unwrap(),
+        serde_json::json!({
+            "id": "vm-id", "name": "named", "status": "Suspended",
+            "persistent": true, "can_resume": true, "available_actions": ["delete"],
+        })
+    );
+}
+
+#[test]
 fn restart_contract_acknowledges_202_and_requires_fresh_authentication() {
     let doc = serde_json::to_value(openapi()).unwrap();
     let operation = &doc["paths"]["/restart"]["post"];

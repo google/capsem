@@ -91,6 +91,26 @@ pub struct ProvisionResponse {
     pub available_actions: Vec<VmAction>,
 }
 
+impl ProvisionResponse {
+    pub fn new(
+        id: String,
+        name: String,
+        status: VmLifecycleState,
+        persistent: bool,
+        can_resume: bool,
+        available_actions: Vec<VmAction>,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            status,
+            persistent,
+            can_resume,
+            available_actions,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
 pub enum VmLifecycleState {
     Running,
