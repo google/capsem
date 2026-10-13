@@ -1,6 +1,77 @@
 use super::*;
 use crate::tests::make_test_state;
 
+#[tokio::test]
+async fn failed_network_retirement_keeps_managed_close_pending_and_original_exit_retryable() {
+    use capsem_core::managed_sessions::{Capability, LeaseClock, LeasePolicy, Registry, Reservation, State};
+    let state = make_test_state();
+    let registry = Registry::open(&state.run_dir.join("managed-ownership")).unwrap();
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([63; 32]);
+    let Reservation::New(ticket) = registry.reserve(request, &cap).unwrap() else {
+        panic!()
+    };
+    let clock = LeaseClock::new(100, std::time::Instant::now());
+    registry
+        .start_lease(
+            &ticket,
+            LeasePolicy::new(std::time::Duration::from_secs(10)).unwrap(),
+            clock,
+        )
+        .unwrap();
+    registry.begin_create(&ticket, clock).unwrap();
+    let binding = VmBinding::new(new_persistent_vm_id(), capsem_crypto::uuid_v4()).unwrap();
+    registry.prepare_spawn(&ticket, binding.clone(), clock).unwrap();
+    registry.bind_created(&ticket, binding.clone(), clock).unwrap();
+    let snapshot = registry.close(request, &cap).unwrap();
+    let grants = Arc::new(ControlledGrants {
+        fail: false.into(),
+        calls: 0.into(),
+    });
+    let adapter = ManagedLifecycle::for_recovery(Arc::clone(&state), &snapshot, Arc::new(Arc::clone(&grants))).unwrap();
+    let session = state.run_dir.join("sessions").join(binding.id());
+    std::fs::create_dir_all(&session).unwrap();
+    crate::instance::persist_spawn_identity(&session, binding.id(), binding.generation()).unwrap();
+    let future = i64::MAX / 2;
+    let network = state.networks.lock().await.create("cleanup", future).await.unwrap();
+    let address = state
+        .networks
+        .lock()
+        .await
+        .attach(network.id, binding.id(), future)
+        .await
+        .unwrap();
+    assert!(adapter.cleanup(ticket.clone(), binding.clone()).await.is_err());
+    assert!(
+        session.exists(),
+        "failed networking cannot acknowledge deleted session bytes"
+    );
+    assert_eq!(
+        registry.inspect(request, &cap).unwrap().unwrap().state(),
+        State::Closing
+    );
+    assert_eq!(
+        state.networks.lock().await.address_of(network.id, binding.id()),
+        Some(address)
+    );
+    let receipts = capsem_core::session::spawn_owner::RetirementStore::open(&state.native_retirements_path()).unwrap();
+    assert!(receipts.contains(&binding).unwrap());
+    assert_eq!(grants.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    state
+        .networks
+        .lock()
+        .await
+        .vm_deleted(binding.id(), future + 1)
+        .await
+        .unwrap();
+    adapter.cleanup(ticket.clone(), binding.clone()).await.unwrap();
+    registry.complete_cleanup(&ticket, &binding).unwrap();
+    assert_eq!(registry.inspect(request, &cap).unwrap().unwrap().state(), State::Closed);
+    assert!(state.networks.lock().await.summary(network.id).is_none());
+    assert_eq!(grants.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(!session.exists());
+}
+
 #[test]
 fn recovery_native_child_fixture() {
     use std::io::Read;

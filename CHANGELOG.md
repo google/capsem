@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Managed close retains original exit and grant authority when network cleanup
+  fails. Already-retired switches are awaited even if another departure fails;
+  a retry completes networking before session deletion and ownership closure.
+
 - Last-member network departure and retirement commit atomically. Failed
   retirement preserves the membership and address for retry instead of
   leaving an empty active network that cleanup can no longer find.

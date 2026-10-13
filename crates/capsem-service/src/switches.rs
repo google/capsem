@@ -33,6 +33,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+#[cfg(test)]
+mod tests;
+
 /// How long the owner has to answer `LinkAttach`.
 const ATTACH_TIMEOUT_SECS: u64 = 8;
 /// How long the owner may take to hand the stream over: a VM plugged at
