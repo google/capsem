@@ -1,0 +1,5 @@
+# Product-wide runtime ceilings embedded into every Capsem binary.
+# User overrides belong to the typed settings contract tracked by #349.
+
+[network]
+max_concurrent_clients = 512

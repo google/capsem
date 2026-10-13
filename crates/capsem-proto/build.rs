@@ -7,6 +7,7 @@
 //! constants remain in the token stream and change the hash.
 
 use quote::ToTokens;
+use std::path::PathBuf;
 use syn::visit_mut::VisitMut;
 
 struct StripDocs;
@@ -28,6 +29,37 @@ fn main() {
         &["ledger.rs", "ledger_commitment.rs", "ledger_control.rs"],
     );
     write_hash("proxy_schema_hash.txt", &["proxy_control.rs", "proxy_policy.rs"]);
+    write_runtime_limits();
+}
+
+fn write_runtime_limits() {
+    let config_path = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"))
+        .join("../../config/data/runtime-limits.toml");
+    let source = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|error| panic!("runtime limits: read {}: {error}", config_path.display()));
+    let config: toml::Value = toml::from_str(&source)
+        .unwrap_or_else(|error| panic!("runtime limits: parse {}: {error}", config_path.display()));
+    let capacity = config
+        .get("network")
+        .and_then(|network| network.get("max_concurrent_clients"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (1..=4096).contains(value))
+        .unwrap_or_else(|| {
+            panic!("runtime limits: network.max_concurrent_clients must be an integer between 1 and 4096")
+        });
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    std::fs::write(
+        format!("{out_dir}/runtime_limits.rs"),
+        format!(
+            "/// Supported concurrent network-client ceiling for one VM.\n\
+             ///\n\
+             /// TCP descriptor grants and each of the two DNS sessions derive\n\
+             /// their bounds from this one config-owned value.\n\
+             pub const NETWORK_CLIENT_CAPACITY: usize = {capacity};\n"
+        ),
+    )
+    .expect("runtime limits: write generated constants");
+    println!("cargo:rerun-if-changed={}", config_path.display());
 }
 
 fn write_hash(output: &str, files: &[&str]) {

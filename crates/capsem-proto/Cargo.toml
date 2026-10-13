@@ -29,6 +29,7 @@ tempfile = "3"
 [build-dependencies]
 quote = "1"
 syn = { version = "2", features = ["full", "visit-mut"] }
+toml = { workspace = true }
 
 [[bench]]
 name = "vsock_framing_micro"

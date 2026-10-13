@@ -31,8 +31,10 @@ and the existing admin validation rail must learn it.
   raw-export and packed-EROFS ceilings plus forbidden payload prefixes. The
   ordinary build must enforce those limits before and after compression; they
   are release policy, not test data.
-- `data/` contains project data embedded or loaded by code, such as model
-  pricing tables.
+- `data/` contains project data embedded or loaded by code. Model pricing
+  tables live here, and `runtime-limits.toml` is the one source for
+  cross-process runtime ceilings embedded by `capsem-proto`. Runtime consumers
+  use the generated protocol constants rather than copying numeric limits.
 
 ## Policy at Runtime
 
