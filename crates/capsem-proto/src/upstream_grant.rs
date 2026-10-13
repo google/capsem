@@ -26,9 +26,7 @@ use guest_metadata::{ATIME_SECONDS_RANGE, PATH_RANGE, TIME_FLAGS_OFFSET};
 pub const UPSTREAM_GRANT_FRAME_SIZE: usize = 4480;
 /// A ledger response grants its storage and trusted-checkpoint channels.
 pub const UPSTREAM_GRANT_MAX_FDS: usize = 2;
-/// Per-worker descriptor and pending-selection ceiling.
-///
-/// The proxy and trusted broker preserve one replacement slot per client.
+/// Per-worker descriptor and pending-selection ceiling with replacement overlap.
 pub const UPSTREAM_GRANT_CAPACITY: usize = crate::NETWORK_TRAFFIC_GRANT_CAPACITY;
 /// DNS names are at most 253 wire-text bytes without a root dot.
 pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;

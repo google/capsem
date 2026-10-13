@@ -201,9 +201,7 @@ pub const BLOCKED_ENV_VARS: &[&str] = &[
     "PS4",
 ];
 
-// ---------------------------------------------------------------------------
 // Vsock port constants (shared between host and guest)
-// ---------------------------------------------------------------------------
 
 /// vsock port for structured control messages (resize, heartbeat, exec, file I/O).
 pub const VSOCK_PORT_CONTROL: u32 = 5000;
