@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use capsem_telemetry::cache as metric;
+use metrics::{Counter, Gauge, Histogram};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LoadStatus {
@@ -34,6 +35,20 @@ struct Counters {
     entries: AtomicU64,
 }
 
+#[derive(Clone)]
+struct ExportedMetrics {
+    hit: Counter,
+    miss: Counter,
+    insert: Counter,
+    refresh: Counter,
+    invalidate: Counter,
+    evict: Counter,
+    load_error: Counter,
+    load_success_duration: Histogram,
+    load_error_duration: Histogram,
+    entries: Gauge,
+}
+
 /// Uniform counters and exported metrics for a domain-specific cache.
 ///
 /// Most callers should use the shared cache primitives, which record these
@@ -41,15 +56,34 @@ struct Counters {
 /// use this type while retaining its required freshness mechanics.
 #[derive(Clone)]
 pub struct CacheMetrics {
-    name: &'static str,
     counters: Arc<Counters>,
+    exported: ExportedMetrics,
 }
 
 impl CacheMetrics {
     pub fn new(name: &'static str) -> Self {
         let telemetry = Self {
-            name,
             counters: Arc::default(),
+            exported: ExportedMetrics {
+                hit: ::metrics::counter!(metric::CACHE_LOOKUPS_TOTAL, "cache" => name, "result" => "hit"),
+                miss: ::metrics::counter!(metric::CACHE_LOOKUPS_TOTAL, "cache" => name, "result" => "miss"),
+                insert: ::metrics::counter!(metric::CACHE_MUTATIONS_TOTAL, "cache" => name, "operation" => "insert"),
+                refresh: ::metrics::counter!(metric::CACHE_MUTATIONS_TOTAL, "cache" => name, "operation" => "refresh"),
+                invalidate: ::metrics::counter!(metric::CACHE_MUTATIONS_TOTAL, "cache" => name, "operation" => "invalidate"),
+                evict: ::metrics::counter!(metric::CACHE_MUTATIONS_TOTAL, "cache" => name, "operation" => "evict"),
+                load_error: ::metrics::counter!(metric::CACHE_MUTATIONS_TOTAL, "cache" => name, "operation" => "load_error"),
+                load_success_duration: ::metrics::histogram!(
+                    metric::CACHE_LOAD_DURATION_MS,
+                    "cache" => name,
+                    "status" => "success"
+                ),
+                load_error_duration: ::metrics::histogram!(
+                    metric::CACHE_LOAD_DURATION_MS,
+                    "cache" => name,
+                    "status" => "error"
+                ),
+                entries: ::metrics::gauge!(metric::CACHE_ENTRIES, "cache" => name),
+            },
         };
         telemetry.set_entries(0);
         telemetry
@@ -57,55 +91,53 @@ impl CacheMetrics {
 
     pub fn hit(&self) {
         self.counters.hits.fetch_add(1, Ordering::Relaxed);
-        ::metrics::counter!(metric::CACHE_LOOKUPS_TOTAL, "cache" => self.name, "result" => "hit").increment(1);
+        self.exported.hit.increment(1);
     }
 
     pub fn miss(&self) {
         self.counters.misses.fetch_add(1, Ordering::Relaxed);
-        ::metrics::counter!(metric::CACHE_LOOKUPS_TOTAL, "cache" => self.name, "result" => "miss").increment(1);
+        self.exported.miss.increment(1);
     }
 
     pub fn insertion(&self) {
-        self.mutation(&self.counters.insertions, "insert", 1);
+        self.mutation(&self.counters.insertions, &self.exported.insert, 1);
     }
 
     pub fn refresh(&self) {
-        self.mutation(&self.counters.refreshes, "refresh", 1);
+        self.mutation(&self.counters.refreshes, &self.exported.refresh, 1);
     }
 
     pub fn invalidate(&self, count: u64) {
-        self.mutation(&self.counters.invalidations, "invalidate", count);
+        self.mutation(&self.counters.invalidations, &self.exported.invalidate, count);
     }
 
     pub fn evict(&self) {
-        self.mutation(&self.counters.evictions, "evict", 1);
+        self.mutation(&self.counters.evictions, &self.exported.evict, 1);
     }
 
-    fn mutation(&self, counter: &AtomicU64, operation: &'static str, count: u64) {
+    fn mutation(&self, counter: &AtomicU64, exported: &Counter, count: u64) {
         if count == 0 {
             return;
         }
         counter.fetch_add(count, Ordering::Relaxed);
-        ::metrics::counter!(metric::CACHE_MUTATIONS_TOTAL, "cache" => self.name, "operation" => operation)
-            .increment(count);
+        exported.increment(count);
     }
 
     pub fn load(&self, elapsed: Duration, status: LoadStatus) {
-        let status = match status {
-            LoadStatus::Success => "success",
+        let histogram = match status {
+            LoadStatus::Success => &self.exported.load_success_duration,
             LoadStatus::Error => {
-                self.mutation(&self.counters.load_errors, "load_error", 1);
-                "error"
+                self.mutation(&self.counters.load_errors, &self.exported.load_error, 1);
+                &self.exported.load_error_duration
             }
         };
-        ::metrics::histogram!(metric::CACHE_LOAD_DURATION_MS, "cache" => self.name, "status" => status)
-            .record(elapsed.as_secs_f64() * 1000.0);
+        histogram.record(elapsed.as_secs_f64() * 1000.0);
     }
 
     pub fn set_entries(&self, entries: usize) {
         let entries = u64::try_from(entries).unwrap_or(u64::MAX);
         self.counters.entries.store(entries, Ordering::Relaxed);
-        ::metrics::gauge!(metric::CACHE_ENTRIES, "cache" => self.name).set(entries as f64);
+        self.exported.entries.set(entries as f64);
     }
 
     pub fn snapshot(&self) -> CacheStats {
