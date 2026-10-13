@@ -88,6 +88,22 @@ Named VMs are persistent; an omitted name creates an ephemeral VM. Omitting
 `cpus` or `memory` uses the service defaults (4 CPUs, 12 GiB). Memory is a
 positive integer in GiB.
 
+Use a managed scope for automatic ownership cleanup:
+
+```python
+async with Hypervisor(url, token) as hv:
+    async with hv.managed(image="docker.io/library/busybox:latest") as vm:
+        print(await vm.exec("echo hello"))
+```
+
+The scope creates once, renews the service's finite lease, and awaits its
+original generation's close on normal exit, failure or cancellation. It also
+closes after an uncertain create response. Repeated cancellation waits for the
+cleanup response; a cleanup failure is raised and `scope.close()` can retry
+that close explicitly. A client crash stops renewal and the service expires
+the lease. Named and attached VM handles keep their ordinary connection-only
+close behavior. Keep the Hypervisor connection open until the scope exits.
+
 `hv.list()` returns a typed VM inventory. `hv.update()` applies the configured
 update. VM lifecycle methods are `start`, `stop`, `pause`, `resume`, `delete`
 and `fork(name)`. A fork returns another `VM` handle. Stats has `summary()` and

@@ -9,5 +9,6 @@ from ._ports import Port as Port
 from ._transport import HttpError as HttpError
 from .execution import ExecResult as ExecResult
 from .hypervisor import Hypervisor as Hypervisor
+from .managed import ManagedSession as ManagedSession
 from .registry import Registry as Registry
 from .vm import VM as VM

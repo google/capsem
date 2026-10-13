@@ -113,6 +113,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python SDK managed scopes renew finite ownership leases and await the
+  original session's cleanup on exit, failure and cancellation without replaying create.
+
 - Ephemeral managed-session creation, capability-authenticated claim/renewal,
   and awaited close use a finite service-owned lease and durable replay protection.
 
