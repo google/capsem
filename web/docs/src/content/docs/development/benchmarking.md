@@ -182,6 +182,13 @@ All load tests use the same concurrency and duration contract:
 
 - `CAPSEM_BENCH_CONCURRENCY`: one value (`64`) or a comma-separated sweep (`1,10,50,200`).
 - `CAPSEM_BENCH_DURATION_S`: seconds per concurrency level for duration-based load tests.
+
+A load run is valid only when every request succeeds at every configured
+concurrency level. One transport, protocol, DNS, or HTTP error rejects the run
+before its latency or throughput can become comparison data. Successful runs
+record `errors = 0` and `error_ratio = 0` for each level as the proof that the
+reported samples cover the complete load rather than only the successful tail.
+
 `capsem-bench protocol` runs deterministic local mock-server scenarios: tiny
 HTTP, 1 MiB body, gzip, SSE model stream, JSON model response, denied-target,
 credential-shaped response, and WebSocket control frames. When
