@@ -9,10 +9,37 @@ from .load_harness import DurationLoadConfig, render_load_table
 
 DEFAULT_QNAME = "load-test.capsem-bogus"
 DEFAULT_QTYPE = 1
-DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
 DEFAULT_TIMEOUT_S = 5.0
 RUST_BENCH = "/usr/local/bin/capsem-bench-rs"
+
+
+def _runtime_limits():
+    completed = subprocess.run(
+        [RUST_BENCH, "runtime-limits"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            f"dns-load: read runtime limits failed with {completed.returncode}: "
+            f"{completed.stderr[-2000:].strip()}"
+        )
+    try:
+        limits = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("dns-load: runtime limits returned invalid JSON") from exc
+    capacity = limits.get("network_client_capacity")
+    if type(capacity) is not int or capacity < 1:
+        raise RuntimeError("dns-load: runtime limits omitted network client capacity")
+    return limits
+
+
+def _default_concurrency():
+    capacity = _runtime_limits()["network_client_capacity"]
+    levels = (1, capacity // 32, capacity // 8, capacity // 4, capacity // 2, capacity)
+    return tuple(dict.fromkeys(max(1, level) for level in levels))
 
 
 def _drive_at_concurrency(qname, qtype, concurrency, duration_s, timeout_s):
@@ -62,9 +89,10 @@ def dns_load_bench(qname=None, qtype=None, concurrency_levels=None, duration_s=N
     qname = qname or os.environ.get("CAPSEM_BENCH_DNS_QNAME", DEFAULT_QNAME)
     qtype = qtype or int(os.environ.get("CAPSEM_BENCH_DNS_QTYPE", DEFAULT_QTYPE))
     timeout_s = float(os.environ.get("CAPSEM_BENCH_DNS_TIMEOUT", DEFAULT_TIMEOUT_S))
+    default_concurrency = _default_concurrency() if concurrency_levels is None else ()
     config = DurationLoadConfig.from_inputs(
         "dns-load",
-        default_concurrency=DEFAULT_CONCURRENCY,
+        default_concurrency=default_concurrency,
         default_duration_s=DEFAULT_DURATION_S,
         concurrency_levels=concurrency_levels,
         duration_s=duration_s,
@@ -95,7 +123,7 @@ def dns_load_bench(qname=None, qtype=None, concurrency_levels=None, duration_s=N
         rows.append(row)
 
     out = {
-        "version": "1.1",
+        "version": "1.2",
         "qname": qname,
         "qtype": qtype,
         "concurrency_levels": rows,
