@@ -50,6 +50,9 @@ async fn ownership_lookup_keeps_live_intent_when_storage_disappears_and_checks_g
 
 struct RecoveryEffects(Arc<Fixture>);
 impl Effects for RecoveryEffects {
+    fn is_live(&self, binding: &VmBinding) -> Result<bool> {
+        self.0.is_live(binding)
+    }
     fn create(
         &self,
         _ticket: Ticket,
@@ -126,6 +129,7 @@ async fn reopened_controller_recovers_original_intent_only_for_cleanup_and_can_r
 }
 
 struct Fixture {
+    live: AtomicBool,
     creates: AtomicUsize,
     cleanups: AtomicUsize,
     reconciles: AtomicUsize,
@@ -143,6 +147,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Arc<Self> {
         Arc::new(Self {
+            live: AtomicBool::new(true),
             creates: AtomicUsize::new(0),
             cleanups: AtomicUsize::new(0),
             reconciles: AtomicUsize::new(0),
@@ -159,7 +164,93 @@ impl Fixture {
     }
 }
 
+#[tokio::test]
+async fn ended_managed_spawn_cannot_renew_and_claim_joins_original_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = controller(&root.path().join("ownership"));
+    let fixture = Fixture::new();
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([85; 32]);
+    fixture.create_release.add_permits(1);
+    let active = owner
+        .create(
+            request,
+            cap.clone(),
+            LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+            Arc::new(fixture.clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(active.state(), State::Active);
+    fixture.live.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        owner.claim(request, Capability::from_bytes([86; 32])).await,
+        Err(Failure::Forbidden)
+    ));
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 0);
+    let claiming = {
+        let owner = owner.clone();
+        let cap = cap.clone();
+        tokio::spawn(async move { owner.claim(request, cap).await })
+    };
+    tokio::time::timeout(Duration::from_secs(1), fixture.cleanup_entered.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    assert!(!claiming.is_finished(), "claim must join the original cleanup barrier");
+    claiming.abort();
+    assert!(claiming.await.unwrap_err().is_cancelled());
+    let closing = owner.claim(request, cap.clone()).await.unwrap();
+    assert_eq!(closing.state(), State::Closing);
+    fixture.cleanup_release.add_permits(1);
+    let ended = owner.close(request, cap.clone()).await.unwrap();
+    assert_eq!(ended.state(), State::Closed, "ended spawn remained renewable");
+    assert_eq!(ended.generation(), active.generation());
+    assert_eq!(
+        ended.expires_wall_ms(),
+        active.expires_wall_ms(),
+        "absence must not renew the original lease"
+    );
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 1);
+    assert_eq!(owner.claim(request, cap).await.unwrap().state(), State::Closed);
+}
+
+#[tokio::test]
+async fn ended_spawn_with_failed_cleanup_cannot_regain_active_renewal() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = controller(&root.path().join("ownership"));
+    let fixture = Fixture::new();
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([87; 32]);
+    fixture.create_release.add_permits(1);
+    let active = owner
+        .create(
+            request,
+            cap.clone(),
+            LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+            Arc::new(fixture.clone()),
+        )
+        .await
+        .unwrap();
+    fixture.live.store(false, Ordering::SeqCst);
+    fixture.fail_cleanup.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        owner.claim(request, cap.clone()).await,
+        Err(Failure::CleanupFailed)
+    ));
+    let closing = owner.claim(request, cap.clone()).await.unwrap();
+    assert_eq!(closing.state(), State::Closing);
+    assert_eq!(closing.expires_wall_ms(), active.expires_wall_ms());
+    fixture.cleanup_release.add_permits(1);
+    assert_eq!(owner.close(request, cap).await.unwrap().state(), State::Closed);
+}
+
 impl Effects for Arc<Fixture> {
+    fn is_live(&self, binding: &VmBinding) -> Result<bool> {
+        anyhow::ensure!(*binding == self.binding, "fixture ownership changed");
+        Ok(self.live.load(Ordering::SeqCst))
+    }
     fn create(&self, _ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding> {
         let fixture = Arc::clone(self);
         Box::pin(async move {

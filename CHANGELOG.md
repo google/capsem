@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Managed ownership stops renewing after ordinary stop/delete or loss of its
+  original VM spawn. Authenticated claims join the existing cleanup barrier;
+  changed spawns and failed cleanup cannot regain active ownership.
+
 - Managed VM spawns cannot transfer to persistence through ordinary save.
   Admission uses original spawn ownership and refuses uncertain storage before
   any persistence side effect.

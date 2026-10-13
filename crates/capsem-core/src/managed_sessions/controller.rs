@@ -13,6 +13,9 @@ pub type EffectFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 /// exit, setup retirement, session cleanup and generation-scoped grant
 /// revocation. Reconcile must retire interrupted setup before reporting absence.
 pub trait Effects: Send + Sync {
+    /// Nonblocking observation of the exact tracked ephemeral spawn. Absence
+    /// or an error requires cleanup; this is never a retirement/closure proof.
+    fn is_live(&self, binding: &VmBinding) -> Result<bool>;
     fn create(&self, ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding>;
     fn cleanup(&self, ticket: Ticket, binding: VmBinding) -> EffectFuture<()>;
     fn reconcile(&self, ticket: Ticket, intent: Option<VmBinding>) -> EffectFuture<Option<VmBinding>>;
@@ -336,6 +339,12 @@ impl Controller {
             .ok_or(Failure::RecoveryPending)?;
         if ticket.generation != snapshot.generation {
             return Err(Failure::RecoveryPending);
+        }
+        if snapshot.state == State::Active {
+            let binding = snapshot.vm.as_ref().ok_or(Failure::RecoveryPending)?;
+            if !work.effects.is_live(binding).unwrap_or(false) {
+                return self.close(request, capability).await;
+            }
         }
         let (renewed, deadline) = self
             .io(move |registry| {
