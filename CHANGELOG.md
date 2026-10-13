@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Managed VM spawns cannot transfer to persistence through ordinary save.
+  Admission uses original spawn ownership and refuses uncertain storage before
+  any persistence side effect.
+
 - TypeScript managed scopes cancel the owned callback and join cleanup at
   validated lease expiry, including while renewal is stalled.
 

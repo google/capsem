@@ -17,6 +17,62 @@ async fn persist(state: &Arc<ServiceState>, id: &str, name: &str) -> Result<Json
     .await
 }
 
+#[tokio::test]
+async fn managed_spawn_cannot_transfer_to_persistence_through_ordinary_save_route() {
+    use capsem_core::managed_sessions::{Capability, LeaseClock, LeasePolicy, Registry, Reservation, VmBinding};
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = new_persistent_vm_id();
+    let session = insert_ephemeral_instance(&state, &id);
+    let generation = state.instances.lock().unwrap().get(&id).unwrap().generation;
+    let store = Registry::open(&state.run_dir.join("managed-ownership")).unwrap();
+    let cap = Capability::from_bytes([84; 32]);
+    let Reservation::New(ticket) = store.reserve(capsem_crypto::uuid_v4(), &cap).unwrap() else {
+        panic!();
+    };
+    let now = LeaseClock::new(100, std::time::Instant::now());
+    store
+        .start_lease(
+            &ticket,
+            LeasePolicy::new(std::time::Duration::from_secs(300)).unwrap(),
+            now,
+        )
+        .unwrap();
+    store.begin_create(&ticket, now).unwrap();
+    store
+        .prepare_spawn(&ticket, VmBinding::new(id.clone(), generation).unwrap(), now)
+        .unwrap();
+    let result = persist(&state, &id, "escape-ownership").await;
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("managed VM escaped to persistence"),
+    };
+    assert_eq!(error.0, StatusCode::CONFLICT);
+    assert_still_ephemeral(&state, &id, &session);
+    assert!(registry_entry_dir(&state, "escape-ownership").is_none());
+}
+
+#[tokio::test]
+async fn unreadable_ownership_cannot_authorize_persistence_of_an_unclassified_spawn() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = new_persistent_vm_id();
+    let session = insert_ephemeral_instance(&state, &id);
+    let request = capsem_crypto::uuid_v4();
+    std::fs::write(
+        state.run_dir.join("managed-ownership").join(format!("{request}.json")),
+        b"corrupt private metadata",
+    )
+    .unwrap();
+    let result = persist(&state, &id, "unclassified").await;
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("corrupt ownership authorized persistence"),
+    };
+    assert_eq!(error.0, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!error.1.contains("private"));
+    assert_still_ephemeral(&state, &id, &session);
+    assert!(registry_entry_dir(&state, "unclassified").is_none());
+}
+
 fn assert_still_ephemeral(state: &ServiceState, id: &str, session_dir: &StdPath) {
     assert!(
         session_dir.join("marker").is_file(),

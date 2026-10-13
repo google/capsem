@@ -643,7 +643,7 @@ pub(super) async fn handle_persist(
     validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Find the running ephemeral instance
-    let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env) = {
+    let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env, generation) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
@@ -662,10 +662,28 @@ pub(super) async fn handle_persist(
             i.base_version.clone(),
             i.forked_from.clone(),
             i.env.clone(),
+            i.generation,
         );
         drop(instances);
         result
     };
+
+    // Managed ownership is immutable for this actual spawn. A save cannot
+    // transfer it to persistence, including while create/recovery is pending.
+    // The controller retains live intent when its durable metadata is lost.
+    let binding = capsem_core::managed_sessions::VmBinding::new(id.clone(), generation)
+        .map_err(|_| AppError(StatusCode::INTERNAL_SERVER_ERROR, "invalid VM spawn identity".into()))?;
+    if state.managed.owns_vm(&binding).await.map_err(|_| {
+        AppError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "managed ownership admission unavailable".into(),
+        )
+    })? {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            "managed sessions cannot become persistent".into(),
+        ));
+    }
 
     // Claim the name and register the session where it lives. The directory
     // moves under persistent/ once the process has exited (see

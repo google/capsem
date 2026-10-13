@@ -14,6 +14,10 @@ pub(crate) struct Runtime {
 }
 
 impl Runtime {
+    pub(crate) async fn owns_vm(&self, binding: &capsem_core::managed_sessions::VmBinding) -> Result<bool, Failure> {
+        self.controller.owns_vm(binding).await
+    }
+
     pub(crate) fn open(run_dir: &StdPath, policy: ManagedSessionPolicy) -> Result<Self> {
         policy.validate().map_err(anyhow::Error::msg)?;
         let lifetime = Duration::from_secs(u64::from(policy.lease_seconds));
