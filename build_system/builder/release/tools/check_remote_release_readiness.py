@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 from urllib.parse import quote, urlparse
 
@@ -27,13 +28,15 @@ from capsem_builder.release.tools.remote_ci_gate import (
 
 from ... import crypto as hashlib
 
+blake3: ModuleType | None
 try:
-    from ... import crypto as blake3
+    from ... import crypto as blake3_binding
 
-    blake3.require_blake3()
+    blake3_binding.require_blake3()
 except ModuleNotFoundError as error:
     BLAKE3_IMPORT_ERROR = error
 else:
+    blake3 = blake3_binding
     BLAKE3_IMPORT_ERROR = None
 
 

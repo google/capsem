@@ -14,7 +14,7 @@ import secrets as _secrets
 import uuid as _uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Protocol
 
 try:
     from blake3 import blake3 as _blake3
@@ -33,6 +33,14 @@ token_hex = _secrets.token_hex
 token_bytes = _secrets.token_bytes
 token_urlsafe = _secrets.token_urlsafe
 uuid_v4 = _uuid.uuid4
+
+
+class Digest(Protocol):
+    """Hash state shared by native digest implementations."""
+
+    def update(self, data: bytes | bytearray | memoryview) -> None: ...
+
+    def hexdigest(self) -> str: ...
 
 
 def require_blake3() -> Callable[..., Any]:
