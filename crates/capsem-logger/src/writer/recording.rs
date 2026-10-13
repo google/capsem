@@ -20,6 +20,15 @@ pub(super) fn record_enqueue(started: Instant, queue_result: &'static str, span:
     ::metrics::histogram!(DB_ENQUEUE_WAIT_MS, "queue_result" => queue_result).record(elapsed_ms);
     span.record("status", if queue_result == "queued" { "ok" } else { "error" });
     span.record("queue_result", queue_result);
+    if elapsed_ms >= 100.0 {
+        tracing::debug!(
+            target: "capsem.db",
+            parent: span,
+            duration_ms = elapsed_ms,
+            queue_result,
+            "db producer admission waited"
+        );
+    }
 }
 
 pub(super) fn record_batch(

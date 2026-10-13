@@ -819,6 +819,7 @@ fn flush_dirty_tables_to_disk(
     if dirty_tables.is_empty() && !bodies.has_work() {
         return Ok(());
     }
+    let started = Instant::now();
     // Bytes before index: the segment reaches the archive file here, and the
     // rows that name it are inserted in the transaction below. A crash in
     // between costs unreferenced bytes, never a row pointing past EOF.
@@ -848,6 +849,12 @@ fn flush_dirty_tables_to_disk(
         schema::record_sqlite_mmap_telemetry(conn, path, "writer", "flush");
     }
     dirty_tables.clear();
+    tracing::debug!(
+        target: "capsem.db",
+        duration_ms = started.elapsed().as_secs_f64() * 1000.0,
+        tables = tables.len(),
+        "db disk flush completed"
+    );
     Ok(())
 }
 
