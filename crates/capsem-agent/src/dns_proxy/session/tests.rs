@@ -355,12 +355,10 @@ async fn supported_dual_stack_client_burst_fits_without_shedding() {
         waiting.iter().all(|task| !task.is_finished()),
         "a supported query was shed"
     );
-    assert!(
-        forwarder
-            .sessions
-            .iter()
-            .all(|session| session.in_flight() == DNS_SESSION_MAX_IN_FLIGHT)
-    );
+    assert!(forwarder
+        .sessions
+        .iter()
+        .all(|session| session.in_flight() == DNS_SESSION_MAX_IN_FLIGHT));
     for task in waiting {
         task.abort();
     }
