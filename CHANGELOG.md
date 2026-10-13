@@ -277,7 +277,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-row scheduling and audit backpressure during concurrent DNS and gateway
   traffic. Their config-derived queues absorb bounded handoff bursts, and a
   one-second disk flush interval keeps each durable copy inside the fail-closed
-  network admission budget.
+  network admission budget. SQLite mmap and file-size diagnostics run at open
+  and shutdown instead of pausing live admissions after every flush.
 
 - Runtime memory caches use one bounded, concurrent implementation with
   uniform hit, miss, mutation, load-time and entry metrics. DNS retains its

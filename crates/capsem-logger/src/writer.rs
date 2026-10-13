@@ -971,6 +971,13 @@ fn writer_loop(
     let status = if result.is_ok() { "ok" } else { "error" };
     ::metrics::histogram!(DB_SHUTDOWN_FLUSH_MS, "status" => status).record(elapsed_ms);
     span.record("status", status);
+    // mmap coverage and file-size diagnostics query SQLite and the filesystem.
+    // Sampling them on every periodic flush once held this admission thread
+    // for more than a second under DNS load. Shutdown is outside the producer
+    // path and still records the final ledger size and mmap budget.
+    if let Some(path) = db_path.as_deref() {
+        schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "shutdown");
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1033,9 +1040,6 @@ fn flush_dirty_tables_to_disk(
     // the transaction back, and the next flush retries both halves together.
     bodies.index_rows_committed();
     flush_watermarks.extend(advanced_watermarks);
-    if let Some(path) = db_path {
-        schema::record_sqlite_mmap_telemetry(conn, path, "writer", "flush");
-    }
     dirty_tables.clear();
     Ok(FlushTimings {
         archive_ms,
