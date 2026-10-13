@@ -34,6 +34,7 @@ export class ManagedSession {
   #wake: AbortController | undefined;
   #generation: string | undefined;
   #ownership: models.ManagedSessionOwnership | undefined;
+  #expiryTimer: ReturnType<typeof setTimeout> | undefined;
   #vm: VM | undefined;
   #vmId: string | undefined;
   #creation: Promise<models.ProvisionResponse> | undefined;
@@ -121,7 +122,15 @@ export class ManagedSession {
       || ownership.renew_after_seconds <= 0 || ownership.renew_after_seconds >= ownership.lease_seconds
       || !Number.isFinite(expiry) || expiry <= Date.now()) throw new Error('Invalid or expired managed ownership lease');
     this.#ownership = {...ownership};
+    clearTimeout(this.#expiryTimer);
+    this.#watchExpiry(expiry);
     this.#wake?.abort();
+  }
+  #watchExpiry(expiry: number): void {
+    if (this.#finished || this.#closing) return;
+    const remaining = expiry - Date.now();
+    if (remaining <= 0) {this.#fail(new Error('Managed ownership lease expired'), models.ManagedSessionOutcome.FAILED); return;}
+    this.#expiryTimer = setTimeout(() => {this.#watchExpiry(expiry);}, Math.min(2 ** 31 - 1, remaining));
   }
   #session(response: models.ProvisionResponse): void {
     if (!response.ownership || response.persistent || !response.id) throw new Error('Managed session omitted its ephemeral ownership');
@@ -169,6 +178,7 @@ export class ManagedSession {
     await this.#closing;
   }
   async #cleanup(outcome: models.ManagedSessionOutcome): Promise<void> {
+    clearTimeout(this.#expiryTimer);
     this.#requests.abort();
     this.#lifetime.abort();
     this.#vm?.close();

@@ -25,18 +25,21 @@ class Service {
   readonly closing = deferred();
   readonly releaseCreate = deferred();
   readonly releaseClose = deferred();
+  readonly releaseClaim = deferred();
   request: ProvisionRequest | undefined;
   state = 'pending';
   holdCreate = false;
   holdClose = false;
+  holdClaim = false;
   failures = 0;
   missing = 0;
   invalidReply = false;
   generation = GENERATION;
+  expiryMs = 4000;
 
   ownership(generation = GENERATION): ManagedSessionOwnership {
     return {request_id: this.request?.managed?.request_id ?? '', generation,
-      lease_seconds: 4, renew_after_seconds: 1, expires_at: new Date(Date.now() + 4000).toISOString()};
+      lease_seconds: 4, renew_after_seconds: 1, expires_at: new Date(Date.now() + this.expiryMs).toISOString()};
   }
   session(): object {
     return {id: VM_ID, name: VM_ID, status: 'Running', persistent: false, can_resume: false,
@@ -64,6 +67,7 @@ class Service {
     if (request.url.endsWith('/claim')) {
       if (this.missing-- > 0) {response.writeHead(404).end('{"code":"not_found","error":"pending admission"}'); return;}
       this.claimed.resolve();
+      if (this.holdClaim) await this.releaseClaim.promise;
       response.end(JSON.stringify({ownership: this.ownership(this.generation), state: this.state,
         session: this.state === 'active' ? this.session() : null}));
       return;
@@ -73,11 +77,32 @@ class Service {
     if (this.holdClose) await this.releaseClose.promise;
     if (this.failures-- > 0) {response.writeHead(500).end('{"code":"cleanup_failed","error":"cleanup pending"}'); return;}
     this.state = 'closed';
+    this.releaseClaim.resolve();
     this.releaseCreate.resolve();
     response.end(JSON.stringify({request_id: this.request?.managed?.request_id, generation: GENERATION,
       state: 'closed', session_id: VM_ID, evidence_retained: false}));
   }
 }
+
+it.each([{expiryMs: 200, holdClaim: false}, {expiryMs: 1200, holdClaim: true}])('expires an owned callback even during a stalled renewal ($holdClaim)', async ({expiryMs, holdClaim}) => {
+  const service = new Service();
+  service.expiryMs = expiryMs;
+  service.holdClaim = holdClaim;
+  await gateway(service.handle, async url => {
+    const hv = new Hypervisor(url, 'gateway-bearer');
+    const scope = await hv.managed({});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {timer = setTimeout(() => {reject(new Error('Missed lease expiry'));}, expiryMs + 550);});
+    try {
+      await expect(Promise.race([scope.run(async (_vm, signal) => {await untilAborted(signal);}), deadline])).rejects.toThrow('expired');
+      expect(service.state).toBe('closed');
+    } finally {
+      clearTimeout(timer);
+      await scope.close();
+      hv.close();
+    }
+  });
+});
 
 it('renews finite service ownership and keeps ordinary handle close connection-only', async () => {
   const service = new Service();

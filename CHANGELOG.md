@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TypeScript managed scopes cancel the owned callback and join cleanup at
+  validated lease expiry, including while renewal is stalled.
+
 - Python managed scopes stop at the validated lease expiry, including while
   a renewal request is stalled, and join original-generation cleanup.
 
