@@ -7,6 +7,16 @@ import {schemas, sample} from './contract.js';
 
 const validators: Record<string, z.ZodType> = generated;
 
+it('validates ownership capabilities without exposing private values', () => {
+  const valid = {request_id: 'fc120782-2272-4b3d-a2e6-a26ee2f8ab61', ownership_token: 'af'.repeat(32)};
+  expect(generated.ManagedSessionCreateSchema.parse(valid)).toEqual(valid);
+  for (const ownership_token of ['private-secret-invalid', 'A'.repeat(64), 'af'.repeat(32) + '\n']) {
+    const result = generated.ProvisionRequestSchema.safeParse({managed: {...valid, ownership_token}});
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.message).not.toContain(ownership_token);
+  }
+});
+
 describe.each(Object.entries(schemas))('%s wire contract', (name, schema) => {
   const validator = validators[`${name}Schema`];
   if (!validator) throw new Error(`No validator for ${name}`);

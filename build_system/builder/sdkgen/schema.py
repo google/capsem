@@ -7,6 +7,7 @@ must gain generator support and tests instead of falling back to untyped data.
 from __future__ import annotations
 
 import json
+import re
 from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 from typing import Literal
@@ -25,7 +26,8 @@ class Schema(BaseModel):
     type: Primitive | list[Primitive] | None = None
     description: str | None = None
     write_only: bool = Field(default=False, alias="writeOnly")
-    format: Literal["int32", "int64", "double", "binary", "ipv4"] | None = None
+    format: Literal["int32", "int64", "double", "binary", "ipv4", "uuid"] | None = None
+    pattern: str | None = None
     minimum: int | float | None = None
     enum: list[str] | None = None
     properties: dict[str, Schema] = Field(default_factory=dict)
@@ -75,11 +77,18 @@ class Schema(BaseModel):
             if self.items is None:
                 raise ValueError("array requires an item schema")
         elif kind == "string":
-            allowed |= {"enum", "format", "write_only"}
+            allowed |= {"enum", "format", "write_only", "pattern"}
             if self.enum is not None and (not self.enum or len(set(self.enum)) != len(self.enum)):
                 raise ValueError("enum must contain distinct values")
-            if self.format not in (None, "binary", "ipv4"):
+            if self.format not in (None, "binary", "ipv4", "uuid"):
                 raise ValueError("unsupported string format")
+            if self.pattern is not None:
+                if self.format is not None or self.pattern_width is None or self.pattern_width > 4096:
+                    raise ValueError("only bounded, anchored character-class string patterns are supported")
+                try:
+                    re.compile(self.pattern)
+                except re.error as error:
+                    raise ValueError("invalid string character-class pattern") from error
         elif kind in ("integer", "number"):
             allowed |= {"minimum", "format"}
             formats = (None, "int32", "int64") if kind == "integer" else (None, "double")
@@ -88,6 +97,11 @@ class Schema(BaseModel):
         if fields - allowed:
             raise ValueError(f"unsupported constraints for {kind}: {sorted(fields - allowed)}")
         return self
+
+    @property
+    def pattern_width(self) -> int | None:
+        match = re.fullmatch(r"\^\[[0-9A-Za-z-]+\]\{([1-9][0-9]{0,3})\}\$", self.pattern or "")
+        return int(match[1]) if match else None
 
     def references(self) -> set[str]:
         """Collect dependencies through object properties, maps, arrays and unions."""

@@ -23,6 +23,9 @@ def test_actual_export_preserves_every_schema() -> None:
 
 @pytest.mark.parametrize("value", [
     {"type": "string", "pattern": "[a-z]+"},
+    {"type": "string", "pattern": "^[a-z]{4097}$"},
+    {"type": "string", "pattern": "^[z-a]{64}$"},
+    {"type": "string", "format": "binary", "pattern": "^[a-z]{64}$"},
     {"type": "string", "format": "date-time"},
     {"type": "string", "format": "int32"},
     {"type": "string", "minimum": 0},

@@ -2,6 +2,8 @@
 
 export {attachNetworkMember} from "./attachNetworkMember.js";
 export {callMcpTool} from "./callMcpTool.js";
+export {claimManagedSession} from "./claimManagedSession.js";
+export {closeManagedSession} from "./closeManagedSession.js";
 export {createNetwork} from "./createNetwork.js";
 export {createVm} from "./createVm.js";
 export {createVmExposure} from "./createVmExposure.js";

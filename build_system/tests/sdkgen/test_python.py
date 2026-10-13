@@ -58,6 +58,10 @@ def _sample(schema: Schema) -> object:
     assert schema.type is not None
     if schema.format == "ipv4":
         return "10.128.0.2"
+    if schema.format == "uuid":
+        return "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
+    if schema.pattern == "^[0-9a-f]{64}$":
+        return "af" * 32
     return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[schema.type]
 
 

@@ -9,6 +9,8 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
+    Field,
+    StrictStr,
     ValidationError,
     ValidatorFunctionWrapHandler,
     model_validator,
@@ -30,6 +32,9 @@ def _finite_json(value: PydanticJsonValue) -> PydanticJsonValue:
 
 
 JsonValue: TypeAlias = Annotated[PydanticJsonValue, AfterValidator(_finite_json)]
+UuidString: TypeAlias = Annotated[StrictStr, Field(
+    pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+)]
 
 
 class Model(BaseModel):

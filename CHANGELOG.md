@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Generated Python requests redact nested credential validation inputs,
+  including raw parent inputs retained when another required field is missing.
+
 - Vhost-vsock validates complete descriptor and ring ranges, queue sizes, and
   index-cell arithmetic before exposing guest-controlled addresses to the
   kernel backend.

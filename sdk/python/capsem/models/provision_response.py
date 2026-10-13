@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import StrictBool, StrictStr
 
+from .managed_session_ownership import ManagedSessionOwnership
 from .model_base import Model
 from .vm_action import VmAction
 from .vm_lifecycle_state import VmLifecycleState
@@ -15,5 +16,6 @@ class ProvisionResponse(Model):
     can_resume: StrictBool | None = None
     id: StrictStr
     name: StrictStr
+    ownership: ManagedSessionOwnership | None = None
     persistent: StrictBool | None = None
     status: VmLifecycleState

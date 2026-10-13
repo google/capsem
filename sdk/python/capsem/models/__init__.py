@@ -96,6 +96,31 @@ from .json_content import JsonContent as JsonContent
 from .json_content_kind import JsonContentKind as JsonContentKind
 from .list_response import ListResponse as ListResponse
 from .logs_response import LogsResponse as LogsResponse
+from .managed_session_claim_request import (
+    ManagedSessionClaimRequest as ManagedSessionClaimRequest,
+)
+from .managed_session_claim_response import (
+    ManagedSessionClaimResponse as ManagedSessionClaimResponse,
+)
+from .managed_session_close_request import (
+    ManagedSessionCloseRequest as ManagedSessionCloseRequest,
+)
+from .managed_session_close_response import (
+    ManagedSessionCloseResponse as ManagedSessionCloseResponse,
+)
+from .managed_session_closed_state import (
+    ManagedSessionClosedState as ManagedSessionClosedState,
+)
+from .managed_session_create import ManagedSessionCreate as ManagedSessionCreate
+from .managed_session_error_code import (
+    ManagedSessionErrorCode as ManagedSessionErrorCode,
+)
+from .managed_session_failure import ManagedSessionFailure as ManagedSessionFailure
+from .managed_session_outcome import ManagedSessionOutcome as ManagedSessionOutcome
+from .managed_session_ownership import (
+    ManagedSessionOwnership as ManagedSessionOwnership,
+)
+from .managed_session_state import ManagedSessionState as ManagedSessionState
 from .material_class import MaterialClass as MaterialClass
 from .mcp_default_permission_response import (
     McpDefaultPermissionResponse as McpDefaultPermissionResponse,

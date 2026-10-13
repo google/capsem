@@ -27,3 +27,10 @@ def test_recursive_references_are_lazy_and_keep_named_types() -> None:
     assert "TreeSchema: z.ZodType<Tree>" in source
     assert 'z.lazy(() => TreeSchema)' in source
     assert 'from "./Tree.js"' not in source
+
+
+def test_fixed_private_token_pattern_and_uuid_format_survive_generation() -> None:
+    assert expression(Schema.model_validate({"type": "string", "pattern": "^[0-9a-f]{64}$"})) == (
+        'z.string().length(64).regex(new RegExp("^[0-9a-f]{64}$"))'
+    )
+    assert expression(Schema.model_validate({"type": "string", "format": "uuid"})) == "z.uuid()"

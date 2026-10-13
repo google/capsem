@@ -2,6 +2,8 @@
 
 from .attach_network_member import attach_network_member as attach_network_member
 from .call_mcp_tool import call_mcp_tool as call_mcp_tool
+from .claim_managed_session import claim_managed_session as claim_managed_session
+from .close_managed_session import close_managed_session as close_managed_session
 from .create_network import create_network as create_network
 from .create_vm import create_vm as create_vm
 from .create_vm_exposure import create_vm_exposure as create_vm_exposure
