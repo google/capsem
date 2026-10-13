@@ -84,7 +84,7 @@ async fn a_fork_whose_guest_will_not_freeze_fails_and_leaves_nothing() {
     )
     .await
     .unwrap_err();
-    assert!(error.1.contains("SnapshotReady"), "{}", error.1);
+    assert!(error.body.error.contains("SnapshotReady"), "{}", error.body.error);
     assert!(state.persistent_registry.lock().unwrap().get("my-fork").is_none());
     let persistent = state.run_dir.join("persistent");
     let leftovers = std::fs::read_dir(&persistent).map(|dir| dir.count()).unwrap_or(0);
@@ -111,7 +111,7 @@ async fn handle_fork_not_found() {
     )
     .await
     .unwrap_err();
-    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert_eq!(err.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -158,7 +158,7 @@ async fn handle_fork_duplicate_returns_conflict() {
     )
     .await
     .unwrap_err();
-    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert_eq!(err.status, StatusCode::CONFLICT);
 }
 
 #[tokio::test]
@@ -267,7 +267,7 @@ async fn handle_fork_from_persistent_registry() {
     )
     .await
     .unwrap_err();
-    assert_eq!(bad.0, StatusCode::BAD_REQUEST, "{}", bad.1);
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST, "{}", bad.body.error);
 }
 
 /// A VM from before profiles were removed is refused, not laundered into a
@@ -302,7 +302,11 @@ async fn handle_fork_refuses_a_profile_era_vm() {
     )
     .await
     .unwrap_err();
-    assert_eq!(err.0, StatusCode::PRECONDITION_FAILED);
-    assert!(err.1.contains("profiles no longer exist"), "{}", err.1);
+    assert_eq!(err.status, StatusCode::PRECONDITION_FAILED);
+    assert!(
+        err.body.error.contains("profiles no longer exist"),
+        "{}",
+        err.body.error
+    );
     assert!(!state.persistent_registry.lock().unwrap().contains("blocked-fork"));
 }

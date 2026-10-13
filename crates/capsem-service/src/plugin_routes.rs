@@ -311,7 +311,7 @@ async fn plugin_runtime_status(
     let snapshots = match activity::session_counters(state).await {
         Ok(snapshots) => snapshots,
         Err(error) => {
-            status.last_error = Some(format!("failed to read security ledger: {}", error.1));
+            status.last_error = Some(format!("failed to read security ledger: {}", error.body.error));
             return status;
         }
     };

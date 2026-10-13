@@ -95,7 +95,11 @@ pub(crate) async fn handle_resume(
         }
         Err(e) => {
             error!(id, error = %e, "resume failed");
-            Err(AppError::new(StatusCode::NOT_FOUND, format!("resume failed: {e}")))
+            let mut err = AppError::new(StatusCode::NOT_FOUND, format!("resume failed: {e}"));
+            if find_persistent_entry_by_route_id(&state, &id).is_none() {
+                err = err.with_code(ErrorCode::VmNotFound).with_vm_id(&id);
+            }
+            Err(err)
         }
     }
 }

@@ -29,7 +29,7 @@ pub(crate) async fn handle_logs(
             state
                 .off_worker(move |state| find_failed_session_dir(&state.run_dir, &failed_id))
                 .await?
-                .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+                .ok_or_else(|| AppError::vm_not_found(&id))?
         }
     };
 

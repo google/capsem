@@ -37,7 +37,7 @@ pub(crate) async fn handle_exec(
         Some(timeout_secs),
     )
     .await
-    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    .map_err(|e| e.into_exec_app_error(false))?;
 
     match res {
         ProcessToService::ExecResult {

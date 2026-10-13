@@ -83,6 +83,7 @@ pub(crate) async fn apply_policy_mutation(
         "policy mutation route requested"
     );
     let rejected = |error: &AppError| {
+        let error = error.body.error.as_str();
         warn!(
             target: "capsem.policy_mutation",
             route = name,
@@ -90,7 +91,7 @@ pub(crate) async fn apply_policy_mutation(
             target_key,
             operation,
             actor = "service-api",
-            error = error.1.as_str(),
+            error,
             "policy mutation route rejected"
         )
     };
@@ -119,7 +120,7 @@ pub(crate) async fn apply_policy_mutation(
     // rather than let a failed push read as a failed edit.
     push_policy_to_running_instances(state, &mutation)
         .await
-        .map_err(|AppError(status, error)| AppError(status, format!("edit saved and recorded; {error}")))?;
+        .map_err(|err| AppError::new(err.status, format!("edit saved and recorded; {}", err.body.error)))?;
     // Held through the VM acknowledgement: that is the end of the mutation.
     drop(mutation);
     Ok(event)

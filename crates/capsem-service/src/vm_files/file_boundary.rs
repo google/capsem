@@ -44,7 +44,7 @@ pub(crate) async fn log_file_boundary_on_owner(
         Some(5),
     )
     .await
-    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    .map_err(ipc_command::IpcCommandError::into_internal_app_error)?;
 
     match res {
         ProcessToService::LogFileBoundaryResult {

@@ -99,6 +99,6 @@ pub(super) async fn handle_preserve_failure(
     let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
     let _preserved = ensure_failed_session_preserved(Arc::clone(&state), id.clone(), shutdown_result)
         .await?
-        .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        .ok_or_else(|| AppError::vm_not_found(&id))?;
     Ok(Json(json!({ "success": true })))
 }

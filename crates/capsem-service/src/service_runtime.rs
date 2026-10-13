@@ -556,13 +556,13 @@ pub(super) async fn kill_all_vm_processes(state: &Arc<ServiceState>) {
                         result.map_err(|error| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
                     })
                 {
-                    tracing::warn!(id,error = %error.1,"service shutdown session cleanup failed");
+                    tracing::warn!(id, error = %error.body.error, "service shutdown session cleanup failed");
                 }
             }
             Ok(_) => {}
             Err(error) => tracing::warn!(
                 id,
-                status = error.0.as_u16(),
+                status = error.status.as_u16(),
                 "service shutdown original child retirement failed"
             ),
         }

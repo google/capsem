@@ -27,6 +27,8 @@ class GatewayState:
     container_states: list[str] = field(default_factory=lambda: ["running"])
     preview_session_status: int | None = None
     delays: dict[str, float] = field(default_factory=dict)
+    create_error: tuple[int, str] | None = None
+    sandboxes: dict[str, str] = field(default_factory=dict)
     created_vms: dict[str, tuple[str, bool]] = field(default_factory=dict)
     sandbox_labels: dict[str, dict[str, str] | None] = field(default_factory=dict)
 
@@ -48,22 +50,29 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         if request.path in state.delays:
             await asyncio.sleep(state.delays[request.path])
         if request.path == "/vms/list":
-            return web.json_response(
-                {
-                    "sandboxes": [
-                        response_model(
-                            "SandboxInfo",
-                            id=f"vm-{index}",
-                            name=name,
-                            labels=state.sandbox_labels.get(f"vm-{index}"),
-                        )
-                        for index, name in enumerate(state.names)
-                    ]
-                }
-            )
+            listed = [
+                response_model("SandboxInfo", id=vm_id, name=name, labels=state.sandbox_labels.get(vm_id))
+                for vm_id, name in state.sandboxes.items()
+            ] + [
+                response_model(
+                    "SandboxInfo",
+                    id=f"vm-{index}",
+                    name=name,
+                    labels=state.sandbox_labels.get(f"vm-{index}"),
+                )
+                for index, name in enumerate(state.names)
+            ]
+            return web.json_response({"sandboxes": listed})
         if request.path == "/vms/create":
             payload = json.loads(body)
             vm_name = payload["name"] or "temporary"
+            if state.create_error is not None:
+                status, message = state.create_error
+                if status == 504:
+                    err_doc = json.loads(message)
+                    if err_doc.get("code") == "create_timeout" and isinstance(err_doc.get("vm_id"), str):
+                        state.sandboxes[err_doc["vm_id"]] = vm_name
+                return web.Response(status=status, text=message, content_type="application/json")
             persistent = bool(payload.get("persistent", bool(payload.get("name") or payload.get("from"))))
             state.created_vms["created-id"] = (vm_name, persistent)
             state.sandbox_labels["created-id"] = payload.get("labels") or None
@@ -75,6 +84,13 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
                     persistent=persistent,
                 )
             )
+        if request.method == "DELETE" and request.path.endswith("/delete"):
+            vm_id = request.path.removeprefix("/vms/").removesuffix("/delete")
+            state.sandboxes.pop(vm_id, None)
+            if vm_id.startswith("vm-") and vm_id[3:].isdigit():
+                index = int(vm_id[3:])
+                if 0 <= index < len(state.names):
+                    state.names.pop(index)
         if request.path.endswith("/info") and request.path.split("/")[2] in state.created_vms:
             vm_id = request.path.split("/")[2]
             vm_name, persistent = state.created_vms[vm_id]

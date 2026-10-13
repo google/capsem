@@ -53,7 +53,7 @@ pub(super) fn network_error(error: NetworkError) -> AppError {
         NetworkError::NotFound(_) | NetworkError::NotAMember { .. } => StatusCode::NOT_FOUND,
         NetworkError::Database { .. } => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    AppError(status, error.to_string())
+    AppError::new(status, error.to_string())
 }
 
 fn parse_network_id(id: &str) -> Result<Uuid, AppError> {
@@ -189,7 +189,7 @@ pub(super) async fn handle_network_attach(
     let known = state.instances.lock().unwrap().contains_key(&vm_id)
         || vm_lifecycle::find_persistent_entry_by_route_id(&state, &vm_id).is_some();
     if !known {
-        return Err(AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {vm_id}")));
+        return Err(AppError::vm_not_found(&vm_id));
     }
     state
         .networks

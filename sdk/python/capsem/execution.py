@@ -13,6 +13,8 @@ GATEWAY_REQUEST_BUDGET_SECS = 120
 #: How long the service waits for a container workload to become ready
 #: before it answers a create; the image pull happens inside this window.
 CREATE_READY_SECS = 110
+#: Largest request body and workspace file the HTTP API accepts, in bytes.
+MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024
 
 
 def command_deadline(default: float, timeout_secs: int | None) -> float:

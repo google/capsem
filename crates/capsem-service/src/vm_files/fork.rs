@@ -43,10 +43,7 @@ pub(crate) async fn handle_fork(
         } else {
             drop(instances);
             let Some(p) = find_persistent_entry_by_route_id(&state, &id) else {
-                return Err(AppError::new(
-                    StatusCode::NOT_FOUND,
-                    format!("source sandbox not found: {}", id),
-                ));
+                return Err(AppError::vm_not_found(&id));
             };
             // A VM in the old shape is refused, never laundered into a fork.
             state
@@ -174,7 +171,7 @@ async fn clone_guest_state(
             Err(error.unwrap_or_else(|| "the sandbox reported no clone size".into()))
         }
         Ok(other) => Err(format!("unexpected clone reply: {other:?}")),
-        Err(error) => Err(error),
+        Err(error) => Err(error.to_string()),
     };
     if result.is_err() {
         // The owner removes what it wrote; this covers an owner that never

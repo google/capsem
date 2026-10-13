@@ -66,6 +66,42 @@ fn app_error_logged_bare_form_builds_correct_appe() {
         StatusCode::INTERNAL_SERVER_ERROR,
         "exec failed for {id}: io error"
     );
-    assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(err.1.contains("vm-test"));
+    assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(err.body.error.contains("vm-test"));
+}
+
+#[tokio::test]
+async fn app_error_structured_builders_serialize_fields() {
+    let err = AppError::vm_not_found("vm-42");
+    let response = err.into_response();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = to_bytes(response.into_body(), 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "sandbox not found: vm-42");
+    assert_eq!(json["code"], "vm_not_found");
+    assert_eq!(json["vm_id"], "vm-42");
+    assert!(json.get("timeout_secs").is_none());
+}
+
+#[tokio::test]
+async fn app_error_exec_timeout_serializes_fields_and_504() {
+    let err = AppError::exec_timeout("command timed out after 30s", 30);
+    let response = err.into_response();
+    assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    let body = to_bytes(response.into_body(), 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"], "command timed out after 30s");
+    assert_eq!(json["code"], "exec_timeout");
+    assert_eq!(json["timeout_secs"], 30);
+    assert!(json.get("vm_id").is_none());
+}
+
+#[tokio::test]
+async fn app_error_create_timeout_and_into_message() {
+    let err = AppError::create_timeout("vm-99", 4);
+    assert_eq!(err.status, StatusCode::GATEWAY_TIMEOUT);
+    assert_eq!(err.body.code, Some(ErrorCode::CreateTimeout));
+    assert_eq!(err.body.vm_id.as_deref(), Some("vm-99"));
+    let msg = err.into_message();
+    assert!(msg.contains("vm-99"));
 }

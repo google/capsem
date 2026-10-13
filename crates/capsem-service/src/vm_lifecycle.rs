@@ -103,7 +103,7 @@ pub(super) fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<Path
     if let Some(entry) = find_persistent_entry_by_route_id(state, id) {
         return Ok(entry.session_dir);
     }
-    Err(AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError::vm_not_found(id))
 }
 
 /// GET /vms/{id}/history -- unified command history (exec + audit events).
@@ -417,9 +417,7 @@ pub(super) async fn handle_suspend(
 
     let (uds_path, generation) = {
         let mut instances = state.instances.lock().unwrap();
-        let i = instances
-            .get_mut(&id)
-            .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        let i = instances.get_mut(&id).ok_or_else(|| AppError::vm_not_found(&id))?;
         if !i.persistent {
             return Err(AppError::new(
                 StatusCode::BAD_REQUEST,
@@ -568,7 +566,7 @@ pub(super) async fn handle_stop(
             persistent,
         }))
     } else {
-        Err(AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+        Err(AppError::vm_not_found(&id))
     }
 }
 
@@ -586,7 +584,7 @@ pub(super) async fn handle_delete(
             if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
                 entry.session_dir
             } else {
-                return Err(AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")));
+                return Err(AppError::vm_not_found(&id));
             }
         };
 
@@ -662,9 +660,7 @@ pub(super) async fn handle_persist(
     // Find the running ephemeral instance
     let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env, generation, labels) = {
         let instances = state.instances.lock().unwrap();
-        let i = instances
-            .get(&id)
-            .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+        let i = instances.get(&id).ok_or_else(|| AppError::vm_not_found(&id))?;
         if i.persistent {
             return Err(AppError::new(
                 StatusCode::BAD_REQUEST,
@@ -958,7 +954,7 @@ pub(super) async fn handle_run(
     let failed = !matches!(&exec_result, Ok(ProcessToService::ExecResult { .. }));
     finalize_one_shot_session(Arc::clone(&state), id.clone(), shutdown_result, failed).await?;
 
-    let response = match exec_result {
+    match exec_result {
         Ok(ProcessToService::ExecResult {
             stdout,
             stderr,
@@ -975,10 +971,6 @@ pub(super) async fn handle_run(
             StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected IPC response".into(),
         )),
-        Err(e) => Err(AppError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("exec failed: {e}"),
-        )),
-    };
-    response
+        Err(e) => Err(e.into_exec_app_error(true)),
+    }
 }

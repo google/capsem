@@ -188,6 +188,16 @@ async fn an_unconfigured_server_is_not_found() {
             "{error}"
         );
     }
+
+    insert_fake_instance_with_session_dir(&_state, "box", 1, dir.path().join("session"));
+    let (status, _error) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/mcp/servers/local/tools/fetch_http/call",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
 
 #[test]
@@ -201,5 +211,5 @@ fn a_tool_id_must_belong_to_its_server() {
         "wiki__search"
     );
     let error = crate::mcp_routes::resolve_mcp_tool_id("wiki", "notes__search").unwrap_err();
-    assert_eq!(error.0, StatusCode::BAD_REQUEST);
+    assert_eq!(error.status, StatusCode::BAD_REQUEST);
 }

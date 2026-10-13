@@ -185,8 +185,8 @@ async fn restored_workload_failure_is_not_lifecycle_success() {
     );
     insert_fake_instance_with_session_dir(&state, "box", 1, session);
     let error = restore_ready(&state, "box").await.unwrap_err();
-    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(error.1.contains("Failed") && error.1.contains("did not start"));
+    assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(error.body.error.contains("Failed") && error.body.error.contains("did not start"));
 }
 
 #[tokio::test]

@@ -54,7 +54,9 @@ pub(super) fn spawn_exit_reaper(
         match receipt {
             Ok(Ok(())) => {}
             Ok(Err(error)) => warn!(id, %error, "durable native exit receipt remains unconfirmed"),
-            Err(error) => warn!(id, error = %error.1, "native exit receipt worker interrupted"),
+            Err(error) => {
+                warn!(id, error = %error.body.error, "native exit receipt worker interrupted")
+            }
         }
 
         // An ephemeral VM's removal from the instances map below is the

@@ -8,7 +8,12 @@ from ._mcp import Mcp as Mcp
 from ._mcp import McpServer as McpServer
 from ._mcp import McpTools as McpTools
 from ._ports import Port as Port
+from ._transport import CapsemError as CapsemError
 from ._transport import HttpError as HttpError
+from .errors import CapsemTimeoutError as CapsemTimeoutError
+from .errors import CreateTimeoutError as CreateTimeoutError
+from .errors import ExecTimeoutError as ExecTimeoutError
+from .errors import VmNotFoundError as VmNotFoundError
 from .execution import ExecResult as ExecResult
 from .hypervisor import Hypervisor as Hypervisor
 from .managed import ManagedSession as ManagedSession

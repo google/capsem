@@ -13,6 +13,7 @@ from ._debug import Debug
 from ._images import Images
 from ._mcp import Mcp
 from ._networks import Networks
+from .errors import _create_vm_with_timeout, _exec_with_timeout
 from .execution import (
     CREATE_READY_SECS,
     GATEWAY_REQUEST_BUDGET_SECS,
@@ -22,6 +23,8 @@ from .execution import (
 from .managed import ManagedSession
 from .registry import Registry
 from .vm import VM
+
+__all__ = ["Hypervisor"]
 
 
 def _memory_mb(memory: int | None) -> int | None:
@@ -111,11 +114,12 @@ class Hypervisor(Client):
                                      networks=networks, image=image, command=command, registry=registry)
         # The service answers only once a container workload is ready, so
         # wait at least as long as it does before giving up on the create.
-        response = await api.create_vm(
-            self._transport, body=request,
-            request_timeout=max(self._transport.timeout, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS),
+        request_timeout = max(self._transport.timeout, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS)
+        return await _create_vm_with_timeout(
+            api.create_vm(self._transport, body=request, request_timeout=request_timeout),
+            self._transport, bind_vm=VM._bind, name=name,
+            container=image is not None, request_timeout=request_timeout,
         )
-        return VM._bind(self._transport, id=response.id, name=response.name, container=image is not None)
 
     def managed(self, *, cpus: int | None = None, memory: int | None = None,
                 env: dict[str, str] | None = None, labels: dict[str, str] | None = None,
@@ -133,11 +137,13 @@ class Hypervisor(Client):
     async def run(self, command: str, *, timeout_secs: int | None = None,
                   cpus: int | None = None, memory: int | None = None,
                   env: dict[str, str] | None = None) -> ExecResult:
-        response = await api.run_vm(self._transport, body=models.RunRequest(
+        return await _exec_with_timeout(
+            api.run_vm(self._transport, body=models.RunRequest(
+                command=command, timeout_secs=timeout_secs,
+                cpus=cpus, ram_mb=_memory_mb(memory), env=env,
+            ), request_timeout=command_deadline(self._transport.timeout, timeout_secs)),
             command=command, timeout_secs=timeout_secs,
-            cpus=cpus, ram_mb=_memory_mb(memory), env=env,
-        ), request_timeout=command_deadline(self._transport.timeout, timeout_secs))
-        return ExecResult.from_wire(response)
+        )
 
     async def purge(self, *, all: bool = False) -> models.PurgeResponse:
         return await api.purge_vms(self._transport, body=models.PurgeRequest(all=all))

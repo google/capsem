@@ -13,7 +13,7 @@ mod exec;
 mod file_boundary;
 pub(super) use file_boundary::{log_file_boundary, log_file_boundary_on_owner};
 mod fork;
-mod ipc_command;
+pub(crate) mod ipc_command;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
 #[cfg(test)]
 pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
@@ -632,7 +632,7 @@ async fn failed_process_log_tail(state: &Arc<ServiceState>, id: &str) -> String 
             None => "(no preserved log found)".to_string(),
         })
         .await
-        .unwrap_or_else(|error| format!("(log read failed: {})", error.1))
+        .unwrap_or_else(|error| format!("(log read failed: {})", error.body.error))
 }
 
 pub(super) fn existing_session_names(state: &ServiceState) -> Vec<String> {
@@ -690,7 +690,7 @@ pub(super) async fn provision_attempt(
         Err(e) => {
             return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!(
                 "vz lifecycle lock acquire failed: {}",
-                e.1
+                e.body.error
             ))
         }
     };
@@ -895,7 +895,7 @@ pub(super) async fn handle_info(
         return Ok(Json(info));
     }
 
-    Err(AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError::vm_not_found(&id))
 }
 
 pub(super) async fn handle_vm_status(
@@ -971,7 +971,7 @@ pub(super) async fn handle_vm_status(
         }
     }
 
-    Err(AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError::vm_not_found(&id))
 }
 
 pub(super) async fn vm_operation_status(
@@ -1051,7 +1051,7 @@ pub(super) fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::pa
     let instances = state.instances.lock().unwrap();
     let path = instances
         .get(id)
-        .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+        .ok_or_else(|| AppError::vm_not_found(id))?
         .uds_path
         .clone();
     drop(instances);

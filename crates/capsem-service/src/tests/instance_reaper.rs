@@ -59,7 +59,7 @@ async fn vm_shutdown_without_original_child_authority_cannot_acknowledge_exit() 
     insert_fake_instance_with_session_dir(&state, id, unrelated.id().unwrap(), session.clone());
     let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
     let result = shutdown_vm_process(&state, id, ShutdownMode::Discard, Some(generation)).await;
-    assert!(matches!(result, Err(AppError(StatusCode::SERVICE_UNAVAILABLE, _))));
+    assert!(matches!(result, Err(ref e) if e.status == StatusCode::SERVICE_UNAVAILABLE));
     assert!(unrelated.try_wait().unwrap().is_none());
     assert!(session.exists(), "unknown exit must not remove owned session bytes");
     assert!(
