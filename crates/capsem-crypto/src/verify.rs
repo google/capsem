@@ -18,7 +18,7 @@ impl Verifier {
         let (algorithm, expected) = digest.split_once(':').ok_or_else(invalid_digest)?;
         let expected = parse_hex(expected)?;
         let backend = match algorithm {
-            "blake3" => Backend::Blake3(Box::new(crate::blake3::Hasher::new())),
+            "blake3" => Backend::Blake3(Box::default()),
             #[cfg(feature = "sha256")]
             "sha256" => Backend::Sha256(crate::Sha256::new()),
             _ => return Err(invalid_digest()),
