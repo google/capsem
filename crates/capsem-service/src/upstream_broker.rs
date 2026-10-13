@@ -19,13 +19,14 @@ use capsem_core::net::mitm_proxy::protocol::Protocol;
 use capsem_core::net::mitm_proxy::UpstreamTarget;
 use capsem_core::net::policy_config::CompiledActivePolicy;
 use capsem_core::net::upstream_address::UpstreamResolver;
+use capsem_foundation::unix::contained::FileTimeSpec;
 use capsem_foundation::unix::fd::{self, SocketShutdown};
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::upstream_grant::{
-    decode_upstream_grant_request, encode_upstream_grant_response, ProxyTrafficService, UpstreamDescriptorKind,
-    UpstreamGrantDenial, UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_FRAME_SIZE,
-    UPSTREAM_GRANT_MAX_FDS,
+    decode_upstream_grant_request, encode_upstream_grant_response, GuestFileTime, ProxyTrafficService,
+    UpstreamDescriptorKind, UpstreamGrantDenial, UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol,
+    UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
@@ -568,6 +569,27 @@ async fn run(
                         }
                     }
                 }
+                UpstreamGrantRequest::SetGuestTimes {
+                    request_id,
+                    relative_path,
+                    atime,
+                    mtime,
+                } => {
+                    let Some(session_dir) = session_dir.as_deref() else {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
+                        continue;
+                    };
+                    match set_guest_times(session_dir, &relative_path, atime, mtime) {
+                        Ok(()) => {
+                            send_response(&responses, &UpstreamGrantResponse::GuestTimesSet { request_id }, None)
+                                .await?;
+                        }
+                        Err(error) => {
+                            warn!(%error, "guest timestamp broker refused metadata change");
+                            send_denied(&responses, request_id, UpstreamGrantDenial::NotAllowed).await?;
+                        }
+                    }
+                }
                 UpstreamGrantRequest::OpenLedger { request_id } => {
                     let Some(source) = ledger.take() else {
                         let reason = if ledger_configured {
@@ -657,6 +679,26 @@ fn set_guest_mode(session_dir: &Path, relative_path: &[u8], mode: u16) -> io::Re
         .descend(std::ffi::OsStr::new(capsem_core::GUEST_SHARE_DIR))?;
     let path = Path::new(std::ffi::OsStr::from_bytes(relative_path));
     root.set_relative_mode(path, u32::from(mode))
+}
+
+fn set_guest_times(
+    session_dir: &Path,
+    relative_path: &[u8],
+    atime: GuestFileTime,
+    mtime: GuestFileTime,
+) -> io::Result<()> {
+    let root = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?
+        .descend(std::ffi::OsStr::new(capsem_core::GUEST_SHARE_DIR))?;
+    let path = Path::new(std::ffi::OsStr::from_bytes(relative_path));
+    root.set_relative_times(path, file_time_spec(atime), file_time_spec(mtime))
+}
+
+const fn file_time_spec(time: GuestFileTime) -> FileTimeSpec {
+    match time {
+        GuestFileTime::Omit => FileTimeSpec::Omit,
+        GuestFileTime::Now => FileTimeSpec::Now,
+        GuestFileTime::Exact { seconds, nanoseconds } => FileTimeSpec::Exact { seconds, nanoseconds },
+    }
 }
 
 async fn send_active_grant(
