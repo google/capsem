@@ -68,15 +68,20 @@ fn each_traffic_capability_keeps_its_full_bounded_capacity() {
 }
 
 #[test]
-fn http_capacity_covers_two_hundred_clients_and_replacement_overlap() {
-    let active = (1..=400).collect::<Vec<_>>();
+fn http_capacity_covers_every_client_and_one_replacement() {
+    assert!(
+        UPSTREAM_GRANT_CAPACITY - capsem_proto::NETWORK_CLIENT_CAPACITY >= capsem_proto::NETWORK_CLIENT_CAPACITY,
+        "traffic capacity must reserve a replacement for every supported client"
+    );
+    let active = (1..UPSTREAM_GRANT_CAPACITY as u64).collect::<Vec<_>>();
     let grants = BTreeMap::from([(ProxyCapability::HttpTraffic, active.clone())]);
     let grant_ids = active.into_iter().collect::<HashSet<_>>();
+    let replacement = UPSTREAM_GRANT_CAPACITY as u64;
 
     assert_eq!(
-        grant_rejection(&grants, &grant_ids, ProxyCapability::HttpTraffic, 401),
+        grant_rejection(&grants, &grant_ids, ProxyCapability::HttpTraffic, replacement),
         None,
-        "the supported 200-client load needs one replacement descriptor per client"
+        "every supported client may overlap its retiring connection"
     );
 }
 
