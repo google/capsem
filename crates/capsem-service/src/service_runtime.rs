@@ -244,6 +244,10 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     // every such service on one shared ledger.
     let host_ledger = host_ledger::open_host_ledger(&capsem_foundation::paths::capsem_sessions_dir())?;
     let state = Arc::new(ServiceState {
+        managed: managed_routes::Runtime::open(
+            &run_dir,
+            capsem_core::net::policy_config::load_managed_session_policy().map_err(anyhow::Error::msg)?,
+        )?,
         instances: Mutex::new(HashMap::new()),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
@@ -315,6 +319,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     // BEFORE stale-socket removal so the orphans get a chance to clean up
     // their own sockets on SIGTERM.
     reap_orphan_capsem_processes(&run_dir);
+    managed_routes::Runtime::start_maintenance(Arc::clone(&state));
 
     // Check for running instances to reattach
     info!("scanning for existing sandboxes in {}", instances_dir.display());

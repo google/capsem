@@ -36,6 +36,8 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/images", get(container_setup::images::handle_list_images))
         .route("/images/pull", post(container_setup::images::handle_pull_image))
         .route("/vms/create", post(handle_provision))
+        .route("/vms/managed/{request_id}/claim", post(managed_routes::claim))
+        .route("/vms/managed/{request_id}/close", post(managed_routes::close))
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))

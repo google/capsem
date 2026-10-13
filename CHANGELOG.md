@@ -113,6 +113,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Ephemeral managed-session creation, capability-authenticated claim/renewal,
+  and awaited close use a finite service-owned lease and durable replay protection.
+
 - Desktop credential settings accept explicit API keys or tokens with file or
   memory storage, clear submitted input, and return a copyable reference.
 

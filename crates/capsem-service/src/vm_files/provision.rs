@@ -2,8 +2,19 @@ use super::*;
 
 pub(crate) async fn handle_provision(
     State(state): State<Arc<ServiceState>>,
-    Json(payload): Json<ProvisionRequest>,
-) -> Result<Json<ProvisionResponse>, AppError> {
+    payload: Result<Json<ProvisionRequest>, axum::extract::rejection::JsonRejection>,
+) -> axum::response::Response {
+    let Json(payload) = match payload {
+        Ok(payload) => payload,
+        Err(_) => return crate::managed_routes::ManagedError::invalid().into_response(),
+    };
+    if payload.managed.is_some() {
+        return crate::managed_routes::create(state, payload).await.into_response();
+    }
+    provision(state, payload).await.into_response()
+}
+
+async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Result<Json<ProvisionResponse>, AppError> {
     let _launch = state
         .lifecycle
         .admit()
