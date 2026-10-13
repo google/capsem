@@ -339,6 +339,29 @@ async fn in_flight_cap_sheds_without_blocking() {
 }
 
 #[tokio::test]
+async fn two_hundred_dual_stack_clients_fit_without_shedding() {
+    let connect = fake_host(|mut host| while read_frame(&mut host).is_some() {});
+    let forwarder = Arc::new(DnsForwarder::new(DNS_SESSIONS, connect));
+    let mut waiting = Vec::new();
+    for i in 0..400u16 {
+        let forwarder = Arc::clone(&forwarder);
+        waiting.push(tokio::spawn(async move {
+            forwarder.forward_query(query(i, "dual-stack.example"), "udp").await
+        }));
+    }
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        waiting.iter().all(|task| !task.is_finished()),
+        "a supported query was shed"
+    );
+    assert!(forwarder.sessions.iter().all(|session| session.in_flight() == 200));
+    for task in waiting {
+        task.abort();
+    }
+}
+
+#[tokio::test]
 async fn a_query_past_its_deadline_fails_and_frees_its_slot() {
     let connect = fake_host(|mut host| while read_frame(&mut host).is_some() {});
     let forwarder = DnsForwarder::new(1, connect);

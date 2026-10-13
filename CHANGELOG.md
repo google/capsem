@@ -176,6 +176,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection-replacement overlap instead of closing excess TLS handshakes when
   its descriptor grant bound is reached.
 
+- Multiplexed DNS sessions admit the dual-stack query burst from 200 concurrent
+  clients instead of shedding valid A or AAAA lookups as SERVFAIL.
+
 - Gateway `/status` reads VM, asset and update state in one coordinator
   snapshot, cutting service CPU for the polled overview without caching stale
   VM lifecycle state.
