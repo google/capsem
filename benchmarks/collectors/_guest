@@ -34,6 +34,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import psutil
+from benchmarks.helpers.guest_measurements import (
+    failed_load_levels,
+    flatten,
+    load_quality_metrics,
+    mitm_runtime_failures,
+    resource_samples,
+    unit_for,
+)
 from helpers.constants import (
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
@@ -41,15 +49,6 @@ from helpers.constants import (
 )
 from helpers.process_resources import ProcessTreeSampler
 from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
-
-# Units the guest reports, by the suffix its key carries.
-UNITS = {
-    "_mbps": "megabits_per_second",
-    "_ms": "milliseconds",
-    "_bytes": "bytes",
-    "iops": "operations",
-    "rps": "requests_per_second",
-}
 
 FORWARDED_ENV = (
     "CAPSEM_BENCH_CONCURRENCY",
@@ -106,28 +105,6 @@ def mitm_fixture_corp_toml(ready: dict) -> str:
     )
 
 
-def failed_load_levels(section: dict) -> list[int]:
-    """Concurrency levels where any request failed.
-
-    Partial success still means the rail failed to sustain the requested
-    concurrency. Recording its latency or RPS would ratchet a degraded run.
-    """
-    return [
-        int(row.get("concurrency", -1))
-        for row in section.get("concurrency_levels", [])
-        if int(row.get("errors", 0)) > 0
-    ]
-
-
-def resource_samples(metrics: dict) -> dict[str, float]:
-    """Flatten sampled host pressure for diagnostics from rejected load runs."""
-    return {
-        name: measurement["samples"][0]
-        for name, measurement in sorted(metrics.items())
-        if measurement.get("samples")
-    }
-
-
 def guest_command(mode: str) -> str:
     """One safely quoted command with only documented benchmark controls."""
     assignments = [
@@ -136,62 +113,6 @@ def guest_command(mode: str) -> str:
         if (value := os.environ.get(name)) is not None
     ]
     return shlex.join(["env", *assignments, "capsem-bench", mode])
-
-
-def unit_for(key: str) -> str | None:
-    """The unit a key declares, or `None` when it declares none.
-
-    A key with no recognised unit is not a measurement. The guest reports the
-    kernel's block-queue settings alongside its timings -- `rotational`,
-    `nr_requests`, `read_ahead_kb` -- and walking everything numeric turned
-    `storage` into 640 "metrics", most of them static configuration that would
-    then be ratcheted like a duration.
-    """
-    for suffix, unit in UNITS.items():
-        if key.endswith(suffix):
-            return unit
-    return None
-
-
-def flatten(node, prefix: str = "") -> dict[str, float]:
-    """Every number the guest reported, under a dotted key.
-
-    The guest sections nest differently per mode -- disk by operation, storage
-    by mount, startup by command -- so the shape is walked rather than known.
-    """
-    found: dict[str, float] = {}
-    if isinstance(node, dict):
-        for key, value in node.items():
-            found.update(flatten(value, f"{prefix}.{key}" if prefix else str(key)))
-    elif isinstance(node, list):
-        for index, value in enumerate(node):
-            found.update(flatten(value, f"{prefix}.{index}" if prefix else str(index)))
-    elif isinstance(node, bool):
-        pass  # a flag is not a measurement
-    elif isinstance(node, (int, float)):
-        found[prefix] = float(node)
-    return found
-
-
-def load_quality_metrics(section: dict) -> dict[str, dict]:
-    """Store zero-error proof for every load concurrency level."""
-    metrics = {}
-    for index, row in enumerate(section.get("concurrency_levels", [])):
-        errors = int(row.get("errors", 0))
-        total = int(row.get("total_requests", 0))
-        metrics[f"concurrency_levels.{index}.errors"] = {
-            "unit": "count",
-            "samples": [errors],
-        }
-        metrics[f"concurrency_levels.{index}.error_ratio"] = {
-            "unit": "ratio",
-            "samples": [errors / total if total else 0.0],
-        }
-        metrics[f"concurrency_levels.{index}.requests"] = {
-            "unit": "count",
-            "samples": [total],
-        }
-    return metrics
 
 
 def main() -> int:
@@ -206,6 +127,7 @@ def main() -> int:
     name = f"bench-{mode}-{uuid.uuid4().hex[:8]}"
     service = ServiceInstance()
     mock_proc = None
+    service_log = ""
     client = service.client()
     try:
         if mode == "mitm-load":
@@ -273,7 +195,11 @@ def main() -> int:
     finally:
         with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        service.stop()
+        if mode == "mitm-load":
+            service_log = service.stop_and_read_log()
+            service.stop()
+        else:
+            service.stop()
         if mock_proc is not None:
             from helpers.mock_server import stop_process
 
@@ -282,6 +208,14 @@ def main() -> int:
     # The guest writes one document per run keyed by mode; take that section
     # when present so keys are not prefixed with the mode twice.
     section = document.get(mode.replace("-", "_"), document)
+    runtime_failures = mitm_runtime_failures(service_log) if mode == "mitm-load" else []
+    if runtime_failures:
+        raise RuntimeError(
+            f"capsem-bench {mode}: {len(runtime_failures)} internal traffic "
+            "descriptor refusal(s) were retried below the client boundary; "
+            f"first={runtime_failures[:5]!r}; "
+            f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}"
+        )
     if failed := failed_load_levels(section):
         raise RuntimeError(
             f"capsem-bench {mode}: requests failed at concurrency {failed}; "
@@ -302,6 +236,11 @@ def main() -> int:
         if (unit := unit_for(key)) is not None
     }
     measured.update(load_quality_metrics(section))
+    if mode == "mitm-load":
+        measured["internal.proxy_traffic_refusals"] = {
+            "unit": "count",
+            "samples": [0],
+        }
     measured.update(resource_metrics)
     if not measured:
         raise RuntimeError(

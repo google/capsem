@@ -111,6 +111,81 @@ def test_a_level_where_any_request_failed_is_not_a_measurement() -> None:
     assert failed({}) == []
 
 
+def test_mitm_runtime_refusals_are_fatal_even_when_the_client_retries() -> None:
+    failures = collector()["mitm_runtime_failures"]
+    log = "\n".join(
+        [
+            '{"fields":{"message":"service.start"}}',
+            '{"fields":{"message":"proxy worker refused traffic descriptor",'
+            '"error":"proxy worker rejected HttpTraffic grant 522: Capacity"}}',
+            '{"fields":{"message":"proxy worker refused traffic descriptor",'
+            '"error":"proxy worker rejected HttpTraffic grant 523: Capacity"}}',
+        ]
+    )
+
+    assert failures(log) == [
+        "proxy worker rejected HttpTraffic grant 522: Capacity",
+        "proxy worker rejected HttpTraffic grant 523: Capacity",
+    ]
+    assert failures('{"fields":{"message":"service.start"}}') == []
+
+
+def test_guest_result_rejects_a_hidden_proxy_refusal(monkeypatch, tmp_path) -> None:
+    document = {
+        "mitm_load": {
+            "concurrency_levels": [
+                {"concurrency": 512, "total_requests": 600, "errors": 0, "rps": 60.0},
+            ]
+        }
+    }
+    client = SimpleNamespace(
+        post=lambda route, *args, **kwargs: (
+            {"id": "bench-test-vm"}
+            if route == "/vms/create"
+            else {
+                "exit_code": 0,
+                "stdout": {"encoding": "utf8", "data": json.dumps(document)},
+            }
+        ),
+        delete=lambda *args: None,
+    )
+    log = (
+        '{"fields":{"message":"proxy worker refused traffic descriptor",'
+        '"error":"proxy worker rejected HttpTraffic grant 522: Capacity"}}'
+    )
+    main = collector()["main"]
+    monkeypatch.setitem(
+        main.__globals__,
+        "ServiceInstance",
+        lambda: SimpleNamespace(
+            client=lambda: client,
+            start=lambda: None,
+            stop=lambda: None,
+            stop_and_read_log=lambda: log,
+            tmp_dir=tmp_path,
+        ),
+    )
+    import helpers.mock_server
+
+    monkeypatch.setattr(
+        helpers.mock_server,
+        "start_mock_server",
+        lambda: (
+            object(),
+            {"dns_udp_addr": "127.0.0.1:41000", "http_addr": "127.0.0.1:3713"},
+        ),
+    )
+    monkeypatch.setattr(helpers.mock_server, "stop_process", lambda proc: None)
+    monkeypatch.setitem(main.__globals__, "wait_exec_ready", lambda *args, **kwargs: True)
+    monkeypatch.setitem(
+        main.__globals__, "process_tree_sampler", lambda service: ResourceSamplerStub()
+    )
+    monkeypatch.setattr(sys, "argv", ["mitm-load"])
+
+    with pytest.raises(RuntimeError, match="1 internal traffic descriptor refusal"):
+        main()
+
+
 def test_load_dimensions_get_more_guest_cpus_bounded_by_the_host() -> None:
     guest_cpus = collector()["guest_cpus"]
     assert guest_cpus("disk", host_cpus=16) == 2, "non-load modes keep the default"
@@ -197,6 +272,7 @@ def test_guest_result_rejects_one_failed_request(monkeypatch, tmp_path) -> None:
             client=lambda: client,
             start=lambda: None,
             stop=lambda: None,
+            stop_and_read_log=lambda: "",
             tmp_dir=tmp_path,
         ),
     )
@@ -257,6 +333,7 @@ def test_guest_command_failure_preserves_resource_pressure(monkeypatch, tmp_path
             client=lambda: client,
             start=lambda: None,
             stop=lambda: None,
+            stop_and_read_log=lambda: "",
             tmp_dir=tmp_path,
         ),
     )
