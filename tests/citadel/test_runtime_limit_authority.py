@@ -54,8 +54,20 @@ REQUIRED_WIRING = {
     "crates/capsem-proto/src/upstream_grant.rs": (
         "UPSTREAM_GRANT_CAPACITY: usize = crate::NETWORK_TRAFFIC_GRANT_CAPACITY",
     ),
-    "crates/capsem-proxy/src/main.rs": ("UPSTREAM_GRANT_CAPACITY",),
+    "crates/capsem-proxy/src/main.rs": (
+        "UPSTREAM_GRANT_CAPACITY",
+        "NETWORK_PROCESS_OPEN_FILE_LIMIT",
+        "ensure_open_file_limit",
+    ),
+    "crates/capsem-service/src/main.rs": (
+        "NETWORK_PROCESS_OPEN_FILE_LIMIT",
+        "ensure_open_file_limit",
+    ),
     "crates/capsem-service/src/upstream_broker.rs": ("UPSTREAM_GRANT_CAPACITY",),
+    "crates/capsem-process/src/main.rs": (
+        "NETWORK_PROCESS_OPEN_FILE_LIMIT",
+        "ensure_open_file_limit",
+    ),
     "crates/capsem-core/src/net/dns/session/mod.rs": ("DNS_SESSION_MAX_IN_FLIGHT",),
     "crates/capsem-agent/src/dns_proxy/session.rs": ("DNS_SESSION_MAX_IN_FLIGHT",),
     "crates/capsem-agent/src/net_proxy.rs": (
