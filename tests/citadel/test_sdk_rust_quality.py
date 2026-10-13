@@ -27,11 +27,10 @@ def _assert_owners(manifest: dict, floors: dict, ci: dict, coverage: dict) -> No
     assert all(manifest.get("lib", {}).get(key, True) for key in ("test", "doctest")), SDK_RATIONALE
     assert floors.get("capsem-sdk", 0) >= 90, SDK_RATIONALE
     local = {name for name in manifest["dependencies"] if name.startswith("capsem")}
-    assert local == {"capsem-api", "capsem-crypto"}, SDK_CRYPTO_RATIONALE
-    crypto = manifest["dependencies"]["capsem-crypto"]
-    assert crypto.get("path") == "../../crates/capsem-crypto", SDK_CRYPTO_RATIONALE
-    assert crypto.get("default-features") is False, SDK_CRYPTO_RATIONALE
-    assert set(crypto.get("features", [])) == {"random", "secrets"}, SDK_CRYPTO_RATIONALE
+    assert local == {"capsem-api", "capsem-crypto"}, (
+        "SDK dependencies are limited to the public API and owned secret primitives; "
+        "they must not grant service/core or local discovery access"
+    )
     steps = ci["jobs"]["test"]["steps"]
     commands = next(step["run"] for step in steps if step.get("name") == "Unit tests with coverage")
     for command in commands.splitlines():
