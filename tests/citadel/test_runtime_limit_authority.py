@@ -12,10 +12,13 @@ CONFIG = ROOT / "config/data/runtime-limits.toml"
 
 RUNTIME_LIMIT_RATIONALE = """\
 The proxy, trusted upstream broker, host DNS session and guest DNS forwarder
-must admit the same supported client burst. Local numeric ceilings previously
-let one stage accept work that the next stage shed, producing intermittent HTTP
-502 responses under load. config/data/runtime-limits.toml is the authority;
-capsem-proto generates the shared constant and every consumer derives from it.
+must admit the same supported client burst. A traffic connection that is being
+replaced overlaps the retiring connection, so descriptor grants must preserve
+the config-owned overlap multiple instead of equalling the client count. Local
+numeric ceilings previously let one stage accept work that the next stage shed,
+producing intermittent HTTP 502 responses under load.
+config/data/runtime-limits.toml is the authority; capsem-proto generates the
+shared constants and every consumer derives from them.
 See skills/dev-mitm-proxy/SKILL.md under Cross-process network limits.
 """
 
@@ -37,6 +40,9 @@ REQUIRED_WIRING = {
         "../../config/data/runtime-limits.toml",
         'get("max_concurrent_clients")',
         "pub const NETWORK_CLIENT_CAPACITY: usize = {capacity}",
+        'get("traffic_grants_per_client")',
+        ".checked_mul(traffic_grants_per_client)",
+        "pub const NETWORK_TRAFFIC_GRANT_CAPACITY: usize = {traffic_grant_capacity}",
         'get("file_descriptors_per_client")',
         ".checked_mul(descriptors_per_client)",
         "pub const NETWORK_PROCESS_OPEN_FILE_LIMIT: u64 = {open_file_limit}",
@@ -46,7 +52,7 @@ REQUIRED_WIRING = {
         "DNS_SESSION_MAX_IN_FLIGHT: usize = NETWORK_CLIENT_CAPACITY",
     ),
     "crates/capsem-proto/src/upstream_grant.rs": (
-        "UPSTREAM_GRANT_CAPACITY: usize = crate::NETWORK_CLIENT_CAPACITY",
+        "UPSTREAM_GRANT_CAPACITY: usize = crate::NETWORK_TRAFFIC_GRANT_CAPACITY",
     ),
     "crates/capsem-proxy/src/main.rs": ("UPSTREAM_GRANT_CAPACITY",),
     "crates/capsem-service/src/upstream_broker.rs": ("UPSTREAM_GRANT_CAPACITY",),
@@ -75,6 +81,12 @@ def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:
         RUNTIME_LIMIT_RATIONALE
         + "\nnetwork.max_concurrent_clients must be an integer from 1 through 4096"
     )
+    traffic_grants_per_client = config.get("network", {}).get("traffic_grants_per_client")
+    assert type(traffic_grants_per_client) is int and 2 <= traffic_grants_per_client <= 4, (
+        RUNTIME_LIMIT_RATIONALE
+        + "\nnetwork.traffic_grants_per_client must cover an active connection "
+        "and its replacement"
+    )
     descriptors_per_client = config.get("network", {}).get("file_descriptors_per_client")
     assert type(descriptors_per_client) is int and 3 <= descriptors_per_client <= 64, (
         RUNTIME_LIMIT_RATIONALE
@@ -82,6 +94,11 @@ def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:
         "descriptors plus runtime overhead"
     )
     assert capacity * descriptors_per_client <= 1_048_576, RUNTIME_LIMIT_RATIONALE
+    assert descriptors_per_client >= traffic_grants_per_client * 2, (
+        RUNTIME_LIMIT_RATIONALE
+        + "\nnetwork.file_descriptors_per_client must cover both ends of every "
+        "overlapping traffic grant"
+    )
 
     missing = []
     for relative_path, required_fragments in REQUIRED_WIRING.items():

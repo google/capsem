@@ -47,6 +47,14 @@ fn write_runtime_limits() {
         .unwrap_or_else(|| {
             panic!("runtime limits: network.max_concurrent_clients must be an integer between 1 and 4096")
         });
+    let traffic_grants_per_client = config
+        .get("network")
+        .and_then(|network| network.get("traffic_grants_per_client"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (2..=4).contains(value))
+        .unwrap_or_else(|| {
+            panic!("runtime limits: network.traffic_grants_per_client must be an integer between 2 and 4")
+        });
     let descriptors_per_client = config
         .get("network")
         .and_then(|network| network.get("file_descriptors_per_client"))
@@ -55,6 +63,13 @@ fn write_runtime_limits() {
         .unwrap_or_else(|| {
             panic!("runtime limits: network.file_descriptors_per_client must be an integer between 3 and 64")
         });
+    let traffic_grant_capacity = capacity
+        .checked_mul(traffic_grants_per_client)
+        .filter(|value| *value <= 16_384)
+        .expect("runtime limits: derived network traffic-grant capacity exceeds 16384");
+    if descriptors_per_client < traffic_grants_per_client * 2 {
+        panic!("runtime limits: network.file_descriptors_per_client must cover both ends of every traffic grant");
+    }
     let open_file_limit = capacity
         .checked_mul(descriptors_per_client)
         .filter(|value| *value <= 1_048_576)
@@ -68,6 +83,8 @@ fn write_runtime_limits() {
              /// TCP descriptor grants and each of the two DNS sessions derive\n\
              /// their bounds from this one config-owned value.\n\
              pub const NETWORK_CLIENT_CAPACITY: usize = {capacity};\n\
+             /// Live and retiring traffic grants allowed during connection replacement.\n\
+             pub const NETWORK_TRAFFIC_GRANT_CAPACITY: usize = {traffic_grant_capacity};\n\
              /// Minimum descriptor budget for a network-facing process.\n\
              pub const NETWORK_PROCESS_OPEN_FILE_LIMIT: u64 = {open_file_limit};\n"
         ),

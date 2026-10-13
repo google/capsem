@@ -3,6 +3,8 @@
 
 [network]
 max_concurrent_clients = 512
+# A replacement can be opened before the retiring connection leaves the pool.
+traffic_grants_per_client = 2
 # Each intercepted client consumes a guest TCP descriptor and a VSOCK
 # descriptor. The remaining per-client allowance covers listeners, the Tokio
 # reactor, DNS, control traffic, and overlap while connections retire.
