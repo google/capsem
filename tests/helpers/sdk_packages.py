@@ -119,6 +119,7 @@ def typescript_gateway(
         payload = work / "payload.mjs"
         gateway = work / "gateway.mjs"
         shutil.copyfile(project / "tools/image-package-acceptance.mjs", payload)
+        shutil.copyfile(project / "tools/crypto.mjs", work / "crypto.mjs")
         shutil.copyfile(project / "tools" / probe, gateway)
         report = work / "acceptance.json"
         result = _run(["node", str(payload), str(root), str(archive), str(report), str(receipt)], work, clean)

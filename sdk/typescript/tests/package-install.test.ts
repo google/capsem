@@ -93,6 +93,7 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
     const probe = join(fixture, 'acceptance.mjs');
     const output = join(fixture, 'acceptance.json');
     copyFileSync(join(source, 'tools/image-package-acceptance.mjs'), probe);
+    copyFileSync(join(source, 'tools/crypto.mjs'), join(fixture, 'crypto.mjs'));
     const runProbe = (): string => execFileSync(consumerNode, [probe, root, archive, output, receipt], {
       cwd: fixture, encoding: 'utf8', stdio: 'pipe', timeout: 15_000,
       env: {PATH: process.env.PATH ?? ''},
