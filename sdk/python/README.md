@@ -64,15 +64,16 @@ python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 90 -- \
 Focused source tests do not need this package build. Clean-install checks use
 the prewarmed offline dependency cache and remove their runtime environments.
 
-An async client for the Capsem HTTP gateway. It takes an explicit gateway URL
-and bearer token; it does not discover services, open local service sockets,
-or run host commands.
+An async client for the Capsem HTTP gateway. Pass an explicit gateway URL and
+bearer token, or omit either to resolve them via `discover_gateway()` from
+`CAPSEM_GATEWAY_URL`, `CAPSEM_GATEWAY_TOKEN`, and `<run_dir>/gateway.{port,token}`
+(`CAPSEM_RUN_DIR`, `CAPSEM_HOME/run`, or `~/.capsem/run`).
 
 ```python
 from capsem import Hypervisor, VM
 from capsem.models import HostLogSource, TimelineLayer
 
-async with Hypervisor("http://127.0.0.1:19222", token, timeout=120) as hv:
+async with Hypervisor.connect(timeout=120) as hv:
     overview = await hv.info()  # health, versions, assets, updates
     network = await hv.networks.create("private")
     vm = await hv.create(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Self
 
 from . import _operations as api
 from . import models
@@ -70,14 +72,21 @@ def _provision_request(*, name: str = "", cpus: int | None = None,
 
 
 class Hypervisor(Client):
-    def __init__(self, url: str, token: str, *, timeout: float = 30) -> None:
-        super().__init__(url, token, timeout=timeout)
+    def __init__(self, url: str | None = None, token: str | None = None, *,
+                 run_dir: str | Path | None = None, timeout: float = 30) -> None:
+        super().__init__(url, token, run_dir=run_dir, timeout=timeout)
         self.networks = Networks(self._transport)
         self.mcp = Mcp(self._transport)
         self.debug = Debug(self._transport)
         self.images = Images(self._transport)
         self.credentials = Credentials(self._transport)
         self.connections = Connections(self._transport)
+
+    @classmethod
+    def connect(cls, url: str | None = None, token: str | None = None, *,
+                run_dir: str | Path | None = None, timeout: float = 30) -> Self:
+        """Create a `Hypervisor` client using gateway discovery when `url` or `token` is omitted."""
+        return cls(url, token, run_dir=run_dir, timeout=timeout)
 
     async def info(self) -> models.HypervisorInfo:
         return await api.get_hypervisor_info(self._transport)

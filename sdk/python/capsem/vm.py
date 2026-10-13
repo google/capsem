@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
+from pathlib import Path
 from typing import TypeVar
 
 from pydantic import StrictStr, TypeAdapter
@@ -23,9 +24,10 @@ _T = TypeVar("_T")
 
 
 class VM(Client):
-    def __init__(self, url: str, token: str, *, name: str | None = None,
-                 id: str | None = None, timeout: float = 30) -> None:
-        super().__init__(url, token, timeout=timeout)
+    def __init__(self, url: str | None = None, token: str | None = None, *,
+                 name: str | None = None, id: str | None = None,
+                 run_dir: str | Path | None = None, timeout: float = 30) -> None:
+        super().__init__(url, token, run_dir=run_dir, timeout=timeout)
         self._select(name=name, id=id)
 
     def _select(self, *, name: str | None, id: str | None) -> None:

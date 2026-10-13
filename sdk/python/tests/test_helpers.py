@@ -1,25 +1,85 @@
-"""Tests for structured SDK errors."""
+"""Tests for gateway discovery and structured SDK errors."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import pickle
+from pathlib import Path
 from typing import Any
 
 import pytest
 from capsem import (
+    DEFAULT_GATEWAY_URL,
+    VM,
     CapsemError,
     CapsemTimeoutError,
     CreateTimeoutError,
     ExecTimeoutError,
+    GatewayEndpoint,
     HttpError,
     Hypervisor,
     VmNotFoundError,
+    capsem_run_dir,
+    discover_gateway,
     models,
 )
 
 from .facade_gateway import gateway
+
+
+def test_capsem_run_dir_priority(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("CAPSEM_RUN_DIR", raising=False)
+    monkeypatch.delenv("CAPSEM_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert capsem_run_dir() == tmp_path / ".capsem" / "run"
+    monkeypatch.setenv("CAPSEM_HOME", str(tmp_path / "custom-home"))
+    assert capsem_run_dir() == tmp_path / "custom-home" / "run"
+    monkeypatch.setenv("CAPSEM_RUN_DIR", str(tmp_path / "explicit-env-run"))
+    assert capsem_run_dir() == tmp_path / "explicit-env-run"
+    assert capsem_run_dir(tmp_path / "arg-run") == tmp_path / "arg-run"
+    with pytest.raises(ValueError, match="run_dir"):
+        capsem_run_dir("   ")
+
+
+def test_discover_gateway_from_files_and_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for var in ("CAPSEM_GATEWAY_URL", "CAPSEM_GATEWAY_TOKEN", "CAPSEM_RUN_DIR", "CAPSEM_HOME"):
+        monkeypatch.delenv(var, raising=False)
+    with pytest.raises(RuntimeError, match="gateway bearer token not found"):
+        discover_gateway(run_dir=tmp_path)
+    (tmp_path / "gateway.token").write_text("file-token\n", encoding="utf-8")
+    assert discover_gateway(run_dir=tmp_path) == GatewayEndpoint(
+        url=DEFAULT_GATEWAY_URL, token="file-token", run_dir=tmp_path,
+    )
+    (tmp_path / "gateway.port").write_text(" 19444\n", encoding="utf-8")
+    assert discover_gateway(run_dir=tmp_path).url == "http://127.0.0.1:19444"
+    for bad_port in ("not-a-port", "0", "70000"):
+        (tmp_path / "gateway.port").write_text(f"{bad_port}\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="invalid port"):
+            discover_gateway(run_dir=tmp_path)
+    monkeypatch.setenv("CAPSEM_GATEWAY_URL", "http://127.0.0.1:19666/")
+    monkeypatch.setenv("CAPSEM_GATEWAY_TOKEN", "env-token")
+    ep_env = discover_gateway(run_dir=tmp_path)
+    assert (ep_env.url, ep_env.token) == ("http://127.0.0.1:19666", "env-token")
+    ep_explicit = discover_gateway(url="http://127.0.0.1:19777", token="arg-token", run_dir=tmp_path)
+    assert (ep_explicit.url, ep_explicit.token) == ("http://127.0.0.1:19777", "arg-token")
+
+
+def test_hypervisor_connect_and_vm_use_discovered_gateway(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        async with gateway() as (url, _):
+            port = url.rsplit(":", 1)[1]
+            monkeypatch.delenv("CAPSEM_GATEWAY_URL", raising=False)
+            monkeypatch.delenv("CAPSEM_GATEWAY_TOKEN", raising=False)
+            (tmp_path / "gateway.port").write_text(f"{port}\n", encoding="utf-8")
+            (tmp_path / "gateway.token").write_text("token\n", encoding="utf-8")
+            async with Hypervisor.connect(run_dir=tmp_path) as hv, VM(run_dir=tmp_path, id="vm-0") as vm:
+                assert isinstance(await hv.info(), models.HypervisorInfo)
+                assert isinstance(await vm.info(), models.SandboxInfo)
+
+    asyncio.run(run())
 
 
 def test_vm_not_found_error_on_name_resolution_and_404_routes(monkeypatch: pytest.MonkeyPatch) -> None:

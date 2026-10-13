@@ -1322,7 +1322,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ErrorResponse` adds an optional typed `code: ErrorCode` (`"create_timeout"`,
   `"exec_timeout"`, `"vm_not_found"`), `vm_id`, and `timeout_secs` on the HTTP
   error wire contract, with service-side exec timeouts returning HTTP 504
-  (`StatusCode::GATEWAY_TIMEOUT`). The Python SDK adds structured exceptions
+  (`StatusCode::GATEWAY_TIMEOUT`). The Python SDK adds host gateway discovery
+  (`discover_gateway`, `capsem_run_dir`, `GatewayEndpoint`,
+  `Hypervisor.connect`, and optional `url`/`token`/`run_dir` on `Hypervisor`
+  and `VM` resolving `CAPSEM_GATEWAY_URL`, `CAPSEM_GATEWAY_TOKEN`, and
+  `<run_dir>/gateway.{port,token}`) and structured exceptions
   (`CapsemError`, `CapsemTimeoutError`, `CreateTimeoutError`,
   `ExecTimeoutError`, and `VmNotFoundError`) dispatched from
   `HttpError.code` (`models.ErrorCode`). The Python and TypeScript SDKs also
