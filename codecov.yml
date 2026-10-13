@@ -220,7 +220,13 @@ component_management:
       paths:
         - crates/capsem-foundation/src/**
 
-    # Shared accelerated hashing, integrity, randomness, and TLS primitives.
+    # Shared bounded cache primitives and metrics used across runtime owners.
+    - component_id: cache
+      name: Cache
+      paths:
+        - crates/capsem-cache/src/**
+
+    # Shared hashing, secret handling, and TLS cryptography primitives.
     - component_id: crypto
       name: Cryptography
       paths:
