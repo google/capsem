@@ -5,6 +5,7 @@ mod image_share;
 mod maintenance;
 mod overlay;
 mod spawn_identity;
+pub mod spawn_owner;
 mod workspace;
 
 #[cfg(test)]

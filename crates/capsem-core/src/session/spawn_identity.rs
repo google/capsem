@@ -48,12 +48,17 @@ pub fn write_spawn_identity(session: &ContainedDir, binding: &VmBinding) -> Resu
         schema_version: 1,
         binding: binding.clone(),
     })?;
+    publish(session, SPAWN_IDENTITY_FILE, &bytes)
+}
+
+/// The same descriptor-owned durable publication for host-only spawn records.
+pub(super) fn publish(session: &ContainedDir, name: &str, bytes: &[u8]) -> Result<()> {
     let temporary_name = format!(".pending-spawn-{}", capsem_crypto::uuid_v4());
     let mut temporary = session.create_new_private_file(temporary_name.as_ref())?;
     let result = (|| -> Result<()> {
-        temporary.write_all(&bytes)?;
+        temporary.write_all(bytes)?;
         temporary.sync_all()?;
-        session.rename_to(temporary_name.as_ref(), session, SPAWN_IDENTITY_FILE.as_ref())?;
+        session.rename_to(temporary_name.as_ref(), session, name.as_ref())?;
         session.sync()?;
         Ok(())
     })();
