@@ -4,7 +4,7 @@ use super::{probe, ProcessProbe, ProcessState};
 fn invalid_pid_is_not_mistaken_for_a_gone_process() {
     assert_eq!(probe(0).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
     let mut conservative = ProcessProbe::new("test-invalid-pid");
-    assert!(conservative.is_alive(0));
+    assert_eq!(conservative.state(0), ProcessState::Alive);
     assert!(!conservative.is_gone(0));
 }
 

@@ -1,5 +1,6 @@
 use super::*;
 
+mod orphans;
 mod shutdown;
 pub(crate) mod telemetry_export;
 
@@ -318,7 +319,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     // run_dir via --session-dir and will never die on their own. Do this
     // BEFORE stale-socket removal so the orphans get a chance to clean up
     // their own sockets on SIGTERM.
-    reap_orphan_capsem_processes(&run_dir);
+    reap_orphan_capsem_processes(&run_dir)?;
     managed_routes::Runtime::start_maintenance(Arc::clone(&state));
 
     // Check for running instances to reattach
@@ -516,65 +517,10 @@ pub(super) fn find_orphan_capsem_pids(
         .collect()
 }
 
-/// Reap `capsem-process` orphans from a prior service run that shared this
-/// run_dir. See [`find_orphan_capsem_pids`] for the why; this wrapper reads the
-/// shared syscall-backed process table, applies the match, and escalates
-/// SIGTERM -> 2s poll -> SIGKILL. An unreadable table is reported; no matching
-/// process is ordinary and silent.
-pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) {
-    let table = match capsem_foundation::proctable::processes() {
-        Ok(table) => table,
-        // Loudly. This used to shell out to `ps` and return silently when the
-        // spawn failed, which is indistinguishable from finding no orphans --
-        // and under a sandbox, where setuid `ps` cannot be exec'd, that was
-        // every single time.
-        Err(error) => {
-            tracing::warn!(
-                error = %error,
-                "cannot read the process table; orphaned capsem-process children \
-                 of a previous service run will not be reaped"
-            );
-            return;
-        }
-    };
-    let orphan_pids: Vec<u32> = find_orphan_capsem_pids(&table, run_dir)
-        .into_iter()
-        .filter_map(|pid| u32::try_from(pid).ok())
-        .collect();
-    if orphan_pids.is_empty() {
-        return;
-    }
-
-    tracing::warn!(
-        count = orphan_pids.len(),
-        ?orphan_pids,
-        "reaping capsem-process orphans from previous service run"
-    );
-
-    for pid in &orphan_pids {
-        process_control::send_or_log(*pid, process_control::Signal::Terminate, "reap-orphan-process");
-    }
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    let mut probe = process_control::ProcessProbe::new("probe-orphan-process");
-    loop {
-        let survivors: Vec<u32> = orphan_pids.iter().copied().filter(|&pid| probe.is_alive(pid)).collect();
-        if survivors.is_empty() {
-            return;
-        }
-        if std::time::Instant::now() >= deadline {
-            tracing::warn!(
-                count = survivors.len(),
-                ?survivors,
-                "orphan capsem-process did not exit, SIGKILLing"
-            );
-            for pid in survivors {
-                process_control::send_or_log(pid, process_control::Signal::Kill, "escalate-orphan-process");
-            }
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
+/// Retire verified original startup processes before stale socket removal.
+/// Failure preserves uncertainty and refuses to start over a live old owner.
+pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) -> Result<()> {
+    orphans::retire(run_dir)
 }
 
 /// Kill every per-VM `capsem-process` the service has spawned.

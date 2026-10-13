@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Linux startup pins original orphan processes and verifies fresh native
+  arguments before signalling. TERM/KILL and exit waits retain those handles;
+  uncertain identity or exit refuses startup before stale socket removal.
+
 - VM teardown signals and awaits its original owned child rather than a
   cached PID. Shutdown, suspend and failed restore refuse uncertain exit;
   service shutdown retires the child before deleting ephemeral session bytes.
