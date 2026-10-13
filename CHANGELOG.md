@@ -274,7 +274,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Ledger producers coalesce bounded consecutive security events into one
   commitment reservation and admission exchange, avoiding audit backpressure
-  during concurrent DNS and gateway traffic.
+  during concurrent DNS and gateway traffic. Their config-derived queues also
+  absorb supported traffic while the ledger owner flushes earlier rows.
 
 - Runtime memory caches use one bounded, concurrent implementation with
   uniform hit, miss, mutation, load-time and entry metrics. DNS retains its

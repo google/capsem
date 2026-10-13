@@ -276,7 +276,7 @@ impl DbHandle {
 
     pub(crate) fn prepare_with_codecs(path: &Path, codecs: ArchiveCodecs) -> rusqlite::Result<PreparedDbHandle> {
         let started = Instant::now();
-        let writer = DbWriter::prepare_with_codecs(path, 1024, codecs.clone())?;
+        let writer = DbWriter::prepare_with_codecs(path, capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY, codecs.clone())?;
         // Reads go to the file, like every other handle's: the writer's
         // memory holds only rows it has not flushed, and SQLite's
         // `data_version` tells the reader when a flush landed.
