@@ -28,9 +28,9 @@ use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, Semaphore};
 use tracing::{debug, warn};
 
-/// Queries one connection answers concurrently. Matches the guest's
-/// per-session in-flight cap; past it the reader simply waits.
-pub const DNS_SESSION_MAX_IN_FLIGHT: usize = 128;
+/// Queries one connection answers concurrently. Past the shared guest/host
+/// bound the reader waits instead of admitting unbounded tasks.
+pub use capsem_proto::DNS_SESSION_MAX_IN_FLIGHT;
 
 pub async fn serve_dns_session(
     conn: OwnedFd,
