@@ -31,6 +31,8 @@ class ProcessUsage:
     name: str
     cpu_seconds: Decimal
     rss_bytes: int
+    pss_bytes: int | None
+    uss_bytes: int | None
     fds: int
 
 
@@ -47,12 +49,15 @@ def process_tree_snapshot(root: psutil.Process) -> TreeSnapshot:
         for process in processes:
             with contextlib.suppress(psutil.Error, OSError):
                 with process.oneshot():
+                    memory = process.memory_full_info()
                     usage = ProcessUsage(
                         pid=process.pid,
                         started_at=process.create_time(),
                         name=process.name(),
                         cpu_seconds=process_cpu_seconds(process),
-                        rss_bytes=process.memory_info().rss,
+                        rss_bytes=memory.rss,
+                        pss_bytes=getattr(memory, "pss", None),
+                        uss_bytes=getattr(memory, "uss", None),
                         fds=process.num_fds(),
                     )
                 found[(usage.pid, usage.started_at)] = usage
@@ -78,8 +83,10 @@ class ProcessTreeSampler:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._observations = 0
-        self._baseline: dict[str, tuple[int, int]] = {}
-        self._peak: dict[str, tuple[int, int]] = {}
+        self._baseline: dict[str, tuple[int, int, int, int]] = {}
+        self._peak: dict[str, tuple[int, int, int, int]] = {}
+        self._pss_available = True
+        self._uss_available = True
         self._peak_processes = 0
         self._first_cpu: dict[tuple[int, float], Decimal] = {}
         self._last_cpu: dict[tuple[int, float], Decimal] = {}
@@ -89,14 +96,25 @@ class ProcessTreeSampler:
         """Fold one snapshot into the benchmark interval."""
         initial = self._observations == 0
         self._observations += 1
-        totals: dict[str, tuple[int, int]] = {"total": (0, 0)}
+        totals: dict[str, tuple[int, int, int, int]] = {"total": (0, 0, 0, 0)}
         for identity, usage in snapshot.processes.items():
             name = _metric_name(usage.name)
-            rss, fds = totals.get(name, (0, 0))
-            totals[name] = (rss + usage.rss_bytes, fds + usage.fds)
-            total_rss, total_fds = totals["total"]
+            self._pss_available &= usage.pss_bytes is not None
+            self._uss_available &= usage.uss_bytes is not None
+            pss = usage.pss_bytes or 0
+            uss = usage.uss_bytes or 0
+            rss_sum, pss_sum, uss_sum, fds_sum = totals.get(name, (0, 0, 0, 0))
+            totals[name] = (
+                rss_sum + usage.rss_bytes,
+                pss_sum + pss,
+                uss_sum + uss,
+                fds_sum + usage.fds,
+            )
+            total_rss, total_pss, total_uss, total_fds = totals["total"]
             totals["total"] = (
                 total_rss + usage.rss_bytes,
+                total_pss + pss,
+                total_uss + uss,
                 total_fds + usage.fds,
             )
             if identity not in self._first_cpu:
@@ -110,8 +128,8 @@ class ProcessTreeSampler:
         if initial:
             self._baseline = dict(totals)
         for name, values in totals.items():
-            previous = self._peak.get(name, (0, 0))
-            self._peak[name] = (max(previous[0], values[0]), max(previous[1], values[1]))
+            previous = self._peak.get(name, (0, 0, 0, 0))
+            self._peak[name] = tuple(max(old, new) for old, new in zip(previous, values, strict=True))
         self._peak_processes = max(self._peak_processes, len(snapshot.processes))
 
     def start(self) -> None:
@@ -147,8 +165,10 @@ class ProcessTreeSampler:
         for name in sorted(self._peak):
             if name != "total" and name not in TRACKED_PROCESS_NAMES:
                 continue
-            peak_rss, peak_fds = self._peak[name]
-            baseline_rss, baseline_fds = self._baseline.get(name, (0, 0))
+            peak_rss, peak_pss, peak_uss, peak_fds = self._peak[name]
+            baseline_rss, baseline_pss, baseline_uss, baseline_fds = self._baseline.get(
+                name, (0, 0, 0, 0)
+            )
             prefix = f"resources.{name}"
             metrics[f"{prefix}.cpu_s"] = {
                 "unit": "seconds",
@@ -162,6 +182,24 @@ class ProcessTreeSampler:
                 "unit": "bytes",
                 "samples": [max(0, peak_rss - baseline_rss)],
             }
+            if self._pss_available:
+                metrics[f"{prefix}.peak_pss_bytes"] = {
+                    "unit": "bytes",
+                    "samples": [peak_pss],
+                }
+                metrics[f"{prefix}.peak_pss_delta_bytes"] = {
+                    "unit": "bytes",
+                    "samples": [max(0, peak_pss - baseline_pss)],
+                }
+            if self._uss_available:
+                metrics[f"{prefix}.peak_uss_bytes"] = {
+                    "unit": "bytes",
+                    "samples": [peak_uss],
+                }
+                metrics[f"{prefix}.peak_uss_delta_bytes"] = {
+                    "unit": "bytes",
+                    "samples": [max(0, peak_uss - baseline_uss)],
+                }
             metrics[f"{prefix}.peak_fds"] = {
                 "unit": "count",
                 "samples": [peak_fds],
