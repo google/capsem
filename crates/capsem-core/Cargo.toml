@@ -19,6 +19,7 @@ tracing = { workspace = true }
 serde = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
 capsem-assets = { path = "../capsem-assets" }
+capsem-cache = { path = "../capsem-cache" }
 capsem-config = { path = "../capsem-config" }
 capsem-credentials = { path = "../capsem-credentials" }
 capsem-foundation = { path = "../capsem-foundation" }
@@ -49,9 +50,6 @@ regex = { workspace = true }
 scraper = "0.25"
 
 hickory-proto = { workspace = true }
-# Bounded LRU primitive used by `net::dns::cache` for the TTL-honoring
-# answer cache (T3.f). Pure-Rust, no_std-compatible, single small dep.
-lru = "0.18.2"
 ego-tree = "0.10"
 # Metrics facade. No recorder registered in this sprint -- emission is a
 # single relaxed atomic add against a no-op recorder. T5 wires the

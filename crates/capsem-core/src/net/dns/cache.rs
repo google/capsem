@@ -1,4 +1,4 @@
-//! TTL-honoring LRU answer cache for the DNS proxy (T3.f).
+//! TTL-honoring bounded answer cache for the DNS proxy (T3.f).
 //!
 //! The cache shaves the upstream UDP RTT off repeated queries to the
 //! same allowed name. Cache shape:
@@ -15,20 +15,19 @@
 //!   (`insert_negative`, bounded by the SOA minimum and
 //!   `NEGATIVE_MAX_TTL_SECS`); SERVFAIL is never persisted, since it may
 //!   be a transient upstream fault.
-//! * **Bound**: an LRU on entry count (default 1024). Evictions are
-//!   counted via the `mitm.dns_cache_evictions_total` counter.
+//! * **Bound**: shared cache admission and eviction on entry count (default
+//!   1024), with both unified and DNS compatibility metrics.
 //!
 //! The cache **does** read the network-policy snapshot on every hit so
 //! redirect/cache mechanics stay coherent without a per-policy version
 //! counter.
 
-use std::num::NonZeroUsize;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use capsem_cache::BoundedCache;
 use hickory_proto::op::Message;
 use hickory_proto::rr::RData;
-use lru::LruCache;
 
 use super::coalesce::LookupKey;
 use crate::net::parsers::dns_parser::DnsQuery;
@@ -62,15 +61,11 @@ struct Entry {
     expires_at: Instant,
 }
 
-/// Bounded LRU cache for DNS answer bytes.
-///
-/// Thread-safe via a single `Mutex<LruCache<...>>`. Lookups and
-/// inserts go through the same lock; under contention this is the
-/// bottleneck, but the hot-path cost (one HashMap lookup + one
-/// Instant::now()) is sub-microsecond on modern hardware.
+/// Bounded concurrent cache for DNS answer bytes.
 pub struct DnsAnswerCache {
-    inner: Mutex<LruCache<LookupKey, Entry>>,
+    inner: BoundedCache<LookupKey, Entry>,
     max_ttl: Duration,
+    reported_dns_evictions: AtomicU64,
 }
 
 impl Default for DnsAnswerCache {
@@ -81,14 +76,13 @@ impl Default for DnsAnswerCache {
 
 impl DnsAnswerCache {
     /// Build a cache with explicit capacity + TTL ceiling.
-    /// `capacity` of 0 is silently bumped to 1 (LruCache requires
-    /// non-zero); `max_ttl_secs` of 0 disables caching effectively
+    /// `capacity` of 0 is silently bumped to 1; `max_ttl_secs` of 0 disables caching effectively
     /// (every entry expires before its first lookup).
     pub fn new(capacity: usize, max_ttl_secs: u32) -> Self {
-        let cap = NonZeroUsize::new(capacity.max(1)).expect("capacity > 0 enforced");
         Self {
-            inner: Mutex::new(LruCache::new(cap)),
+            inner: BoundedCache::new("core.dns_answer", capacity),
             max_ttl: Duration::from_secs(u64::from(max_ttl_secs)),
+            reported_dns_evictions: AtomicU64::new(0),
         }
     }
 
@@ -115,33 +109,26 @@ impl DnsAnswerCache {
         let qtype = query.qtype;
         let query_id = query.id;
         let now = Instant::now();
-        let mut guard = self.inner.lock().unwrap();
-        let Some(entry) = guard.get(key) else {
-            drop(guard);
+        let mut expired = false;
+        let mut redirected = false;
+        let entry = self.inner.get_if(key, |entry| {
+            expired = entry.expires_at <= now;
+            redirected = policy.find_dns_redirect(qname, qtype).is_some();
+            !expired && !redirected
+        });
+        let Some(entry) = entry else {
+            if expired || redirected {
+                self.inner.remove(key);
+            }
+            if expired {
+                trace!(qname, qtype, "dns cache: expired entry evicted");
+            } else if redirected {
+                trace!(qname, qtype, "dns cache: entry invalidated by redirect change");
+            }
             return None;
         };
-        if entry.expires_at <= now {
-            // Lazy expiry: drop the stale entry so the next
-            // lookup is a clean miss without re-checking expiry.
-            guard.pop(key);
-            drop(guard);
-            ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
-            trace!(qname, qtype, "dns cache: expired entry evicted");
-            return None;
-        }
-        // Coherence: re-check redirect mechanics on every hit. Security-rule
-        // enforcement happens before cache lookup in the DNS handler, so this
-        // cache layer does not own allow/block decisions.
-        if policy.find_dns_redirect(qname, qtype).is_some() {
-            guard.pop(key);
-            drop(guard);
-            ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
-            trace!(qname, qtype, "dns cache: entry invalidated by redirect change");
-            return None;
-        }
         let bytes = entry.bytes.clone();
         let remaining = entry.expires_at.duration_since(now).as_secs_f64().ceil() as u32;
-        drop(guard);
         // Patch the current query's transaction id into bytes 0-1
         // (RFC 1035 sec 4.1.1: the ID field is the first 16 bits of
         // the DNS header, big-endian). The cached answer was stored
@@ -170,8 +157,7 @@ impl DnsAnswerCache {
     /// Insert an Allowed response for future hits. The TTL is
     /// derived from the answer wire bytes (minimum across all
     /// answer records, capped by `max_ttl`). Zero prohibits caching. On
-    /// LRU eviction, the `mitm.dns_cache_evictions_total` counter
-    /// fires.
+    /// admission eviction, both unified and compatibility counters fire.
     pub(super) fn insert(&self, key: &LookupKey, answer_bytes: &[u8]) {
         let ttl = ttl_from_answer(answer_bytes, self.max_ttl);
         if ttl.is_zero() {
@@ -181,13 +167,8 @@ impl DnsAnswerCache {
             bytes: answer_bytes.to_vec(),
             expires_at: Instant::now() + ttl,
         };
-        let key = key.clone();
-        let mut guard = self.inner.lock().unwrap();
-        let evicted = guard.push(key, entry);
-        drop(guard);
-        if evicted.is_some() {
-            ::metrics::counter!(m::DNS_CACHE_EVICTIONS_TOTAL).increment(1);
-        }
+        self.inner.insert(key.clone(), entry);
+        self.report_compatibility_evictions();
     }
 
     /// Remember an upstream NXDOMAIN for this exact query. The TTL
@@ -203,11 +184,8 @@ impl DnsAnswerCache {
             bytes: answer_bytes.to_vec(),
             expires_at: Instant::now() + ttl,
         };
-        let key = key.clone();
-        let evicted = self.inner.lock().unwrap().push(key, entry);
-        if evicted.is_some() {
-            ::metrics::counter!(m::DNS_CACHE_EVICTIONS_TOTAL).increment(1);
-        }
+        self.inner.insert(key.clone(), entry);
+        self.report_compatibility_evictions();
     }
 
     /// Drop every cached entry. Used when the policy is hot-swapped
@@ -215,16 +193,24 @@ impl DnsAnswerCache {
     /// each entry independently re-validate against the new policy
     /// on its next lookup.
     pub fn clear(&self) {
-        self.inner.lock().unwrap().clear();
+        self.inner.clear();
     }
 
     /// Current entry count (debugging / metrics only).
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().len()
+        self.inner.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.inner.is_empty()
+    }
+
+    fn report_compatibility_evictions(&self) {
+        let total = self.inner.stats().evictions;
+        let reported = self.reported_dns_evictions.fetch_max(total, Ordering::Relaxed);
+        if total > reported {
+            ::metrics::counter!(m::DNS_CACHE_EVICTIONS_TOTAL).increment(total - reported);
+        }
     }
 }
 

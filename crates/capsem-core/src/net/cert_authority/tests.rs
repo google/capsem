@@ -78,6 +78,27 @@ fn concurrent_minting_safe() {
     assert_eq!(ca.cache_size(), 10);
 }
 
+#[test]
+fn concurrent_reads_single_flight_one_domain_mint() {
+    let ca = Arc::new(load_ca());
+    let start = Arc::new(std::sync::Barrier::new(8));
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let ca = Arc::clone(&ca);
+        let start = Arc::clone(&start);
+        handles.push(std::thread::spawn(move || {
+            start.wait();
+            ca.certified_key_for_domain("shared.example.com").unwrap()
+        }));
+    }
+    let keys: Vec<_> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+    assert!(keys.windows(2).all(|pair| Arc::ptr_eq(&pair[0], &pair[1])));
+    let stats = ca.cache.stats();
+    assert_eq!(stats.misses, 1);
+    assert_eq!(stats.hits, 7);
+    assert_eq!(stats.entries, 1);
+}
+
 // -- Leaf cache identity and bounds --
 //
 // The guest chooses the SNI. The cache it feeds must key on the host's

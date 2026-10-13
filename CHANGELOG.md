@@ -257,6 +257,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Runtime memory caches use one bounded, concurrent implementation with
+  uniform hit, miss, mutation, load-time and entry metrics. DNS retains its
+  TTL and policy checks, while concurrent TLS handshakes share one leaf mint.
+
 - Host MCP packages identify as 0.7.0 and depend on the matching TypeScript SDK.
 
 - TypeScript SDK packages use the 0.7.0 client version.
