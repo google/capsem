@@ -1,6 +1,17 @@
 use super::*;
 
 impl Registry {
+    /// The existing owner can revoke its exact ticket without a client token.
+    /// This records Closing before original effects retire on policy denial.
+    pub(super) fn begin_owned_cleanup(&self, ticket: &Ticket) -> Result<Snapshot> {
+        let _lease = self.lease()?;
+        let mut record = self.ticket_record(ticket)?;
+        record.state = closing_state(record.state);
+        self.write(&record)?;
+        self.runtime_deadlines()?.remove(&record.request);
+        Ok(Snapshot::from(&record))
+    }
+
     /// The only permission to perform a create side effect. Persist before
     /// spawning; a repeat or a close racing this operation never admits again.
     pub fn begin_create(&self, ticket: &Ticket, clock: LeaseClock) -> Result<bool> {
@@ -41,10 +52,7 @@ impl Registry {
                 closed_wall_ms: None,
             },
         };
-        record.state = match record.state {
-            State::Reserved | State::Closed => State::Closed,
-            State::Creating | State::Active | State::Closing | State::Unknown => State::Closing,
-        };
+        record.state = closing_state(record.state);
         self.write(&record)?;
         self.runtime_deadlines()?.remove(&request);
         Ok(Snapshot::from(&record))
@@ -124,5 +132,12 @@ impl Registry {
         self.write(&record)?;
         self.runtime_deadlines()?.remove(&record.request);
         Ok(Snapshot::from(&record))
+    }
+}
+
+fn closing_state(state: State) -> State {
+    match state {
+        State::Reserved | State::Closed => State::Closed,
+        State::Creating | State::Active | State::Closing | State::Unknown => State::Closing,
     }
 }

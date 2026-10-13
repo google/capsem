@@ -83,11 +83,22 @@ struct Work {
     effects: Arc<dyn Effects>,
     cancel: CancellationToken,
     created: watch::Sender<Option<ControlResult<Snapshot>>>,
-    deadline: watch::Sender<tokio::time::Instant>,
+    deadline: watch::Sender<Option<LeaseDeadline>>,
     cleanup: Mutex<Option<watch::Sender<Option<ControlResult<Snapshot>>>>>,
 }
 
 impl Work {
+    fn update_deadline(&self, deadline: LeaseDeadline) {
+        self.deadline.send_if_modified(|current| {
+            if current.is_none_or(|previous| deadline.revision > previous.revision) {
+                *current = Some(deadline);
+                true
+            } else {
+                false
+            }
+        });
+    }
+
     fn remember_binding(&self, binding: VmBinding) -> ControlResult<()> {
         if self.intent.lock().map_err(|_| Failure::RecoveryPending)?.as_ref() != Some(&binding) {
             return Err(Failure::CreationFailed);
@@ -171,7 +182,7 @@ impl Controller {
             effects,
             cancel: CancellationToken::new(),
             created: watch::channel(None).0,
-            deadline: watch::channel(tokio::time::Instant::now()).0,
+            deadline: watch::channel(None).0,
             cleanup: Mutex::new(None),
         });
         {
@@ -201,6 +212,104 @@ impl Controller {
 
     pub async fn inspect(&self, request: Uuid, capability: Capability) -> ControlResult<Option<Snapshot>> {
         self.io(move |registry| registry.inspect(request, &capability)).await
+    }
+
+    /// Reload never renews a lease. Timer revisions prevent delayed admission
+    /// or claim completions from overwriting a newer tightened deadline.
+    pub async fn set_lease_limit(&self, policy: LeasePolicy) -> ControlResult<usize> {
+        let revision = self
+            .0
+            .registry
+            .publish_lease_limit(policy)
+            .map_err(|_| Failure::StoreUnavailable)?;
+        let owner = self.clone();
+        tokio::spawn(async move { owner.limit_worker(revision).await })
+            .await
+            .map_err(|_| Failure::StoreUnavailable)?
+    }
+
+    pub async fn deny_lease_admission(&self) -> ControlResult<()> {
+        let revision = self
+            .0
+            .registry
+            .deny_lease_admission()
+            .map_err(|_| Failure::StoreUnavailable)?;
+        let owner = self.clone();
+        tokio::spawn(async move {
+            let works = owner.0.works.lock().await;
+            if owner
+                .0
+                .registry
+                .admission_denied(revision)
+                .map_err(|_| Failure::StoreUnavailable)?
+            {
+                for work in works.values() {
+                    work.cancel.cancel();
+                }
+            }
+            drop(works);
+            Ok(())
+        })
+        .await
+        .map_err(|_| Failure::StoreUnavailable)?
+    }
+
+    async fn limit_worker(&self, revision: u64) -> ControlResult<usize> {
+        let updated = self
+            .io(move |registry| {
+                registry
+                    .apply_lease_limit(LeaseClock::now()?)?
+                    .into_iter()
+                    .map(|snapshot| {
+                        let ticket = Ticket {
+                            request: snapshot.request,
+                            generation: snapshot.generation,
+                        };
+                        let deadline = if matches!(snapshot.state, State::Reserved | State::Creating | State::Active)
+                            && snapshot.lease_duration().is_some()
+                        {
+                            Some(registry.runtime_deadline(&ticket)?)
+                        } else {
+                            None
+                        };
+                        Ok((snapshot, deadline))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .await;
+        let works = self.0.works.lock().await;
+        match updated {
+            Ok(updated) => {
+                let count = updated.len();
+                for (snapshot, deadline) in updated {
+                    if let Some(work) = works.get(&snapshot.request) {
+                        match deadline {
+                            Some(deadline) => work.update_deadline(deadline),
+                            None => work.cancel.cancel(),
+                        }
+                    }
+                }
+                drop(works);
+                Ok(count)
+            }
+            Err(error) => {
+                // Persistence uncertainty cannot preserve permissive live
+                // effects. The original owner still performs awaited cleanup.
+                if self
+                    .0
+                    .registry
+                    .policy_revision()
+                    .map_err(|_| Failure::StoreUnavailable)?
+                    == revision
+                {
+                    for work in works.values() {
+                        work.cancel.cancel();
+                    }
+                }
+                drop(works);
+                Err(error)
+            }
+        }
     }
 
     pub async fn recovery_inventory(&self) -> ControlResult<Vec<Snapshot>> {
@@ -267,7 +376,7 @@ impl Controller {
             effects,
             cancel: CancellationToken::new(),
             created: watch::channel(None).0,
-            deadline: watch::channel(tokio::time::Instant::now()).0,
+            deadline: watch::channel(None).0,
             cleanup: Mutex::new(None),
         });
         works.insert(request, Arc::clone(&work));
@@ -366,7 +475,7 @@ impl Controller {
             })
             .await?;
         if let Some(deadline) = deadline {
-            work.deadline.send_replace(tokio::time::Instant::from_std(deadline));
+            work.update_deadline(deadline);
         } else {
             work.cancel.cancel();
         }
@@ -419,7 +528,7 @@ impl Controller {
             }
         };
         *work.ticket.lock().expect("worker ticket lock poisoned") = Some(ticket.clone());
-        work.deadline.send_replace(tokio::time::Instant::from_std(deadline));
+        work.update_deadline(deadline);
         let owner = self.clone();
         let expiry = Arc::clone(&work);
         let expiry_ticket = ticket.clone();
@@ -435,6 +544,7 @@ impl Controller {
             ticket: ticket.clone(),
         };
         let created = bounded(self.0.bounds.create, async move {
+            ensure!(!cancel.is_cancelled(), "managed creation cancelled before effects");
             effects.create(effect_ticket, cancel, reporter).await
         })
         .await;
@@ -614,14 +724,27 @@ impl Controller {
         let mut retry = false;
         loop {
             let next = *deadline.borrow_and_update();
+            let elapsed = async {
+                match next {
+                    Some(next) => tokio::time::sleep_until(tokio::time::Instant::from_std(next.at)).await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
             tokio::select! {
                 () = work.cancel.cancelled() => {},
-                () = tokio::time::sleep_until(next) => {},
+                () = elapsed => {},
                 changed = deadline.changed() => { if changed.is_err() { return; } continue; }
             }
             let expire_ticket = ticket.clone();
+            let cancelled = work.cancel.is_cancelled();
             let snapshot = self
-                .io(move |registry| registry.expire_lease(&expire_ticket, LeaseClock::now()?))
+                .io(move |registry| {
+                    if cancelled {
+                        registry.begin_owned_cleanup(&expire_ticket)
+                    } else {
+                        registry.expire_lease(&expire_ticket, LeaseClock::now()?)
+                    }
+                })
                 .await;
             let closing = matches!(snapshot, Ok(ref snapshot) if matches!(snapshot.state, State::Closing | State::Closed | State::Unknown));
             if closing || snapshot.is_err() || work.cancel.is_cancelled() {

@@ -13,7 +13,7 @@ use capsem_foundation::unix::{
     lock::{try_acquire, FileLock, LockAttempt, LockMode},
 };
 pub use leases::{LeaseClock, LeasePolicy};
-use leases::{LeaseFacts, RuntimeLease};
+use leases::{LeaseDeadline, LeaseFacts, LeaseLimitState, RuntimeLease};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -120,6 +120,7 @@ pub struct Snapshot {
     state: State,
     vm: Option<VmBinding>,
     expires_wall_ms: Option<u64>,
+    lease_duration_ms: Option<u64>,
     spawn_intent: Option<VmBinding>,
 }
 
@@ -139,6 +140,9 @@ impl Snapshot {
     pub fn expires_wall_ms(&self) -> Option<u64> {
         self.expires_wall_ms
     }
+    pub fn lease_duration(&self) -> Option<std::time::Duration> {
+        self.lease_duration_ms.map(std::time::Duration::from_millis)
+    }
     pub fn spawn_intent(&self) -> Option<&VmBinding> {
         self.spawn_intent.as_ref()
     }
@@ -152,6 +156,7 @@ impl From<&Record> for Snapshot {
             state: record.state,
             vm: record.vm.clone(),
             expires_wall_ms: record.lease.as_ref().map(|lease| lease.expires_wall_ms),
+            lease_duration_ms: record.lease.as_ref().map(|lease| lease.duration_ms),
             spawn_intent: record.spawn_intent.clone(),
         }
     }
@@ -183,6 +188,7 @@ pub enum Reservation {
 pub struct Registry {
     root: ContainedDir,
     deadlines: std::sync::Mutex<std::collections::HashMap<Uuid, RuntimeLease>>,
+    lease_limit: std::sync::Mutex<LeaseLimitState>,
 }
 
 impl Registry {
@@ -193,6 +199,7 @@ impl Registry {
         Ok(Self {
             root,
             deadlines: std::sync::Mutex::new(std::collections::HashMap::new()),
+            lease_limit: std::sync::Mutex::new(LeaseLimitState::default()),
         })
     }
 

@@ -3,6 +3,151 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::Semaphore;
 
 #[tokio::test]
+async fn obsolete_policy_failure_cannot_cancel_current_validated_owner() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("ownership");
+    let owner = controller(&path);
+    let fixture = Fixture::new();
+    fixture.create_release.add_permits(1);
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([97; 32]);
+    owner
+        .create(
+            request,
+            cap.clone(),
+            LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+            Arc::new(fixture.clone()),
+        )
+        .await
+        .unwrap();
+    let obsolete = owner
+        .0
+        .registry
+        .publish_lease_limit(LeasePolicy::new(Duration::from_secs(5)).unwrap())
+        .unwrap();
+    owner
+        .0
+        .registry
+        .publish_lease_limit(LeasePolicy::new(Duration::from_secs(10)).unwrap())
+        .unwrap();
+    let corrupt = path.join(format!("{}.json", capsem_crypto::uuid_v4()));
+    std::fs::write(&corrupt, b"corrupt").unwrap();
+    assert!(owner.limit_worker(obsolete).await.is_err());
+    let work = owner.0.works.lock().await.get(&request).unwrap().clone();
+    assert!(!work.cancel.is_cancelled());
+    std::fs::remove_file(corrupt).unwrap();
+    fixture.cleanup_release.add_permits(1);
+    assert_eq!(owner.close(request, cap).await.unwrap().state(), State::Closed);
+}
+
+#[tokio::test]
+async fn invalid_host_policy_closes_original_owned_effects_without_client_authority() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = controller(&root.path().join("ownership"));
+    let fixture = Fixture::new();
+    fixture.create_release.add_permits(1);
+    fixture.cleanup_release.add_permits(1);
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([96; 32]);
+    let created = owner
+        .create(
+            request,
+            cap.clone(),
+            LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+            Arc::new(fixture.clone()),
+        )
+        .await
+        .unwrap();
+    owner.deny_lease_admission().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let snapshot = owner.inspect(request, cap.clone()).await.unwrap().unwrap();
+            if snapshot.state() == State::Closed {
+                assert_eq!(snapshot.generation(), created.generation());
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn tighter_policy_updates_expiry_worker_and_original_cleanup_without_a_claim() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = controller(&root.path().join("ownership"));
+    let fixture = Fixture::new();
+    fixture.create_release.add_permits(1);
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([93; 32]);
+    owner
+        .create(
+            request,
+            cap.clone(),
+            LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+            Arc::new(fixture.clone()),
+        )
+        .await
+        .unwrap();
+    assert!(
+        owner
+            .set_lease_limit(LeasePolicy::new(Duration::from_millis(40)).unwrap())
+            .now_or_never()
+            .is_none(),
+        "drop the polled reload waiter; its owned policy worker must continue"
+    );
+    tokio::time::timeout(Duration::from_secs(1), fixture.cleanup_entered.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    assert_eq!(
+        owner.inspect(request, cap.clone()).await.unwrap().unwrap().state(),
+        State::Closing
+    );
+    fixture.cleanup_release.add_permits(1);
+    assert_eq!(owner.close(request, cap).await.unwrap().state(), State::Closed);
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn stale_admission_or_claim_completion_cannot_overwrite_newer_tighter_timer() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = controller(&root.path().join("ownership"));
+    let fixture = Fixture::new();
+    fixture.create_release.add_permits(1);
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([94; 32]);
+    owner
+        .create(
+            request,
+            cap.clone(),
+            LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+            Arc::new(fixture.clone()),
+        )
+        .await
+        .unwrap();
+    let work = owner.0.works.lock().await.get(&request).unwrap().clone();
+    let before = work.deadline.borrow().unwrap();
+    owner
+        .set_lease_limit(LeasePolicy::new(Duration::from_secs(2)).unwrap())
+        .await
+        .unwrap();
+    let after = work.deadline.borrow().unwrap();
+    assert!(after.at < before.at);
+    assert!(after.revision > before.revision);
+    work.update_deadline(before);
+    assert_eq!(work.deadline.borrow().unwrap().at, after.at);
+    assert_eq!(work.deadline.borrow().unwrap().revision, after.revision);
+    fixture.cleanup_release.add_permits(1);
+    owner.close(request, cap).await.unwrap();
+}
+
+#[tokio::test]
 async fn ownership_lookup_keeps_live_intent_when_storage_disappears_and_checks_generation() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("ownership");
