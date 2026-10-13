@@ -34,6 +34,10 @@ impl Barriers {
                 batch.push(op);
                 false
             }
+            WriterMessage::WriteBatch(mut writes) => {
+                batch.append(&mut writes);
+                false
+            }
             WriterMessage::Flush(reply) => {
                 self.flushes.push(reply);
                 true

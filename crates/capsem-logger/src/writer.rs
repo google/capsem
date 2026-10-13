@@ -256,6 +256,10 @@ type RetainReply = tokio::sync::oneshot::Sender<Result<RetainOutcome, String>>;
 #[derive(Debug)]
 enum WriterMessage {
     Write(WriteEnvelope),
+    /// A producer batch that must reach the SQLite transaction as one unit.
+    /// Keeping the vector intact avoids rebuilding a protocol batch through
+    /// one channel send and one scheduler wakeup per row.
+    WriteBatch(Vec<WriteEnvelope>),
     /// Commit everything queued before this and report whether the disk flush
     /// happened.
     Flush(tokio::sync::oneshot::Sender<FlushOutcome>),
@@ -277,6 +281,18 @@ impl WriterMessage {
             op,
             commitment: Some(commitment),
         })
+    }
+
+    fn committed_batch(writes: Vec<(WriteOp, capsem_proto::ledger_commitment::LedgerCommitment)>) -> Self {
+        Self::WriteBatch(
+            writes
+                .into_iter()
+                .map(|(op, commitment)| WriteEnvelope {
+                    op,
+                    commitment: Some(commitment),
+                })
+                .collect(),
+        )
     }
 
     fn flush(reply: tokio::sync::oneshot::Sender<FlushOutcome>) -> Self {
@@ -387,17 +403,28 @@ impl DbWriter {
         Self::prepare_with_clock_and_codecs(path, capacity, now, ArchiveCodecs::default()).map(PreparedDbWriter::start)
     }
 
-    pub(crate) fn prepare_with_codecs(
+    pub(crate) fn prepare_with_capacities(
         path: &Path,
-        capacity: usize,
+        channel_capacity: usize,
+        batch_capacity: usize,
         codecs: ArchiveCodecs,
     ) -> rusqlite::Result<PreparedDbWriter> {
-        Self::prepare_with_clock_and_codecs(path, capacity, SystemTime::now, codecs)
+        Self::prepare_with_clock_and_capacities(path, channel_capacity, batch_capacity, SystemTime::now, codecs)
     }
 
     fn prepare_with_clock_and_codecs(
         path: &Path,
         capacity: usize,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
+        Self::prepare_with_clock_and_capacities(path, capacity, capacity, now, codecs)
+    }
+
+    fn prepare_with_clock_and_capacities(
+        path: &Path,
+        channel_capacity: usize,
+        batch_capacity: usize,
         now: LedgerClock,
         codecs: ArchiveCodecs,
     ) -> rusqlite::Result<PreparedDbWriter> {
@@ -407,7 +434,7 @@ impl DbWriter {
 
         let mut last_busy = None;
         for _ in 0..50 {
-            match Self::prepare_once(path, capacity, now, codecs.clone()) {
+            match Self::prepare_once(path, channel_capacity, batch_capacity, now, codecs.clone()) {
                 Ok(prepared) => return Ok(prepared),
                 Err(error) if is_sqlite_busy(&error) => {
                     last_busy = Some(error);
@@ -424,7 +451,8 @@ impl DbWriter {
 
     fn prepare_once(
         path: &Path,
-        capacity: usize,
+        channel_capacity: usize,
+        batch_capacity: usize,
         now: LedgerClock,
         codecs: ArchiveCodecs,
     ) -> rusqlite::Result<PreparedDbWriter> {
@@ -467,7 +495,12 @@ impl DbWriter {
         // scan of its rows.
         let tally = LedgerTally::restored(counters::load(&conn)?);
 
-        let (tx, rx) = writer_channel(schedule.capacity);
+        let batch_capacity = if batch_capacity == 0 {
+            DEFAULT_BATCH_CAPACITY
+        } else {
+            batch_capacity
+        };
+        let (tx, rx) = writer_channel(channel_capacity);
         let db_path = path.to_path_buf();
         let pending_body_bytes = Arc::new(AtomicU64::new(0));
         Ok(PreparedDbWriter {

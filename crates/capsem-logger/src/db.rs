@@ -276,7 +276,12 @@ impl DbHandle {
 
     pub(crate) fn prepare_with_codecs(path: &Path, codecs: ArchiveCodecs) -> rusqlite::Result<PreparedDbHandle> {
         let started = Instant::now();
-        let writer = DbWriter::prepare_with_codecs(path, capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY, codecs.clone())?;
+        let writer = DbWriter::prepare_with_capacities(
+            path,
+            capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY / capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY,
+            capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY,
+            codecs.clone(),
+        )?;
         // Reads go to the file, like every other handle's: the writer's
         // memory holds only rows it has not flushed, and SQLite's
         // `data_version` tells the reader when a flush landed.
@@ -780,6 +785,23 @@ impl DbHandle {
             .as_ref()
             .ok_or_else(|| "db handle is read-only; no writer is available".to_string())?;
         writer.write_committed(op, commitment).await?;
+        self.invalidate_after_write(affects_session_summary);
+        Ok(())
+    }
+
+    pub(crate) async fn write_committed_batch(
+        &self,
+        writes: Vec<(WriteOp, capsem_proto::ledger_commitment::LedgerCommitment)>,
+    ) -> DbResult<()> {
+        let affects_session_summary = writes
+            .iter()
+            .any(|(op, _)| !matches!(op, WriteOp::PolicyMutationEvent(_) | WriteOp::HostEvent(_)));
+        let writer = self
+            .inner
+            .writer
+            .as_ref()
+            .ok_or_else(|| "db handle is read-only; no writer is available".to_string())?;
+        writer.write_committed_batch(writes).await?;
         self.invalidate_after_write(affects_session_summary);
         Ok(())
     }

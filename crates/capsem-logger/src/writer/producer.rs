@@ -58,6 +58,24 @@ impl DbWriter {
             .map_err(|error| format!("db writer channel closed: {error}"))
     }
 
+    pub(crate) async fn write_committed_batch(
+        &self,
+        writes: Vec<(WriteOp, capsem_proto::ledger_commitment::LedgerCommitment)>,
+    ) -> Result<(), String> {
+        if self.remote.is_some() {
+            return Err("a remote ledger writer cannot accept prebuilt commitments".into());
+        }
+        if writes.is_empty() || writes.len() > capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY {
+            return Err("committed write batch is empty or exceeds its bound".into());
+        }
+        let Some(tx) = self.clone_sender() else {
+            return Err("db writer sender missing".to_string());
+        };
+        send_with_backpressure(&tx, WriterMessage::committed_batch(writes))
+            .await
+            .map_err(|error| format!("db writer channel closed: {error}"))
+    }
+
     /// Try to enqueue without blocking. Returns false when the queue is full or closed.
     pub fn try_write(&self, op: WriteOp) -> bool {
         let span = tracing::debug_span!(

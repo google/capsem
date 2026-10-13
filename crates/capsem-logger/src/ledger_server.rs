@@ -156,21 +156,15 @@ impl LedgerServer {
                                 .map_err(|_| "ledger admission batch count exceeds u16".to_string());
                             match count {
                                 Ok(count) => {
-                                    let mut failure = None;
-                                    for admission in admissions {
-                                        let (event, commitment) = admission.into_parts();
-                                        if let Err(error) = self.db.write_committed(event, commitment).await {
-                                            failure = Some(storage(error));
-                                            break;
-                                        }
-                                        admission_state.last_accepted = admission_state
-                                            .last_accepted
-                                            .checked_add(1)
-                                            .ok_or_else(|| "ledger admission id exhausted".to_string())?;
-                                    }
-                                    let through_admission_id = admission_state.last_accepted;
+                                    let through_admission_id = first_admission_id
+                                        .checked_add(u64::from(count) - 1)
+                                        .ok_or_else(|| "ledger admission id exhausted".to_string())?;
+                                    let writes =
+                                        admissions.into_iter().map(|admission| admission.into_parts()).collect();
+                                    self.db.write_committed_batch(writes).await.map_err(storage)?;
+                                    admission_state.last_accepted = through_admission_id;
                                     drop(admission_state);
-                                    failure.map_or_else(|| Ok((first_admission_id, through_admission_id, count)), Err)
+                                    Ok((first_admission_id, through_admission_id, count))
                                 }
                                 Err(error) => Err(error),
                             }

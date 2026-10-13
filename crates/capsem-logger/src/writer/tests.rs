@@ -685,6 +685,21 @@ fn writer_channel_capacity_applies_backpressure() {
 }
 
 #[test]
+fn queued_write_batch_reaches_one_writer_transaction_batch() {
+    let mut barriers = Barriers::default();
+    let mut batch = Vec::new();
+    let writes = vec![
+        WriteEnvelope::plain(file_event_with_credential("/batch/one", None)),
+        WriteEnvelope::plain(file_event_with_credential("/batch/two", None)),
+    ];
+
+    assert!(!barriers.accept(WriterMessage::WriteBatch(writes), &mut batch));
+    assert_eq!(batch.len(), 2);
+    assert!(matches!(&batch[0].op, WriteOp::FileEvent(event) if event.path == "/batch/one"));
+    assert!(matches!(&batch[1].op, WriteOp::FileEvent(event) if event.path == "/batch/two"));
+}
+
+#[test]
 fn brokered_substitution_persists_reference_and_not_secret() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("broker.db");
