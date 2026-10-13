@@ -19,6 +19,8 @@ pub use exposures::*;
 mod images;
 pub use images::*;
 mod lifecycle;
+mod managed_sessions;
+pub use managed_sessions::*;
 pub mod stream;
 pub use lifecycle::*;
 mod execution;

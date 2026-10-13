@@ -758,6 +758,7 @@ name = "capsem-api"
 version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
+ "capsem-crypto",
  "serde",
  "serde_json",
  "utoipa",
