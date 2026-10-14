@@ -37,6 +37,7 @@ fn completing_a_flushed_exec_commits_its_count_with_the_row() {
         None,
         &mut bodies,
         tally.counters(),
+        true,
     )
     .unwrap();
     assert_eq!(on_disk(&path).0.exec.started, 1);

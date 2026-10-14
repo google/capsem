@@ -809,7 +809,7 @@ fn writer_loop(
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.
     loop {
-        let first_message = if dirty_ops == 0 {
+        let first_message = if dirty_ops == 0 && !bodies.has_work() {
             rx.recv().ok()
         } else {
             match rx.recv_timeout(interval.saturating_sub(last_disk_flush.elapsed())) {
@@ -822,7 +822,10 @@ fn writer_loop(
                         db_path.as_deref(),
                         &mut bodies,
                         tally.counters(),
-                        dirty_ops,
+                        FlushRequest {
+                            pending_ops: dirty_ops,
+                            wait_for_body_sync: false,
+                        },
                     ) {
                         warn!(error = %error, "db interval flush failed");
                     } else {
@@ -907,7 +910,10 @@ fn writer_loop(
                 db_path.as_deref(),
                 &mut bodies,
                 tally.counters(),
-                dirty_ops,
+                FlushRequest {
+                    pending_ops: dirty_ops,
+                    wait_for_body_sync: barriers.waiting(),
+                },
             ) {
                 Ok(()) => {
                     dirty_ops = 0;
@@ -947,7 +953,10 @@ fn writer_loop(
         db_path.as_deref(),
         &mut bodies,
         tally.counters(),
-        dirty_ops,
+        FlushRequest {
+            pending_ops: dirty_ops,
+            wait_for_body_sync: true,
+        },
     ) {
         warn!(error = %error, "db shutdown dirty table flush failed");
         // There is no next flush to retry into, so the bodies still waiting
@@ -1001,6 +1010,7 @@ fn flush_dirty_tables_to_disk(
     db_path: Option<&Path>,
     bodies: &mut BodyArchive,
     counters: &LedgerCounters,
+    wait_for_body_sync: bool,
 ) -> rusqlite::Result<FlushTimings> {
     if dirty_tables.is_empty() && !bodies.has_work() {
         return Ok(FlushTimings::default());
@@ -1011,11 +1021,11 @@ fn flush_dirty_tables_to_disk(
     // between costs unreferenced bytes, never a row pointing past EOF.
     let started = Instant::now();
     bodies.flush_segment();
+    bodies.prepare_index_rows(wait_for_body_sync);
     let archive_ms = started.elapsed().as_secs_f64() * 1000.0;
     let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
     let tx = conn.unchecked_transaction()?;
-    bodies.commit_index_rows(&tx)?;
-    let index_finished = Instant::now();
+    bodies.commit_prepared_index_rows(&tx)?;
     // Injected where a real flush failure lands: inside the transaction, with
     // the archive's index rows already written into it. Everything here rolls
     // back together, and the retry has to bring the bodies back with the rows.
@@ -1057,6 +1067,12 @@ struct FlushTimings {
     commit_ms: f64,
 }
 
+#[derive(Clone, Copy)]
+struct FlushRequest {
+    pending_ops: usize,
+    wait_for_body_sync: bool,
+}
+
 fn flush_dirty_tables_to_disk_recorded(
     conn: &Connection,
     dirty_tables: &mut BTreeSet<&'static str>,
@@ -1064,11 +1080,19 @@ fn flush_dirty_tables_to_disk_recorded(
     db_path: Option<&Path>,
     bodies: &mut BodyArchive,
     counters: &LedgerCounters,
-    pending_ops: usize,
+    request: FlushRequest,
 ) -> rusqlite::Result<()> {
     let table_count = dirty_tables.len();
     let started = Instant::now();
-    let result = flush_dirty_tables_to_disk(conn, dirty_tables, flush_watermarks, db_path, bodies, counters);
+    let result = flush_dirty_tables_to_disk(
+        conn,
+        dirty_tables,
+        flush_watermarks,
+        db_path,
+        bodies,
+        counters,
+        request.wait_for_body_sync,
+    );
     let elapsed = started.elapsed();
     let status = if result.is_ok() { "ok" } else { "error" };
     let timings = result.as_ref().ok();
@@ -1083,7 +1107,7 @@ fn flush_dirty_tables_to_disk_recorded(
         table_copy_ms,
         counter_snapshot_ms,
         commit_ms,
-        pending_ops,
+        pending_ops = request.pending_ops,
         table_count,
         status,
         "db disk flush completed"
@@ -1095,7 +1119,7 @@ fn flush_dirty_tables_to_disk_recorded(
             table_copy_ms,
             counter_snapshot_ms,
             commit_ms,
-            pending_ops,
+            pending_ops = request.pending_ops,
             table_count,
             status,
             "db disk flush exceeded its configured interval"

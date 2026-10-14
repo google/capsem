@@ -5,15 +5,17 @@
 //! on disk. The order is the whole point: every disk flush writes one segment
 //! of the open block -- everything staged since the last one -- and syncs it
 //! *before* the transaction that inserts its rows and updates its
-//! `body_blocks` row commits. A crash between the two leaves unreferenced
+//! `body_blocks` row commits. Periodic flushes perform that device sync on a
+//! small dedicated thread so the ledger can keep accepting events, while
+//! explicit barriers wait for it. A crash between the two leaves unreferenced
 //! bytes at the end of the file, which cost their bytes and nothing else; the
 //! reverse order would leave index rows pointing past EOF, which is a ledger
 //! that lies.
 //!
 //! A sync-flushed segment leaves the block open, so later bodies reuse its
 //! dictionary. A block closes at its target size, `MAX_BLOCK_AGE`, shutdown,
-//! or retention. Compression runs synchronously on this writer thread; each
-//! flush costs only the sync point.
+//! or retention. Compression runs synchronously on this writer thread; only
+//! the durability syscall leaves it.
 //!
 //! Identical bytes within the open block are stored once. An event that
 //! matches three rules archives its payload three times over, and the
@@ -27,11 +29,13 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::{blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
 use capsem_archive::{
-    ArchiveCodecs, ArchiveError, ArchiveId, BodyLogWriter, BodyRef, FileHeader, GenerationId, SegmentWritten,
+    ArchiveCodecs, ArchiveError, ArchiveId, BodyLogSync, BodyLogWriter, BodyRef, FileHeader, GenerationId,
+    SegmentWritten,
 };
 use capsem_foundation::unix::contained::{ContainedDir, EntryKind};
 use capsem_foundation::unix::fs::{durable_sync_directory, ensure_private_dir};
@@ -103,6 +107,68 @@ struct BodyIndexRow {
     created_at: String,
 }
 
+type AppendedSegment = (SegmentWritten, Vec<BodyIndexRow>);
+
+struct ArchiveSyncWorker {
+    requests: Option<mpsc::SyncSender<()>>,
+    completions: mpsc::Receiver<Result<(), String>>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ArchiveSyncWorker {
+    fn start(sync: BodyLogSync) -> std::io::Result<Self> {
+        let (requests, work) = mpsc::sync_channel(1);
+        let (completed, completions) = mpsc::sync_channel(1);
+        let join = std::thread::Builder::new()
+            .name("capsem-archive-sync".into())
+            .stack_size(128 * 1024)
+            .spawn(move || {
+                while work.recv().is_ok() {
+                    let result = sync.sync().map_err(|error| error.to_string());
+                    if completed.send(result).is_err() {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requests: Some(requests),
+            completions,
+            join: Some(join),
+        })
+    }
+
+    fn request(&self) -> Result<(), String> {
+        self.requests
+            .as_ref()
+            .ok_or_else(|| "archive sync worker stopped".to_string())?
+            .send(())
+            .map_err(|_| "archive sync worker stopped".to_string())
+    }
+
+    fn try_complete(&self) -> Option<Result<(), String>> {
+        match self.completions.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err("archive sync worker stopped".into())),
+        }
+    }
+
+    fn complete(&self) -> Result<(), String> {
+        self.completions
+            .recv()
+            .map_err(|_| "archive sync worker stopped".to_string())?
+    }
+}
+
+impl Drop for ArchiveSyncWorker {
+    fn drop(&mut self) {
+        self.requests.take();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
 /// The writer thread's archive: one `session.bodies` beside `session.db`.
 pub(super) struct BodyArchive {
     db_path: Option<PathBuf>,
@@ -133,9 +199,15 @@ pub(super) struct BodyArchive {
     block_spans: HashMap<String, BodyRef>,
     /// Sequence number the next staged row takes.
     next_seq: u64,
-    /// Segments on disk, each with the rows it made placeable, waiting for
-    /// those rows to commit.
-    appended: Vec<(SegmentWritten, Vec<BodyIndexRow>)>,
+    /// Segments written through the page cache and waiting to start a device
+    /// sync.
+    appended: Vec<AppendedSegment>,
+    /// Segments whose device sync completed and whose rows may enter SQLite.
+    synced: Vec<AppendedSegment>,
+    /// Segments covered by the durability barrier currently running.
+    syncing: Option<Vec<AppendedSegment>>,
+    /// Lazily-created helper that keeps fdatasync off the admission thread.
+    sync_worker: Option<ArchiveSyncWorker>,
     /// Test builds only: make the next segment write fail the way a full
     /// disk does. Injected at this seam rather than inside the archive
     /// writer because what is under test is what *this* type does once the
@@ -457,6 +529,9 @@ impl BodyArchive {
             block_spans: HashMap::new(),
             next_seq: 0,
             appended: Vec::new(),
+            synced: Vec::new(),
+            syncing: None,
+            sync_worker: None,
             #[cfg(test)]
             fail_next_append: false,
             #[cfg(test)]
@@ -628,6 +703,7 @@ impl BodyArchive {
     /// written goes with it. Every caller has already counted the rows that
     /// named those bytes.
     fn retire_writer(&mut self) {
+        self.sync_worker = None;
         if let Some(writer) = self.writer.take() {
             writer.abandon();
         }
@@ -648,6 +724,7 @@ impl BodyArchive {
 
     pub(super) fn adopt_generation(&mut self, writer: BodyLogWriter) {
         debug_assert!(!self.has_work());
+        self.sync_worker = None;
         self.writer = Some(writer);
         self.block_spans.clear();
         self.block_opened_at = None;
@@ -668,6 +745,14 @@ impl BodyArchive {
         self.reused.retain(|row| row.seq < mark);
         for (_, rows) in &mut self.appended {
             rows.retain(|row| row.seq < mark);
+        }
+        for (_, rows) in &mut self.synced {
+            rows.retain(|row| row.seq < mark);
+        }
+        if let Some(syncing) = &mut self.syncing {
+            for (_, rows) in syncing {
+                rows.retain(|row| row.seq < mark);
+            }
         }
     }
 
@@ -690,7 +775,12 @@ impl BodyArchive {
     /// were dropped by a rollback -- they still have to reach the file, or the
     /// writer closes holding them.
     pub(super) fn has_work(&self) -> bool {
-        !self.appended.is_empty() || !self.staged.is_empty() || !self.reused.is_empty() || self.pending_bytes() > 0
+        !self.appended.is_empty()
+            || !self.synced.is_empty()
+            || self.syncing.is_some()
+            || !self.staged.is_empty()
+            || !self.reused.is_empty()
+            || self.pending_bytes() > 0
     }
 
     /// Write everything staged since the last flush as one segment of the
@@ -758,7 +848,102 @@ impl BodyArchive {
         }
     }
 
-    /// Record every written segment's block and the index rows it holds.
+    /// Start or collect the durability work that makes index rows safe.
+    ///
+    /// Periodic flushes poll without waiting so archive storage latency never
+    /// blocks new ledger admissions. Explicit barriers and shutdown wait for
+    /// every segment, preserving their read-after-write and durability
+    /// contracts.
+    pub(super) fn prepare_index_rows(&mut self, wait: bool) {
+        if !self.finish_archive_sync(wait) {
+            return;
+        }
+        while self.syncing.is_none() && !self.appended.is_empty() {
+            if !self.start_archive_sync() || !wait || !self.finish_archive_sync(true) {
+                return;
+            }
+        }
+    }
+
+    fn start_archive_sync(&mut self) -> bool {
+        if self.appended.is_empty() {
+            return true;
+        }
+        if self.writer.is_none() {
+            self.abandon_uncommitted("poisoned");
+            return false;
+        }
+        if self.sync_worker.is_none() {
+            let started = self
+                .writer
+                .as_ref()
+                .expect("writer checked above")
+                .sync_handle()
+                .map_err(|error| error.to_string())
+                .and_then(|sync| ArchiveSyncWorker::start(sync).map_err(|error| error.to_string()));
+            match started {
+                Ok(worker) => self.sync_worker = Some(worker),
+                Err(error) => {
+                    warn!(error, "session body archive sync worker could not start");
+                    self.abandon_uncommitted("sync");
+                    self.retire_writer();
+                    return false;
+                }
+            }
+        }
+        if let Err(error) = self.sync_worker.as_ref().expect("worker created above").request() {
+            warn!(error, "session body archive sync worker stopped");
+            self.abandon_uncommitted("sync");
+            self.retire_writer();
+            return false;
+        }
+        self.syncing = Some(std::mem::take(&mut self.appended));
+        true
+    }
+
+    fn finish_archive_sync(&mut self, wait: bool) -> bool {
+        if self.syncing.is_none() {
+            return true;
+        }
+        let result = if wait {
+            Some(
+                self.sync_worker
+                    .as_ref()
+                    .expect("an in-flight sync has a worker")
+                    .complete(),
+            )
+        } else {
+            self.sync_worker
+                .as_ref()
+                .expect("an in-flight sync has a worker")
+                .try_complete()
+        };
+        let Some(result) = result else {
+            return true;
+        };
+        let syncing = self.syncing.take().expect("the completed sync was in flight");
+        match result {
+            Ok(()) => {
+                self.synced.extend(syncing);
+                #[cfg(test)]
+                self.steps.push("sync");
+                true
+            }
+            Err(error) => {
+                let dropped_segments = syncing.len();
+                self.appended.extend(syncing);
+                warn!(
+                    error,
+                    dropped_segments, "session body archive could not be flushed; no further bodies will be stored"
+                );
+                self.abandon_uncommitted("sync");
+                self.retire_writer();
+                false
+            }
+        }
+    }
+
+    /// Record every durably-written segment's block and the index rows it holds.
     ///
     /// Runs inside the caller's transaction, after `flush_segment` put the
     /// bytes in the file. Nothing here can make a row visible before its
@@ -786,11 +971,12 @@ impl BodyArchive {
     /// beside it and the commit after it; all three roll back every row, and
     /// the next flush retries these with them.
     pub(super) fn commit_index_rows(&mut self, conn: &Connection) -> rusqlite::Result<()> {
-        if self.appended.is_empty() && self.reused.is_empty() {
-            return Ok(());
-        }
-        let started = Instant::now();
-        if !self.appended.is_empty() && !self.sync_appended_segments() {
+        self.prepare_index_rows(true);
+        self.commit_prepared_index_rows(conn)
+    }
+
+    pub(super) fn commit_prepared_index_rows(&mut self, conn: &Connection) -> rusqlite::Result<()> {
+        if self.synced.is_empty() && self.reused.is_empty() {
             return Ok(());
         }
         let synced = Instant::now();
@@ -800,11 +986,11 @@ impl BodyArchive {
         #[cfg(test)]
         self.steps.push("commit");
         let sealed_at = format_timestamp((self.now)());
-        for (segment, _) in &self.appended {
+        for (segment, _) in &self.synced {
             upsert_block(conn, segment, &sealed_at)?;
         }
         let mut committed_end = None;
-        for (segment, _) in &self.appended {
+        for (segment, _) in &self.synced {
             let end = segment.block_offset.checked_add(segment.disk_len).ok_or_else(|| {
                 rusqlite::Error::InvalidParameterName("archive committed extent overflows u64".into())
             })?;
@@ -821,56 +1007,43 @@ impl BodyArchive {
                 [committed_end],
             )?;
         }
-        let blocks_finished = Instant::now();
-        index_batch::insert(
-            conn,
-            self.appended.iter().flat_map(|(_, rows)| rows).chain(&self.reused),
-        )?;
-        let rows_finished = Instant::now();
-        tracing::debug!(
-            target: "capsem.db",
-            archive_sync_ms = synced.duration_since(started).as_secs_f64() * 1000.0,
-            index_sql_ms = synced.elapsed().as_secs_f64() * 1000.0,
-            block_sql_ms = blocks_finished.duration_since(synced).as_secs_f64() * 1000.0,
-            row_sql_ms = rows_finished.duration_since(blocks_finished).as_secs_f64() * 1000.0,
-            segments = self.appended.len(),
-            index_rows = self.appended.iter().map(|(_, rows)| rows.len()).sum::<usize>() + self.reused.len(),
-            "db archive index flushed"
-        );
+        for row in self.synced.iter().flat_map(|(_, rows)| rows).chain(&self.reused) {
+            execute_cached(
+                conn,
+                "INSERT OR REPLACE INTO event_body_blobs (
+                    event_id, event_type, source_table, direction, content_type,
+                    original_bytes, stored_bytes, truncated, body_hash,
+                    block_offset, body_offset, body_len,
+                    trace_id, turn_id, created_at
+                 )
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                params![
+                    &row.event_id,
+                    row.event_type,
+                    row.source_table,
+                    row.direction,
+                    &row.content_type,
+                    row.original_bytes,
+                    row.stored_bytes,
+                    i64::from(row.truncated),
+                    &row.body_hash,
+                    row.block_offset as i64,
+                    row.body_offset,
+                    row.stored_bytes,
+                    &row.trace_id,
+                    &row.turn_id,
+                    &row.created_at,
+                ],
+            )?;
+        }
         Ok(())
     }
 
     /// The transaction that `commit_index_rows` wrote into has committed, so
     /// those segments are indexed and this archive is done with them.
     pub(super) fn index_rows_committed(&mut self) {
-        self.appended.clear();
+        self.synced.clear();
         self.reused.clear();
-    }
-
-    /// Flush the written segments to the device before their rows commit.
-    /// `false` when the flush failed and the rows must not be written.
-    fn sync_appended_segments(&mut self) -> bool {
-        let Some(writer) = self.writer.as_mut() else {
-            // The writer is already gone -- an earlier write or flush gave
-            // up -- so these segments will never be vouched for. Dropping them
-            // is the same fail-closed answer, and keeping them would leave
-            // every later flush opening a transaction to do nothing with.
-            self.abandon_uncommitted("poisoned");
-            return false;
-        };
-        if let Err(error) = writer.sync() {
-            warn!(
-                error = %error,
-                dropped_segments = self.appended.len(),
-                "session body archive could not be flushed; no further bodies will be stored"
-            );
-            self.abandon_uncommitted("sync");
-            self.retire_writer();
-            return false;
-        }
-        #[cfg(test)]
-        self.steps.push("sync");
-        true
     }
 
     /// Durability barrier for session close. The block was closed and its
@@ -888,9 +1061,17 @@ impl BodyArchive {
     /// and the rows of bytes not yet written are equally unreachable once the
     /// archive stops vouching for its own file.
     pub(super) fn abandon_uncommitted(&mut self, reason: &'static str) {
-        let dropped: usize =
-            self.appended.iter().map(|(_, rows)| rows.len()).sum::<usize>() + self.staged.len() + self.reused.len();
+        let dropped: usize = self.appended.iter().map(|(_, rows)| rows.len()).sum::<usize>()
+            + self.synced.iter().map(|(_, rows)| rows.len()).sum::<usize>()
+            + self
+                .syncing
+                .as_ref()
+                .map_or(0, |segments| segments.iter().map(|(_, rows)| rows.len()).sum())
+            + self.staged.len()
+            + self.reused.len();
         self.appended.clear();
+        self.synced.clear();
+        self.syncing = None;
         self.staged.clear();
         self.reused.clear();
         self.drop_bodies(dropped, reason);
@@ -935,7 +1116,7 @@ impl BodyArchive {
     /// Segments written but not yet indexed.
     #[cfg(test)]
     pub(super) fn appended_len_for_tests(&self) -> usize {
-        self.appended.len()
+        self.appended.len() + self.synced.len() + self.syncing.as_ref().map_or(0, Vec::len)
     }
 
     /// The flush/commit steps this archive has taken, in order.

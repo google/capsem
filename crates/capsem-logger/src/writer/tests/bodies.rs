@@ -334,6 +334,38 @@ fn appended_blocks_are_flushed_before_their_index_rows_commit() {
     archive.sync();
 }
 
+/// A periodic flush may leave archive durability running in parallel with
+/// later admissions, but it must not publish the corresponding index rows
+/// until that durability work has completed.
+#[test]
+fn nonblocking_archive_sync_defers_index_rows_until_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("nonblocking-sync.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
+    archive.stage(
+        &conn,
+        body_blob("0f1f2f3f4f60", "a body synchronized away from admissions"),
+    );
+    archive.flush_segment();
+    archive.prepare_index_rows(false);
+    archive.commit_prepared_index_rows(&conn).unwrap();
+    archive.index_rows_committed();
+
+    let rows = || {
+        conn.query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get::<_, i64>(0))
+            .unwrap()
+    };
+    assert_eq!(rows(), 0, "an in-flight sync cannot publish its rows");
+
+    archive.commit_index_rows(&conn).unwrap();
+    archive.index_rows_committed();
+    assert_eq!(rows(), 1, "the row becomes eligible after the sync finishes");
+    assert_eq!(archive.steps_for_tests(), ["sync", "commit"]);
+}
+
 /// A body that cannot fit beside what the open block holds closes the block
 /// and retries, rather than failing or panicking. Two 10 MiB bodies cannot
 /// share a 16 MiB block, so they land in two.
