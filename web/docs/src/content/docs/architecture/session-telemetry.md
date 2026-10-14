@@ -5,7 +5,7 @@ sidebar:
   order: 20
 ---
 
-Every Capsem VM gets its own session ledger: a SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, and credential substitutions, and beside it a body archive (`session.bodies`) that holds the full request, response, tool, exec and security payloads those rows describe. The two files live in the session directory and follow the VM lifecycle; retained and forked VMs keep both for forensic review, and one without the other is not a ledger.
+Every Capsem VM gets its own session ledger: a SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, and credential substitutions, and beside it a body archive directory (`session.bodies/`) that holds the full request, response, tool, exec and security payloads those rows describe. The database and archive directory live in the session directory and follow the VM lifecycle; retained and forked VMs keep both for forensic review, and one without the other is not a ledger.
 
 The session ledger has no migrations. A ledger written by an older build fails to open, by name, instead of being upgraded in place.
 
@@ -346,8 +346,8 @@ AI provider API calls with parsed response metadata.
 
 ### event_body_blobs
 
-The index into `session.bodies`, the compressed block archive that holds full
-captured bodies: HTTP and model requests and responses, tool results, exec
+The index into the selected generation under `session.bodies/`, the compressed
+block archive that holds full captured bodies: HTTP and model requests and responses, tool results, exec
 stdout and stderr, and security rule payloads. The bytes are not in SQLite:
 each row names the block they sit in and their span inside it. The primary
 protocol tables keep compact display fields (2 KB previews) for table scans;
@@ -370,7 +370,7 @@ ledger requires both.
 | `stored_bytes` | INTEGER | Bytes actually archived, after the 10 MiB per-direction cap |
 | `truncated` | INTEGER | `1` when the persisted body hit the capture limit |
 | `body_hash` | TEXT | `blake3:*` hash of the **archived** bytes, so a read can verify what it got against the row that named it |
-| `block_offset` | INTEGER | Offset of the `session.bodies` block holding this body, keyed to `body_blocks` |
+| `block_offset` | INTEGER | Offset of the block in the selected archive generation, keyed to `body_blocks` |
 | `body_offset` | INTEGER | Offset of this body inside that block's inflated bytes |
 | `body_len` | INTEGER | Length of this body inside that block, always equal to `stored_bytes` |
 | `trace_id` | TEXT | Cross-table correlation ID |
@@ -394,13 +394,13 @@ preview and an archived body disagree, the archive is the ledger.
 
 ### body_blocks
 
-One row per block of `session.bodies`, so a reader seeks straight to a block
-instead of scanning the file. A block stays open across disk flushes and grows
+One row per block of the selected archive generation, so a reader seeks straight
+to a block instead of scanning the file. A block stays open across disk flushes and grows
 by one segment each, so its row is updated as it grows.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `block_offset` | INTEGER PK | Byte offset of the block's header in `session.bodies` |
+| `block_offset` | INTEGER PK | Byte offset of the block's header in the selected generation file |
 | `raw_len` | INTEGER | Inflated size of the block's committed segments |
 | `disk_len` | INTEGER | Committed extent of the block in the file, headers included |
 | `sealed_at` | TEXT | When the block's last segment was written; retention cuts by this |
@@ -639,7 +639,7 @@ graph LR
         CH["tokio mpsc channel"]
         WT["Dedicated writer thread<br/>(capsem-db-writer)"]
         DB["session.db<br/>(SQLite WAL)"]
-        BODIES["session.bodies<br/>(block archive)"]
+        BODIES["session.bodies/<br/>(archive generations)"]
     end
 
     MITM -->|"WriteOp::NetEvent<br/>WriteOp::ModelCall"| CH
@@ -653,16 +653,24 @@ graph LR
     WT -->|"bodies, one segment per flush"| BODIES
 ```
 
-The writer thread owns both files. A body is fed to the open block's
-compressor as its event is written; each disk flush appends what the block
-produced since the last one to `session.bodies` as a segment, syncs it, and
-only then commits the body's index row and the block's grown extent in
+The writer thread owns the database and archive directory. A body is fed to the
+open block's compressor as its event is written; each disk flush appends what
+the block produced since the last one to the selected generation file as a
+segment, syncs it, and only then commits the body's index row and the block's grown extent in
 `body_blocks`.
 
 ## Body archive
 
-`session.bodies` is append-only: a 16-byte file header, then blocks. A block
-is one raw-deflate stream: an 8-byte header (magic and codec), then segments.
+`session.bodies/` contains generation files named `g-<generation_id>.cbl`,
+where the generation ID is 32 hexadecimal digits. The database's single
+`archive_state` row selects the exact archive and generation identities,
+committed byte extent, and revision; readers never choose a file by its age.
+The ledger format is version 4, while the generation byte format is version 3.
+
+Each selected generation is append-only: an 80-byte header, then blocks.
+The header contains `CAPSEMBL`, version and flags, its length, 16-byte archive
+and generation identities, and a 32-byte BLAKE3 hash of the first 48 bytes.
+A block is one raw-deflate stream: an 8-byte header (magic and codec), then segments.
 Each disk flush sync-flushes the stream -- byte-aligned, dictionary kept -- and
 appends what it produced as a segment behind a 52-byte header (`raw_start`,
 `raw_len`, `comp_len` and the blake3 of the segment's raw bytes). The block
@@ -681,11 +689,11 @@ segment is refused rather than served as someone else's bytes. A reader never
 reads past the segment it needs, which is why another process can read a block
 the writer is still appending to.
 
-The writer checks at open that every block the index names is inside the file.
-If the index names bytes past the end of `session.bodies` -- a crash between
-retention's compaction and its index rewrite, or a `session.db` copied without
-its archive -- the session stores no further bodies and says so in its log;
-the stale rows fail their hash check instead of answering with the wrong bytes.
+Archive access verifies the selected generation's identity, committed extent,
+and block bounds. A missing or truncated generation, mismatched identity, or
+damaged bytes means a broken ledger and is refused. Copy a consistent database
+and its archive directory together; copying `session.db` alone loses the
+bodies its index names.
 
 | Access | What it returns |
 |--------|-----------------|
@@ -731,7 +739,8 @@ seek within it without Capsem code. It is streamed, not buffered.
 - At service start, failed-session directories older than the period are
   deleted.
 - When a persistent VM stops, its `capsem-process` drops the blocks sealed
-  before the cutoff, compacts `session.bodies`, and rewrites the index rows.
+  before the cutoff, compacts the archive generation, and rewrites the index rows
+  with the selected generation state.
   Only the process that owns the ledger's writes does this.
 - Ephemeral sessions are deleted whole and are not trimmed.
 
@@ -858,7 +867,7 @@ The `DbWriter` spawns a dedicated thread that owns the SQLite connection:
 
 This **block-then-drain** pattern batches writes for efficiency while keeping the async callers non-blocking. The channel has configurable backpressure capacity.
 
-SQLite pragmas: WAL journal mode, NORMAL synchronous. Text fields are defensively capped at 256 KB, headers at 16 KB and display previews at 2 KB; full bodies go to the archive, capped at 10 MiB per direction.
+SQLite writer pragmas: WAL journal mode, FULL synchronous. Text fields are defensively capped at 256 KB, headers at 16 KB and display previews at 2 KB; full bodies go to the archive, capped at 10 MiB per direction.
 
 **Drop order is critical:** `Drop::drop()` takes `tx` before joining the thread. Without this, the join would deadlock (thread waits for all senders to drop, but `tx` drops after the join).
 
@@ -952,19 +961,19 @@ projection.
 
 | Property | Value |
 |----------|-------|
-| Location | `~/.capsem/run/sessions/{id}/` (ephemeral) or `~/.capsem/run/persistent/{name}/` (named): `session.db` and `session.bodies` |
+| Location | `~/.capsem/run/sessions/{id}/` (ephemeral) or `~/.capsem/run/persistent/{id}/` (named): `session.db` and `session.bodies/`; names are display labels |
 | Lifetime | Created at VM boot and retained or deleted with the VM's lifecycle state; a persistent VM's bodies are trimmed to the retention period at stop |
-| Access | Only the owning capsem-process writes, retention included; the service reads the files directly through SQLite's WAL |
+| Access | Only the owning capsem-process writes, retention included; the service reads through logger-owned database and archive APIs |
 | VirtioFS boundary | The ledger is outside the VirtioFS share; the guest cannot access it |
 | Concurrent access | WAL mode allows concurrent readers and one writer |
-| Fork behavior | `capsem fork` checkpoints and copies both files |
+| Fork behavior | `capsem fork` checkpoints and copies the database with its selected archive generation |
 
 ## Key source files
 
 | File | Purpose |
 |------|---------|
 | `capsem-logger/src/schema.rs` | Table DDL and pragmas |
-| `capsem-archive/src/format.rs` | The `session.bodies` byte format |
+| `capsem-archive/src/format.rs` | The archive generation byte format |
 | `capsem-archive/src/warc.rs` | WARC record writer |
 | `capsem-logger/src/db/bodies.rs` | `read_body`, `read_bodies`, retention entry point |
 | `capsem-logger/src/db/warc_export.rs` | Session-to-WARC mapping |
