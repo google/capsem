@@ -33,7 +33,7 @@ from helpers.service import (
     vm_session_db_path,
     vm_session_dir,
 )
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import (
     HERMETIC_OPENAI_PRICED_MODEL,
@@ -182,15 +182,11 @@ class ModelClientEnv:
 
     def settle_ledger(self) -> Path:
         """Drain every producer before an exact direct-ledger assertion."""
-        db_path = self.db_path
-        stopped = self.client.post(
-            f"/vms/{self.session_id}/stop",
-            {},
-            timeout=60,
+        return stop_session_for_ledger_read(
+            self.client,
+            self.session_id,
+            self.db_path,
         )
-        assert stopped == {"success": True, "persistent": True}, stopped
-        assert db_path.exists(), db_path
-        return db_path
 
 
 @pytest.fixture
