@@ -183,8 +183,11 @@ maximum_count = 10
 description = "Current assembled VM runtime view consumed by local shells and packaging."
 scope = "disk"
 path = "target/assets"
-warm_size_bytes = 4294967296 # 4 GiB
-max_size_bytes = 8589934592 # 8 GiB
+# OCI test tooling lives in test-images. The current assembled view, including
+# legacy aliases, uses 3.2 GiB; retain 4 GiB and transfer the other 4 GiB to
+# fixture retention without raising the total budget or lowering headroom.
+warm_size_bytes = 2147483648 # 2 GiB
+max_size_bytes = 4294967296 # 4 GiB
 prune_strategy = "none"
 maximum_age_hours = 336
 
@@ -226,8 +229,11 @@ scope = "disk"
 # digest land in the same entry, so the harness pulls a pinned image once per
 # machine rather than once per private checkout. An arm64 layout is ~430 MB.
 path = "target/tests/images"
-warm_size_bytes = 1073741824 # 1 GiB
-max_size_bytes = 2147483648 # 2 GiB
+# A pinned 0.7 debug fixture is 1.15 GiB including its prepared EROFS. Retain
+# the four-generation working set below; 1 GiB could not retain even one and
+# an enforcement run discarded every fixture after crossing the old 2 GiB cap.
+warm_size_bytes = 5368709120 # 5 GiB
+max_size_bytes = 6442450944 # 6 GiB
 prune_strategy = "lru"
 maximum_age_hours = 720
 maximum_count = 4

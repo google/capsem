@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Test-image cache retention keeps the OCI and prepared EROFS working set for
+  concurrent checkouts instead of reclaiming every fixture during enforcement.
+
 - Development builds optimize SQLite, its adapter and the ledger writer, and
   archive index flushes reuse their prepared statement to reduce HTTP completion
   stalls under load.
