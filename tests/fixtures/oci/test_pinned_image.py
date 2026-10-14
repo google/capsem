@@ -44,7 +44,7 @@ def test_private_ghcr_pin_uses_the_existing_github_login(monkeypatch):
         'Bearer realm="https://ghcr.io/token",service="ghcr.io"'
     )
 
-    class Client:
+    class Client(pinned_image._Registry):
         def __init__(self):
             self.calls = []
 
