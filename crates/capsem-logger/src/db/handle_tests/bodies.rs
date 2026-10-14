@@ -708,18 +708,22 @@ async fn a_rejected_op_does_not_leave_the_archive_holding_a_block() {
         credential_ref: Some("not-a-credential-reference".into()),
     }];
     db.write(WriteOp::ModelCall(call)).await.expect("write is accepted");
-    db.flush().await.expect("flush");
+    let error = db
+        .flush()
+        .await
+        .expect_err("the rejected row must surface at the barrier");
+    assert_eq!(error, "db rejected 1 accepted write operations");
     drop(db);
 
     let reader = DbHandle::open_external_reader(&p).expect("reopen the ledger");
     reader.ready().await.expect("the ledger is still sound");
     // The block reached the file: a writer that closed still holding it
-    // would leave the archive at its bare 16-byte header, and the archive's
+    // would leave the archive at its bare header, and the archive's
     // own drop assertion -- which the writer thread swallows on join -- would
     // be the only other sign.
     let archive = std::fs::metadata(archive_path(&p)).expect("stat archive");
     assert!(
-        archive.len() > 16,
+        archive.len() > capsem_archive::FILE_HEADER_BYTES as u64,
         "the rejected op's bytes must be sealed at shutdown, not held; archive is {} bytes",
         archive.len()
     );

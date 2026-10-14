@@ -118,13 +118,36 @@ fn random_op(rng: &mut Rng, step: u64) -> Vec<WriteOp> {
     }
 }
 
-async fn write_session(db: &DbHandle, seed: u64, steps: u64, first_step: u64) {
+async fn write_session(db: &DbHandle, seed: u64, steps: u64, first_step: u64) -> usize {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+    let mut rejected = 0;
     for step in first_step..first_step + steps {
         for op in random_op(&mut rng, step) {
+            // These are the generator's two deliberately invalid fixtures,
+            // not a second implementation of the production validators.
+            rejected += usize::from(
+                matches!(
+                    &op,
+                    WriteOp::SubstitutionEvent(event) if event.outcome == "observed"
+                ) || matches!(&op, WriteOp::SecurityAskEvent(event) if event.ask_id == "not-hex"),
+            );
             db.write(op).await.unwrap();
         }
     }
+    rejected
+}
+
+async fn flush_session(db: &DbHandle, rejected: usize) {
+    let expected = if rejected == 0 {
+        Ok(())
+    } else {
+        Err(format!("db rejected {rejected} accepted write operations"))
+    };
+    assert_eq!(
+        db.flush().await,
+        expected,
+        "flush must report every deliberately rejected fixture"
+    );
 }
 
 async fn assert_snapshot_matches_rows(path: &Path, context: &str) -> LedgerCounters {
@@ -142,8 +165,8 @@ async fn random_sessions_match_the_rows_they_wrote() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let db = DbHandle::open(&path).unwrap();
-        write_session(&db, seed, 120, 0).await;
-        db.flush().await.unwrap();
+        let rejected = write_session(&db, seed, 120, 0).await;
+        flush_session(&db, rejected).await;
         seen.push(assert_snapshot_matches_rows(&path, &format!("seed {seed}")).await);
     }
     // Agreement on empty sections proves nothing. Every counter the
@@ -176,15 +199,15 @@ async fn a_reopened_ledger_resumes_counting_where_it_left_off() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
     let db = DbHandle::open(&path).unwrap();
-    write_session(&db, 7, 80, 0).await;
-    db.flush().await.unwrap();
+    let rejected = write_session(&db, 7, 80, 0).await;
+    flush_session(&db, rejected).await;
     drop(db);
 
     let db = DbHandle::open(&path).unwrap();
     // Exec ids restart with the process; a completion must not reach a start
     // an earlier writer left behind, and must not be counted as if it did.
-    write_session(&db, 8, 80, 1_000).await;
-    db.flush().await.unwrap();
+    let rejected = write_session(&db, 8, 80, 1_000).await;
+    flush_session(&db, rejected).await;
     assert_snapshot_matches_rows(&path, "after reopen").await;
 }
 
@@ -194,8 +217,8 @@ async fn a_rolled_back_flush_leaves_the_snapshot_with_its_rows() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
     let db = DbHandle::open(&path).unwrap();
-    write_session(&db, 3, 60, 0).await;
-    db.flush().await.unwrap();
+    let rejected = write_session(&db, 3, 60, 0).await;
+    flush_session(&db, rejected).await;
     let before = DbHandle::open_external_reader(&path)
         .unwrap()
         .ledger_counters()
@@ -204,7 +227,8 @@ async fn a_rolled_back_flush_leaves_the_snapshot_with_its_rows() {
 
     crate::writer::fail_disk_flushes_for_path_for_tests(&path, 1);
     write_session(&db, 4, 60, 500).await;
-    assert!(db.flush().await.is_err(), "the injected flush failure must surface");
+    let error = db.flush().await.expect_err("the injected flush failure must surface");
+    assert!(error.starts_with("db dirty table flush failed:"), "{error}");
     // Neither the rows nor the snapshot reached the disk.
     assert_snapshot_matches_rows(&path, "after the failed flush").await;
     let unchanged = DbHandle::open_external_reader(&path)
@@ -225,15 +249,15 @@ async fn a_fork_carries_the_snapshot_of_the_rows_it_copied() {
     let dst = tempfile::tempdir().unwrap();
     let path = src.path().join("session.db");
     let db = DbHandle::open(&path).unwrap();
-    write_session(&db, 11, 100, 0).await;
-    db.flush().await.unwrap();
+    let rejected = write_session(&db, 11, 100, 0).await;
+    flush_session(&db, rejected).await;
     snapshot_session_ledger(src.path(), dst.path()).unwrap();
     assert_snapshot_matches_rows(&dst.path().join("session.db"), "fork").await;
 
     // The fork keeps counting from the copy, not from zero.
     let forked = DbHandle::open(&dst.path().join("session.db")).unwrap();
-    write_session(&forked, 12, 40, 2_000).await;
-    forked.flush().await.unwrap();
+    let rejected = write_session(&forked, 12, 40, 2_000).await;
+    flush_session(&forked, rejected).await;
     assert_snapshot_matches_rows(&dst.path().join("session.db"), "fork after writes").await;
 }
 
