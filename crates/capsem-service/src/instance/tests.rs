@@ -89,14 +89,13 @@ async fn normal_native_exit_persists_retirement_before_next_host_boot_resume() {
     let generation = capsem_crypto::uuid_v4();
     let binding = capsem_core::managed_sessions::VmBinding::new("receipt-vm".into(), generation).unwrap();
     persist_spawn_identity(&session, binding.id(), generation).unwrap();
-    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    let mut command = crate::tests::isolated_test_command(std::env::current_exe().unwrap());
     command
         .args([
             "--exact",
             "managed_sessions::tests::recovery_native_child_fixture",
             "--nocapture",
         ])
-        .env_clear()
         .env("CAPSEM_TEST_RECOVERY_ROOT", &session)
         .env("CAPSEM_TEST_RECOVERY_BINDING", serde_json::to_string(&binding).unwrap())
         .stdin(std::process::Stdio::piped())
