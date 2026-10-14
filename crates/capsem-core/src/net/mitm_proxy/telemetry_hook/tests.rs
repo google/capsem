@@ -361,6 +361,49 @@ fn agy_cloudcode_stream_generate_content_is_a_model_call() {
 }
 
 #[test]
+fn vertex_ai_global_and_regional_gemini_paths_produce_model_calls_with_cost() {
+    let pricing = Arc::new(PricingTable::load());
+    let trace = Arc::new(Mutex::new(TraceState::new()));
+    let response = br#"{
+        "candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "STOP"}],
+        "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 50}
+    }"#;
+    let resp_stats = TelemetryResponseStats {
+        bytes: response.len() as u64,
+        preview: response.to_vec(),
+        max_body_capture: response.len(),
+    };
+    for (domain, path, expected_model, expected_stream) in [
+        (
+            "aiplatform.googleapis.com",
+            "/v1/projects/my-gcp-project/locations/global/publishers/google/models/gemini-2.5-flash:generateContent",
+            "gemini-2.5-flash",
+            false,
+        ),
+        (
+            "us-central1-aiplatform.googleapis.com",
+            "/v1beta1/projects/my-gcp-project/locations/us-central1/publishers/google/models/gemini-2.5-pro:streamGenerateContent",
+            "gemini-2.5-pro",
+            true,
+        ),
+    ] {
+        let mut req_ctx = anthropic_req_ctx();
+        req_ctx.domain = domain.into();
+        req_ctx.ai_provider = Some(ProviderKind::Google);
+        req_ctx.ai_protocol = Some(ModelProtocol::Google);
+        req_ctx.path = path.into();
+        req_ctx.request_body_stats = req_stats(br#"{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#);
+        let mc = maybe_build_model_call(&req_ctx, &resp_stats, &[], &pricing, &trace)
+            .expect("Vertex AI Gemini call should produce model telemetry");
+        assert_eq!(mc.provider, "google", "{domain} {path}");
+        assert_eq!(mc.protocol.as_deref(), Some("google"), "{domain} {path}");
+        assert_eq!(mc.model.as_deref(), Some(expected_model), "{domain} {path}");
+        assert_eq!(mc.stream, expected_stream, "{domain} {path}");
+        assert!(mc.estimated_cost_usd > 0.0, "{domain} {path}");
+    }
+}
+
+#[test]
 fn google_non_streaming_function_call_is_logged_as_model_tool_call() {
     let mut req_ctx = anthropic_req_ctx();
     req_ctx.domain = "daily-cloudcode-pa.googleapis.com".into();

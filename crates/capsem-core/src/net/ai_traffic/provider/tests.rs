@@ -45,6 +45,31 @@ fn route_google_gemini_generate() {
 }
 
 #[test]
+fn route_google_vertex_ai_v1_and_v1beta1() {
+    for path in [
+        "/v1/projects/my-gcp-project/locations/global/publishers/google/models/gemini-2.5-flash:generateContent",
+        "/v1/projects/my-gcp-project/locations/us-central1/publishers/google/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+        "/v1/projects/my-gcp-project/locations/us-central1/publishers/google/models/gemini-2.5-flash:countTokens",
+        "/v1beta1/projects/my-gcp-project/locations/global/publishers/google/models/gemini-2.5-flash:generateContent",
+        "/v1beta1/projects/my-gcp-project/locations/us-central1/publishers/google/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+    ] {
+        let (kind, _) = route_provider(path).unwrap_or_else(|| panic!("expected Google route for {path}"));
+        assert_eq!(kind, ModelProtocol::Google, "{path}");
+    }
+    assert!(route_provider("/v1/models").is_none());
+    assert!(route_provider("/v1/models/gpt-4o").is_none());
+    assert!(route_provider(
+        "/v1/projects/my-gcp-project/locations/global/publishers/google/models/gemini-2.5-flash:generateContentX"
+    )
+    .is_none());
+    assert!(route_provider(
+        "/v1/projects/my-gcp-project/locations/global/publishers/google/models/gemini-2.5-flash:generateContent/extra"
+    )
+    .is_none());
+    assert!(route_provider("/v1/projects/my-gcp-project/locations/global/endpoints/e:predict").is_none());
+}
+
+#[test]
 fn route_unknown_returns_none() {
     assert!(route_provider("/v2/something").is_none());
     assert!(route_provider("/health").is_none());
@@ -98,6 +123,22 @@ fn extract_model_gemini_stream() {
 fn extract_model_gemini_generate() {
     assert_eq!(
         extract_model_from_path("/v1beta/models/gemini-2.5-pro:generateContent"),
+        Some("gemini-2.5-pro".to_string())
+    );
+}
+
+#[test]
+fn extract_model_vertex_ai_paths() {
+    assert_eq!(
+        extract_model_from_path(
+            "/v1/projects/my-gcp-project/locations/global/publishers/google/models/gemini-2.5-flash:streamGenerateContent"
+        ),
+        Some("gemini-2.5-flash".to_string())
+    );
+    assert_eq!(
+        extract_model_from_path(
+            "/v1beta1/projects/my-gcp-project/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent"
+        ),
         Some("gemini-2.5-pro".to_string())
     );
 }

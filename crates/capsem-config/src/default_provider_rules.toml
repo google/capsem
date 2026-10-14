@@ -221,13 +221,18 @@ name = "Google AI"
 protocol = "google"
 url = "https://generativelanguage.googleapis.com/v1beta"
 listen_ports = [443]
-allowed_remote_targets = ["generativelanguage.googleapis.com:443", "daily-cloudcode-pa.googleapis.com:443"]
+allowed_remote_targets = [
+  "generativelanguage.googleapis.com:443",
+  "daily-cloudcode-pa.googleapis.com:443",
+  "aiplatform.googleapis.com:443",
+  "*-aiplatform.googleapis.com:443",
+]
 
 [ai.google.rules.http_gemini_api]
 name = "google_gemini_http_observed"
 action = "allow"
 detection_level = "informational"
-match = 'http.host.matches("(^|.*\.)(generativelanguage\.googleapis\.com|aistudio\.google\.com|gemini\.google\.com)$")'
+match = 'http.host.matches("(^|.*\.)(generativelanguage\.googleapis\.com|([a-z0-9-]+-)?aiplatform\.googleapis\.com|aistudio\.google\.com|gemini\.google\.com)$")'
 
 [ai.google.rules.http_googleapis]
 name = "googleapis_http_observed"

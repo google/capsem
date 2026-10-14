@@ -151,6 +151,32 @@ fn provider_detection_marks_undeclared_model_path_as_unknown_provider() {
 }
 
 #[test]
+fn builtin_endpoint_registry_identifies_vertex_ai_global_and_regional_targets() {
+    let registry = crate::net::policy_config::ProviderRuleProfile::builtin_defaults()
+        .endpoint_registry()
+        .expect("builtin registry");
+    for (domain, path) in [
+        (
+            "aiplatform.googleapis.com",
+            "/v1/projects/my-gcp-project/locations/global/publishers/google/models/gemini-2.5-flash:generateContent",
+        ),
+        (
+            "us-central1-aiplatform.googleapis.com",
+            "/v1beta1/projects/my-gcp-project/locations/us-central1/publishers/google/models/gemini-2.5-pro:streamGenerateContent",
+        ),
+    ] {
+        assert_eq!(
+            ai_identity_for_target_or_path(&registry, domain, 443, path),
+            ModelTrafficIdentity {
+                provider: Some(ProviderKind::Google),
+                protocol: Some(ModelProtocol::Google),
+            },
+            "{domain} {path}"
+        );
+    }
+}
+
+#[test]
 fn provider_identity_keeps_ollama_endpoint_owner_with_path_protocol() {
     let profile = crate::net::policy_config::ProviderRuleProfile::parse_toml(
         r#"

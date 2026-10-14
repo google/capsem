@@ -74,7 +74,7 @@ pub fn route_provider(path: &str) -> Option<(ModelProtocol, Box<dyn Provider>)> 
             ModelProtocol::Anthropic,
             Box::new(crate::net::interpreters::anthropic_interpreter::AnthropicProvider),
         ))
-    } else if path.starts_with("/v1beta/") {
+    } else if path.starts_with("/v1beta/") || is_vertex_gemini_path(path) {
         Some((
             ModelProtocol::Google,
             Box::new(crate::net::interpreters::google_interpreter::GoogleProvider),
@@ -89,6 +89,15 @@ pub fn route_provider(path: &str) -> Option<(ModelProtocol, Box<dyn Provider>)> 
     } else {
         None
     }
+}
+
+fn is_vertex_gemini_path(path: &str) -> bool {
+    let path_only = path.split_once('?').map_or(path, |(p, _)| p);
+    (path_only.starts_with("/v1/") || path_only.starts_with("/v1beta1/"))
+        && path_only.contains("/models/")
+        && (path_only.ends_with(":generateContent")
+            || path_only.ends_with(":streamGenerateContent")
+            || path_only.ends_with(":countTokens"))
 }
 
 /// Extract model name from a Gemini-style URL path.
