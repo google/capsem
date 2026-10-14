@@ -29,10 +29,10 @@ use std::collections::BTreeSet;
 use tokio::time::{Duration, Instant};
 
 /// How long a catalog read is reused before the next request reads it again.
-pub(crate) const CATALOG_REFRESH: Duration = Duration::from_secs(30 * 60);
+pub(crate) const CATALOG_REFRESH: Duration = Duration::from_secs(capsem_proto::CACHE_IMAGE_CATALOG_REFRESH_SECONDS);
 /// How long a failed read waits before the next request tries again, so an
 /// offline host does not pay a registry timeout on every request.
-pub(crate) const CATALOG_RETRY: Duration = Duration::from_secs(60);
+pub(crate) const CATALOG_RETRY: Duration = Duration::from_secs(capsem_proto::CACHE_IMAGE_CATALOG_RETRY_SECONDS);
 
 pub(crate) type CatalogFuture = Pin<Box<dyn Future<Output = anyhow::Result<(Digest, Catalog)>> + Send>>;
 

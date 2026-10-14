@@ -7,8 +7,6 @@ use crate::api;
 #[cfg(test)]
 mod tests;
 
-const UPDATE_CACHE_TTL_SECS: u64 = 24 * 3600;
-
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct UpdateCheckCache {
     #[serde(default)]
@@ -57,7 +55,7 @@ pub(super) fn update_status_response_from_paths(
     };
     let checked_at = cache.as_ref().map(|cache| cache.checked_at);
     let stale = checked_at
-        .map(|checked_at| now.saturating_sub(checked_at) > UPDATE_CACHE_TTL_SECS)
+        .map(|checked_at| now.saturating_sub(checked_at) > capsem_proto::CACHE_UPDATE_CHECK_TTL_SECONDS)
         .unwrap_or(true);
     let channel_url = cache
         .as_ref()

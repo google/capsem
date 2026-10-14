@@ -127,8 +127,14 @@ pub(crate) fn test_state(
         host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
         containers: Default::default(),
-        storage_diagnostics_cache: BoundedCache::new("service.storage_diagnostics", 256),
-        persistent_resume_state_cache: KeyedIdentityCache::new("service.persistent_resume", 256),
+        storage_diagnostics_cache: BoundedCache::new(
+            "service.storage_diagnostics",
+            capsem_proto::CACHE_SERVICE_STORAGE_DIAGNOSTICS_ENTRIES,
+        ),
+        persistent_resume_state_cache: KeyedIdentityCache::new(
+            "service.persistent_resume",
+            capsem_proto::CACHE_SERVICE_PERSISTENT_RESUME_ENTRIES,
+        ),
         asset_manifest_cache: IdentityCache::new("service.asset_manifest"),
         list_response_cache: IdentityCache::new("service.vm_list"),
         lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
