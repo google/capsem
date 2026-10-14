@@ -4,6 +4,9 @@
 mod credentials;
 mod document;
 pub use credentials::*;
+mod connections;
+pub use connections::*;
+mod identity;
 pub use document::{openapi, CONTRACT_VERSION};
 mod hypervisor;
 pub use hypervisor::*;

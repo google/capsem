@@ -46,18 +46,7 @@ impl<'de> Deserialize<'de> for ManagedOwnershipToken {
 
 /// The managed wire identity rule, shared by deserializers and SDK generation checks.
 pub fn validate_managed_request_id(value: &str) -> Result<(), &'static str> {
-    let bytes = value.as_bytes();
-    if bytes.len() != 36
-        || bytes[14] != b'4'
-        || !matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
-        || !bytes.iter().enumerate().all(|(index, byte)| {
-            if matches!(index, 8 | 13 | 18 | 23) {
-                *byte == b'-'
-            } else {
-                byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)
-            }
-        })
-    {
+    if !crate::identity::canonical_uuid(value) || value.as_bytes()[14] != b'4' {
         return Err("managed request id must be a canonical UUIDv4");
     }
     Ok(())
