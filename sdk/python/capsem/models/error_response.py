@@ -8,4 +8,5 @@ from .model_base import Model
 
 
 class ErrorResponse(Model):
+    code: StrictStr | None = None
     error: StrictStr
