@@ -109,12 +109,17 @@ pub(crate) async fn push_policy_to_running_instances(
                     None
                 }
                 // A VM that stopped since it was listed has nothing to reload.
-                Ok(digest) => Some((id.clone(), instances.get(&id)?.uds_path.clone(), digest)),
+                Ok(digest) => Some((
+                    id.clone(),
+                    instances.get(&id)?.uds_path.clone(),
+                    instances.get(&id)?.generation,
+                    digest,
+                )),
             })
             .collect::<Vec<_>>()
     };
 
-    let results = futures::future::join_all(targets.iter().map(|(id, uds_path, expected)| async move {
+    let results = futures::future::join_all(targets.iter().map(|(id, uds_path, generation, expected)| async move {
         let request = ServiceToProcess::ReloadConfig {
             id: state.next_job_id(),
         };
@@ -123,7 +128,10 @@ pub(crate) async fn push_policy_to_running_instances(
                 active_policy_digest: Some(applied),
                 error: None,
                 ..
-            }) if &applied == expected => None,
+            }) if &applied == expected => connection_routes::policy::acknowledge(state, id, *generation, expected)
+                .await
+                .err()
+                .map(|_| format!("{id}: applied credential policy ownership unavailable")),
             Ok(ProcessToService::ConfigReloadResult {
                 active_policy_digest: Some(applied),
                 error: None,

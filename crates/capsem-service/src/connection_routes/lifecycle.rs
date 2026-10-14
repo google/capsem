@@ -18,6 +18,7 @@ impl Runtime {
     /// Used by synchronous stale-instance cleanup. The instance map must have
     /// released its lock before entering the grant admission lock.
     pub(crate) fn fence_runtime(&self, id: &str, generation: uuid::Uuid, policy: GrantStopPolicy) {
+        self.applied.lock().unwrap().remove(&(id.into(), generation));
         if let Some(session) = canonical(id) {
             if let Err(error) = self.authority.detach_runtime(session, *generation.as_bytes(), policy) {
                 warn!(%error, "credential runtime fence unavailable");
@@ -30,6 +31,7 @@ impl Runtime {
         generation: uuid::Uuid,
         policy: GrantStopPolicy,
     ) -> Result<(), AppError> {
+        self.applied.lock().unwrap().remove(&(id.into(), generation));
         let Some(session) = canonical(id) else {
             return Ok(());
         };
@@ -45,6 +47,7 @@ impl Runtime {
         Ok(())
     }
     pub(crate) async fn retire_session(&self, id: &str) -> Result<(), AppError> {
+        self.applied.lock().unwrap().retain(|(session, _), _| session != id);
         let Some(session) = canonical(id) else {
             return Ok(());
         };
@@ -97,8 +100,13 @@ pub(crate) async fn rebind(state: &Arc<ServiceState>, id: &str) -> Result<(), Ap
         Err(error) => return Err(unavailable(error.0)),
     };
     let context = context(state, id).await.map_err(|error| unavailable(error.0))?;
+    let admission = super::policy::admission(state, &context, broker, true)
+        .await
+        .map_err(|error| unavailable(error.0))?;
     broker
-        .grants(context.binding, |_, _| permitted && context.current(state))
+        .grants(context.binding, |_, capability| {
+            permitted && context.current(state) && admission.admits(capability)
+        })
         .await
         .map_err(unavailable)?;
     Ok(())

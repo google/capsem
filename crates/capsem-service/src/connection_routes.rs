@@ -4,11 +4,13 @@ use capsem_core::managed_sessions::{controller::CredentialOwner, VmBinding};
 use capsem_credentials::broker::{BrokerLimits, BrokerProfile, BrokerStorage, ConnectionBroker, SessionBinding};
 use std::time::SystemTime;
 pub(crate) mod lifecycle;
+pub(crate) mod policy;
 
 pub(crate) struct Runtime {
     path: PathBuf,
     authority: Arc<capsem_credentials::GrantAuthority>,
     broker: tokio::sync::OnceCell<Result<ConnectionBroker, api::CredentialErrorCode>>,
+    applied: std::sync::Mutex<std::collections::BTreeMap<(String, uuid::Uuid), policy::Applied>>,
 }
 impl Runtime {
     pub(crate) fn new(path: PathBuf, authority: Arc<capsem_credentials::GrantAuthority>) -> Self {
@@ -16,6 +18,7 @@ impl Runtime {
             path,
             authority,
             broker: tokio::sync::OnceCell::new(),
+            applied: Default::default(),
         }
     }
     async fn broker(&self) -> Result<&ConnectionBroker, CredentialError> {
@@ -171,6 +174,8 @@ struct Context {
     binding: SessionBinding,
     runtime: VmBinding,
     managed: Option<CredentialOwner>,
+    policy_path: PathBuf,
+    uds_path: PathBuf,
 }
 impl Context {
     fn current(&self, state: &ServiceState) -> bool {
@@ -195,12 +200,18 @@ async fn context(state: &ServiceState, id: &str) -> Result<Context, CredentialEr
     if session.is_nil() || session.to_string() != id {
         return Err(api::CredentialErrorCode::SessionUnavailable.into());
     }
-    let generation = state
+    let (generation, policy_path, uds_path) = state
         .instances
         .lock()
         .unwrap()
         .get(id)
-        .map(|instance| instance.generation)
+        .map(|instance| {
+            (
+                instance.generation,
+                instance.session_dir.join(ACTIVE_POLICY_DIR).join(ACTIVE_POLICY_FILE),
+                instance.uds_path.clone(),
+            )
+        })
         .ok_or(api::CredentialErrorCode::SessionUnavailable)?;
     let runtime = VmBinding::new(id.to_owned(), generation)
         .map_err(|_| CredentialError(api::CredentialErrorCode::SessionUnavailable, false))?;
@@ -224,6 +235,8 @@ async fn context(state: &ServiceState, id: &str) -> Result<Context, CredentialEr
         binding: SessionBinding::new(grant, SystemTime::now() + lifetime)?,
         runtime,
         managed,
+        policy_path,
+        uds_path,
     };
     if !context.current(state) {
         return Err(api::CredentialErrorCode::SessionUnavailable.into());
@@ -256,12 +269,16 @@ pub(crate) async fn grants(
     let _policy = state.policy_mutation.begin().await;
     enabled(&state).await?;
     let context = context(&state, &id).await?;
+    let broker = state.connections.broker().await?;
+    let admission = policy::admission(&state, &context, broker, false).await?;
     Ok(Json(
         state
             .connections
             .broker()
             .await?
-            .grants(context.binding, |_, _| context.current(&state))
+            .grants(context.binding, |_, capability| {
+                context.current(&state) && admission.admits(capability)
+            })
             .await?,
     ))
 }
@@ -274,6 +291,8 @@ pub(crate) async fn create_grant(
     let _policy = state.policy_mutation.begin().await;
     enabled(&state).await?;
     let context = context(&state, &id).await?;
+    let broker = state.connections.broker().await?;
+    let admission = policy::admission(&state, &context, broker, true).await?;
     Ok((
         StatusCode::CREATED,
         Json(
@@ -281,7 +300,9 @@ pub(crate) async fn create_grant(
                 .connections
                 .broker()
                 .await?
-                .create_grant(context.binding, request, |_, _| context.current(&state))
+                .create_grant(context.binding, request, |_, capability| {
+                    context.current(&state) && admission.admits(capability)
+                })
                 .await?,
         ),
     ))

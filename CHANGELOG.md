@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Session credential grants require the original runtime's acknowledged policy
+  and current policy; applied-policy receipts retire with stopped sessions.
+
 - Credential target preflight uses the existing security rules and plugins,
   including corporate ask/block and method, query and port constraints.
 
