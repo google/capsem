@@ -136,6 +136,7 @@ REQUIRED_WIRING = {
     "crates/capsem-logger/src/db.rs": (
         "LEDGER_PRODUCER_QUEUE_CAPACITY",
         "LEDGER_ADMISSION_BATCH_CAPACITY",
+        "capsem_proto::CACHE_LEDGER_QUERY_BATCH_ENTRIES",
     ),
     "crates/capsem-logger/src/writer.rs": (
         "LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS",
@@ -143,9 +144,6 @@ REQUIRED_WIRING = {
     ),
     "crates/capsem-logger/src/schema/pragmas.rs": (
         "capsem_proto::LEDGER_SQLITE_MMAP_BYTES",
-    ),
-    "crates/capsem-logger/src/db.rs": (
-        "capsem_proto::CACHE_LEDGER_QUERY_BATCH_ENTRIES",
     ),
     "crates/capsem-logger/src/reader/open.rs": (
         "capsem_proto::CACHE_SQLITE_PREPARED_STATEMENTS",
