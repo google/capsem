@@ -6,6 +6,8 @@ use futures::FutureExt;
 use std::{collections::HashMap, future::Future, panic::AssertUnwindSafe, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::{watch, Mutex, Semaphore};
 use tokio_util::sync::CancellationToken;
+mod credentials;
+pub use credentials::CredentialOwner;
 
 pub type EffectFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 
