@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update rustls to 0.23.46, fixing unauthenticated certificate-decompression,
+  ECH-rejection, key-exchange downgrade, and session-secret exposure flaws.
+
 - Fail DNS closed when any decision, rule or ask row is refused, and coalesce
   related supplemental admissions so concurrent queries do not serialize one
   ledger round trip per row.
