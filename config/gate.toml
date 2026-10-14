@@ -2923,6 +2923,16 @@ observer_survey_seconds = 1.0
 # reported one filesystem fault, and a fault count that is never zero is a
 # fault count nobody reads.
 duplicate_content_exempt = ["crates/capsem-app/gen"]
+# The dual-architecture asset proof builds one initrd product per architecture.
+# Files at the same relative path may be architecture-independent inputs; a
+# second copy anywhere else remains a fault. These exact product roots keep the
+# observer useful without reporting every shared diagnostic and benchmark file.
+duplicate_content_mirrors = [
+    [
+        "cache/target/tests/ironbank/build-arm64/arm64",
+        "cache/target/tests/ironbank/build-x86_64/x86_64",
+    ],
+]
 # `source.record` intentionally copies every Git-visible byte into this exact
 # tree. Duplicate and empty bytes there are properties of checked-in input,
 # while hardlinks, mode churn, and concurrent writers remain faults.

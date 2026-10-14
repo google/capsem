@@ -818,6 +818,42 @@ def test_the_exemption_does_not_blunt_the_rule_elsewhere(relative: str, tmp_path
     )
 
 
+def test_declared_mirror_roots_allow_only_matching_relative_files(tmp_path: Path) -> None:
+    """Architecture products may share inputs without hiding copies within one product."""
+    arm = "cache/target/tests/ironbank/build-arm64/arm64"
+    x86 = "cache/target/tests/ironbank/build-x86_64/x86_64"
+    watch = Watch(
+        [],
+        source_root=tmp_path,
+        duplicate_content_mirrors=((arm, x86),),
+    )
+
+    for index, relative in enumerate((f"{arm}/staging/init", f"{x86}/staging/init")):
+        watch._judge(
+            Event(
+                at=1.0,
+                kind="created",
+                path=tmp_path / relative,
+                steps=("assets.pack-initrds",),
+                facts=Facts(inode=index + 1, digest="shared-input"),
+            )
+        )
+
+    assert not [fault for fault in watch.faults if fault.reason == "duplicate-content"]
+
+    watch._judge(
+        Event(
+            at=2.0,
+            kind="created",
+            path=tmp_path / arm / "staging" / "copied-init",
+            steps=("assets.pack-initrds",),
+            facts=Facts(inode=3, digest="shared-input"),
+        )
+    )
+
+    assert [fault.reason for fault in watch.faults] == ["duplicate-content"]
+
+
 def test_a_declared_source_replica_is_not_judged_as_duplicate_or_empty_output(
     tmp_path: Path,
 ) -> None:

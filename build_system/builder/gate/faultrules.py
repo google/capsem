@@ -16,7 +16,7 @@ import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .faults import duplication_expected
+from .faults import duplication_expected, mirrored_paths
 
 #: The one fault reason a publishing run treats as fatal; `observing` reads it.
 SOURCE_TREE = "source-tree"
@@ -78,8 +78,11 @@ def judge(watch: Watch, event: Event) -> None:
     )
     if event.digest is not None and not exempt:
         matches = watch._digests.setdefault(event.digest, set())
-        if matches and event.inode is not None:
-            first = min(matches, key=str)
+        unexpected = matches - mirrored_paths(
+            event.path, watch._source_root, watch._duplicate_mirrors
+        )
+        if unexpected and event.inode is not None:
+            first = min(unexpected, key=str)
             watch.fault(event, "duplicate-content", f"identical bytes already at {first}")
         matches.add(event.path)
         watch._path_digests[event.path] = event.digest

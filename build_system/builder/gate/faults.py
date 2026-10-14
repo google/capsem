@@ -82,6 +82,24 @@ def duplication_expected(path: Path, root: Path, exempt: tuple[str, ...]) -> boo
     )
 
 
+def mirrored_paths(
+    path: Path, root: Path, mirrors: tuple[tuple[str, ...], ...]
+) -> frozenset[Path]:
+    """Exact peer paths allowed to hold the same bytes in mirrored products."""
+    try:
+        relative = path.resolve().relative_to(root)
+    except (ValueError, OSError):
+        return frozenset()
+    for group in mirrors:
+        for entry in group:
+            prefix = PurePosixPath(entry)
+            if relative.parts[: len(prefix.parts)] != prefix.parts:
+                continue
+            suffix = relative.parts[len(prefix.parts) :]
+            return frozenset((root / peer).joinpath(*suffix).resolve() for peer in group)
+    return frozenset()
+
+
 def is_source(path: Path, root: Path) -> bool:
     """Whether an absolute path is checked-in input rather than build output."""
     # A relative path can come from an operation using dir_fd. Resolving it
