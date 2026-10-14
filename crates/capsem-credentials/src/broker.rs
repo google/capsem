@@ -287,20 +287,45 @@ impl ConnectionBroker {
     }
 
     pub async fn list(&self) -> BrokerResult<api::ConnectionListResponse> {
+        self.list_page(&api::ConnectionListQuery::default()).await
+    }
+
+    /// Keyset inventory reads only bounded owner state, never provider or disk.
+    pub async fn list_page(&self, query: &api::ConnectionListQuery) -> BrokerResult<api::ConnectionListResponse> {
+        let limit = query
+            .limit
+            .map_or(self.0.limits.max_connections, |value| value as usize);
+        if limit == 0 || limit > self.0.limits.max_connections {
+            return Err(api::CredentialErrorCode::RequestConflict);
+        }
+        if let Some(cursor) = &query.cursor {
+            uuid(cursor)?;
+        }
         let state = self.0.state.lock().await;
+        let mut entries = state.connections.range::<str, _>((
+            std::ops::Bound::Excluded(query.cursor.as_deref().unwrap_or("")),
+            std::ops::Bound::Unbounded,
+        ));
+        let connections: Vec<_> = entries
+            .by_ref()
+            .take(limit)
+            .map(|(_, entry)| self.summary(entry))
+            .collect::<BrokerResult<_>>()?;
+        let next_cursor = if entries.next().is_some() {
+            connections.last().map(|entry| entry.id.clone())
+        } else {
+            None
+        };
+        drop(state);
         Ok(api::ConnectionListResponse {
-            connections: state
-                .connections
-                .values()
-                .map(|entry| self.summary(entry))
-                .collect::<BrokerResult<_>>()?,
+            connections,
             scope_profiles: self
                 .0
                 .profiles
                 .values()
                 .map(|profile| profile.summary.clone())
                 .collect(),
-            next_cursor: None,
+            next_cursor,
         })
     }
 
