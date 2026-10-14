@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -298,6 +298,14 @@ impl WriterMessage {
     fn flush(reply: tokio::sync::oneshot::Sender<FlushOutcome>) -> Self {
         Self::Flush(reply)
     }
+
+    fn event_count(&self) -> usize {
+        match self {
+            Self::Write(_) => 1,
+            Self::WriteBatch(writes) => writes.len(),
+            Self::Flush(_) | Self::Retain { .. } => 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -318,11 +326,122 @@ impl WriteEnvelope {
 /// message that outgrows it by a lot deserves the question asked again.
 const _: () = assert!(std::mem::size_of::<WriterMessage>() <= 1024);
 
-type WriterSender = mpsc::SyncSender<WriterMessage>;
-type WriterReceiver = mpsc::Receiver<WriterMessage>;
+#[derive(Clone)]
+struct WriterSender {
+    tx: mpsc::SyncSender<QueuedWriterMessage>,
+    budget: Arc<WriterQueueBudget>,
+}
+
+type WriterReceiver = mpsc::Receiver<QueuedWriterMessage>;
+
+struct QueuedWriterMessage {
+    message: WriterMessage,
+    _permit: WriterQueuePermit,
+}
+
+impl QueuedWriterMessage {
+    fn into_message(self) -> WriterMessage {
+        self.message
+    }
+}
+
+struct WriterQueueBudget {
+    capacity: usize,
+    used: AtomicUsize,
+}
+
+struct WriterQueuePermit {
+    budget: Arc<WriterQueueBudget>,
+    weight: usize,
+}
+
+impl Drop for WriterQueuePermit {
+    fn drop(&mut self) {
+        self.budget.used.fetch_sub(self.weight, Ordering::Release);
+    }
+}
+
+impl WriterQueueBudget {
+    fn try_reserve(self: &Arc<Self>, weight: usize) -> Option<WriterQueuePermit> {
+        let mut used = self.used.load(Ordering::Acquire);
+        loop {
+            let next = used.checked_add(weight)?;
+            if next > self.capacity {
+                return None;
+            }
+            match self
+                .used
+                .compare_exchange_weak(used, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => {
+                    return Some(WriterQueuePermit {
+                        budget: Arc::clone(self),
+                        weight,
+                    })
+                }
+                Err(current) => used = current,
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum WriterTrySendError {
+    Full,
+    Disconnected,
+}
+
+impl WriterSender {
+    fn try_send(&self, message: &mut Option<WriterMessage>) -> Result<(), WriterTrySendError> {
+        let weight = message.as_ref().expect("writer message is present").event_count();
+        let Some(permit) = self.budget.try_reserve(weight) else {
+            return Err(WriterTrySendError::Full);
+        };
+        match self.tx.try_send(QueuedWriterMessage {
+            message: message.take().expect("writer message is present"),
+            _permit: permit,
+        }) {
+            Ok(()) => Ok(()),
+            Err(mpsc::TrySendError::Full(queued)) => {
+                *message = Some(queued.into_message());
+                Err(WriterTrySendError::Full)
+            }
+            Err(mpsc::TrySendError::Disconnected(queued)) => {
+                *message = Some(queued.into_message());
+                Err(WriterTrySendError::Disconnected)
+            }
+        }
+    }
+
+    fn send(&self, message: WriterMessage) -> Result<(), &'static str> {
+        let mut message = Some(message);
+        let mut wait = Duration::from_micros(50);
+        loop {
+            match self.try_send(&mut message) {
+                Ok(()) => return Ok(()),
+                Err(WriterTrySendError::Full) => {
+                    std::thread::sleep(wait);
+                    wait = (wait * 2).min(Duration::from_millis(5));
+                }
+                Err(WriterTrySendError::Disconnected) => return Err("db writer channel closed"),
+            }
+        }
+    }
+}
 
 fn writer_channel(capacity: usize) -> (WriterSender, WriterReceiver) {
-    mpsc::sync_channel(capacity.max(1))
+    let capacity = capacity.max(1);
+    let (tx, rx) = mpsc::sync_channel(capacity);
+    (
+        WriterSender {
+            tx,
+            budget: Arc::new(WriterQueueBudget {
+                capacity,
+                used: AtomicUsize::new(0),
+            }),
+        },
+        rx,
+    )
 }
 
 mod barriers;
@@ -752,14 +871,14 @@ const BACKPRESSURE_MAX_WAIT: Duration = Duration::from_millis(5);
 /// backoff. Retrying immediately after `yield_now` pinned every producer task
 /// at full CPU for as long as the writer thread was inside a disk flush, which
 /// can be seconds with a large dirty set or a busy-timeout on the file.
-async fn send_with_backpressure(tx: &WriterSender, mut message: WriterMessage) -> Result<(), String> {
+async fn send_with_backpressure(tx: &WriterSender, message: WriterMessage) -> Result<(), String> {
+    let mut message = Some(message);
     let mut wait = Duration::from_micros(50);
     let mut attempts = 0u32;
     loop {
-        match tx.try_send(message) {
+        match tx.try_send(&mut message) {
             Ok(()) => return Ok(()),
-            Err(mpsc::TrySendError::Full(returned)) => {
-                message = returned;
+            Err(WriterTrySendError::Full) => {
                 if attempts == 0 {
                     tokio::task::yield_now().await;
                 } else {
@@ -768,7 +887,7 @@ async fn send_with_backpressure(tx: &WriterSender, mut message: WriterMessage) -
                 }
                 attempts += 1;
             }
-            Err(mpsc::TrySendError::Disconnected(_)) => {
+            Err(WriterTrySendError::Disconnected) => {
                 return Err("db writer channel closed".to_string());
             }
         }
@@ -778,7 +897,7 @@ async fn send_with_backpressure(tx: &WriterSender, mut message: WriterMessage) -
 /// The writer thread loop: block-then-drain batching.
 fn writer_loop(
     conn: Connection,
-    rx: mpsc::Receiver<WriterMessage>,
+    rx: WriterReceiver,
     db_path: Option<PathBuf>,
     schedule: WriterSchedule,
     pending_body_bytes: &AtomicU64,
@@ -845,12 +964,12 @@ fn writer_loop(
 
         let mut batch = Vec::with_capacity(batch_capacity);
         let mut barriers = Barriers::default();
-        let mut at_barrier = barriers.accept(first_message, &mut batch);
+        let mut at_barrier = barriers.accept(first_message.into_message(), &mut batch);
 
         // 2. Drain any ops already queued (non-blocking).
         while !at_barrier && batch.len() < batch_capacity {
             match rx.try_recv() {
-                Ok(message) => at_barrier = barriers.accept(message, &mut batch),
+                Ok(message) => at_barrier = barriers.accept(message.into_message(), &mut batch),
                 Err(_) => break,
             }
         }

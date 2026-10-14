@@ -91,10 +91,10 @@ impl DbWriter {
             return accepted;
         }
         let queue_result = match self.clone_sender() {
-            Some(tx) => match tx.try_send(WriterMessage::write(op)) {
+            Some(tx) => match tx.try_send(&mut Some(WriterMessage::write(op))) {
                 Ok(()) => "queued",
-                Err(mpsc::TrySendError::Full(_)) => "full",
-                Err(mpsc::TrySendError::Disconnected(_)) => "closed",
+                Err(WriterTrySendError::Full) => "full",
+                Err(WriterTrySendError::Disconnected) => "closed",
             },
             None => "missing_sender",
         };

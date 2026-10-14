@@ -675,13 +675,37 @@ fn try_write_on_open_writer_succeeds() {
 #[test]
 fn writer_channel_capacity_applies_backpressure() {
     let (tx, _rx) = writer_channel(1);
-    tx.try_send(WriterMessage::write(file_event_with_credential("/queued", None)))
-        .unwrap();
+    tx.try_send(&mut Some(WriterMessage::write(file_event_with_credential(
+        "/queued", None,
+    ))))
+    .unwrap();
 
     assert!(matches!(
-        tx.try_send(WriterMessage::write(file_event_with_credential("/full", None,))),
-        Err(std::sync::mpsc::TrySendError::Full(_))
+        tx.try_send(&mut Some(WriterMessage::write(file_event_with_credential(
+            "/full", None,
+        )))),
+        Err(WriterTrySendError::Full)
     ));
+}
+
+#[test]
+fn writer_channel_capacity_counts_events_inside_batches() {
+    let (tx, rx) = writer_channel(3);
+    let batch = || {
+        WriterMessage::WriteBatch(vec![
+            WriteEnvelope::plain(file_event_with_credential("/batch/one", None)),
+            WriteEnvelope::plain(file_event_with_credential("/batch/two", None)),
+        ])
+    };
+
+    tx.try_send(&mut Some(batch())).unwrap();
+    assert!(matches!(tx.try_send(&mut Some(batch())), Err(WriterTrySendError::Full)));
+    tx.try_send(&mut Some(WriterMessage::write(file_event_with_credential(
+        "/third", None,
+    ))))
+    .unwrap();
+    drop(rx.recv().unwrap());
+    tx.try_send(&mut Some(batch())).unwrap();
 }
 
 #[test]

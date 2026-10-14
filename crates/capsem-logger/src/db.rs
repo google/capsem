@@ -278,7 +278,7 @@ impl DbHandle {
         let started = Instant::now();
         let writer = DbWriter::prepare_with_capacities(
             path,
-            capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY / capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY,
+            capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY,
             capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY,
             codecs.clone(),
         )?;
