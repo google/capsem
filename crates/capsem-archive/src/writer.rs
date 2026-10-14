@@ -23,6 +23,7 @@
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::fd::AsFd as _;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::time::Instant;
@@ -89,6 +90,20 @@ pub struct BodyLogWriter {
     fail_write_after: Option<usize>,
 }
 
+/// A duplicated archive descriptor that can run the durability barrier on a
+/// helper thread while the writer continues appending later segments.
+pub struct BodyLogSync {
+    file: File,
+}
+
+impl BodyLogSync {
+    /// Make every archive write completed before this call durable.
+    pub fn sync(&self) -> Result<()> {
+        unix_fs::durable_sync_file(&self.file)?;
+        Ok(())
+    }
+}
+
 impl Drop for BodyLogWriter {
     fn drop(&mut self) {
         // Not while unwinding, and not when poisoned: a poisoned writer can
@@ -103,6 +118,13 @@ impl Drop for BodyLogWriter {
 }
 
 impl BodyLogWriter {
+    /// Duplicate the archive descriptor for an independent sync worker.
+    pub fn sync_handle(&self) -> Result<BodyLogSync> {
+        Ok(BodyLogSync {
+            file: File::from(capsem_foundation::unix::fd::duplicate(self.file.as_fd())?),
+        })
+    }
+
     /// Create or reopen `session.bodies`.
     ///
     /// Creates the file with mode 0o600, refuses a symlink, and opens without
