@@ -2,15 +2,38 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from helpers.body_archive import FILE_HEADER_BYTES, SessionArchive, archived_bodies
+import pytest
+import pyzstd
+from blake3 import blake3
+from helpers.body_archive import (
+    BLOCK_MAGIC,
+    CODEC_ZSTD,
+    FILE_HEADER_BYTES,
+    SEGMENT_FINAL,
+    SEGMENT_MAGIC,
+    SessionArchive,
+    archived_bodies,
+    served_security_payload,
+    served_security_payload_if_ready,
+)
 
 FIXTURE_DB = Path(__file__).resolve().parent / "fixtures/session/test.db"
+
+
+class _BodyClient:
+    def __init__(self, *responses: dict) -> None:
+        self.responses = iter(responses)
+
+    def get(self, path: str) -> dict:
+        assert path == "/vms/vm-id/bodies/abcdef123456"
+        return next(self.responses)
 
 
 def _ledger(tmp_path: Path) -> Path:
@@ -44,3 +67,88 @@ def test_a_body_committed_after_the_reader_opened_is_read(tmp_path: Path) -> Non
         _committed_end(db, committed)  # the writer commits the rest
         read = {key: archive.read(key[1], key[0], key[2]) for key in expected}
     assert read == expected
+
+
+def test_zstd_segments_share_one_bounded_decoder_stream(tmp_path: Path) -> None:
+    db = _ledger(tmp_path)
+    expected = archived_bodies(db)
+    with closing(sqlite3.connect(db)) as conn:
+        row = conn.execute(
+            "SELECT block_offset, disk_len, raw_len FROM body_blocks"
+        ).fetchone()
+    with SessionArchive(db) as archive:
+        block_offset, disk_len, raw_len = map(int, row)
+        raw = archive._span(block_offset, 0, raw_len, disk_len, raw_len)
+        generation = archive.generation_path
+
+    split = len(raw) // 2
+    compressor = pyzstd.ZstdCompressor(3)
+    compressed = (
+        compressor.compress(raw[:split])
+        + compressor.flush(pyzstd.ZstdCompressor.FLUSH_BLOCK),
+        compressor.compress(raw[split:])
+        + compressor.flush(pyzstd.ZstdCompressor.FLUSH_FRAME),
+    )
+
+    def segment(start: int, body: bytes, encoded: bytes, flags: int) -> bytes:
+        return b"".join(
+            (
+                SEGMENT_MAGIC,
+                bytes((flags, 0, 0, 0)),
+                start.to_bytes(4, "little"),
+                len(body).to_bytes(4, "little"),
+                len(encoded).to_bytes(4, "little"),
+                blake3(body).digest(),
+                encoded,
+            )
+        )
+
+    block = b"".join(
+        (
+            BLOCK_MAGIC,
+            bytes((CODEC_ZSTD, 0, 0, 0)),
+            segment(0, raw[:split], compressed[0], 0),
+            segment(split, raw[split:], compressed[1], SEGMENT_FINAL),
+        )
+    )
+    header = generation.read_bytes()[:FILE_HEADER_BYTES]
+    generation.write_bytes(header + block)
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("UPDATE body_blocks SET disk_len = ?", (len(block),))
+        conn.execute(
+            "UPDATE archive_state SET committed_end = ?",
+            (FILE_HEADER_BYTES + len(block),),
+        )
+        conn.commit()
+
+    assert archived_bodies(db) == expected
+
+
+def test_a_live_security_payload_retries_until_the_archive_index_is_visible() -> None:
+    body = base64.b64encode(b"\x81\xaaevent_type\xa3dns").decode()
+    client = _BodyClient(
+        {"event_id": "abcdef123456", "bodies": []},
+        {
+            "event_id": "abcdef123456",
+            "bodies": [
+                {
+                    "source_table": "security_rule_events",
+                    "direction": "payload",
+                    "truncated": False,
+                    "truncated_for_transport": False,
+                    "encoding": "base64",
+                    "content": body,
+                }
+            ],
+        },
+    )
+
+    assert served_security_payload_if_ready(client, "vm-id", "abcdef123456") is None
+    payload = served_security_payload_if_ready(client, "vm-id", "abcdef123456")
+    assert payload is not None and payload["event_type"] == "dns"
+
+
+def test_the_strict_security_payload_reader_rejects_an_unindexed_body() -> None:
+    client = _BodyClient({"event_id": "abcdef123456", "bodies": []})
+    with pytest.raises(AssertionError, match="has no served payload"):
+        served_security_payload(client, "vm-id", "abcdef123456")

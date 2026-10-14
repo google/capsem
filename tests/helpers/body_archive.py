@@ -508,6 +508,21 @@ def forensic_payload(body: bytes) -> dict[str, Any]:
     return payload
 
 
+def _security_payload_from_response(
+    served: dict[str, Any], event_id: str, source_table: str
+) -> dict[str, Any]:
+    for body in served["bodies"]:
+        if (body["source_table"], body["direction"]) != (source_table, "payload"):
+            continue
+        assert not body["truncated"] and not body["truncated_for_transport"], body
+        content = str(body["content"])
+        raw = base64.b64decode(content) if body["encoding"] == "base64" else content.encode()
+        return forensic_payload(raw)
+    raise AssertionError(
+        f"{source_table} has no served payload for {event_id}: {served}"
+    )
+
+
 def served_security_payload(
     client: Any, vm_id: str, event_id: str, source_table: str = "security_rule_events"
 ) -> dict[str, Any]:
@@ -517,11 +532,20 @@ def served_security_payload(
     event, and its payload is an archived body like any other.
     """
     served = client.get(f"/vms/{vm_id}/bodies/{event_id}")
-    for body in served["bodies"]:
-        if (body["source_table"], body["direction"]) != (source_table, "payload"):
-            continue
-        assert not body["truncated"] and not body["truncated_for_transport"], body
-        content = str(body["content"])
-        raw = base64.b64decode(content) if body["encoding"] == "base64" else content.encode()
-        return forensic_payload(raw)
-    raise AssertionError(f"{source_table} has no served payload for {event_id}: {served}")
+    return _security_payload_from_response(served, event_id, source_table)
+
+
+def served_security_payload_if_ready(
+    client: Any, vm_id: str, event_id: str, source_table: str = "security_rule_events"
+) -> dict[str, Any] | None:
+    """Return a live event's payload once its archive index is visible.
+
+    Live row queries include the writer's memory tables. Body reads use the
+    durable archive index, which lands with the next periodic flush, so an
+    event row may briefly precede its body. An empty response is retryable;
+    every other response retains the strict payload validation above.
+    """
+    served = client.get(f"/vms/{vm_id}/bodies/{event_id}")
+    if not served["bodies"]:
+        return None
+    return _security_payload_from_response(served, event_id, source_table)
