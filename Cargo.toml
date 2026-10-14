@@ -66,6 +66,19 @@ opt-level = 3
 [profile.dev.package.capsem-cache]
 opt-level = 3
 
+[profile.dev.package.capsem-logger]
+opt-level = 3
+
+# The ledger's SQLite transaction is part of live DNS/HTTP admission. Package
+# overrides do not flow into dependencies, so optimize both the Rust wrapper
+# and bundled C engine explicitly in the debug binaries used by installs and
+# gateway benchmarks.
+[profile.dev.package.rusqlite]
+opt-level = 3
+
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
 [profile.dev.package.quick_cache]
 opt-level = 3
 
