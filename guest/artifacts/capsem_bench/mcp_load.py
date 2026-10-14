@@ -30,7 +30,7 @@ from .load_harness import (
     render_load_table,
     summarize_load_level,
 )
-from .mcp_transport import StdioClient
+from .mcp_transport import McpError, StdioClient
 
 MCP_SERVER = "/run/capsem-mcp-server"
 DEFAULT_DURATION_S = 10.0
@@ -58,7 +58,7 @@ async def _drive_at_concurrency(client, concurrency, duration_s, payload):
                 ms = (time.monotonic() - t0) * 1000
                 async with lat_lock:
                     latencies.append(ms)
-            except Exception:  # noqa: BLE001 -- every request failure is benchmark data.
+            except (McpError, OSError):
                 errors += 1
 
     await asyncio.gather(*(worker() for _ in range(concurrency)))
