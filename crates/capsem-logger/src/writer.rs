@@ -1024,8 +1024,12 @@ fn flush_dirty_tables_to_disk(
     bodies.prepare_index_rows(wait_for_body_sync);
     let archive_ms = started.elapsed().as_secs_f64() * 1000.0;
     let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
+    let started = Instant::now();
     let tx = conn.unchecked_transaction()?;
+    let transaction_begin_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let started = Instant::now();
     bodies.commit_prepared_index_rows(&tx)?;
+    let body_index_ms = started.elapsed().as_secs_f64() * 1000.0;
     // Injected where a real flush failure lands: inside the transaction, with
     // the archive's index rows already written into it. Everything here rolls
     // back together, and the retry has to bring the bodies back with the rows.
@@ -1053,6 +1057,8 @@ fn flush_dirty_tables_to_disk(
     dirty_tables.clear();
     Ok(FlushTimings {
         archive_ms,
+        transaction_begin_ms,
+        body_index_ms,
         table_copy_ms,
         counter_snapshot_ms,
         commit_ms,
@@ -1062,6 +1068,8 @@ fn flush_dirty_tables_to_disk(
 #[derive(Default)]
 struct FlushTimings {
     archive_ms: f64,
+    transaction_begin_ms: f64,
+    body_index_ms: f64,
     table_copy_ms: f64,
     counter_snapshot_ms: f64,
     commit_ms: f64,
@@ -1097,6 +1105,8 @@ fn flush_dirty_tables_to_disk_recorded(
     let status = if result.is_ok() { "ok" } else { "error" };
     let timings = result.as_ref().ok();
     let archive_ms = timings.map_or(0.0, |timings| timings.archive_ms);
+    let transaction_begin_ms = timings.map_or(0.0, |timings| timings.transaction_begin_ms);
+    let body_index_ms = timings.map_or(0.0, |timings| timings.body_index_ms);
     let table_copy_ms = timings.map_or(0.0, |timings| timings.table_copy_ms);
     let counter_snapshot_ms = timings.map_or(0.0, |timings| timings.counter_snapshot_ms);
     let commit_ms = timings.map_or(0.0, |timings| timings.commit_ms);
@@ -1104,6 +1114,8 @@ fn flush_dirty_tables_to_disk_recorded(
         target: "capsem.db",
         duration_ms = elapsed.as_secs_f64() * 1000.0,
         archive_ms,
+        transaction_begin_ms,
+        body_index_ms,
         table_copy_ms,
         counter_snapshot_ms,
         commit_ms,
@@ -1116,6 +1128,8 @@ fn flush_dirty_tables_to_disk_recorded(
         warn!(
             duration_ms = elapsed.as_secs_f64() * 1000.0,
             archive_ms,
+            transaction_begin_ms,
+            body_index_ms,
             table_copy_ms,
             counter_snapshot_ms,
             commit_ms,

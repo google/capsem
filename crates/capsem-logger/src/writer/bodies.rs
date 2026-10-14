@@ -41,7 +41,7 @@ use capsem_foundation::unix::contained::{ContainedDir, EntryKind};
 use capsem_foundation::unix::fs::{durable_sync_directory, ensure_private_dir};
 use capsem_foundation::unix::lock::{self, FileLock, LockAttempt, LockMode};
 use capsem_telemetry::db::{DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL, DB_ARCHIVE_BODIES_DROPPED_TOTAL};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, ToSql};
 use tracing::warn;
 
 /// How long a block may stay open before the next body starts a new one.
@@ -100,7 +100,7 @@ struct BodyIndexRow {
     stored_bytes: i64,
     truncated: bool,
     body_hash: String,
-    block_offset: u64,
+    block_offset: i64,
     body_offset: i64,
     trace_id: Option<String>,
     turn_id: Option<String>,
@@ -224,6 +224,13 @@ pub(super) struct BodyArchive {
 /// window already finds a repeat that small inside the block, and the lookup
 /// would cost more than the bytes it saves.
 const MIN_ARCHIVE_DEDUP_BYTES: usize = 512;
+
+/// Fifteen bound values per body row fit 64 rows below SQLite's portable
+/// 999-variable ceiling. The statement and transient reference vector stay
+/// bounded while a busy flush pays statement dispatch once per 64 bodies
+/// instead of once per body.
+const BODY_INDEX_ROWS_PER_INSERT: usize = 64;
+const BODY_INDEX_VALUE_LIST: &str = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
 /// Where identical stored bytes already sit in a committed segment, if they
 /// do. Committed spans are immutable and synced, so pointing a new row at one
@@ -587,7 +594,7 @@ impl BodyArchive {
             // same stored bytes from bodies of different sizes.
             truncated: original_bytes > stored_len as u64,
             body_hash,
-            block_offset: reference.block_offset,
+            block_offset: reference.block_offset as i64,
             body_offset: i64::from(reference.offset),
             trace_id: blob.trace_id.map(str::to_string),
             turn_id: blob.turn_id.map(str::to_string),
@@ -1007,35 +1014,13 @@ impl BodyArchive {
                 [committed_end],
             )?;
         }
-        for row in self.synced.iter().flat_map(|(_, rows)| rows).chain(&self.reused) {
-            execute_cached(
-                conn,
-                "INSERT OR REPLACE INTO event_body_blobs (
-                    event_id, event_type, source_table, direction, content_type,
-                    original_bytes, stored_bytes, truncated, body_hash,
-                    block_offset, body_offset, body_len,
-                    trace_id, turn_id, created_at
-                 )
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-                params![
-                    &row.event_id,
-                    row.event_type,
-                    row.source_table,
-                    row.direction,
-                    &row.content_type,
-                    row.original_bytes,
-                    row.stored_bytes,
-                    i64::from(row.truncated),
-                    &row.body_hash,
-                    row.block_offset as i64,
-                    row.body_offset,
-                    row.stored_bytes,
-                    &row.trace_id,
-                    &row.turn_id,
-                    &row.created_at,
-                ],
-            )?;
-        }
+        let rows = self
+            .synced
+            .iter()
+            .flat_map(|(_, rows)| rows)
+            .chain(&self.reused)
+            .collect::<Vec<_>>();
+        insert_body_index_rows(conn, &rows)?;
         Ok(())
     }
 
@@ -1124,6 +1109,50 @@ impl BodyArchive {
     pub(super) fn steps_for_tests(&self) -> &[&'static str] {
         &self.steps
     }
+}
+
+fn insert_body_index_rows(conn: &Connection, rows: &[&BodyIndexRow]) -> rusqlite::Result<()> {
+    for chunk in rows.chunks(BODY_INDEX_ROWS_PER_INSERT) {
+        let mut sql = String::from(
+            "INSERT OR REPLACE INTO event_body_blobs (
+                event_id, event_type, source_table, direction, content_type,
+                original_bytes, stored_bytes, truncated, body_hash,
+                block_offset, body_offset, body_len,
+                trace_id, turn_id, created_at
+             ) VALUES ",
+        );
+        for index in 0..chunk.len() {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            sql.push_str(BODY_INDEX_VALUE_LIST);
+        }
+
+        // References only: the rows keep ownership until the surrounding
+        // transaction commits, so batching does not clone any body metadata.
+        let mut values: Vec<&dyn ToSql> = Vec::with_capacity(chunk.len() * 15);
+        for row in chunk {
+            values.extend([
+                &row.event_id as &dyn ToSql,
+                &row.event_type as &dyn ToSql,
+                &row.source_table as &dyn ToSql,
+                &row.direction as &dyn ToSql,
+                &row.content_type as &dyn ToSql,
+                &row.original_bytes as &dyn ToSql,
+                &row.stored_bytes as &dyn ToSql,
+                &row.truncated as &dyn ToSql,
+                &row.body_hash as &dyn ToSql,
+                &row.block_offset as &dyn ToSql,
+                &row.body_offset as &dyn ToSql,
+                &row.stored_bytes as &dyn ToSql,
+                &row.trace_id as &dyn ToSql,
+                &row.turn_id as &dyn ToSql,
+                &row.created_at as &dyn ToSql,
+            ]);
+        }
+        execute_cached(conn, &sql, params_from_iter(values))?;
+    }
+    Ok(())
 }
 
 /// Record one written segment against its block: insert the block's row on
