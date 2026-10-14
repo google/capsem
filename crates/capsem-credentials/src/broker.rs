@@ -207,6 +207,13 @@ struct Inner {
 pub struct ConnectionBroker(Arc<Inner>);
 
 impl ConnectionBroker {
+    /// Only host-configured, qualified capabilities have target contracts.
+    pub fn configured_capabilities(&self) -> impl Iterator<Item = &GrantCapability> {
+        self.0
+            .profiles
+            .values()
+            .flat_map(|profile| profile.capabilities.values())
+    }
     pub async fn open(
         storage: BrokerStorage,
         profiles: Vec<BrokerProfile>,

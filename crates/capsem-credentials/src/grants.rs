@@ -56,6 +56,12 @@ pub struct GrantTarget {
     url: url::Url,
 }
 impl GrantTarget {
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+    pub fn destination(&self) -> &url::Url {
+        &self.url
+    }
     pub fn new(method: &str, destination: &str) -> Result<Self, GrantError> {
         if !matches!(method, "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS") {
             return Err(GrantError::Invalid);
@@ -75,7 +81,7 @@ impl GrantTarget {
         })
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantCapability {
     id: String,
     scopes: BTreeSet<String>,
@@ -107,6 +113,9 @@ impl GrantCapability {
     }
     pub fn required_scopes(&self) -> &BTreeSet<String> {
         &self.scopes
+    }
+    pub fn targets(&self) -> &[GrantTarget] {
+        &self.targets
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
