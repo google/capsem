@@ -2,6 +2,27 @@ use super::*;
 use std::collections::HashMap;
 
 #[test]
+fn enforcing_policy_refuses_any_broken_corporate_file() {
+    let root = tempfile::tempdir().unwrap();
+    let user = root.path().join("settings.toml");
+    let first = root.path().join("system-corp.toml");
+    let second = root.path().join("local-corp.toml");
+    std::fs::write(&user, "[plugins.credential_broker]\nmode = 'rewrite'\n").unwrap();
+    std::fs::write(&first, "[plugins.credential_broker]\nmode = 'disable'\n").unwrap();
+    std::fs::write(&second, "broken = [").unwrap();
+    let paths = [first.clone(), second.clone()];
+    assert!(policy_files_from_paths(Some(&user), &paths).is_err());
+    std::fs::write(&second, "[plugins.credential_broker]\nmode = 'rewrite'\n").unwrap();
+    let (user, corp) = policy_files_from_paths(Some(&user), &paths).unwrap();
+    assert_eq!(
+        crate::net::policy_config::merge_plugin_policy(&user, &corp)["credential_broker"].mode,
+        capsem_config::SecurityPluginMode::Disable
+    );
+    std::fs::write(&first, "broken = [").unwrap();
+    assert!(policy_files_from_paths(None, &paths).is_err());
+}
+
+#[test]
 fn managed_policy_load_preserves_host_settings_and_corp_priority() {
     let root = tempfile::tempdir().unwrap();
     let user = root.path().join("settings.toml");

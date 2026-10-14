@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Invalid corporate policy now refuses security admission instead of being
+  treated as empty constraints; the settings UI remains available for repair.
+
 - Credential grant issuance checks current policy and runtime ownership inside
   the same admission lock as terminal retirement, preventing stale permission
   checks from inserting authority after its owner has retired.

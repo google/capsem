@@ -271,11 +271,22 @@ pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
 /// from. settings.toml carries the user's security rules, so one that does
 /// not load fails here: reading it as empty would run the VM without them.
 pub fn load_policy_files() -> Result<(SettingsFile, SettingsFile), String> {
-    let settings = match settings_config_path() {
-        Some(path) => load_local_settings_file(&path)?,
+    policy_files_from_paths(settings_config_path().as_deref(), &corp_config_paths())
+}
+
+fn policy_files_from_paths(
+    settings: Option<&Path>,
+    corp_paths: &[std::path::PathBuf],
+) -> Result<(SettingsFile, SettingsFile), String> {
+    let settings = match settings {
+        Some(path) => load_local_settings_file(path)?,
         None => SettingsFile::default(),
     };
-    Ok((settings, load_corp_files()))
+    let corp = corp_paths
+        .iter()
+        .map(|path| load_settings_file(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((settings, merge_corp_files(corp)))
 }
 
 /// Load finite managed ownership policy without the display-only corporate
@@ -305,57 +316,60 @@ fn managed_session_policy_from_paths(
 /// Corp constraints from every available path (system + user-provisioned).
 /// First path wins per-key (/etc/capsem/corp.toml overrides ~/.capsem/corp.toml).
 pub fn load_corp_files() -> SettingsFile {
+    merge_corp_files(corp_config_paths().into_iter().filter_map(|path| {
+        load_settings_file(&path)
+            .map_err(|error| {
+                tracing::warn!(%error, "corp settings at {}", path.display());
+            })
+            .ok()
+    }))
+}
+
+fn merge_corp_files(files: impl IntoIterator<Item = SettingsFile>) -> SettingsFile {
     let mut corp = SettingsFile::default();
-    for path in corp_config_paths() {
-        match load_settings_file(&path) {
-            Ok(file) => {
-                // First path wins per-key: only insert if not already present
-                for (id, entry) in file.settings {
-                    corp.settings.entry(id).or_insert(entry);
-                }
-                // MCP config: first non-None wins
-                if corp.mcp.is_none() && file.mcp.is_some() {
-                    corp.mcp = file.mcp;
-                }
-                // Image policy: first non-None wins, and replaces the user's.
-                if corp.images.is_none() && file.images.is_some() {
-                    corp.images = file.images;
-                }
-                if corp.managed_sessions.is_none() {
-                    corp.managed_sessions = file.managed_sessions;
-                }
-                // External rule files: first corp path wins per reference.
-                corp.rule_files.merge_first_wins(file.rule_files);
-                corp.corp_rule_files.merge_first_wins(file.corp_rule_files);
-                if corp.refresh_policy.is_none() {
-                    corp.refresh_policy = file.refresh_policy;
-                }
-                for (rule_id, rule) in file.default {
-                    corp.default.entry(rule_id).or_insert(rule);
-                }
-                for (rule_id, rule) in file.profiles.rules {
-                    corp.profiles.rules.entry(rule_id).or_insert(rule);
-                }
-                for (rule_id, rule) in file.corp.rules {
-                    corp.corp.rules.entry(rule_id).or_insert(rule);
-                }
-                // Provider config: first corp path wins per provider.
-                for (provider_id, provider) in file.ai {
-                    corp.ai.entry(provider_id).or_insert(provider);
-                }
-                for (plugin_id, plugin) in file.plugins {
-                    corp.plugins.entry(plugin_id).or_insert(plugin);
-                }
-                if corp.network.dns.upstreams.is_empty() && !file.network.dns.upstreams.is_empty() {
-                    corp.network.dns.upstreams = file.network.dns.upstreams;
-                }
-                for (target, override_config) in file.network.upstream_overrides {
-                    corp.network.upstream_overrides.entry(target).or_insert(override_config);
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "corp settings at {}", path.display());
-            }
+    for file in files {
+        // First path wins per-key: only insert if not already present
+        for (id, entry) in file.settings {
+            corp.settings.entry(id).or_insert(entry);
+        }
+        // MCP config: first non-None wins
+        if corp.mcp.is_none() && file.mcp.is_some() {
+            corp.mcp = file.mcp;
+        }
+        // Image policy: first non-None wins, and replaces the user's.
+        if corp.images.is_none() && file.images.is_some() {
+            corp.images = file.images;
+        }
+        if corp.managed_sessions.is_none() {
+            corp.managed_sessions = file.managed_sessions;
+        }
+        // External rule files: first corp path wins per reference.
+        corp.rule_files.merge_first_wins(file.rule_files);
+        corp.corp_rule_files.merge_first_wins(file.corp_rule_files);
+        if corp.refresh_policy.is_none() {
+            corp.refresh_policy = file.refresh_policy;
+        }
+        for (rule_id, rule) in file.default {
+            corp.default.entry(rule_id).or_insert(rule);
+        }
+        for (rule_id, rule) in file.profiles.rules {
+            corp.profiles.rules.entry(rule_id).or_insert(rule);
+        }
+        for (rule_id, rule) in file.corp.rules {
+            corp.corp.rules.entry(rule_id).or_insert(rule);
+        }
+        // Provider config: first corp path wins per provider.
+        for (provider_id, provider) in file.ai {
+            corp.ai.entry(provider_id).or_insert(provider);
+        }
+        for (plugin_id, plugin) in file.plugins {
+            corp.plugins.entry(plugin_id).or_insert(plugin);
+        }
+        if corp.network.dns.upstreams.is_empty() && !file.network.dns.upstreams.is_empty() {
+            corp.network.dns.upstreams = file.network.dns.upstreams;
+        }
+        for (target, override_config) in file.network.upstream_overrides {
+            corp.network.upstream_overrides.entry(target).or_insert(override_config);
         }
     }
     corp
