@@ -33,14 +33,7 @@ pub(super) fn mint_owner_secret(session_dir: &std::path::Path) -> Result<String>
 }
 
 fn secrets_match(presented: &str, expected: &str) -> bool {
-    // Same length, then every byte compared: a mismatch costs the same as a
-    // match, so timing says nothing about how much of the secret was right.
-    presented.len() == expected.len()
-        && presented
-            .bytes()
-            .zip(expected.bytes())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0
+    capsem_crypto::secrets::constant_time_eq(presented.as_bytes(), expected.as_bytes())
 }
 
 /// The asker is the running owner of `vm`, or nobody.
