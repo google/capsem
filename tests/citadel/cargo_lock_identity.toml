@@ -7,5 +7,5 @@
 # each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
 # this record matches the lock again, so the cost is chosen, reviewed and
 # batched rather than discovered twenty minutes into a gate.
-sha256 = "9c77a9aa03c2ef6a6537b0903ea60c0bc7b3ac62c4ee0ca9b2511237d9cea58e"
-reason = "The merged 0.7 line centralizes cryptographic dependencies in capsem-crypto while #206 adds isolated ledger and archive codecs; the host and sealed guest cohort will be rebuilt and qualified together."
+sha256 = "31b8050cdf30b4c50c0365fa235a0bb6840e18b6cf40e48edefd1b7e9a9c2bca"
+reason = "The unified observable cache adds quick_cache 0.7.0. The 0.7 crypto ownership retrofit centralizes first-party hashes, entropy, TLS keys, JWT verification and secret primitives; BLAKE2b/BLAKE2s SIMD 1.0.5 support normal-harness comparisons. Managed-session APIs add zeroizing request capabilities, and Rust managed scopes add SDK edges to existing capsem-crypto random/secrets, futures, humantime and tokio-util rt. Central runtime-limit generation adds capsem-proto's direct toml edge, and exact benchmark reporting adds capsem-bench's direct capsem-proto edge. The host and sealed guest cohort will be rebuilt and qualified together."
