@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "guest" / "artifacts"))
 
 from capsem_bench import __main__ as bench_main
-from capsem_bench import dns_load, load_harness, mitm_load
+from capsem_bench import dns_load, load_harness, mcp_load, mitm_load
 
 
 def test_mitm_load_delegates_to_async_rust_driver(monkeypatch):
@@ -139,17 +139,21 @@ def test_dns_load_delegates_to_async_rust_driver(monkeypatch):
     ]
 
 
-def test_dns_load_curve_reaches_the_config_owned_client_ceiling(monkeypatch):
+def test_load_curve_reaches_the_config_owned_client_ceiling(monkeypatch):
     monkeypatch.setattr(
-        dns_load,
-        "_runtime_limits",
+        load_harness,
+        "runtime_limits",
         lambda: {"network_client_capacity": 512},
     )
 
-    assert dns_load._default_concurrency() == (1, 16, 64, 128, 256, 512)
+    expected = (1, 16, 64, 128, 256, 512)
+    assert load_harness.capacity_concurrency_levels() == expected
+    assert dns_load.capacity_concurrency_levels() == expected
+    assert mitm_load.capacity_concurrency_levels() == expected
+    assert mcp_load.capacity_concurrency_levels() == expected
 
 
-def test_dns_load_reads_runtime_limits_from_the_rust_harness(monkeypatch):
+def test_load_harness_reads_runtime_limits_from_the_rust_harness(monkeypatch):
     calls = []
 
     def run(argv, **kwargs):
@@ -160,12 +164,12 @@ def test_dns_load_reads_runtime_limits_from_the_rust_harness(monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr(dns_load.subprocess, "run", run)
+    monkeypatch.setattr(load_harness.subprocess, "run", run)
 
-    assert dns_load._runtime_limits()["network_client_capacity"] == 512
+    assert load_harness.runtime_limits()["network_client_capacity"] == 512
     assert calls == [
         (
-            [dns_load.RUST_BENCH, "runtime-limits"],
+            [load_harness.RUST_BENCH, "runtime-limits"],
             {"check": False, "capture_output": True, "text": True},
         )
     ]

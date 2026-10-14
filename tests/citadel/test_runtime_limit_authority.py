@@ -141,11 +141,14 @@ REQUIRED_WIRING = {
         "LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS",
         "LEDGER_SQLITE_MMAP_BYTES",
     ),
-    "guest/artifacts/capsem_bench/dns_load.py": (
+    "guest/artifacts/capsem_bench/load_harness.py": (
         '"runtime-limits"',
         '"network_client_capacity"',
         "capacity // 2",
     ),
+    "guest/artifacts/capsem_bench/dns_load.py": ("capacity_concurrency_levels",),
+    "guest/artifacts/capsem_bench/mitm_load.py": ("capacity_concurrency_levels",),
+    "guest/artifacts/capsem_bench/mcp_load.py": ("capacity_concurrency_levels",),
 }
 
 
@@ -156,6 +159,19 @@ def _numeric_limit_declarations(sources: dict[str, str]) -> list[str]:
             if name in CONFIG_OWNED_NAMES:
                 violations.append(f"{path}: numeric {name} = {value}")
     return violations
+
+
+def test_guest_load_benchmarks_do_not_duplicate_a_concurrency_ceiling() -> None:
+    for relative in (
+        "guest/artifacts/capsem_bench/dns_load.py",
+        "guest/artifacts/capsem_bench/mitm_load.py",
+        "guest/artifacts/capsem_bench/mcp_load.py",
+    ):
+        source = (ROOT / relative).read_text()
+        assert "DEFAULT_CONCURRENCY" not in source, (
+            RUNTIME_LIMIT_RATIONALE
+            + f"\n{relative}: derive the load curve from NETWORK_CLIENT_CAPACITY"
+        )
 
 
 def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:

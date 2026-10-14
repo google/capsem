@@ -47,13 +47,13 @@ import subprocess
 from .helpers import console
 from .load_harness import (
     DurationLoadConfig,
+    capacity_concurrency_levels,
     render_load_table,
 )
 
 # Served by capsem-mock-server through the benchmark collector's corp config
 # (DNS fixture + upstream override), configured by the shared guest collector.
 DEFAULT_TARGET = "https://fixture.capsem.test/tiny"
-DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
 RUST_BENCH = "/usr/local/bin/capsem-bench-rs"
 
@@ -97,9 +97,10 @@ def _drive_at_concurrency(url, concurrency, duration_s):
 def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
     """Drive the MITM proxy at each concurrency level; return the result dict."""
     target = target or os.environ.get("CAPSEM_BENCH_MITM_TARGET", DEFAULT_TARGET)
+    default_concurrency = capacity_concurrency_levels() if concurrency_levels is None else ()
     config = DurationLoadConfig.from_inputs(
         "mitm-load",
-        default_concurrency=DEFAULT_CONCURRENCY,
+        default_concurrency=default_concurrency,
         default_duration_s=DEFAULT_DURATION_S,
         concurrency_levels=concurrency_levels,
         duration_s=duration_s,

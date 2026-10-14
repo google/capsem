@@ -6,8 +6,10 @@ JSON. Keep that machinery here so DNS, MCP, MITM, and local mock-server
 benchmarks cannot drift into incompatible result shapes.
 """
 
+import json
 import os
 import resource
+import subprocess
 from dataclasses import dataclass
 
 GLOBAL_CONCURRENCY_ENV = "CAPSEM_BENCH_CONCURRENCY"
@@ -15,6 +17,37 @@ GLOBAL_DURATION_ENV = "CAPSEM_BENCH_DURATION_S"
 GLOBAL_TOTAL_REQUESTS_ENV = "CAPSEM_BENCH_TOTAL_REQUESTS"
 GLOBAL_TIMEOUT_ENV = "CAPSEM_BENCH_TIMEOUT_S"
 GLOBAL_SCENARIOS_ENV = "CAPSEM_BENCH_SCENARIOS"
+RUST_BENCH = "/usr/local/bin/capsem-bench-rs"
+
+
+def runtime_limits():
+    """Read the generated product capacity authority from the Rust harness."""
+    completed = subprocess.run(
+        [RUST_BENCH, "runtime-limits"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            "read runtime limits failed with "
+            f"{completed.returncode}: {completed.stderr[-2000:].strip()}"
+        )
+    try:
+        limits = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("runtime limits returned invalid JSON") from exc
+    capacity = limits.get("network_client_capacity")
+    if type(capacity) is not int or capacity < 1:
+        raise RuntimeError("runtime limits omitted network client capacity")
+    return limits
+
+
+def capacity_concurrency_levels():
+    """Exercise one client through the complete supported network capacity."""
+    capacity = runtime_limits()["network_client_capacity"]
+    levels = (1, capacity // 32, capacity // 8, capacity // 4, capacity // 2, capacity)
+    return tuple(dict.fromkeys(max(1, level) for level in levels))
 
 
 def _env_prefix(mode):
