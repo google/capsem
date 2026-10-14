@@ -1,7 +1,8 @@
 // Gateway API client. Token is module-scoped -- never in localStorage, DOM, logs, or URLs.
 
 import * as gateway from '@capsem/sdk/operations';
-import { HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
+import { Connections, CredentialGrants, HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
+import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
 import { surfaceLauncherUrl } from './models/surface';
@@ -785,6 +786,43 @@ export async function getVmDetectionStatus(id: string): Promise<SecurityRuleStat
 }
 
 // -- Plugins --
+
+// Consent and session approval are separate explicit actions. Mutations never replay.
+export function listConnections() {
+  return _sdk.call(transport => new Connections(transport).list());
+}
+
+export function authorizeGoogleConnection(request: AuthorizeGoogleRequest) {
+  return _sdk.call(transport => new Connections(transport).authorizeGoogle(request), false);
+}
+
+export function getConnectionAuthorization(id: string) {
+  return _sdk.call(transport => new Connections(transport).authorization(id));
+}
+
+export function cancelConnectionAuthorization(id: string) {
+  return _sdk.call(transport => new Connections(transport).cancelAuthorization(id), false);
+}
+
+export function getConnection(id: string) {
+  return _sdk.call(transport => new Connections(transport).get(id));
+}
+
+export function disconnectConnection(id: string) {
+  return _sdk.call(transport => new Connections(transport).disconnect(id), false);
+}
+
+export function listSessionCredentialGrants(id: string) {
+  return _sdk.call(transport => new CredentialGrants(async () => ({transport, id})).list());
+}
+
+export function createSessionCredentialGrant(id: string, request: CreateSessionGrantRequest) {
+  return _sdk.call(transport => new CredentialGrants(async () => ({transport, id})).create(request), false);
+}
+
+export function revokeSessionCredentialGrant(id: string, grantId: string) {
+  return _sdk.call(transport => new CredentialGrants(async () => ({transport, id})).revoke(grantId), false);
+}
 
 /** Explicit host material; never replay this mutation or fabricate offline success. */
 export function injectCredential(provider: CredentialInjectProvider, value: string, storage: CredentialStorage): Promise<CredentialInjectResponse> {

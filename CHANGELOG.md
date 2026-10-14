@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Frontend connection and session-grant requests use authenticated SDK calls,
+  validate returned ownership, and never replay consent or grant mutations.
+
 - Grant polling retires authority when its consent is unavailable and refuses
   exhausted revisions instead of publishing numbers clients cannot represent.
 
