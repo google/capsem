@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Ledger event identifiers reject NUL suffixes, and host audit-chain hashes
+  require binary storage. Stale declarations fail integrity readiness.
+
 - Ledger digest and credential-reference checks reject nonhex characters and
   NUL suffixes. Readers and writers refuse older checks without rewriting the ledger.
 

@@ -17,6 +17,12 @@ fn seed_integrity_rows(conn: &Connection) {
          INSERT INTO security_decision_events(timestamp_unix_ms,event_id,event_type,stage,actor,
              previous_decision,requested_decision,effective_decision)
              VALUES(0,'000000000001','http.request','rule','fixture','allow','allow','allow');
+         INSERT INTO security_ask_events(timestamp_unix_ms,ask_id,event_id,event_type,rule_id,rule_name,status,rule_json)
+             VALUES(0,'000000000001','000000000001','http.request','fixture','fixture','pending','{}');
+         INSERT INTO transport_events(event_id,timestamp_unix_ms,event_type,event_json)
+             VALUES('000000000001',0,'network.connect','{}');
+         INSERT INTO host_events(timestamp_unix_ms,kind,actor,detail,prev_hash,hash)
+             VALUES(0,'service_started','fixture',x'80',zeroblob(32),zeroblob(32));
          INSERT INTO body_blocks(block_offset,raw_len,disk_len,sealed_at) VALUES(80,1,1,'t');",
     )
     .unwrap();
@@ -38,6 +44,91 @@ fn seed_integrity_rows(conn: &Connection) {
         [format!("credential:{hash}")],
     )
     .unwrap();
+}
+
+#[test]
+fn ledger_ids_reject_nul_suffixes_in_every_actual_column() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    seed_integrity_rows(&conn);
+    let mut checked = 0;
+    for (table, columns) in REQUIRED_COLUMNS_FOR_TESTS {
+        for column in *columns {
+            if !matches!(*column, "event_id" | "ask_id" | "mutation_id") {
+                continue;
+            }
+            checked += 1;
+            let update = format!("UPDATE {table} SET {column}=?1");
+            assert_eq!(conn.execute(&update, ["000000000001"]).unwrap(), 1, "{table}.{column}");
+            let error = match conn.execute(&update, ["000000000001\0suffix"]) {
+                Err(error) => error,
+                Ok(_) => panic!("{table}.{column} accepted a NUL-suffixed ID"),
+            };
+            assert!(error.to_string().contains("CHECK"), "{table}.{column}: {error}");
+        }
+    }
+    assert_eq!(checked, 17);
+}
+
+#[test]
+fn host_chain_hashes_require_binary_storage() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    seed_integrity_rows(&conn);
+    for column in ["prev_hash", "hash"] {
+        let update = format!("UPDATE host_events SET {column}=?1");
+        assert_eq!(conn.execute(&update, [&[1u8; 32]]).unwrap(), 1);
+        let error = match conn.execute(&update, ["a".repeat(32)]) {
+            Err(error) => error,
+            Ok(_) => panic!("host_events.{column} accepted text in place of a binary hash"),
+        };
+        assert!(error.to_string().contains("CHECK"), "{column}: {error}");
+    }
+}
+
+#[test]
+fn stale_transport_id_checks_are_refused_without_rewriting_the_ledger() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    let canonical: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name='transport_events'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let stale = canonical.replace("length(CAST(event_id AS BLOB))", "length(event_id)");
+    assert_ne!(stale, canonical);
+    conn.execute_batch("DROP TABLE transport_events").unwrap();
+    conn.execute_batch(&stale).unwrap();
+    conn.execute(
+        "INSERT INTO transport_events(event_id,timestamp_unix_ms,event_type,event_json)
+         VALUES('000000000001',0,'network.connect','{}')",
+        [],
+    )
+    .unwrap();
+    for result in [
+        validate_ready_schema(&conn),
+        create_tables(&conn).map_err(|error| error.to_string()),
+        create_memory_tables(&conn, &memory_uri_for_name("stale_transport_id_checks"))
+            .map_err(|error| error.to_string()),
+    ] {
+        let error = result.expect_err("old transport ID checks must fail at each ledger boundary");
+        assert!(error.contains("transport_events.event_id"), "{error}");
+    }
+    let unchanged: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name='transport_events'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(unchanged, stale);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM transport_events", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
 }
 
 #[test]

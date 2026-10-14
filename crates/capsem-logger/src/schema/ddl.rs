@@ -17,7 +17,7 @@
 pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS net_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         domain TEXT NOT NULL,
         port INTEGER DEFAULT 443,
@@ -51,7 +51,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS model_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         provider TEXT NOT NULL,
         protocol TEXT CHECK (protocol IS NULL OR protocol IN ('anthropic', 'openai', 'google', 'ollama')),
@@ -121,7 +121,7 @@ pub const CREATE_SCHEMA: &str = "
     -- block it sits in and its span inside that block's inflated bytes.
     CREATE TABLE IF NOT EXISTS event_body_blobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.decision', 'security.ask')),
         source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'tool_responses', 'exec_events', 'security_rule_events', 'security_decision_events', 'security_ask_events')),
         direction TEXT NOT NULL CHECK (direction IN ('request', 'response', 'payload', 'stdout', 'stderr')),
@@ -148,7 +148,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS tool_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL DEFAULT '',
         model_call_id INTEGER,
         provider TEXT NOT NULL DEFAULT '',
@@ -181,7 +181,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS tool_responses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         model_call_id INTEGER NOT NULL,
         call_id TEXT NOT NULL,
         content_preview TEXT,
@@ -219,7 +219,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS model_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         model_call_id INTEGER NOT NULL,
         timestamp TEXT NOT NULL,
         provider TEXT NOT NULL,
@@ -251,7 +251,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS fs_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         action TEXT NOT NULL,
         path TEXT NOT NULL,
@@ -271,7 +271,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS exec_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         exec_id INTEGER NOT NULL,
         command TEXT NOT NULL,
@@ -301,7 +301,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS dns_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         qname TEXT NOT NULL,
         qtype INTEGER NOT NULL,
@@ -334,7 +334,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         pid INTEGER NOT NULL,
         ppid INTEGER NOT NULL,
@@ -364,7 +364,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS substitution_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         material_class TEXT NOT NULL,
         source TEXT NOT NULL,
@@ -405,7 +405,7 @@ pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS security_rule_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
-        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         rule_id TEXT NOT NULL,
         rule_action TEXT NOT NULL CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess')),
@@ -463,7 +463,7 @@ pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS security_decision_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
-        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         stage TEXT CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution')),
         actor TEXT,
@@ -495,8 +495,8 @@ pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS security_ask_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
-        ask_id TEXT NOT NULL CHECK (length(ask_id) = 12 AND ask_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        ask_id TEXT NOT NULL CHECK (length(CAST(ask_id AS BLOB)) = 12 AND ask_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         rule_id TEXT NOT NULL,
         rule_name TEXT NOT NULL,
@@ -521,7 +521,7 @@ pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS policy_mutation_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
-        mutation_id TEXT NOT NULL CHECK (length(mutation_id) = 12 AND mutation_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        mutation_id TEXT NOT NULL CHECK (length(CAST(mutation_id AS BLOB)) = 12 AND mutation_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         actor TEXT NOT NULL,
         category TEXT NOT NULL,
         filename TEXT NOT NULL,
@@ -558,8 +558,8 @@ pub const CREATE_SCHEMA: &str = "
         actor TEXT NOT NULL,
         detail BLOB NOT NULL,
         trace_id TEXT,
-        prev_hash BLOB NOT NULL CHECK (length(prev_hash) = 32),
-        hash BLOB NOT NULL CHECK (length(hash) = 32)
+        prev_hash BLOB NOT NULL CHECK (typeof(prev_hash) = 'blob' AND length(prev_hash) = 32),
+        hash BLOB NOT NULL CHECK (typeof(hash) = 'blob' AND length(hash) = 32)
     );
     CREATE INDEX IF NOT EXISTS idx_host_events_session ON host_events(session_id, id);
 
@@ -614,7 +614,7 @@ pub const CREATE_SCHEMA: &str = "
 pub(super) const CREATE_TRANSPORT: &str = "
     CREATE TABLE IF NOT EXISTS transport_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL UNIQUE CHECK(length(event_id)=12 AND event_id NOT GLOB '*[^0-9a-f]*'),
+        event_id TEXT NOT NULL UNIQUE CHECK(length(CAST(event_id AS BLOB))=12 AND event_id NOT GLOB '*[^0-9a-f]*'),
         timestamp_unix_ms INTEGER NOT NULL CHECK(timestamp_unix_ms >= 0),
         event_type TEXT NOT NULL CHECK(event_type IN ('network.connect','network.connect_result','network.close','network.lifecycle','network.probe','network.probe_result')),
         network_id TEXT,

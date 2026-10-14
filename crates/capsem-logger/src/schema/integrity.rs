@@ -1,6 +1,6 @@
-//! Refuse ledger declarations that cannot enforce canonical digest metadata.
+//! Refuse ledger declarations that cannot enforce canonical integrity metadata.
 //! Derive the required checks from the one DDL, without rewriting an old ledger.
-use super::CREATE_SCHEMA;
+use super::{ddl::CREATE_TRANSPORT, CREATE_SCHEMA};
 use rusqlite::Connection;
 
 fn normalized(sql: &str) -> String {
@@ -11,11 +11,14 @@ fn normalized(sql: &str) -> String {
 
 pub(super) fn validate(conn: &Connection) -> rusqlite::Result<()> {
     let mut lookup = conn.prepare_cached("SELECT sql FROM main.sqlite_master WHERE type='table' AND name=?1")?;
-    for declaration in CREATE_SCHEMA.split("CREATE TABLE IF NOT EXISTS ").skip(1) {
+    for declaration in [CREATE_SCHEMA, CREATE_TRANSPORT]
+        .into_iter()
+        .flat_map(|ddl| ddl.split("CREATE TABLE IF NOT EXISTS ").skip(1))
+    {
         let table = declaration.split_whitespace().next().expect("canonical table name");
         let mut required = declaration
             .lines()
-            .filter(|line| line.contains(" GLOB 'blake3:") || line.contains(" GLOB 'credential:blake3:"))
+            .filter(|line| line.contains(" GLOB ") || line.contains(" CHECK (typeof("))
             .peekable();
         if required.peek().is_none() {
             continue;
@@ -31,7 +34,7 @@ pub(super) fn validate(conn: &Connection) -> rusqlite::Result<()> {
             if !sql.contains(&normalized(line)) {
                 let column = line.split_whitespace().next().expect("canonical digest column");
                 return Err(rusqlite::Error::InvalidParameterName(format!(
-                    "session ledger predates canonical digest checks: {table}.{column}"
+                    "session ledger predates canonical integrity checks: {table}.{column}"
                 )));
             }
         }
