@@ -29,7 +29,7 @@ use capsem_proto::{decode_dns_response, encode_dns_request, DnsRequest, DnsRespo
 
 /// Sessions per forwarder. Two keep the guest resolving while one
 /// reconnects, and give the host two independent frame streams.
-pub(crate) const DNS_SESSIONS: usize = 2;
+pub(crate) const DNS_SESSIONS: usize = capsem_proto::NETWORK_DNS_SESSIONS_PER_VM;
 /// Queries one session holds in flight before it sheds. Past the shared
 /// guest/host bound the client gets SERVFAIL rather than an unbounded queue.
 pub(crate) use capsem_proto::DNS_SESSION_MAX_IN_FLIGHT;
