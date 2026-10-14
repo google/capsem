@@ -73,19 +73,9 @@ fn query_cache_key(queries: &[DbQueryOwned]) -> DbQueryCacheKey {
 /// `serde_json::Value` is neither `Hash` nor `Ord`, so the shared bounded cache
 /// uses the complete canonical serialization as its collision-free key. The
 /// read epoch remains the freshness identity owned by this DB handle.
+/// The generated product capacity leaves room for the route batches fetched
+/// side by side while keeping every row-bounded result under one authority.
 type DbQueryManyCache = KeyedIdentityCache<DbQueryCacheKey, u64, Vec<DbQueryJson>>;
-
-/// How many distinct batches one handle keeps answers for.
-///
-/// The route lists that read a session handle through this rail -- the
-/// `stats/detail` batch, the timeline, history pages and the security window
-/// -- are fetched side by side when a user opens a session, so the bound
-/// leaves room for them without one evicting another. The bound is on memory
-/// as much as on lookups: an entry holds a whole JSON result set, and every
-/// batch that reaches here bounds its rows. Nothing in here outlives the
-/// ledger state it was read from; the whole cache is dropped when the read
-/// epoch moves.
-const QUERY_MANY_CACHE_ENTRIES: usize = 8;
 
 /// Typed invalidation domains for DB-owned data consumed by cached readers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -340,7 +330,10 @@ impl DbHandle {
                 reader_join: Mutex::new(Some(reader_join)),
                 writer: None,
                 archive_blocks_inflated: AtomicU64::new(0),
-                query_many_cache: DbQueryManyCache::new("logger.query_many", QUERY_MANY_CACHE_ENTRIES),
+                query_many_cache: DbQueryManyCache::new(
+                    "logger.query_many",
+                    capsem_proto::CACHE_LEDGER_QUERY_BATCH_ENTRIES,
+                ),
                 hot,
                 reader_requests: AtomicU64::new(0),
                 read_cache_epoch: AtomicU64::new(0),

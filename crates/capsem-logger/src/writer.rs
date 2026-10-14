@@ -591,7 +591,7 @@ impl DbWriter {
         conn.busy_timeout(Duration::from_secs(5))?;
         schema::apply_pragmas(&conn)?;
         // One statement per table per target; the default 16 would evict.
-        conn.set_prepared_statement_cache_capacity(64);
+        conn.set_prepared_statement_cache_capacity(capsem_proto::CACHE_SQLITE_PREPARED_STATEMENTS);
         schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
         let bodies = match schema::archive_schema_status(&conn)? {
             schema::ArchiveSchemaStatus::Fresh => {
@@ -646,7 +646,7 @@ impl DbWriter {
         let conn = Connection::open_in_memory()?;
         schema::apply_pragmas(&conn)?;
         // One statement per table per target; the default 16 would evict.
-        conn.set_prepared_statement_cache_capacity(64);
+        conn.set_prepared_statement_cache_capacity(capsem_proto::CACHE_SQLITE_PREPARED_STATEMENTS);
         schema::create_tables(&conn)?;
         let bodies = BodyArchive::disabled(SystemTime::now);
         let memory_uri = schema::memory_uri_for_name(&format!(
