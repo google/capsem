@@ -4,6 +4,57 @@ use axum::http::Request;
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn connection_catalog_query_refuses_invalid_input_without_echoing_it() {
+    let app = build_service_router(crate::tests::make_test_state());
+    for query in [
+        "limit=0",
+        "limit=33",
+        "limit=4294967295",
+        "limit=-1",
+        "limit=1&limit=2",
+        "cursor=private-query",
+        "cursor=00000000-0000-0000-0000-000000000000",
+        "cursor=12345678-1234-4234-8234-123456789ABC",
+        "scope=private-query",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/connections?{query}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "invalid query: {query}");
+        let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+        let error: api::ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(error.error, "credential request refused");
+        assert_eq!(error.code, Some("request_conflict".into()));
+        assert!(!String::from_utf8(bytes.to_vec()).unwrap().contains("private-query"));
+    }
+    for query in ["", "limit=1", "limit=32&cursor=12345678-1234-4234-8234-123456789abc"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/connections?{query}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+        let result: api::ConnectionListResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(result.connections.is_empty());
+        assert!(result.next_cursor.is_none());
+        assert_eq!(result.scope_profiles[0].id, "agy-native");
+    }
+}
+
+#[tokio::test]
 async fn connection_catalog_and_nine_routes_use_typed_owner_failures_without_secret_echo() {
     let state = crate::tests::make_test_state();
     let app = build_service_router(Arc::clone(&state));

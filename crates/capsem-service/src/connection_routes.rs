@@ -128,8 +128,18 @@ fn body<T>(payload: Result<Json<T>, axum::extract::rejection::JsonRejection>) ->
 
 pub(crate) async fn list(
     State(state): State<Arc<ServiceState>>,
+    query: Result<axum::extract::Query<api::ConnectionListQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<api::ConnectionListResponse>, CredentialError> {
-    Ok(Json(state.connections.broker().await?.list().await?))
+    let axum::extract::Query(query) =
+        query.map_err(|_| CredentialError(api::CredentialErrorCode::RequestConflict, true))?;
+    let result = state
+        .connections
+        .broker()
+        .await?
+        .list_page(&query)
+        .await
+        .map_err(|code| CredentialError(code, code == api::CredentialErrorCode::RequestConflict))?;
+    Ok(Json(result))
 }
 pub(crate) async fn authorize(
     State(state): State<Arc<ServiceState>>,
