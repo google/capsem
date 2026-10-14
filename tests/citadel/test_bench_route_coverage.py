@@ -17,8 +17,9 @@ hosted package build rather than nineteen minutes into binary qualification.
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 PROJECT_ROOT = Path(__file__).parents[2]
 SERVICE = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "router_runtime.rs"
@@ -165,9 +166,10 @@ def test_the_debt_is_a_ratchet_that_can_only_shrink() -> None:
     """
     coverage = _config()
     unmeasured = len(coverage["unmeasured"])
-    # Restart adds one explicitly unmeasured supervisor mutation. Preserve the
-    # six routes already removed from debt instead of retaining old headroom.
-    assert unmeasured <= 95, (
+    # The reviewed provider and lifecycle mutations add six stateful paths.
+    # Catalog/grant reads are measured; record the actual remaining 75 rather
+    # than retaining headroom that could hide future classification debt.
+    assert unmeasured <= 75, (
         f"{unmeasured} routes are unmeasured, more than when this guard was "
         "written. A new route should be measured, not added to the debt."
     )

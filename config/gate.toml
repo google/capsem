@@ -2023,6 +2023,7 @@ building = ["frontend-build", "docs", "site"]
 # `tests/test_gate_*.py` to appear here, since by construction those need
 # neither.
 source_contract = [
+    "tests/test_benchmark_routes.py",
     "integrations/inspect-ai/tests/containers/test_compose_fields.py",
     "integrations/inspect-ai/tests/containers/test_compose_inputs.py",
     "integrations/inspect-ai/tests/containers/test_compose_interpolation.py",
@@ -3015,6 +3016,8 @@ slowest_steps = 10
 [benchmark.routes]
 internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
 measured = [
+    "/connections",
+    "/vms/{id}/credential-grants",
     "/vms/{id}/bodies/{event_id}",
     "/vms/{id}/status",
     "/vms/{id}/exposures",
@@ -3033,6 +3036,16 @@ measured = [
     "/update/status",
 ]
 unmeasured = [
+    # Provider authorization/poll/disconnect and concrete connection records
+    # need genuine provider lifecycle fixtures, not timed error responses.
+    "/connections/google/authorize",
+    "/connections/authorizations/{transaction_id}",
+    "/connections/{connection_id}",
+    # Claim/close mutate owned session lifetimes; grant revocation mutates
+    # credential authority. Their native acceptance owns the effects.
+    "/vms/managed/{request_id}/claim",
+    "/vms/managed/{request_id}/close",
+    "/vms/{id}/credential-grants/{grant_id}",
     # Restart needs a disposable supervisor; the read-only route collector
     # cannot time accepted restarts. Its functional proof owns that lifecycle.
     "/restart",

@@ -46,7 +46,13 @@ from helpers.gateway import GatewayInstance
 from helpers.http_transport import Transport
 from helpers.process_cpu import process_cpu_seconds
 from helpers.service import ServiceInstance
-from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, assert_event_bodies, seed_stopped_workspace
+from helpers.stopped_workspace import (
+    BODY_ROUTE,
+    BODY_URL,
+    VM_ID,
+    assert_event_bodies,
+    seed_stopped_workspace,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 WARMUP = 2
@@ -55,6 +61,14 @@ WARMUP = 2
 def measured_routes() -> list[str]:
     config = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
     return list(config["benchmark"]["routes"]["measured"])
+
+
+def request_path(pattern: str) -> str:
+    """Resolve the measured subject to a seeded, successful fixture URL."""
+    path = BODY_URL if pattern == BODY_ROUTE else pattern.replace("/vms/{id}/", f"/vms/{VM_ID}/")
+    if "{" in path or "}" in path:
+        raise ValueError(f"measured route has no successful fixture: {pattern}")
+    return path
 
 
 @dataclass(frozen=True)
@@ -128,6 +142,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    requests = {path: request_path(path) for path in routes}
 
     service = ServiceInstance()
     gateway = GatewayInstance(service.uds_path)
@@ -154,11 +169,11 @@ def main() -> int:
             ),
         )
         for path in routes:
-            request_path = {BODY_ROUTE: BODY_URL}.get(path, path)
+            url = requests[path]
             for target in targets:
                 print(f"{target.label} {path}", file=sys.stderr)
-                latencies, cpu = sample_warm_route(target, request_path, samples)
-                cold_latencies = sample_cold_route(target, request_path, samples)
+                latencies, cpu = sample_warm_route(target, url, samples)
+                cold_latencies = sample_cold_route(target, url, samples)
                 metrics[f"{target.label}.{path}.latency_ms"] = {
                     "unit": "milliseconds",
                     "samples": latencies,
