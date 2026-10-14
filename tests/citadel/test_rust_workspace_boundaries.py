@@ -19,6 +19,9 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 FOCUSED_DEPENDENCY_RULES = {
+    "capsem-cache": frozenset(
+        {"capsem-core", "capsem-logger", "capsem-assets", "capsem-config", "rusqlite", "tokio"}
+    ),
     "capsem-foundation": frozenset(
         {"capsem-core", "capsem-logger", "capsem-assets", "rmcp", "rusqlite"}
     ),

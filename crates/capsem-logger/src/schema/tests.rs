@@ -1,8 +1,4 @@
 use super::*;
-use capsem_telemetry::db::{
-    DB_SQLITE_FILE_SIZE_BYTES, DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL, DB_SQLITE_MMAP_CONFIG_BYTES,
-    DB_SQLITE_MMAP_COVERAGE_RATIO, DB_SQLITE_MMAP_EFFECTIVE_BYTES, DB_SQLITE_WAL_SIZE_BYTES,
-};
 use rusqlite::OpenFlags;
 
 mod archive;
@@ -162,6 +158,33 @@ fn db_mem_flush_copies_each_row_once_and_empties_memory() {
 }
 
 #[test]
+fn db_mem_flush_releases_pages_from_completed_bursts() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    create_memory_tables(&conn, &memory_uri_for_name("db_mem_flush_releases_pages")).unwrap();
+    let initial_pages: i64 = conn.query_row("PRAGMA mem.page_count", [], |row| row.get(0)).unwrap();
+    let payload = "x".repeat(4096);
+    for index in 0..2048 {
+        conn.execute(
+            "INSERT INTO mem.net_events (timestamp, domain, decision)
+             VALUES ('2026-10-14T00:00:00Z', ?1, 'denied')",
+            [format!("{index}-{payload}")],
+        )
+        .unwrap();
+    }
+    let peak_pages: i64 = conn.query_row("PRAGMA mem.page_count", [], |row| row.get(0)).unwrap();
+    assert!(peak_pages > initial_pages + 1000, "fixture must create memory pressure");
+
+    let watermarks = initial_memory_flush_watermarks(&conn, ["net_events"]).unwrap();
+    flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).unwrap();
+    let retained_pages: i64 = conn.query_row("PRAGMA mem.page_count", [], |row| row.get(0)).unwrap();
+    assert!(
+        retained_pages <= initial_pages + 16,
+        "empty staging tables retained {retained_pages} pages after a {peak_pages}-page burst"
+    );
+}
+
+#[test]
 fn memory_sequences_start_above_every_id_the_disk_handed_out() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
@@ -226,8 +249,13 @@ fn writer_pragmas_use_full_wal_durability() {
 
     let journal: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0)).unwrap();
     let synchronous: i64 = conn.query_row("PRAGMA synchronous", [], |row| row.get(0)).unwrap();
+    let temp_store: i64 = conn.query_row("PRAGMA temp_store", [], |row| row.get(0)).unwrap();
     assert_eq!(journal.to_ascii_lowercase(), "wal");
     assert_eq!(synchronous, 2, "SQLite FULL is pragma value 2");
+    assert_eq!(
+        temp_store, 2,
+        "writer sort and copy scratch state must stay inside the confined process"
+    );
     #[cfg(target_os = "macos")]
     assert_eq!(
         conn.query_row("PRAGMA fullfsync", [], |row| row.get::<_, i64>(0))
@@ -880,84 +908,7 @@ fn security_rule_events_reject_non_json_forensic_payloads() {
     );
 }
 
-/// Writer pragmas (WAL + synchronous) must only be applied to read-write
-/// connections. Read-only connections must use apply_reader_pragmas instead.
-#[test]
-fn reader_pragmas_work_on_readonly_connection() {
-    // Create a file-backed DB first (writer sets WAL).
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("test.db");
-    {
-        let conn = Connection::open(&path).unwrap();
-        apply_pragmas(&conn).unwrap();
-        create_tables(&conn).unwrap();
-    }
-
-    // Open read-only -- apply_reader_pragmas must not fail.
-    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let conn = Connection::open_with_flags(&path, flags).unwrap();
-    apply_reader_pragmas(&conn).unwrap();
-}
-
-#[test]
-fn reader_pragmas_enable_mmap_before_query_only() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("test.db");
-    {
-        let conn = Connection::open(&path).unwrap();
-        apply_pragmas(&conn).unwrap();
-        create_tables(&conn).unwrap();
-    }
-
-    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let conn = Connection::open_with_flags(&path, flags).unwrap();
-    apply_reader_pragmas(&conn).unwrap();
-
-    let mmap_size: i64 = conn.query_row("PRAGMA mmap_size", [], |row| row.get(0)).unwrap();
-    assert!(
-        mmap_size >= SQLITE_MMAP_SIZE_BYTES,
-        "reader worker connections must enable SQLite mmap before query_only; got {mmap_size}"
-    );
-
-    let query_only: i64 = conn.query_row("PRAGMA query_only", [], |row| row.get(0)).unwrap();
-    assert_eq!(query_only, 1, "reader worker must still be query-only");
-}
-
-#[test]
-fn mmap_telemetry_records_budget_and_size_metrics() {
-    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
-
-    let recorder = DebuggingRecorder::new();
-    let snapshotter = recorder.snapshotter();
-    let _guard = metrics::set_default_local_recorder(&recorder);
-
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("test.db");
-    let conn = Connection::open(&path).unwrap();
-    apply_pragmas(&conn).unwrap();
-    create_tables(&conn).unwrap();
-    record_sqlite_mmap_telemetry(&conn, &path, "writer", "test");
-
-    let snapshot = snapshotter.snapshot().into_vec();
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SQLITE_MMAP_CONFIG_BYTES && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SQLITE_MMAP_EFFECTIVE_BYTES && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SQLITE_FILE_SIZE_BYTES && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SQLITE_WAL_SIZE_BYTES && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SQLITE_MMAP_COVERAGE_RATIO && matches!(value, DebugValue::Gauge(_))
-    }));
-    assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_SQLITE_MMAP_BUDGET_CHECKS_TOTAL && matches!(value, DebugValue::Counter(1))
-    }));
-}
+mod pragmas;
 
 #[test]
 fn create_tables_keeps_snapshots_out_of_session_db() {

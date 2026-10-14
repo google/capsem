@@ -83,15 +83,35 @@ pub async fn resolve_upstream(host: &str, port: u16) -> Result<Vec<SocketAddr>, 
 /// Where guest-named upstreams resolve. The system resolver unless a name
 /// carries a fixed answer -- a deterministic stand-in for a DNS record, so a
 /// test can point a public-looking name at loopback without touching DNS.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct UpstreamResolver {
     fixed: BTreeMap<String, Vec<IpAddr>>,
+    system: bool,
+}
+
+impl Default for UpstreamResolver {
+    fn default() -> Self {
+        Self::system()
+    }
 }
 
 impl UpstreamResolver {
     /// Resolve every name through the host's system resolver.
     pub fn system() -> Self {
-        Self::default()
+        Self {
+            fixed: BTreeMap::new(),
+            system: true,
+        }
+    }
+
+    /// Carry no host resolution authority.  Confined workers use connected
+    /// descriptor grants instead, so even an accidental direct selection
+    /// must fail closed before consulting DNS.
+    pub fn disabled() -> Self {
+        Self {
+            fixed: BTreeMap::new(),
+            system: false,
+        }
     }
 
     /// Answer `name` with `addresses` instead of asking the system resolver.
@@ -108,7 +128,8 @@ impl UpstreamResolver {
                 .iter()
                 .map(|address| SocketAddr::new(address.to_canonical(), port))
                 .collect()),
-            None => resolve_upstream(host, port).await,
+            None if self.system => resolve_upstream(host, port).await,
+            None => Err("upstream resolution is disabled in this process".to_owned()),
         }
     }
 }

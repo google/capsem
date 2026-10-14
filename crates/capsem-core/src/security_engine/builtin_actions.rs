@@ -17,7 +17,9 @@ pub(super) fn registry() -> &'static SecurityActionRegistry {
     static BUILTIN: OnceLock<SecurityActionRegistry> = OnceLock::new();
     BUILTIN.get_or_init(|| {
         SecurityActionRegistry::new()
-            .register_plugin(CredentialBrokerPlugin)
+            .register_plugin(CredentialBrokerPlugin::new(std::sync::Arc::new(
+                crate::net::proxy_engine::LocalProxyCredentials,
+            )))
             .and_then(|registry| registry.register_plugin(DummyPreEicarPlugin))
             .and_then(|registry| registry.register_plugin(DummyPostAllowPlugin))
             .and_then(|registry| registry.register_plugin(LogSanitizerPlugin))

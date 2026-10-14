@@ -28,6 +28,7 @@ pub(crate) async fn handle_exec(
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let res = send_ipc_command(
+        &state,
         &uds_path,
         ServiceToProcess::Exec {
             id: state.next_job_id(),

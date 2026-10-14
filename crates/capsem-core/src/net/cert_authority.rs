@@ -1,25 +1,18 @@
 /// Certificate authority for MITM proxy: loads the static Capsem CA keypair
 /// and mints short-lived leaf certificates on demand for each domain.
 use std::fmt;
-use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use lru::LruCache;
-
+use capsem_cache::BoundedCache;
 use capsem_crypto::tls::CertificateIssuer;
 use rustls::pki_types::CertificateDer;
 use rustls::server::ClientHello;
 use rustls::sign::CertifiedKey;
 
-/// Most leaf certificates kept alive at once. The guest chooses the SNI, so
-/// an unbounded map let a loop over random names grow host memory for the
-/// life of the VM; a real workload talks to far fewer hosts than this.
-const LEAF_CACHE_CAPACITY: usize = 1024;
-
 /// Holds the static CA keypair and caches minted leaf certificates.
 pub struct CertAuthority {
     issuer: CertificateIssuer,
-    cache: Mutex<LruCache<String, Arc<CertifiedKey>>>,
+    cache: BoundedCache<String, CertifiedKey>,
 }
 
 impl CertAuthority {
@@ -30,9 +23,7 @@ impl CertAuthority {
         let issuer = CertificateIssuer::load(key_pem, cert_pem)?;
         Ok(Self {
             issuer,
-            cache: Mutex::new(LruCache::new(
-                NonZeroUsize::new(LEAF_CACHE_CAPACITY).expect("leaf cache capacity is non-zero"),
-            )),
+            cache: BoundedCache::new("core.tls_leaf", capsem_proto::CACHE_TLS_LEAF_ENTRIES),
         })
     }
 
@@ -42,14 +33,8 @@ impl CertAuthority {
     /// happens under the lock rather than racing two mints for one name.
     pub fn certified_key_for_domain(&self, domain: &str) -> anyhow::Result<Arc<CertifiedKey>> {
         let host = crate::net::hostname::normalize_host(domain);
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(key) = cache.get(&host) {
-            return Ok(Arc::clone(key));
-        }
-        let arc = Arc::new(self.mint_leaf(&host)?);
-        cache.put(host, Arc::clone(&arc));
-        drop(cache);
-        Ok(arc)
+        self.cache
+            .get_or_try_insert_with(host.as_str(), || self.mint_leaf(&host))
     }
 
     /// The CA certificate in DER, for a client that must trust minted leaves.
@@ -59,7 +44,7 @@ impl CertAuthority {
 
     /// Number of cached certificates.
     pub fn cache_size(&self) -> usize {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.cache.len()
     }
 
     /// Mint a leaf certificate for the given domain, signed by the CA.

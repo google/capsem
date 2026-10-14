@@ -31,8 +31,7 @@ use crate::net::dns::resolver::DnsResolver;
 use crate::net::parsers::dns_parser::{
     build_nxdomain, build_ptr_response, build_redirect_response, build_servfail, parse_query, DnsQuery,
 };
-use crate::net::policy::NetworkMechanics;
-use crate::net::policy_config::{snapshot_plugin_policy, SecurityRuleSet, SharedPluginPolicy};
+use crate::net::proxy_engine::ProxyPolicyHandle;
 use crate::security_engine::{
     evaluate_security_boundary, DnsSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementDecision, SecurityEvent,
 };
@@ -168,15 +167,6 @@ fn apply_security_enforcement_fields(result: &mut DnsHandlerResult, enforcement:
     result.policy_reason = enforcement.reason.clone();
 }
 
-/// Hot-swappable network policy snapshot for DNS resolver mechanics.
-///
-/// The outer `Arc<RwLock<...>>` lets admins edit the policy at runtime
-/// (frontend's policy editor → service → write lock); the inner
-/// `Arc<NetworkMechanics>` is what each request snapshots before redirect/cache
-/// checks so we never hold the read lock across an await point.
-pub type SharedPolicy = Arc<std::sync::RwLock<Arc<NetworkMechanics>>>;
-pub type SharedSecurityRules = Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>;
-
 /// Async DNS handler shared across vsock connections.
 ///
 /// `policy` is shared (not cloned) with the MITM proxy via the same
@@ -190,9 +180,7 @@ pub type SharedSecurityRules = Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>;
 /// runs use `new(policy, resolver)` which leaves cache=None.
 #[derive(Clone)]
 pub struct DnsHandler {
-    policy: SharedPolicy,
-    security_rules: SharedSecurityRules,
-    plugin_policy: SharedPluginPolicy,
+    policy: ProxyPolicyHandle,
     resolver: Arc<DnsResolver>,
     cache: Option<Arc<DnsAnswerCache>>,
     /// Identical lookups on their way upstream, shared by every clone so
@@ -206,16 +194,9 @@ impl DnsHandler {
     /// Build a handler with no answer cache. Tests use this so a
     /// cache hit can't accidentally hide an upstream-path
     /// regression.
-    pub fn new(
-        policy: SharedPolicy,
-        security_rules: SharedSecurityRules,
-        plugin_policy: SharedPluginPolicy,
-        resolver: Arc<DnsResolver>,
-    ) -> Self {
+    pub fn new(policy: ProxyPolicyHandle, resolver: Arc<DnsResolver>) -> Self {
         Self {
             policy,
-            security_rules,
-            plugin_policy,
             resolver,
             cache: None,
             in_flight: Arc::default(),
@@ -224,17 +205,9 @@ impl DnsHandler {
     }
 
     /// Build a handler with an explicit answer cache.
-    pub fn with_cache(
-        policy: SharedPolicy,
-        security_rules: SharedSecurityRules,
-        plugin_policy: SharedPluginPolicy,
-        resolver: Arc<DnsResolver>,
-        cache: Arc<DnsAnswerCache>,
-    ) -> Self {
+    pub fn with_cache(policy: ProxyPolicyHandle, resolver: Arc<DnsResolver>, cache: Arc<DnsAnswerCache>) -> Self {
         Self {
             policy,
-            security_rules,
-            plugin_policy,
             resolver,
             cache: Some(cache),
             in_flight: Arc::default(),
@@ -245,15 +218,9 @@ impl DnsHandler {
     /// Build a production handler: default UDP forwarder
     /// (DEFAULT_UPSTREAMS, 5s timeout) + default-sized
     /// TTL-honoring answer cache.
-    pub fn with_default_resolver(
-        policy: SharedPolicy,
-        security_rules: SharedSecurityRules,
-        plugin_policy: SharedPluginPolicy,
-    ) -> Self {
+    pub fn with_default_resolver(policy: ProxyPolicyHandle) -> Self {
         Self::with_cache(
             policy,
-            security_rules,
-            plugin_policy,
             Arc::new(DnsResolver::new()),
             Arc::new(DnsAnswerCache::default()),
         )
@@ -313,13 +280,6 @@ impl DnsHandler {
     /// Borrow the cache (debugging / metrics only).
     pub fn cache(&self) -> Option<&Arc<DnsAnswerCache>> {
         self.cache.as_ref()
-    }
-
-    /// Snapshot the current `NetworkMechanics` under the read lock,
-    /// release the lock immediately, and return the cheap-Arc snapshot
-    /// for use across the rest of the request lifecycle.
-    fn policy_snapshot(&self) -> Arc<NetworkMechanics> {
-        self.policy.read().unwrap().clone()
     }
 
     /// Process one DNS query message. Pure async, no background tasks.
@@ -394,9 +354,12 @@ impl DnsHandler {
             qname: Some(query.qname.clone()),
             qtype: Some(query.qtype.to_string()),
         });
-        let rules = self.security_rules.read().unwrap().clone();
-        let plugin_policy = snapshot_plugin_policy(&self.plugin_policy);
-        let dns_evaluation = match evaluate_security_boundary(&rules, plugin_policy, dns_security_event) {
+        let policy = self.policy.snapshot();
+        let dns_evaluation = match evaluate_security_boundary(
+            policy.security_rules(),
+            Arc::clone(policy.plugins()),
+            dns_security_event,
+        ) {
             Ok(evaluation) => evaluation,
             Err(error) => {
                 warn!(error = %error, qname = %query.qname, "dns handler: security engine failed");
@@ -440,8 +403,6 @@ impl DnsHandler {
             return result;
         }
 
-        let policy = self.policy_snapshot();
-
         if is_capsem_local_nxdomain_name(&query.qname) {
             debug!(
                 qname = %query.qname,
@@ -466,7 +427,7 @@ impl DnsHandler {
         // (a blocked query stays NXDOMAIN; redirect never weakens a block)
         // and BEFORE the upstream forward (no network round trip when an
         // admin has pinned the answer locally).
-        if let Some(redirect) = policy.find_dns_redirect(&query.qname, query.qtype) {
+        if let Some(redirect) = policy.network().find_dns_redirect(&query.qname, query.qtype) {
             let matched_rule = format!("redirect:{}", redirect.matcher.pattern_str());
             debug!(
                 qname = %query.qname,
@@ -500,7 +461,7 @@ impl DnsHandler {
         // from cache. See `dns/cache.rs` for the full invariant.
         let key = super::coalesce::LookupKey::new(query_bytes);
         if let Some(cache) = &self.cache {
-            if let Some(cached) = cache.get(&query, &key, &policy) {
+            if let Some(cached) = cache.get(&query, &key, policy.network()) {
                 let rcode = response_rcode(&cached);
                 debug!(
                     qname = %query.qname,
@@ -519,7 +480,11 @@ impl DnsHandler {
         let t0 = Instant::now();
         let (outcome, led) = match self.in_flight.join_or_lead(key.clone()) {
             super::coalesce::Role::Lead(lease) => {
-                let outcome = self.resolver.resolve(query_bytes).await.map_err(|e| format!("{e:#}"));
+                let outcome = self
+                    .resolver
+                    .resolve_for_policy(query_bytes, policy.digest())
+                    .await
+                    .map_err(|e| format!("{e:#}"));
                 (lease.finish(outcome), true)
             }
             super::coalesce::Role::Follow(rx) => {

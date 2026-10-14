@@ -1,5 +1,7 @@
-//! Admit only the original service-issued process generation, then bind the
-//! VM owner's lifetime to that service before preparing any VM resources.
+//! Admit only the original service-issued process generation and retain its
+//! lifetime fence before preparing any VM resources. The process entrypoint
+//! arms the parent watcher after confinement so that thread cannot retain
+//! ambient authority.
 use crate::Args;
 use anyhow::{ensure, Context, Result};
 use capsem_core::managed_sessions::VmBinding;
@@ -7,16 +9,12 @@ use capsem_foundation::unix::contained::ContainedDir;
 use std::path::Path;
 
 pub(crate) fn enroll(args: &Args) -> Result<capsem_core::session::spawn_owner::SpawnOwner> {
-    let owner = admit(
+    admit(
         &args.id,
         args.spawn_generation.as_deref(),
         args.parent_pid,
         &args.session_dir,
-    )?;
-    // Recheck the actual parent while arming: it may have disappeared during
-    // metadata validation. The existing guard terminates even on SIGKILL/OOM.
-    capsem_guard::watch_parent_or_exit(args.parent_pid).context("VM service parent unavailable")?;
-    Ok(owner)
+    )
 }
 
 fn admit(

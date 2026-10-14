@@ -5,15 +5,19 @@ mod collector;
 mod commands;
 #[cfg(feature = "host")]
 mod comparison;
+mod dns_load;
+mod http_load;
 #[cfg(feature = "host")]
 mod machine;
 mod ping;
 mod protocol;
+mod protocol_collector;
 #[cfg(feature = "host")]
 mod protocol_record;
 #[path = "stats/rates.rs"]
 mod rates;
 mod redis;
+mod runtime_limits;
 mod scenarios;
 #[cfg(feature = "host")]
 mod schema;
@@ -51,6 +55,7 @@ async fn main() -> Result<()> {
         scenarios: None,
         lane: "host_direct".to_string(),
         json_out: PathBuf::from("/tmp/capsem-benchmark.json"),
+        collector_out: None,
         #[cfg(feature = "host")]
         record: None,
         #[cfg(feature = "host")]
@@ -62,12 +67,19 @@ async fn main() -> Result<()> {
         Command::Throughput(args) => println!("{}", serde_json::to_string(&throughput::run(args).await?)?),
         Command::Udp(args) => println!("{}", serde_json::to_string(&udp::run(args).await?)?),
         Command::Ping(args) => println!("{}", serde_json::to_string(&ping::run(args).await?)?),
+        Command::HttpLoad(args) => println!("{}", serde_json::to_string(&http_load::run(args).await?)?),
+        Command::DnsLoad(args) => println!("{}", serde_json::to_string(&dns_load::run(args).await?)?),
+        Command::RuntimeLimits => println!("{}", serde_json::to_string(&runtime_limits::report())?),
         Command::Protocol(args) => {
+            let collector_out = args.collector_out.clone();
             #[cfg(feature = "host")]
             let destination = args.record.clone();
             #[cfg(feature = "host")]
             let (channel, commit) = (args.channel.clone(), args.commit.clone());
             let artifact = run_protocol(args).await?;
+            if let Some(path) = collector_out {
+                protocol_collector::write(&path, &artifact)?;
+            }
             #[cfg(feature = "host")]
             if let Some(root) = destination {
                 let record = protocol_record::build(&artifact, &channel, &commit, machine::running_capsem_processes()?);
@@ -105,6 +117,7 @@ async fn main() -> Result<()> {
                 &args.current,
                 dimension,
                 std::env::consts::ARCH,
+                args.runs,
                 args.thresholds,
             );
         }

@@ -226,13 +226,12 @@ async fn recovery_fences_preboot_and_awaits_original_native_exit_before_closing(
         );
         if admitted {
             let mut child = Child(
-                std::process::Command::new(std::env::current_exe().unwrap())
+                crate::tests::isolated_std_test_command(std::env::current_exe().unwrap())
                     .args([
                         "--exact",
                         "managed_sessions::tests::recovery_native_child_fixture",
                         "--nocapture",
                     ])
-                    .env_clear()
                     .env("CAPSEM_TEST_RECOVERY_ROOT", &session)
                     .env("CAPSEM_TEST_RECOVERY_BINDING", serde_json::to_string(&binding).unwrap())
                     .stdin(std::process::Stdio::piped())

@@ -2,10 +2,8 @@ use super::*;
 pub(crate) mod activity;
 pub(crate) mod bodies;
 pub(super) use bodies::{handle_bodies_warc_export, handle_event_bodies};
-mod response_cache;
 mod rows;
-pub(crate) use response_cache::{forget_session_responses, session_response_cache_lookup, SessionResponseCache};
-use rows::{query_route_objects, query_route_typed_rows, route_query_objects};
+use rows::{ledger_rows_to_objects, query_route_typed_rows};
 pub(crate) mod stats_detail;
 pub(super) use stats_detail::read_stats_detail_payload_from_session_db;
 pub(crate) mod history;
@@ -31,13 +29,6 @@ pub(super) async fn handle_security_latest(
     Query(params): Query<SecurityLedgerQuery>,
 ) -> Result<axum::response::Response, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let route_key = format!("security_latest:limit={limit}");
-    let slot = match session_response_cache_lookup(&state, &id, &route_key, "security", &db_path).await? {
-        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
-        SessionResponseCache::Miss(slot) => slot,
-    };
     let rows = security_latest_for_vm(&state, &id, limit, false).await?;
     tracing::debug!(
         route = "/vms/{id}/security/latest",
@@ -52,7 +43,6 @@ pub(super) async fn handle_security_latest(
             format!("failed to serialize security latest response: {error}"),
         )
     })?;
-    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -63,13 +53,6 @@ pub(super) async fn handle_detection_latest(
     Query(params): Query<SecurityLedgerQuery>,
 ) -> Result<axum::response::Response, AppError> {
     let limit = params.limit.unwrap_or(100).min(2000);
-    let session_dir = resolve_session_dir(&state, &id)?;
-    let db_path = session_dir.join("session.db");
-    let route_key = format!("detection_latest:limit={limit}");
-    let slot = match session_response_cache_lookup(&state, &id, &route_key, "security", &db_path).await? {
-        SessionResponseCache::Hit(body) => return Ok(json_bytes_response(body)),
-        SessionResponseCache::Miss(slot) => slot,
-    };
     let rows = security_latest_for_vm(&state, &id, limit, true).await?;
     let body = serde_json::to_vec(&rows).map_err(|error| {
         AppError(
@@ -77,7 +60,6 @@ pub(super) async fn handle_detection_latest(
             format!("failed to serialize detection latest response: {error}"),
         )
     })?;
-    slot.store(&state, &body);
     Ok(json_bytes_response(Bytes::from(body)))
 }
 
@@ -149,7 +131,7 @@ pub(super) async fn open_ready_session_db(
     vm_id: &str,
     ledger: &str,
     db_path: &StdPath,
-) -> Result<Arc<capsem_logger::DbHandle>, AppError> {
+) -> Result<Arc<session_db_handles::SessionLedger>, AppError> {
     let db = session_db(state, vm_id, ledger, db_path).await?;
     db.ready()
         .await
@@ -166,7 +148,7 @@ pub(super) async fn session_db(
     vm_id: &str,
     ledger: &str,
     db_path: &StdPath,
-) -> Result<Arc<capsem_logger::DbHandle>, AppError> {
+) -> Result<Arc<session_db_handles::SessionLedger>, AppError> {
     if !db_path.exists() {
         error!(
             vm_id,

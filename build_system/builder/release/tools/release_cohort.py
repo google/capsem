@@ -34,6 +34,8 @@ REQUIRED_LINUX_RELEASE_BINARIES = frozenset(
         "capsem-mcp-builtin",
         "capsem-mock-server",
         "capsem-process",
+        "capsem-ledger",
+        "capsem-proxy",
         "capsem-service",
         "capsem-tray",
         "capsem-tui",

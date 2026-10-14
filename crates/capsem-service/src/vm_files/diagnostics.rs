@@ -202,6 +202,7 @@ pub(crate) async fn handle_triage(
 /// `idx_tool_calls_origin`, which for an `IN` list returns rows out of id order
 /// and sorts every counted tool call, and insertion order is newest first where
 /// `timestamp` is not (a call recorded without one sorted last).
+#[cfg(test)]
 pub(crate) fn session_triage_statements(limit: usize) -> [(&'static str, String); 3] {
     let origins = capsem_logger::counters::counted_tool_origins_sql();
     [
@@ -237,38 +238,62 @@ pub(crate) fn session_triage_statements(limit: usize) -> [(&'static str, String)
 
 pub(crate) async fn session_db_triage(
     vm_id: &str,
-    db: &capsem_logger::DbHandle,
+    db: &crate::session_db_handles::SessionLedger,
     db_path: &std::path::Path,
     limit: usize,
 ) -> anyhow::Result<serde_json::Value> {
     db.ready()
         .await
         .map_err(|error| anyhow!("session triage ledger is not ready for {vm_id}: {error}"))?;
+    let sets = db
+        .query(capsem_logger::ledger_protocol::LedgerQuery::Triage {
+            limit: u16::try_from(limit.clamp(1, 2000)).unwrap_or(2000),
+        })
+        .await
+        .map_err(|error| anyhow!("session triage query failed: {error}"))?;
+    let names = ["denied_net", "tool_errors", "exec_failures"];
+    if sets.len() != names.len() {
+        return Err(anyhow!(
+            "session triage query returned {} result sets, expected {}",
+            sets.len(),
+            names.len()
+        ));
+    }
     let mut answers = serde_json::Map::new();
-    for (query_name, sql) in session_triage_statements(limit) {
-        let raw = db.query(&sql, &[]).await.map_err(|error| {
+    for (query_name, rows) in names.into_iter().zip(sets) {
+        let value = ledger_rows_columnar(rows);
+        if value.get("rows").is_none() {
             error!(
                 vm_id,
                 query_name,
                 db_path = %db_path.display(),
-                error = %error,
-                "session triage ledger query failed"
+                "session triage ledger query returned invalid rows"
             );
-            anyhow!("session triage query {query_name} failed: {error}")
-        })?;
-        let value = serde_json::from_str(&raw).map_err(|error| {
-            error!(
-                vm_id,
-                query_name,
-                db_path = %db_path.display(),
-                error = %error,
-                "session triage ledger query returned invalid JSON"
-            );
-            anyhow!("session triage query {query_name} returned invalid JSON: {error}")
-        })?;
+        }
         answers.insert(query_name.to_string(), value);
     }
     Ok(serde_json::Value::Object(answers))
+}
+
+fn ledger_rows_columnar(rows: capsem_logger::ledger_protocol::LedgerRows) -> serde_json::Value {
+    let values = rows
+        .rows
+        .into_iter()
+        .map(|row| row.into_iter().map(ledger_value_json).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    json!({ "columns": rows.columns, "rows": values })
+}
+
+fn ledger_value_json(value: capsem_logger::ledger_protocol::LedgerValue) -> serde_json::Value {
+    match value {
+        capsem_logger::ledger_protocol::LedgerValue::Null => serde_json::Value::Null,
+        capsem_logger::ledger_protocol::LedgerValue::Integer(value) => value.into(),
+        capsem_logger::ledger_protocol::LedgerValue::Real(value) => json!(value),
+        capsem_logger::ledger_protocol::LedgerValue::Text(value) => value.into(),
+        capsem_logger::ledger_protocol::LedgerValue::Blob(value) => {
+            serde_json::Value::Array(value.into_iter().map(serde_json::Value::from).collect())
+        }
+    }
 }
 
 pub(crate) fn limit_columnar_query_json(value: &serde_json::Value, limit: usize) -> serde_json::Value {

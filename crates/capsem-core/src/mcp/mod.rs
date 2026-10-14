@@ -1,3 +1,4 @@
+pub mod aggregator_driver;
 pub mod builtin_ledger;
 pub mod builtin_tools;
 pub mod policy;

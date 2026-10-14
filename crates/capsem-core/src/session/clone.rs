@@ -23,6 +23,26 @@ use crate::GUEST_SHARE_DIR;
 /// from `src_session_dir` into the existing, empty `dst_session_dir`, and
 /// create the `workspace` compat link. Returns the destination's disk usage.
 pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> anyhow::Result<u64> {
+    clone_sandbox_files(src_session_dir, dst_session_dir)?;
+
+    // The ledger lives at the session root, outside the share. session.db may
+    // be in WAL mode while the VM runs, so copying the main file alone can
+    // produce a stale or malformed fork; the logger writes a coherent image
+    // and brings the body archive beside it, since the database only indexes
+    // into that file.
+    if src_session_dir.join("session.db").exists() {
+        capsem_logger::snapshot_session_ledger(src_session_dir, dst_session_dir)
+            .context("failed to snapshot the session ledger")?;
+    }
+
+    Ok(super::disk_usage_bytes(dst_session_dir))
+}
+
+/// Clone only the sandbox files that are outside the session ledger.
+///
+/// The dedicated ledger owner snapshots `session.db` and its body archive;
+/// coordinators use this function so they never open or copy database files.
+pub fn clone_sandbox_files(src_session_dir: &Path, dst_session_dir: &Path) -> anyhow::Result<u64> {
     adopt_system_overlay(src_session_dir).context("system overlay of the clone source")?;
     let src_root = ContainedDir::open_root(src_session_dir)
         .with_context(|| format!("open clone source {}", src_session_dir.display()))?;
@@ -64,16 +84,6 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
     // The image the source staged, linked from its host-only share: never
     // re-read from anything the guest could have written.
     super::image_share::carry_image_share(src_session_dir, dst_session_dir).context("carry the image share")?;
-
-    // The ledger lives at the session root, outside the share. session.db may
-    // be in WAL mode while the VM runs, so copying the main file alone can
-    // produce a stale or malformed fork; the logger writes a coherent image
-    // and brings the body archive beside it, since the database only indexes
-    // into that file.
-    if src_session_dir.join("session.db").exists() {
-        capsem_logger::snapshot_session_ledger(src_session_dir, dst_session_dir)
-            .context("failed to snapshot the session ledger")?;
-    }
 
     let size_bytes = super::disk_usage_bytes(dst_session_dir);
     info!(

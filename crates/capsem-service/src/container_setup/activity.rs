@@ -24,6 +24,20 @@ struct State {
     retiring: Weak<Mutex<HashMap<String, Vec<Activity>>>>,
 }
 
+impl State {
+    fn remove_retirement(&self) {
+        if let Some(retiring) = self.retiring.upgrade() {
+            let mut retiring = retiring.lock().unwrap();
+            if let Some(generations) = retiring.get_mut(&self.id) {
+                generations.retain(|activity| activity.0.generation != self.generation);
+                if generations.is_empty() {
+                    retiring.remove(&self.id);
+                }
+            }
+        }
+    }
+}
+
 pub(super) struct Lease(Arc<State>);
 
 impl Activity {
@@ -56,6 +70,10 @@ impl Activity {
             tokio::pin!(notified);
             notified.as_mut().enable();
             if self.0.running.load(Ordering::Acquire) == 0 {
+                // The final lease can publish zero before its Drop cleanup
+                // reaches the retirement map. Make returning from wait the
+                // barrier callers expect instead of exposing that window.
+                self.0.remove_retirement();
                 return;
             }
             notified.await;
@@ -77,16 +95,8 @@ impl Lease {
 impl Drop for Lease {
     fn drop(&mut self) {
         if self.0.running.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.0.remove_retirement();
             self.0.idle.notify_waiters();
-            if let Some(retiring) = self.0.retiring.upgrade() {
-                let mut retiring = retiring.lock().unwrap();
-                if let Some(generations) = retiring.get_mut(&self.0.id) {
-                    generations.retain(|activity| activity.0.generation != self.0.generation);
-                    if generations.is_empty() {
-                        retiring.remove(&self.0.id);
-                    }
-                }
-            }
         }
     }
 }

@@ -11,10 +11,11 @@
 //! is refused, not adapted.
 
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
-use super::builder::{merge_plugin_policy, network_config_from_policy_and_dns, MergedPolicies};
+use super::builder::{apply_network_config, merge_plugin_policy, network_config_from_policy_and_dns, MergedPolicies};
 use super::provider_profile::{ModelEndpointRegistry, ProviderRuleProfile};
 use super::security_rule_profile::{SecurityPluginConfig, SecurityRuleProfile, SecurityRuleSet};
 use super::types::{NetworkConfig, SettingsFile};
@@ -37,6 +38,18 @@ pub struct ActivePolicyFile {
     /// The user's MCP servers with corp's laid over them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpConfig>,
+}
+
+/// Every runtime concern compiled from one validated active-policy value.
+/// Callers attach the exact-byte digest and source path they read; this value
+/// contains no fallback to ambient settings or built-in defaults on failure.
+pub struct CompiledActivePolicy {
+    pub network: crate::net::policy::NetworkMechanics,
+    pub dns_upstreams: Vec<SocketAddr>,
+    pub security_rules: SecurityRuleSet,
+    pub plugins: BTreeMap<String, SecurityPluginConfig>,
+    pub model_endpoints: ModelEndpointRegistry,
+    pub mcp: McpConfig,
 }
 
 /// Digest of an active policy's serialized bytes, as `blake3:<hex>`.
@@ -77,6 +90,12 @@ impl ActivePolicyFile {
         }
         let merged = MergedPolicies::from_files(settings, corp)?;
         let mut network = network_config_from_policy_and_dns(&merged.network, corp.network.dns.clone());
+        if network.dns.upstreams.is_empty() {
+            network.dns.upstreams = crate::net::dns::DEFAULT_UPSTREAMS
+                .iter()
+                .map(|upstream| (*upstream).to_string())
+                .collect();
+        }
         network.upstream_overrides = corp.network.upstream_overrides.clone();
 
         let active = Self {
@@ -101,6 +120,33 @@ impl ActivePolicyFile {
             mcp.validate("active_policy")?;
         }
         Ok(())
+    }
+
+    /// Compile one complete runtime snapshot from this file alone.
+    pub fn compile_runtime(&self) -> Result<CompiledActivePolicy, String> {
+        self.validate()?;
+        let (user, corp) = self.merged_policy_inputs();
+        let mut merged = MergedPolicies::from_files(&user, &corp)?;
+        apply_network_config(&self.network, &mut merged.network);
+        let dns_upstreams = self
+            .network
+            .dns
+            .upstreams
+            .iter()
+            .map(|upstream| {
+                upstream
+                    .parse::<SocketAddr>()
+                    .map_err(|error| format!("parse DNS upstream {upstream:?}: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(CompiledActivePolicy {
+            network: merged.network,
+            dns_upstreams,
+            security_rules: merged.security_rules,
+            plugins: self.plugins.clone(),
+            model_endpoints: merged.model_endpoints,
+            mcp: self.mcp.clone().unwrap_or_default(),
+        })
     }
 
     /// The (user, corp) settings pair `MergedPolicies` builds a session from.

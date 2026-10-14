@@ -31,6 +31,8 @@ class ModelClientEnvironment(Protocol):
 
     def run_python(self, script: str, *, timeout_secs: int = 240) -> dict: ...
 
+    def settle_ledger(self) -> Path: ...
+
 
 def assert_imported_script_contains(
     env: ModelClientEnvironment,
@@ -166,8 +168,9 @@ def assert_two_turn_model_client(env: ModelClientEnvironment, script: str) -> di
         credential_provider=result.get("credential_provider") or result["provider"],
     )
     raw_secret = "sk-" + result["credential_nonce"]
+    db_path = env.settle_ledger()
     run = ModelLedgerRun(
-        db_path=env.db_path,
+        db_path=db_path,
         upstream_transcript_path=env.upstream_transcript_path,
         log_paths=env.log_paths,
         raw_secrets=(raw_secret,),

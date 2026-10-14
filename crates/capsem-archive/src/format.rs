@@ -47,6 +47,9 @@ pub const SEGMENT_HEADER_BYTES: usize = 52;
 /// Raw deflate (RFC 1951), no zlib or gzip framing; every segment but the
 /// last ends in a sync flush, the last in the stream's end.
 pub const CODEC_DEFLATE: u8 = 1;
+/// Zstandard frame kept open across segments with `ZSTD_e_flush`; native
+/// implementation is supplied only by the confined ledger executable.
+pub const CODEC_ZSTD: u8 = 2;
 /// Flag bit 0 of a segment: this segment ends its block's stream.
 pub const SEGMENT_FINAL: u8 = 0x01;
 /// The four bytes a sync flush ends with: an empty stored block's length and
@@ -225,7 +228,7 @@ pub fn parse_block_header(bytes: &[u8; BLOCK_HEADER_BYTES], block_offset: u64) -
         return Err(ArchiveError::BadBlockHeader(block_offset));
     }
     let codec = bytes[4];
-    if codec != CODEC_DEFLATE || bytes[5] != 0 || bytes[6..8] != [0, 0] {
+    if bytes[5] != 0 || bytes[6..8] != [0, 0] {
         return Err(ArchiveError::UnsupportedCodec { block_offset, codec });
     }
     Ok(codec)

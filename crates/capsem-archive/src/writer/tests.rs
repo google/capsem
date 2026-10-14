@@ -60,6 +60,22 @@ fn a_flush_with_nothing_staged_writes_nothing() {
     assert_eq!(file_len(&path), end);
 }
 
+#[test]
+fn a_duplicated_sync_handle_can_flush_while_the_writer_stays_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let mut writer = BodyLogWriter::open(&path).unwrap();
+    writer.stage(b"first body").unwrap();
+    writer.flush_segment().unwrap().expect("one segment");
+
+    let sync = writer.sync_handle().unwrap();
+    sync.sync().unwrap();
+
+    writer.stage(b"later body").unwrap();
+    assert!(writer.flush_segment().unwrap().is_some());
+    writer.sync().unwrap();
+}
+
 /// The whole point of the format: one block across many flushes, its raw
 /// and on-disk lengths growing under one offset, only the first segment
 /// carrying the block header.

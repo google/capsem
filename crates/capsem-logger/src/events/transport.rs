@@ -1,8 +1,9 @@
 //! Bounded primary routing records. Core owns policy facts and log sanitization.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TransportEventKind {
     Connect,
     ConnectResult,
@@ -25,7 +26,7 @@ impl TransportEventKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransportEvent {
     pub(crate) event_id: String,
     pub(crate) timestamp_unix_ms: i64,

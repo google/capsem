@@ -41,6 +41,18 @@ pub enum LogSink {
     /// File (json) + stderr (pretty). Used by capsem-app so the file
     /// feeds the support bundle and stderr feeds `pnpm tauri dev` output.
     FileAndPretty { path: PathBuf },
+    /// Write JSON-per-line to an already-open private file. A worker that must
+    /// confine before creating the non-blocking writer thread prepares this
+    /// descriptor while it still has startup filesystem authority.
+    PreparedFile { file: std::fs::File },
+}
+
+/// Open a private append-only log before a worker installs filesystem
+/// confinement. Passing the returned sink to [`init`] starts the writer thread
+/// later, so that thread inherits the worker sandbox.
+pub fn prepare_file_sink(path: &std::path::Path) -> std::io::Result<LogSink> {
+    let file = crate::unix::fs::open_private_append_no_follow(path)?;
+    Ok(LogSink::PreparedFile { file })
 }
 
 /// Static per-binary telemetry config. `service` is the binary name (also
@@ -379,6 +391,12 @@ pub struct TelemetryGuard {
 /// var at startup. W4/W5 read this for in-band propagation. Empty when
 /// unset (CLI invocations and top-level binaries).
 static PARENT_TRACEPARENT: OnceLock<String> = OnceLock::new();
+/// Process identity delivered over a trusted non-environment channel.
+///
+/// Confined workers clear their entire inherited environment before parsing
+/// coordinator-minted arguments. They install the resulting trace identity
+/// here so telemetry keeps correlation without reopening ambient authority.
+static IN_BAND_TRACE_ID: OnceLock<String> = OnceLock::new();
 
 /// Initialize tracing. Call exactly once per binary, in `main()`, before
 /// any `tracing::info!` macro fires.
@@ -424,6 +442,11 @@ pub fn init(cfg: TelemetryConfig) -> std::io::Result<TelemetryGuard> {
                 .with(fmt::layer().json().with_writer(nb).boxed())
                 .with(stderr_pretty_layer())
                 .init();
+        }
+        LogSink::PreparedFile { file } => {
+            let (nb, guard) = tracing_appender::non_blocking(file);
+            file_guard = Some(guard);
+            registry.with(fmt::layer().json().with_writer(nb).boxed()).init();
         }
     }
 
@@ -521,10 +544,44 @@ fn env_truthy(value: &str) -> bool {
 /// representation to remember when grepping.
 pub fn ambient_capsem_trace_id() -> Option<String> {
     let env = std::env::var("CAPSEM_TRACE_ID").ok();
-    resolve_ambient_capsem_trace_id(env.as_deref(), PARENT_TRACEPARENT.get().map(String::as_str))
+    resolve_ambient_capsem_trace_id(
+        IN_BAND_TRACE_ID.get().map(String::as_str),
+        env.as_deref(),
+        PARENT_TRACEPARENT.get().map(String::as_str),
+    )
 }
 
-fn resolve_ambient_capsem_trace_id(capsem_trace_id: Option<&str>, parent_traceparent: Option<&str>) -> Option<String> {
+/// Install a trace identity received through a trusted in-band channel.
+///
+/// The compact 16-lowercase-hex form is the same one used by
+/// `CAPSEM_TRACE_ID`. A process may install it once, before telemetry starts.
+pub fn install_in_band_trace_id(trace_id: String) -> Result<(), &'static str> {
+    if !valid_compact_trace_id(&trace_id) {
+        return Err("trace id must be 16 lowercase hexadecimal digits");
+    }
+    IN_BAND_TRACE_ID
+        .set(trace_id)
+        .map_err(|_| "in-band trace id is already installed")
+}
+
+fn valid_compact_trace_id(trace_id: &str) -> bool {
+    trace_id.len() == 16
+        && trace_id
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        && trace_id.bytes().any(|byte| byte != b'0')
+}
+
+fn resolve_ambient_capsem_trace_id(
+    in_band_trace_id: Option<&str>,
+    capsem_trace_id: Option<&str>,
+    parent_traceparent: Option<&str>,
+) -> Option<String> {
+    if let Some(in_band) = in_band_trace_id {
+        if valid_compact_trace_id(in_band) {
+            return Some(in_band.to_string());
+        }
+    }
     if let Some(env) = capsem_trace_id {
         if !env.is_empty() {
             return Some(env.to_string());

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/capsem-cache",
     "crates/capsem-crypto",
     "sdk/rust",
     "crates/capsem-api",
@@ -15,6 +16,8 @@ members = [
     "crates/capsem-app",
     "crates/capsem-agent",
     "crates/capsem-logger",
+    "crates/capsem-ledger",
+    "crates/capsem-proxy",
     "crates/capsem-process",
     "crates/capsem-service",
     "crates/capsem-admin",
@@ -60,6 +63,25 @@ opt-level = 3
 [profile.dev.package.capsem-crypto]
 opt-level = 3
 
+[profile.dev.package.capsem-cache]
+opt-level = 3
+
+[profile.dev.package.capsem-logger]
+opt-level = 3
+
+# The ledger's SQLite transaction is part of live DNS/HTTP admission. Package
+# overrides do not flow into dependencies, so optimize both the Rust wrapper
+# and bundled C engine explicitly in the debug binaries used by installs and
+# gateway benchmarks.
+[profile.dev.package.rusqlite]
+opt-level = 3
+
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
+[profile.dev.package.quick_cache]
+opt-level = 3
+
 [profile.dev.package.blake2b_simd]
 opt-level = 3
 
@@ -98,18 +120,6 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.ryu]
-opt-level = 3
-
-# Periodic ledger flushes drain archive indexes and copy hot tables on the
-# writer actor. Unoptimized SQLite/adapter work filled its bounded producer
-# queue and held HTTP response completion for seconds (#350).
-[profile.dev.package.rusqlite]
-opt-level = 3
-
-[profile.dev.package.libsqlite3-sys]
-opt-level = 3
-
-[profile.dev.package.capsem-logger]
 opt-level = 3
 
 [profile.release]

@@ -839,6 +839,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "capsem-foundation",
+ "capsem-proto",
  "clap",
  "futures",
  "reqwest 0.12.28",
@@ -848,6 +849,15 @@ dependencies = [
  "socket2",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "capsem-cache"
+version = "0.7.0"
+dependencies = [
+ "capsem-telemetry",
+ "metrics",
+ "quick_cache",
 ]
 
 [[package]]
@@ -873,6 +883,7 @@ dependencies = [
  "block2",
  "bytes",
  "capsem-assets",
+ "capsem-cache",
  "capsem-config",
  "capsem-credentials",
  "capsem-crypto",
@@ -895,7 +906,6 @@ dependencies = [
  "hyper-util",
  "io-uring",
  "libc",
- "lru",
  "metrics",
  "metrics-util",
  "nix 0.29.0",
@@ -1039,11 +1049,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-ledger"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "capsem-archive",
+ "capsem-foundation",
+ "capsem-guard",
+ "capsem-logger",
+ "capsem-proto",
+ "clap",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "zstd",
+]
+
+[[package]]
 name = "capsem-logger"
 version = "0.7.0"
 dependencies = [
  "anyhow",
  "capsem-archive",
+ "capsem-cache",
  "capsem-crypto",
  "capsem-foundation",
  "capsem-proto",
@@ -1054,8 +1082,10 @@ dependencies = [
  "memmap2",
  "metrics",
  "metrics-util",
+ "rmp-serde",
  "rusqlite",
  "serde",
+ "serde_bytes",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1145,7 +1175,9 @@ name = "capsem-process"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
+ "bytes",
  "capsem-assets",
  "capsem-core",
  "capsem-foundation",
@@ -1156,6 +1188,8 @@ dependencies = [
  "clap",
  "core-foundation-sys",
  "futures",
+ "http",
+ "opentelemetry-http",
  "serde",
  "serde_json",
  "tempfile",
@@ -1179,6 +1213,28 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "toml 0.8.2",
+]
+
+[[package]]
+name = "capsem-proxy"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "capsem-core",
+ "capsem-foundation",
+ "capsem-guard",
+ "capsem-logger",
+ "capsem-proto",
+ "capsem-telemetry",
+ "clap",
+ "http",
+ "opentelemetry-http",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1221,10 +1277,13 @@ name = "capsem-service"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.22.1",
+ "bytes",
  "capsem-api",
  "capsem-assets",
+ "capsem-cache",
  "capsem-config",
  "capsem-core",
  "capsem-credentials",
@@ -1238,10 +1297,14 @@ dependencies = [
  "clap",
  "filetime",
  "futures",
+ "http",
  "humantime",
+ "metrics",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry_sdk",
  "reqwest 0.12.28",
+ "rmp-serde",
  "rusqlite",
  "serde",
  "serde_json",
@@ -5316,6 +5379,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick_cache"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "403c1a912fec895cafb223201e368234842acb9220aaf08ab042ae89ba5f135c"
+dependencies = [
+ "equivalent",
+ "foldhash 0.2.0",
+ "hashbrown 0.17.1",
+ "parking_lot",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5953,9 +6028,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "log",

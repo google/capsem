@@ -190,7 +190,7 @@ pub(super) fn plugin_catalog() -> &'static BTreeMap<String, PluginCatalogEntry> 
 
 /// Each catalogued plugin's effective configuration, and the plugins settings
 /// or corp set.
-type EffectivePluginPolicy = (BTreeMap<String, SecurityPluginConfig>, BTreeSet<String>);
+pub(super) type EffectivePluginPolicy = (BTreeMap<String, SecurityPluginConfig>, BTreeSet<String>);
 
 /// The effective plugin policy from the current files.
 fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
@@ -205,12 +205,45 @@ fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
     Ok((policy, overridden))
 }
 
+impl ServiceState {
+    pub(crate) fn invalidate_plugin_policy_cache(&self) {
+        self.plugin_policy_cache.invalidate();
+    }
+}
+
+async fn effective_plugin_policy_for(state: &Arc<ServiceState>) -> Result<Arc<EffectivePluginPolicy>, AppError> {
+    loop {
+        let lookup = state.plugin_policy_cache.lookup();
+        if let Some(policy) = lookup.value() {
+            return Ok(policy);
+        }
+        let started = std::time::Instant::now();
+        let policy = match state.off_worker(|_| effective_plugin_policy()).await {
+            Ok(Ok(policy)) => {
+                state
+                    .plugin_policy_cache
+                    .record_load(started.elapsed(), capsem_cache::LoadStatus::Success);
+                policy
+            }
+            Ok(Err(error)) | Err(error) => {
+                state
+                    .plugin_policy_cache
+                    .record_load(started.elapsed(), capsem_cache::LoadStatus::Error);
+                return Err(error);
+            }
+        };
+        if let Some(policy) = state.plugin_policy_cache.publish(lookup.generation(), policy) {
+            return Ok(policy);
+        }
+    }
+}
+
 async fn plugin_info_for(
     state: &Arc<ServiceState>,
     plugin_id: &str,
     include_runtime: bool,
 ) -> Result<PluginInfo, AppError> {
-    let policy = state.off_worker(|_| effective_plugin_policy()).await??;
+    let policy = effective_plugin_policy_for(state).await?;
     plugin_info_from(state, &policy, plugin_id, include_runtime).await
 }
 
@@ -428,7 +461,7 @@ fn hydrate_credential_broker_runtime(
 pub(super) async fn handle_plugins(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<PluginListResponse>, AppError> {
-    let policy = state.off_worker(|_| effective_plugin_policy()).await??;
+    let policy = effective_plugin_policy_for(&state).await?;
     let mut plugins = Vec::new();
     for plugin_id in plugin_catalog().keys() {
         plugins.push(plugin_info_from(&state, &policy, plugin_id, false).await?);

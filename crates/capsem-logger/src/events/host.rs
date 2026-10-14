@@ -87,6 +87,7 @@ pub struct HostEvent {
     pub session_id: Option<String>,
     pub actor: String,
     #[serde(default)]
+    #[serde(with = "serde_bytes")]
     pub detail: Vec<u8>,
     #[serde(default)]
     pub trace_id: Option<String>,

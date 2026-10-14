@@ -17,9 +17,8 @@ hosted package build rather than nineteen minutes into binary qualification.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[2]
 SERVICE = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "router_runtime.rs"
@@ -126,10 +125,10 @@ def test_each_route_has_exactly_one_benchmark_classification() -> None:
 def test_internal_routes_carry_a_reason_and_are_a_tight_inventory() -> None:
     internal = _config()["internal"]
     assert all(reason.strip() for reason in internal.values())
-    # Five real exceptions: doctor failure preservation, private-network
-    # resolution, and the three preview admission exchanges between the
-    # gateway and service over the local UDS.
-    assert len(internal) <= 5, (
+    # Seven real exceptions: doctor failure preservation, private-network
+    # resolution, the gateway's combined status snapshot, owner metric
+    # ingestion, and three preview admission exchanges.
+    assert len(internal) <= 7, (
         "the internal service-only route inventory grew; prefer a public, "
         "measured gateway route unless the control-plane exception is real"
     )
@@ -167,9 +166,10 @@ def test_the_debt_is_a_ratchet_that_can_only_shrink() -> None:
     coverage = _config()
     unmeasured = len(coverage["unmeasured"])
     # The reviewed provider and lifecycle mutations add six stateful paths.
-    # Catalog/grant reads are measured; record the actual remaining 75 rather
-    # than retaining headroom that could hide future classification debt.
-    assert unmeasured <= 75, (
+    # The combined #206 surface adds three supervised proxy lease paths;
+    # managed claim/close now have successful tombstone measurements. These
+    # changes leave exactly 76 stateful paths with named acceptance owners.
+    assert unmeasured <= 76, (
         f"{unmeasured} routes are unmeasured, more than when this guard was "
         "written. A new route should be measured, not added to the debt."
     )

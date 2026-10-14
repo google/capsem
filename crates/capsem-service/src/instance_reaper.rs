@@ -35,9 +35,32 @@ pub(super) fn spawn_exit_reaper(
     // task can be delayed across an exit/replacement or PID reuse.
     let generation = retirement.generation();
     tokio::spawn(async move {
-        let Ok(exit_status) = retirement.wait_child(&mut child).await else {
+        let Ok((exit_status, current)) = retirement
+            .wait_child_before_reap(&mut child, || {
+                state
+                    .connections
+                    .fence_runtime(&id, generation, capsem_credentials::GrantStopPolicy::Preserve);
+                let instances = state.instances.lock().unwrap();
+                let current = instances
+                    .get(&id)
+                    .is_none_or(|instance| instance.generation == generation);
+                if let Some(instance) = instances.get(&id).filter(|instance| instance.generation == generation) {
+                    instance.authority.revoke();
+                }
+                drop(instances);
+                if current {
+                    state.remove_proxy_worker(&id, generation);
+                }
+                current
+            })
+            .await
+        else {
             return;
         };
+        if !current {
+            retirement.complete();
+            return;
+        }
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
         // Even a delayed reaper must fence its exact old runtime. A resumed
         // replacement may already own the map, but never owns these handles.
@@ -87,6 +110,8 @@ pub(super) fn spawn_exit_reaper(
             instances.remove(&id)
         };
         if let Some(info) = &removed {
+            info.authority.revoke();
+            state.remove_proxy_worker(&id, generation);
             // The VM is gone: a container setup for it has nothing left to do.
             let policy = connection_routes::lifecycle::stop_policy(info.persistent, true);
             if let Err(error) = state.connections.stop_runtime(&id, generation, policy).await {

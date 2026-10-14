@@ -12,16 +12,46 @@ pub(crate) fn compare(
     current_db: &Path,
     dimension: schema::Dimension,
     arch: &str,
+    runs: usize,
     thresholds: Thresholds,
 ) -> Result<()> {
+    if runs == 0 {
+        bail!("--runs must be at least 1");
+    }
     let baseline_store = store::open(baseline_db)?;
     let current_store = store::open(current_db)?;
-    let baseline = store::latest(&baseline_store, dimension, arch)?
-        .with_context(|| format!("no {} evidence for {arch}", dimension.as_str()))?;
-    let current = store::latest(&current_store, dimension, arch)?
-        .with_context(|| format!("no {} run for {arch}", dimension.as_str()))?;
+    let baseline_runs = store::latest_many(&baseline_store, dimension, arch, runs)?;
+    let current_runs = store::latest_many(&current_store, dimension, arch, runs)?;
+    let baseline =
+        aggregate(&baseline_runs).with_context(|| format!("no {} evidence for {arch}", dimension.as_str()))?;
+    let current = aggregate(&current_runs).with_context(|| format!("no {} run for {arch}", dimension.as_str()))?;
+    println!(
+        "comparing {} baseline run(s) with {} current run(s)",
+        baseline_runs.len(),
+        current_runs.len()
+    );
     report(&baseline, &judge(&baseline, &current, thresholds));
     Ok(())
+}
+
+fn aggregate(records: &[schema::Record]) -> Option<schema::Record> {
+    let mut aggregate = records.first()?.clone();
+    aggregate.metrics = aggregate
+        .metrics
+        .iter()
+        .filter_map(|metric| {
+            let samples: Option<Vec<_>> = records
+                .iter()
+                .map(|record| record.metric(&metric.key).map(|found| found.summary.median))
+                .collect();
+            Some(schema::Metric {
+                key: metric.key.clone(),
+                unit: metric.unit,
+                summary: stats::Summary::of(&samples?)?,
+            })
+        })
+        .collect();
+    Some(aggregate)
 }
 
 /// Ratchet this run against evidence without granting noise release authority.
@@ -92,3 +122,6 @@ fn report(baseline: &schema::Record, verdicts: &[stats::Comparison]) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

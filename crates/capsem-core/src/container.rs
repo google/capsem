@@ -126,19 +126,13 @@ macro_rules! launcher_in_moved_root {
 
 /// The launcher with the client attached: `capsem run --image` streams its
 /// stdio, so the workload's command reads and writes the client's.
-pub const LAUNCH_COMMAND: &str = concat!(
-    "chmod 555 /root/.capsem-image/launch.py && ",
-    launcher_in_moved_root!("/root/.capsem-image")
-);
+pub const LAUNCH_COMMAND: &str = launcher_in_moved_root!("/root/.capsem-image");
 
 /// The launcher with nothing attached: a detached create, a relaunch. The
 /// workload's command runs on a terminal the launcher holds, so an
 /// interactive one (a shell, an agent's TUI) waits for its user instead of
 /// reading end-of-file, and the session terminal attaches to it.
-pub const DETACHED_LAUNCH_COMMAND: &str = concat!(
-    "chmod 555 /root/.capsem-image/launch.py && ",
-    launcher_in_moved_root!("--detached /root/.capsem-image")
-);
+pub const DETACHED_LAUNCH_COMMAND: &str = launcher_in_moved_root!("--detached /root/.capsem-image");
 
 /// The session terminal's command in an image session: the launcher enters the
 /// workload with a login shell, again whenever it ends, and never falls back to

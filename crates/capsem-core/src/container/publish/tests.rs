@@ -1,10 +1,26 @@
 use super::*;
+use std::net::Ipv4Addr;
 use std::os::fd::AsRawFd;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
+mod saved;
 mod security;
 mod sessions;
+
+struct LocalListenerAuthority;
+
+impl LoopbackListenerAuthority for LocalListenerAuthority {
+    fn open(&self, port: u16) -> LoopbackListenerFuture<'_> {
+        Box::pin(async move {
+            std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).map(LoopbackListenerGrant::untracked)
+        })
+    }
+}
+
+fn with_local_listener_authority(publisher: Publisher) -> Publisher {
+    publisher.with_listener_authority(Arc::new(LocalListenerAuthority))
+}
 
 fn source_fixture() -> Arc<Source> {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();

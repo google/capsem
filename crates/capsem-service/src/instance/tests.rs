@@ -14,12 +14,12 @@ async fn stale_shutdown_binding_leaves_replacement_socket_and_ledger_intact() {
     instance.uds_path = socket.clone();
     let generation = instance.generation;
     state.instances.lock().unwrap().insert("replacement".into(), instance);
-    let ledger = Arc::clone(&state.host_ledger);
-    state
-        .session_db_handles
-        .lock()
-        .unwrap()
-        .insert("replacement".into(), Arc::clone(&ledger));
+    let ledger_dir = tempfile::tempdir().unwrap();
+    let writer = capsem_logger::DbWriter::open(&ledger_dir.path().join("session.db"), 16).unwrap();
+    writer.shutdown_blocking();
+    let ledger = state
+        .register_session_db_handle("replacement", ledger_dir.path())
+        .unwrap();
     let result = shutdown_vm_process(
         &state,
         "replacement",
@@ -95,14 +95,13 @@ async fn normal_native_exit_persists_retirement_before_next_host_boot_resume() {
     let generation = capsem_crypto::uuid_v4();
     let binding = capsem_core::managed_sessions::VmBinding::new("receipt-vm".into(), generation).unwrap();
     persist_spawn_identity(&session, binding.id(), generation).unwrap();
-    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    let mut command = crate::tests::isolated_test_command(std::env::current_exe().unwrap());
     command
         .args([
             "--exact",
             "managed_sessions::tests::recovery_native_child_fixture",
             "--nocapture",
         ])
-        .env_clear()
         .env("CAPSEM_TEST_RECOVERY_ROOT", &session)
         .env("CAPSEM_TEST_RECOVERY_BINDING", serde_json::to_string(&binding).unwrap())
         .stdin(std::process::Stdio::piped())
@@ -185,4 +184,35 @@ fn teardown_claim_is_bound_to_generation_even_when_id_and_pid_are_reused() {
     );
     assert!(claim_shutdown_instance(&state, "vm", replacement_generation));
     assert!(!claim_shutdown_instance(&state, "vm", replacement_generation));
+}
+
+#[tokio::test]
+async fn removing_or_replacing_an_instance_revokes_its_grants() {
+    let state = make_test_state();
+    let original = test_instance();
+    let generation = original.generation;
+    let grant = original.authority.grant();
+    let disposable = original.authority.grant();
+    drop(disposable);
+    assert!(!grant.is_revoked());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(1), grant.revoked())
+            .await
+            .is_err(),
+        "dropping a non-owning grant cannot revoke its worker"
+    );
+    state.instances.lock().unwrap().insert("vm".into(), original);
+    assert!(state.evict_instance("vm", generation).is_some());
+    tokio::time::timeout(std::time::Duration::from_millis(100), grant.revoked())
+        .await
+        .expect("registry removal revokes the generation");
+    assert!(grant.is_revoked());
+
+    let replacement_target = test_instance();
+    let replaced = replacement_target.authority.grant();
+    state.instances.lock().unwrap().insert("vm".into(), replacement_target);
+    state.instances.lock().unwrap().insert("vm".into(), test_instance());
+    tokio::time::timeout(std::time::Duration::from_millis(100), replaced.revoked())
+        .await
+        .expect("registry replacement revokes the displaced generation");
 }

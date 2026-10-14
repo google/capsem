@@ -124,6 +124,27 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
     assert_eq!(body["updates"]["checked_at"], 1100);
 }
 
+#[tokio::test]
+async fn gateway_status_route_returns_vms_assets_and_updates_in_one_response() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+    install_test_runtime_assets(&state);
+    insert_fake_instance(&state, "gateway-status-vm", std::process::id());
+
+    let (status, body) = route_request(
+        build_service_router(state),
+        axum::http::Method::GET,
+        "/internal/gateway/status",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sandboxes"][0]["id"], "gateway-status-vm");
+    assert_eq!(body["assets"]["ready"], true);
+    assert!(body["updates"].is_object());
+}
+
 #[test]
 fn process_env_allowlist_forwards_mcp_timeout_knobs() {
     assert!(

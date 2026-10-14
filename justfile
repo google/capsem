@@ -288,6 +288,11 @@ install:
 bench *dimensions:
     @uv run --project build_system --frozen capsem-gate bench {{ quote(dimensions) }}
 
+# Rebuild stale VM assets before measuring dimensions whose committed inputs
+# changed. Separate because variadic recipe arguments are one quoted value.
+bench-slow *dimensions:
+    @uv run --project build_system --frozen capsem-gate bench --slow {{ quote(dimensions) }}
+
 # The dev loop: only the dimensions that need no guest, bounded so it stays a
 # dev loop. Records like any other run; never evidence.
 bench-quick *dimensions:

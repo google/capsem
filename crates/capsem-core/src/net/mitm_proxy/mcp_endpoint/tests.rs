@@ -10,6 +10,35 @@ use capsem_proto::mcp_contracts::{JsonRpcRequest, McpPromptDef, McpResourceDef, 
 
 use super::*;
 
+fn empty_proxy_snapshot(digest: &str) -> crate::net::proxy_engine::ProxyPolicySnapshot {
+    crate::net::proxy_engine::ProxyPolicySnapshot::new(
+        digest.to_string(),
+        crate::net::policy::NetworkMechanics::default(),
+        SecurityRuleSet::new(Vec::new()),
+        BTreeMap::new(),
+        crate::net::policy_config::ModelEndpointRegistry::default(),
+    )
+}
+
+#[test]
+fn unified_endpoint_reads_rules_and_plugins_from_one_live_revision() {
+    let (aggregator, _rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(1);
+    let policy = ProxyPolicyHandle::new(empty_proxy_snapshot("first"));
+    let endpoint = McpEndpointState::with_proxy_policy(
+        aggregator,
+        policy.clone(),
+        Arc::new(tokio::sync::Semaphore::new(1)),
+        McpTimeouts::default(),
+    );
+    let (first_rules, first_plugins) = endpoint.policy_snapshot();
+
+    policy.replace(empty_proxy_snapshot("second"));
+    let (second_rules, second_plugins) = endpoint.policy_snapshot();
+
+    assert!(!Arc::ptr_eq(&first_rules, &second_rules));
+    assert!(!Arc::ptr_eq(&first_plugins, &second_plugins));
+}
+
 struct ScopedToolsFixture {
     calls: Arc<Mutex<Vec<serde_json::Value>>>,
     fail: bool,

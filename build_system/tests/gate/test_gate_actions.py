@@ -73,6 +73,16 @@ def test_render_shows_the_environment_an_action_adds() -> None:
     assert action.render() == "CAPSEM_TEST_MODULE=fast just _test-candidate-run"
 
 
+def test_render_distinguishes_projects_with_the_same_directory_name() -> None:
+    """SDK and MCP builds are separate work even though both end in typescript."""
+    sdk = Run(["pnpm", "run", "build"], cwd=PROJECT_ROOT / "sdk/typescript")
+    mcp = Run(["pnpm", "run", "build"], cwd=PROJECT_ROOT / "mcp/typescript")
+
+    assert sdk.render() != mcp.render()
+    assert str(PROJECT_ROOT / "sdk/typescript") in sdk.render()
+    assert str(PROJECT_ROOT / "mcp/typescript") in mcp.render()
+
+
 # ---------------------------------------------------------------------------
 # Performing
 # ---------------------------------------------------------------------------

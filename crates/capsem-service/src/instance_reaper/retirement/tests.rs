@@ -12,6 +12,34 @@ fn sleeper() -> tokio::process::Child {
 }
 
 #[tokio::test]
+async fn revocation_callback_runs_while_original_child_pid_is_reserved() {
+    let owner = Retirements::default();
+    let generation = capsem_crypto::uuid_v4();
+    let mut registration = owner.register("vm", generation).unwrap();
+    let mut child = tokio::process::Command::new("sh")
+        .args(["-c", "exit 11"])
+        .spawn()
+        .unwrap();
+    let pid = ProcessId::try_from(child.id().unwrap()).unwrap();
+    let (status, ()) = registration
+        .wait_child_before_reap(&mut child, || {
+            assert!(
+                process::child_has_exited(pid).unwrap(),
+                "revocation must precede native reap"
+            );
+            assert!(
+                owner.is_live("vm", generation).unwrap(),
+                "exit is unpublished before revocation"
+            );
+        })
+        .await
+        .unwrap();
+    assert_eq!(status.code(), Some(11));
+    assert!(owner.wait_exit("vm", generation).await.unwrap());
+    registration.complete();
+}
+
+#[tokio::test]
 async fn owned_child_exit_precedes_full_retirement_and_stale_signals_do_not_retarget() {
     let owner = std::sync::Arc::new(Retirements::default());
     let old_generation = capsem_crypto::uuid_v4();

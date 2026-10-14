@@ -50,6 +50,8 @@ pub enum Dimension {
     Startup,
     McpLoad,
     MitmLoad,
+    /// Aggregate HTTPS interception throughput as independent VMs fan out.
+    MitmScale,
     DnsLoad,
 }
 
@@ -75,6 +77,7 @@ impl Dimension {
         Dimension::Startup,
         Dimension::McpLoad,
         Dimension::MitmLoad,
+        Dimension::MitmScale,
         Dimension::DnsLoad,
     ];
 
@@ -99,6 +102,7 @@ impl Dimension {
             Dimension::Startup => "startup",
             Dimension::McpLoad => "mcp-load",
             Dimension::MitmLoad => "mitm-load",
+            Dimension::MitmScale => "mitm-scale",
             Dimension::DnsLoad => "dns-load",
         }
     }

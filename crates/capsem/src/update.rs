@@ -180,7 +180,6 @@ impl BinaryInstallerApplyCommand {
     }
 }
 
-const CACHE_TTL_SECS: u64 = 24 * 3600; // 24 hours
 const DEFAULT_RELEASE_MANIFEST_URL: &str = "https://release.capsem.org/assets/stable/manifest.json";
 const DEFAULT_RELEASE_CHANNELS_URL: &str = "https://release.capsem.org/channels.json";
 const RELEASE_MANIFEST_URL_ENV: &str = "CAPSEM_RELEASE_MANIFEST_URL";
@@ -503,7 +502,7 @@ pub fn read_cached_update_notice() -> Option<String> {
 
     // Only show if cache is still fresh
     let age = now_secs().saturating_sub(check.checked_at);
-    if age > CACHE_TTL_SECS {
+    if age > capsem_proto::CACHE_UPDATE_CHECK_TTL_SECONDS {
         return None;
     }
 
@@ -657,7 +656,7 @@ pub async fn refresh_update_cache_if_stale() {
         .filter(|check| check.source.as_deref() == Some(manifest_url.as_str()));
     if let Some(check) = previous_check.as_ref() {
         let age = now_secs().saturating_sub(check.checked_at);
-        if age < CACHE_TTL_SECS {
+        if age < capsem_proto::CACHE_UPDATE_CHECK_TTL_SECONDS {
             return; // Still fresh
         }
     }

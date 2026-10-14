@@ -195,10 +195,23 @@ pub fn compare(
     };
     let delta_pct = if before == 0.0 { 0.0 } else { delta_abs / before * 100.0 };
 
-    let regressed = ratio > thresholds.maximum_factor;
+    let regression_ratio = if matches!(unit, Unit::RequestsPerSecond | Unit::MegabitsPerSecond) {
+        if after == 0.0 {
+            if before == 0.0 {
+                1.0
+            } else {
+                f64::INFINITY
+            }
+        } else {
+            before / after
+        }
+    } else {
+        ratio
+    };
+    let regressed = regression_ratio > thresholds.maximum_factor;
     let noise_band = baseline.cv * thresholds.noise_factor;
-    let material = delta_abs >= minimum_delta(unit, thresholds.minimum_time_resolution_ms);
-    let significant = regressed && material && (ratio - 1.0) > noise_band;
+    let material = delta_abs.abs() >= minimum_delta(unit, thresholds.minimum_time_resolution_ms);
+    let significant = regressed && material && (regression_ratio - 1.0) > noise_band;
 
     Comparison {
         key: key.to_string(),

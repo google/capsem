@@ -20,6 +20,8 @@ REQUIRED_BINARIES = [
     "capsem",
     "capsem-service",
     "capsem-process",
+    "capsem-ledger",
+    "capsem-proxy",
     "capsem-router",
     "capsem-tui",
 

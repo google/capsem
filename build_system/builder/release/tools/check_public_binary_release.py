@@ -590,6 +590,8 @@ def run_docker_install_smoke(
             "capsem-mcp-aggregator",
             "capsem-mcp-builtin",
             "capsem-process",
+            "capsem-ledger",
+            "capsem-proxy",
             "capsem-service",
             "capsem-tray",
             "capsem-tui",

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from ..cache import budget
 from ..cache.config import load_policy
 from ..cache.controlmodels import ImageCachePolicy
+from ..cache.generations import managed
+from ..cache.leases import release_path, retain_generation
 from . import cachelayout
 from .config import GateConfig, for_root
 from .errors import GateError
@@ -103,6 +106,36 @@ class CacheControl:
         """Enforce one cache owner's maximum before expensive work."""
         reason = f"gate cache enforcement for {label or cache_id}"
         self._run("enforce", cache_id, "--reason", reason)
+
+
+class CacheGenerationLease(Resource, name="cache-generation"):
+    """Keep an explicit managed input alive for one gate command."""
+
+    def __init__(self, config: GateConfig, stage_id: str, generation: Path) -> None:
+        self._config = config
+        self._stage_id = stage_id
+        self._generation = generation
+        self._lease: Path | None = None
+
+    def acquire(self) -> None:
+        paths = cachelayout.cache_paths(self._config)
+        root = paths.stage(self._stage_id).resolve()
+        try:
+            relative = self._generation.resolve().relative_to(root)
+        except ValueError:
+            return
+        policy = paths.policy.stages[self._stage_id]
+        if len(relative.parts) != 1 or not managed(policy, relative.name):
+            return
+        if policy.lease_template is None:
+            raise GateError(f"cache stage {self._stage_id!r} cannot lease explicit inputs")
+        retain_generation(paths, self._stage_id, relative.name)
+        self._lease = root / policy.lease_template.format(key=relative.name)
+
+    def release(self) -> None:
+        if self._lease is not None:
+            release_path(self._lease)
+            self._lease = None
 
 
 class CargoCacheBound(Resource, name="cargo-cache"):

@@ -15,9 +15,12 @@ import argparse
 from pathlib import Path
 
 from . import pytestsuite, referenceimage, runtimeprepare
+from .cachecontrol import CacheGenerationLease
 from .command import GateCommand
 from .errors import GateError
+from .lifecycle import Resource
 from .plan import Plan
+from .proc import Runner
 from .testmodules import InWorkspace
 
 
@@ -34,6 +37,20 @@ class ImageQualifyModule(
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--image", help="the candidate's catalog name (with --layout)")
         parser.add_argument("--layout", type=Path, help="the candidate's OCI layout (with --image)")
+
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
+        resources = super().resources(runner)
+        layout = getattr(self._args, "layout", None)
+        if layout is None:
+            return resources
+        return (
+            *resources,
+            CacheGenerationLease(
+                self._config,
+                self._config.functional.debug_image.cache_stage,
+                Path(layout),
+            ),
+        )
 
     def plan(self) -> Plan:
         image, layout = getattr(self._args, "image", None), getattr(self._args, "layout", None)

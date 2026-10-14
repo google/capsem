@@ -112,7 +112,7 @@ def test_all_nine_friendly_calls_preserve_explicit_authenticated_requests():
 def test_grant_creation_refuses_substituted_authority(field, value):
     async def run():
         async with gateway(response={**grant(), field: value}) as (url, received), Hypervisor(url, "gateway-token") as hv:
-            with pytest.raises(ValueError, match="grant.*changed"):
+            with pytest.raises(ValueError, match=r"grant.*changed"):
                 await hv.vm(id=SESSION).credential_grants.create(grant_request())
             assert len(received) == 1
     asyncio.run(run())
@@ -152,7 +152,7 @@ def test_response_checks_use_the_original_request_after_caller_mutation():
         request = grant_request()
         async with gateway(response={**grant(), "capability_ids": ["other"]},
                            on_request=lambda: setattr(request, "capability_ids", ["other"])) as (url, received), Hypervisor(url, "gateway-token") as hv:
-            with pytest.raises(ValueError, match="grant.*changed"):
+            with pytest.raises(ValueError, match=r"grant.*changed"):
                 await hv.vm(id=SESSION).credential_grants.create(request)
             assert received[0][2]["capability_ids"] == ["agy"]
             assert request.capability_ids == ["other"]

@@ -8,17 +8,19 @@
 
 use std::time::{Duration, Instant};
 
-use capsem_archive::{ArchiveError, BlockExtent, BodyLogReader, BodyRef};
+use capsem_archive::{ArchiveCodecs, ArchiveError, BlockExtent, BodyLogReader, BodyRef};
 use capsem_foundation::unix::contained::ContainedDir;
 use capsem_foundation::unix::lock::{self, LockMode};
 use rusqlite::{Connection, Row};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{DbHandle, DbResult};
 use crate::writer::RetainOutcome;
 
 /// Which side of an exchange a stored body is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BodyDirection {
     Request,
     Response,
@@ -466,6 +468,7 @@ pub(super) fn capture_body_rows(
     db_path: &std::path::Path,
     queries: Vec<super::DbQueryOwned>,
     requested_ids: usize,
+    codecs: &ArchiveCodecs,
 ) -> DbResult<CapturedBodies> {
     if requested_ids > INTERACTIVE_CAPTURE_MAX_IDS {
         return Err(format!(
@@ -490,8 +493,9 @@ pub(super) fn capture_body_rows(
             Ok(directory)
         })
         .map_err(|error| format!("open archive generation directory: {error}"))?;
-    let reader = BodyLogReader::open_generation(&directory, state.header, state.committed_end)
-        .map_err(|error| format!("open captured archive generation: {error}"))?;
+    let reader =
+        BodyLogReader::open_generation_with_codecs(&directory, state.header, state.committed_end, codecs.clone())
+            .map_err(|error| format!("open captured archive generation: {error}"))?;
     drop(archive_lock);
     pause_archive_capture_for_tests(db_path);
 

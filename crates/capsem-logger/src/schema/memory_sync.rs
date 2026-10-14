@@ -41,6 +41,7 @@ pub(super) const COPY_SECURITY_DECISION_OCCURRENCES: &str = "INSERT OR REPLACE I
 const DISK_ONLY_TABLES: &[&str] = &[
     "archive_state",
     "ledger_counters",
+    "ledger_commitments",
     "event_body_blobs",
     "body_blocks",
     "transport_schema",
@@ -48,6 +49,11 @@ const DISK_ONLY_TABLES: &[&str] = &[
     "network_members",
     "network_schema",
 ];
+
+fn required_hot_table(table: &str) -> rusqlite::Result<&'static str> {
+    canonical_hot_table(table)
+        .ok_or_else(|| rusqlite::Error::InvalidParameterName(format!("unknown ledger table {table}")))
+}
 
 pub(crate) fn is_disk_only_table(name: &str) -> bool {
     DISK_ONLY_TABLES.contains(&name)
@@ -113,12 +119,10 @@ pub(crate) fn seed_memory_sequences<'a>(
     tables: impl IntoIterator<Item = &'a str>,
 ) -> rusqlite::Result<()> {
     for table in tables {
-        if is_disk_only_table(table)
-            || !table_exists(conn, "main", table)?
-            || !table_exists(conn, MEMORY_SCHEMA, table)?
-        {
+        if is_disk_only_table(table) {
             continue;
         }
+        let table = required_hot_table(table)?;
         let next: i64 = conn.query_row(
             &format!(
                 "SELECT MAX(
@@ -156,12 +160,7 @@ pub(crate) fn initial_memory_flush_watermarks<'a>(
         if is_disk_only_table(table) {
             continue;
         }
-        if !table_exists(conn, "main", table)? {
-            continue;
-        }
-        let Some(table) = canonical_hot_table(table) else {
-            continue;
-        };
+        let table = required_hot_table(table)?;
         let max_id = max_table_id(conn, "main", table)?;
         watermarks.insert(table, max_id);
     }
@@ -192,12 +191,13 @@ pub fn flush_memory_tables_to_disk<'a>(
         if is_disk_only_table(table) {
             continue;
         }
-        if !table_exists(conn, "main", table)? || !table_exists(conn, MEMORY_SCHEMA, table)? {
-            continue;
-        }
-        let Some(table) = canonical_hot_table(table) else {
-            continue;
-        };
+        let table = required_hot_table(table)?;
+        // Execute the cached probe so a schema-cookie change reparses it.
+        // Even an empty memory table must not hide a missing disk table/id.
+        let _: Option<i64> = conn
+            .prepare_cached(&format!("SELECT id FROM main.{table} WHERE 0"))?
+            .query_row([], |row| row.get(0))
+            .optional()?;
         let last_flushed_id = *watermarks.get(table).unwrap_or(&0);
         let max_memory_id = max_table_id(conn, MEMORY_SCHEMA, table)?;
         if max_memory_id > last_flushed_id {

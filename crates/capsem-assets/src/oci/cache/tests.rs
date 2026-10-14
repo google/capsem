@@ -383,6 +383,54 @@ async fn abandoned_partial_is_reclaimed_by_publication() {
     assert!(!partial.exists());
 }
 
+#[tokio::test]
+async fn copy_hit_with_lease_releases_stripe_lock_on_hit_and_retains_on_miss() {
+    let root = super::super::tests::private_dir();
+    let staging = tempfile::tempdir().unwrap();
+    let cache = BlobCache::at(root.path()).unwrap();
+    cache.prepare().await.unwrap();
+    let digest = identity(b"payload");
+    let mut lease = Some(cache.lease(&digest).await.unwrap());
+    assert!(!cache
+        .copy_hit_with_lease(&digest, 7, &staging.path().join("miss"), &mut lease)
+        .await
+        .unwrap());
+    assert!(lease.is_some(), "cache miss must retain the stripe lock for download");
+    let source = staging.path().join("source");
+    std::fs::write(&source, b"payload").unwrap();
+    cache.publish(&digest, &source).await.unwrap();
+    assert!(cache
+        .copy_hit_with_lease(&digest, 7, &staging.path().join("hit"), &mut lease)
+        .await
+        .unwrap());
+    assert!(lease.is_none(), "cache hit must release the stripe lock once opened");
+}
+
+#[tokio::test]
+async fn stripe_lease_uses_pull_timeout_while_cache_locks_keep_thirty_seconds() {
+    assert_eq!(lock_timeout(LockScope::BlobStripe), super::super::PULL_TIMEOUT);
+    assert_eq!(lock_timeout(LockScope::BlobStripe), Duration::from_secs(300));
+    assert_eq!(lock_timeout(LockScope::Cache), CACHE_LOCK_TIMEOUT);
+    assert_eq!(lock_timeout(LockScope::Cache), Duration::from_secs(30));
+
+    let root = super::super::tests::private_dir();
+    let cache = BlobCache::at(root.path()).unwrap();
+    cache.prepare().await.unwrap();
+    let digest = identity(b"contended-stripe");
+    let _held = cache.lease(&digest).await.unwrap();
+    let hex = digest_hex(&digest).unwrap();
+    let stripe_path = root.path().join("locks").join(format!("{}.lock", &hex[..2]));
+    let err = lock_with_timeout(
+        stripe_path,
+        LockAccess::Prepare,
+        LockMode::Exclusive,
+        Duration::from_millis(20),
+    )
+    .await
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("timeout: 20ms"), "{err:#}");
+}
+
 fn integrity(bytes: &[u8]) -> String {
     format!("blake3:{}", capsem_crypto::blake3::hash(bytes).to_hex())
 }

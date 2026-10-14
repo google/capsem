@@ -22,7 +22,9 @@ mod builtin_actions;
 mod container;
 mod credential_grants;
 pub use container::ContainerSecurityEvent;
+mod engine;
 pub use credential_grants::CredentialGrantAdmission;
+pub use engine::*;
 mod event_id;
 pub use event_id::SecurityEventId;
 mod forensics;
@@ -679,7 +681,9 @@ pub async fn emit_security_decision_transition(
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
     let decision_event = security_decision_event(event_id, event_type, rule, event, decision_state, timestamp_unix_ms)?;
-    emit_security_write(db, WriteOp::SecurityDecisionEvent(decision_event)).await;
+    emit_security_write(db, WriteOp::SecurityDecisionEvent(decision_event))
+        .await
+        .ok_or_else(|| "ledger refused security decision row".to_string())?;
     Ok(())
 }
 
@@ -693,17 +697,44 @@ pub fn emit_security_decision_transition_blocking(
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
     let decision_event = security_decision_event(event_id, event_type, rule, event, decision_state, timestamp_unix_ms)?;
-    emit_security_write_blocking(db, WriteOp::SecurityDecisionEvent(decision_event));
+    emit_security_write_blocking(db, WriteOp::SecurityDecisionEvent(decision_event))
+        .ok_or_else(|| "ledger refused security decision row".to_string())?;
     Ok(())
 }
 
 pub fn evaluate_security_boundary(
     rules: &SecurityRuleSet,
     plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    event: SecurityEvent,
+) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
+    evaluate_security_boundary_with_registry(
+        rules,
+        SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy),
+        event,
+    )
+}
+
+pub(crate) fn evaluate_security_boundary_with_credentials(
+    rules: &SecurityRuleSet,
+    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    credentials: Arc<dyn crate::net::proxy_engine::ProxyCredentials>,
+    event: SecurityEvent,
+) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
+    evaluate_security_boundary_with_registry(
+        rules,
+        SecurityActionRegistry::with_builtin_actions()
+            .with_proxy_credentials(credentials)
+            .with_plugin_policy(plugin_policy),
+        event,
+    )
+}
+
+fn evaluate_security_boundary_with_registry(
+    rules: &SecurityRuleSet,
+    action_registry: SecurityActionRegistry,
     mut event: SecurityEvent,
 ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
     event.validate_network(event.event_type)?;
-    let action_registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
 
     event = action_registry.apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
 
@@ -737,7 +768,9 @@ pub async fn emit_security_rule_match(
 ) -> Result<(), String> {
     let rule_event = security_rule_event(event_id, event_type, rule, event, timestamp_unix_ms)?;
     trace_security_rule_match(&rule_event, rule);
-    emit_security_write(db, WriteOp::SecurityRuleEvent(rule_event)).await;
+    emit_security_write(db, WriteOp::SecurityRuleEvent(rule_event))
+        .await
+        .ok_or_else(|| "ledger refused security rule row".to_string())?;
     Ok(())
 }
 
@@ -775,7 +808,9 @@ pub async fn emit_security_ask_pending(
 ) -> Result<SecurityEventId, String> {
     let ask_id = SecurityEventId::new_uuid4();
     let ask_event = security_ask_pending_event(ask_id.clone(), event_id, event_type, rule, event, timestamp_unix_ms)?;
-    emit_security_write(db, WriteOp::SecurityAskEvent(ask_event)).await;
+    emit_security_write(db, WriteOp::SecurityAskEvent(ask_event))
+        .await
+        .ok_or_else(|| "ledger refused pending security ask row".to_string())?;
     Ok(ask_id)
 }
 
@@ -789,7 +824,8 @@ pub fn emit_security_ask_pending_blocking(
 ) -> Result<SecurityEventId, String> {
     let ask_id = SecurityEventId::new_uuid4();
     let ask_event = security_ask_pending_event(ask_id.clone(), event_id, event_type, rule, event, timestamp_unix_ms)?;
-    emit_security_write_blocking(db, WriteOp::SecurityAskEvent(ask_event));
+    emit_security_write_blocking(db, WriteOp::SecurityAskEvent(ask_event))
+        .ok_or_else(|| "ledger refused pending security ask row".to_string())?;
     Ok(ask_id)
 }
 
@@ -802,7 +838,8 @@ pub fn emit_security_ask_resolution_blocking(
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
     let event = security_ask_resolution_event(pending, status, resolver, reason, timestamp_unix_ms)?;
-    emit_security_write_blocking(db, WriteOp::SecurityAskEvent(event));
+    emit_security_write_blocking(db, WriteOp::SecurityAskEvent(event))
+        .ok_or_else(|| "ledger refused resolved security ask row".to_string())?;
     Ok(())
 }
 
@@ -815,7 +852,9 @@ pub async fn emit_security_ask_resolution(
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
     let event = security_ask_resolution_event(pending, status, resolver, reason, timestamp_unix_ms)?;
-    emit_security_write(db, WriteOp::SecurityAskEvent(event)).await;
+    emit_security_write(db, WriteOp::SecurityAskEvent(event))
+        .await
+        .ok_or_else(|| "ledger refused resolved security ask row".to_string())?;
     Ok(())
 }
 
@@ -1674,6 +1713,13 @@ pub struct MaterializedHttpRequest {
 pub fn materialize_http_request_for_upstream(
     event: &SecurityEvent,
 ) -> Result<MaterializedHttpRequest, SecurityActionError> {
+    materialize_http_request_for_upstream_with_credentials(event, &crate::net::proxy_engine::LocalProxyCredentials)
+}
+
+pub(crate) fn materialize_http_request_for_upstream_with_credentials(
+    event: &SecurityEvent,
+    credentials: &dyn crate::net::proxy_engine::ProxyCredentials,
+) -> Result<MaterializedHttpRequest, SecurityActionError> {
     let Some(request) = event.http_request.as_ref() else {
         return Err(SecurityActionError::new(
             "security event does not carry an HTTP request",
@@ -1689,8 +1735,8 @@ pub fn materialize_http_request_for_upstream(
     }
 
     let mut headers = request.headers.clone();
-    let BrokeredUpstreamCredentials { credential_ref, query } =
-        crate::credential_broker::substitute_brokered_upstream_credentials(
+    let BrokeredUpstreamCredentials { credential_ref, query } = credentials
+        .substitute_upstream(
             &request.domain,
             request.ai_provider,
             &mut headers,
@@ -1814,6 +1860,14 @@ impl SecurityActionRegistry {
 
     pub fn with_plugin_policy(mut self, plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>) -> Self {
         self.plugin_policy = plugin_policy.into();
+        self
+    }
+
+    fn with_proxy_credentials(mut self, credentials: Arc<dyn crate::net::proxy_engine::ProxyCredentials>) -> Self {
+        Arc::make_mut(&mut self.plugins).insert(
+            "credential_broker".to_string(),
+            Arc::new(CredentialBrokerPlugin::new(credentials)),
+        );
         self
     }
 
@@ -1986,85 +2040,6 @@ fn model_contains_text(model: &ModelSecurityEvent, needle: &str) -> bool {
     .into_iter()
     .flatten()
     .any(|content| content.contains(needle))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SecurityEmitError {
-    message: String,
-}
-
-impl SecurityEmitError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl fmt::Display for SecurityEmitError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for SecurityEmitError {}
-
-/// Single auditable event emission boundary.
-pub trait SecurityEventEmitter: Send + Sync {
-    fn emit(&self, event: SecurityEvent) -> Result<(), SecurityEmitError>;
-}
-
-/// Security-event execution boundary for matched rule actions.
-///
-/// Runtime/parser paths hand this engine a canonical `SecurityEvent` plus the
-/// matched action-bearing rules. The engine applies actions in deterministic
-/// order, then emits exactly the final post-action event.
-pub struct SecurityEventEngine<E: SecurityEventEmitter> {
-    action_registry: SecurityActionRegistry,
-    emitter: Arc<E>,
-}
-
-impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
-    pub fn new(action_registry: SecurityActionRegistry, emitter: Arc<E>) -> Self {
-        Self {
-            action_registry,
-            emitter,
-        }
-    }
-
-    pub fn with_builtin_actions(emitter: Arc<E>) -> Self {
-        Self::new(SecurityActionRegistry::with_builtin_actions(), emitter)
-    }
-
-    pub fn apply_matching_rules_and_emit(
-        &self,
-        rules: &SecurityRuleSet,
-        mut event: SecurityEvent,
-    ) -> Result<SecurityEvent, SecurityActionError> {
-        event.validate_network(event.event_type)?;
-        event = self
-            .action_registry
-            .apply_security_plugins(SecurityPluginStage::Preprocess, event)?;
-
-        let evaluation = rules.evaluate(&event).map_err(SecurityActionError::new)?;
-        for rule in evaluation.matched_rules() {
-            record_rule_detection(&mut event, rule);
-        }
-        event.request_decision(requested_boundary_decision(
-            selected_enforcement_rule(&evaluation),
-            event.event_type,
-        ));
-        event = self
-            .action_registry
-            .apply_security_plugins(SecurityPluginStage::Postprocess, event)?;
-        event = self
-            .action_registry
-            .apply_security_plugins(SecurityPluginStage::Logging, event)?;
-        self.emitter
-            .emit(event.clone())
-            .map_err(|error| SecurityActionError::new(error.to_string()))?;
-        Ok(event)
-    }
 }
 
 #[cfg(test)]

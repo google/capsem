@@ -1,8 +1,7 @@
 //! Capsem protocol types for host/guest communication over vsock.
 //!
 //! Defines disjoint `HostToGuest` and `GuestToHost` message enums with
-//! MessagePack framing. No platform-specific dependencies, so this crate
-//! cross-compiles for both macOS host and aarch64-linux-musl guest.
+//! MessagePack framing with no platform dependencies for macOS and aarch64-linux-musl.
 //!
 //! # Security invariant (RFC T14)
 //!
@@ -14,18 +13,30 @@ pub mod credential_injection;
 pub mod credential_reference;
 mod exec_stream;
 pub mod forensic;
+pub mod gateway_grant;
 pub mod handshake;
 pub mod host_session;
 pub mod ipc;
+pub mod ledger;
+pub mod ledger_commitment;
+pub mod ledger_control;
 pub mod ledger_counters;
 pub mod mcp;
 pub mod mcp_aggregator;
 pub mod mcp_contracts;
 pub mod poll;
 pub mod privatelink;
+pub mod proxy_control;
+pub mod proxy_credentials;
+pub mod proxy_mcp;
+pub mod proxy_metrics;
+pub mod proxy_policy;
+pub mod proxy_private_names;
+pub mod proxy_trace_hints;
 pub mod repeated;
 pub mod router;
 mod sparse;
+pub mod upstream_grant;
 mod wire_bytes;
 
 /// Where the guest mounts the host-visible workspace share: every VM sees its
@@ -49,7 +60,6 @@ use serde::{Deserialize, Serialize};
 /// guest control channel. Keep this bounded, but large enough that legitimate
 /// file import/export requests do not tear down the agent control stream.
 pub const MAX_FRAME_SIZE: u32 = 2 * 1024 * 1024;
-
 /// Maximum number of env vars allowed during boot handshake.
 pub const MAX_BOOT_ENV_VARS: usize = 128;
 
@@ -75,10 +85,12 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// credentials and descriptor handoff admission. Version 10 omits default
 /// fields from named MessagePack maps while decoding their absence as defaults.
 /// Version 11 removes the workspace snapshot status query and the unused
-/// service-to-owner freeze messages, and adds the owner-run `CloneState` for
-/// forks.
-/// Version 12 adds host-only memory credential injection and acknowledgement.
-pub const PROTOCOL_VERSION: u16 = 12;
+/// service-to-owner freeze messages, and adds `CloneState` for forks.
+/// Version 12 makes cloning a coordinator operation bracketed by the owner's
+/// guest freeze, so no destination path crosses into the VM owner.
+/// Version 13 fixes suspend to the owner's confined checkpoint location.
+/// Version 14 adds host-only credential injection; version 15 carries active-policy bytes.
+pub const PROTOCOL_VERSION: u16 = 15;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;
@@ -190,9 +202,7 @@ pub const BLOCKED_ENV_VARS: &[&str] = &[
     "PS4",
 ];
 
-// ---------------------------------------------------------------------------
 // Vsock port constants (shared between host and guest)
-// ---------------------------------------------------------------------------
 
 /// vsock port for structured control messages (resize, heartbeat, exec, file I/O).
 pub const VSOCK_PORT_CONTROL: u32 = 5000;
@@ -206,10 +216,12 @@ pub const VSOCK_PORT_LIFECYCLE: u32 = 5004;
 pub const VSOCK_PORT_EXEC: u32 = 5005;
 /// vsock port for kernel audit stream (execve events from auditd via guest agent).
 pub const VSOCK_PORT_AUDIT: u32 = 5006;
-/// vsock port for the DNS proxy (T3): the guest agent's `capsem-dns-proxy`
-/// listener forwards each DNS query to the host's hickory-backed handler
-/// over an `rmp-serde` length-framed envelope.
+/// vsock port for the guest-to-host, length-framed DNS proxy.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
+include!(concat!(env!("OUT_DIR"), "/runtime_limits.rs"));
+/// Per-session DNS bound. Two sessions cover the A+AAAA burst from every
+/// supported concurrent client without shedding either address family.
+pub const DNS_SESSION_MAX_IN_FLIGHT: usize = NETWORK_CLIENT_CAPACITY;
 /// Guest-initiated data connections for explicitly published container TCP ports.
 pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
 /// Network cables: each guest `capsem-tun` pumps one cable's ethernet frames

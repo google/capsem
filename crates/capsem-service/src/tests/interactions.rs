@@ -99,7 +99,6 @@ async fn interactions_project_model_messages_tools_and_results_without_cross_cal
     assert_eq!(orphan["content"]["arguments"]["content"]["reason"], "invalid_json");
     assert_eq!(orphan["content"]["result"]["is_error"], true);
     assert_eq!(orphan["content"]["result"]["error_message"], "failed");
-    assert!(state.stats_detail_response_cache.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

@@ -22,6 +22,7 @@ suites call `ready()`, which only verifies.
 from __future__ import annotations
 
 import argparse
+import base64
 import functools
 import hashlib
 import json
@@ -38,8 +39,12 @@ from pathlib import Path
 
 from capsem_builder.cache.config import load_paths
 from capsem_builder.gate import config as gate_config
+from capsem_builder.release.tools.fetch_channel_source_manifest import github_token
 
 ROOT = Path(__file__).resolve().parents[3]
+if __package__ in (None, ""):
+    sys.path.insert(0, str(ROOT))
+
 MANIFEST_TYPES = (
     "application/vnd.oci.image.manifest.v1+json",
     "application/vnd.docker.distribution.manifest.v2+json",
@@ -111,8 +116,17 @@ class _Registry:
             _NoCrossHostAuth, urllib.request.HTTPSHandler(context=context)
         )
 
-    def open(self, url: str, token: str | None = None, accept: str | None = None):
+    def open(
+        self,
+        url: str,
+        token: str | None = None,
+        accept: str | None = None,
+        basic: tuple[str, str] | None = None,
+    ):
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        if basic is not None:
+            encoded = base64.b64encode(f"{basic[0]}:{basic[1]}".encode()).decode()
+            headers["Authorization"] = f"Basic {encoded}"
         if accept:
             headers["Accept"] = accept
         return self._opener.open(urllib.request.Request(url, headers=headers), timeout=TIMEOUT)
@@ -131,7 +145,20 @@ def _token(client: _Registry, registry: str, name: str) -> str | None:
     query = urllib.parse.urlencode(
         {"service": fields.get("service", registry), "scope": f"repository:{name}:pull"}
     )
-    with client.open(f"{fields['realm']}?{query}") as response:
+    token_url = f"{fields['realm']}?{query}"
+    try:
+        response = client.open(token_url)
+    except urllib.error.HTTPError as error:
+        realm = urllib.parse.urlsplit(fields.get("realm", ""))
+        if error.code != 403 or registry != "ghcr.io" or realm != urllib.parse.urlsplit(
+            "https://ghcr.io/token"
+        ):
+            raise
+        credential = github_token()
+        if credential is None:
+            raise
+        response = client.open(token_url, basic=("x-access-token", credential))
+    with response:
         body = json.load(response)
     return body.get("token") or body["access_token"]
 

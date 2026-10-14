@@ -2533,7 +2533,12 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                     "SELECT * FROM fs_events WHERE path = ? ORDER BY id",
                     (filename,),
                 ).fetchall(),
-                lambda rows: any(row["action"] in {"created", "modified"} for row in rows),
+                lambda rows: any(
+                    row["action"] in {"created", "modified"}
+                    and row["size"] == len((nonce + "\n").encode())
+                    and row["trace_id"] == tool_row["trace_id"]
+                    for row in rows
+                ),
             )
             assert all(row["credential_ref"] is None for row in file_rows)
             created_file_rows = [

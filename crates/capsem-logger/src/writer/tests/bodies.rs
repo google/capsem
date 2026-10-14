@@ -43,7 +43,15 @@ fn recovered_writer_fences_then_collects_only_owned_orphan_generations() {
     drop(directory.create_new_private_file(OsStr::new("operator-note")).unwrap());
     directory.sync().unwrap();
 
-    drop(BodyArchive::open_existing(&db_path, SystemTime::now, &conn).unwrap());
+    drop(
+        BodyArchive::open_existing(
+            &db_path,
+            SystemTime::now,
+            &conn,
+            capsem_archive::ArchiveCodecs::default(),
+        )
+        .unwrap(),
+    );
 
     let after = crate::schema::archive_state(&conn).unwrap();
     assert_eq!(
@@ -324,6 +332,106 @@ fn appended_blocks_are_flushed_before_their_index_rows_commit() {
         .unwrap();
     assert_eq!(rows, 1);
     archive.sync();
+}
+
+/// A periodic flush may leave archive durability running in parallel with
+/// later admissions, but it must not publish the corresponding index rows
+/// until that durability work has completed.
+#[test]
+fn nonblocking_archive_sync_defers_index_rows_until_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("nonblocking-sync.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
+    archive.stage(
+        &conn,
+        body_blob("0f1f2f3f4f60", "a body synchronized away from admissions"),
+    );
+    archive.flush_segment();
+    archive.prepare_index_rows(false);
+    archive
+        .commit_prepared_index_rows_with_limit(&conn, capsem_proto::LEDGER_ARCHIVE_INDEX_ROWS_PER_FLUSH)
+        .unwrap();
+    archive.index_rows_committed();
+
+    let rows = || {
+        conn.query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get::<_, i64>(0))
+            .unwrap()
+    };
+    assert_eq!(rows(), 0, "an in-flight sync cannot publish its rows");
+
+    archive.commit_index_rows(&conn).unwrap();
+    archive.index_rows_committed();
+    assert_eq!(rows(), 1, "the row becomes eligible after the sync finishes");
+    assert_eq!(archive.steps_for_tests(), ["sync", "commit"]);
+}
+
+/// A completed device sync may make several seconds of body rows eligible at
+/// once. Each SQLite transaction publishes only its bounded prefix, and a
+/// committed prefix is removed while the remainder stays available to the
+/// next flush.
+#[test]
+fn synchronized_index_backlog_drains_across_bounded_transactions() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("bounded-index-publish.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
+    for index in 0..5 {
+        archive.stage(
+            &conn,
+            body_blob(&format!("{index:012x}"), &format!("unique body {index}")),
+        );
+    }
+    archive.flush_segment();
+    archive.prepare_index_rows(true);
+
+    for expected in [2, 4, 5] {
+        let tx = conn.unchecked_transaction().unwrap();
+        archive.commit_prepared_index_rows_with_limit(&tx, 2).unwrap();
+        assert!(archive.prepared_index_row_count() <= 2);
+        tx.commit().unwrap();
+        archive.index_rows_committed();
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, expected);
+        if expected == 2 {
+            conn.execute_batch(
+                "CREATE TRIGGER body_block_metadata_is_written_once
+                 BEFORE UPDATE ON body_blocks
+                 BEGIN
+                     SELECT RAISE(FAIL, 'body block metadata rewritten');
+                 END;",
+            )
+            .unwrap();
+        }
+    }
+    assert_eq!(archive.prepared_index_row_count(), 0);
+}
+
+#[test]
+fn committed_empty_segment_leaves_no_archive_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("empty-segment.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+    let mut archive = BodyArchive::open_for_tests(Some(&db_path), SystemTime::now, &conn);
+
+    let mark = archive.staged_mark();
+    archive.stage(&conn, body_blob("empty-segment", "rolled back body"));
+    archive.flush_segment();
+    archive.rollback_staged(mark);
+    archive.prepare_index_rows(true);
+    let tx = conn.unchecked_transaction().unwrap();
+    archive.commit_prepared_index_rows_with_limit(&tx, 2).unwrap();
+    tx.commit().unwrap();
+    archive.index_rows_committed();
+
+    assert!(!archive.has_work(), "the committed empty segment has no backlog");
 }
 
 /// A body that cannot fit beside what the open block holds closes the block
@@ -732,7 +840,13 @@ fn publication_crash_boundaries_recover_and_append_to_the_elected_generation() {
         let writer = DbWriter::open(&db_path, 1).unwrap();
         writer.shutdown_blocking();
         let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let mut archive = BodyArchive::open_existing(&db_path, SystemTime::now, &conn).unwrap();
+        let mut archive = BodyArchive::open_existing(
+            &db_path,
+            SystemTime::now,
+            &conn,
+            capsem_archive::ArchiveCodecs::default(),
+        )
+        .unwrap();
         archive.stage(&conn, body_blob("aa0000000001", "old bytes"));
         archive.close_block();
         commit(&mut archive, &conn);
@@ -762,7 +876,13 @@ fn publication_crash_boundaries_recover_and_append_to_the_elected_generation() {
             published,
             "{case}"
         );
-        let mut archive = BodyArchive::open_existing(&db_path, SystemTime::now, &conn).unwrap();
+        let mut archive = BodyArchive::open_existing(
+            &db_path,
+            SystemTime::now,
+            &conn,
+            capsem_archive::ArchiveCodecs::default(),
+        )
+        .unwrap();
         let fenced = crate::schema::archive_state(&conn).unwrap();
         assert_eq!(fenced.revision, elected.revision + 1, "{case} recovery fence");
 
@@ -851,55 +971,4 @@ fn a_crash_between_a_segment_and_its_commit_strands_bytes_and_nothing_else() {
     assert_eq!(read_indexed(&conn, &db_path, "0a0a0a0a0a03"), b"after the restart");
 }
 
-/// Seconds since the epoch the test clock reads, so a test can move time.
-static TEST_CLOCK_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1_800_000_000);
-
-fn test_clock() -> SystemTime {
-    SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(TEST_CLOCK_SECS.load(std::sync::atomic::Ordering::SeqCst))
-}
-
-fn advance_test_clock(by: std::time::Duration) {
-    TEST_CLOCK_SECS.fetch_add(by.as_secs(), std::sync::atomic::Ordering::SeqCst);
-}
-
-/// A quiet session must not keep one block open for days: retention drops
-/// whole blocks by their last write, so a block that never closed would keep
-/// every body in it for as long as anything new joined it. A block older
-/// than `MAX_BLOCK_AGE` closes, and the next body starts a new one.
-#[test]
-fn a_block_open_longer_than_its_age_limit_closes_before_the_next_body() {
-    use crate::writer::bodies::MAX_BLOCK_AGE;
-
-    let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("block-age.db");
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    crate::schema::create_tables(&conn).unwrap();
-
-    let mut archive = BodyArchive::open_for_tests(Some(&db_path), test_clock, &conn);
-    archive.stage(&conn, body_blob("0a0a0a0a0b01", "opens the block"));
-    archive.flush_segment();
-    advance_test_clock(MAX_BLOCK_AGE.saturating_sub(std::time::Duration::from_secs(60)));
-    archive.stage(&conn, body_blob("0a0a0a0a0b02", "still inside the age limit"));
-    archive.flush_segment();
-    advance_test_clock(std::time::Duration::from_secs(120));
-    archive.stage(&conn, body_blob("0a0a0a0a0b03", "past it"));
-    archive.flush_segment();
-    commit(&mut archive, &conn);
-
-    let blocks: Vec<i64> = conn
-        .prepare("SELECT block_offset FROM event_body_blobs ORDER BY event_id")
-        .unwrap()
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
-    assert_eq!(blocks[0], blocks[1], "inside the limit, one block");
-    assert!(blocks[2] > blocks[1], "past it, a new block: {blocks:?}");
-    assert_eq!(read_indexed(&conn, &db_path, "0a0a0a0a0b03"), b"past it");
-
-    // And an idle block closes at the next flush, not only at the next body.
-    advance_test_clock(MAX_BLOCK_AGE);
-    archive.flush_segment();
-    assert_eq!(archive.appended_len_for_tests(), 1, "the stale block closed");
-    commit(&mut archive, &conn);
-}
+mod aging;

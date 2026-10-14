@@ -1,0 +1,61 @@
+# Product-wide runtime ceilings embedded into every Capsem binary.
+# User overrides belong to the typed settings contract tracked by #349.
+
+[network]
+max_concurrent_clients = 512
+# A pool can hold active, idle and retiring connections for one client slot.
+traffic_grants_per_client = 3
+# Each intercepted client consumes a guest TCP descriptor and a VSOCK
+# descriptor. The remaining per-client allowance covers listeners, the Tokio
+# reactor, DNS, control traffic, and overlap while connections retire.
+file_descriptors_per_client = 8
+# Two independent guest-to-host sessions cover the usual A+AAAA pair and keep
+# resolution available while one session reconnects.
+dns_sessions_per_vm = 2
+# RFC 6891's practical EDNS UDP payload ceiling. The listener buffer derives
+# from this, the session count and the supported client count below.
+dns_max_udp_datagram_bytes = 4096
+
+[ledger]
+# A DNS query contributes a primary row, a decision transition and a rule row.
+# Two persistent DNS sessions can overlap; two additional event slots per
+# client absorb the bounded handoff between protocol and SQLite batches.
+producer_events_per_network_client = 8
+# One transport exchange carries this many consecutive producer events. The
+# queue must be an exact multiple so a full burst drains without a tail shape.
+admission_batch_capacity = 256
+# A lone event waits briefly for its immediate followers. This is far below a
+# network round trip while avoiding singleton IPC under concurrent bursts.
+admission_coalesce_wait_microseconds = 100
+# Body indexes are published only after their archive segment reaches the
+# device. A slow sync can make several seconds of rows eligible at once; cap
+# each following SQLite transaction so admission never waits on that backlog.
+# This is an exact admission-batch multiple so the drain has no tail shape.
+archive_index_rows_per_flush = 8192
+# The ledger is append-heavy and its polled queries use narrow indexes. A
+# 256 MiB window made each busy VM retain almost the full ledger as resident
+# file-backed memory; keep a 32 MiB query working set and let the kernel cache
+# colder pages globally across many concurrent VMs.
+sqlite_mmap_bytes = 33554432
+# A fail-closed network action waits at most one second for admission. Flush
+# often enough that copying preceding memory rows cannot consume that budget.
+disk_flush_interval_milliseconds = 1000
+# A burst also flushes before the timer at this exact batch multiple.
+disk_flush_max_pending_events = 1048576
+
+[cache]
+# Bounded runtime maps and freshness windows are product capacities. Keep
+# them here so every process sees the same policy and local literals cannot
+# silently drift apart.
+dns_answer_entries = 1024
+dns_max_ttl_seconds = 300
+dns_negative_ttl_seconds = 60
+tls_leaf_entries = 1024
+ledger_query_batch_entries = 8
+sqlite_prepared_statements = 64
+service_storage_diagnostics_entries = 256
+service_persistent_resume_entries = 256
+update_check_ttl_seconds = 86400
+image_catalog_refresh_seconds = 1800
+image_catalog_retry_seconds = 60
+image_verification_batch_keys = 1024

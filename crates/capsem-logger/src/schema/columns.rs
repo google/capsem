@@ -148,6 +148,20 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
     ("body_blocks", &["block_offset", "raw_len", "disk_len", "sealed_at"]),
     ("ledger_counters", &["singleton", "counters"]),
     (
+        "ledger_commitments",
+        &[
+            "global_sequence",
+            "generation",
+            "client_id",
+            "producer_role",
+            "producer_sequence",
+            "event_kind",
+            "event_hash",
+            "previous_hash",
+            "commitment_hash",
+        ],
+    ),
+    (
         "fs_events",
         &[
             "action",

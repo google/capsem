@@ -91,7 +91,7 @@ def _process_facts(proc: psutil.Process) -> dict | None:
 
 
 def _owned_roots(root: Path) -> list[Path]:
-    """`root`, plus wherever its own `cache/target/` profile links actually point.
+    """`root`, plus wherever its own shared Cargo links actually point.
 
     Compiler output is shared between runs at one absolute path, so a prefix
     reaches it through `cache/target/cargo/debug` and `cache/target/release` symlinks. Resolving
@@ -106,7 +106,13 @@ def _owned_roots(root: Path) -> list[Path]:
     reason the sharing is safe at all: one gate runs per machine under `flock`.
     """
     roots = [root.resolve()]
-    for link in sorted((root / "cache" / "target" / "cargo").glob("*")):
+    cargo = root / "cache" / "target" / "cargo"
+    try:
+        if cargo.is_symlink():
+            roots.append(cargo.resolve())
+    except OSError:
+        pass
+    for link in sorted(cargo.glob("*")):
         try:
             if link.is_symlink():
                 roots.append(link.resolve())

@@ -180,49 +180,55 @@ pub fn insert(connection: &mut Connection, record: &Record) -> Result<i64> {
 /// difference between them rather than a change in Capsem. A quick run is
 /// never evidence.
 pub fn latest(connection: &Connection, dimension: Dimension, arch: &str) -> Result<Option<Record>> {
-    let run = connection
-        .query_row(
-            "SELECT id, recorded_at, version, channel, commit_sha, os, cpu_count,
+    Ok(latest_many(connection, dimension, arch, 1)?.into_iter().next())
+}
+
+/// The most recent `count` non-quick runs, newest first.
+pub fn latest_many(connection: &Connection, dimension: Dimension, arch: &str, count: usize) -> Result<Vec<Record>> {
+    let mut query = connection.prepare(
+        "SELECT id, recorded_at, version, channel, commit_sha, os, cpu_count,
                     kvm, governor, load_before, sidecar
                FROM runs
               WHERE dimension = ?1 AND arch = ?2 AND quick = 0
               ORDER BY recorded_at DESC, id DESC
-              LIMIT 1",
-            params![dimension.as_str(), arch],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    crate::schema::Record {
-                        schema: crate::schema::SCHEMA.to_string(),
-                        dimension,
-                        recorded_at: row.get(1)?,
-                        release: crate::schema::Release {
-                            version: row.get(2)?,
-                            channel: row.get(3)?,
-                            commit: row.get(4)?,
-                        },
-                        host: crate::schema::Host {
-                            arch: arch.to_string(),
-                            os: row.get(5)?,
-                            cpu_count: row.get::<_, i64>(6)? as usize,
-                            kvm: row.get::<_, i64>(7)? != 0,
-                            governor: row.get(8)?,
-                            load_before: row.get(9)?,
-                        },
-                        quick: false,
-                        metrics: Vec::new(),
-                        sidecar: row.get(10)?,
+              LIMIT ?3",
+    )?;
+    let rows = query.query_map(
+        params![dimension.as_str(), arch, i64::try_from(count).unwrap_or(i64::MAX)],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                crate::schema::Record {
+                    schema: crate::schema::SCHEMA.to_string(),
+                    dimension,
+                    recorded_at: row.get(1)?,
+                    release: crate::schema::Release {
+                        version: row.get(2)?,
+                        channel: row.get(3)?,
+                        commit: row.get(4)?,
                     },
-                ))
-            },
-        )
-        .ok();
-
-    let Some((run_id, mut record)) = run else {
-        return Ok(None);
-    };
-    record.metrics = metrics_of(connection, run_id)?;
-    Ok(Some(record))
+                    host: crate::schema::Host {
+                        arch: arch.to_string(),
+                        os: row.get(5)?,
+                        cpu_count: row.get::<_, i64>(6)? as usize,
+                        kvm: row.get::<_, i64>(7)? != 0,
+                        governor: row.get(8)?,
+                        load_before: row.get(9)?,
+                    },
+                    quick: false,
+                    metrics: Vec::new(),
+                    sidecar: row.get(10)?,
+                },
+            ))
+        },
+    )?;
+    let mut records = Vec::new();
+    for row in rows {
+        let (run_id, mut record) = row?;
+        record.metrics = metrics_of(connection, run_id)?;
+        records.push(record);
+    }
+    Ok(records)
 }
 
 fn metrics_of(connection: &Connection, run_id: i64) -> Result<Vec<Metric>> {

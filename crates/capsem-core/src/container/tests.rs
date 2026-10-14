@@ -75,13 +75,14 @@ fn a_vm_too_small_for_a_workload_is_refused() {
 }
 
 #[test]
-fn the_launch_command_is_unchanged_by_sharing_the_moved_root_prefix() {
+fn the_launch_commands_do_not_mutate_the_guest_owned_stage() {
     assert_eq!(
         LAUNCH_COMMAND,
-        "chmod 555 /root/.capsem-image/launch.py && chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec \
+        "chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec \
          'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 \
          /root/.capsem-image/launch.py /root/.capsem-image'"
     );
+    assert!(!DETACHED_LAUNCH_COMMAND.contains("chmod"), "{DETACHED_LAUNCH_COMMAND}");
 }
 
 /// The JSON request a `workload_exec_command` carries, hex-decoded.
@@ -100,11 +101,7 @@ fn decode_workload_exec(payload: &str) -> serde_json::Value {
 fn a_workload_exec_carries_any_command_exactly_to_the_launcher() {
     let hostile = "printf '%s' \"$(id -u)\"; echo 'a'\\''b' `uname`\n; exit 7";
     let command = workload_exec_command(hostile);
-    let (context, _) = LAUNCH_COMMAND
-        .strip_prefix("chmod 555 /root/.capsem-image/launch.py && ")
-        .unwrap()
-        .split_once("launch.py ")
-        .unwrap();
+    let (context, _) = LAUNCH_COMMAND.split_once("launch.py ").unwrap();
     assert!(command.starts_with(context), "{command}");
     // What the outer shell hands `sh -ec`: run it through a real shell with
     // the chroot replaced by printf and read the inner script back.

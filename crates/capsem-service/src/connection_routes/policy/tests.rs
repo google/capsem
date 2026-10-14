@@ -56,7 +56,10 @@ async fn credential_policy_confirmation_requires_exact_successful_digest_ack() {
     let mut command = tokio::process::Command::new("sleep");
     command.arg("30").kill_on_drop(true);
     let (mut child, mut retirement) = state.retirements.spawn(&id, generation, &mut command).unwrap();
-    state.instances.lock().unwrap().get_mut(&id).unwrap().pid = child.id().unwrap();
+    // The in-process IPC fixture's kernel peer is this process; retirement
+    // remains owned by the separately spawned child.
+    let proxy = crate::proxy_worker::tests::fake("normal").await.unwrap();
+    state.register_proxy_worker(&id, generation, proxy).unwrap();
     let session = *uuid::Uuid::parse_str(&id).unwrap().as_bytes();
     let context = Context {
         runtime: VmBinding::new(id.clone(), generation).unwrap(),
@@ -75,13 +78,17 @@ async fn credential_policy_confirmation_requires_exact_successful_digest_ack() {
         (None, Some("reload refused".into()), false),
     ] {
         state.connections.applied.lock().unwrap().clear();
+        let expected_policy = bytes.as_bytes().to_vec();
         let owner = crate::tests::spawn_fake_process(&uds_path, 1, move |message| {
             let reply = match message {
-                ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
-                    id: *id,
-                    active_policy_digest: digest.clone(),
-                    error: error.clone(),
-                }),
+                ServiceToProcess::ReloadConfig { id, active_policy } => {
+                    assert_eq!(active_policy, &expected_policy);
+                    Some(ProcessToService::ConfigReloadResult {
+                        id: *id,
+                        active_policy_digest: digest.clone(),
+                        error: error.clone(),
+                    })
+                }
                 _ => None,
             };
             Box::pin(async move { reply })

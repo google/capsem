@@ -37,12 +37,11 @@ fn native_process_scope_child_fixture() {
 #[test]
 fn native_process_scope_matches_a_real_child() {
     let scope = ProcessScope::current().unwrap();
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let status = crate::isolated_test_command(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "unix::process::scope::tests::native_process_scope_child_fixture",
         ])
-        .env_clear()
         .env("CAPSEM_TEST_PROCESS_SCOPE", serde_json::to_string(&scope).unwrap())
         .stdin(std::process::Stdio::null())
         .status()

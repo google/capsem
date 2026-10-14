@@ -482,6 +482,38 @@ fn parse_uds_path_default_none() {
     assert_eq!(cli.uds_path, None);
 }
 
+#[test]
+fn parse_proxy_defaults_and_explicit_listener() {
+    let cli = Cli::parse_from(["capsem", "proxy"]);
+    let Some(Commands::Proxy(defaults)) = cli.command else {
+        panic!("expected Proxy");
+    };
+    assert_eq!(defaults.provider, "openai");
+    assert_eq!(defaults.bind, "127.0.0.1".parse::<std::net::IpAddr>().unwrap());
+    assert_eq!(defaults.port, 0);
+
+    let cli = Cli::parse_from([
+        "capsem",
+        "proxy",
+        "--provider",
+        "local",
+        "--bind",
+        "0.0.0.0",
+        "--port",
+        "8080",
+    ]);
+    let Some(Commands::Proxy(explicit)) = cli.command else {
+        panic!("expected Proxy");
+    };
+    assert_eq!(explicit.provider, "local");
+    assert_eq!(explicit.bind, "0.0.0.0".parse::<std::net::IpAddr>().unwrap());
+    assert_eq!(explicit.port, 8080);
+    assert_eq!(
+        direct_service_lifetime(&Commands::Proxy(explicit)),
+        client::DirectServiceLifetime::BoundToCommand
+    );
+}
+
 // RAM conversion
 
 #[test]

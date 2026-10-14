@@ -177,7 +177,7 @@ def test_shared_host_timing_ratchets_use_the_least_contended_sample() -> None:
 
     for metric in (
         BenchmarkMetric.LIFECYCLE_PROVISION,
-        BenchmarkMetric.LIFECYCLE_READY,
+        BenchmarkMetric.LIFECYCLE_STARTUP,
         BenchmarkMetric.LIFECYCLE_EXEC,
         BenchmarkMetric.LIFECYCLE_DELETE,
         BenchmarkMetric.FORK_DURATION,
@@ -192,6 +192,17 @@ def test_shared_host_timing_ratchets_use_the_least_contended_sample() -> None:
         )
 
 
+def test_lifecycle_startup_metric_spans_create_and_ready_boundary() -> None:
+    document = {
+        "operations": {
+            "provision_ms": {"min": 40.0, "values": [40.0, 70.0, 50.0]},
+            "exec_ready_ms": {"min": 30.0, "values": [80.0, 30.0, 60.0]},
+        }
+    }
+
+    assert metric_value(document, BenchmarkMetric.LIFECYCLE_STARTUP) == 100.0
+
+
 def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     evidence = tmp_path / PRUNE.BENCHMARKS.relative_to(PROJECT_ROOT) / BenchmarkCategory.FORK.value
@@ -200,7 +211,7 @@ def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> 
         json.dumps({"timestamp": 1, "identity": "tracked"}), encoding="utf-8"
     )
     subprocess.run(
-        ["git", "add", "benchmarks/baselines/fork/tracked.json"],
+        ["git", "add", str((evidence / "tracked.json").relative_to(tmp_path))],
         cwd=tmp_path,
         check=True,
     )
@@ -224,7 +235,7 @@ def test_release_benchmarks_use_typed_evidence_instead_of_authored_limits() -> N
     categories = {
         BenchmarkCategory.LIFECYCLE: (
             BenchmarkMetric.LIFECYCLE_PROVISION,
-            BenchmarkMetric.LIFECYCLE_READY,
+            BenchmarkMetric.LIFECYCLE_STARTUP,
             BenchmarkMetric.LIFECYCLE_EXEC,
             BenchmarkMetric.LIFECYCLE_DELETE,
         ),
@@ -254,7 +265,7 @@ def test_release_benchmarks_use_typed_evidence_instead_of_authored_limits() -> N
 def _evidence_repo(tmp_path: Path, files: dict[str, dict]) -> Path:
     """A tracked evidence directory, plus the config the lane names come from."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    evidence = tmp_path / "benchmarks" / "baselines" / "fork"
+    evidence = tmp_path / PRUNE.BENCHMARKS.relative_to(PROJECT_ROOT) / "fork"
     evidence.mkdir(parents=True)
     for name, document in files.items():
         (evidence / name).write_text(json.dumps(document), encoding="utf-8")

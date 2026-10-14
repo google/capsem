@@ -12,6 +12,7 @@ use grouped_help::GROUPED_HELP;
 mod network_commands;
 mod paths;
 mod platform;
+mod proxy_command;
 mod route_ids;
 mod service_install;
 mod session_display;
@@ -258,6 +259,9 @@ enum Commands {
 
     /// List the image catalog, or pull an image ahead of a create
     Images(image_commands::ImagesArgs),
+
+    /// Run a VM-free OpenAI-compatible model API endpoint
+    Proxy(proxy_command::ProxyArgs),
 
     #[command(flatten)]
     Misc(MiscCommands),
@@ -1025,7 +1029,9 @@ fn should_start_background_update_refresh(command: Option<&Commands>) -> bool {
 
 fn direct_service_lifetime(command: &Commands) -> client::DirectServiceLifetime {
     match command {
-        Commands::Session(SessionCommands::Run(..)) => client::DirectServiceLifetime::BoundToCommand,
+        Commands::Session(SessionCommands::Run(..)) | Commands::Proxy(..) => {
+            client::DirectServiceLifetime::BoundToCommand
+        }
         _ => client::DirectServiceLifetime::Persistent,
     }
 }
@@ -1653,6 +1659,10 @@ async fn main() -> Result<()> {
         }
         Commands::Network(command) => network_commands::run(&client, command).await?,
         Commands::Images(args) => image_commands::run(&client, args).await?,
+        Commands::Proxy(args) => {
+            let result = proxy_command::run(&client, args).await;
+            client.finish_direct_request(result).await?;
+        }
         Commands::Mcp(McpCommands::Servers) => {
             let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/servers/list").await?;
             let servers = resp.into_result()?;

@@ -11,13 +11,18 @@ Sharing alone is not a reason to put code in `capsem-core`.
 
 - **`capsem-foundation`**: dependency-light host primitives: paths, UDS HTTP,
   polling, telemetry/log setup, and IPC handshakes.
-- **`capsem-crypto`**: first-party Rust cryptographic operations: accelerated
-  hashes and bounded integrity verification, randomness, TLS key/provider
-  selection, JWT verification and secret primitives. Speed measurements belong
-  in the existing `capsem-bench` harness, not a separate benchmark crate.
+- **`capsem-cache`**: bounded cache storage, concurrency-safe freshness
+  publication, and uniform hit/miss/load/eviction telemetry. Domain owners
+  supply content identities, generations, and TTL policy.
 - **`capsem-archive`**: block-compressed body archive for session ledgers.
   Pure Rust (`miniz_oxide`); SQLite keeps the index, this crate keeps the
   bytes, and every block is blake3-verified before a body is returned.
+- **`capsem-crypto`**: first-party Rust cryptographic operations: accelerated
+  hashes and bounded integrity verification, randomness, TLS key/provider
+  selection, JWT verification, signatures, constant-time verification, and
+  secret handling. Speed measurements belong in `capsem-bench`.
+- **`capsem-ledger`**: confined session-ledger worker and the sole runtime
+  executor of body archive codecs.
 - **`capsem-telemetry`**: the one owner of every `metrics`-facade metric name,
   with its kind, unit and description. Depends only on `metrics`; emitting
   crates import names from it and never spell a metric name themselves.
@@ -34,7 +39,10 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-logger`**: session DB schema, queries, storage, and async writer.
 - **`capsem-guard`**: parent-watch and singleton-flock lifecycle primitives.
 - **`capsem-service`**: daemon HTTP/UDS API and VM-process orchestration.
-- **`capsem-process`**: low-privilege per-VM boot, vsock, IPC, and job runtime.
+- **`capsem-process`**: low-privilege per-VM boot, vsock, IPC, and job runtime;
+  it holds only the paths and descriptors granted for its session and generation.
+- **`capsem-proxy`**: confined HTTP/DNS worker for VM and standalone proxy
+  traffic; upstream, ledger, credential, and MCP authority arrives by grant.
 - **`capsem`**: CLI client; HTTP/UDS to the service, including streamed shell
   and terminal operations. It never dials a per-VM process socket.
 - **`capsem-tui`**: terminal control UI over the gateway API.
@@ -54,7 +62,19 @@ Sharing alone is not a reason to put code in `capsem-core`.
 
 ## Process privilege model
 
-capsem-process is a **low-privilege** per-VM process. Security invariants:
+The service launches each VM owner, proxy, and ledger worker with a cleared
+environment, private control descriptors, a generation-bound protocol grant,
+and an OS sandbox. Linux uses Landlock plus seccomp; macOS uses a parameterized
+Seatbelt profile. Each worker runs a startup attestation that proves ambient
+file, socket, process-execution, and signal authority was denied before it
+accepts workload data.
+
+The VM owner retains only its session paths, verified boot assets, inherited
+VM resources, and explicit service grants. It cannot open the ledger or dial
+upstream sockets. `capsem-proxy` receives connected DNS/TCP descriptors plus
+credential, MCP, and ledger channels. `capsem-ledger` receives the ledger files
+and typed producer channels; durable service-owned commitment checkpoints
+anchor the sequence outside that worker.
 
 1. **Minimal environment**: service uses `env_clear()` before spawn, then passes only `HOME`, `PATH`, `USER`, `TMPDIR`, `RUST_LOG`. API keys and tokens from the user's shell never reach the process.
 2. **Socket permissions 0600**: Per-VM owner sockets (`{id}.sock` IPC, `{id}-handoff.sock`) are chmod 0600 after bind; no client dials them -- terminals and attach go through the service `/vms/{id}/stream` route. Only the owning user can connect.
@@ -70,18 +90,15 @@ capsem-process is a **low-privilege** per-VM process. Security invariants:
    is read-only at the device. The workspace compatibility symlink points into
    `guest/`; the system image must never be reachable through that share.
 
-### What capsem-process CAN access
-- Its own session_dir (read-write)
-- Assets dir (read-only: kernel, initrd, rootfs)
-- Its own UDS sockets
-- Apple VZ framework (requires `com.apple.security.virtualization` entitlement)
+Socket permissions remain 0600 and session directories 0700 as defense in
+depth. The guest sees only `session_dir/guest/` through VirtioFS; the writable
+system overlay, serial log, ledger, and worker state remain outside the share.
+Runtime rootfs assets are read-only and injected guest binaries are mode 0555.
 
-### What capsem-process CANNOT access
-- Other VMs' session dirs (0700, different path)
-- Other VMs' UDS sockets (0600)
-- The service's UDS socket (filesystem permission only)
-- The persistent registry or other service state
-- The user's environment variables (cleared at spawn)
+The service and kernel remain trusted. A compromised producer can lie about an
+observation before committing it, and a crash can lose an unanchored tail.
+Anchored alteration, substitution, omission, reordering, and stale-generation
+reuse are detected when the service opens the ledger.
 
 ### MITM CA key transparency
 The MITM proxy CA private key (`crates/capsem-core/resources/ca/capsem-ca.key`) is committed to the repo and embedded at compile time. This is intentional -- capsem's network interception exists for user visibility into what AI agents do, not for secrecy. The CA is only trusted inside capsem's own air-gapped VMs and has zero trust outside them. A public key lets anyone verify there is no hidden interception. Per-installation key generation would reduce transparency.

@@ -144,7 +144,7 @@ before invoking its sandboxed modules.
 Native supervisor restart uses its existing glow-up owner because supervisor
 setup must precede inherited privilege confinement. Linux then runs the SDK
 worker as the original user with `no_new_privs` in a loopback-only namespace;
-see `/dev-testing`'s `references/local-ci-parity.md`. Never run sudo after
+see `/dev-testing`'s `../dev-testing/references/local-ci-parity.md`. Never run sudo after
 that restriction or disable it to make setup work.
 
 ## Declaring a command

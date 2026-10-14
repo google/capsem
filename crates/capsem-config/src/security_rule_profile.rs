@@ -7,9 +7,10 @@ use crate::types::{default_true, PolicySubject};
 use crate::validation::{validate_identifier, validate_non_empty, validate_policy_target};
 
 mod sigma;
+use sigma::SigmaRule;
+
 #[cfg(test)]
 mod tests;
-use sigma::SigmaRule;
 
 pub const CORP_PRIORITY_MIN: i32 = -1000;
 pub const CORP_PRIORITY_MAX: i32 = -10;
@@ -386,18 +387,16 @@ impl SecurityRuleProfile {
 
     pub fn parse_sigma_yaml(input: &str) -> Result<Self, String> {
         let mut profile = Self::default();
-        let mut parsed_any = false;
-        for sigma_rule in serde_saphyr::from_multiple::<SigmaRule>(input)
-            .map_err(|error| format!("security rule Sigma YAML: {error}"))?
-        {
+        let documents: Vec<SigmaRule> =
+            serde_saphyr::from_multiple(input).map_err(|error| format!("security rule Sigma YAML: {error}"))?;
+        if documents.is_empty() {
+            return Err("security rule Sigma YAML: no rules found".to_string());
+        }
+        for sigma_rule in documents {
             let (rule_key, rule) = sigma_rule.into_security_rule()?;
             if profile.profiles.rules.insert(rule_key.clone(), rule).is_some() {
                 return Err(format!("duplicate Sigma-derived rule '{rule_key}'"));
             }
-            parsed_any = true;
-        }
-        if !parsed_any {
-            return Err("security rule Sigma YAML: no rules found".to_string());
         }
         profile.validate()?;
         Ok(profile)

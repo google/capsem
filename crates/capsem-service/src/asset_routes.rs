@@ -209,40 +209,21 @@ fn manifest_file_identity(path: &StdPath) -> ManifestFileIdentity {
     }
 }
 
-/// The manifest status as last built, and the inputs it was built from.
-pub(super) struct CachedManifestStatus {
-    inputs: [ManifestFileIdentity; 2],
-    status: Arc<api::AssetManifestStatus>,
-}
-
 /// The installed manifest's provenance and validation. Polled through
 /// `/status`: it is rebuilt only when manifest.json or its metadata changes.
 pub(super) fn asset_manifest_status(state: &ServiceState) -> Result<Arc<api::AssetManifestStatus>, AppError> {
     let path = state.assets_dir.join("manifest.json");
     let metadata_path = state.assets_dir.join("manifest-metadata.json");
     let inputs = [manifest_file_identity(&path), manifest_file_identity(&metadata_path)];
-    let cache = || {
-        state.asset_manifest_cache.lock().map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("asset manifest cache lock poisoned: {error}"),
-            )
-        })
-    };
-    let cached = cache()?
-        .as_ref()
-        .filter(|cached| cached.inputs == inputs)
-        .map(|cached| Arc::clone(&cached.status));
-    if let Some(status) = cached {
+    if let Some(status) = state.asset_manifest_cache.get(&inputs) {
         return Ok(status);
     }
-    // Built outside the lock; two concurrent rebuilds of one input agree.
-    let status = Arc::new(build_asset_manifest_status(state, &path, &metadata_path, &inputs[0]));
-    *cache()? = Some(CachedManifestStatus {
-        inputs,
-        status: Arc::clone(&status),
-    });
-    Ok(status)
+    let started = std::time::Instant::now();
+    let status = build_asset_manifest_status(state, &path, &metadata_path, &inputs[0]);
+    state
+        .asset_manifest_cache
+        .record_load(started.elapsed(), capsem_cache::LoadStatus::Success);
+    Ok(state.asset_manifest_cache.publish(inputs, status))
 }
 
 fn build_asset_manifest_status(

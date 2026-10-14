@@ -303,6 +303,10 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert mcp_default["action"] in {"allow", "ask", "block", "disable"}
         assert mcp_default["source"] in {"corp", "settings", "default"}
 
+        mcp_refresh = client.post("/mcp/servers/local/refresh", timeout=30)
+        assert mcp_refresh["success"] is True
+        assert mcp_refresh["instances"] >= 1
+
         mcp_servers = client.get("/mcp/servers/list", timeout=30)
         assert isinstance(mcp_servers, list)
         assert mcp_servers

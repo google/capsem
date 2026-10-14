@@ -15,7 +15,7 @@ VirtioFS exposes a POSIX-compatible shared mount between host and guest. The gue
 |-----------|-------|-------------|
 | Guest FUSE client | Untrusted | May send malformed requests, attempt path traversal, exhaust resources |
 | Host VirtioFS server | Trusted | Must validate all requests, enforce limits, never trust guest input |
-| Shared directory | Host-controlled | Capsem creates it fresh per session; no external process modifies it |
+| Shared directory | Guest-writable through VirtioFS | Every host access must remain beneath the already-open workspace descriptor |
 
 ## Path Traversal Protection
 
@@ -26,25 +26,18 @@ Every FUSE LOOKUP resolves a single path component (filename) under a parent ino
 - `.` and `..`
 - Names containing `/` or `\0`
 
-**Path canonicalization** (resolves symlinks, verifies containment):
-```
-child_path = parent_path.join(name)
-canonical  = child_path.canonicalize()
-assert canonical.starts_with(root_canonical)
-```
+**Descriptor-relative access** opens the workspace once, descends one component
+at a time with `openat`, and uses `O_NOFOLLOW` in the same syscall that opens
+an entry. Directory descriptors, rather than reconstructed absolute paths,
+anchor later reads, writes, links, renames, metadata operations, and deletion.
+An entry swapped for a symlink between requests cannot redirect a later open.
 
-If the guest creates a symlink inside the workspace pointing outside it (e.g., `ln -s /etc/passwd escape`), `canonicalize()` follows the symlink and the containment check rejects the resolved path.
-
-### TOCTOU Analysis
-
-There is a time-of-check-to-time-of-use window between `canonicalize()` and the subsequent filesystem operation. Exploiting this window requires a host-side process to replace a directory in the workspace with a symlink between the two syscalls.
-
-This is acceptable because:
-1. The untrusted party is the **guest**, not host processes. The guest communicates via FUSE opcodes and cannot manipulate the host filesystem directly.
-2. The shared directory is **Capsem-controlled** (`~/.capsem/sessions/<id>/workspace/`). No external process should modify it during a VM session.
-3. A malicious host process already has the same user privileges as Capsem and could attack directly.
-
-If defense-in-depth against compromised host processes is ever needed, the implementation can migrate to fd-relative operations (`openat` with `O_NOFOLLOW` + `O_PATH`).
+The FUSE inode table also canonicalizes identities needed for guest symlink
+semantics and checkpoint restore, but canonicalization is not the authority for
+host filesystem syscalls. Guest-writable filesystem access goes through
+`capsem_foundation::unix::contained::ContainedDir` or the equivalent
+descriptor-backed VirtioFS operation. A symlink to `/etc/passwd`, FIFO, socket,
+or device is reported as such and is never followed as a regular file.
 
 ## Resource Exhaustion Defenses
 

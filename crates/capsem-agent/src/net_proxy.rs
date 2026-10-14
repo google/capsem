@@ -36,7 +36,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 
-use capsem_proto::VSOCK_PORT_SNI_PROXY;
+use capsem_foundation::unix::process::ensure_open_file_limit;
+use capsem_proto::{NETWORK_PROCESS_OPEN_FILE_LIMIT, VSOCK_PORT_SNI_PROXY};
 use process_attribution::encode_meta_line;
 use vsock_io::{vsock_connect, AsyncVsock, VSOCK_HOST_CID};
 
@@ -238,6 +239,7 @@ async fn run_listener(port: u16, attributor: Arc<ProcessAttributor>) -> io::Resu
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    ensure_open_file_limit(NETWORK_PROCESS_OPEN_FILE_LIMIT)?;
     eprintln!("[capsem-net-proxy] starting (pid {})", process::id());
 
     let attributor = Arc::new(ProcessAttributor::default());

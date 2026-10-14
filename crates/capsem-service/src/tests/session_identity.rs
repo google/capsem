@@ -141,7 +141,7 @@ async fn startup_hydration_keys_persistent_db_handles_by_session_id() {
     register_persistent_entry(&state, &session_dir);
     write_one_security_event(session_dir.join("session.db")).await;
 
-    state.hydrate_session_db_handles();
+    state.hydrate_session_db_handles().await;
     assert_eq!(session_db_handle_keys(&state), vec![VM_ID.to_string()]);
     assert!(
         state.session_db_handle(DISPLAY_NAME).is_none(),
@@ -150,7 +150,7 @@ async fn startup_hydration_keys_persistent_db_handles_by_session_id() {
 
     // A running persistent VM must not gain a second handle on rehydration.
     insert_running_persistent_instance(&state, &session_dir);
-    state.hydrate_session_db_handles();
+    state.hydrate_session_db_handles().await;
     assert_eq!(session_db_handle_keys(&state), vec![VM_ID.to_string()]);
 }
 

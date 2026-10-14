@@ -39,10 +39,11 @@ fn engine(action: &str, plugin_block: bool) -> Arc<NetworkSecurity> {
 }
 
 pub(super) fn authorized_publisher(budgets: capsem_config::router::RouterConfig) -> Publisher {
-    let owner =
-        Publisher::configured(budgets)
-            .unwrap()
-            .with_security("vm-id".into(), "redis".into(), engine("allow", false));
+    let owner = with_local_listener_authority(Publisher::configured(budgets).unwrap()).with_security(
+        "vm-id".into(),
+        "redis".into(),
+        engine("allow", false),
+    );
     owner.control_ready().unwrap();
     owner
 }
@@ -537,7 +538,11 @@ async fn a_refused_exposure_is_audited_and_leaves_its_port_unbound() {
     for (rules, refusal) in [(BLOCK_REDIS, "blocked by policy"), (ASK_REDIS, "needs approval")] {
         let dir = tempfile::tempdir().unwrap();
         let (engine, path) = lifecycle_engine(&dir, rules);
-        let owner = Arc::new(Publisher::default().with_security("vm-id".into(), "redis".into(), engine.clone()));
+        let owner = Arc::new(with_local_listener_authority(Publisher::default()).with_security(
+            "vm-id".into(),
+            "redis".into(),
+            engine.clone(),
+        ));
         let (control, _requests) = mpsc::channel(8);
         let port = free_port();
         let error = owner
@@ -546,7 +551,7 @@ async fn a_refused_exposure_is_audited_and_leaves_its_port_unbound() {
             .err()
             .expect("the rules refuse this exposure");
         assert!(error.is::<crate::container::publish::ExposureRefused>(), "{error:#}");
-        assert!(error.to_string().contains(refusal), "{error:#}");
+        assert!(format!("{error:#}").contains(refusal), "{error:#}");
         std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("a refused exposure keeps no listener");
         assert!(owner.publications().is_empty());
         let rows = lifecycle_rows(&engine, &path).await;
@@ -560,7 +565,11 @@ async fn an_exposure_whose_audit_cannot_be_admitted_is_not_opened() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, _path) = lifecycle_engine(&dir, "");
     engine.db.shutdown_blocking();
-    let owner = Arc::new(Publisher::default().with_security("vm-id".into(), "redis".into(), engine));
+    let owner = Arc::new(with_local_listener_authority(Publisher::default()).with_security(
+        "vm-id".into(),
+        "redis".into(),
+        engine,
+    ));
     let (control, _requests) = mpsc::channel(8);
     let port = free_port();
     let error = owner
@@ -598,6 +607,7 @@ async fn a_revoked_exposure_closes_then_is_audited_under_its_publication() {
             task: task.abort_handle(),
             cancellation: cancellation.clone(),
             preview: None,
+            _listener_lease: None,
         },
     });
     assert!(
@@ -627,14 +637,16 @@ async fn a_saved_exposure_the_rules_now_refuse_is_forgotten_on_restore() {
     let owner = Arc::new(
         Publisher::for_session(dir.path(), capsem_config::router::RouterConfig::default())
             .unwrap()
+            .with_listener_authority(Arc::new(LocalListenerAuthority))
             .with_security("vm-id".into(), "redis".into(), engine.clone()),
     );
     let (control, _requests) = mpsc::channel(8);
     assert_eq!(owner.restore(control).await.unwrap(), 0);
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("published-ports.json")).unwrap(),
+        std::fs::read_to_string(dir.path().join("owner/published-ports.json")).unwrap(),
         "[]"
     );
+    assert!(!dir.path().join("published-ports.json").exists());
     let rows = lifecycle_rows(&engine, &path).await;
     assert!(rows.contains("restored"), "{rows}");
     std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("nothing listens for a refused restore");

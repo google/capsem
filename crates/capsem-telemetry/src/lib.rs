@@ -16,6 +16,7 @@
 
 use metrics::{KeyName, SharedString, Unit};
 
+pub mod cache;
 pub mod db;
 pub mod dns;
 #[cfg(feature = "export")]
@@ -68,6 +69,7 @@ impl MetricSpec {
 
 /// Every domain's table, keyed by the module that owns it.
 pub const DOMAINS: &[(&str, &[MetricSpec])] = &[
+    ("cache", cache::SPECS),
     ("db", db::SPECS),
     ("dns", dns::SPECS),
     ("mitm", mitm::SPECS),

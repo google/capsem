@@ -40,6 +40,7 @@ EXPECTED_TARGETS = frozenset(
         "build_system/tests/",
         "benchmarks/collectors/",
         "benchmarks/baselines/",
+        "benchmarks/helpers/",
         "config/",
         "crates/",
         "guest/",

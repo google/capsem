@@ -1,5 +1,92 @@
 use super::*;
 
+fn memory_integrity_database(name: &str) -> Connection {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    create_memory_tables(&conn, &memory_uri_for_name(name)).unwrap();
+    conn
+}
+
+#[test]
+fn memory_sync_empty_flush_refuses_missing_tables_and_id_columns() {
+    for (index, corruption) in [
+        "DROP TABLE main.net_events",
+        "DROP TABLE mem.net_events",
+        "ALTER TABLE main.net_events RENAME COLUMN id TO lost_id",
+        "ALTER TABLE mem.net_events RENAME COLUMN id TO lost_id",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let conn = memory_integrity_database(&format!("memory-sync-empty-{index}"));
+        let watermarks = MemoryFlushWatermarks::new();
+        assert!(flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks)
+            .unwrap()
+            .is_empty());
+        conn.execute_batch(corruption).unwrap();
+        assert!(
+            flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).is_err(),
+            "a warmed empty flush acknowledged broken schema: {corruption}"
+        );
+    }
+}
+
+#[test]
+fn memory_sync_missing_disk_table_preserves_pending_rows_until_explicit_repair() {
+    let conn = memory_integrity_database("memory-sync-repair");
+    let watermarks = initial_memory_flush_watermarks(&conn, ["net_events"]).unwrap();
+    conn.execute_batch(
+        "INSERT INTO mem.net_events(event_id,timestamp,domain,decision)
+         VALUES('012345abcdef','t','fixture','allowed'); DROP TABLE main.net_events",
+    )
+    .unwrap();
+    assert!(flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).is_err());
+    let pending: i64 = conn
+        .query_row("SELECT COUNT(*) FROM mem.net_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(pending, 1);
+    assert_eq!(watermarks["net_events"], 0);
+    create_tables(&conn).unwrap(); // Explicit fixture repair, never a production fallback.
+    let advanced = flush_memory_tables_to_disk(&conn, ["net_events"], &watermarks).unwrap();
+    assert_eq!(advanced["net_events"], 1);
+    let event: String = conn
+        .query_row("SELECT event_id FROM main.net_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(event, "012345abcdef");
+    let pending: i64 = conn
+        .query_row("SELECT COUNT(*) FROM mem.net_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(pending, 0);
+}
+
+#[test]
+fn memory_sync_sequence_seed_refuses_missing_tables() {
+    for schema in ["main", "mem"] {
+        let conn = memory_integrity_database(&format!("memory-sync-seed-{schema}"));
+        conn.execute_batch(&format!("DROP TABLE {schema}.net_events")).unwrap();
+        assert!(
+            seed_memory_sequences(&conn, ["net_events"]).is_err(),
+            "missing {schema}.net_events was ignored"
+        );
+    }
+}
+
+#[test]
+fn memory_sync_initial_watermark_refuses_missing_disk_table() {
+    let conn = memory_integrity_database("memory-sync-watermark");
+    conn.execute_batch("DROP TABLE main.net_events").unwrap();
+    assert!(initial_memory_flush_watermarks(&conn, ["net_events"]).is_err());
+}
+
+#[test]
+fn memory_sync_refuses_unknown_hot_table_names() {
+    let conn = memory_integrity_database("memory-sync-unknown");
+    let watermarks = MemoryFlushWatermarks::new();
+    assert!(seed_memory_sequences(&conn, ["unknown_ledger"]).is_err());
+    assert!(initial_memory_flush_watermarks(&conn, ["unknown_ledger"]).is_err());
+    assert!(flush_memory_tables_to_disk(&conn, ["unknown_ledger"], &watermarks).is_err());
+}
+
 fn seed_integrity_rows(conn: &Connection) {
     let hash = format!("blake3:{}", "0123456789abcdef".repeat(4));
     conn.execute_batch(

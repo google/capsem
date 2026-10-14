@@ -139,14 +139,14 @@ reason = "Builder, gate, release, release-site, and script unit tests move with 
 [[surface]]
 id = "benchmarks"
 state = "retained"
-current = ["benchmarks/collectors/", "benchmarks/baselines/"]
-targets = ["benchmarks/collectors/", "benchmarks/baselines/"]
+current = ["benchmarks/collectors/", "benchmarks/baselines/", "benchmarks/helpers/"]
+targets = ["benchmarks/collectors/", "benchmarks/baselines/", "benchmarks/helpers/"]
 lint = ["python.ruff", "python.ty.relaxed", "fast.audit.source-syntax"]
 tests = ["tests/test_benchmark_retention_contract.py", "tests/test_capsem_bench_gates.py"]
 ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
-coverage = "not-applicable: collectors and reviewed evidence are contract-tested; Rust harness coverage stays crate-owned"
+coverage = "not-applicable: collectors, reusable helpers, and reviewed evidence are contract-tested; Rust harness coverage stays crate-owned"
 debt = "tests/citadel/repository_path_debt.toml"
-reason = "Collectors and reviewed baselines converge under one benchmark owner."
+reason = "Collectors, reusable helpers, and reviewed baselines converge under one benchmark owner."
 
 [[surface]]
 id = "product-config"

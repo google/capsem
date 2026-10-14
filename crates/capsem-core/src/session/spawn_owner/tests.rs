@@ -5,6 +5,28 @@ fn new_binding() -> VmBinding {
     VmBinding::new("owner-vm".into(), capsem_crypto::uuid_v4()).unwrap()
 }
 
+fn isolated_owner_command(
+    program: impl AsRef<std::ffi::OsStr>,
+    coverage_profile: Option<&std::ffi::OsStr>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    command.env_clear();
+    if let Some(profile) = coverage_profile {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+    command
+}
+
+#[test]
+fn isolated_owner_child_preserves_only_the_coverage_output_path() {
+    let profile = std::ffi::OsStr::new("/tmp/capsem-profile-%p-%m.profraw");
+    let command = isolated_owner_command("true", Some(profile));
+    assert_eq!(
+        command.get_envs().collect::<Vec<_>>(),
+        [(std::ffi::OsStr::new("LLVM_PROFILE_FILE"), Some(profile))]
+    );
+}
+
 #[test]
 fn spawn_owner_records_original_pid_and_excludes_duplicate_boot_or_recovery() {
     let root = tempfile::tempdir().unwrap();
@@ -135,14 +157,14 @@ fn spawn_owner_subprocess_holds_native_lifetime_until_actual_exit() {
     let binding = new_binding();
     prepare(directory.path(), &binding, std::process::id()).unwrap();
     let root = ContainedDir::open_root(directory.path()).unwrap();
+    let coverage_profile = std::env::var_os("LLVM_PROFILE_FILE");
     let mut child = Child(
-        std::process::Command::new(std::env::current_exe().unwrap())
+        isolated_owner_command(std::env::current_exe().unwrap(), coverage_profile.as_deref())
             .args([
                 "--exact",
                 "session::spawn_owner::tests::spawn_owner_subprocess_fixture",
                 "--nocapture",
             ])
-            .env_clear()
             .env("CAPSEM_TEST_OWNER_ROOT", directory.path())
             .env("CAPSEM_TEST_OWNER_BINDING", serde_json::to_string(&binding).unwrap())
             .stdin(std::process::Stdio::piped())

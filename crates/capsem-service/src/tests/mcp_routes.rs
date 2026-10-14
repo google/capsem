@@ -72,6 +72,45 @@ async fn mcp_reads_list_the_configured_and_builtin_servers() {
 }
 
 #[tokio::test]
+async fn coordinator_persists_complete_owner_tool_catalog() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let _home = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+    let state = make_asset_state(dir.path().join("assets"));
+    let input_schema = json!({
+        "type": "object",
+        "properties": {"query": {"type": "string"}}
+    });
+
+    crate::mcp_routes::persist_mcp_tool_cache(
+        &state,
+        vec![capsem_proto::ipc::McpToolStatus {
+            namespaced_name: "wiki__search".into(),
+            original_name: "search".into(),
+            description: Some("Search the wiki".into()),
+            input_schema: input_schema.clone(),
+            server_name: "wiki".into(),
+            annotations: None,
+        }],
+    )
+    .unwrap();
+
+    let expected_hash = capsem_core::mcp::compute_tool_hash(&capsem_proto::mcp_contracts::McpToolDef {
+        namespaced_name: "wiki__search".into(),
+        original_name: "search".into(),
+        description: Some("Search the wiki".into()),
+        input_schema,
+        server_name: "wiki".into(),
+        annotations: None,
+        timeout_secs: None,
+    });
+    let cache = crate::mcp_routes::latest_mcp_tool_cache(&state);
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache[0].pin_hash, expected_hash);
+    assert_eq!(capsem_core::mcp::load_tool_cache(), cache);
+}
+
+#[tokio::test]
 async fn a_tool_permission_edit_is_written_to_settings_and_recorded() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
