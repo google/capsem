@@ -217,6 +217,12 @@ component_management:
       paths:
         - crates/capsem-foundation/src/**
 
+    # Shared accelerated hashing, integrity, randomness, and TLS primitives.
+    - component_id: crypto
+      name: Cryptography
+      paths:
+        - crates/capsem-crypto/src/**
+
     # Cross-cutting capsem-core primitives every other component builds on:
     # crate root, ~/.capsem path resolution, UDS helpers, IPC handshake and
     # stream coalescing, backoff polling, shared macros.
