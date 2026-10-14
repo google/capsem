@@ -734,4 +734,5 @@ async fn reservation_batch_extends_one_trusted_tail_atomically() {
     assert_eq!(pending[0].producer_sequence(), 1);
     assert_eq!(pending[1].producer_sequence(), 2);
     assert_eq!(pending[1].previous_hash(), pending[0].commitment_hash());
+    drop(state);
 }

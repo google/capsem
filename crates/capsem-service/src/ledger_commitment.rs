@@ -157,6 +157,7 @@ impl CommitmentAuthority {
         state.next_global_sequence = global_sequence;
         state.global_sequences.extend(global_sequences.iter().copied());
         state.pending.entry(key).or_default().extend(commitments);
+        drop(state);
         Ok(global_sequences)
     }
 
