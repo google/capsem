@@ -88,6 +88,7 @@ def _digest(records: tuple[str, ...]) -> str:
 #: matching, so a file is skipped only while its bytes match its pin; an
 #: edited one is scanned like any other source.
 VENDORED_TREES = ("crates/capsem-gateway/vendor/xpra-html5",)
+BENCHMARK_SOURCE_ROOTS = ("benchmarks/collectors/", "benchmarks/helpers/")
 
 
 def _pinned_vendor_files(root: Path = ROOT) -> dict[str, str]:
@@ -230,7 +231,7 @@ def _observe() -> Observed:
         path
         for path in tracked
         if path.startswith("benchmarks/")
-        and not path.startswith(("benchmarks/baselines/", "benchmarks/collectors/"))
+        and not path.startswith(("benchmarks/baselines/", *BENCHMARK_SOURCE_ROOTS))
     )
     graphics = tuple(
         f"{path}->web/graphics/{path.removeprefix('graphics/')}"
@@ -241,7 +242,7 @@ def _observe() -> Observed:
         path
         for path in tracked
         if path.startswith("benchmarks/")
-        and not path.startswith("benchmarks/collectors/")
+        and not path.startswith(BENCHMARK_SOURCE_ROOTS)
     )
     recordings = tuple(
         f"tracked generated recording: {path}"
