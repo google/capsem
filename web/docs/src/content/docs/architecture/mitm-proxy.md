@@ -41,6 +41,34 @@ graph TD
 
 The proxy uses hyper for HTTP parsing and tokio-rustls for TLS. Each vsock connection can carry multiple HTTP requests via keep-alive -- upstream connections are cached per-connection to avoid re-establishing TLS for each request.
 
+## Capacity, reuse, and overload
+
+One session accepts up to 512 concurrent network clients in this release. The
+guest relay, VM owner, upstream grant broker, proxy, DNS sessions, descriptor
+floors, and ledger queues all derive their capacities from one embedded runtime
+limits contract. This prevents one stage from accepting a burst that the next
+stage cannot represent.
+
+An intercepted client connection reuses its upstream HTTP/TLS connection for
+keep-alive requests. That sender stays inside the client connection because it
+is pinned to the judged target and shares that connection's cancellation and
+audit scope; unrelated clients do not borrow it. Independent connections and
+VM sessions run concurrently across host cores.
+
+Queues and descriptor grants are bounded. If capacity or required audit
+admission is unavailable, the affected operation waits within its deadline or
+fails explicitly; it is never reported as a successful benchmark request.
+The current limits are product defaults embedded in the binaries and are not
+yet user-configurable.
+
+Use the official `mitm-load` curve to test one VM through the full supported
+client range. Use `mitm-scale` to keep the per-VM work fixed while increasing
+the number of independent VMs. The scale collector reports aggregate RPS,
+per-VM latency, proportional memory, Capsem CPU, fixture CPU, physical cores,
+logical CPUs, request errors, and hidden proxy refusals. A plateau after the
+process tree consumes the host CPU budget is host saturation; a plateau before
+that point requires investigation for shared serialization.
+
 ## Configuration
 
 ```mermaid

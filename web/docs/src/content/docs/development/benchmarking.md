@@ -189,6 +189,33 @@ before its latency or throughput can become comparison data. Successful runs
 record `errors = 0` and `error_ratio = 0` for each level as the proof that the
 reported samples cover the complete load rather than only the successful tail.
 
+### Multi-VM MITM scaling (`mitm-scale`)
+
+```bash
+just bench mitm-scale
+```
+
+This host-side dimension creates a fresh identical cohort at each configured
+VM count, starts one fixed-concurrency keep-alive HTTPS load in every VM, and
+measures all VMs at the same time. Fresh cohorts keep memory and lifecycle
+history from one level out of the next. The collector records:
+
+- aggregate and per-VM RPS;
+- per-VM p50, p95, p99, and p99.9 latency;
+- PSS, USS, RSS, CPU time, threads, descriptors, and I/O for the Capsem process
+  tree;
+- the same resource pressure for the mock upstream in a separate namespace;
+- host physical-core and logical-CPU counts; and
+- request errors plus proxy traffic-grant refusals.
+
+Any request error, starved client loop, or hidden proxy refusal fails the
+dimension. Compare two unchanged runs. Interpret scaling against physical
+cores first and logical CPUs second: when total Capsem CPU reaches the host
+budget, rising latency or falling aggregate RPS is a host-capacity result.
+Before that point it can indicate a shared lock, serialized queue, or fixture
+bottleneck. Fixture CPU is reported separately so upstream saturation cannot
+be mistaken for a Capsem limit.
+
 `capsem-bench protocol` runs deterministic local mock-server scenarios: tiny
 HTTP, 1 MiB body, gzip, SSE model stream, JSON model response, denied-target,
 credential-shaped response, and WebSocket control frames. When

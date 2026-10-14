@@ -32,6 +32,31 @@ miss for the same bounded-cache key performs one load. Refreshing an existing
 key is distinct from a capacity eviction, so operational counters explain why
 an entry changed.
 
+## Capacity authority
+
+`config/data/runtime-limits.toml` is the single source for bounded runtime
+cache counts and freshness windows. `capsem-proto` validates it at build time
+and generates constants consumed by every process. The benchmark
+`runtime-limits` mode records the generated values, and a Citadel guard rejects
+local numeric copies.
+
+| Policy | Shipped value |
+|---|---:|
+| DNS answer entries | 1,024 |
+| Positive / negative DNS TTL ceiling | 300 s / 60 s |
+| TLS leaf certificates | 1,024 |
+| Ledger query batches per reader | 8 |
+| SQLite prepared statements per connection | 64 |
+| Storage diagnostics / persistent resume entries | 256 / 256 |
+| Update-check reuse | 24 hours |
+| Image catalog refresh / failed-read retry | 30 min / 60 s |
+| Image verification keys per batch | 1,024 |
+
+These are product defaults embedded in this release. User settings do not yet
+override them. Durable developer and build caches use the separate
+`config/cache.toml` retention contract because their lifetime and enforcement
+model are different.
+
 ## Freshness owners
 
 | Cache | Freshness rule | Shared mechanism |

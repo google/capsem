@@ -929,13 +929,29 @@ Inside `capsem-ledger`, the ledger server gives `DbWriter` a dedicated thread
 that owns the SQLite connection. Callers see a typed remote handle and never a
 database file descriptor:
 
-1. Async callers send `WriteOp` via `tx.send()` (non-blocking)
-2. Writer thread blocks on `rx.blocking_recv()` for the first op
-3. After receiving one op, drains the rest of the queue
-4. Executes all drained ops in a single SQLite transaction
-5. Repeats
+1. A producer submits an event to a bounded, DB-owned admission queue.
+2. Consecutive remote admissions coalesce for at most 100 microseconds and
+   cross IPC in batches of up to 256 events.
+3. The writer thread blocks for the first message, drains up to the same
+   256-event batch bound, and applies the batch to its in-memory SQLite tables
+   in one transaction.
+4. Dirty tables publish to the disk-backed WAL on the one-second durability
+   interval or the configured pending-event threshold. Body archive segments
+   reach durable storage before their SQLite index rows become visible.
+5. Readers cache complete typed query batches only until the logger-owned read
+   epoch or SQLite `data_version` changes.
 
-This **block-then-drain** pattern batches writes for efficiency while keeping the async callers non-blocking. The channel has configurable backpressure capacity.
+The producer queue holds 4,096 events: eight event slots for each of the 512
+supported network clients. `write(event).await` means the event was accepted
+into this bounded queue. It may yield under backpressure, and it does not mean
+the event is durable yet. Tests and lifecycle code that require durability use
+the explicit flush barrier. The SQLite mapped window is 32 MiB per ledger
+process, and archive index publication is capped at 8,192 rows per transaction
+so a slow storage flush cannot turn into unbounded admission memory.
+
+All of these relationships come from `config/data/runtime-limits.toml` and are
+generated through `capsem-proto`; no producer or route owns a second queue,
+batch, cache, or flush limit.
 
 SQLite writer pragmas: WAL journal mode, FULL synchronous. Text fields are defensively capped at 256 KB, headers at 16 KB and display previews at 2 KB; full bodies go to the archive, capped at 10 MiB per direction.
 
