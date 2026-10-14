@@ -1,6 +1,8 @@
 use std::time::{Duration, SystemTime};
 
-use capsem_logger::{DbWriter, FileAction, FileEvent, WriteOp};
+use capsem_logger::{
+    DbWriter, FileAction, FileEvent, SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, WriteOp,
+};
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 
 #[path = "support/net_bodies.rs"]
@@ -95,5 +97,62 @@ fn bench_db_writer_body_bursts(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_db_writer_bursts, bench_db_writer_body_bursts);
+/// Hold the event/stage/actor bucket constant while varying the snapshot
+/// reason. This exercises durable decision lookup as the run table grows.
+fn bench_db_writer_decisions(c: &mut Criterion) {
+    let mut group = c.benchmark_group("db_writer_pressure");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(16));
+    group.throughput(Throughput::Elements(1024));
+    for (name, distinct) in [
+        ("security_decisions_1024_repeated", false),
+        ("security_decisions_1024_distinct", true),
+    ] {
+        group.bench_function(name, |bench| {
+            bench.iter_batched(
+                || {
+                    let dir = tempfile::tempdir().expect("create temp db dir");
+                    let writer = DbWriter::open(&dir.path().join("session.db"), 1024).expect("open DbWriter");
+                    let ops = (0..1024)
+                        .map(|idx| {
+                            WriteOp::SecurityDecisionEvent(SecurityDecisionEvent {
+                                timestamp_unix_ms: idx,
+                                event_id: format!("{idx:012x}"),
+                                event_type: "http.request".into(),
+                                stage: SecurityDecisionStage::Rule,
+                                actor: "rules.http".into(),
+                                rule_id: Some("http".into()),
+                                plugin_id: None,
+                                previous_decision: SecurityDecision::Allow,
+                                requested_decision: SecurityDecision::Block,
+                                effective_decision: SecurityDecision::Block,
+                                reason: Some(format!("decision-{}", if distinct { idx } else { 0 })),
+                                event_json: "{}".into(),
+                                trace_id: None,
+                                turn_id: None,
+                                credential_ref: None,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    (dir, writer, ops)
+                },
+                |(_dir, writer, ops)| {
+                    for op in ops {
+                        writer.write_blocking(op);
+                    }
+                    writer.shutdown_blocking();
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_db_writer_bursts,
+    bench_db_writer_body_bursts,
+    bench_db_writer_decisions
+);
 criterion_main!(benches);

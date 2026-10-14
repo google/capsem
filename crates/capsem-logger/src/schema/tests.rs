@@ -6,6 +6,7 @@ use capsem_telemetry::db::{
 use rusqlite::OpenFlags;
 
 mod archive;
+mod decision_lookup;
 
 fn columns_for_schema(conn: &Connection, schema: &str, table: &str) -> BTreeSet<String> {
     let pragma = if schema == "main" {

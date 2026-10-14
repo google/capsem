@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Decision ledger flushes use the full snapshot index when recording
+  occurrences, avoiding repeated scans as distinct decisions accumulate.
+
 - Idle ledger writers honor the original flush deadline when a late event
   arrives, and failed idle flushes retain their normal retry interval.
 

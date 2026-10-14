@@ -8,6 +8,30 @@
 
 use super::*;
 
+// Match ddl.rs's nullable shape expressions exactly: raw IS comparisons only
+// seek the event/stage/actor prefix and scan every candidate snapshot per row.
+pub(super) const COPY_SECURITY_DECISION_OCCURRENCES: &str = "INSERT OR REPLACE INTO main.security_decision_events (
+        id, timestamp_unix_ms, event_id, event_type, stage, actor,
+        rule_id, plugin_id, previous_decision, requested_decision,
+        effective_decision, reason, trace_id, turn_id, credential_ref, run_id
+     )
+     SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            event.trace_id, event.turn_id, event.credential_ref,
+            (SELECT run.id FROM main.security_decision_runs AS run
+             WHERE run.event_type = event.event_type
+               AND run.stage = event.stage AND run.actor = event.actor
+               AND (CASE WHEN run.rule_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(run.rule_id AS BLOB)) END)
+                 = (CASE WHEN event.rule_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(event.rule_id AS BLOB)) END)
+               AND (CASE WHEN run.plugin_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(run.plugin_id AS BLOB)) END)
+                 = (CASE WHEN event.plugin_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(event.plugin_id AS BLOB)) END)
+               AND run.previous_decision = event.previous_decision
+               AND run.requested_decision = event.requested_decision
+               AND run.effective_decision = event.effective_decision
+               AND (CASE WHEN run.reason IS NULL THEN 'N' ELSE 'S' || hex(CAST(run.reason AS BLOB)) END)
+                 = (CASE WHEN event.reason IS NULL THEN 'N' ELSE 'S' || hex(CAST(event.reason AS BLOB)) END))
+     FROM mem.security_decision_events AS event WHERE event.id > ?1";
+
 /// Tables that live on disk only and never mirror into the memory schema:
 /// the body index and its block table are written straight to disk beside the
 /// archive file they point into, the schema markers are not data, the counter
@@ -208,26 +232,7 @@ pub fn flush_memory_tables_to_disk<'a>(
                 )?;
             } else if table == "security_decision_events" {
                 compact_security_decision_snapshots(conn, last_flushed_id)?;
-                conn.execute(
-                    "INSERT OR REPLACE INTO main.security_decision_events (
-                        id, timestamp_unix_ms, event_id, event_type, stage, actor,
-                        rule_id, plugin_id, previous_decision, requested_decision,
-                        effective_decision, reason, trace_id, turn_id, credential_ref, run_id
-                     )
-                     SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type,
-                            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                            event.trace_id, event.turn_id, event.credential_ref,
-                            (SELECT run.id FROM main.security_decision_runs AS run
-                             WHERE run.event_type = event.event_type
-                               AND run.stage = event.stage AND run.actor = event.actor
-                               AND run.rule_id IS event.rule_id AND run.plugin_id IS event.plugin_id
-                               AND run.previous_decision = event.previous_decision
-                               AND run.requested_decision = event.requested_decision
-                               AND run.effective_decision = event.effective_decision
-                               AND run.reason IS event.reason)
-                     FROM mem.security_decision_events AS event WHERE event.id > ?1",
-                    [last_flushed_id],
-                )?;
+                conn.execute(COPY_SECURITY_DECISION_OCCURRENCES, [last_flushed_id])?;
             } else {
                 conn.execute(
                     &format!(
