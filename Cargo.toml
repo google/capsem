@@ -109,6 +109,9 @@ opt-level = 3
 [profile.dev.package.libsqlite3-sys]
 opt-level = 3
 
+[profile.dev.package.capsem-logger]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 strip = "symbols"

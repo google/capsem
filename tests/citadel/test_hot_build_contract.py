@@ -30,6 +30,7 @@ HOT_DEV_OPTIMIZED_PACKAGES = {
     "ryu",
     "rusqlite",
     "libsqlite3-sys",
+    "capsem-logger",
 }
 
 RATIONALE = """\
@@ -38,8 +39,8 @@ Hot codec package lost dev optimization.
 Capsem's hands-on local install path uses debug binaries, so JSON, MessagePack,
 DNS wire parsing, and BLAKE3 must stay optimized in the dev profile. If this
 guard fails, route/gateway latency can regress from compiler configuration
-before the DB or network code even runs. SQLite and its adapter must also stay
-optimized: a native concurrency 64 reproduction took 2.07 seconds to flush its
+before the DB or network code even runs. SQLite, its adapter and the ledger
+writer must also stay optimized: a native concurrency 64 reproduction took 2.07 seconds to flush its
 archive index and ledger tables, filling the bounded producer queue and holding
 the final HTTP frame for 2.18 seconds (#350). Preserve audit admission and FULL
 durability; do not hide compiler cost by raising queue limits or dropping rows.
