@@ -1,5 +1,18 @@
 use crate::types::PolicySubject;
 
+// Grouped alternatives compile into disjunctions. Bound their cross product
+// before cloning atoms: a short imported rule can otherwise exhaust the host.
+const MAX_COMPILED_CLAUSES: usize = 1024;
+const MAX_COMPILED_ATOMS: usize = 16 * 1024;
+
+fn check_complexity(clauses: usize, atoms: usize) -> Result<(), String> {
+    if clauses > MAX_COMPILED_CLAUSES || atoms > MAX_COMPILED_ATOMS {
+        Err("policy condition is too complex after expanding grouped alternatives".into())
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CompiledCondition {
     clauses: Vec<ConditionClause>,
@@ -78,7 +91,16 @@ where
     if raw_clauses.len() > 1 {
         let mut clauses = Vec::new();
         for clause in raw_clauses {
-            clauses.extend(parse_clauses(clause, validate)?);
+            let nested = parse_clauses(clause, validate)?;
+            check_complexity(
+                clauses.len() + nested.len(),
+                clauses
+                    .iter()
+                    .chain(&nested)
+                    .map(|clause: &ConditionClause| clause.atoms.len())
+                    .sum(),
+            )?;
+            clauses.extend(nested);
         }
         return Ok(clauses);
     }
@@ -92,6 +114,21 @@ where
         let term = strip_outer_grouping(term.trim())?;
         if contains_top_level_operator(term, "||")? || contains_top_level_operator(term, "&&")? {
             let nested = parse_clauses(term, validate)?;
+            check_complexity(
+                clauses.len().saturating_mul(nested.len()),
+                clauses
+                    .iter()
+                    .map(|clause| clause.atoms.len())
+                    .sum::<usize>()
+                    .saturating_mul(nested.len())
+                    .saturating_add(
+                        nested
+                            .iter()
+                            .map(|clause| clause.atoms.len())
+                            .sum::<usize>()
+                            .saturating_mul(clauses.len()),
+                    ),
+            )?;
             let mut expanded = Vec::new();
             for existing in &clauses {
                 for nested_clause in &nested {
@@ -103,6 +140,10 @@ where
             clauses = expanded;
         } else {
             let atom = ConditionAtom::parse_with(term, validate)?;
+            check_complexity(
+                clauses.len(),
+                clauses.iter().map(|clause| clause.atoms.len()).sum::<usize>() + clauses.len(),
+            )?;
             for clause in &mut clauses {
                 clause.atoms.push(atom.clone());
             }

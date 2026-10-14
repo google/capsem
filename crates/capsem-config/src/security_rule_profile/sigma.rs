@@ -111,8 +111,8 @@ impl SigmaRule {
             selections.insert(
                 name.clone(),
                 SigmaSelectionClause {
-                    positive: positive.join(" && "),
-                    negative: negative.join(" || "),
+                    positive: join_grouped(&positive, " && "),
+                    negative: join_grouped(&negative, " || "),
                 },
             );
         }
@@ -211,8 +211,8 @@ fn sigma_field_clause(field: &str, expected: &serde_yaml::Value) -> Result<Sigma
             negative.push(sigma_scalar_compare(field, "!=", value)?);
         }
         return Ok(SigmaSelectionClause {
-            positive: positive.join(" || "),
-            negative: negative.join(" && "),
+            positive: join_grouped(&positive, " || "),
+            negative: join_grouped(&negative, " && "),
         });
     }
     Ok(SigmaSelectionClause {
@@ -225,6 +225,15 @@ fn sigma_scalar_compare(field: &str, operator: &str, expected: &serde_yaml::Valu
     let expected = sigma_scalar_to_string(expected)
         .ok_or_else(|| format!("Sigma field '{field}' value must be a scalar or sequence"))?;
     Ok(format!("{field} {operator} {}", cel_string_literal(&expected)))
+}
+
+fn join_grouped(clauses: &[String], operator: &str) -> String {
+    let expression = clauses.join(operator);
+    if clauses.len() > 1 {
+        format!("({expression})")
+    } else {
+        expression
+    }
 }
 
 fn sigma_scalar_to_string(value: &serde_yaml::Value) -> Option<String> {

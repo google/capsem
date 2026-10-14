@@ -7,6 +7,8 @@ use crate::types::{default_true, PolicySubject};
 use crate::validation::{validate_identifier, validate_non_empty, validate_policy_target};
 
 mod sigma;
+#[cfg(test)]
+mod tests;
 use sigma::SigmaRule;
 
 pub const CORP_PRIORITY_MIN: i32 = -1000;

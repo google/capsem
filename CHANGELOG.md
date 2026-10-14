@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sigma selection lists and negated selections retain their logical grouping,
+  so an alternative cannot bypass another required security rule field.
+  Compiling grouped alternatives rejects excessive expansion before allocation.
+
 - Test-image cache retention keeps the OCI and prepared EROFS working set for
   concurrent checkouts instead of reclaiming every fixture during enforcement.
 
