@@ -1,14 +1,18 @@
 """capsem-debug's fixture: only the pinned bytes are ever served."""
 
 import hashlib
+import io
 import json
 import ssl
 import subprocess
 import sys
+import urllib.error
+from email.message import Message
 from pathlib import Path
 
 import pytest
 
+from tests.fixtures.oci import pinned_image
 from tests.fixtures.oci.pinned_image import debug_image, reference_image
 from tests.fixtures.oci.registry import serve
 
@@ -32,6 +36,34 @@ def test_direct_launcher_can_import_repository_fixtures(tmp_path):
     )
 
     assert launched.returncode == 0, launched.stderr
+
+
+def test_private_ghcr_pin_uses_the_existing_github_login(monkeypatch):
+    challenge = Message()
+    challenge["WWW-Authenticate"] = (
+        'Bearer realm="https://ghcr.io/token",service="ghcr.io"'
+    )
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def open(self, url, token=None, accept=None, basic=None):
+            self.calls.append((url, basic))
+            if url == "https://ghcr.io/v2/":
+                raise urllib.error.HTTPError(url, 401, "unauthorized", challenge, None)
+            if basic is None:
+                raise urllib.error.HTTPError(url, 403, "private", Message(), None)
+            return io.BytesIO(b'{"token":"registry-token"}')
+
+    client = Client()
+    monkeypatch.setattr(pinned_image, "github_token", lambda: "github-token")
+
+    assert pinned_image._token(client, "ghcr.io", "google/capsem/dev") == "registry-token"
+    assert client.calls[-1] == (
+        "https://ghcr.io/token?service=ghcr.io&scope=repository%3Agoogle%2Fcapsem%2Fdev%3Apull",
+        ("x-access-token", "github-token"),
+    )
 
 
 def _layout(root, *, architecture="arm64", media=MANIFEST):
