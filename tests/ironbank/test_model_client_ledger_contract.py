@@ -180,6 +180,18 @@ class ModelClientEnv:
         assert line is not None, stdout + stderr
         return json.loads(line.split("=", 1)[1])
 
+    def settle_ledger(self) -> Path:
+        """Drain every producer before an exact direct-ledger assertion."""
+        db_path = self.db_path
+        stopped = self.client.post(
+            f"/vms/{self.session_id}/stop",
+            {},
+            timeout=60,
+        )
+        assert stopped == {"success": True, "persistent": True}, stopped
+        assert db_path.exists(), db_path
+        return db_path
+
 
 @pytest.fixture
 def model_client_env():
@@ -491,14 +503,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
     # a separate monitor. Stop the persistent VM first so the process drains
     # FsMonitor -> DbWriter and checkpoints the database before we reopen it.
     # A timing poll here would only hide a missing visibility barrier.
-    db_path = model_client_env.db_path
-    stopped = model_client_env.client.post(
-        f"/vms/{model_client_env.session_id}/stop",
-        {},
-        timeout=60,
-    )
-    assert stopped == {"success": True, "persistent": True}, stopped
-    assert db_path.exists(), db_path
+    db_path = model_client_env.settle_ledger()
 
     import sqlite3
 

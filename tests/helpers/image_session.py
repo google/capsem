@@ -106,7 +106,7 @@ def session_of(
     with layout_registry(workdir, layout, image_name) as (reference, certificate, _):
         catalog = (
             f"{reference.split('/', 1)[0]}/library/catalog:stable"
-            if (layout / "rootfs-v2").is_dir() or (layout / "rootfs").is_dir()
+            if (layout / "rootfs-v2").is_dir()
             else None
         )
         grant_exact(service.home_dir, reference, catalog=catalog, certificate=certificate)

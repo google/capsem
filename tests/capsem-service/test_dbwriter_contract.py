@@ -41,7 +41,10 @@ def test_dbwriter_source_boundaries_are_single_rail() -> None:
     assert "write_many" not in process_vsock
 
     assert "pub struct DbWriter" in logger_writer
-    assert "type WriterSender = mpsc::SyncSender<WriterMessage>;" in logger_writer
-    assert "mpsc::sync_channel(capacity.max(1))" in logger_writer
+    assert "struct WriterSender {" in logger_writer
+    assert "tx: mpsc::SyncSender<QueuedWriterMessage>," in logger_writer
+    assert "budget: Arc<WriterQueueBudget>," in logger_writer
+    assert "let capacity = capacity.max(1);" in logger_writer
+    assert "let (tx, rx) = mpsc::sync_channel(capacity);" in logger_writer
     assert "mpsc::channel()" not in logger_writer
     assert '.name("capsem-db-writer".into())' in logger_writer
