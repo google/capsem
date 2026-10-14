@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "3.1.1"
+    "version": "3.2.0"
   },
   "paths": {
     "/assets/status": {
@@ -15,6 +15,244 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AssetStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections": {
+      "get": {
+        "operationId": "listConnections",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/authorizations/{transaction_id}": {
+      "get": {
+        "operationId": "getConnectionAuthorization",
+        "parameters": [
+          {
+            "name": "transaction_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationTransaction"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cancelConnectionAuthorization",
+        "parameters": [
+          {
+            "name": "transaction_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationTransaction"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/google/authorize": {
+      "post": {
+        "operationId": "authorizeGoogleConnection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorizeGoogleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizeGoogleResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/{connection_id}": {
+      "get": {
+        "operationId": "getConnection",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "disconnectConnection",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisconnectResponse"
                 }
               }
             }
@@ -1536,6 +1774,148 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ContainerStatusResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/credential-grants": {
+      "get": {
+        "operationId": "listSessionCredentialGrants",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionGrantListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSessionCredentialGrant",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionGrantSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/credential-grants/{grant_id}": {
+      "delete": {
+        "operationId": "revokeSessionCredentialGrant",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "grant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeSessionGrantResponse"
                 }
               }
             }
@@ -3213,12 +3593,125 @@
           }
         }
       },
+      "AuthorizationTransaction": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "expires_at",
+          "connection_id",
+          "error_code"
+        ],
+        "properties": {
+          "connection_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CredentialErrorCode"
+              }
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TransactionState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorizeGoogleRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "scope_profile_id",
+          "reconnect_connection_id"
+        ],
+        "properties": {
+          "reconnect_connection_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope_profile_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorizeGoogleResponse": {
+        "type": "object",
+        "required": [
+          "transaction",
+          "authorization_url"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transaction": {
+            "$ref": "#/components/schemas/AuthorizationTransaction"
+          }
+        },
+        "additionalProperties": false
+      },
       "BodyEncoding": {
         "type": "string",
         "enum": [
           "utf8",
           "base64"
         ]
+      },
+      "CapabilitySummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "consumer",
+          "required_scopes",
+          "supported"
+        ],
+        "properties": {
+          "consumer": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "required_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "supported": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
       },
       "CaptureStatus": {
         "type": "string",
@@ -3285,6 +3778,136 @@
             "description": "The reference the catalog was read from, usually a moving channel tag."
           }
         }
+      },
+      "ConnectionListResponse": {
+        "type": "object",
+        "required": [
+          "connections",
+          "scope_profiles",
+          "next_cursor"
+        ],
+        "properties": {
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionSummary"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope_profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeProfileSummary"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionProvider": {
+        "type": "string",
+        "enum": [
+          "google"
+        ]
+      },
+      "ConnectionState": {
+        "type": "string",
+        "enum": [
+          "connected",
+          "reauth_required",
+          "disconnecting",
+          "disconnected",
+          "degraded"
+        ]
+      },
+      "ConnectionSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "scope_profile_id",
+          "account_label",
+          "state",
+          "revision",
+          "granted_scopes",
+          "available_capabilities",
+          "created_at",
+          "updated_at",
+          "last_refresh_at",
+          "provider_revocation",
+          "error_code"
+        ],
+        "properties": {
+          "account_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "available_capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error_code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CredentialErrorCode"
+              }
+            ]
+          },
+          "granted_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_refresh_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ConnectionProvider"
+          },
+          "provider_revocation": {
+            "$ref": "#/components/schemas/ProviderRevocationState"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 0
+          },
+          "scope_profile_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConnectionState"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
       },
       "ContainerSpec": {
         "type": "object",
@@ -3445,6 +4068,67 @@
           }
         }
       },
+      "CreateSessionGrantRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_owner_generation",
+          "connection_id",
+          "capability_ids",
+          "expires_at"
+        ],
+        "properties": {
+          "capability_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "connection_id": {
+            "type": "string"
+          },
+          "expected_owner_generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CredentialErrorCode": {
+        "type": "string",
+        "enum": [
+          "configuration_required",
+          "unsupported_capability",
+          "unknown_scope_profile",
+          "policy_denied",
+          "scope_denied",
+          "connection_unavailable",
+          "reauth_required",
+          "storage_unavailable",
+          "storage_commit_failed",
+          "transaction_expired",
+          "transaction_cancelled",
+          "invalid_callback",
+          "provider_rejected",
+          "provider_timeout",
+          "owner_changed",
+          "session_unavailable",
+          "grant_unavailable",
+          "request_conflict",
+          "revocation_pending"
+        ]
+      },
       "CredentialEvent": {
         "type": "object",
         "required": [
@@ -3594,6 +4278,28 @@
           "memory"
         ]
       },
+      "DisconnectResponse": {
+        "type": "object",
+        "required": [
+          "connection",
+          "revoked_grant_count",
+          "local_authority"
+        ],
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/ConnectionSummary"
+          },
+          "local_authority": {
+            "$ref": "#/components/schemas/LocalCredentialAuthority"
+          },
+          "revoked_grant_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "DnsEvent": {
         "type": "object",
         "required": [
@@ -3683,6 +4389,13 @@
           }
         }
       },
+      "EnrollmentKind": {
+        "type": "string",
+        "enum": [
+          "owned_oauth_client",
+          "native_consumer_sign_in"
+        ]
+      },
       "ErrorEvent": {
         "type": "object",
         "required": [
@@ -3718,6 +4431,12 @@
           "error"
         ],
         "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "error": {
             "type": "string"
           }
@@ -4196,6 +4915,14 @@
             "minimum": 0
           }
         }
+      },
+      "GrantState": {
+        "type": "string",
+        "enum": [
+          "active",
+          "revoked",
+          "expired"
+        ]
       },
       "HistoryDetails": {
         "oneOf": [
@@ -5037,6 +5764,13 @@
             }
           }
         }
+      },
+      "LocalCredentialAuthority": {
+        "type": "string",
+        "enum": [
+          "revoking",
+          "revoked"
+        ]
       },
       "LogsResponse": {
         "type": "object",
@@ -5976,6 +6710,15 @@
           }
         }
       },
+      "ProviderRevocationState": {
+        "type": "string",
+        "enum": [
+          "not_started",
+          "pending",
+          "succeeded",
+          "failed"
+        ]
+      },
       "ProvisionRequest": {
         "type": "object",
         "description": "Unknown fields are refused rather than ignored.",
@@ -6259,6 +7002,28 @@
         "type": "string",
         "enum": [
           "accepted"
+        ]
+      },
+      "RevokeSessionGrantResponse": {
+        "type": "object",
+        "required": [
+          "grant",
+          "local_authority"
+        ],
+        "properties": {
+          "grant": {
+            "$ref": "#/components/schemas/SessionGrantSummary"
+          },
+          "local_authority": {
+            "$ref": "#/components/schemas/RevokedCredentialAuthority"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RevokedCredentialAuthority": {
+        "type": "string",
+        "enum": [
+          "revoked"
         ]
       },
       "RunRequest": {
@@ -6554,6 +7319,48 @@
           }
         }
       },
+      "ScopeProfileSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "enrollment_kind",
+          "label",
+          "application_label",
+          "requested_scopes",
+          "capabilities",
+          "enabled"
+        ],
+        "properties": {
+          "application_label": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapabilitySummary"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "enrollment_kind": {
+            "$ref": "#/components/schemas/EnrollmentKind"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "requested_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "ServiceAvailability": {
         "type": "string",
         "enum": [
@@ -6584,6 +7391,100 @@
             "type": "boolean"
           }
         }
+      },
+      "SessionGrantListResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "owner_generation",
+          "grants",
+          "denied_capability_ids"
+        ],
+        "properties": {
+          "denied_capability_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionGrantSummary"
+            }
+          },
+          "owner_generation": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SessionGrantSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "owner_generation",
+          "connection_id",
+          "capability_ids",
+          "state",
+          "revision",
+          "created_at",
+          "expires_at",
+          "revoked_at",
+          "runtime_bound"
+        ],
+        "properties": {
+          "capability_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "connection_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "owner_generation": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 0
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "runtime_bound": {
+            "type": "boolean"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/GrantState"
+          }
+        },
+        "additionalProperties": false
       },
       "SlowOpEvent": {
         "type": "object",
@@ -7035,6 +7936,17 @@
           "builtin",
           "local",
           "mcp_proxy"
+        ]
+      },
+      "TransactionState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "connected",
+          "denied",
+          "expired",
+          "cancelled",
+          "failed"
         ]
       },
       "TriageResponse": {

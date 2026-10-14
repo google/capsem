@@ -33,6 +33,7 @@ pub fn openapi() -> OpenApi {
     doc.get::<ContainerStatusResponse>("/vms/{id}/container", "getVmContainer");
     doc.images();
     doc.post::<CredentialInjectRequest, CredentialInjectResponse>("/credentials/inject", "injectCredential");
+    doc.connections();
     doc.exposures();
     doc.post::<ExecRequest, ExecResponse>("/vms/{id}/exec", "execVm");
     doc.post::<ForkRequest, ForkResponse>("/vms/{id}/fork", "forkVm");
@@ -95,9 +96,46 @@ struct Document {
 /// force every generated SDK to be regenerated, and an SDK built against the
 /// contract keeps working across binary releases. Raise it when the contract
 /// changes in a way clients must notice.
-pub const CONTRACT_VERSION: &str = "3.1.1";
+pub const CONTRACT_VERSION: &str = "3.2.0";
 
 impl Document {
+    fn connections(&mut self) {
+        self.get::<ConnectionListResponse>("/connections", "listConnections");
+        self.post_status::<AuthorizeGoogleRequest, AuthorizeGoogleResponse>(
+            "/connections/google/authorize",
+            "authorizeGoogleConnection",
+            "202",
+        );
+        self.get::<AuthorizationTransaction>(
+            "/connections/authorizations/{transaction_id}",
+            "getConnectionAuthorization",
+        );
+        let cancel = self.operation::<AuthorizationTransaction>(
+            "/connections/authorizations/{transaction_id}",
+            "cancelConnectionAuthorization",
+        );
+        self.add(
+            "/connections/authorizations/{transaction_id}",
+            HttpMethod::Delete,
+            cancel,
+        );
+        self.get::<ConnectionSummary>("/connections/{connection_id}", "getConnection");
+        let disconnect =
+            self.operation_status::<DisconnectResponse>("/connections/{connection_id}", "disconnectConnection", "202");
+        self.add("/connections/{connection_id}", HttpMethod::Delete, disconnect);
+        self.get::<SessionGrantListResponse>("/vms/{id}/credential-grants", "listSessionCredentialGrants");
+        self.post_status::<CreateSessionGrantRequest, SessionGrantSummary>(
+            "/vms/{id}/credential-grants",
+            "createSessionCredentialGrant",
+            "201",
+        );
+        let revoke = self.operation::<RevokeSessionGrantResponse>(
+            "/vms/{id}/credential-grants/{grant_id}",
+            "revokeSessionCredentialGrant",
+        );
+        self.add("/vms/{id}/credential-grants/{grant_id}", HttpMethod::Delete, revoke);
+    }
+
     fn schema<T: ToSchema>(&mut self) -> Ref {
         let mut nested = Vec::new();
         T::schemas(&mut nested);
