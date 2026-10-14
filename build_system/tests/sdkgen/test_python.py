@@ -64,6 +64,8 @@ def _sample(schema: Schema) -> object:
         return "2026-10-14T12:34:56.123456789+01:30"
     if schema.pattern == "^[0-9a-f]{64}$":
         return "af" * 32
+    if schema.type == "integer" and schema.minimum is not None:
+        return max(0, schema.minimum)
     return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[schema.type]
 
 

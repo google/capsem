@@ -26,6 +26,14 @@ SCHEMAS = read_schemas(SPEC)
 ROUTES = read_operations(SPEC)
 
 
+def test_uuid_query_uses_the_shared_alias_and_refuses_invalid_material(package: ModuleType) -> None:
+    async def run() -> None:
+        async with package._transport.Transport("http://127.0.0.1:1", "secret") as transport:
+            with pytest.raises(ValidationError):
+                await package.operations.list_connections(transport, limit=1, cursor="private-query")
+    asyncio.run(run())
+
+
 @pytest.fixture
 def package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
     root = tmp_path / "generated_client"
