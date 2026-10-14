@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Delayed process exit cleanup fences its exact old credential runtime even
+  after a resumed replacement has taken over the session registry.
+
 - Session stop, suspend, exit and terminal cleanup fence credential grants.
   Ready resume rebinds valid approval, and deletion refuses a resumed replacement.
 

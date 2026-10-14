@@ -39,6 +39,11 @@ pub(super) fn spawn_exit_reaper(
             return;
         };
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
+        // Even a delayed reaper must fence its exact old runtime. A resumed
+        // replacement may already own the map, but never owns these handles.
+        state
+            .connections
+            .fence_runtime(&id, generation, capsem_credentials::GrantStopPolicy::Preserve);
 
         // Native wait is positive exit authority. Persist the fenced receipt
         // before moving a named session, so a later host boot can reprepare
