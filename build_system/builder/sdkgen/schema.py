@@ -26,9 +26,10 @@ class Schema(BaseModel):
     type: Primitive | list[Primitive] | None = None
     description: str | None = None
     write_only: bool = Field(default=False, alias="writeOnly")
-    format: Literal["int32", "int64", "double", "binary", "ipv4", "uuid"] | None = None
+    format: Literal["int32", "int64", "double", "binary", "ipv4", "uuid", "date-time"] | None = None
     pattern: str | None = None
     minimum: int | float | None = None
+    maximum: int | float | None = None
     enum: list[str] | None = None
     properties: dict[str, Schema] = Field(default_factory=dict)
     required: list[str] = Field(default_factory=list)
@@ -80,7 +81,7 @@ class Schema(BaseModel):
             allowed |= {"enum", "format", "write_only", "pattern"}
             if self.enum is not None and (not self.enum or len(set(self.enum)) != len(self.enum)):
                 raise ValueError("enum must contain distinct values")
-            if self.format not in (None, "binary", "ipv4", "uuid"):
+            if self.format not in (None, "binary", "ipv4", "uuid", "date-time"):
                 raise ValueError("unsupported string format")
             if self.pattern is not None:
                 if self.format is not None or self.pattern_width is None or self.pattern_width > 4096:
@@ -90,7 +91,9 @@ class Schema(BaseModel):
                 except re.error as error:
                     raise ValueError("invalid string character-class pattern") from error
         elif kind in ("integer", "number"):
-            allowed |= {"minimum", "format"}
+            allowed |= {"minimum", "maximum", "format"}
+            if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
+                raise ValueError("numeric minimum exceeds maximum")
             formats = (None, "int32", "int64") if kind == "integer" else (None, "double")
             if self.format not in formats:
                 raise ValueError("numeric format does not match type")

@@ -60,6 +60,8 @@ def _sample(schema: Schema) -> object:
         return "10.128.0.2"
     if schema.format == "uuid":
         return "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
+    if schema.format == "date-time":
+        return "2026-10-14T12:34:56.123456789+01:30"
     if schema.pattern == "^[0-9a-f]{64}$":
         return "af" * 32
     return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[schema.type]
@@ -132,6 +134,19 @@ def test_generation_is_deterministic_and_compact() -> None:
 def test_ipv4_is_a_validated_address_value() -> None:
     schema = Schema.model_validate({"type": "string", "format": "ipv4"})
     assert type_name(schema) == "IPv4Address"
+
+
+def test_connection_datetime_and_revision_validation_preserve_wire_values(models: ModuleType) -> None:
+    adapter = TypeAdapter(models.ConnectionSummary)
+    value = _sample(SCHEMAS["ConnectionSummary"])
+    value["revision"] = 9007199254740991
+    parsed = adapter.validate_json(json.dumps(value))
+    assert json.loads(adapter.dump_json(parsed)) == value
+    for timestamp in ("2026-02-30T12:00:00Z", "2026-10-14T12:00:00", "123", 123):
+        with pytest.raises(ValidationError):
+            adapter.validate_json(json.dumps({**value, "updated_at": timestamp}))
+    with pytest.raises(ValidationError):
+        adapter.validate_json(json.dumps({**value, "revision": 9007199254740992}))
 
 
 @pytest.mark.parametrize("value", [

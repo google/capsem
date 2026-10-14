@@ -12,15 +12,18 @@ BASE = '''"""Shared validation for JSON values and optional nonnullable fields."
 
 from __future__ import annotations
 
+import json
 from math import isfinite
 from typing import Annotated, ClassVar, TypeAlias
 
 from pydantic import (
     AfterValidator,
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
     StrictStr,
+    TypeAdapter,
     ValidationError,
     ValidatorFunctionWrapHandler,
     model_validator,
@@ -45,6 +48,16 @@ JsonValue: TypeAlias = Annotated[PydanticJsonValue, AfterValidator(_finite_json)
 UuidString: TypeAlias = Annotated[StrictStr, Field(
     pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
 )]
+
+
+def _datetime_string(value: str) -> str:
+    TypeAdapter(AwareDatetime).validate_json(json.dumps(value), strict=True)
+    return value
+
+
+DateTimeString: TypeAlias = Annotated[StrictStr, Field(
+    pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$",
+), AfterValidator(_datetime_string)]
 
 
 class Model(BaseModel):
@@ -118,10 +131,14 @@ def type_name(schema: Schema) -> str:
         primitive = "IPv4Address"
     elif schema.format == "uuid":
         primitive = "UuidString"
+    elif schema.format == "date-time":
+        primitive = "DateTimeString"
     if schema.pattern is not None:
         primitive = f"Annotated[{primitive}, Field(pattern={schema.pattern!r}, min_length={schema.pattern_width}, max_length={schema.pattern_width})]"
     if schema.minimum is not None:
         primitive = f"Annotated[{primitive}, Field(ge={schema.minimum!r})]"
+    if schema.maximum is not None:
+        primitive = f"Annotated[{primitive}, Field(le={schema.maximum!r})]"
     return primitive
 
 
@@ -208,6 +225,8 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
         base_names = (["JsonValue"] if re.search(r"\bJsonValue\b", body) else [])
         if re.search(r"\bUuidString\b", body):
             base_names.append("UuidString")
+        if re.search(r"\bDateTimeString\b", body):
+            base_names.append("DateTimeString")
         if "(Model)" in body:
             base_names.append("Model")
         if base_names:

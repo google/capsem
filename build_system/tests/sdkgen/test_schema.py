@@ -26,9 +26,10 @@ def test_actual_export_preserves_every_schema() -> None:
     {"type": "string", "pattern": "^[a-z]{4097}$"},
     {"type": "string", "pattern": "^[z-a]{64}$"},
     {"type": "string", "format": "binary", "pattern": "^[a-z]{64}$"},
-    {"type": "string", "format": "date-time"},
     {"type": "string", "format": "int32"},
     {"type": "string", "minimum": 0},
+    {"type": "string", "maximum": 1},
+    {"type": "integer", "minimum": 2, "maximum": 1},
     {"type": "integer", "format": "double"},
     {"type": ["integer", "string"]},
     {"type": []},
@@ -80,6 +81,14 @@ def test_optional_is_distinct_from_nullable() -> None:
     assert schema.properties["nullable"].type == ["integer", "null"]
     assert schema.properties["nullable"].minimum == 0
     assert schema.properties["optional"].type == "string"
+
+
+@pytest.mark.parametrize("value", [
+    {"type": ["string", "null"], "format": "date-time"},
+    {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+])
+def test_connection_timestamp_and_safe_revision_constraints_round_trip(value: dict) -> None:
+    assert Schema.model_validate(value).model_dump(exclude_unset=True) == value
 
 
 def test_circular_references_fail_explicitly() -> None:
