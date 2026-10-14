@@ -75,5 +75,6 @@ def test_supervisor_worker_refuses_a_forged_native_uid() -> None:
         sys.executable, "-c", "print('UNEXPECTED_KERNEL_COMMAND')",
     ], cwd=ROOT, capture_output=True, text=True, timeout=10, check=False)
     assert result.returncode != 0
+    assert "AssertionError: native supervisor UID/GID changed" in result.stderr
     assert "SDK_SUPERVISOR_KERNEL_PROOF_OK" not in result.stdout
     assert "UNEXPECTED_KERNEL_COMMAND" not in result.stdout

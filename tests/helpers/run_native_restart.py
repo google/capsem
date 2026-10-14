@@ -28,7 +28,7 @@ def main() -> int:
     if not command:
         parser.error("a qualification command is required")
     if args.inside:
-        assert (os.getuid(), os.getgid()) == (args.uid, args.gid)
+        assert (os.getuid(), os.getgid()) == (args.uid, args.gid), "native supervisor UID/GID changed"
         assert args.uid != 0, "native SDK acceptance requires the ordinary user"
         assert "NoNewPrivs:\t1" in Path("/proc/self/status").read_text()
         assert [name for _, name in socket.if_nameindex()] == ["lo"]
