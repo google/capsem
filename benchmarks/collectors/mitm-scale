@@ -194,7 +194,10 @@ def main() -> int:
         service.start()
 
         for vm_count in SETTINGS.vm_counts:
-            while len(vm_ids) < vm_count:
+            for vm_id in reversed(vm_ids):
+                client.delete(f"/vms/{vm_id}/delete")
+            vm_ids.clear()
+            for _ in range(vm_count):
                 name = f"bench-mitm-scale-{uuid.uuid4().hex[:8]}"
                 created = client.post(
                     "/vms/create",
@@ -204,6 +207,7 @@ def main() -> int:
                     raise RuntimeError(f"provision {name} failed: {created!r}")
                 vm_id = created["id"]
                 vm_ids.append(vm_id)
+            for vm_id in vm_ids:
                 if not wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT):
                     raise RuntimeError(f"{vm_id} never became exec-ready")
 
