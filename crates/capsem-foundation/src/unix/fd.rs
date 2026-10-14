@@ -268,12 +268,7 @@ pub fn tcp_clear_reset_on_close(fd: BorrowedFd<'_>) -> io::Result<bool> {
 /// Linux accounts up to twice the requested bytes for TCP bookkeeping. VSOCK
 /// uses separate credit-buffer options, so those are fixed as well on Linux.
 pub fn set_stream_buffers(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
-    if bytes == 0 || bytes > i32::MAX as usize {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid socket buffer size",
-        ));
-    }
+    validate_socket_buffer_size(bytes)?;
     socket::setsockopt(&fd, socket::sockopt::SndBuf, &bytes).map_err(errno::io)?;
     socket::setsockopt(&fd, socket::sockopt::RcvBuf, &bytes).map_err(errno::io)?;
     #[cfg(target_os = "linux")]
@@ -305,6 +300,22 @@ pub fn set_stream_buffers(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
                 .map_err(errno::io)?;
             }
         }
+    }
+    Ok(())
+}
+
+/// Size a datagram receive queue for a known bounded burst.
+pub fn set_receive_buffer(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
+    validate_socket_buffer_size(bytes)?;
+    socket::setsockopt(&fd, socket::sockopt::RcvBuf, &bytes).map_err(errno::io)
+}
+
+fn validate_socket_buffer_size(bytes: usize) -> io::Result<()> {
+    if bytes == 0 || bytes > i32::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid socket buffer size",
+        ));
     }
     Ok(())
 }

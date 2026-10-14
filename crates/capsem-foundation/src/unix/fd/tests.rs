@@ -169,6 +169,14 @@ fn stream_buffer_limits_replace_large_kernel_queues() {
 }
 
 #[test]
+fn datagram_receive_buffer_can_hold_a_concurrent_burst() {
+    use nix::sys::socket::{getsockopt, sockopt};
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    super::set_receive_buffer(socket.as_fd(), 512 * 1024).unwrap();
+    assert!(getsockopt(&socket, sockopt::RcvBuf).unwrap() >= 512 * 1024);
+}
+
+#[test]
 fn zero_buffer_limit_is_refused_without_changing_the_socket() {
     use nix::sys::socket::{getsockopt, sockopt};
     let (stream, _peer) = UnixStream::pair().unwrap();
