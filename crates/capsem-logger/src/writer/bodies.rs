@@ -793,14 +793,19 @@ impl BodyArchive {
                 [committed_end],
             )?;
         }
+        let blocks_finished = Instant::now();
         index_batch::insert(
             conn,
             self.appended.iter().flat_map(|(_, rows)| rows).chain(&self.reused),
         )?;
+        let rows_finished = Instant::now();
         tracing::debug!(
             target: "capsem.db",
             archive_sync_ms = synced.duration_since(started).as_secs_f64() * 1000.0,
             index_sql_ms = synced.elapsed().as_secs_f64() * 1000.0,
+            block_sql_ms = blocks_finished.duration_since(synced).as_secs_f64() * 1000.0,
+            row_sql_ms = rows_finished.duration_since(blocks_finished).as_secs_f64() * 1000.0,
+            segments = self.appended.len(),
             index_rows = self.appended.iter().map(|(_, rows)| rows.len()).sum::<usize>() + self.reused.len(),
             "db archive index flushed"
         );
