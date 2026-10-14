@@ -14,6 +14,16 @@ pub(crate) struct Runtime {
 }
 
 impl Runtime {
+    pub(crate) fn grant_authority(&self) -> Arc<capsem_credentials::GrantAuthority> {
+        Arc::clone(&self.grants)
+    }
+    pub(crate) async fn credential_owner(
+        &self,
+        binding: &capsem_core::managed_sessions::VmBinding,
+    ) -> Result<Option<capsem_core::managed_sessions::controller::CredentialOwner>, Failure> {
+        self.policy()?;
+        self.controller.credential_owner(binding).await
+    }
     fn policy(&self) -> Result<ManagedSessionPolicy, Failure> {
         self.policy
             .read()

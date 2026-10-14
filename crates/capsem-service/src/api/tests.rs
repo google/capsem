@@ -262,6 +262,7 @@ fn logs_response_roundtrip() {
 fn error_response_roundtrip() {
     let r = ErrorResponse {
         error: "sandbox not found".into(),
+        code: None,
     };
     let json = serde_json::to_string(&r).unwrap();
     let r2: ErrorResponse = serde_json::from_str(&json).unwrap();

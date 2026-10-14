@@ -244,11 +244,17 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     // directory placed elsewhere (a short socket path under /tmp) once put
     // every such service on one shared ledger.
     let host_ledger = host_ledger::open_host_ledger(&capsem_foundation::paths::capsem_sessions_dir())?;
+    let managed = managed_routes::Runtime::open(
+        &run_dir,
+        capsem_core::net::policy_config::load_managed_session_policy().map_err(anyhow::Error::msg)?,
+    )?;
+    let connections = connection_routes::Runtime::new(
+        capsem_foundation::paths::capsem_home().join("credentials/broker.json"),
+        managed.grant_authority(),
+    );
     let state = Arc::new(ServiceState {
-        managed: managed_routes::Runtime::open(
-            &run_dir,
-            capsem_core::net::policy_config::load_managed_session_policy().map_err(anyhow::Error::msg)?,
-        )?,
+        managed,
+        connections,
         instances: Mutex::new(HashMap::new()),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
@@ -321,6 +327,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     // their own sockets on SIGTERM.
     reap_orphan_capsem_processes(&run_dir)?;
     managed_routes::Runtime::start_maintenance(Arc::clone(&state));
+    connection_routes::Runtime::start(Arc::clone(&state)).await;
 
     // Check for running instances to reattach
     info!("scanning for existing sandboxes in {}", instances_dir.display());

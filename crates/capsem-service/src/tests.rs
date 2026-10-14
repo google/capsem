@@ -48,8 +48,12 @@ pub(crate) fn test_state(
 ) -> ServiceState {
     std::fs::create_dir_all(&run_dir).unwrap();
     let manifest = capsem_assets::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
+    let managed = managed_routes::Runtime::open(&run_dir, Default::default()).unwrap();
+    let connections =
+        connection_routes::Runtime::new(run_dir.join("credentials/broker.json"), managed.grant_authority());
     ServiceState {
-        managed: managed_routes::Runtime::open(&run_dir, Default::default()).unwrap(),
+        managed,
+        connections,
         instances: Mutex::new(HashMap::new()),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),

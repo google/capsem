@@ -35,6 +35,24 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         )
         .route("/images", get(container_setup::images::handle_list_images))
         .route("/images/pull", post(container_setup::images::handle_pull_image))
+        .route("/connections", get(connection_routes::list))
+        .route("/connections/google/authorize", post(connection_routes::authorize))
+        .route(
+            "/connections/authorizations/{transaction_id}",
+            get(connection_routes::authorization).delete(connection_routes::cancel),
+        )
+        .route(
+            "/connections/{connection_id}",
+            get(connection_routes::get_connection).delete(connection_routes::disconnect),
+        )
+        .route(
+            "/vms/{id}/credential-grants",
+            get(connection_routes::grants).post(connection_routes::create_grant),
+        )
+        .route(
+            "/vms/{id}/credential-grants/{grant_id}",
+            delete(connection_routes::revoke_grant),
+        )
         .route("/vms/create", post(handle_provision))
         .route("/vms/managed/{request_id}/claim", post(managed_routes::claim))
         .route("/vms/managed/{request_id}/close", post(managed_routes::close))

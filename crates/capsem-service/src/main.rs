@@ -40,6 +40,7 @@ use instance::InstanceInfo;
 mod network_routes;
 mod policy_mutation;
 use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
+mod connection_routes;
 mod credential_routes;
 mod mcp_routes;
 mod plugin_routes;
@@ -196,6 +197,7 @@ const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 
 pub struct ServiceState {
     managed: managed_routes::Runtime,
+    connections: connection_routes::Runtime,
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
     retirements: instance_reaper::Retirements,
     /// Logger-owned DB handles keyed by session/VM id. Logged-data routes

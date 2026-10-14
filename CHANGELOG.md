@@ -236,6 +236,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Service-owned connection metadata and explicit credential grant routes share
+  managed ownership fences and enforce the current broker policy. Native AGY
+  enrollment remains unavailable pending its supported handoff integration.
+
 - Connection authorization and generation-bound credential grant operations in
   the authenticated API contract and generated Rust, Python and TypeScript SDKs.
 
