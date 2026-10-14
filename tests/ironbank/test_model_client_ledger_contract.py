@@ -34,6 +34,7 @@ from helpers.service import (
     vm_session_dir,
 )
 from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
+from helpers.uds_client import UdsHttpClient
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import (
     HERMETIC_OPENAI_PRICED_MODEL,
@@ -133,7 +134,7 @@ def _credential_ref_for_secret(secret: str, *, provider: str = "openai") -> str:
 @dataclass
 class ModelClientEnv:
     service: ServiceInstance
-    client: object
+    client: UdsHttpClient
     session_id: str
     mock_base_url: str
     upstream_transcript_path: Path
