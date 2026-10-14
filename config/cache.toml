@@ -214,26 +214,24 @@ maximum_age_hours = 168
 description = "Bounded diagnostics preserved from failed expensive tests."
 scope = "disk"
 path = "target/tests/evidence"
-# Lowered from 4/8 GiB to fund `test-images` inside [budget]: the stage held
-# 53 MB when measured on 2026-10-04, so 6 GiB still bounds a run of failures.
-warm_size_bytes = 3221225472 # 3 GiB
-max_size_bytes = 6442450944 # 6 GiB
+# The stage held 53 MB when measured on 2026-10-04. Half a GiB retains several
+# failed-run evidence sets while funding the complete pinned-image matrix.
+warm_size_bytes = 268435456 # 256 MiB
+max_size_bytes = 536870912 # 512 MiB
 prune_strategy = "lru"
 maximum_age_hours = 720
 maximum_count = 20
 
 [stages.test-images]
-description = "Digest-pinned OCI layouts of test-fixture images (capsem-debug), shared by every checkout and gate prefix."
+description = "Digest-pinned OCI layouts of the debug and reference images, shared by every checkout and gate prefix."
 scope = "disk"
 # One directory per image digest: a local build and a registry pull of the same
 # digest land in the same entry, so the harness pulls a pinned image once per
-# machine rather than once per private checkout. An arm64 layout is ~430 MB.
+# machine rather than once per private checkout. The gate needs both images for
+# both supported architectures present before its network sandbox closes.
 path = "target/tests/images"
-# A pinned 0.7 debug fixture is 1.15 GiB including its prepared EROFS. Retain
-# the four-generation working set below; 1 GiB could not retain even one and
-# an enforcement run discarded every fixture after crossing the old 2 GiB cap.
-warm_size_bytes = 5368709120 # 5 GiB
-max_size_bytes = 6442450944 # 6 GiB
+warm_size_bytes = 6442450944 # 6 GiB
+max_size_bytes = 8589934592 # 8 GiB
 prune_strategy = "lru"
 maximum_age_hours = 720
 maximum_count = 4
