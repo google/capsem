@@ -15,12 +15,15 @@ pub(super) fn writer_loop(
         capacity: batch_capacity,
         interval,
     } = schedule;
-    let mut flush_watermarks =
-        schema::with_memory_schema_lock(|| schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables()))
-            .unwrap_or_else(|error| {
-                warn!(error = %error, "db initial memory flush watermark load failed");
-                schema::MemoryFlushWatermarks::new()
-            });
+    let mut flush_watermarks = match schema::with_memory_schema_lock(|| {
+        schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables())
+    }) {
+        Ok(watermarks) => watermarks,
+        Err(error) => {
+            warn!(error = %error, "db initial memory flush watermark load failed");
+            return;
+        }
+    };
     // Rows at or below the open-time watermark were written by an earlier
     // writer; exec ids restart with the process, so a completion must not
     // reach one of those.

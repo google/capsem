@@ -282,6 +282,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Ledger flushes reject missing tables or ID columns even when empty, keeping
+  pending rows available for retry instead of acknowledging broken schema.
+
 - The guest DNS listener sizes its UDP receive queue from the supported client,
   session and EDNS datagram limits, preventing kernel receive drops during a
   512-client dual-stack burst.
