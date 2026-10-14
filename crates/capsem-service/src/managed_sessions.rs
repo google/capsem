@@ -67,6 +67,7 @@ impl ManagedLifecycle {
             request.name.is_none() && !request.persistent,
             "managed sessions must be unnamed and ephemeral"
         );
+        crate::validate_vm_labels(request.labels.as_ref())?;
         let binding = VmBinding::new(new_persistent_vm_id(), capsem_crypto::uuid_v4())?;
         let work = Arc::new(Work {
             scope: Default::default(),
@@ -241,6 +242,7 @@ impl ManagedLifecycle {
                         version_override: None,
                         persistent: false,
                         env: capsem_core::container::session_env(request.env, request.container.is_some()),
+                        labels: crate::non_empty_labels(request.labels),
                         from: request.from.map(|source| CloneFrom {
                             source,
                             replace_image: request.container.is_some(),

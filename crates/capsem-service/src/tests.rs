@@ -151,6 +151,7 @@ pub(crate) fn test_instance() -> InstanceInfo {
         base_version: "0.0.0".into(),
         persistent: false,
         env: None,
+        labels: None,
         forked_from: None,
         owner_secret: String::new(),
     }
@@ -371,7 +372,7 @@ fn install_test_runtime_manifest(state: &ServiceState) {
 
 /// Install the test runtime asset set: the manifest and every image under
 /// its hash name, so a new VM's assets are ready.
-fn install_test_runtime_assets(state: &ServiceState) {
+pub(crate) fn install_test_runtime_assets(state: &ServiceState) {
     install_test_runtime_manifest(state);
     let arch_dir = state.assets_dir.join(host_manifest_arch());
     std::fs::create_dir_all(&arch_dir).unwrap();
@@ -398,6 +399,23 @@ pub(crate) fn test_persistent_entry(name: &str, session_dir: PathBuf) -> Persist
         last_error: None,
         checkpoint_path: None,
         env: None,
+        labels: None,
+    }
+}
+
+pub(crate) fn test_provision_options<'a>(id: &'a str, name: &'a str) -> ProvisionOptions<'a> {
+    ProvisionOptions {
+        id,
+        name,
+        ram_mb: 2048,
+        cpus: 2,
+        scratch_disk_size_gb: 16,
+        version_override: None,
+        persistent: false,
+        env: None,
+        labels: None,
+        from: None,
+        description: None,
     }
 }
 
@@ -441,6 +459,6 @@ mod update_routes;
 mod vm_info;
 
 pub(crate) use assets_registry::make_state_in;
-pub(crate) use settings_files::EnvVarGuard;
-use settings_files::{ensure_test_builtin_mcp_binary, install_empty_settings_env, make_test_state_with_tempdir_at};
+use settings_files::{ensure_test_builtin_mcp_binary, make_test_state_with_tempdir_at};
+pub(crate) use settings_files::{install_empty_settings_env, EnvVarGuard};
 use update_routes::decode_response_json;

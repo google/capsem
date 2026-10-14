@@ -8,6 +8,7 @@ export interface ProvisionRequest {
   "cpus"?: number | null;
   "env"?: Record<string, string> | null;
   "from"?: string | null;
+  "labels"?: Record<string, string> | null;
   "managed"?: null | ManagedSessionCreate;
   "name"?: string | null;
   "networks"?: Array<string>;

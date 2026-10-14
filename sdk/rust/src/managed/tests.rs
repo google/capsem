@@ -302,11 +302,17 @@ async fn scope_renews_and_joins_close_without_replaying_create() {
     let mut gateway = Gateway::new(Fixture::default()).await;
     let hv = gateway.hv.clone();
     let scope = tokio::spawn(async move {
-        hv.with_managed(CreateOptions::default(), |vm, _cancel| async move {
-            assert_eq!(vm.id(), Some("vm-original"));
-            tokio::time::sleep(Duration::from_millis(1100)).await;
-            Ok(17)
-        })
+        hv.with_managed(
+            CreateOptions {
+                labels: Some([("suite".to_string(), "eval".to_string())].into()),
+                ..Default::default()
+            },
+            |vm, _cancel| async move {
+                assert_eq!(vm.id(), Some("vm-original"));
+                tokio::time::sleep(Duration::from_millis(1100)).await;
+                Ok(17)
+            },
+        )
         .await
     });
     gateway.event("/create").await;
@@ -317,6 +323,7 @@ async fn scope_renews_and_joins_close_without_replaying_create() {
     assert_eq!(scope.await.unwrap().unwrap(), 17);
     let requests = gateway.state.requests.lock().unwrap();
     assert_eq!(requests.iter().filter(|(p, _)| p == "/vms/create").count(), 1);
+    assert_eq!(requests[0].1["labels"], json!({"suite": "eval"}));
     assert_eq!(requests.last().unwrap().1["outcome"], "completed");
     drop(requests);
 }

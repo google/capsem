@@ -955,18 +955,7 @@ fn provision_accepts_name_just_under_uds_limit() {
     // One byte shorter than the limit -- should pass path validation
     let name_len = sun_path_max - prefix - suffix_len - 1;
     let ok_name = "x".repeat(name_len);
-    let result = state.provision_sandbox(ProvisionOptions {
-        id: &ok_name,
-        name: &ok_name,
-        ram_mb: 2048,
-        cpus: 2,
-        scratch_disk_size_gb: 16,
-        version_override: None,
-        persistent: false,
-        env: None,
-        from: None,
-        description: None,
-    });
+    let result = state.provision_sandbox(test_provision_options(&ok_name, &ok_name));
     // Will fail later (missing rootfs), but NOT for path length
     if let Err(e) = &result {
         let msg = e.to_string();
@@ -980,18 +969,7 @@ fn provision_accepts_name_just_under_uds_limit() {
 #[test]
 fn provision_short_name_passes_path_check() {
     let state = make_test_state();
-    let result = state.provision_sandbox(ProvisionOptions {
-        id: "my-vm",
-        name: "my-vm",
-        ram_mb: 2048,
-        cpus: 2,
-        scratch_disk_size_gb: 16,
-        version_override: None,
-        persistent: false,
-        env: None,
-        from: None,
-        description: None,
-    });
+    let result = state.provision_sandbox(test_provision_options("my-vm", "my-vm"));
     // Fails for missing assets, not path length
     if let Err(e) = &result {
         let msg = e.to_string();
@@ -1005,18 +983,7 @@ fn provision_short_name_passes_path_check() {
 #[test]
 fn provision_without_a_manifest_fails_before_session_state() {
     let (state, _dir) = make_test_state_with_tempdir();
-    let result = state.provision_sandbox(ProvisionOptions {
-        id: "my-vm",
-        name: "my-vm",
-        ram_mb: 2048,
-        cpus: 2,
-        scratch_disk_size_gb: 16,
-        version_override: None,
-        persistent: false,
-        env: None,
-        from: None,
-        description: None,
-    });
+    let result = state.provision_sandbox(test_provision_options("my-vm", "my-vm"));
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("no asset manifest is installed"),
@@ -1046,16 +1013,8 @@ fn provision_persistent_rejects_duplicate_name() {
         );
     }
     let result = state.provision_sandbox(ProvisionOptions {
-        id: "taken",
-        name: "taken",
-        ram_mb: 2048,
-        cpus: 2,
-        scratch_disk_size_gb: 16,
-        version_override: None,
         persistent: true,
-        env: None,
-        from: None,
-        description: None,
+        ..test_provision_options("taken", "taken")
     });
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
