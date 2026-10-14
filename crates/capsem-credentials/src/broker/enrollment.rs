@@ -74,6 +74,7 @@ impl ConnectionBroker {
         let deadline = Instant::now() + self.0.limits.enrollment_lifetime;
         let record = TransactionRecord {
             request,
+            terminal_at: None,
             target_connection_id: target.clone(),
             transaction: api::AuthorizationTransaction {
                 id: id.clone(),
@@ -124,6 +125,7 @@ impl ConnectionBroker {
             return Ok(entry.record.transaction.clone());
         }
         entry.record.transaction.state = api::TransactionState::Cancelled;
+        entry.record.terminal_at = Some(SystemTime::now());
         entry.record.transaction.error_code = Some(api::CredentialErrorCode::TransactionCancelled);
         entry.url = None;
         let result = entry.record.transaction.clone();
@@ -226,6 +228,7 @@ fn fail(state: &mut State, id: &str, code: api::CredentialErrorCode) {
             api::TransactionState::Failed
         };
         entry.record.transaction.error_code = Some(code);
+        entry.record.terminal_at = Some(SystemTime::now());
         entry.url = None;
     }
 }
@@ -332,6 +335,7 @@ async fn run(
                 });
             let entry = state.transactions.get_mut(&id).expect("pending transaction");
             entry.record.transaction.state = api::TransactionState::Connected;
+            entry.record.terminal_at = Some(SystemTime::now());
             entry.record.transaction.connection_id = Some(target.clone());
             entry.url = None;
             if broker.0.store.write(state.snapshot()).await.is_err() {

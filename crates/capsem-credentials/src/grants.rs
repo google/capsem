@@ -96,6 +96,10 @@ impl GrantCapability {
         {
             return Err(GrantError::Invalid);
         }
+        let scopes = scopes
+            .iter()
+            .map(|value| crate::oauth::canonical_scope(value).to_owned())
+            .collect();
         Ok(Self { id, scopes, targets })
     }
     pub fn id(&self) -> &str {

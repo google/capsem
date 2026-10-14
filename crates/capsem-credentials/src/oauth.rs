@@ -11,6 +11,7 @@ use capsem_crypto::secrets::Zeroizing;
 use capsem_crypto::Sha256;
 
 mod google;
+pub(crate) use google::canonical_scope;
 #[cfg(test)]
 pub(crate) use google::{test_connection, TestReply};
 mod listener;

@@ -28,6 +28,7 @@ pub(super) struct TransactionRecord {
     pub request: api::AuthorizeGoogleRequest,
     pub transaction: api::AuthorizationTransaction,
     pub target_connection_id: String,
+    pub terminal_at: Option<SystemTime>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

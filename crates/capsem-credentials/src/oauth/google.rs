@@ -507,7 +507,7 @@ fn valid_scope(value: &str) -> bool {
 fn base64url_nonce(value: &str) -> bool {
     value.len() == 43 && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
 }
-fn canonical_scope(value: &str) -> &str {
+pub(crate) fn canonical_scope(value: &str) -> &str {
     match value {
         "email" => "https://www.googleapis.com/auth/userinfo.email",
         "profile" => "https://www.googleapis.com/auth/userinfo.profile",

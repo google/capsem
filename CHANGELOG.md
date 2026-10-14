@@ -66,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Credential grant retries normalize capability sets and exact RFC3339 expiry
+  instants, including offsets, and share Google's documented scope aliases.
+  Broker input budgets and timeouts come from one checked-in policy; completed
+  retry records retire after its 24-hour window without evicting active work.
+
 - Sigma YAML imports use a maintained safe Rust parser, reject duplicate
   selection keys, and bound document, nesting and alias expansion.
 

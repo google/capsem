@@ -207,6 +207,45 @@ async fn expiration_closes_callback_and_cannot_replay_enrollment() {
 }
 
 #[tokio::test]
+async fn terminal_retention_keeps_recent_retries_and_reclaims_old_slots_without_touching_pending() {
+    let provider = Arc::new(Provider::default());
+    let _first = provider.queue();
+    let _second = provider.queue();
+    let mut bounds = limits();
+    bounds.max_transactions = 2;
+    let broker = ConnectionBroker::open(
+        BrokerStorage::Memory,
+        vec![profile(Arc::clone(&provider))],
+        authority(),
+        bounds,
+    )
+    .await
+    .unwrap();
+    let request = consent();
+    let first = broker.authorize(request.clone()).await.unwrap();
+    broker.cancel_authorization(&first.transaction.id).await.unwrap();
+    let second = broker.authorize(consent()).await.unwrap();
+    assert_eq!(broker.prune_at(SystemTime::now()).await.unwrap().transactions, 0);
+    assert_eq!(
+        broker.authorize(request).await.unwrap().transaction.state,
+        api::TransactionState::Cancelled
+    );
+    let future = SystemTime::now() + bounds.retention_lifetime + Duration::from_secs(1);
+    assert_eq!(broker.prune_at(future).await.unwrap().transactions, 1);
+    assert_eq!(
+        broker.authorization(&second.transaction.id).await.unwrap().state,
+        api::TransactionState::Pending
+    );
+    assert_eq!(
+        broker.authorization(&first.transaction.id).await.unwrap_err(),
+        api::CredentialErrorCode::TransactionExpired
+    );
+    let _third = provider.queue();
+    broker.authorize(consent()).await.unwrap();
+    assert_eq!(provider.begins.load(Ordering::Acquire), 3);
+}
+
+#[tokio::test]
 async fn durable_restart_cancels_pending_and_never_persists_browser_material() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("private/broker.json");
@@ -689,4 +728,74 @@ async fn failed_durable_grant_publication_retires_authority_and_cannot_replay() 
         .is_none());
     let (id, owner, _) = session.session.identities();
     assert_eq!(authority.revoke_owner(id, owner).unwrap(), 0);
+}
+
+#[tokio::test]
+async fn terminal_cleanup_is_durable_and_never_removes_live_connections_or_unexpired_grants() {
+    let (_fixture, connection) = verified().await;
+    let provider = Arc::new(Provider::default());
+    let sender = provider.queue();
+    let authority = authority();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("private/broker.json");
+    let broker = ConnectionBroker::open(
+        BrokerStorage::File {
+            path: path.clone(),
+            max_bytes: 65536,
+        },
+        vec![profile(Arc::clone(&provider))],
+        Arc::clone(&authority),
+        limits(),
+    )
+    .await
+    .unwrap();
+    let started = broker.authorize(consent()).await.unwrap();
+    sender.send(connection).unwrap();
+    joined(&broker, &started.transaction.id).await;
+    let id = broker
+        .authorization(&started.transaction.id)
+        .await
+        .unwrap()
+        .connection_id
+        .unwrap();
+    let session = binding();
+    let grant = broker
+        .create_grant(session, grant_request(session, id.clone()), |_, _| true)
+        .await
+        .unwrap();
+    assert_eq!(broker.prune().await.unwrap(), BrokerPruned::default());
+    assert_eq!(
+        broker.connection(&id).await.unwrap().state,
+        api::ConnectionState::Connected
+    );
+    assert!(broker.grants(session, |_, _| true).await.unwrap().grants[0].runtime_bound);
+    broker.disconnect(&id).await.unwrap();
+    joined(&broker, &id).await;
+    let future = SystemTime::now() + limits().retention_lifetime + Duration::from_secs(31);
+    assert_eq!(
+        broker.prune_at(future).await.unwrap(),
+        BrokerPruned {
+            transactions: 1,
+            grants: 1,
+            connections: 1
+        }
+    );
+    assert_eq!(
+        broker.connection(&id).await.unwrap_err(),
+        api::CredentialErrorCode::ConnectionUnavailable
+    );
+    assert_eq!(
+        broker.revoke_grant(session, &grant.id).await.unwrap_err(),
+        api::CredentialErrorCode::GrantUnavailable
+    );
+    drop(broker);
+    let restored = ConnectionBroker::open(
+        BrokerStorage::File { path, max_bytes: 65536 },
+        vec![],
+        super::authority(),
+        limits(),
+    )
+    .await
+    .unwrap();
+    assert!(restored.list().await.unwrap().connections.is_empty());
 }

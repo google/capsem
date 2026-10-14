@@ -14,6 +14,10 @@ use tokio::sync::Mutex;
 use crate::{GoogleConnection, GrantAuthority, GrantCapability, GrantHandle, GrantSession};
 
 mod enrollment;
+mod policy;
+mod retention;
+use policy::{label, normalize_grant_request, normalize_profile, scope};
+pub use retention::BrokerPruned;
 mod sessions;
 pub use sessions::SessionBinding;
 mod storage;
@@ -44,11 +48,13 @@ pub struct BrokerProfile {
 }
 
 impl BrokerProfile {
-    pub fn unconfigured(summary: api::ScopeProfileSummary) -> BrokerResult<Self> {
+    pub fn unconfigured(mut summary: api::ScopeProfileSummary) -> BrokerResult<Self> {
+        let limits = BrokerLimits::bundled()?;
+        normalize_profile(&mut summary, limits)?;
         if summary.enabled || summary.capabilities.iter().any(|capability| capability.supported) {
             return Err(api::CredentialErrorCode::ConfigurationRequired);
         }
-        Self::validate(&summary)?;
+        Self::validate(&summary, limits)?;
         Ok(Self {
             summary,
             capabilities: BTreeMap::new(),
@@ -59,11 +65,13 @@ impl BrokerProfile {
     /// Trusted host configuration must establish consumer support independently
     /// of consent. Supplying an adapter is not itself a native-vendor proof.
     pub fn configured(
-        summary: api::ScopeProfileSummary,
+        mut summary: api::ScopeProfileSummary,
         capabilities: Vec<GrantCapability>,
         provider: Arc<dyn EnrollmentProvider>,
     ) -> BrokerResult<Self> {
-        Self::validate(&summary)?;
+        let limits = BrokerLimits::bundled()?;
+        normalize_profile(&mut summary, limits)?;
+        Self::validate(&summary, limits)?;
         let mut configured = BTreeMap::new();
         for capability in capabilities {
             if configured.insert(capability.id().to_owned(), capability).is_some() {
@@ -96,19 +104,27 @@ impl BrokerProfile {
         })
     }
 
-    fn validate(summary: &api::ScopeProfileSummary) -> BrokerResult<()> {
+    fn validate(summary: &api::ScopeProfileSummary, limits: BrokerLimits) -> BrokerResult<()> {
+        if summary.capabilities.len() > limits.max_capabilities || summary.requested_scopes.len() > limits.max_scopes {
+            return Err(api::CredentialErrorCode::ConfigurationRequired);
+        }
         let ids: BTreeSet<_> = summary.capabilities.iter().map(|capability| &capability.id).collect();
         if !catalog_id(&summary.id)
-            || summary.capabilities.len() > 64
+            || summary.id.len() > limits.max_identifier_bytes
             || ids.len() != summary.capabilities.len()
-            || summary.label.len() > 256
-            || summary.application_label.len() > 256
-            || summary.requested_scopes.len() > 64
+            || !label(&summary.label, limits)
+            || !label(&summary.application_label, limits)
+            || summary.requested_scopes.iter().any(|value| !scope(value, limits))
             || summary.capabilities.iter().any(|capability| {
                 !catalog_id(&capability.id)
-                    || capability.label.len() > 256
-                    || capability.consumer.len() > 256
-                    || capability.required_scopes.len() > 64
+                    || capability.id.len() > limits.max_identifier_bytes
+                    || !label(&capability.label, limits)
+                    || !label(&capability.consumer, limits)
+                    || capability.required_scopes.len() > limits.max_scopes
+                    || capability
+                        .required_scopes
+                        .iter()
+                        .any(|value| !scope(value, limits) || !summary.requested_scopes.contains(value))
             })
         {
             return Err(api::CredentialErrorCode::ConfigurationRequired);
@@ -117,14 +133,26 @@ impl BrokerProfile {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BrokerLimits {
     pub max_connections: usize,
     pub max_transactions: usize,
     pub max_grants: usize,
+    pub max_profiles: usize,
+    pub max_capabilities: usize,
+    pub max_scopes: usize,
+    pub max_identifier_bytes: usize,
+    pub max_label_bytes: usize,
+    pub max_scope_bytes: usize,
+    #[serde(deserialize_with = "policy::seconds")]
     pub enrollment_lifetime: Duration,
+    #[serde(deserialize_with = "policy::seconds")]
     pub grant_lifetime: Duration,
+    #[serde(deserialize_with = "policy::seconds")]
     pub retirement_timeout: Duration,
+    #[serde(deserialize_with = "policy::seconds")]
+    pub retention_lifetime: Duration,
 }
 
 struct ConnectionEntry {
@@ -182,22 +210,13 @@ impl ConnectionBroker {
         authority: Arc<GrantAuthority>,
         limits: BrokerLimits,
     ) -> BrokerResult<Self> {
-        if limits.max_connections == 0
-            || limits.max_transactions == 0
-            || limits.max_grants == 0
-            || profiles.len() > 64
-            || [
-                limits.enrollment_lifetime,
-                limits.grant_lifetime,
-                limits.retirement_timeout,
-            ]
-            .iter()
-            .any(|duration| duration.is_zero() || Instant::now().checked_add(*duration).is_none())
-        {
+        limits.validate()?;
+        if profiles.len() > limits.max_profiles {
             return Err(api::CredentialErrorCode::ConfigurationRequired);
         }
         let mut catalog = BTreeMap::new();
         for profile in profiles {
+            BrokerProfile::validate(&profile.summary, limits)?;
             if catalog.insert(profile.summary.id.clone(), profile).is_some() {
                 return Err(api::CredentialErrorCode::ConfigurationRequired);
             }
@@ -225,6 +244,7 @@ impl ConnectionBroker {
             if record.transaction.state == api::TransactionState::Pending {
                 record.transaction.state = api::TransactionState::Cancelled;
                 record.transaction.error_code = Some(api::CredentialErrorCode::TransactionCancelled);
+                record.terminal_at = Some(SystemTime::now());
             }
             state
                 .transactions

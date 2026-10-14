@@ -1,5 +1,6 @@
 use super::*;
 mod lifecycle;
+mod policy;
 
 fn limits() -> BrokerLimits {
     BrokerLimits {
@@ -9,6 +10,7 @@ fn limits() -> BrokerLimits {
         enrollment_lifetime: Duration::from_secs(1),
         grant_lifetime: Duration::from_secs(30),
         retirement_timeout: Duration::from_secs(1),
+        ..BrokerLimits::bundled().unwrap()
     }
 }
 

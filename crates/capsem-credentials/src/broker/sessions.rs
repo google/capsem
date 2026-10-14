@@ -61,11 +61,12 @@ impl ConnectionBroker {
     pub async fn create_grant(
         &self,
         binding: SessionBinding,
-        request: api::CreateSessionGrantRequest,
+        mut request: api::CreateSessionGrantRequest,
         policy: impl Fn(&GrantSession, &GrantCapability) -> bool,
     ) -> BrokerResult<api::SessionGrantSummary> {
         uuid(&request.request_id)?;
         uuid(&request.expected_owner_generation)?;
+        normalize_grant_request(&mut request, self.0.limits)?;
         let (session_id, owner_generation) = binding.ids();
         if request.expected_owner_generation != owner_generation {
             return Err(api::CredentialErrorCode::OwnerChanged);
@@ -260,7 +261,7 @@ impl ConnectionBroker {
             .profiles
             .get(profile)
             .ok_or(api::CredentialErrorCode::ConfigurationRequired)?;
-        if ids.is_empty() || ids.len() > 64 {
+        if ids.is_empty() || ids.len() > self.0.limits.max_capabilities {
             return Err(api::CredentialErrorCode::UnsupportedCapability);
         }
         let set: BTreeSet<_> = ids.iter().collect();
