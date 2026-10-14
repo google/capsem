@@ -33,6 +33,9 @@ pub struct GrantSession {
     runtime: [u8; 16],
 }
 impl GrantSession {
+    pub fn identities(&self) -> ([u8; 16], [u8; 16], [u8; 16]) {
+        (self.session, self.ownership, self.runtime)
+    }
     pub fn new(session: [u8; 16], ownership: [u8; 16], runtime: [u8; 16]) -> Result<Self, GrantError> {
         if session == [0; 16] || ownership == [0; 16] || runtime == [0; 16] {
             return Err(GrantError::Invalid);
@@ -98,6 +101,9 @@ impl GrantCapability {
     pub fn id(&self) -> &str {
         &self.id
     }
+    pub fn required_scopes(&self) -> &BTreeSet<String> {
+        &self.scopes
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GrantHandle([u8; 32]);
@@ -130,7 +136,33 @@ pub struct GrantAuthority {
     limits: GrantLimits,
     grants: Mutex<HashMap<GrantHandle, Arc<Grant>>>,
 }
+pub(crate) enum GrantVisibility {
+    Active,
+    Preserved,
+    Expired,
+}
 impl GrantAuthority {
+    pub(crate) fn visibility(
+        &self,
+        handle: GrantHandle,
+        session: GrantSession,
+        now: Instant,
+    ) -> Option<GrantVisibility> {
+        let grants = self.grants.lock().ok()?;
+        let grant = grants.get(&handle)?;
+        if grant.session != session || !Self::consent_current(grant) {
+            return None;
+        }
+        let visibility = if now >= grant.expires {
+            GrantVisibility::Expired
+        } else if grant.active {
+            GrantVisibility::Active
+        } else {
+            GrantVisibility::Preserved
+        };
+        drop(grants);
+        Some(visibility)
+    }
     pub fn new(limits: GrantLimits) -> Result<Self, GrantError> {
         if limits.max_grants == 0 || limits.max_lifetime.is_zero() {
             return Err(GrantError::Invalid);

@@ -225,6 +225,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Credential-owned coordination for finite enrollment, redacted connection
+  state and explicit session grants, including durable request records and
+  same-owner resume fencing. Service activation and the supported native AGY
+  adapter remain under integration.
+
 - Rust SDK connection and session credential-grant resources implement the
   nine approved calls with explicit consent, ownership checks and no automatic
   replay. Live service activation and native AGY handoff remain pending.

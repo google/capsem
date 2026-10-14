@@ -1,5 +1,6 @@
 //! Broker-owned credential storage without telemetry or policy dependencies.
 
+pub mod broker;
 mod durable;
 mod grants;
 mod oauth;

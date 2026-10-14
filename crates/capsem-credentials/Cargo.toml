@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+capsem-api = { path = "../capsem-api" }
 capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["jwt"] }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
@@ -24,6 +25,8 @@ futures = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+humantime = { workspace = true }
+uuid = "1"
 tracing = { workspace = true }
 
 [lints]

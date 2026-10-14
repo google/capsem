@@ -249,6 +249,9 @@ impl GoogleOAuthClient {
 }
 
 impl GoogleConnection {
+    pub(crate) fn same_owner(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
     fn from_record(client: Arc<GoogleOAuthClient>, storage: OAuthConnectionStorage, record: Record) -> Self {
         let denied = record.state != GoogleConnectionState::Connected;
         Self(Arc::new(Core {
