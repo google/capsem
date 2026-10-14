@@ -186,7 +186,7 @@ impl ConnectionBroker {
             .as_ref()
             .map(|value| humantime::parse_rfc3339(value).map_err(|_| api::CredentialErrorCode::RequestConflict))
             .transpose()?
-            .unwrap_or(default);
+            .unwrap_or(default.min(binding.expires));
         if expires > default || expires > binding.expires || expires <= now {
             return Err(api::CredentialErrorCode::SessionUnavailable);
         }

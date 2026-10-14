@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Default session grant expiry fits the trusted remaining owner lifetime,
+  including time spent checking policy; explicit expiry overruns remain refused.
+
 - Retained credential approvals can be inspected and durably revoked using
   their original session owner without creating or rebinding runtime authority.
 

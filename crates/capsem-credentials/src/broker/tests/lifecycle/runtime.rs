@@ -229,3 +229,24 @@ async fn stopped_approval_inventory_expires_finite_approval_without_provider_fet
     assert!(crate::broker::ApprovalOwner::new([0; 16], owner).is_err());
     assert!(crate::broker::ApprovalOwner::new(session, [0; 16]).is_err());
 }
+
+#[tokio::test]
+async fn default_grant_expiry_fits_equal_and_shorter_trusted_owner_deadlines() {
+    for remaining in [limits().grant_lifetime, Duration::from_secs(5)] {
+        let (_fixture, broker, _provider, _authority, original, existing) = granted(BrokerStorage::Memory).await;
+        let bound = SessionBinding::new(original.session, SystemTime::now() + remaining).unwrap();
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let request = grant_request(bound, existing.connection_id.clone());
+        let result = broker.create_grant(bound, request.clone(), |_, _| true).await.unwrap();
+        let expiry = humantime::parse_rfc3339(&result.expires_at).unwrap();
+        assert!(expiry <= bound.expires);
+        assert!(expiry > SystemTime::now());
+        let mut overrun = request;
+        overrun.request_id = capsem_crypto::uuid_v4().to_string();
+        overrun.expires_at = Some(timestamp(bound.expires + Duration::from_secs(1)).unwrap());
+        assert_eq!(
+            broker.create_grant(bound, overrun, |_, _| true).await.unwrap_err(),
+            api::CredentialErrorCode::SessionUnavailable
+        );
+    }
+}
