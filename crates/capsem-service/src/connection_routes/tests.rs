@@ -61,3 +61,90 @@ async fn connection_catalog_and_nine_routes_use_typed_owner_failures_without_sec
             .is_some());
     }
 }
+
+#[tokio::test]
+async fn retained_credential_approvals_use_canonical_registry_owner_without_a_process() {
+    let (state, _root) = crate::tests::make_test_state_with_tempdir();
+    let id = "fa24d12d-86af-448a-9f99-dd1fcceae68c".to_string();
+    let mut entry = crate::tests::test_persistent_entry("retained-box", state.run_dir.join("persistent").join(&id));
+    entry.id = id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(entry.name.clone(), entry);
+    let app = build_service_router(Arc::clone(&state));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/vms/{id}/credential-grants"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+    let inventory: api::SessionGrantListResponse = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(inventory.session_id, id);
+    assert_eq!(inventory.owner_generation, id);
+    assert!(inventory.grants.is_empty());
+    assert!(state.instances.lock().unwrap().is_empty());
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/vms/{id}/credential-grants/missing"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<api::ErrorResponse>(&bytes).unwrap().code,
+        Some("grant_unavailable".into())
+    );
+    for route_id in [
+        "retained-box".into(),
+        capsem_crypto::uuid_v4().to_string(),
+        uuid::Uuid::nil().to_string(),
+        id.to_uppercase(),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/vms/{route_id}/credential-grants"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(response.status(), StatusCode::OK);
+    }
+    let request = api::CreateSessionGrantRequest {
+        request_id: capsem_crypto::uuid_v4().to_string(),
+        expected_owner_generation: id.clone(),
+        connection_id: "missing".into(),
+        capability_ids: vec!["agy".into()],
+        expires_at: None,
+    };
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/vms/{id}/credential-grants"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(response.status(), StatusCode::CREATED);
+    assert!(state.instances.lock().unwrap().is_empty());
+}

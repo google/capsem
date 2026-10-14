@@ -3,6 +3,7 @@ use super::*;
 use capsem_core::managed_sessions::{controller::CredentialOwner, VmBinding};
 use capsem_credentials::broker::{BrokerLimits, BrokerProfile, BrokerStorage, ConnectionBroker, SessionBinding};
 use std::time::SystemTime;
+mod approval_context;
 pub(crate) mod lifecycle;
 pub(crate) mod policy;
 
@@ -195,11 +196,7 @@ impl Context {
     }
 }
 async fn context(state: &ServiceState, id: &str) -> Result<Context, CredentialError> {
-    let session =
-        uuid::Uuid::parse_str(id).map_err(|_| CredentialError(api::CredentialErrorCode::SessionUnavailable, false))?;
-    if session.is_nil() || session.to_string() != id {
-        return Err(api::CredentialErrorCode::SessionUnavailable.into());
-    }
+    let session = approval_context::canonical(id)?;
     let (generation, policy_path, uds_path) = state
         .instances
         .lock()
@@ -266,9 +263,14 @@ pub(crate) async fn grants(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::SessionGrantListResponse>, CredentialError> {
+    let context = match approval_context::resolve(&state, &id).await? {
+        approval_context::Target::Retained(owner) => {
+            return Ok(Json(state.connections.broker().await?.approvals(owner).await?))
+        }
+        approval_context::Target::Running(context) => context,
+    };
     let _policy = state.policy_mutation.begin().await;
     enabled(&state).await?;
-    let context = context(&state, &id).await?;
     let broker = state.connections.broker().await?;
     let admission = policy::admission(&state, &context, broker, false).await?;
     Ok(Json(
@@ -311,14 +313,9 @@ pub(crate) async fn revoke_grant(
     State(state): State<Arc<ServiceState>>,
     Path((id, grant)): Path<(String, String)>,
 ) -> Result<Json<api::RevokeSessionGrantResponse>, CredentialError> {
-    let context = context(&state, &id).await?;
+    let owner = approval_context::resolve(&state, &id).await?.owner();
     Ok(Json(
-        state
-            .connections
-            .broker()
-            .await?
-            .revoke_grant(context.binding, &grant)
-            .await?,
+        state.connections.broker().await?.revoke_approval(owner, &grant).await?,
     ))
 }
 

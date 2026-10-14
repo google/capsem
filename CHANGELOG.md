@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Named stopped sessions expose retained approval inventory and revocation
+  through canonical session IDs; grant creation still requires a live runtime.
+
 - Default session grant expiry fits the trusted remaining owner lifetime,
   including time spent checking policy; explicit expiry overruns remain refused.
 
