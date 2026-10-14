@@ -33,8 +33,7 @@ fn main() {
 }
 
 fn write_runtime_limits() {
-    let config_path = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"))
-        .join("../../config/data/runtime-limits.toml");
+    let config_path = PathBuf::from("../../config/data/runtime-limits.toml");
     let source = std::fs::read_to_string(&config_path)
         .unwrap_or_else(|error| panic!("runtime limits: read {}: {error}", config_path.display()));
     let config: toml::Value = toml::from_str(&source)
