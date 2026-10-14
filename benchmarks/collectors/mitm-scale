@@ -183,7 +183,12 @@ def main() -> int:
     client = service.client()
     mock_proc = None
     vm_ids: list[str] = []
-    measured: dict[str, dict] = {}
+    logical_cpus = os.cpu_count() or 1
+    physical_cores = psutil.cpu_count(logical=False) or logical_cpus
+    measured: dict[str, dict] = {
+        "host.logical_cpus": {"unit": "count", "samples": [logical_cpus]},
+        "host.physical_cores": {"unit": "count", "samples": [physical_cores]},
+    }
     sidecar = {"settings": SETTINGS.model_dump(), "levels": {}}
     service_log = ""
     try:

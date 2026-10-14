@@ -107,7 +107,7 @@ def test_protocol_defaults_come_from_the_typed_gate_config(monkeypatch) -> None:
 
 def test_mitm_scale_settings_cover_independent_vm_fanout() -> None:
     settings = CONFIG.benchmark.mitm_scale
-    assert tuple(settings.vm_counts) == (1, 2, 4)
+    assert tuple(settings.vm_counts) == (1, 2, 4, 8)
     assert settings.per_vm_concurrency == 16
     assert settings.duration_seconds == 10
 
