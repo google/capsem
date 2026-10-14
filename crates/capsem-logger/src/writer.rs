@@ -69,16 +69,15 @@ pub const MAX_BODY_BLOB_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_BATCH_CAPACITY: usize = 10_000;
 /// Unflushed ops that force a disk flush before the interval is up.
 ///
-/// The ceiling for bulk writers with large caller-provided queues. Small
-/// queues must flush much sooner: five seconds once accumulated 30k body
-/// index rows and stalled a 1024-entry native audit queue for over a second.
-/// Scale pending work to that existing capacity without enlarging admission.
+/// Every op waiting for a flush is a row held in RAM, and every flush empties
+/// that memory, so what the writer holds is bounded by `DISK_FLUSH_INTERVAL`
+/// of traffic, not by the session. This threshold only caps a burst faster
+/// than the interval. It stays high on purpose: at 10,000 a 100k-row burst
+/// spent its accept path waiting on ten disk flushes and was accepted 3-4x
+/// slower (see `benches/db_read_write_micro.rs`), where the whole point of
+/// the memory schema is that accepting a row never waits on the disk.
 const DISK_FLUSH_THRESHOLD_OPS: usize = 1_000_000;
 const DISK_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
-
-fn disk_flush_work_limit(capacity: usize) -> usize {
-    capacity.max(1024).saturating_mul(2).min(DISK_FLUSH_THRESHOLD_OPS)
-}
 
 pub const DB_ENQUEUE_SPAN: &str = "capsem.db.enqueue";
 pub const DB_WRITE_BATCH_SPAN: &str = "capsem.db.write_batch";
@@ -614,7 +613,6 @@ fn writer_loop(
     mut bodies: BodyArchive,
     mut tally: LedgerTally,
 ) {
-    let disk_flush_work_limit = disk_flush_work_limit(batch_capacity);
     let mut flush_watermarks =
         schema::with_memory_schema_lock(|| schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables()))
             .unwrap_or_else(|error| {
@@ -716,7 +714,7 @@ fn writer_loop(
         // wait for the next transaction; its bytes are already on disk.
         bodies.close_if_due();
         pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
-        let disk_flush_due = dirty_ops >= disk_flush_work_limit
+        let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
             || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
             || barriers.waiting();
         let mut barrier_outcome: FlushOutcome = if rejected_ops == 0 {
