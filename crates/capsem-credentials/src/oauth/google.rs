@@ -18,8 +18,9 @@ pub(crate) use connection::tests::setup as test_connection;
 pub(crate) use tests::fixture::Reply as TestReply;
 mod identity;
 pub use connection::{
-    GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionState,
-    GoogleConnectionStatus, GoogleRevocationOutcome, GoogleRevocationState, OAuthConnectionStorage,
+    GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionMetadata,
+    GoogleConnectionState, GoogleConnectionStatus, GoogleRevocationOutcome, GoogleRevocationState,
+    OAuthConnectionStorage,
 };
 pub use identity::{GoogleIdentity, OAuthIdentityError};
 

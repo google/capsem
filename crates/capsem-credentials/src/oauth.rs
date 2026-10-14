@@ -15,10 +15,10 @@ mod google;
 pub(crate) use google::{test_connection, TestReply};
 mod listener;
 pub use google::{
-    GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionState,
-    GoogleConnectionStatus, GoogleIdentity, GoogleOAuthClient, GoogleRegistration, GoogleRevocationOutcome,
-    GoogleRevocationState, OAuthAuthorizationUrl, OAuthConnectionStorage, OAuthHttpPolicy, OAuthIdentityError,
-    OAuthProviderError, OAuthTokenError, OAuthTokens,
+    GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionMetadata,
+    GoogleConnectionState, GoogleConnectionStatus, GoogleIdentity, GoogleOAuthClient, GoogleRegistration,
+    GoogleRevocationOutcome, GoogleRevocationState, OAuthAuthorizationUrl, OAuthConnectionStorage, OAuthHttpPolicy,
+    OAuthIdentityError, OAuthProviderError, OAuthTokenError, OAuthTokens,
 };
 pub use listener::{OAuthListener, OAuthListenerError, OAuthListenerPolicy};
 

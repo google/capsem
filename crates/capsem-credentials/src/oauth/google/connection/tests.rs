@@ -9,6 +9,8 @@ use super::super::tests::fixture::{Fixture, Reply};
 use super::*;
 use crate::{LoopbackRedirect, OAuthAttempt, OAuthHttpPolicy, OAuthPolicy};
 
+mod metadata;
+
 const CLIENT: &str = "fixture.apps.googleusercontent.com";
 const SUBJECT: &str = "private-connection-subject";
 const JWKS: &str = include_str!("../../../../../../tests/fixtures/oauth/identity-jwks-test-only.json");
