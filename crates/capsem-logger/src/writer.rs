@@ -79,6 +79,25 @@ const DEFAULT_BATCH_CAPACITY: usize = 10_000;
 const DISK_FLUSH_THRESHOLD_OPS: usize = 1_000_000;
 const DISK_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 
+#[derive(Clone, Copy)]
+struct WriterSchedule {
+    capacity: usize,
+    interval: Duration,
+}
+
+impl WriterSchedule {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity: if capacity == 0 {
+                DEFAULT_BATCH_CAPACITY
+            } else {
+                capacity
+            },
+            interval: DISK_FLUSH_INTERVAL,
+        }
+    }
+}
+
 pub const DB_ENQUEUE_SPAN: &str = "capsem.db.enqueue";
 pub const DB_WRITE_BATCH_SPAN: &str = "capsem.db.write_batch";
 pub const DB_SHUTDOWN_FLUSH_SPAN: &str = "capsem.db.shutdown_flush";
@@ -326,7 +345,7 @@ impl DbWriter {
 
         let mut last_busy = None;
         for _ in 0..50 {
-            match Self::open_once(path, capacity, now) {
+            match Self::open_once(path, WriterSchedule::new(capacity), now) {
                 Ok(writer) => return Ok(writer),
                 Err(error) if is_sqlite_busy(&error) => {
                     last_busy = Some(error);
@@ -341,7 +360,7 @@ impl DbWriter {
         )))
     }
 
-    fn open_once(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
+    fn open_once(path: &Path, schedule: WriterSchedule, now: LedgerClock) -> rusqlite::Result<Self> {
         let held = writer_lock::acquire(path)?;
         legacy::set_aside_pre_archive_ledger(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -381,12 +400,7 @@ impl DbWriter {
         // scan of its rows.
         let tally = LedgerTally::restored(counters::load(&conn)?);
 
-        let batch_capacity = if capacity == 0 {
-            DEFAULT_BATCH_CAPACITY
-        } else {
-            capacity
-        };
-        let (tx, rx) = writer_channel(batch_capacity);
+        let (tx, rx) = writer_channel(schedule.capacity);
         let db_path = path.to_path_buf();
         let writer_loop_db_path = Some(db_path.clone());
         let pending_body_bytes = Arc::new(AtomicU64::new(0));
@@ -400,7 +414,7 @@ impl DbWriter {
                     conn,
                     rx,
                     writer_loop_db_path,
-                    batch_capacity,
+                    schedule,
                     &loop_pending_body_bytes,
                     bodies,
                     tally,
@@ -435,17 +449,13 @@ impl DbWriter {
         })?;
         let tally = LedgerTally::restored(counters::load(&conn)?);
 
-        let batch_capacity = if capacity == 0 {
-            DEFAULT_BATCH_CAPACITY
-        } else {
-            capacity
-        };
-        let (tx, rx) = writer_channel(batch_capacity);
+        let schedule = WriterSchedule::new(capacity);
+        let (tx, rx) = writer_channel(schedule.capacity);
         let pending_body_bytes = Arc::new(AtomicU64::new(0));
         let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, None, batch_capacity, &loop_pending_body_bytes, bodies, tally))
+            .spawn(move || writer_loop(conn, rx, None, schedule, &loop_pending_body_bytes, bodies, tally))
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -608,11 +618,15 @@ fn writer_loop(
     conn: Connection,
     rx: mpsc::Receiver<WriterMessage>,
     db_path: Option<PathBuf>,
-    batch_capacity: usize,
+    schedule: WriterSchedule,
     pending_body_bytes: &AtomicU64,
     mut bodies: BodyArchive,
     mut tally: LedgerTally,
 ) {
+    let WriterSchedule {
+        capacity: batch_capacity,
+        interval,
+    } = schedule;
     let mut flush_watermarks =
         schema::with_memory_schema_lock(|| schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables()))
             .unwrap_or_else(|error| {
@@ -636,9 +650,12 @@ fn writer_loop(
         let first_message = if dirty_ops == 0 {
             rx.recv().ok()
         } else {
-            match rx.recv_timeout(DISK_FLUSH_INTERVAL) {
+            match rx.recv_timeout(interval.saturating_sub(last_disk_flush.elapsed())) {
                 Ok(message) => Some(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // A failed attempt retains its dirty rows but must not
+                    // keep receiving against an already-expired deadline.
+                    last_disk_flush = Instant::now();
                     if let Err(error) = flush_dirty_tables_to_disk(
                         &conn,
                         &mut dirty_tables,
@@ -651,6 +668,7 @@ fn writer_loop(
                     } else {
                         dirty_ops = 0;
                         last_disk_flush = Instant::now();
+                        pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
                     }
                     ::metrics::gauge!(DB_MEMORY_UNFLUSHED_OPS).set(dirty_ops as f64);
                     continue;
@@ -714,15 +732,15 @@ fn writer_loop(
         // wait for the next transaction; its bytes are already on disk.
         bodies.close_if_due();
         pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
-        let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
-            || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
-            || barriers.waiting();
+        let disk_flush_due =
+            dirty_ops >= DISK_FLUSH_THRESHOLD_OPS || last_disk_flush.elapsed() >= interval || barriers.waiting();
         let mut barrier_outcome: FlushOutcome = if rejected_ops == 0 {
             Ok(())
         } else {
             Err(format!("db rejected {rejected_ops} accepted write operations"))
         };
         if disk_flush_due {
+            last_disk_flush = Instant::now();
             match flush_dirty_tables_to_disk(
                 &conn,
                 &mut dirty_tables,

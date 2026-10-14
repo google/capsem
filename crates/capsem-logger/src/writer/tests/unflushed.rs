@@ -35,6 +35,82 @@ fn fs_op(idx: usize) -> WriteOp {
     ))
 }
 
+#[test]
+fn a_late_write_does_not_restart_the_idle_flush_interval() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let writer = DbWriter::open_once(
+        &path,
+        WriterSchedule {
+            capacity: 32,
+            interval: std::time::Duration::from_secs(1),
+        },
+        std::time::SystemTime::now,
+    )
+    .unwrap();
+    writer.write_blocking_checked(fs_op(0)).unwrap();
+    let ready = std::time::Instant::now();
+    while mem_rows(&path, "fs_events") != 1 {
+        assert!(
+            ready.elapsed() < std::time::Duration::from_secs(2),
+            "writer did not process the first row"
+        );
+        std::thread::yield_now();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    writer.write_blocking_checked(fs_op(1)).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
+    while disk_count(&path, "SELECT COUNT(*) FROM fs_events") != 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a late row must not postpone the original flush deadline by another full interval"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    writer.shutdown_blocking();
+}
+
+#[test]
+fn a_failed_idle_flush_waits_for_the_next_interval_before_retrying() {
+    let _fault = super::super::flush_faults::DISK_FLUSH_FAULT_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let writer = DbWriter::open_once(
+        &path,
+        WriterSchedule {
+            capacity: 32,
+            interval: std::time::Duration::from_secs(1),
+        },
+        std::time::SystemTime::now,
+    )
+    .unwrap();
+    super::super::flush_faults::fail_disk_flushes_for_path_for_tests(&path, 1);
+    writer.write_blocking_checked(fs_op(0)).unwrap();
+    let ready = std::time::Instant::now();
+    while mem_rows(&path, "fs_events") != 1 {
+        assert!(
+            ready.elapsed() < std::time::Duration::from_secs(2),
+            "writer did not process the row"
+        );
+        std::thread::yield_now();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert_eq!(
+        disk_count(&path, "SELECT COUNT(*) FROM fs_events"),
+        0,
+        "the failed deadline must not become an immediate retry loop"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while disk_count(&path, "SELECT COUNT(*) FROM fs_events") != 1 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the next interval did not retry the dirty row"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    writer.shutdown_blocking();
+}
+
 fn exec_start(exec_id: u64, command: &str) -> WriteOp {
     WriteOp::ExecEvent(crate::events::ExecEvent {
         event_id: None,

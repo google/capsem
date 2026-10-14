@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Idle ledger writers honor the original flush deadline when a late event
+  arrives, and failed idle flushes retain their normal retry interval.
+
 - Connection inventory supports bounded `limit` and `cursor` pages through the
   service and SDKs, with malformed queries refused.
 
