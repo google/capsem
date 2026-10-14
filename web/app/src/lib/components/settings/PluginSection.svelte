@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import CredentialInjectionForm from './CredentialInjectionForm.svelte';
+  import ConnectionSection from './ConnectionSection.svelte';
   import { getCredentialBrokerInfo, listPlugins, reloadCredentialBrokerStore, updatePlugin } from '../../api';
   import type {
     CredentialBrokerInfo,
@@ -359,6 +360,7 @@
               {/if}
             {/if}
             <CredentialInjectionForm onadded={() => { void loadCredentialBrokerInfo(); }} />
+            <ConnectionSection />
           </div>
         {/if}
       </div>

@@ -84,6 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Credential settings show account sign-in, cancellation and provider retirement;
+  running sessions can explicitly grant and revoke selected account capabilities.
+  Unsupported sign-in profiles remain disabled with an explanation.
+
 - Frontend connection and session-grant requests use authenticated SDK calls,
   validate returned ownership, and never replay consent or grant mutations.
 
