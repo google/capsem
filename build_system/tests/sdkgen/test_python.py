@@ -141,6 +141,7 @@ def test_ipv4_is_a_validated_address_value() -> None:
 def test_connection_datetime_and_revision_validation_preserve_wire_values(models: ModuleType) -> None:
     adapter = TypeAdapter(models.ConnectionSummary)
     value = _sample(SCHEMAS["ConnectionSummary"])
+    assert isinstance(value, dict), "ConnectionSummary samples must be wire objects"
     value["revision"] = 9007199254740991
     parsed = adapter.validate_json(json.dumps(value))
     assert json.loads(adapter.dump_json(parsed)) == value

@@ -200,6 +200,7 @@ def test_sdk_managed_scope_awaits_native_cleanup(language: str) -> None:
     try:
         service.start()
         client = gateway(service)
+        assert client.token is not None, "native SDK acceptance requires an authenticated gateway"
         environment = {
             **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
             "SDK_GATEWAY_URL": client.base_url, "SDK_GATEWAY_TOKEN": client.token,

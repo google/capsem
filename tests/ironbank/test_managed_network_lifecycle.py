@@ -195,6 +195,7 @@ def test_lost_create_reply_can_be_claimed_and_concurrently_closed_without_replay
         with ThreadPoolExecutor(max_workers=4) as workers:
             replies = list(workers.map(lambda _: close(), range(4)))
         first = replies[0][1]
+        assert isinstance(first, dict), "managed close must return its typed JSON object"
         assert all(status == 200 and payload == first for status, payload in replies), replies
         assert first["request_id"] == request_id and first["generation"] == generation
         assert first["state"] == "closed" and first["session_id"] == session_id
