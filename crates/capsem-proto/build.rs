@@ -74,6 +74,25 @@ fn write_runtime_limits() {
         .checked_mul(descriptors_per_client)
         .filter(|value| *value <= 1_048_576)
         .expect("runtime limits: derived network descriptor budget exceeds 1048576");
+    let dns_sessions_per_vm = config
+        .get("network")
+        .and_then(|network| network.get("dns_sessions_per_vm"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (2..=8).contains(value))
+        .unwrap_or_else(|| panic!("runtime limits: network.dns_sessions_per_vm must be an integer between 2 and 8"));
+    let dns_max_udp_datagram_bytes = config
+        .get("network")
+        .and_then(|network| network.get("dns_max_udp_datagram_bytes"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (4096..=65_507).contains(value))
+        .unwrap_or_else(|| {
+            panic!("runtime limits: network.dns_max_udp_datagram_bytes must be an integer between 4096 and 65507")
+        });
+    let dns_udp_socket_buffer_bytes = capacity
+        .checked_mul(dns_sessions_per_vm)
+        .and_then(|value| value.checked_mul(dns_max_udp_datagram_bytes))
+        .filter(|value| *value <= 64 * 1024 * 1024)
+        .expect("runtime limits: derived DNS UDP socket buffer exceeds 64 MiB");
     let producer_events_per_network_client = config
         .get("ledger")
         .and_then(|ledger| ledger.get("producer_events_per_network_client"))
@@ -105,6 +124,24 @@ fn write_runtime_limits() {
         .unwrap_or_else(|| {
             panic!("runtime limits: ledger.admission_coalesce_wait_microseconds must be an integer between 1 and 10000")
         });
+    let ledger_archive_index_rows_per_flush = config
+        .get("ledger")
+        .and_then(|ledger| ledger.get("archive_index_rows_per_flush"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (ledger_batch_capacity..=65_536).contains(value))
+        .filter(|value| value % ledger_batch_capacity == 0)
+        .unwrap_or_else(|| {
+            panic!("runtime limits: ledger.archive_index_rows_per_flush must be a batch multiple between the batch capacity and 65536")
+        });
+    let ledger_sqlite_mmap_bytes = config
+        .get("ledger")
+        .and_then(|ledger| ledger.get("sqlite_mmap_bytes"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (4 * 1024 * 1024..=256 * 1024 * 1024).contains(value))
+        .filter(|value| value % (1024 * 1024) == 0)
+        .unwrap_or_else(|| {
+            panic!("runtime limits: ledger.sqlite_mmap_bytes must be a whole MiB between 4 MiB and 256 MiB")
+        });
     let ledger_disk_flush_interval_milliseconds = config
         .get("ledger")
         .and_then(|ledger| ledger.get("disk_flush_interval_milliseconds"))
@@ -135,12 +172,22 @@ fn write_runtime_limits() {
              pub const NETWORK_TRAFFIC_GRANT_CAPACITY: usize = {traffic_grant_capacity};\n\
              /// Minimum descriptor budget for a network-facing process.\n\
              pub const NETWORK_PROCESS_OPEN_FILE_LIMIT: u64 = {open_file_limit};\n\
+             /// Independent guest-to-host DNS sessions per VM.\n\
+             pub const NETWORK_DNS_SESSIONS_PER_VM: usize = {dns_sessions_per_vm};\n\
+             /// Maximum DNS datagram accepted by the guest proxy.\n\
+             pub const NETWORK_DNS_MAX_UDP_DATAGRAM_BYTES: usize = {dns_max_udp_datagram_bytes};\n\
+             /// Receive buffer for one full supported DNS client burst.\n\
+             pub const NETWORK_DNS_UDP_SOCKET_BUFFER_BYTES: usize = {dns_udp_socket_buffer_bytes};\n\
              /// Per-producer security-event queue derived from supported clients.\n\
              pub const LEDGER_PRODUCER_QUEUE_CAPACITY: usize = {ledger_queue_capacity};\n\
              /// Consecutive producer events coalesced into one ledger exchange.\n\
              pub const LEDGER_ADMISSION_BATCH_CAPACITY: usize = {ledger_batch_capacity};\n\
              /// Maximum wait for an immediate follower before admitting a singleton.\n\
              pub const LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS: u64 = {ledger_coalesce_wait_microseconds};\n\
+             /// Archive body-index rows published in one disk flush transaction.\n\
+             pub const LEDGER_ARCHIVE_INDEX_ROWS_PER_FLUSH: usize = {ledger_archive_index_rows_per_flush};\n\
+             /// Maximum file-backed ledger window mapped into one process.\n\
+             pub const LEDGER_SQLITE_MMAP_BYTES: i64 = {ledger_sqlite_mmap_bytes};\n\
              /// Maximum time accepted rows stay only in the memory schema.\n\
              pub const LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS: u64 = {ledger_disk_flush_interval_milliseconds};\n\
              /// Pending events that force a disk flush before the timer.\n\
