@@ -7,9 +7,8 @@ look like runtime regressions even though the compiler contract is broken.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -33,8 +32,6 @@ HOT_DEV_OPTIMIZED_PACKAGES = {
     "ryu",
     "quick_cache",
     "rusqlite",
-    "libsqlite3-sys",
-    "capsem-logger",
 }
 
 RATIONALE = """\

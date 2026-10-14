@@ -13,12 +13,13 @@ from urllib.parse import quote
 
 import pytest
 from aiohttp import web
-from build_system.tests.sdkgen.test_python import _sample as sample
 from capsem_builder.sdkgen.operations import Route, is_binary_media_type, read_operations
 from capsem_builder.sdkgen.python import module_name, render_models, type_name
 from capsem_builder.sdkgen.python_operations import render_operations
 from capsem_builder.sdkgen.schema import read_schemas
 from pydantic import TypeAdapter, ValidationError
+
+from build_system.tests.sdkgen.test_python import _sample as sample
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "sdk/specification/openapi.json"

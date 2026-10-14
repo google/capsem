@@ -123,7 +123,6 @@ def test_real_workspace_inventory_matches_cargo_members() -> None:
         "capsem-core",
         "capsem-crypto",
         "capsem-credentials",
-        "capsem-crypto",
         "capsem-foundation",
         "capsem-gateway",
         "capsem-guard",

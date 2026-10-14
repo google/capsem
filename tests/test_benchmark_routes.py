@@ -2,13 +2,13 @@
 
 import json
 import sys
+import tomllib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 config = tomllib.loads((ROOT / "config/gate.toml").read_text())

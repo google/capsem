@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
+import tomllib
 from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-import tomllib
 from capsem_builder.gate import sdkchecks
 from capsem_builder.gate.plan import Plan
 from citadel.test_sdk_ci import _documents

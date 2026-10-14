@@ -860,6 +860,7 @@
   "dependencies": [
    "anyhow",
    "capsem-foundation",
+   "capsem-proto",
    "clap",
    "futures",
    "reqwest",
@@ -960,20 +961,24 @@
   "dependencies": [
    "base64",
    "bytes",
+   "capsem-api",
    "capsem-crypto",
    "capsem-foundation",
    "capsem-proto",
    "futures",
    "http-body-util",
+   "humantime",
    "hyper",
    "hyper-util",
    "reqwest",
    "serde",
    "serde_json",
    "tempfile",
+   "time",
    "tokio",
    "tracing",
-   "url"
+   "url",
+   "uuid"
   ]
  },
  "capsem-crypto": {
@@ -1212,7 +1217,8 @@
    "syn",
    "tempfile",
    "thiserror",
-   "tokio"
+   "tokio",
+   "toml"
   ]
  },
  "capsem-proxy": {
@@ -1257,11 +1263,15 @@
   "dependencies": [
    "axum",
    "capsem-api",
+   "capsem-crypto",
+   "futures",
+   "humantime",
    "reqwest",
    "serde",
    "serde_json",
    "thiserror",
-   "tokio"
+   "tokio",
+   "tokio-util"
   ]
  },
  "capsem-service": {

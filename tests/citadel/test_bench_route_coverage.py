@@ -17,9 +17,8 @@ hosted package build rather than nineteen minutes into binary qualification.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[2]
 SERVICE = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "router_runtime.rs"
