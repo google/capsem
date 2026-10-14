@@ -824,9 +824,11 @@ fn flush_dirty_tables_to_disk(
     // rows that name it are inserted in the transaction below. A crash in
     // between costs unreferenced bytes, never a row pointing past EOF.
     bodies.flush_segment();
+    let archive_finished = Instant::now();
     let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
     let tx = conn.unchecked_transaction()?;
     bodies.commit_index_rows(&tx)?;
+    let index_finished = Instant::now();
     // Injected where a real flush failure lands: inside the transaction, with
     // the archive's index rows already written into it. Everything here rolls
     // back together, and the retry has to bring the bodies back with the rows.
@@ -838,9 +840,11 @@ fn flush_dirty_tables_to_disk(
     let advanced_watermarks = schema::with_memory_schema_lock(|| {
         schema::flush_memory_tables_to_disk(&tx, tables.iter().copied(), flush_watermarks)
     })?;
+    let tables_finished = Instant::now();
     // The snapshot lands with the rows it counts, or neither does.
     counters::store(&tx, counters)?;
     tx.commit()?;
+    let commit_finished = Instant::now();
     // Only now are the written segments indexed: anything above this line rolls
     // the transaction back, and the next flush retries both halves together.
     bodies.index_rows_committed();
@@ -852,6 +856,10 @@ fn flush_dirty_tables_to_disk(
     tracing::debug!(
         target: "capsem.db",
         duration_ms = started.elapsed().as_secs_f64() * 1000.0,
+        archive_ms = archive_finished.duration_since(started).as_secs_f64() * 1000.0,
+        index_ms = index_finished.duration_since(archive_finished).as_secs_f64() * 1000.0,
+        tables_ms = tables_finished.duration_since(index_finished).as_secs_f64() * 1000.0,
+        commit_ms = commit_finished.duration_since(tables_finished).as_secs_f64() * 1000.0,
         tables = tables.len(),
         "db disk flush completed"
     );

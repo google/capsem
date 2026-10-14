@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Development builds optimize SQLite and its adapter, and archive index flushes
+  reuse their prepared statement to reduce HTTP completion stalls under load.
+
 - Protocol throughput benchmarks explicitly identify guest execution and reject
   host/guest comparisons with incorrect execution labels.
 

@@ -7,8 +7,9 @@ look like runtime regressions even though the compiler contract is broken.
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -27,6 +28,8 @@ HOT_DEV_OPTIMIZED_PACKAGES = {
     "memchr",
     "itoa",
     "ryu",
+    "rusqlite",
+    "libsqlite3-sys",
 }
 
 RATIONALE = """\
@@ -35,7 +38,11 @@ Hot codec package lost dev optimization.
 Capsem's hands-on local install path uses debug binaries, so JSON, MessagePack,
 DNS wire parsing, and BLAKE3 must stay optimized in the dev profile. If this
 guard fails, route/gateway latency can regress from compiler configuration
-before the DB or network code even runs.
+before the DB or network code even runs. SQLite and its adapter must also stay
+optimized: a native concurrency 64 reproduction took 2.07 seconds to flush its
+archive index and ledger tables, filling the bounded producer queue and holding
+the final HTTP frame for 2.18 seconds (#350). Preserve audit admission and FULL
+durability; do not hide compiler cost by raising queue limits or dropping rows.
 """
 
 
@@ -48,8 +55,8 @@ def test_hot_wire_codecs_are_optimized_in_dev_profile() -> None:
         if packages.get(package, {}).get("opt-level") != 3
     )
 
-    assert not missing_or_slow, RATIONALE + "\nMissing opt-level=3: " + ", ".join(
-        missing_or_slow
+    assert not missing_or_slow, (
+        RATIONALE + "\nMissing opt-level=3: " + ", ".join(missing_or_slow)
     )
 
 
@@ -93,16 +100,24 @@ def full_debuginfo(cargo_toml: dict) -> list[str]:
 def test_dev_profile_keeps_only_line_tables() -> None:
     cargo_toml = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text())
     offenders = full_debuginfo(cargo_toml)
-    assert not offenders, DEBUGINFO_RATIONALE + "\nFull debuginfo: " + ", ".join(offenders)
+    assert not offenders, (
+        DEBUGINFO_RATIONALE + "\nFull debuginfo: " + ", ".join(offenders)
+    )
 
 
 def test_debuginfo_guard_rejects_every_full_spelling() -> None:
     lean = {"profile": {"dev": {"debug": "line-tables-only"}}}
     assert full_debuginfo(lean) == []
-    assert full_debuginfo({}) == ["profile.dev"], "an absent key is Cargo's full default"
+    assert full_debuginfo({}) == ["profile.dev"], (
+        "an absent key is Cargo's full default"
+    )
     for spelling in (2, 1, True, "full", "limited"):
-        assert full_debuginfo({"profile": {"dev": {"debug": spelling}}}) == ["profile.dev"]
-    via_test = {"profile": {"dev": {"debug": "line-tables-only"}, "test": {"debug": True}}}
+        assert full_debuginfo({"profile": {"dev": {"debug": spelling}}}) == [
+            "profile.dev"
+        ]
+    via_test = {
+        "profile": {"dev": {"debug": "line-tables-only"}, "test": {"debug": True}}
+    }
     assert full_debuginfo(via_test) == ["profile.test"]
     via_package = {
         "profile": {"dev": {"debug": 0, "package": {"capsem-core": {"debug": "full"}}}}
