@@ -18,28 +18,19 @@ from .compose_values import (
     parse_cpus_to_cpu_count,
     parse_memory_to_ram_gb,
 )
-from .compose_values import (
-    _normalize_environment as _normalize_compose_environment,
-)
-from .compose_values import (
-    _normalize_volumes as _normalize_compose_volumes,
-)
+from .compose_values import _normalize_environment as _normalize_compose_environment
+from .compose_values import _normalize_volumes as _normalize_compose_volumes
 
 logger = logging.getLogger(__name__)
 CAPSEM_INSPECT_ALLOWED_HOST_PATHS_VAR = "CAPSEM_INSPECT_ALLOWED_HOST_PATHS"
 _UNSUPPORTED_KEYS = (
     "cap_add cap_drop devices security_opt sysctls pid ipc uts cgroup cgroup_parent userns_mode"
 )
-_BUILD_ERR = (
-    "not supported in Capsem OCI-workload mode; specify a pre-built 'image' reference instead."
-)
 _REJECTED_SERVICE_KEYS: dict[str, str] = {
     **{
         k: f"Compose {k!r} is not supported in Capsem OCI-workload mode."
         for k in _UNSUPPORTED_KEYS.split()
     },
-    "build": f"Compose 'build' / Dockerfile builds are {_BUILD_ERR}",
-    "dockerfile": f"Compose 'dockerfile' builds are {_BUILD_ERR}",
     "privileged": (
         "Compose 'privileged' is not supported in Capsem OCI-workload mode; "
         "Capsem isolates workloads via micro-VM hardware virtualization."
@@ -160,7 +151,7 @@ def normalize_volumes(
             raise ValueError(
                 f"Named or non-bind Compose volume {spec!r} is not supported in Capsem "
                 "OCI-workload mode unless declared in top-level 'volumes:'; "
-                "use a relative or allowlisted host(allowed_host_paths) bind mount."
+                "use a relative or allowlisted (allowed_host_paths) bind mount."
             )
     return tuple(out)
 
@@ -172,10 +163,15 @@ def extract_capsem_compose_fields(
     allowed_host_env: Sequence[str] = (),
     allowed_host_paths: Sequence[str] = (),
     sample_metadata: Mapping[str, Any] | None = None,
+    host_build: Any = None,
 ) -> dict[str, Any]:
     """Extract and validate Capsem container overrides from a parsed Compose mapping."""
+    from .build_grant import prepare_compose_build_service, resolve_effective_host_build
+
     declared_vols = _resolve_declared_volumes(parsed.get("volumes"))
-    services, svc, svc_name, parsed_for_extract = parsed.get("services"), {}, "default", parsed
+    services = parsed.get("services")
+    svc: Mapping[str, Any] = {}
+    svc_name, parsed_for_extract, stanza = "default", parsed, None
     if isinstance(services, Mapping) and len(services) == 1:
         raw_name, raw_svc = next(iter(services.items()))
         svc_name = str(raw_name)
@@ -184,8 +180,9 @@ def extract_capsem_compose_fields(
             for key, msg in _REJECTED_SERVICE_KEYS.items():
                 if svc.get(key) not in (None, False, [], (), {}):
                     raise ValueError(msg)
-            drop = ("build", "dockerfile", "cpus", "platform")
-            svc_clean = {k: v for k, v in svc.items() if k not in drop}
+            svc_clean, stanza = prepare_compose_build_service(
+                {k: v for k, v in svc.items() if k not in ("cpus", "platform")}
+            )
             parsed_for_extract = {**parsed, "services": {svc_name: svc_clean}}
     inputs = build_host_compose_inputs(
         base_dir=base_dir,
@@ -194,8 +191,7 @@ def extract_capsem_compose_fields(
         include_dotenv=True,
     )
     out = extract_compose_fields(parsed_for_extract, base_dir=base_dir, inputs=inputs)
-    net_mode = out.pop("network_mode", None)
-    explicit_net = svc.get("network_mode")
+    net_mode, explicit_net = out.pop("network_mode", None), svc.get("network_mode")
     if isinstance(explicit_net, str) and (cleaned_mode := explicit_net.strip()):
         if cleaned_mode not in ("bridge", "default"):
             raise ValueError(
@@ -217,8 +213,11 @@ def extract_capsem_compose_fields(
             "the container process directly.",
             svc_name,
         )
-    cmd = _combine_entrypoint_and_command(out.pop("entrypoint", None), out.pop("command", None))
-    if cmd is not None:
+    if (
+        cmd := _combine_entrypoint_and_command(
+            out.pop("entrypoint", None), out.pop("command", None)
+        )
+    ) is not None:
         out["command"] = cmd
     if "mem_limit" in out:
         out["ram_gb"] = parse_memory_to_ram_gb(out["mem_limit"])
@@ -233,5 +232,15 @@ def extract_capsem_compose_fields(
     if raw_vols := out.pop("volumes", None):
         out["volumes"] = normalize_volumes(
             raw_vols, base_dir, allowed_host_paths, declared_volumes=declared_vols
+        )
+    if stanza is not None and "dockerfile" in out:
+        out["build"] = resolve_effective_host_build(
+            dockerfile=out.pop("dockerfile"),
+            build_context=out.pop("build_context", None),
+            build_args=out.pop("build_args", None),
+            build_target=out.pop("build_target", None),
+            stanza=stanza,
+            allowed_host_paths=allowed_host_paths,
+            host_build=host_build,
         )
     return out

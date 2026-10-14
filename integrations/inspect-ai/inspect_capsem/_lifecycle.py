@@ -75,7 +75,13 @@ async def _init_sample_vm(
     if task_name:
         sample_labels[_TASK_LABEL] = task_name[:255]
     oci_image = cfg.image if cfg.execution_mode == "container" else None
+    ca_pem: str | None = None
+    if cfg.execution_mode == "container" and cfg.build:
+        from inspect_capsem.containers.image_build import build_and_stage_oci_image
+
+        oci_image, ca_pem = await build_and_stage_oci_image(cfg.build)
     oci_cmd = _oci_create_command(cfg) if cfg.execution_mode == "container" else None
+    extra_kw = {"registry_ca_pem": ca_pem} if ca_pem else {}
     start_task = asyncio.ensure_future(
         controller.start_vm(
             cpu_count=cfg.cpu_count,
@@ -84,6 +90,7 @@ async def _init_sample_vm(
             command=oci_cmd,
             env=dict(cfg.environment) if cfg.environment else None,
             labels=sample_labels,
+            **extra_kw,
         )
     )
     try:
