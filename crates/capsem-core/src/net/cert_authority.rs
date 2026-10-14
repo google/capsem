@@ -9,11 +9,6 @@ use rustls::pki_types::CertificateDer;
 use rustls::server::ClientHello;
 use rustls::sign::CertifiedKey;
 
-/// Most leaf certificates kept alive at once. The guest chooses the SNI, so
-/// an unbounded map let a loop over random names grow host memory for the
-/// life of the VM; a real workload talks to far fewer hosts than this.
-const LEAF_CACHE_CAPACITY: usize = 1024;
-
 /// Holds the static CA keypair and caches minted leaf certificates.
 pub struct CertAuthority {
     issuer: CertificateIssuer,
@@ -28,7 +23,7 @@ impl CertAuthority {
         let issuer = CertificateIssuer::load(key_pem, cert_pem)?;
         Ok(Self {
             issuer,
-            cache: BoundedCache::new("core.tls_leaf", LEAF_CACHE_CAPACITY),
+            cache: BoundedCache::new("core.tls_leaf", capsem_proto::CACHE_TLS_LEAF_ENTRIES),
         })
     }
 

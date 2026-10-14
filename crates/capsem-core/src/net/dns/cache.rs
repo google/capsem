@@ -41,19 +41,19 @@ use capsem_telemetry::dns as m;
 /// constraining real workloads (a single curl invocation typically
 /// resolves <= 5 names, so 1024 covers many minutes of agent
 /// activity).
-pub const DEFAULT_CAPACITY: usize = 1024;
+pub const DEFAULT_CAPACITY: usize = capsem_proto::CACHE_DNS_ANSWER_ENTRIES;
 
 /// Default upper bound on cache TTL, in seconds. DNS records can
 /// advertise TTLs up to 7 days; a long-lived cache entry would
 /// outlive most agent sessions and risk staleness on infrastructure
 /// change. Cap at 5 minutes -- aligns with the typical interactive
 /// agent loop and the existing CDN TTLs (Cloudflare default 5 min).
-pub const DEFAULT_MAX_TTL_SECS: u32 = 300;
+pub const DEFAULT_MAX_TTL_SECS: u32 = capsem_proto::CACHE_DNS_MAX_TTL_SECONDS;
 
 /// Ceiling on how long an upstream NXDOMAIN is remembered. RFC 2308 lets a
 /// negative answer live for the SOA minimum; a minute is enough to absorb a
 /// client retrying a dead name without amplifying a name that reappears.
-pub const NEGATIVE_MAX_TTL_SECS: u32 = 60;
+pub const NEGATIVE_MAX_TTL_SECS: u32 = capsem_proto::CACHE_DNS_NEGATIVE_TTL_SECONDS;
 
 #[derive(Clone)]
 struct Entry {
