@@ -33,6 +33,16 @@ eviction and occupancy telemetry where those states exist, and preserve the
 logger DB boundary instead of caching ledger projections in a route or UI
 process.
 
+The `[cache]` table owns every in-memory cache count and freshness window:
+DNS answers and positive/negative TTLs, TLS leaves, ledger query batches,
+SQLite prepared statements, service diagnostics and resume state, update
+checks, image-catalog refresh/retry and image-verification batching. Preserve
+their current behavior by importing `capsem_proto::CACHE_*`; a local literal,
+even when two crates currently agree, is a second authority. Add a new field,
+build-time validation, generated constant, benchmark `runtime-limits` field
+and Citadel consumer assertion together when a new bounded runtime cache is
+introduced. User overrides remain the typed-settings follow-up in issue #349.
+
 ## Typed boundary
 
 Programs use `CacheRegistry`, `CacheRequest`, `CacheOperation`, and

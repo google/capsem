@@ -52,7 +52,7 @@ Guest curl -> iptables REDIRECT -> capsem-net-proxy (guest, port 10443)
 | File | What |
 |------|------|
 | `crates/capsem-core/src/net/mitm_proxy.rs` | Async MITM proxy (rustls + hyper): TLS termination, HTTP inspection, upstream bridging |
-| `crates/capsem-core/src/net/cert_authority.rs` | CA loader + on-demand domain cert minting with RwLock cache |
+| `crates/capsem-core/src/net/cert_authority.rs` | CA loader + bounded single-flight domain certificate cache |
 | `crates/capsem-core/src/security_engine/` | Rule/plugin/decision rail over `SecurityEvent` |
 | `crates/capsem-core/src/net/sni.rs` | SNI parser for TLS ClientHello |
 | `crates/capsem-agent/src/net_proxy.rs` | Guest-side TCP-to-vsock relay |
@@ -88,6 +88,10 @@ capacity refusal fails the run. User overrides belong in the typed settings
 contract tracked by issue #349. Extend and run
 `tests/citadel/test_runtime_limit_authority.py` whenever a new consumer or
 derived limit is added.
+
+The same file's `[cache]` table owns DNS answer count and TTLs plus the TLS
+leaf count. Use its generated `capsem_proto::CACHE_*` constants; do not place a
+second cache bound in the proxy or DNS modules.
 
 Use `just bench mitm-scale` when a one-VM curve plateaus while the host still
 looks idle. The lane uses fresh 1/2/4/8-VM cohorts, keeps per-VM work fixed and

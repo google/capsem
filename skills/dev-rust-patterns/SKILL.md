@@ -195,10 +195,14 @@ struct FunctionCall {
 
 ## Concurrency patterns
 
-- **RwLock for caches**: Cert authority uses `RwLock<HashMap>` -- many readers, rare writers. Use `read()` first, upgrade to `write()` only on cache miss.
+- **Shared runtime caches**: Use `capsem-cache` primitives instead of a local
+  map and eviction policy. Import capacities and freshness windows from the
+  generated `capsem_proto::CACHE_*` constants; their only numeric source is
+  `[cache]` in `config/data/runtime-limits.toml`.
 - **Arc for shared state**: VM state, proxy config, and telemetry handles are `Arc`-wrapped for sharing across tasks.
 - **Per-connection tasks**: The MITM proxy spawns a new tokio task per connection. Each task owns its TLS state and upstream connection. No shared mutable state between connections.
-- **Config-owned cross-process ceilings**: Network concurrency is owned by
+- **Config-owned runtime ceilings**: Network concurrency and in-memory cache
+  policy are owned by
   `config/data/runtime-limits.toml` and generated into `capsem-proto`. Import
   the shared protocol constant in host and guest consumers; never duplicate a
   numeric capacity in individual crates. Ledger queue and batch capacities
