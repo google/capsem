@@ -15,17 +15,17 @@ pub(crate) async fn handle_exec(
     Json(payload): Json<ExecRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
     let timeout_secs =
-        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
     let uds_path = running_uds_path(&state, &id)?;
     let target = capsem_api::exec_target(
         payload.target,
         crate::container_setup::runs_container(&state, &id).await,
     )
-    .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+    .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
 
     wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let res = send_ipc_command(
         &uds_path,
@@ -37,7 +37,7 @@ pub(crate) async fn handle_exec(
         Some(timeout_secs),
     )
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    .map_err(|e| e.into_exec_app_error(false))?;
 
     match res {
         ProcessToService::ExecResult {
@@ -52,7 +52,7 @@ pub(crate) async fn handle_exec(
             exit_code,
             truncated,
         })),
-        _ => Err(AppError(
+        _ => Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected IPC response for exec".to_string(),
         )),

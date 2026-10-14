@@ -7,11 +7,16 @@ export function decodeExecOutput(output: ExecOutput): Uint8Array {
 }
 
 /** The service's ceiling for one exec or run, which is also its default. */
-const EXEC_TIMEOUT_CEILING_SECS = 60 * 60;
+export const EXEC_TIMEOUT_CEILING_SECS = 60 * 60;
 /** The gateway's budget for readiness, boot and teardown around a command. */
-const GATEWAY_REQUEST_BUDGET_SECS = 120;
-/** The service's workload readiness window, including its image pull. */
-const CREATE_READY_SECS = 110;
+export const GATEWAY_REQUEST_BUDGET_SECS = 120;
+/**
+ * How long the service waits for a container workload to become ready
+ * before it answers a create; the image pull happens inside this window.
+ */
+export const CREATE_READY_SECS = 110;
+/** Largest request body and workspace file the HTTP API accepts, in bytes. */
+export const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
 
 /** Creation answers only after workload readiness, so allow its full window. */
 export function createDeadlineMs(fallbackMs: number): number {

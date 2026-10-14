@@ -38,6 +38,7 @@ export {CredentialStorageSchema} from "./CredentialStorage.js";
 export {DisconnectResponseSchema} from "./DisconnectResponse.js";
 export {DnsEventSchema} from "./DnsEvent.js";
 export {EnrollmentKindSchema} from "./EnrollmentKind.js";
+export {ErrorCodeSchema} from "./ErrorCode.js";
 export {ErrorEventSchema} from "./ErrorEvent.js";
 export {ErrorResponseSchema} from "./ErrorResponse.js";
 export {EventBodiesResponseSchema} from "./EventBodiesResponse.js";

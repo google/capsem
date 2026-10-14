@@ -26,13 +26,13 @@ fn sanitize_strips_unicode() {
 #[test]
 fn sanitize_rejects_dot_dot() {
     let err = sanitize_file_path("../etc/passwd").unwrap_err();
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
 }
 
 #[test]
 fn sanitize_rejects_embedded_dot_dot() {
     let err = sanitize_file_path("foo/../bar").unwrap_err();
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn sanitize_strips_leading_slash() {
 #[test]
 fn sanitize_rejects_empty() {
     let err = sanitize_file_path("").unwrap_err();
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
 }
 
 #[test]
@@ -72,8 +72,8 @@ fn sanitize_rejects_only_slashes() {
     // Several slashes collapse + leading-strip to empty, then the empty
     // check fires. Confirms the order: collapse → strip → reject empty.
     let err = sanitize_file_path("///").unwrap_err();
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
-    assert_eq!(err.1, "empty path after sanitization");
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    assert_eq!(err.body.error, "empty path after sanitization");
 }
 
 #[test]
@@ -82,8 +82,8 @@ fn sanitize_rejects_dot_dot_after_filter() {
     // collapses to `..` and is correctly rejected as traversal -- proves
     // the filter runs before the traversal check, not after it.
     let err = sanitize_file_path(".<>.").unwrap_err();
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
-    assert_eq!(err.1, "path traversal rejected");
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    assert_eq!(err.body.error, "path traversal rejected");
 }
 
 // ---- file typing ----
@@ -166,9 +166,9 @@ mod paths {
     }
 
     fn refused(raw: &str, container: bool) -> String {
-        let AppError(status, message) = resolve_file_path(raw, false, container).unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        message
+        let err = resolve_file_path(raw, false, container).unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        err.body.error
     }
 
     #[test]

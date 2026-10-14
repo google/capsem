@@ -14,7 +14,7 @@ pub(crate) async fn log_file_boundary(
     let uds_path = active_instance_uds_path(state, sandbox_id)?;
     wait_for_vm_ready(&uds_path, 30, Some(state), Some(sandbox_id))
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     log_file_boundary_on_owner(state, &uds_path, action, path, data_preview, size, mime_type).await
 }
 
@@ -44,17 +44,17 @@ pub(crate) async fn log_file_boundary_on_owner(
         Some(5),
     )
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    .map_err(ipc_command::IpcCommandError::into_internal_app_error)?;
 
     match res {
         ProcessToService::LogFileBoundaryResult {
             success: true, data, ..
         } => Ok(data),
-        ProcessToService::LogFileBoundaryResult { error, .. } => Err(AppError(
+        ProcessToService::LogFileBoundaryResult { error, .. } => Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             error.unwrap_or_else(|| "failed to log file boundary".into()),
         )),
-        _ => Err(AppError(
+        _ => Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected IPC response for file boundary log".into(),
         )),

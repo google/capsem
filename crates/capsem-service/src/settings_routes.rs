@@ -25,7 +25,7 @@ pub(super) async fn handle_save_settings(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let _mutation = state.policy_mutation.begin().await;
     capsem_core::net::policy_config::batch_update_settings_json(&raw)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+        .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
     let resp = capsem_core::net::policy_config::load_settings_response();
     Ok(Json(serde_json::to_value(resp).unwrap_or_default()))
 }
@@ -38,19 +38,19 @@ pub(super) async fn handle_corp_config(
     use capsem_core::net::policy_config::corp_provision;
     let _mutation = state.policy_mutation.begin().await;
     let capsem_dir = capsem_foundation::paths::capsem_home_opt()
-        .ok_or(AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+        .ok_or(AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
 
     if let Some(source) = &payload.source {
         corp_provision::provision_from_source(&capsem_dir, source)
             .await
-            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+            .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
     } else if let Some(toml_content) = &payload.toml {
         corp_provision::validate_corp_toml(toml_content)
-            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+            .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
         corp_provision::install_inline_corp_config(&capsem_dir, toml_content)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     } else {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
             "provide either 'source' (URL) or 'toml' (inline content)".into(),
         ));
@@ -68,7 +68,7 @@ pub(super) fn corp_info_value() -> Result<serde_json::Value, AppError> {
     use capsem_core::net::policy_config::{corp_config_paths, corp_provision};
 
     let capsem_dir = capsem_foundation::paths::capsem_home_opt()
-        .ok_or(AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+        .ok_or(AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
     let paths: Vec<_> = corp_config_paths()
         .into_iter()
         .map(|path| {
@@ -96,12 +96,12 @@ pub(super) async fn handle_corp_validate(
         let client = reqwest::Client::new();
         corp_provision::fetch_corp_config(&client, source)
             .await
-            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+            .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
     } else if let Some(toml_content) = &payload.toml {
         corp_provision::validate_corp_toml(toml_content)
-            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+            .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
     } else {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
             "provide either 'source' (URL) or 'toml' (inline content)".into(),
         ));
@@ -117,7 +117,7 @@ pub(super) async fn handle_corp_reload(
     use capsem_core::net::policy_config::corp_provision;
 
     let capsem_dir = capsem_foundation::paths::capsem_home_opt()
-        .ok_or(AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
+        .ok_or(AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".into()))?;
     corp_provision::refresh_corp_config_if_stale(capsem_dir).await;
     handle_reload_config(State(state)).await
 }

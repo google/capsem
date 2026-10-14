@@ -38,6 +38,7 @@ export { CredentialStorage } from "./CredentialStorage.js";
 export type { DisconnectResponse } from "./DisconnectResponse.js";
 export type { DnsEvent } from "./DnsEvent.js";
 export { EnrollmentKind } from "./EnrollmentKind.js";
+export { ErrorCode } from "./ErrorCode.js";
 export type { ErrorEvent } from "./ErrorEvent.js";
 export type { ErrorResponse } from "./ErrorResponse.js";
 export type { EventBodiesResponse } from "./EventBodiesResponse.js";

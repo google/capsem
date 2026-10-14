@@ -103,13 +103,13 @@ impl IntoResponse for CredentialError {
             }
         };
         warn!(code=?self.0,status=status.as_u16(),"credential request refused");
-        let code: String =
-            serde_json::from_str(&serde_json::to_string(&self.0).expect("wire enum")).expect("wire enum string");
         (
             status,
             Json(api::ErrorResponse {
                 error: "credential request refused".into(),
-                code: Some(code),
+                code: Some(self.0.into()),
+                vm_id: None,
+                timeout_secs: None,
             }),
         )
             .into_response()

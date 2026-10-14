@@ -13,7 +13,7 @@ mod exec;
 mod file_boundary;
 pub(super) use file_boundary::{log_file_boundary, log_file_boundary_on_owner};
 mod fork;
-mod ipc_command;
+pub(crate) mod ipc_command;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
 #[cfg(test)]
 pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
@@ -284,7 +284,7 @@ pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<Contained
     let session_dir = resolve_session_dir(state, id)?;
     // Never by path: the guest can replace its workspace with a host link.
     capsem_core::session::open_workspace(&session_dir).map_err(|e| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("open workspace of {}: {e}", session_dir.display()),
         )
@@ -296,16 +296,16 @@ pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<Contained
 /// directory was expected is a bad request, anything else is the host's.
 pub(super) fn workspace_io_error(e: std::io::Error) -> AppError {
     if is_symlink_refusal(&e) {
-        AppError(
+        AppError::new(
             StatusCode::FORBIDDEN,
             "path leaves the workspace through a symlink".into(),
         )
     } else if e.kind() == std::io::ErrorKind::NotFound {
-        AppError(StatusCode::NOT_FOUND, "path not found".into())
+        AppError::new(StatusCode::NOT_FOUND, "path not found".into())
     } else if e.kind() == std::io::ErrorKind::InvalidInput || is_not_directory(&e) {
-        AppError(StatusCode::BAD_REQUEST, format!("not a workspace path: {e}"))
+        AppError::new(StatusCode::BAD_REQUEST, format!("not a workspace path: {e}"))
     } else {
-        AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("workspace: {e}"))
+        AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("workspace: {e}"))
     }
 }
 
@@ -322,7 +322,7 @@ pub(super) fn resolve_workspace_target(
     let rel = StdPath::new(sanitized);
     let name = rel
         .file_name()
-        .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "path has no file name".into()))?
+        .ok_or_else(|| AppError::new(StatusCode::BAD_REQUEST, "path has no file name".into()))?
         .to_owned();
     let parent_rel = rel.parent().unwrap_or_else(|| StdPath::new(""));
     let root = workspace_root(state, id)?;
@@ -333,7 +333,7 @@ pub(super) fn resolve_workspace_target(
     }
     .map_err(workspace_io_error)?;
     if parent.entry_kind(&name).map_err(workspace_io_error)? == Some(EntryKind::Other) {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::FORBIDDEN,
             "path names a symlink or special file".into(),
         ));
@@ -428,7 +428,7 @@ pub(super) async fn handle_list_files(
     // Directory reads are blocking I/O -- run in spawn_blocking
     let entries = tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_path, 1, depth))
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?;
 
     Ok(Json(FileListResponse { entries }))
 }
@@ -443,7 +443,7 @@ pub(super) fn file_security_preview_bytes(data: &[u8]) -> Vec<u8> {
 pub(super) fn active_instance_uds_path(state: &Arc<ServiceState>, id: &str) -> Result<PathBuf, AppError> {
     let instances = state.instances.lock().unwrap();
     instances.get(id).map(|i| i.uds_path.clone()).ok_or_else(|| {
-        AppError(
+        AppError::new(
             StatusCode::CONFLICT,
             "file import/export requires a running sandbox security ledger".into(),
         )
@@ -469,9 +469,9 @@ pub(super) async fn handle_download_file(
         let mut data = Vec::new();
         file.take(MAX_FILE_SIZE + 1)
             .read_to_end(&mut data)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("read: {e}")))?;
+            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("read: {e}")))?;
         if data.len() as u64 > MAX_FILE_SIZE {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 format!("file too large (max {MAX_FILE_SIZE} bytes)"),
             ));
@@ -486,7 +486,7 @@ pub(super) async fn handle_download_file(
         Ok::<_, AppError>((data, mime_str, safe_name))
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
 
     let rewritten = log_file_boundary(
         &state,
@@ -548,11 +548,11 @@ pub(super) async fn handle_upload_file(
             .open_file(&name, ContainedOpenOptions::write_create_truncate(0o644))
             .map_err(workspace_io_error)?;
         file.write_all(&data)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
+            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
         Ok::<_, AppError>(())
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
 
     Ok(Json(UploadResponse {
         success: true,
@@ -611,7 +611,7 @@ pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &s
         | ProvisionAttemptOutcome::Launched { uds_path }
         | ProvisionAttemptOutcome::StillBootingTimedOut { uds_path } => AttemptDecision::Succeed(uds_path),
         ProvisionAttemptOutcome::LaunchdTransient => AttemptDecision::RetryAfterCleanup,
-        ProvisionAttemptOutcome::BootCrash { tail } => AttemptDecision::BailWithError(AppError(
+        ProvisionAttemptOutcome::BootCrash { tail } => AttemptDecision::BailWithError(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
                 "sandbox {id} failed to boot. process.log tail:\n\n{tail}\n\n\
@@ -632,7 +632,7 @@ async fn failed_process_log_tail(state: &Arc<ServiceState>, id: &str) -> String 
             None => "(no preserved log found)".to_string(),
         })
         .await
-        .unwrap_or_else(|error| format!("(log read failed: {})", error.1))
+        .unwrap_or_else(|error| format!("(log read failed: {})", error.body.error))
 }
 
 pub(super) fn existing_session_names(state: &ServiceState) -> Vec<String> {
@@ -690,7 +690,7 @@ pub(super) async fn provision_attempt(
         Err(e) => {
             return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!(
                 "vz lifecycle lock acquire failed: {}",
-                e.1
+                e.body.error
             ))
         }
     };
@@ -895,7 +895,7 @@ pub(super) async fn handle_info(
         return Ok(Json(info));
     }
 
-    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError::vm_not_found(&id))
 }
 
 pub(super) async fn handle_vm_status(
@@ -971,7 +971,7 @@ pub(super) async fn handle_vm_status(
         }
     }
 
-    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError::vm_not_found(&id))
 }
 
 pub(super) async fn vm_operation_status(
@@ -1051,7 +1051,7 @@ pub(super) fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::pa
     let instances = state.instances.lock().unwrap();
     let path = instances
         .get(id)
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+        .ok_or_else(|| AppError::vm_not_found(id))?
         .uds_path
         .clone();
     drop(instances);

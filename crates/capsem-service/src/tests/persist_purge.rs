@@ -46,7 +46,7 @@ async fn managed_spawn_cannot_transfer_to_persistence_through_ordinary_save_rout
         Err(error) => error,
         Ok(_) => panic!("managed VM escaped to persistence"),
     };
-    assert_eq!(error.0, StatusCode::CONFLICT);
+    assert_eq!(error.status, StatusCode::CONFLICT);
     assert_still_ephemeral(&state, &id, &session);
     assert!(registry_entry_dir(&state, "escape-ownership").is_none());
 }
@@ -67,8 +67,8 @@ async fn unreadable_ownership_cannot_authorize_persistence_of_an_unclassified_sp
         Err(error) => error,
         Ok(_) => panic!("corrupt ownership authorized persistence"),
     };
-    assert_eq!(error.0, StatusCode::SERVICE_UNAVAILABLE);
-    assert!(!error.1.contains("private"));
+    assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!error.body.error.contains("private"));
     assert_still_ephemeral(&state, &id, &session);
     assert!(registry_entry_dir(&state, "unclassified").is_none());
 }
@@ -156,7 +156,7 @@ async fn persist_refuses_a_duplicate_id_and_leaves_the_instance_ephemeral() {
     let error = persist(&state, "persist-src", "fresh-name")
         .await
         .expect_err("duplicate id must be refused");
-    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR, "{}", error.1);
+    assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", error.body.error);
 
     assert_still_ephemeral(&state, "persist-src", &session_dir);
     let (claimed, entries) = {
@@ -186,10 +186,10 @@ async fn racing_persists_on_one_name_leave_one_entry_and_no_orphan() {
             Ok(_) => winners.push(id),
             Err(error) => {
                 assert_eq!(
-                    error.0,
+                    error.status,
                     StatusCode::CONFLICT,
                     "loser must see a name conflict: {}",
-                    error.1
+                    error.body.error
                 );
                 losers.push(id);
             }

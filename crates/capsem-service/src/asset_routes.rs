@@ -223,7 +223,7 @@ pub(super) fn asset_manifest_status(state: &ServiceState) -> Result<Arc<api::Ass
     let inputs = [manifest_file_identity(&path), manifest_file_identity(&metadata_path)];
     let cache = || {
         state.asset_manifest_cache.lock().map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("asset manifest cache lock poisoned: {error}"),
             )

@@ -175,7 +175,7 @@ pub(crate) fn spawn_refresh(state: Arc<ServiceState>, table: SessionTable) {
         loop {
             match collect(&state).await {
                 Ok(totals) => *table.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = totals,
-                Err(error) => warn!(error = %error.1, "session metric refresh failed"),
+                Err(error) => warn!(error = %error.body.error, "session metric refresh failed"),
             }
             tokio::time::sleep(REFRESH_INTERVAL).await;
         }

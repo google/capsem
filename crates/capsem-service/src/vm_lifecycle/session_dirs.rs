@@ -14,14 +14,14 @@ use super::*;
 pub(super) fn claim_persistent_name(state: &ServiceState, entry: PersistentVmEntry) -> Result<(), AppError> {
     let registry = state.persistent_registry.lock().unwrap();
     if registry.contains(&entry.name) {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::CONFLICT,
             format!("persistent VM \"{}\" already exists", entry.name),
         ));
     }
     registry
         .register(entry)
-        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+        .map_err(|error| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 
 /// Move a persisted session that still lives where it ran to

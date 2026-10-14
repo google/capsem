@@ -10,16 +10,16 @@ pub(crate) async fn handle_fork(
     let _launch = state
         .lifecycle
         .admit()
-        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::CONFLICT, e.to_string()))?;
     let name = &payload.name;
-    validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    validate_vm_name(name).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
+    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Check name is not taken
     {
         let registry = state.persistent_registry.lock().unwrap();
         if registry.contains(name) {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::CONFLICT,
                 format!("sandbox '{}' already exists", name),
             ));
@@ -43,15 +43,12 @@ pub(crate) async fn handle_fork(
         } else {
             drop(instances);
             let Some(p) = find_persistent_entry_by_route_id(&state, &id) else {
-                return Err(AppError(
-                    StatusCode::NOT_FOUND,
-                    format!("source sandbox not found: {}", id),
-                ));
+                return Err(AppError::vm_not_found(&id));
             };
             // A VM in the old shape is refused, never laundered into a fork.
             state
                 .validate_persistent_entry(&p)
-                .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+                .map_err(|e| AppError::new(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
             (
                 p.session_dir,
                 p.asset_pins,
@@ -107,7 +104,7 @@ pub(crate) async fn handle_fork(
     state
         .off_worker(move |state| state.persistent_registry.lock().unwrap().register(entry))
         .await?
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(ForkResponse {
         id: vm_id,
@@ -174,7 +171,7 @@ async fn clone_guest_state(
             Err(error.unwrap_or_else(|| "the sandbox reported no clone size".into()))
         }
         Ok(other) => Err(format!("unexpected clone reply: {other:?}")),
-        Err(error) => Err(error),
+        Err(error) => Err(error.to_string()),
     };
     if result.is_err() {
         // The owner removes what it wrote; this covers an owner that never

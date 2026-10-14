@@ -29,7 +29,7 @@ pub(crate) async fn handle_logs(
             state
                 .off_worker(move |state| find_failed_session_dir(&state.run_dir, &failed_id))
                 .await?
-                .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+                .ok_or_else(|| AppError::vm_not_found(&id))?
         }
     };
 
@@ -47,7 +47,7 @@ pub(crate) async fn handle_logs(
         (serial, process)
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
 
     let serial_logs = serial_logs.map(|text| filter_log(text, &params));
     let process_logs = process_logs.map(|text| filter_log(text, &params));
@@ -309,7 +309,7 @@ pub(crate) async fn triage_for_vm(
     }
     let db = open_ready_session_db(state, vm_id, "triage", &db_path).await?;
     let session = session_db_triage(vm_id, &db, &db_path, limit).await.map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to read triage ledger for {vm_id}: {error}"),
         )
@@ -330,7 +330,7 @@ pub(crate) async fn handle_host_logs(
         HostLogSource::App => state
             .off_worker(|_| triage::latest_app_log(&capsem_foundation::paths::capsem_home()))
             .await?
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no app log found".into()))?,
+            .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, "no app log found".into()))?,
         HostLogSource::Service => state.run_dir.join("service.log"),
         HostLogSource::Mcp => state.run_dir.join("mcp.log"),
         HostLogSource::Gateway => state.run_dir.join("gateway.log"),
@@ -346,7 +346,7 @@ pub(crate) async fn handle_host_logs(
         capsem_foundation::telemetry::read_log_tail(&path, max_bytes).unwrap_or_default()
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
 
     let text = filter_log(text, &params);
     let json = headers.get_all(axum::http::header::ACCEPT).iter().any(|value| {
@@ -405,8 +405,8 @@ pub(crate) async fn handle_service_logs(State(state): State<Arc<ServiceState>>) 
             .ok_or_else(|| format!("no log files in stream {}", log_path.display()))
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(text)
 }

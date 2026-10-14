@@ -941,3 +941,53 @@ fn admission_takes_either_content_address_and_nothing_else() {
     let refused = admit(&policy, &requested, &pulled(&b, &c)).unwrap_err();
     assert!(refused.contains("not admitted"), "{refused}");
 }
+
+#[tokio::test]
+async fn container_helpers_propagate_missing_vm_and_boundary_errors() {
+    let fx = fixture(images());
+    assert!(record_launched(&fx.state, "missing").is_err());
+    let generation = fx.state.containers.begin("missing", "registry.example/app:1");
+    let pulled = PulledImage {
+        root: PathBuf::new(),
+        files: Vec::new(),
+        digest: "sha256:a".into(),
+        image_digest: "sha256:a".into(),
+        cache_key: None,
+        _hold: Box::new(()),
+    };
+    assert!(share_image(&fx.state, "missing", generation, &pulled, None)
+        .await
+        .is_err());
+    let mk_file = || stage::StagedFile {
+        name: "spec.json".to_string(),
+        bytes: vec![b'{', b'}'],
+    };
+    assert!(stage_file(&fx.state, "missing", generation, mk_file()).await.is_err());
+
+    let stopped_dir = fx._dir.path().join("stopped-session");
+    std::fs::create_dir_all(stopped_dir.join("guest/workspace")).unwrap();
+    let entry = crate::tests::test_persistent_entry("stopped-box", stopped_dir);
+    let stopped_id = entry.id.clone();
+    fx.state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("stopped-box".into(), entry);
+    let gen2 = fx.state.containers.begin(&stopped_id, "registry.example/app:1");
+    assert!(stage_file(&fx.state, &stopped_id, gen2, mk_file()).await.is_err());
+
+    let bad_uds = std::path::Path::new("/nonexistent/uds.sock");
+    assert!(log_file_boundary_on_owner(
+        &fx.state,
+        bad_uds,
+        FileBoundaryAction::Import,
+        "a".into(),
+        vec![],
+        0,
+        None
+    )
+    .await
+    .is_err());
+}
