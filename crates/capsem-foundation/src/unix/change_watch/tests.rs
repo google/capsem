@@ -107,6 +107,23 @@ fn ancestor_notification_backlog_cannot_hide_rebinding() {
     assert!(watch.changed().unwrap());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn unrelated_ancestor_backlog_does_not_invalidate_the_binding() {
+    let parent = namespace_fixture();
+    let path = parent.path().join("ancestor/cache");
+    std::fs::create_dir_all(&path).unwrap();
+    let mut watch = ChangeWatch::new().unwrap();
+    let _held = watch.open_directory(&path).unwrap();
+    for index in 0..400 {
+        std::fs::write(parent.path().join(format!("unrelated-{index}")), b"sibling").unwrap();
+    }
+    assert!(
+        !watch.changed().unwrap(),
+        "a bounded burst of unrelated siblings must be fully drained"
+    );
+}
+
 #[test]
 fn read_only_access_is_quiet_but_hardlink_writes_are_sticky() {
     let root = tempfile::tempdir().unwrap();

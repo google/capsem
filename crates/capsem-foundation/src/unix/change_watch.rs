@@ -17,6 +17,9 @@ use std::{
 
 #[cfg(target_os = "linux")]
 use nix::sys::inotify::{AddWatchFlags, InitFlags, Inotify, WatchDescriptor};
+
+#[cfg(target_os = "linux")]
+const MAX_INOTIFY_DRAIN_BATCHES: usize = 64;
 #[cfg(target_os = "macos")]
 use nix::sys::{
     event::{EventFilter, EventFlag, FilterFlag, KEvent, Kqueue},
@@ -211,7 +214,10 @@ impl ChangeWatch {
 
     #[cfg(target_os = "linux")]
     fn read_change(&self) -> io::Result<bool> {
-        for _ in 0..2 {
+        // Drain ordinary bursts completely so unrelated sibling churn cannot
+        // create a false invalidation. Retain a hard bound for a producer that
+        // continuously outruns polling; exhaustion remains conservative.
+        for _ in 0..MAX_INOTIFY_DRAIN_BATCHES {
             match self.watcher.read_events() {
                 Ok(events) => {
                     if events.is_empty() {
