@@ -30,7 +30,7 @@ import json
 import sys
 import time
 from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,8 +156,9 @@ def main() -> int:
     metrics: dict[str, dict] = {}
     try:
         seed_stopped_workspace(service.tmp_dir, ASSETS_DIR)
-        service.start()
-        gateway.start()
+        with redirect_stdout(sys.stderr):
+            service.start()
+            gateway.start()
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
         targets = (
