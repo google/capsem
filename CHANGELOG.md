@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Connection inventory supports bounded `limit` and `cursor` pages through the
+  service and SDKs, with malformed queries refused.
+
 - Interrupted credential disconnects resume bounded provider revocation after
   service restart; maintenance retries unresolved retirement while grants stay revoked.
 

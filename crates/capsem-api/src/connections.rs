@@ -1,7 +1,7 @@
 //! Reviewed host connection and session-grant contracts, without token exports.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 const MAX_SAFE_REVISION: u64 = 9_007_199_254_740_991;
 
@@ -163,6 +163,21 @@ pub struct ConnectionListResponse {
     pub scope_profiles: Vec<ScopeProfileSummary>,
     #[schema(required = true)]
     pub next_cursor: Option<String>,
+}
+
+/// Bounded connection inventory. Profiles are returned on every page.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct ConnectionListQuery {
+    /// Page size, at most the host's configured connection capacity. Omission
+    /// uses that capacity; zero and larger values are refused.
+    #[param(minimum = 1)]
+    pub limit: Option<u32>,
+    /// Continue after this canonical server-issued connection UUID. Keyset
+    /// ordering permits the previous page's last connection to be removed.
+    #[param(format = "uuid")]
+    pub cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

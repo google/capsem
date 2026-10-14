@@ -1,4 +1,21 @@
 use super::*;
+
+#[test]
+fn catalog_contract_declares_only_optional_limit_and_cursor_queries() {
+    let doc = serde_json::to_value(crate::openapi()).unwrap();
+    let parameters = doc["paths"]["/connections"]["get"]["parameters"].as_array().unwrap();
+    assert_eq!(parameters.len(), 2);
+    for name in ["limit", "cursor"] {
+        let parameter = parameters.iter().find(|item| item["name"] == name).unwrap();
+        assert_eq!(parameter["in"], "query");
+        assert_eq!(parameter["required"], false);
+    }
+    assert_eq!(
+        serde_json::from_value::<ConnectionListQuery>(json!({})).unwrap(),
+        ConnectionListQuery::default()
+    );
+    assert!(serde_json::from_value::<ConnectionListQuery>(json!({"scope":"private-query"})).is_err());
+}
 use serde_json::json;
 
 #[test]

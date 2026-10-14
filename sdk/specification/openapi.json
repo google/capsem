@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "3.2.0"
+    "version": "3.3.0"
   },
   "paths": {
     "/assets/status": {
@@ -40,6 +40,29 @@
     "/connections": {
       "get": {
         "operationId": "listConnections",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, at most the host's configured connection capacity. Omission\nuses that capacity; zero and larger values are refused.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Continue after this canonical server-issued connection UUID. Keyset\nordering permits the previous page's last connection to be removed.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success",
