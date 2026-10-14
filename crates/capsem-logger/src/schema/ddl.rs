@@ -12,6 +12,8 @@
 //! per session and never carried across builds, so a file an older build wrote
 //! fails here, naming what it lacks.
 
+// Digest checks use exact byte lengths and 64 individual hex characters.
+// GLOB '[0-9a-f]*' checks only the first character; text length ignores a NUL suffix.
 pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS net_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +46,7 @@ pub const CREATE_SCHEMA: &str = "
         policy_reason TEXT,
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     CREATE TABLE IF NOT EXISTS model_calls (
@@ -77,7 +79,7 @@ pub const CREATE_SCHEMA: &str = "
         trace_id TEXT,
         turn_id TEXT,
         usage_details TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     -- The one generation selected by this SQLite snapshot. Its UUID fields
@@ -130,7 +132,7 @@ pub const CREATE_SCHEMA: &str = "
         -- blake3 of the ARCHIVED bytes, not of whatever they were cut from:
         -- a read verifies what it got against this, so a corrupted or
         -- edited index row is caught instead of served as a body.
-        body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
+        body_hash TEXT NOT NULL CHECK (length(CAST(body_hash AS BLOB)) = 71 AND body_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         block_offset INTEGER NOT NULL REFERENCES body_blocks(block_offset),
         body_offset INTEGER NOT NULL CHECK (body_offset >= 0),
         body_len INTEGER NOT NULL CHECK (body_len = stored_bytes),
@@ -174,7 +176,7 @@ pub const CREATE_SCHEMA: &str = "
         policy_reason TEXT,
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     CREATE TABLE IF NOT EXISTS tool_responses (
@@ -186,7 +188,7 @@ pub const CREATE_SCHEMA: &str = "
         is_error INTEGER DEFAULT 0,
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_net_events_domain
@@ -231,8 +233,8 @@ pub const CREATE_SCHEMA: &str = "
         tool_name TEXT,
         arguments TEXT,
         content TEXT,
-        content_hash TEXT NOT NULL CHECK (length(content_hash) = 71 AND content_hash GLOB 'blake3:[0-9a-f]*'),
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        content_hash TEXT NOT NULL CHECK (length(CAST(content_hash AS BLOB)) = 71 AND content_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')),
         UNIQUE(trace_id, kind, content_hash, call_id)
     );
     CREATE INDEX IF NOT EXISTS idx_model_items_trace_id
@@ -259,7 +261,7 @@ pub const CREATE_SCHEMA: &str = "
         kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('file','dir','symlink','other')),
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp
@@ -286,7 +288,7 @@ pub const CREATE_SCHEMA: &str = "
         turn_id TEXT,
         process_name TEXT,
         pid INTEGER,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
     CREATE INDEX IF NOT EXISTS idx_exec_events_timestamp
         ON exec_events(timestamp);
@@ -317,7 +319,7 @@ pub const CREATE_SCHEMA: &str = "
         policy_action TEXT,
         policy_rule TEXT,
         policy_reason TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
     CREATE INDEX IF NOT EXISTS idx_dns_events_timestamp
         ON dns_events(timestamp);
@@ -349,7 +351,7 @@ pub const CREATE_SCHEMA: &str = "
         parent_exe TEXT,
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
     CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
         ON audit_events(timestamp);
@@ -368,7 +370,7 @@ pub const CREATE_SCHEMA: &str = "
         source TEXT NOT NULL,
         event_type TEXT,
         algorithm TEXT NOT NULL,
-        substitution_ref TEXT NOT NULL CHECK (length(substitution_ref) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f]*'),
+        substitution_ref TEXT NOT NULL CHECK (length(CAST(substitution_ref AS BLOB)) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         outcome TEXT NOT NULL CHECK (outcome IN ('captured', 'brokered', 'injected', 'error')),
         provider TEXT,
         confidence REAL,
@@ -417,7 +419,7 @@ pub const CREATE_SCHEMA: &str = "
         -- in RAM.
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')),
         CHECK ((rule_json IS NOT NULL AND json_valid(rule_json) AND run_id IS NULL)
             OR (rule_json IS NULL AND run_id IS NOT NULL))
     );
@@ -478,7 +480,7 @@ pub const CREATE_SCHEMA: &str = "
         -- mirrored in RAM.
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')),
         run_id INTEGER REFERENCES security_decision_runs(id),
         CHECK ((run_id IS NULL AND stage IS NOT NULL AND actor IS NOT NULL
                 AND previous_decision IS NOT NULL AND requested_decision IS NOT NULL AND effective_decision IS NOT NULL)
@@ -528,9 +530,9 @@ pub const CREATE_SCHEMA: &str = "
         target_key TEXT NOT NULL,
         operation TEXT NOT NULL,
         rule_id TEXT,
-        old_hash TEXT NOT NULL CHECK (length(old_hash) = 71 AND old_hash GLOB 'blake3:[0-9a-f]*'),
+        old_hash TEXT NOT NULL CHECK (length(CAST(old_hash AS BLOB)) = 71 AND old_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         old_size INTEGER NOT NULL,
-        new_hash TEXT NOT NULL CHECK (length(new_hash) = 71 AND new_hash GLOB 'blake3:[0-9a-f]*'),
+        new_hash TEXT NOT NULL CHECK (length(CAST(new_hash AS BLOB)) = 71 AND new_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         new_size INTEGER NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('applied', 'failed')),
         error TEXT,

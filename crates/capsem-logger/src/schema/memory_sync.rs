@@ -59,6 +59,7 @@ pub(crate) fn is_disk_only_table(name: &str) -> bool {
 /// rebuilt. This function is intentionally DB-owned: route callers neither
 /// inspect nor repair ledger schema.
 pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<()> {
+    integrity::validate(conn)?;
     let mut stmt = conn.prepare(
         "SELECT name, sql
          FROM main.sqlite_master

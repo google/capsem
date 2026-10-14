@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Ledger digest and credential-reference checks reject nonhex characters and
+  NUL suffixes. Readers and writers refuse older checks without rewriting the ledger.
+
 - Session credential grants require the original runtime's acknowledged policy
   and current policy; applied-policy receipts retire with stopped sessions.
 
