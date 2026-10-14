@@ -10,6 +10,7 @@ pub struct BrokerPruned {
 impl ConnectionBroker {
     /// Service maintenance owns this operation; inventory reads do no I/O.
     pub async fn prune(&self) -> BrokerResult<BrokerPruned> {
+        self.resume_retirements().await?;
         self.prune_at(SystemTime::now()).await
     }
 

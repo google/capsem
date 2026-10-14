@@ -16,6 +16,7 @@ use crate::{GoogleConnection, GrantAuthority, GrantCapability, GrantHandle, Gran
 mod enrollment;
 mod policy;
 mod retention;
+mod retirement;
 use policy::{label, normalize_grant_request, normalize_profile, scope};
 pub use retention::BrokerPruned;
 mod sessions;
@@ -274,13 +275,15 @@ impl ConnectionBroker {
             );
         }
         store.write(state.snapshot()).await?;
-        Ok(Self(Arc::new(Inner {
+        let broker = Self(Arc::new(Inner {
             profiles: catalog,
             authority,
             limits,
             store: Arc::new(store),
             state: Mutex::new(state),
-        })))
+        }));
+        broker.resume_retirements().await?;
+        Ok(broker)
     }
 
     pub async fn list(&self) -> BrokerResult<api::ConnectionListResponse> {

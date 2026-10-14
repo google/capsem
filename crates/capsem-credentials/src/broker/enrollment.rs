@@ -148,9 +148,9 @@ impl ConnectionBroker {
             .connections
             .get_mut(id)
             .ok_or(api::CredentialErrorCode::ConnectionUnavailable)?;
-        let connection = entry
+        entry
             .connection
-            .clone()
+            .as_ref()
             .ok_or(api::CredentialErrorCode::ConnectionUnavailable)?;
         entry.record.retiring = true;
         let count = self.retire_connection_grants(&mut state, id)?;
@@ -160,47 +160,7 @@ impl ConnectionBroker {
             revoked_grant_count: count,
             local_authority: api::LocalCredentialAuthority::Revoked,
         };
-        // Local authority is already fenced, even if durable retirement or
-        // provider revocation fails. Never start a second concurrent retiree.
-        if !state.jobs.get(id).is_some_and(|job| !job.is_finished()) {
-            let owner = Arc::downgrade(&self.0);
-            let id = id.to_owned();
-            let timeout = self.0.limits.retirement_timeout;
-            let key = id.clone();
-            let job = tokio::spawn(async move {
-                let result = tokio::time::timeout(timeout, connection.disconnect())
-                    .await
-                    .map_err(|_| api::CredentialErrorCode::ProviderTimeout)
-                    .and_then(|result| result.map_err(connection_error));
-                if let Some(owner) = owner.upgrade() {
-                    let mut state = owner.state.lock().await;
-                    if let Some(entry) = state.connections.get_mut(&id) {
-                        entry.record.error_code = match result {
-                            Ok(
-                                crate::GoogleRevocationOutcome::Succeeded | crate::GoogleRevocationOutcome::NotNeeded,
-                            ) => {
-                                entry.record.retiring = false;
-                                None
-                            }
-                            Ok(crate::GoogleRevocationOutcome::Failed(_)) => {
-                                Some(api::CredentialErrorCode::ProviderRejected)
-                            }
-                            Err(error) => Some(error),
-                        };
-                        if owner.store.write(state.snapshot()).await.is_err() {
-                            state
-                                .connections
-                                .get_mut(&id)
-                                .expect("retained connection")
-                                .record
-                                .error_code = Some(api::CredentialErrorCode::StorageCommitFailed);
-                        }
-                    }
-                    state.jobs.remove(&id);
-                }
-            });
-            state.jobs.insert(key, job);
-        }
+        self.start_retirement(&mut state, id)?;
         drop(state);
         saved?;
         Ok(response)

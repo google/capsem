@@ -2,6 +2,7 @@ use super::*;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::oneshot;
+mod retirement;
 mod runtime;
 
 #[derive(Default)]

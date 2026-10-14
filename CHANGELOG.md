@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Interrupted credential disconnects resume bounded provider revocation after
+  service restart; maintenance retries unresolved retirement while grants stay revoked.
+
 - Archive index flushes batch SQLite inserts within the existing atomic
   archive/ledger transaction, reducing repeated statement execution.
 
