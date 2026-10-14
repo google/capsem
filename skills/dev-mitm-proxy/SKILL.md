@@ -89,6 +89,14 @@ contract tracked by issue #349. Extend and run
 `tests/citadel/test_runtime_limit_authority.py` whenever a new consumer or
 derived limit is added.
 
+Use `just bench mitm-scale` when a one-VM curve plateaus while the host still
+looks idle. The lane uses fresh 1/2/4/8-VM cohorts, keeps per-VM work fixed and
+records the mock upstream outside the Capsem process tree. Compare the curve to
+physical cores, not only logical CPUs: after the VM owners, confined proxies
+and ledgers consume the physical-core budget, SMT contention is expected to
+raise per-VM latency. A busy fixture, request error or hidden descriptor
+refusal invalidates the run; do not explain it as product saturation.
+
 ## Content-Encoding: the systemic rule
 
 The proxy MUST handle response decompression as a general capability. This is not optional, not per-feature.

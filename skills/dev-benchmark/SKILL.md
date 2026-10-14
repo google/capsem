@@ -119,6 +119,17 @@ capacity because summing RSS counts shared pages once per process; use USS to
 show the memory that disappears with that process. Compare two unchanged runs
 before and two changed runs after any performance work.
 
+`just bench mitm-scale` is the aggregate HTTPS capacity proof. Its
+`[benchmark.mitm_scale]` config creates a fresh identical cohort at each VM
+count, fixes one keep-alive concurrency level per VM, samples the Capsem tree
+and mock upstream separately, and rejects request errors or hidden proxy
+refusals. It also records physical cores and logical CPUs. Judge scaling below
+physical-core saturation first; once total CPU reaches the host budget, a flat
+or falling aggregate RPS is host pressure rather than evidence of a shared
+Capsem lock. Report aggregate RPS, RPS per consumed CPU, PSS per loaded VM and
+per-VM latency together. Run the lane twice after changing VM ownership,
+network workers, proxy concurrency, ledger admission or their limits.
+
 ## Is the move real?
 
 `compare` and `verify` report `delta_abs`, `delta_pct`, `ratio`, and
