@@ -679,7 +679,9 @@ pub async fn emit_security_decision_transition(
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
     let decision_event = security_decision_event(event_id, event_type, rule, event, decision_state, timestamp_unix_ms)?;
-    emit_security_write(db, WriteOp::SecurityDecisionEvent(decision_event)).await;
+    emit_security_write(db, WriteOp::SecurityDecisionEvent(decision_event))
+        .await
+        .ok_or_else(|| "ledger refused security decision row".to_string())?;
     Ok(())
 }
 
@@ -693,7 +695,8 @@ pub fn emit_security_decision_transition_blocking(
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
     let decision_event = security_decision_event(event_id, event_type, rule, event, decision_state, timestamp_unix_ms)?;
-    emit_security_write_blocking(db, WriteOp::SecurityDecisionEvent(decision_event));
+    emit_security_write_blocking(db, WriteOp::SecurityDecisionEvent(decision_event))
+        .ok_or_else(|| "ledger refused security decision row".to_string())?;
     Ok(())
 }
 
@@ -763,7 +766,9 @@ pub async fn emit_security_rule_match(
 ) -> Result<(), String> {
     let rule_event = security_rule_event(event_id, event_type, rule, event, timestamp_unix_ms)?;
     trace_security_rule_match(&rule_event, rule);
-    emit_security_write(db, WriteOp::SecurityRuleEvent(rule_event)).await;
+    emit_security_write(db, WriteOp::SecurityRuleEvent(rule_event))
+        .await
+        .ok_or_else(|| "ledger refused security rule row".to_string())?;
     Ok(())
 }
 
@@ -801,7 +806,9 @@ pub async fn emit_security_ask_pending(
 ) -> Result<SecurityEventId, String> {
     let ask_id = SecurityEventId::new_uuid4();
     let ask_event = security_ask_pending_event(ask_id.clone(), event_id, event_type, rule, event, timestamp_unix_ms)?;
-    emit_security_write(db, WriteOp::SecurityAskEvent(ask_event)).await;
+    emit_security_write(db, WriteOp::SecurityAskEvent(ask_event))
+        .await
+        .ok_or_else(|| "ledger refused pending security ask row".to_string())?;
     Ok(ask_id)
 }
 
@@ -815,7 +822,8 @@ pub fn emit_security_ask_pending_blocking(
 ) -> Result<SecurityEventId, String> {
     let ask_id = SecurityEventId::new_uuid4();
     let ask_event = security_ask_pending_event(ask_id.clone(), event_id, event_type, rule, event, timestamp_unix_ms)?;
-    emit_security_write_blocking(db, WriteOp::SecurityAskEvent(ask_event));
+    emit_security_write_blocking(db, WriteOp::SecurityAskEvent(ask_event))
+        .ok_or_else(|| "ledger refused pending security ask row".to_string())?;
     Ok(ask_id)
 }
 
@@ -828,7 +836,8 @@ pub fn emit_security_ask_resolution_blocking(
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
     let event = security_ask_resolution_event(pending, status, resolver, reason, timestamp_unix_ms)?;
-    emit_security_write_blocking(db, WriteOp::SecurityAskEvent(event));
+    emit_security_write_blocking(db, WriteOp::SecurityAskEvent(event))
+        .ok_or_else(|| "ledger refused resolved security ask row".to_string())?;
     Ok(())
 }
 
@@ -841,7 +850,9 @@ pub async fn emit_security_ask_resolution(
     timestamp_unix_ms: i64,
 ) -> Result<(), String> {
     let event = security_ask_resolution_event(pending, status, resolver, reason, timestamp_unix_ms)?;
-    emit_security_write(db, WriteOp::SecurityAskEvent(event)).await;
+    emit_security_write(db, WriteOp::SecurityAskEvent(event))
+        .await
+        .ok_or_else(|| "ledger refused resolved security ask row".to_string())?;
     Ok(())
 }
 

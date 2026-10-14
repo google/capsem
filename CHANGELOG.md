@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Fail DNS closed when any decision, rule or ask row is refused, and coalesce
+  related supplemental admissions so concurrent queries do not serialize one
+  ledger round trip per row.
+
+- VM boot admission retains an exclusive generation lifetime fence. Service
+  restart cleanup confirms exit in the original kernel boot and PID namespace
+  before retiring grants and session bytes; delayed children cannot replay boot.
+
+- Startup retirement verifies loss of the original service parent and uses
+  stable native identity on Linux and Mac. Hosts without guarded signals await
+  the owner's parent-loss exit and refuse unconfirmed retirement.
+
+- Fresh and resumed VM launches carry the service's original PID and exact
+  spawn generation into process lifetime and boot admission.
+
+- VM processes verify their original service parent and trusted spawn
+  generation before boot, and terminate when that service disappears.
+
+- Linux startup pins original orphan processes and verifies fresh native
+  arguments before signalling. TERM/KILL and exit waits retain those handles;
+  uncertain identity or exit refuses startup before stale socket removal.
+
+- VM teardown signals and awaits its original owned child rather than a
+  cached PID. Shutdown, suspend and failed restore refuse uncertain exit;
+  service shutdown retires the child before deleting ephemeral session bytes.
+
+- Service startup orphan selection preserves native argument boundaries and
+  requires one session path directly under its own run roots. Neighbouring
+  root prefixes, incidental command text, duplicate options and traversal
+  targets cannot select unrelated workloads.
+
+- Managed VM expiry and authenticated close retire the original trusted
+  effects even when ownership storage is missing or corrupt. Failed persistence
+  cannot acknowledge a replacement generation as closed.
+
 - Replace the archived `serde_yaml`/`unsafe-libyaml` Sigma-rule parser with a
   maintained safe-Rust parser, rejecting duplicate detection keys instead of
   silently accepting the last value.

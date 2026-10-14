@@ -436,6 +436,45 @@ match = 'http.path.startsWith("/v1/")'
 }
 
 #[tokio::test]
+async fn emit_matching_security_rules_reports_supplemental_admission_failure() {
+    let writer = capsem_logger::DbWriter::open_in_memory(16).unwrap();
+    writer.shutdown_blocking();
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.http_block]
+name = "http_block"
+action = "block"
+detection_level = "critical"
+match = 'http.path.startsWith("/v1/")'
+"#,
+    )
+    .unwrap();
+    let rules =
+        crate::net::policy_config::SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        host: Some("api.openai.com".into()),
+        method: Some("POST".into()),
+        path: Some("/v1/responses".into()),
+        query: None,
+        status: None,
+        body: None,
+    });
+
+    let error = emit_matching_security_rules(
+        &writer,
+        SecurityEventId::new_uuid4(),
+        RuntimeSecurityEventType::HttpRequest,
+        &rules,
+        &event,
+        1_789_000_000_200,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.contains("supplemental security rows"), "{error}");
+}
+
+#[tokio::test]
 async fn emit_matching_security_rules_with_decision_uses_same_evaluation_as_ledger() {
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("session.db");

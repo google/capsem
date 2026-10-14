@@ -179,6 +179,7 @@ pub async fn emit_dns_security_write_and_rules(
     .await
     {
         warn!(error = %error, "failed to emit DNS security rule ledger rows");
+        return None;
     }
     Some(event_id)
 }
