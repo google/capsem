@@ -332,6 +332,15 @@ pub(super) async fn shutdown_vm_process(
     state.containers.cancel_and_wait(id).await;
     state.unregister_session_db_handle(id);
 
+    let grant_retirement = state
+        .connections
+        .stop_runtime(
+            id,
+            generation,
+            connection_routes::lifecycle::stop_policy(persistent, mode.retains_state()),
+        )
+        .await;
+
     if mode.retains_state() {
         // Send shutdown command via IPC (or SIGTERM as fallback).
         let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
@@ -401,6 +410,7 @@ pub(super) async fn shutdown_vm_process(
             "original child retirement is unknown".into(),
         ));
     }
+    grant_retirement?;
     Ok(Some((session_dir, persistent, pid)))
 }
 
@@ -515,6 +525,11 @@ pub(super) async fn handle_suspend(
     // reaping instead of guessing that a fixed post-kill sleep was sufficient.
     wait_for_process_exit(&state, &id, generation, std::time::Duration::from_millis(500)).await?;
 
+    state
+        .connections
+        .stop_runtime(&id, generation, capsem_credentials::GrantStopPolicy::Preserve)
+        .await?;
+
     tracing::warn!(id, "handle_suspend (success) removing instance");
     state.instances.lock().unwrap().remove(&id);
     state.unregister_session_db_handle(&id);
@@ -589,6 +604,8 @@ pub(super) async fn handle_delete(
                 return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")));
             }
         };
+
+    let _deletion_guard = connection_routes::lifecycle::deletion(&state, &id).await?;
 
     // DELETE is a destructive contract. Validate registry-derived paths,
     // perform the blocking removal off the async runtime, and do not report

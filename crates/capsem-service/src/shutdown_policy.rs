@@ -3,7 +3,15 @@ use super::ServiceState;
 /// Atomically claim teardown ownership for an instance. The child watcher
 /// uses the same map removal as its ownership token, so only one side wins.
 pub(super) fn claim_shutdown_instance(state: &ServiceState, id: &str, generation: uuid::Uuid) -> bool {
-    state.evict_instance(id, generation).is_some()
+    let Some(info) = state.evict_instance(id, generation) else {
+        return false;
+    };
+    state.connections.fence_runtime(
+        id,
+        generation,
+        super::connection_routes::lifecycle::stop_policy(info.persistent, true),
+    );
+    true
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

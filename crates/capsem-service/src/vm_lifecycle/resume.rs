@@ -66,6 +66,7 @@ pub(crate) async fn handle_resume(
                             state
                                 .off_worker(move |state| state.clear_resume_checkpoint(&cleared_id))
                                 .await?;
+                            connection_routes::lifecycle::rebind(&state, &cold_id).await?;
                             crate::container_setup::restore_ready(&state, &cold_id).await?;
                             return provision_response_for_running(&state, cold_id).map(Json);
                         }
@@ -90,6 +91,7 @@ pub(crate) async fn handle_resume(
             state
                 .off_worker(move |state| state.clear_resume_checkpoint(&cleared_id))
                 .await?;
+            connection_routes::lifecycle::rebind(&state, &resumed_id).await?;
             crate::container_setup::restore_ready(&state, &resumed_id).await?;
             provision_response_for_running(&state, resumed_id).map(Json)
         }
@@ -116,6 +118,10 @@ pub(crate) async fn stop_failed_restore_process_under_lock(state: &ServiceState,
     claim_shutdown_instance(state, id, generation);
     state.unregister_session_db_handle(id);
     wait_for_process_exit(state, id, generation, std::time::Duration::from_secs(1)).await?;
+    state
+        .connections
+        .stop_runtime(id, generation, capsem_credentials::GrantStopPolicy::Preserve)
+        .await?;
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
     Ok(())

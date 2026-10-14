@@ -3,6 +3,7 @@ use super::*;
 use capsem_core::managed_sessions::{controller::CredentialOwner, VmBinding};
 use capsem_credentials::broker::{BrokerLimits, BrokerProfile, BrokerStorage, ConnectionBroker, SessionBinding};
 use std::time::SystemTime;
+pub(crate) mod lifecycle;
 
 pub(crate) struct Runtime {
     path: PathBuf,

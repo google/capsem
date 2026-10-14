@@ -565,6 +565,11 @@ impl ServiceState {
     /// and `rename` can block on large dirs and stall other handlers
     /// racing for the lock.
     fn scrub_evicted_instance(&self, id: &str, info: &InstanceInfo) {
+        self.connections.fence_runtime(
+            id,
+            info.generation,
+            connection_routes::lifecycle::stop_policy(info.persistent, true),
+        );
         self.unregister_session_db_handle(id);
         if info.persistent {
             info!(id, "persistent VM process died, preserving session dir");

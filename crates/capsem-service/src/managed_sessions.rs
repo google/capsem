@@ -294,6 +294,11 @@ impl ManagedLifecycle {
         self.confirm_native_exit(binding.clone(), false).await?;
         self.state.containers.cancel_and_wait(binding.id()).await;
         self.grants.revoke(ticket, binding.clone()).await?;
+        self.state
+            .connections
+            .retire_session(binding.id())
+            .await
+            .map_err(app_error)?;
         network_routes::vm_deleted_checked(&self.state, binding.id()).await?;
         self.remove_session(binding, true).await
     }

@@ -79,6 +79,13 @@ pub(crate) fn settle_persistent_session_dir(state: &ServiceState, name: &str, ex
 /// reports is data, not authority, and used to go straight to
 /// `remove_dir_all`.
 pub(super) async fn remove_purged_session_dir(state: &Arc<ServiceState>, vm_id: &str, session_dir: PathBuf) -> bool {
+    let _deletion_guard = match connection_routes::lifecycle::deletion(state, vm_id).await {
+        Ok(guard) => guard,
+        Err(error) => {
+            warn!(vm_id, error = %error.1, "purge credential retirement remains pending");
+            return false;
+        }
+    };
     let delete_state = Arc::clone(state);
     let dir = session_dir.clone();
     let outcome = tokio::task::spawn_blocking(move || delete_state.delete_session_dir(&dir)).await;

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Session stop, suspend, exit and terminal cleanup fence credential grants.
+  Ready resume rebinds valid approval, and deletion refuses a resumed replacement.
+
 - Credential runtime fences preserve finite same-session approval on retained
   stops and retire terminal session approvals, including recovered metadata.
 

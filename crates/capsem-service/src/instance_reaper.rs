@@ -81,8 +81,12 @@ pub(super) fn spawn_exit_reaper(
             }
             instances.remove(&id)
         };
-        if removed.is_some() {
+        if let Some(info) = &removed {
             // The VM is gone: a container setup for it has nothing left to do.
+            let policy = connection_routes::lifecycle::stop_policy(info.persistent, true);
+            if let Err(error) = state.connections.stop_runtime(&id, generation, policy).await {
+                warn!(id, error = %error.1, "exited session credential metadata remains pending");
+            }
             state.containers.cancel_and_wait(&id).await;
         }
         // Publish the exit before waiting: restore holds the write guard
