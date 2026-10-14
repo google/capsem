@@ -63,16 +63,21 @@ fn bench_db_writer_body_bursts(c: &mut Criterion) {
 
     // The 4096 exchange case also exercises a large archive-index flush,
     // whose cost stalls bounded HTTP audit admission during periodic flushes.
-    for burst_size in [256usize, 1024usize, 4096usize] {
+    for (name, burst_size, capacity) in [
+        ("net_bodies_256", 256usize, 256usize),
+        ("net_bodies_1024", 1024, 1024),
+        ("net_bodies_4096", 4096, 4096),
+        ("net_bodies_4096_bounded_1024", 4096, 1024),
+    ] {
         // Ten measured large bursts took 26 seconds; retain rounded 20% margin.
         group.measurement_time(Duration::from_secs(if burst_size == 4096 { 35 } else { 8 }));
         group.throughput(Throughput::Elements(burst_size as u64));
-        group.bench_with_input(format!("net_bodies_{burst_size}"), &burst_size, |bench, &burst| {
+        group.bench_with_input(name, &(burst_size, capacity), |bench, &(burst, capacity)| {
             bench.iter_batched(
                 || {
                     let dir = tempfile::tempdir().expect("create temp db dir");
                     let db_path = dir.path().join("session.db");
-                    let writer = DbWriter::open(&db_path, burst.max(128)).expect("open DbWriter");
+                    let writer = DbWriter::open(&db_path, capacity).expect("open DbWriter");
                     let ops = (0..burst).map(net_bodies::net_event).collect::<Vec<_>>();
                     (dir, writer, ops)
                 },

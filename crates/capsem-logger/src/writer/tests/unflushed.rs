@@ -35,6 +35,39 @@ fn fs_op(idx: usize) -> WriteOp {
     ))
 }
 
+#[test]
+fn sustained_small_queue_persists_work_before_the_interval_without_a_flush_barrier() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let writer = DbWriter::open(&path, 1024).unwrap();
+    for index in 0..4096 {
+        writer.write_blocking_checked(fs_op(index)).unwrap();
+    }
+    let reader = disk(&path);
+    let started = std::time::Instant::now();
+    let persisted = loop {
+        let tx = reader.unchecked_transaction().unwrap();
+        let count: i64 = tx
+            .query_row("SELECT COUNT(*) FROM fs_events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            crate::counters::load(&tx).unwrap().files.events,
+            count as u64,
+            "every automatic commit must publish its counters with exactly its rows"
+        );
+        tx.commit().unwrap();
+        if count >= 2048 {
+            break count;
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(2),
+            "a 1024-entry producer queue must not accumulate an interval's whole ledger before persisting; got {count} rows without a flush barrier");
+        std::thread::yield_now();
+    };
+    assert!(persisted <= 4096);
+    writer.shutdown_blocking();
+    assert_eq!(disk_count(&path, "SELECT COUNT(*) FROM fs_events"), 4096);
+}
+
 fn exec_start(exec_id: u64, command: &str) -> WriteOp {
     WriteOp::ExecEvent(crate::events::ExecEvent {
         event_id: None,

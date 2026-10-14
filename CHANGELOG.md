@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- VM audit writers persist smaller complete batches sized to their existing
+  producer queue, reducing long periodic flush stalls without weakening durability.
+
 - Connection inventory supports bounded `limit` and `cursor` pages through the
   service and SDKs, with malformed queries refused.
 
