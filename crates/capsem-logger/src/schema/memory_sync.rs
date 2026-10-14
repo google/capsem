@@ -194,9 +194,10 @@ pub fn flush_memory_tables_to_disk<'a>(
         let table = required_hot_table(table)?;
         // Execute the cached probe so a schema-cookie change reparses it.
         // Even an empty memory table must not hide a missing disk table/id.
-        let _: i64 = conn
-            .prepare_cached(&format!("SELECT COUNT(id) FROM main.{table} WHERE 0"))?
-            .query_row([], |row| row.get(0))?;
+        let _: Option<i64> = conn
+            .prepare_cached(&format!("SELECT id FROM main.{table} WHERE 0"))?
+            .query_row([], |row| row.get(0))
+            .optional()?;
         let last_flushed_id = *watermarks.get(table).unwrap_or(&0);
         let max_memory_id = max_table_id(conn, MEMORY_SCHEMA, table)?;
         if max_memory_id > last_flushed_id {
