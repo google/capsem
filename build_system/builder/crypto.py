@@ -13,7 +13,7 @@ import re
 import secrets as _secrets
 import uuid as _uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
 
 if TYPE_CHECKING:
     from blake3 import blake3 as Blake3
@@ -27,6 +27,16 @@ token_hex = _secrets.token_hex
 token_bytes = _secrets.token_bytes
 token_urlsafe = _secrets.token_urlsafe
 uuid_v4 = _uuid.uuid4
+
+
+class Hasher(Protocol):
+    """Incremental digest contract shared by the accelerated bindings."""
+
+    def update(self, data: bytes | bytearray | memoryview, /) -> object: ...
+
+    def digest(self) -> bytes: ...
+
+    def hexdigest(self) -> str: ...
 
 
 def blake3(*args: Any, **kwargs: Any) -> Blake3:

@@ -1316,7 +1316,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
         in workflow
     )
     assert "from ... import crypto as hashlib" in script
-    assert "from ... import crypto as blake3" in script
+    assert "hashlib.blake3()" in script
     assert "def fetch_and_verify_evidence_artifact" in script
     assert 'site, sbom, "sha256", "host SBOM evidence", "spdx"' in script
     assert 'site, obom, "blake3", "VM OBOM evidence", "rootfs_cyclonedx"' in script

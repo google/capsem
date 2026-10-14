@@ -80,7 +80,7 @@ def _inputs(root: Path, relatives: tuple[str, ...]) -> Iterator[tuple[str, Path]
             yield path.relative_to(root).as_posix(), path
 
 
-def _feed(digest: blake3.blake3, path: Path) -> None:
+def _feed(digest: blake3.Hasher, path: Path) -> None:
     mode = path.lstat().st_mode
     digest.update(f"{stat.S_IMODE(mode):04o}".encode("ascii"))
     digest.update(b"\0")
