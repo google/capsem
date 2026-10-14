@@ -3,6 +3,8 @@ use crate::oauth::{test_connection, TestReply};
 use crate::OAuthConnectionStorage;
 use futures::FutureExt;
 
+mod sets;
+
 fn session() -> GrantSession {
     GrantSession::new([1; 16], [1; 16], [1; 16]).unwrap()
 }

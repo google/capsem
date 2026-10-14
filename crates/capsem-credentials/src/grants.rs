@@ -121,7 +121,8 @@ struct Grant {
     connection: GoogleConnection,
     generation: u64,
     session: GrantSession,
-    capability: GrantCapability,
+    capabilities: Vec<GrantCapability>,
+    scopes: BTreeSet<String>,
     expires: Instant,
     active: bool,
 }
@@ -150,14 +151,36 @@ impl GrantAuthority {
         now: Instant,
         policy: impl Fn(&GrantSession, &GrantCapability) -> bool,
     ) -> Result<GrantHandle, GrantError> {
+        self.issue_set(connection, session, vec![capability], lifetime, now, policy)
+    }
+
+    /// Issue the whole explicit capability set as one revocable grant. Every
+    /// precondition is checked before inserting authority or consuming capacity.
+    pub fn issue_set(
+        &self,
+        connection: GoogleConnection,
+        session: GrantSession,
+        capabilities: Vec<GrantCapability>,
+        lifetime: Duration,
+        now: Instant,
+        policy: impl Fn(&GrantSession, &GrantCapability) -> bool,
+    ) -> Result<GrantHandle, GrantError> {
         if lifetime.is_zero() || lifetime > self.limits.max_lifetime {
             return Err(GrantError::Invalid);
         }
-        if !policy(&session, &capability) {
+        let ids: BTreeSet<_> = capabilities.iter().map(GrantCapability::id).collect();
+        if capabilities.is_empty() || ids.len() != capabilities.len() {
+            return Err(GrantError::Invalid);
+        }
+        if !capabilities.iter().all(|capability| policy(&session, capability)) {
             return Err(GrantError::Denied);
         }
+        let scopes: BTreeSet<_> = capabilities
+            .iter()
+            .flat_map(|capability| capability.scopes.iter().cloned())
+            .collect();
         let authorization = connection.authorization().map_err(|_| GrantError::Denied)?;
-        if !capability.scopes.is_subset(&authorization.granted_scopes) {
+        if !scopes.is_subset(&authorization.granted_scopes) {
             return Err(GrantError::Denied);
         }
         let expires = now.checked_add(lifetime).ok_or(GrantError::Invalid)?;
@@ -173,7 +196,8 @@ impl GrantAuthority {
                 connection,
                 generation: authorization.generation,
                 session,
-                capability,
+                capabilities,
+                scopes,
                 expires,
                 active: true,
             }),
@@ -194,7 +218,7 @@ impl GrantAuthority {
         grant
             .connection
             .authorization()
-            .is_ok_and(|a| a.generation == grant.generation && grant.capability.scopes.is_subset(&a.granted_scopes))
+            .is_ok_and(|a| a.generation == grant.generation && grant.scopes.is_subset(&a.granted_scopes))
     }
     fn admits(
         grant: &Grant,
@@ -206,8 +230,10 @@ impl GrantAuthority {
         grant.active
             && grant.session == session
             && now < grant.expires
-            && grant.capability.targets.contains(target)
-            && policy(&session, &grant.capability)
+            && grant
+                .capabilities
+                .iter()
+                .any(|capability| capability.targets.contains(target) && policy(&session, capability))
             && Self::consent_current(grant)
     }
     /// The callback must be short synchronous host work and must not reenter
@@ -239,7 +265,7 @@ impl GrantAuthority {
             return Err(GrantError::Denied);
         }
         let result = lease
-            .with_authorization(checked_now, grant.generation, &grant.capability.scopes, use_token)
+            .with_authorization(checked_now, grant.generation, &grant.scopes, use_token)
             .map_err(|_| GrantError::Denied);
         drop(grants);
         result
@@ -289,7 +315,7 @@ impl GrantAuthority {
             || grant.session.ownership != session.ownership
             || grant.session.runtime == session.runtime
             || now >= grant.expires
-            || !policy(&session, &grant.capability)
+            || !grant.capabilities.iter().all(|capability| policy(&session, capability))
             || !Self::consent_current(grant)
         {
             return Err(GrantError::Denied);
