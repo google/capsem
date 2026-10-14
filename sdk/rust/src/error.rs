@@ -5,6 +5,8 @@ pub enum Error {
     VmLookup { name: String, matches: usize },
     #[error("invalid SDK input: {0}")]
     InvalidInput(&'static str),
+    #[error("invalid gateway response: {0}")]
+    InvalidResponse(&'static str),
     #[error("managed session cancelled")]
     Cancelled,
     #[error("managed session failed: {0}")]
@@ -23,3 +25,16 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl Error {
+    /// The broker's sanitized machine-readable refusal, when present. Unknown
+    /// future codes or malformed/non-JSON responses retain their HTTP error.
+    pub fn credential_code(&self) -> Option<crate::models::CredentialErrorCode> {
+        #[derive(serde::Deserialize)]
+        struct Envelope {
+            code: crate::models::CredentialErrorCode,
+        }
+        let Self::Http { body, .. } = self else { return None };
+        serde_json::from_slice::<Envelope>(body).ok().map(|value| value.code)
+    }
+}

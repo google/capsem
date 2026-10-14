@@ -221,6 +221,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Rust SDK connection and session credential-grant resources implement the
+  nine approved calls with explicit consent, ownership checks and no automatic
+  replay. Live service activation and native AGY handoff remain pending.
+
 - TypeScript SDK managed scopes renew finite ownership and await cleanup
   through caller abort, lease failure and uncertain creation without replay.
 

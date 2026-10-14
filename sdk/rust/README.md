@@ -37,6 +37,20 @@ prefetches without creating a VM; an optional redacted `Registry` applies only
 to that call. The borrowed resource uses the hypervisor's HTTP deadline and
 connection pool. Dropping a request future cancels it; mutations are not retried.
 
+`hv.connections()` provides typed list, Google authorization, authorization
+poll/cancel, connection status and disconnect calls. `vm.credential_grants()`
+provides explicit create/list/revoke calls for that VM's canonical session.
+Keep the caller-supplied request UUID when explicitly retrying the same consent
+or grant mutation. Grant creation requires the current ownership generation;
+connecting or reconnecting never grants access implicitly. The SDK does not
+launch a browser or poll automatically, and `revoking` means cleanup remains
+pending. Errors retain the HTTP status; `error.credential_code()` reads a known
+broker refusal code when supplied by the service.
+
+These client methods implement the approved 0.7 wire contract. Live service
+route activation and native AGY handoff are still being integrated; the
+client tests alone do not qualify either behavior.
+
 ```rust,no_run
 use capsem_sdk::{CreateOptions, Hypervisor, LogOptions, PortOptions, Result, TriageOptions, VmSelector};
 use capsem_sdk::models::HostLogSource;

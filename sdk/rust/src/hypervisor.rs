@@ -67,6 +67,10 @@ impl Hypervisor {
         crate::Credentials(&self.client)
     }
 
+    pub fn connections(&self) -> crate::Connections<'_> {
+        crate::Connections(&self.client)
+    }
+
     /// The MCP servers every VM runs, from settings and corp config.
     pub fn mcp(&self) -> Mcp<'_> {
         Mcp(&self.client)
