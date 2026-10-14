@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -16,6 +16,7 @@ from capsem import (
     ExecTimeoutError,
     HttpError,
     Hypervisor,
+    Registry,
     models,
 )
 from capsem.execution import (
@@ -23,7 +24,7 @@ from capsem.execution import (
     decode_exec_output,
 )
 
-from inspect_capsem._transfer import _staged_download, _staged_upload
+from inspect_capsem._transfer import _OCI_STAGE_DIR, _staged_download, _staged_upload
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,11 @@ class CapsemController(Protocol):
         *,
         cpu_count: int,
         ram_gb: int,
+        image: str | None = None,
+        command: Sequence[str] | None = None,
         env: dict[str, str] | None = None,
         labels: Mapping[str, str] | None = None,
+        registry_ca_pem: str | None = None,
     ) -> str: ...
     async def stop_vm(self, vm_id: str) -> None: ...
     async def list_vms(self) -> list[models.SandboxInfo]: ...
@@ -73,6 +77,13 @@ def is_root_user_spec(user: str | None) -> bool:
         return True
     u, _, g = user.strip().partition(":")
     return u.strip().lower() in ("", "root", "0") and g.strip().lower() in ("", "root", "0")
+
+
+def _normalize_image_ref(image: str | None) -> str | None:
+    if not image or not image.strip():
+        return None
+    ref = image.strip()
+    return ref if "://" in ref else f"docker://{ref}"
 
 
 def _managed_vm_prefix_slug() -> str:
@@ -123,11 +134,14 @@ class SdkCapsemController:
         *,
         url: str | None = None,
         token: str | None = None,
+        registry_ca_pem: str | None = None,
     ) -> None:
         if hypervisor is None:
             hypervisor = Hypervisor.connect(url, token, timeout=_SDK_CALL_TIMEOUT_SECS)
         self._hypervisor: Hypervisor = hypervisor
+        self._registry_ca_pem = registry_ca_pem
         self._sessions: dict[str, VM] = {}
+        self._oci_vms: set[str] = set()
 
     async def close(self) -> None:
         with contextlib.suppress(Exception):
@@ -143,14 +157,24 @@ class SdkCapsemController:
         *,
         cpu_count: int,
         ram_gb: int,
+        image: str | None = None,
+        command: Sequence[str] | None = None,
         env: dict[str, str] | None = None,
         labels: Mapping[str, str] | None = None,
+        registry_ca_pem: str | None = None,
     ) -> str:
+        norm_image = _normalize_image_ref(image)
         kwargs: dict[str, Any] = {
             "cpus": cpu_count,
             "memory": ram_gb,
             "labels": _managed_vm_labels(labels),
         }
+        if norm_image:
+            kwargs["image"] = norm_image
+        if eff_ca := (registry_ca_pem or self._registry_ca_pem):
+            kwargs["registry"] = Registry(ca_pem=eff_ca)
+        if command is not None:
+            kwargs["command"] = list(command)
         if env:
             kwargs["env"] = dict(env)
         try:
@@ -160,6 +184,8 @@ class SdkCapsemController:
             raise
         vm_id = str(session.id)
         self._sessions[vm_id] = session
+        if norm_image:
+            self._oci_vms.add(vm_id)
         return vm_id
 
     async def stop_vm(self, vm_id: str) -> None:
@@ -185,8 +211,9 @@ class SdkCapsemController:
     async def exec_in_vm(self, vm_id: str, command: str, *, timeout: int = 120) -> CommandResult:
         session = self._session_for(vm_id)
         timeout = min(timeout, EXEC_TIMEOUT_CEILING_SECS)
+        target = models.ExecTarget.WORKLOAD if vm_id in self._oci_vms else models.ExecTarget.VM
         try:
-            res = await session.exec(command, timeout_secs=timeout, target=models.ExecTarget.VM)
+            res = await session.exec(command, timeout_secs=timeout, target=target)
         except ExecTimeoutError as exc:
             raise TimeoutError(f"Capsem exec timed out after {timeout}s: {exc}") from exc
         return CommandResult(
@@ -198,10 +225,14 @@ class SdkCapsemController:
 
     async def upload_to_vm(self, vm_id: str, guest_path: str, data: bytes) -> None:
         files = self._session_for(vm_id).files
-        await _staged_upload(self, files, vm_id, guest_path, data)
+        stage_dir = _OCI_STAGE_DIR if vm_id in self._oci_vms else None
+        await _staged_upload(self, files, vm_id, guest_path, data, stage_dir=stage_dir)
 
     async def download_from_vm(
         self, vm_id: str, guest_path: str, *, max_bytes: int | None = None
     ) -> bytes:
         files = self._session_for(vm_id).files
-        return await _staged_download(self, files, vm_id, guest_path, max_bytes=max_bytes)
+        stage_dir = _OCI_STAGE_DIR if vm_id in self._oci_vms else None
+        return await _staged_download(
+            self, files, vm_id, guest_path, max_bytes=max_bytes, stage_dir=stage_dir
+        )

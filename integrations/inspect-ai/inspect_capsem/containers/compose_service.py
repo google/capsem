@@ -100,8 +100,8 @@ def _extract_service_fields(
             )
     overrides: dict[str, Any] = {"execution_mode": "container"}
     svc_image = _field(selected_svc, "image")
-    if svc_image:
-        overrides["image"] = str(svc_image)
+    if svc_image is not None and str(svc_image).strip():
+        overrides["image"] = str(svc_image).strip()
     svc_build = _field(selected_svc, "build")
     if svc_build:
         if isinstance(svc_build, str):
@@ -136,8 +136,8 @@ def _extract_service_fields(
             if build_target:
                 overrides["build_target"] = str(build_target)
     svc_workdir = _field(selected_svc, "working_dir")
-    if svc_workdir:
-        overrides["working_dir"] = str(svc_workdir)
+    if svc_workdir is not None and str(svc_workdir).strip():
+        overrides["working_dir"] = str(svc_workdir).strip()
     svc_env = _normalize_environment(_field(selected_svc, "environment"), inputs)
     if svc_env:
         overrides["environment"] = svc_env
@@ -174,8 +174,8 @@ def _extract_service_fields(
     if net_mode:
         overrides["network_mode"] = net_mode
     svc_user = _field(selected_svc, "user")
-    if svc_user:
-        overrides["user"] = str(svc_user)
+    if svc_user is not None and str(svc_user).strip():
+        overrides["user"] = str(svc_user).strip()
     if "dockerfile" in overrides:
         for k, v in inputs.dockerfile_defaults(overrides["dockerfile"]).items():
             overrides.setdefault(k, v)
