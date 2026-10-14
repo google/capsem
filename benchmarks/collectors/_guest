@@ -192,6 +192,17 @@ def main() -> int:
                 f"response={json.dumps(artifact_result)[:1000]}"
             )
         document = json.loads(exec_output_text(artifact_result))
+        # Reject while the fixture is still live. ServiceInstance sees the
+        # active exception during teardown and preserves the ledger/proxy
+        # evidence instead of treating this as a clean benchmark shutdown.
+        section = document.get(mode.replace("-", "_"), document)
+        if failed := failed_load_levels(section):
+            raise RuntimeError(
+                f"capsem-bench {mode}: requests failed at concurrency {failed}; "
+                "the rail did not sustain the requested load, so the run is rejected; "
+                f"artifact={json.dumps(document, sort_keys=True)}; "
+                f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}"
+            )
     finally:
         with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
@@ -207,19 +218,12 @@ def main() -> int:
 
     # The guest writes one document per run keyed by mode; take that section
     # when present so keys are not prefixed with the mode twice.
-    section = document.get(mode.replace("-", "_"), document)
     runtime_failures = mitm_runtime_failures(service_log) if mode == "mitm-load" else []
     if runtime_failures:
         raise RuntimeError(
             f"capsem-bench {mode}: {len(runtime_failures)} internal traffic "
             "descriptor refusal(s) were retried below the client boundary; "
             f"first={runtime_failures[:5]!r}; "
-            f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}"
-        )
-    if failed := failed_load_levels(section):
-        raise RuntimeError(
-            f"capsem-bench {mode}: requests failed at concurrency {failed}; "
-            "the rail did not sustain the requested load, so the run is rejected; "
             f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}"
         )
     numbers = flatten(section)
