@@ -33,8 +33,9 @@ and the existing admin validation rail must learn it.
   are release policy, not test data.
 - `data/` contains project data embedded or loaded by code. Model pricing
   tables live here, and `runtime-limits.toml` is the one source for
-  cross-process runtime ceilings embedded by `capsem-proto`. Runtime consumers
-  use the generated protocol constants rather than copying numeric limits.
+  cross-process runtime ceilings, bounded in-memory cache capacities, and
+  cache freshness windows embedded by `capsem-proto`. Runtime consumers use
+  the generated protocol constants rather than copying numeric limits.
 
 ## Policy at Runtime
 

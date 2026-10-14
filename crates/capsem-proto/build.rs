@@ -159,6 +159,32 @@ fn write_runtime_limits() {
         .unwrap_or_else(|| {
             panic!("runtime limits: ledger.disk_flush_max_pending_events must be a batch multiple between the batch capacity and 10000000")
         });
+    let cache = config
+        .get("cache")
+        .and_then(toml::Value::as_table)
+        .unwrap_or_else(|| panic!("runtime limits: cache must be a table"));
+    let cache_integer = |name: &str, minimum: i64, maximum: i64| {
+        cache
+            .get(name)
+            .and_then(toml::Value::as_integer)
+            .filter(|value| (minimum..=maximum).contains(value))
+            .unwrap_or_else(|| {
+                panic!("runtime limits: cache.{name} must be an integer between {minimum} and {maximum}")
+            })
+    };
+    let cache_dns_answer_entries = cache_integer("dns_answer_entries", 1, 65_536);
+    let cache_dns_max_ttl_seconds = cache_integer("dns_max_ttl_seconds", 1, 86_400);
+    let cache_dns_negative_ttl_seconds = cache_integer("dns_negative_ttl_seconds", 1, cache_dns_max_ttl_seconds);
+    let cache_tls_leaf_entries = cache_integer("tls_leaf_entries", 1, 65_536);
+    let cache_ledger_query_batch_entries = cache_integer("ledger_query_batch_entries", 1, 65_536);
+    let cache_sqlite_prepared_statements = cache_integer("sqlite_prepared_statements", 1, 65_536);
+    let cache_service_storage_diagnostics_entries = cache_integer("service_storage_diagnostics_entries", 1, 65_536);
+    let cache_service_persistent_resume_entries = cache_integer("service_persistent_resume_entries", 1, 65_536);
+    let cache_update_check_ttl_seconds = cache_integer("update_check_ttl_seconds", 60, 604_800);
+    let cache_image_catalog_refresh_seconds = cache_integer("image_catalog_refresh_seconds", 60, 86_400);
+    let cache_image_catalog_retry_seconds =
+        cache_integer("image_catalog_retry_seconds", 1, cache_image_catalog_refresh_seconds);
+    let cache_image_verification_batch_keys = cache_integer("image_verification_batch_keys", 1, 65_536);
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     std::fs::write(
         format!("{out_dir}/runtime_limits.rs"),
@@ -191,7 +217,31 @@ fn write_runtime_limits() {
              /// Maximum time accepted rows stay only in the memory schema.\n\
              pub const LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS: u64 = {ledger_disk_flush_interval_milliseconds};\n\
              /// Pending events that force a disk flush before the timer.\n\
-             pub const LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS: usize = {ledger_disk_flush_max_pending_events};\n"
+             pub const LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS: usize = {ledger_disk_flush_max_pending_events};\n\
+             /// DNS answers retained per session.\n\
+             pub const CACHE_DNS_ANSWER_ENTRIES: usize = {cache_dns_answer_entries};\n\
+             /// Longest positive DNS answer reuse.\n\
+             pub const CACHE_DNS_MAX_TTL_SECONDS: u32 = {cache_dns_max_ttl_seconds};\n\
+             /// Longest negative DNS answer reuse.\n\
+             pub const CACHE_DNS_NEGATIVE_TTL_SECONDS: u32 = {cache_dns_negative_ttl_seconds};\n\
+             /// Minted TLS leaves retained per proxy.\n\
+             pub const CACHE_TLS_LEAF_ENTRIES: usize = {cache_tls_leaf_entries};\n\
+             /// Distinct ledger query batches retained per reader.\n\
+             pub const CACHE_LEDGER_QUERY_BATCH_ENTRIES: usize = {cache_ledger_query_batch_entries};\n\
+             /// Compiled SQLite statements retained per connection.\n\
+             pub const CACHE_SQLITE_PREPARED_STATEMENTS: usize = {cache_sqlite_prepared_statements};\n\
+             /// Service storage diagnostic results retained.\n\
+             pub const CACHE_SERVICE_STORAGE_DIAGNOSTICS_ENTRIES: usize = {cache_service_storage_diagnostics_entries};\n\
+             /// Persistent-resume states retained by the service.\n\
+             pub const CACHE_SERVICE_PERSISTENT_RESUME_ENTRIES: usize = {cache_service_persistent_resume_entries};\n\
+             /// Reuse period for release update checks.\n\
+             pub const CACHE_UPDATE_CHECK_TTL_SECONDS: u64 = {cache_update_check_ttl_seconds};\n\
+             /// Reuse period for the last good image catalog.\n\
+             pub const CACHE_IMAGE_CATALOG_REFRESH_SECONDS: u64 = {cache_image_catalog_refresh_seconds};\n\
+             /// Retry delay after an image catalog failure.\n\
+             pub const CACHE_IMAGE_CATALOG_RETRY_SECONDS: u64 = {cache_image_catalog_retry_seconds};\n\
+             /// Catalog keys admitted to one cache-verification request.\n\
+             pub const CACHE_IMAGE_VERIFICATION_BATCH_KEYS: usize = {cache_image_verification_batch_keys};\n"
         ),
     )
     .expect("runtime limits: write generated constants");
