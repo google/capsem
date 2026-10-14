@@ -2263,12 +2263,12 @@ serial_paths = [
     "tests/ironbank/test_route_health.py",
 ]
 benchmark_baseline = "tests/capsem-serial/test_capsem_bench_baseline.py"
-# The SDKs surviving a launchd KeepAlive restart. launchd refuses `bootstrap`
-# from any Seatbelt-sandboxed caller (exit 5, Input/output error, even under
-# `(allow default)`), so this cannot run in the sandboxed suites above; the
-# macOS glow-up lane, which installs and drives launchd for real, runs it
-# outside the sandbox instead.
+# Native supervisor setup cannot run after inherited privilege confinement.
+# The existing glow-up owner drives launchd on macOS; on Linux its driver
+# prepares an isolated manager, then runs the ordinary UID with no_new_privs
+# inside that manager's loopback-only namespace. Ordinary suites exclude it.
 managed_restart = "tests/ironbank/test_sdk_restart.py"
+managed_restart_driver = "tests.helpers.run_native_restart"
 benchmark_deselect = "not test_capsem_bench_baseline"
 # Namespaces tests/conftest.py's leak ledger per step, so suites running at the
 # same time neither erase nor inherit each other's attribution.

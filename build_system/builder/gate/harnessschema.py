@@ -284,6 +284,7 @@ class PytestConfig(Strict):
     benchmark_baseline: str
     benchmark_deselect: str
     managed_restart: str
+    managed_restart_driver: str
     run_id_variable: str
     require_artifacts: str
 
