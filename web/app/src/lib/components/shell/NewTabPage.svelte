@@ -317,7 +317,7 @@
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_estimated_cost != null ? formatCost(vm.total_estimated_cost) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-end">
                 <div class="inline-flex items-center gap-x-1">
-                  {#if vm.status === 'Running'}
+                  {#if vm.status === 'Running' || vm.persistent}
                     <button type="button" class="py-1 px-2 text-xs rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => { e.stopPropagation(); credentialSession = vm; }}>Credentials</button>
                   {/if}
                   {#if hasVmAction(vm, VmAction.PAUSE)}
@@ -516,7 +516,7 @@
 
 {#if credentialSession}
   {#key credentialSession.id}
-    <SessionCredentials session={{id: credentialSession.id, name: credentialSession.name ?? undefined}} onclose={() => { credentialSession = null; }} />
+    <SessionCredentials session={{id: credentialSession.id, name: credentialSession.name ?? undefined, running: credentialSession.status === 'Running'}} onclose={() => { credentialSession = null; }} />
   {/key}
 {/if}
 

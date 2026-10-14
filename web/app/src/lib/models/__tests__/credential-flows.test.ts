@@ -156,3 +156,16 @@ it('refuses a second grant mutation while the original request is pending', asyn
   reject(new Error('refused'));
   await first;
 });
+
+it('allows retained approval inspection and revocation without allowing new grants', async () => {
+  const f = fixture();
+  const flow = new SessionGrantFlow('session', f.api as CredentialFlowApi, () => {}, () => 'request', false);
+  await flow.load();
+  expect(f.api.listConnections).not.toHaveBeenCalled();
+  await flow.grant('connection', ['agy']);
+  expect(f.api.createSessionCredentialGrant).not.toHaveBeenCalled();
+  f.api.listSessionCredentialGrants.mockResolvedValueOnce({...grants(), grants: [{id: 'grant', state: 'active', runtime_bound: false}]});
+  await flow.load();
+  await flow.revoke('grant');
+  expect(f.api.revokeSessionCredentialGrant).toHaveBeenCalledWith('session', 'grant');
+});

@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stopped named sessions offer a read-only Credentials view with explicit
+  revocation; inspecting approvals does not wait for the connection catalog.
+
 - Named stopped sessions expose retained approval inventory and revocation
   through canonical session IDs; grant creation still requires a live runtime.
 

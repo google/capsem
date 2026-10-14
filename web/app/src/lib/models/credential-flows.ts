@@ -125,12 +125,17 @@ export interface SessionGrantViewState extends Feedback {
 export class SessionGrantFlow extends Flow<SessionGrantViewState> {
   private request: {key: string; body: CreateSessionGrantRequest} | null = null;
   constructor(private readonly session: string, private readonly api: CredentialFlowApi,
-    changed: (state: SessionGrantViewState) => void, private readonly requestId: () => string = () => crypto.randomUUID()) {
+    changed: (state: SessionGrantViewState) => void, private readonly requestId: () => string = () => crypto.randomUUID(),
+    private readonly canGrant = true) {
     super({catalog: null, grants: null, busy: false, error: null}, changed);
   }
   load() {
     return this.run(async () => {
       this.update({catalog: null, grants: null});
+      if (!this.canGrant) {
+        this.update({grants: await this.api.listSessionCredentialGrants(this.session)});
+        return;
+      }
       const [catalog, grants] = await Promise.all([this.api.listConnections(), this.api.listSessionCredentialGrants(this.session)]);
       this.update({catalog, grants});
     }, 'Could not load session access. The session or policy may have changed.');
@@ -138,6 +143,7 @@ export class SessionGrantFlow extends Flow<SessionGrantViewState> {
   grant(connectionId: string, capabilities: string[]) {
     return this.run(async () => {
       const current = this.state.grants;
+      if (!this.canGrant) throw new Error('Retained approval is read-only');
       const allowed = availableCapabilities(this.state.catalog, connectionId, current?.denied_capability_ids ?? []);
       const selected = [...new Set(capabilities)].sort();
       if (!current || !selected.length || selected.some(id => !allowed.some(c => c.id === id))) throw new Error('Unavailable capability');
