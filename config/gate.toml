@@ -3323,12 +3323,28 @@ store = "cache/target/tests/benchmarks/benchmarks.db"
 # under the project's interpreter rather than whatever the shebang resolves to.
 interpreter = "uv run --project build_system --frozen --active python"
 # A collector that never exits would hold the machine lock the whole gate runs
-# under, so one is always bounded.
-timeout_secs = 900
+# under, so one is always bounded. Criterion discovers every workspace target;
+# a cold build plus the statistical runs exceeded the old 15-minute ceiling
+# while still making progress, so the full lane gets a 30-minute bound.
+timeout_secs = 1800
 # The dev loop is only useful while it stays a dev loop. `quick` takes the two
 # dimensions that need no guest and finish in seconds; the ceiling is the
 # promise, not an estimate.
 quick_timeout_secs = 60
+
+[benchmark.protocol]
+# Raw samples need enough p99 tail observations to expose drift while keeping
+# this four-scenario VM lane routine. The 50,000-request release stress cohort
+# remains a separate qualification fixture.
+requests = 5000
+concurrency = 64
+timeout_ms = 30000
+scenarios = [
+    "model_json_response",
+    "credential_response",
+    "mcp_tools_list",
+    "mcp_tool_call",
+]
 
 [benchmark_regression]
 # Product benchmarks use the latest checked-in result as evidence. A release

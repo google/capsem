@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Measure one dimension inside a VM, via the guest `capsem-bench` package.
 
-One program for eight dimensions: it reads the mode from the name it was
+One program for nine dimensions: it reads the mode from the name it was
 invoked as, so `disk`, `rootfs`, `storage`, `startup`, `snapshot`, `mcp-load`,
-`mitm-load` and `dns-load` are symlinks to this file. Eight copies of "boot a
+`mitm-load`, `dns-load` and `protocol` are symlinks to this file. Nine copies of "boot a
 VM, run a mode, pull the JSON out" would drift apart, which is how the three
 load modes ended up with committed baselines and no caller.
 
@@ -22,18 +22,22 @@ import argparse
 import contextlib
 import json
 import os
-import shlex
 import sys
 import uuid
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 # Both, because the test helpers import each other as `helpers.*` and the
 # repository scripts as `scripts.*`; pytest puts the rootdir on the path and a
 # collector run outside pytest has to do the same.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-import psutil
+from capsem_builder.gate import config as gate_config
+from helpers.constants import DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
+
 from benchmarks.helpers.guest_measurements import (
     failed_load_levels,
     flatten,
@@ -42,23 +46,34 @@ from benchmarks.helpers.guest_measurements import (
     resource_samples,
     unit_for,
 )
-from helpers.constants import (
-    DEFAULT_CPUS,
-    DEFAULT_RAM_MB,
-    EXEC_READY_TIMEOUT,
+from benchmarks.helpers.guest_runtime import (
+    LOAD_MODES,
+    MITM_FIXTURE_TARGET,
+    PROTOCOL_COLLECTOR_PATH,
+    PROXY_ERROR_MODES,
+    failed_load_diagnostics,
+    guest_command,
+    guest_cpus,
+    mitm_fixture_corp_toml,
+    process_tree_sampler,
 )
-from helpers.process_resources import ProcessTreeSampler
-from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
 
-FORWARDED_ENV = (
-    "CAPSEM_BENCH_CONCURRENCY",
-    "CAPSEM_BENCH_DURATION_S",
-    "CAPSEM_BENCH_MITM_TARGET",
-    "CAPSEM_STORAGE_BENCH_PATHS",
-    "CAPSEM_STORAGE_BENCH_SIZE_MB",
-    "CAPSEM_STORAGE_IO_PROFILE_SIZE_MB",
-    "CAPSEM_STORAGE_IO_PROFILE_RANDOM_OPS",
-)
+PROTOCOL_SETTINGS = gate_config.load(PROJECT_ROOT).benchmark.protocol
+
+
+def apply_protocol_defaults() -> None:
+    """Apply the config-owned routine model and MCP sample cohort."""
+    os.environ.setdefault(
+        "CAPSEM_BENCH_TOTAL_REQUESTS", str(PROTOCOL_SETTINGS.requests)
+    )
+    os.environ.setdefault(
+        "CAPSEM_BENCH_CONCURRENCY", str(PROTOCOL_SETTINGS.concurrency)
+    )
+    os.environ.setdefault("CAPSEM_BENCH_TIMEOUT_MS", str(PROTOCOL_SETTINGS.timeout_ms))
+    os.environ.setdefault(
+        "CAPSEM_BENCH_SCENARIOS", ",".join(PROTOCOL_SETTINGS.scenarios)
+    )
+
 
 # The mitm-load target: a name the mock server's DNS answers (with 127.0.0.1,
 # which the guest's NAT sends through capsem-net-proxy like any other address)
@@ -72,47 +87,6 @@ FORWARDED_ENV = (
 # Python threads doing TLS, plus the guest proxies, on the default two vCPUs
 # measured the generator's starvation, not the host rails. Give those guests
 # half the host's cores, at least the default and at most eight.
-LOAD_MODES = ("dns-load", "mitm-load", "mcp-load")
-LOAD_GUEST_CPUS_MAX = 8
-
-
-def guest_cpus(mode: str, host_cpus: int | None = None) -> int:
-    """vCPUs for the guest that runs `mode`."""
-    if mode not in LOAD_MODES:
-        return DEFAULT_CPUS
-    host = host_cpus if host_cpus is not None else (os.cpu_count() or DEFAULT_CPUS)
-    return max(DEFAULT_CPUS, min(LOAD_GUEST_CPUS_MAX, host // 2))
-
-
-MITM_FIXTURE_HOST = "fixture.capsem.test"
-MITM_FIXTURE_TARGET = f"https://{MITM_FIXTURE_HOST}/tiny"
-
-
-def process_tree_sampler(service: ServiceInstance) -> ProcessTreeSampler:
-    """Measure the service and every confined per-VM descendant."""
-    return ProcessTreeSampler(psutil.Process(service.proc.pid))
-
-
-def mitm_fixture_corp_toml(ready: dict) -> str:
-    """Corp config routing guest DNS and the fixture host to the mock server."""
-    return (
-        "[network.dns]\n"
-        f"upstreams = [{json.dumps(ready['dns_udp_addr'])}]\n"
-        "\n"
-        f'[network.upstream_overrides."{MITM_FIXTURE_HOST}:443"]\n'
-        f"dial = {json.dumps(ready['http_addr'])}\n"
-        'protocol = "http"\n'
-    )
-
-
-def guest_command(mode: str) -> str:
-    """One safely quoted command with only documented benchmark controls."""
-    assignments = [
-        f"{name}={value}"
-        for name in FORWARDED_ENV
-        if (value := os.environ.get(name)) is not None
-    ]
-    return shlex.join(["env", *assignments, "capsem-bench", mode])
 
 
 def main() -> int:
@@ -138,6 +112,15 @@ def main() -> int:
             corp_path.write_text(mitm_fixture_corp_toml(ready), encoding="utf-8")
             os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
             os.environ.setdefault("CAPSEM_BENCH_MITM_TARGET", MITM_FIXTURE_TARGET)
+        elif mode == "protocol":
+            from helpers.mock_server import start_mock_server
+
+            mock_proc, ready = start_mock_server(capture_requests=False)
+            os.environ.setdefault("CAPSEM_MOCK_SERVER_BASE_URL", ready["base_url"])
+            os.environ.setdefault(
+                "CAPSEM_MOCK_SERVER_DNS_UDP_ADDR", ready["dns_udp_addr"]
+            )
+            apply_protocol_defaults()
         service.start()
         print(f"provisioning {name}", file=sys.stderr)
         created = client.post(
@@ -176,11 +159,16 @@ def main() -> int:
                 f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}"
             )
 
+        artifact_path = (
+            PROTOCOL_COLLECTOR_PATH
+            if mode == "protocol"
+            else "/tmp/capsem-benchmark.json"
+        )
         artifact_result = client.post(
             f"/vms/{name}/exec",
             {
                 "target": "vm",
-                "command": "cat /tmp/capsem-benchmark.json",
+                "command": f"cat {artifact_path}",
                 "timeout_secs": 15,
             },
             timeout=25,
@@ -191,22 +179,33 @@ def main() -> int:
                 f"exit={None if not artifact_result else artifact_result.get('exit_code')}\n"
                 f"response={json.dumps(artifact_result)[:1000]}"
             )
-        document = json.loads(exec_output_text(artifact_result))
+        raw_document = json.loads(exec_output_text(artifact_result))
+        protocol_collection = raw_document if mode == "protocol" else None
+        document = (
+            json.loads(protocol_collection["sidecar"])
+            if protocol_collection is not None
+            else raw_document
+        )
         # Reject while the fixture is still live. ServiceInstance sees the
         # active exception during teardown and preserves the ledger/proxy
         # evidence instead of treating this as a clean benchmark shutdown.
-        section = document.get(mode.replace("-", "_"), document)
+        section_name = (
+            "mock_server_protocol" if mode == "protocol" else mode.replace("-", "_")
+        )
+        section = document.get(section_name, document)
         if failed := failed_load_levels(section):
+            diagnostics = failed_load_diagnostics(service, client, name, mode)
             raise RuntimeError(
                 f"capsem-bench {mode}: requests failed at concurrency {failed}; "
                 "the rail did not sustain the requested load, so the run is rejected; "
                 f"artifact={json.dumps(document, sort_keys=True)}; "
-                f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}"
+                f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}; "
+                f"guest_diagnostics={diagnostics[-20_000:]!r}"
             )
     finally:
         with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        if mode == "mitm-load":
+        if mode in PROXY_ERROR_MODES:
             service_log = service.stop_and_read_log()
             service.stop()
         else:
@@ -218,7 +217,9 @@ def main() -> int:
 
     # The guest writes one document per run keyed by mode; take that section
     # when present so keys are not prefixed with the mode twice.
-    runtime_failures = mitm_runtime_failures(service_log) if mode == "mitm-load" else []
+    runtime_failures = (
+        mitm_runtime_failures(service_log) if mode in PROXY_ERROR_MODES else []
+    )
     if runtime_failures:
         raise RuntimeError(
             f"capsem-bench {mode}: {len(runtime_failures)} internal traffic "
@@ -234,12 +235,17 @@ def main() -> int:
             f"exec_response={json.dumps(benchmark_result)[:1000]!r}"
         )
 
-    measured = {
-        key: {"unit": unit, "samples": [value]}
-        for key, value in sorted(numbers.items())
-        if (unit := unit_for(key)) is not None
-    }
-    measured.update(load_quality_metrics(section))
+    measured = (
+        dict(protocol_collection["metrics"])
+        if protocol_collection is not None
+        else {
+            key: {"unit": unit, "samples": [value]}
+            for key, value in sorted(numbers.items())
+            if (unit := unit_for(key)) is not None
+        }
+    )
+    if protocol_collection is None:
+        measured.update(load_quality_metrics(section))
     if mode == "mitm-load":
         measured["internal.proxy_traffic_refusals"] = {
             "unit": "count",

@@ -18,9 +18,24 @@ def usage(
     pss: int,
     uss: int,
     fds: int,
+    rss_anon: int | None = None,
+    rss_file: int | None = None,
+    rss_shmem: int | None = None,
     started_at: float = 1.0,
 ) -> ProcessUsage:
-    return ProcessUsage(pid, started_at, name, Decimal(cpu), rss, pss, uss, fds)
+    return ProcessUsage(
+        pid,
+        started_at,
+        name,
+        Decimal(cpu),
+        rss,
+        pss,
+        uss,
+        fds,
+        rss_anon,
+        rss_file,
+        rss_shmem,
+    )
 
 
 def test_sampler_reports_tree_and_named_process_pressure() -> None:
@@ -124,8 +139,12 @@ def test_sampler_reports_tree_and_named_process_pressure() -> None:
 
 def test_process_that_exits_keeps_its_last_cpu_sample() -> None:
     sampler = ProcessTreeSampler(None)
-    sampler.observe(snapshot(usage(7, "capsem-proxy", cpu="3", rss=20, pss=15, uss=10, fds=2)))
-    sampler.observe(snapshot(usage(7, "capsem-proxy", cpu="4", rss=30, pss=25, uss=20, fds=3)))
+    sampler.observe(
+        snapshot(usage(7, "capsem-proxy", cpu="3", rss=20, pss=15, uss=10, fds=2))
+    )
+    sampler.observe(
+        snapshot(usage(7, "capsem-proxy", cpu="4", rss=30, pss=25, uss=20, fds=3))
+    )
     sampler.observe(snapshot())
 
     assert sampler.metrics()["resources.capsem_proxy.cpu_s"]["samples"] == [1.0]
@@ -133,13 +152,59 @@ def test_process_that_exits_keeps_its_last_cpu_sample() -> None:
 
 def test_sampler_attributes_dedicated_ledger_pressure() -> None:
     sampler = ProcessTreeSampler(None)
-    sampler.observe(snapshot(usage(8, "capsem-ledger", cpu="2", rss=100, pss=80, uss=70, fds=5)))
-    sampler.observe(snapshot(usage(8, "capsem-ledger", cpu="3", rss=250, pss=220, uss=200, fds=7)))
+    sampler.observe(
+        snapshot(usage(8, "capsem-ledger", cpu="2", rss=100, pss=80, uss=70, fds=5))
+    )
+    sampler.observe(
+        snapshot(usage(8, "capsem-ledger", cpu="3", rss=250, pss=220, uss=200, fds=7))
+    )
 
     metrics = sampler.metrics()
     assert metrics["resources.capsem_ledger.cpu_s"]["samples"] == [1.0]
     assert metrics["resources.capsem_ledger.peak_pss_bytes"]["samples"] == [220]
     assert metrics["resources.capsem_ledger.peak_pss_delta_bytes"]["samples"] == [140]
+
+
+def test_sampler_splits_anonymous_file_and_shared_resident_memory() -> None:
+    sampler = ProcessTreeSampler(None)
+    sampler.observe(
+        snapshot(
+            usage(
+                8,
+                "capsem-ledger",
+                cpu="2",
+                rss=100,
+                pss=80,
+                uss=70,
+                fds=5,
+                rss_anon=30,
+                rss_file=60,
+                rss_shmem=10,
+            )
+        )
+    )
+    sampler.observe(
+        snapshot(
+            usage(
+                8,
+                "capsem-ledger",
+                cpu="3",
+                rss=250,
+                pss=220,
+                uss=200,
+                fds=7,
+                rss_anon=40,
+                rss_file=195,
+                rss_shmem=15,
+            )
+        )
+    )
+
+    metrics = sampler.metrics()
+    assert metrics["resources.capsem_ledger.peak_rss_anon_bytes"]["samples"] == [40]
+    assert metrics["resources.capsem_ledger.peak_rss_file_bytes"]["samples"] == [195]
+    assert metrics["resources.capsem_ledger.peak_rss_shmem_bytes"]["samples"] == [15]
+    assert metrics["resources.total.peak_rss_file_bytes"]["samples"] == [195]
 
 
 def test_platform_without_proportional_memory_omits_those_metrics() -> None:

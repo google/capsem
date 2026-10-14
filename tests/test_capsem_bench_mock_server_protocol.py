@@ -263,6 +263,8 @@ def test_protocol_mode_delegates_to_rust_bench(monkeypatch, tmp_path):
     calls = []
     rust_bench = tmp_path / "capsem-bench-rs"
     rust_bench.touch()
+    for variable, _ in bench_main.PROTOCOL_ENV_FLAGS:
+        monkeypatch.delenv(variable, raising=False)
 
     class Completed:
         returncode = 7
@@ -290,6 +292,44 @@ def test_protocol_mode_delegates_to_rust_bench(monkeypatch, tmp_path):
                 "protocol",
                 "--base-url",
                 "http://127.0.0.1:3713",
+            ],
+            False,
+        )
+    ]
+
+
+def test_protocol_mode_translates_documented_environment_controls(monkeypatch, tmp_path):
+    calls = []
+    rust_bench = tmp_path / "capsem-bench-rs"
+    rust_bench.touch()
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setenv("CAPSEM_BENCH_TOTAL_REQUESTS", "1000")
+    monkeypatch.setenv("CAPSEM_BENCH_CONCURRENCY", "64")
+    monkeypatch.setenv("CAPSEM_BENCH_TIMEOUT_MS", "2500")
+    monkeypatch.setenv("CAPSEM_BENCH_SCENARIOS", "model_json_response,mcp_tool_call")
+    monkeypatch.setattr(bench_main, "RUST_BENCH", str(rust_bench))
+    monkeypatch.setattr(
+        bench_main.subprocess,
+        "run",
+        lambda argv, check=False: calls.append((argv, check)) or Completed(),
+    )
+
+    assert bench_main._run_rust_protocol(["protocol", "--requests=7"]) == 0
+    assert calls == [
+        (
+            [
+                bench_main.RUST_BENCH,
+                "protocol",
+                "--requests=7",
+                "--concurrency",
+                "64",
+                "--timeout-ms",
+                "2500",
+                "--scenarios",
+                "model_json_response,mcp_tool_call",
             ],
             False,
         )

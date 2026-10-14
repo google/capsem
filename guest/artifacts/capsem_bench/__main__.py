@@ -23,6 +23,12 @@ RUST_ONLY_MODES = ("http", "throughput", "protocol")
 MOCK_SERVER_PROTOCOL_BASE_URL_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
 MOCK_SERVER_DNS_UDP_ADDR_ENV = "CAPSEM_MOCK_SERVER_DNS_UDP_ADDR"
 RUST_BENCH = "/usr/local/bin/capsem-bench-rs"
+PROTOCOL_ENV_FLAGS = (
+    ("CAPSEM_BENCH_TOTAL_REQUESTS", "--requests"),
+    ("CAPSEM_BENCH_CONCURRENCY", "--concurrency"),
+    ("CAPSEM_BENCH_TIMEOUT_MS", "--timeout-ms"),
+    ("CAPSEM_BENCH_SCENARIOS", "--scenarios"),
+)
 
 
 def main():
@@ -157,8 +163,19 @@ def _run_rust_protocol(args):
     if not os.path.exists(RUST_BENCH):
         console.print(f"ERROR: {RUST_BENCH} is required for capsem-bench protocol")
         return 127
-    completed = subprocess.run([RUST_BENCH, *args], check=False)
+    completed = subprocess.run([RUST_BENCH, *_protocol_args(args)], check=False)
     return completed.returncode
+
+
+def _protocol_args(args):
+    """Translate the documented environment controls unless CLI wins."""
+    args = list(args)
+    for variable, flag in PROTOCOL_ENV_FLAGS:
+        value = os.environ.get(variable)
+        supplied = any(arg == flag or arg.startswith(f"{flag}=") for arg in args)
+        if value and not supplied:
+            args.extend([flag, value])
+    return args
 
 
 def _run_rust_protocol_artifact(scenarios=None, requests=None, concurrency=None):
@@ -181,15 +198,9 @@ def _run_rust_protocol_artifact(scenarios=None, requests=None, concurrency=None)
         command.extend(["--dns-udp-addr", os.environ[MOCK_SERVER_DNS_UDP_ADDR_ENV]])
     if requests is not None:
         command.extend(["--requests", str(requests)])
-    elif os.environ.get("CAPSEM_BENCH_TOTAL_REQUESTS"):
-        command.extend(["--requests", os.environ["CAPSEM_BENCH_TOTAL_REQUESTS"]])
     if concurrency is not None:
         command.extend(["--concurrency", str(concurrency)])
-    elif os.environ.get("CAPSEM_BENCH_CONCURRENCY"):
-        command.extend(["--concurrency", os.environ["CAPSEM_BENCH_CONCURRENCY"]])
-    if os.environ.get("CAPSEM_BENCH_TIMEOUT_MS"):
-        command.extend(["--timeout-ms", os.environ["CAPSEM_BENCH_TIMEOUT_MS"]])
-    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    completed = subprocess.run(_protocol_args(command), check=False, capture_output=True, text=True)
     if completed.returncode != 0:
         raise RuntimeError(
             f"capsem-bench-rs protocol failed with {completed.returncode}: "

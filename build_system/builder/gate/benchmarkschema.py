@@ -122,6 +122,15 @@ class BenchmarkRunConfig(Strict):
     quick_timeout_secs: int
 
 
+class BenchmarkProtocolConfig(Strict):
+    """Stable workload for the in-guest model and MCP protocol collector."""
+
+    requests: PositiveInt
+    concurrency: PositiveInt
+    timeout_ms: PositiveInt
+    scenarios: list[str]
+
+
 class DiskIopsConfig(Strict):
     """A floor that is not the same number on every platform.
 
@@ -172,4 +181,5 @@ class BenchmarkConfig(Strict):
     route_load: RouteLoadConfig
     route_health: RouteHealthConfig
     run: BenchmarkRunConfig
+    protocol: BenchmarkProtocolConfig
     gates: BenchmarkGatesConfig
