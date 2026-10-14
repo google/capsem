@@ -8,6 +8,7 @@ a distinct subject from building and releasing.
 from __future__ import annotations
 
 import math
+from itertools import pairwise
 
 from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
@@ -143,7 +144,7 @@ class BenchmarkMitmScaleConfig(Strict):
     def fanout_starts_at_one_and_increases(cls, values: tuple[int, ...]) -> tuple[int, ...]:
         if not values or values[0] != 1:
             raise ValueError("MITM scale fanout must start at one VM")
-        if any(current <= previous for previous, current in zip(values, values[1:])):
+        if any(current <= previous for previous, current in pairwise(values)):
             raise ValueError("MITM scale VM counts must be strictly increasing")
         return values
 
