@@ -23,12 +23,11 @@ use super::{
     catalog::{Catalog, CATALOG_MEDIA_TYPE},
     digest_hex, image_reference,
     selector::Digest as ContentDigest,
-    verify_platform, CacheIdentity, ImageReference, METADATA_LIMIT, RUNTIME_CONTRACT,
+    verify_platform, CacheIdentity, ImageReference, METADATA_LIMIT, PULL_TIMEOUT, RUNTIME_CONTRACT,
 };
 
 const LAYER_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
-const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 const CATALOG_LIMIT: u64 = 1024 * 1024;
 
 pub(super) fn validate_architecture(architecture: &str) -> Result<()> {
@@ -583,11 +582,11 @@ impl Puller {
         let cache = self.cache.as_ref().map(|cache| cache.for_repository(reference));
         let _lease = match &cache {
             Some(cache) => {
-                let lease = cache.lease(&descriptor.digest).await?;
+                let mut lease = Some(cache.lease(&descriptor.digest).await?);
                 let hit = match usage {
                     BlobUse::Private | BlobUse::CacheOnly => {
                         cache
-                            .copy_hit(&descriptor.digest, descriptor.size as u64, &destination)
+                            .copy_hit_with_lease(&descriptor.digest, descriptor.size as u64, &destination, &mut lease)
                             .await?
                     }
                     BlobUse::PublishedRoot | BlobUse::PublishedRootCacheOnly => {
@@ -605,7 +604,10 @@ impl Puller {
                     tracing::debug!(digest = %descriptor.digest, "OCI blob cache hit");
                     return Ok(());
                 }
-                Some(lease)
+                if lease.is_none() {
+                    lease = Some(cache.lease(&descriptor.digest).await?);
+                }
+                lease
             }
             None => None,
         };
