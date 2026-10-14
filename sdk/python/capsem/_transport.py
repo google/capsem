@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import math
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
@@ -13,6 +14,7 @@ import aiohttp
 from pydantic import BaseModel, TypeAdapter
 from yarl import URL
 
+from .models.credential_error_code import CredentialErrorCode
 from .models.model_base import JsonValue
 
 QueryValue = str | int | bool | Sequence[str | int | bool] | None
@@ -38,6 +40,15 @@ class HttpError(Exception):
         self.status = status
         self.body = body
         super().__init__(f"HTTP {status}: {body}")
+
+    @property
+    def credential_code(self) -> CredentialErrorCode | None:
+        """Known credential refusal code; future/non-JSON errors remain HTTP errors."""
+        try:
+            envelope = json.loads(self.body)
+            return CredentialErrorCode(envelope.get("code")) if isinstance(envelope, dict) else None
+        except (ValueError, TypeError):
+            return None
 
 
 def _query_value(value: str | int | bool) -> str:

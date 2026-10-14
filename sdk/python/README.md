@@ -1,5 +1,29 @@
 # Capsem Python SDK
 
+Connections and VM credential grants are separate, explicit resources:
+
+| Resource | Methods |
+| --- | --- |
+| `hv.connections` | `list`, `authorize_google`, `authorization`, `cancel_authorization`, `get`, `disconnect` |
+| `vm.credential_grants` | `list`, `create`, `revoke` |
+
+`authorize_google` takes `models.AuthorizeGoogleRequest`; retain its request ID
+and exact payload for an explicit retry. The caller opens the returned URL and
+polls the transaction. Consent never grants a VM access automatically.
+Grant creation takes `models.CreateSessionGrantRequest`, including the current
+`owner_generation` returned by `vm.credential_grants.list()`. The SDK checks
+the returned session, owner, connection and capability set.
+
+These calls accept `request_timeout`, including VM name resolution. Neither
+mutations nor polling are retried implicitly. `HttpError.credential_code`
+returns a known `models.CredentialErrorCode`, or `None` for other envelopes.
+Disconnect fences local authority; poll the connection to confirm provider
+retirement. A browser transaction and raw credentials are never exported to a VM.
+
+Inspect the catalog's enabled profiles and supported capabilities before
+offering sign-in. Native AGY enrollment remains unavailable pending integration
+of its supported broker handoff.
+
 Image catalog and prefetch use the service's admission policy:
 
 ```python

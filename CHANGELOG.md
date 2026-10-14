@@ -236,6 +236,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python SDK connection and credential grant resources support explicit consent,
+  typed refusal codes, ownership checks and deadlines during VM name resolution.
+
 - Service-owned connection metadata and explicit credential grant routes share
   managed ownership fences and enforce the current broker policy. Native AGY
   enrollment remains unavailable pending its supported handoff integration.
