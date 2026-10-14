@@ -19,6 +19,15 @@ TRANSACTION = "transaction /?&é"
 GRANT = "grant /?&é"
 
 
+def test_connection_pages_forward_limit_and_cursor_to_authenticated_gateway():
+    async def run():
+        response = {"connections": [], "scope_profiles": [], "next_cursor": None}
+        async with gateway(response=response) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            await hv.connections.list(limit=2, cursor=REQUEST)
+            assert received[0][1] == f"/connections?limit=2&cursor={REQUEST}"
+    asyncio.run(run())
+
+
 def record(name: str) -> dict[str, Any]:
     value = sample(SCHEMAS[name])
     assert isinstance(value, dict)

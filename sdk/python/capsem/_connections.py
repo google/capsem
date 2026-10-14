@@ -17,8 +17,10 @@ class Connections:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
 
-    async def list(self, *, request_timeout: float | None = None) -> models.ConnectionListResponse:
-        return await api.list_connections(self._transport, request_timeout=request_timeout)
+    async def list(
+        self, *, limit: int | None = None, cursor: str | None = None, request_timeout: float | None = None,
+    ) -> models.ConnectionListResponse:
+        return await api.list_connections(self._transport, limit=limit, cursor=cursor, request_timeout=request_timeout)
 
     async def authorize_google(
         self, request: models.AuthorizeGoogleRequest, *, request_timeout: float | None = None,
