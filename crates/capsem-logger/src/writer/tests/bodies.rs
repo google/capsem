@@ -5,6 +5,7 @@
 //! and the archive holds exactly what the index says it holds.
 
 use capsem_archive::ArchiveError;
+mod index_batches;
 
 use super::*;
 use crate::writer::bodies::takes_the_archive_out_of_service;

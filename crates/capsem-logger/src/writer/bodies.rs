@@ -44,6 +44,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tracing::warn;
 
 use super::{blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
+mod index_batch;
 
 /// How long a block may stay open before the next body starts a new one.
 ///
@@ -792,34 +793,10 @@ impl BodyArchive {
                 [committed_end],
             )?;
         }
-        let mut statement = conn.prepare_cached(
-            "INSERT OR REPLACE INTO event_body_blobs (
-                    event_id, event_type, source_table, direction, content_type,
-                    original_bytes, stored_bytes, truncated, body_hash,
-                    block_offset, body_offset, body_len,
-                    trace_id, turn_id, created_at
-                 )
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        index_batch::insert(
+            conn,
+            self.appended.iter().flat_map(|(_, rows)| rows).chain(&self.reused),
         )?;
-        for row in self.appended.iter().flat_map(|(_, rows)| rows).chain(&self.reused) {
-            statement.execute(params![
-                &row.event_id,
-                row.event_type,
-                row.source_table,
-                row.direction,
-                &row.content_type,
-                row.original_bytes,
-                row.stored_bytes,
-                i64::from(row.truncated),
-                &row.body_hash,
-                row.block_offset as i64,
-                row.body_offset,
-                row.stored_bytes,
-                &row.trace_id,
-                &row.turn_id,
-                &row.created_at,
-            ])?;
-        }
         tracing::debug!(
             target: "capsem.db",
             archive_sync_ms = synced.duration_since(started).as_secs_f64() * 1000.0,

@@ -30,6 +30,7 @@ tempfile = "3"
 workspace = true
 
 [dev-dependencies]
+rusqlite = { workspace = true, features = ["trace"] }
 # Reading the WARC export back the way an external tool does: member by member.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 metrics-util = "0.19"

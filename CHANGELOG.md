@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Archive index flushes batch SQLite inserts within the existing atomic
+  archive/ledger transaction, reducing repeated statement execution.
+
 - Stopped named sessions offer a read-only Credentials view with explicit
   revocation; inspecting approvals does not wait for the connection catalog.
 
