@@ -83,8 +83,18 @@ approved = [
 ]
 
 [http]
-count = 97
+count = 106
 approved = [
+  # All nine connection/grant routes approved by the user on 2026-10-14.
+  "GET /connections",
+  "POST /connections/google/authorize",
+  "GET /connections/authorizations/{transaction_id}",
+  "DELETE /connections/authorizations/{transaction_id}",
+  "GET /connections/{connection_id}",
+  "DELETE /connections/{connection_id}",
+  "GET /vms/{id}/credential-grants",
+  "POST /vms/{id}/credential-grants",
+  "DELETE /vms/{id}/credential-grants/{grant_id}",
   "POST /vms/managed/{request_id}/claim",
   "POST /vms/managed/{request_id}/close",
   "DELETE /networks/{id}",

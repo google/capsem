@@ -232,6 +232,21 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         )
         .route("/images", get(proxy::handle_proxy))
         .route("/images/pull", post(proxy::handle_proxy))
+        .route("/connections", get(proxy::handle_proxy))
+        .route("/connections/google/authorize", post(proxy::handle_proxy))
+        .route(
+            "/connections/authorizations/{transaction_id}",
+            get(proxy::handle_proxy).delete(proxy::handle_proxy),
+        )
+        .route(
+            "/connections/{connection_id}",
+            get(proxy::handle_proxy).delete(proxy::handle_proxy),
+        )
+        .route(
+            "/vms/{id}/credential-grants",
+            get(proxy::handle_proxy).post(proxy::handle_proxy),
+        )
+        .route("/vms/{id}/credential-grants/{grant_id}", delete(proxy::handle_proxy))
         .route("/vms/create", post(proxy::handle_proxy))
         .route("/vms/managed/{request_id}/claim", post(proxy::handle_proxy))
         .route("/vms/managed/{request_id}/close", post(proxy::handle_proxy))

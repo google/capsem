@@ -1,5 +1,41 @@
 use super::*;
 
+#[tokio::test]
+async fn connection_routes_require_gateway_auth_before_service_forwarding() {
+    let (_, state) = health_app("/tmp/capsem-credential-route-missing-service.sock");
+    let app = service_proxy_routes()
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
+        .with_state(state);
+    for (method, path) in [
+        ("GET", "/connections"),
+        ("POST", "/connections/google/authorize"),
+        ("GET", "/connections/authorizations/transaction"),
+        ("DELETE", "/connections/authorizations/transaction"),
+        ("GET", "/connections/connection"),
+        ("DELETE", "/connections/connection"),
+        ("GET", "/vms/session/credential-grants"),
+        ("POST", "/vms/session/credential-grants"),
+        ("DELETE", "/vms/session/credential-grants/grant"),
+    ] {
+        for token in [None, Some("Bearer wrong"), Some("Bearer test")] {
+            let mut request = http::Request::builder().method(method).uri(path);
+            if let Some(token) = token {
+                request = request.header("authorization", token);
+            }
+            let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+            let expected = if token == Some("Bearer test") {
+                http::StatusCode::BAD_GATEWAY
+            } else {
+                http::StatusCode::UNAUTHORIZED
+            };
+            assert_eq!(response.status(), expected, "{method} {path}");
+        }
+    }
+}
+
 fn service_proxy_app(uds_path: &str) -> axum::Router {
     let state = Arc::new(AppState {
         token: "test".into(),
