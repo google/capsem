@@ -90,6 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Staged release verification includes the shared crypto owner and can verify
+  SHA-256 without optional BLAKE3 packages. Missing BLAKE3 reports a setup hint.
+
 - Decision ledger flushes use the full snapshot index when recording
   occurrences, avoiding repeated scans as distinct decisions accumulate.
 

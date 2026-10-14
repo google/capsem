@@ -1,9 +1,28 @@
 """Vectors and corruption cases for the owned Python integrity bindings."""
 
 import io
+import subprocess
+import sys
 
 import pytest
 from capsem_builder import crypto
+
+
+def test_sha256_works_without_site_packages_and_blake3_fails_explicitly():
+    code = (
+        "import importlib.util, sys; "
+        "spec = importlib.util.spec_from_file_location('crypto', sys.argv[1]); "
+        "owner = importlib.util.module_from_spec(spec); spec.loader.exec_module(owner); "
+        "print(owner.sha256(b'abc').hexdigest()); "
+        "owner.blake3(b'abc')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-S", "-c", code, crypto.__file__],
+        env={}, capture_output=True, text=True, check=False, timeout=10,
+    )
+    assert result.stdout.strip() == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    assert result.returncode == 1
+    assert "ModuleNotFoundError: No module named 'blake3'" in result.stderr
 
 
 @pytest.mark.parametrize(

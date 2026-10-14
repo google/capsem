@@ -77,7 +77,7 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
     # Launchers share their real release implementation; the clean guest has
     # neither an editable builder install nor the repository bootstrap path.
     for name in (
-        "__init__.py", "release/__init__.py", "release/tools/__init__.py",
+        "__init__.py", "crypto.py", "release/__init__.py", "release/tools/__init__.py",
         "release/tools/release_fixture_server.py", "release/tools/release_glowup.py",
         "release/tools/release_transition.py", "release/tools/verify_installed_release.py",
     ):

@@ -13,20 +13,27 @@ import re
 import secrets as _secrets
 import uuid as _uuid
 from pathlib import Path
-from typing import BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
-from blake3 import blake3 as _blake3
+if TYPE_CHECKING:
+    from blake3 import blake3 as Blake3
 
 sha256 = _hashlib.sha256
 sha1 = _hashlib.sha1  # Protocol-specific handshake checks only.
 blake2b = _hashlib.blake2b
 blake2s = _hashlib.blake2s
-blake3 = _blake3
 compare_digest = _hmac.compare_digest
 token_hex = _secrets.token_hex
 token_bytes = _secrets.token_bytes
 token_urlsafe = _secrets.token_urlsafe
 uuid_v4 = _uuid.uuid4
+
+
+def blake3(*args: Any, **kwargs: Any) -> Blake3:
+    """Load the SIMD binding only for BLAKE3; staged SHA verification is stdlib-only."""
+    from blake3 import blake3 as constructor
+
+    return constructor(*args, **kwargs)
 
 
 def digest_file(path: Path, *, algorithm: str = "blake3") -> str:

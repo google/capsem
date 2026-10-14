@@ -29,6 +29,7 @@ from ... import crypto as hashlib
 
 try:
     from ... import crypto as blake3
+    blake3.blake3()
 except ModuleNotFoundError as error:
     blake3 = None
     BLAKE3_IMPORT_ERROR = error
