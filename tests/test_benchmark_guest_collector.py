@@ -323,6 +323,7 @@ def test_protocol_result_preserves_raw_model_samples(monkeypatch, capsys) -> Non
     def post(route, body=None, **kwargs):
         if route == "/vms/create":
             return {"id": "bench-test-vm"}
+        assert body is not None
         output = (
             json.dumps(collection)
             if body["command"] == "cat /tmp/capsem-benchmark-collector.json"
@@ -458,6 +459,7 @@ def test_failed_dns_load_preserves_the_guest_proxy_log(monkeypatch) -> None:
     def post(route, body=None, **kwargs):
         if route == "/vms/create":
             return {"id": "bench-test-vm"}
+        assert body is not None
         command = body["command"]
         exec_commands.append(command)
         if command == "cat /tmp/capsem-benchmark.json":

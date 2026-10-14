@@ -8,6 +8,7 @@ import threading
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import psutil
 
@@ -185,11 +186,15 @@ class ProcessTreeSampler:
             self._baseline = dict(totals)
         for name, values in totals.items():
             previous = self._peak.get(name, (0, 0, 0, 0))
-            self._peak[name] = tuple(max(old, new) for old, new in zip(previous, values, strict=True))
+            self._peak[name] = cast(
+                tuple[int, int, int, int],
+                tuple(max(old, new) for old, new in zip(previous, values, strict=True)),
+            )
         for name, values in rss_breakdowns.items():
             previous = self._peak_rss_breakdown.get(name, (0, 0, 0))
-            self._peak_rss_breakdown[name] = tuple(
-                max(old, new) for old, new in zip(previous, values, strict=True)
+            self._peak_rss_breakdown[name] = cast(
+                tuple[int, int, int],
+                tuple(max(old, new) for old, new in zip(previous, values, strict=True)),
             )
         self._peak_processes = max(self._peak_processes, len(snapshot.processes))
 
