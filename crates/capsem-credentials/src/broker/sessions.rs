@@ -242,13 +242,7 @@ impl ConnectionBroker {
         }
         if entry.record.summary.state == api::GrantState::Active {
             entry.record.summary.state = api::GrantState::Revoked;
-            entry.record.summary.revision = entry
-                .record
-                .summary
-                .revision
-                .checked_add(1)
-                .filter(|revision| *revision < 1_u64 << 53)
-                .ok_or(api::CredentialErrorCode::StorageUnavailable)?;
+            entry.record.summary.revision = next_revision(entry.record.summary.revision)?;
             entry.record.summary.revoked_at = Some(timestamp(SystemTime::now())?);
         }
         entry.record.summary.runtime_bound = false;
@@ -298,7 +292,7 @@ impl ConnectionBroker {
                 self.0.authority.revoke(handle).map_err(grant_error)?;
             }
             entry.record.summary.state = api::GrantState::Expired;
-            entry.record.summary.revision += 1;
+            entry.record.summary.revision = next_revision(entry.record.summary.revision)?;
             return Ok(());
         }
         let Some(connection) = connections.get(&entry.record.summary.connection_id) else {
@@ -309,7 +303,9 @@ impl ConnectionBroker {
             return Ok(());
         };
         if connection.record.retiring
-            || owner.authorization().map_err(connection_error)?.generation != entry.record.consent_generation
+            || !owner
+                .authorization()
+                .is_ok_and(|authorization| authorization.generation == entry.record.consent_generation)
         {
             self.revoke_entry(entry)?;
             return Ok(());

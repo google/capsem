@@ -799,3 +799,50 @@ async fn terminal_cleanup_is_durable_and_never_removes_live_connections_or_unexp
     .unwrap();
     assert!(restored.list().await.unwrap().connections.is_empty());
 }
+
+#[tokio::test]
+async fn unavailable_consent_retires_grants_and_expiry_never_publishes_an_unsafe_revision() {
+    let (_fixture, connection) = verified().await;
+    let provider = Arc::new(Provider::default());
+    let sender = provider.queue();
+    let broker = ConnectionBroker::open(BrokerStorage::Memory, vec![profile(provider)], authority(), limits())
+        .await
+        .unwrap();
+    let started = broker.authorize(consent()).await.unwrap();
+    sender.send(connection.clone()).unwrap();
+    joined(&broker, &started.transaction.id).await;
+    let id = broker
+        .authorization(&started.transaction.id)
+        .await
+        .unwrap()
+        .connection_id
+        .unwrap();
+    let session = binding();
+    let grant = broker
+        .create_grant(session, grant_request(session, id), |_, _| true)
+        .await
+        .unwrap();
+    {
+        let mut state = broker.0.state.lock().await;
+        let entry = state.grants.get_mut(&grant.id).unwrap();
+        entry.record.summary.expires_at = timestamp(SystemTime::now() - Duration::from_secs(1)).unwrap();
+        entry.record.summary.revision = (1_u64 << 53) - 1;
+        drop(state);
+    }
+    assert_eq!(
+        broker.grants(session, |_, _| true).await.unwrap_err(),
+        api::CredentialErrorCode::StorageUnavailable
+    );
+    {
+        let mut state = broker.0.state.lock().await;
+        let entry = state.grants.get_mut(&grant.id).unwrap();
+        entry.record.summary.state = api::GrantState::Active;
+        entry.record.summary.revision = 1;
+        entry.record.summary.expires_at = timestamp(SystemTime::now() + Duration::from_secs(30)).unwrap();
+        drop(state);
+    }
+    connection.disconnect().await.unwrap();
+    let result = broker.grants(session, |_, _| true).await.unwrap();
+    assert_eq!(result.grants[0].state, api::GrantState::Revoked);
+    assert!(!result.grants[0].runtime_bound);
+}

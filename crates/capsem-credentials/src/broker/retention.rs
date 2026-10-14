@@ -32,13 +32,7 @@ impl ConnectionBroker {
                 }
                 entry.record.summary.state = api::GrantState::Expired;
                 entry.record.summary.runtime_bound = false;
-                entry.record.summary.revision = entry
-                    .record
-                    .summary
-                    .revision
-                    .checked_add(1)
-                    .filter(|revision| *revision < 1_u64 << 53)
-                    .ok_or(api::CredentialErrorCode::StorageUnavailable)?;
+                entry.record.summary.revision = next_revision(entry.record.summary.revision)?;
                 changed = true;
             }
             let terminal = match entry.record.summary.state {

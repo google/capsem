@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Grant polling retires authority when its consent is unavailable and refuses
+  exhausted revisions instead of publishing numbers clients cannot represent.
+
 - Credential grant retries normalize capability sets and exact RFC3339 expiry
   instants, including offsets, and share Google's documented scope aliases.
   Broker input budgets and timeouts come from one checked-in policy; completed

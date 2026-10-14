@@ -386,6 +386,12 @@ fn timestamp(time: SystemTime) -> BrokerResult<String> {
         .map_err(|_| api::CredentialErrorCode::StorageUnavailable)?;
     Ok(result)
 }
+fn next_revision(value: u64) -> BrokerResult<u64> {
+    value
+        .checked_add(1)
+        .filter(|revision| *revision < 1_u64 << 53)
+        .ok_or(api::CredentialErrorCode::StorageUnavailable)
+}
 fn connection_error(error: crate::GoogleConnectionError) -> api::CredentialErrorCode {
     use api::CredentialErrorCode as Code;
     match error {
