@@ -43,17 +43,17 @@ export class ConnectionFlow extends Flow<ConnectionViewState> {
       this.update({catalog: await this.api.listConnections()});
     }, 'Could not load connections. Refresh to try again.');
   }
-  authorize(profileId: string, reconnect: string | null = null) {
+  authorize(scopeId: string, reconnect: string | null = null) {
     return this.run(async () => {
-      const profile = this.state.catalog?.scope_profiles.find(p => p.id === profileId);
+      const profile = this.state.catalog?.scope_profiles.find(p => p.id === scopeId);
       const original = this.state.catalog?.connections.find(c => c.id === reconnect);
       if (!profile?.enabled || !profile.capabilities.some(c => c.supported) ||
-        (reconnect && original?.scope_profile_id !== profileId) || this.state.transaction?.state === TransactionState.PENDING) {
+        (reconnect && original?.scope_profile_id !== scopeId) || this.state.transaction?.state === TransactionState.PENDING) {
         throw new Error('Unavailable consent');
       }
-      const key = JSON.stringify([profileId, reconnect]);
+      const key = JSON.stringify([scopeId, reconnect]);
       if (this.request?.key !== key) this.request = {key, body: {
-        request_id: this.requestId(), scope_profile_id: profileId, reconnect_connection_id: reconnect,
+        request_id: this.requestId(), scope_profile_id: scopeId, reconnect_connection_id: reconnect,
       }};
       const response = await this.api.authorizeGoogleConnection(this.request.body);
       this.update({transaction: response.transaction, url: null});
