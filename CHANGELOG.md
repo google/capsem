@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Credential runtime fences preserve finite same-session approval on retained
+  stops and retire terminal session approvals, including recovered metadata.
+
 - Invalid corporate policy now refuses security admission instead of being
   treated as empty constraints; the settings UI remains available for repair.
 

@@ -1,6 +1,55 @@
 use super::*;
 
 #[tokio::test]
+async fn lifecycle_runtime_fences_all_original_owners_and_leaves_replacements_and_neighbours() {
+    let (_fixture, client, tokens) = test_connection(vec![]).await;
+    let connection = client
+        .open_connection(tokens, OAuthConnectionStorage::memory(65536).unwrap())
+        .await
+        .unwrap();
+    let authority = authority();
+    let old = session();
+    let replacement = GrantSession::new([1; 16], [2; 16], [2; 16]).unwrap();
+    let neighbour = GrantSession::new([2; 16], [1; 16], [1; 16]).unwrap();
+    let issue = |binding| {
+        authority
+            .issue(
+                connection.clone(),
+                binding,
+                capability(),
+                Duration::from_secs(30),
+                Instant::now(),
+                allow,
+            )
+            .unwrap()
+    };
+    let original_handle = issue(old);
+    let fresh = issue(replacement);
+    let other = issue(neighbour);
+    assert_eq!(
+        authority
+            .detach_runtime([1; 16], [1; 16], GrantStopPolicy::Preserve)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        authority.visibility(original_handle, old, Instant::now()),
+        Some(GrantVisibility::Preserved)
+    );
+    assert_eq!(
+        authority.visibility(fresh, replacement, Instant::now()),
+        Some(GrantVisibility::Active)
+    );
+    assert_eq!(authority.revoke_session([1; 16]).unwrap(), 2);
+    assert_eq!(authority.visibility(original_handle, old, Instant::now()), None);
+    assert_eq!(authority.visibility(fresh, replacement, Instant::now()), None);
+    assert_eq!(
+        authority.visibility(other, neighbour, Instant::now()),
+        Some(GrantVisibility::Active)
+    );
+}
+
+#[tokio::test]
 async fn issuance_checks_current_policy_inside_the_retirement_lock() {
     let (_fixture, client, tokens) = test_connection(vec![]).await;
     let connection = client

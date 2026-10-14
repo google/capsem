@@ -2,6 +2,7 @@ use super::*;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::oneshot;
+mod runtime;
 
 #[derive(Default)]
 struct Provider {
@@ -533,10 +534,15 @@ async fn preserved_approval_rebinds_only_the_same_owner_and_fences_old_runtime()
         .unwrap()
         .handle
         .unwrap();
-    authority
-        .detach(original.session, crate::GrantStopPolicy::Preserve)
-        .unwrap();
     let (session, owner, _) = original.session.identities();
+    let (_, _, runtime) = original.session.identities();
+    broker
+        .stop_runtime(session, runtime, crate::GrantStopPolicy::Preserve)
+        .await
+        .unwrap();
+    let stopped = broker.0.state.lock().await.grants[&grant.id].record.summary.clone();
+    assert!(!stopped.runtime_bound);
+    assert_eq!(stopped.state, api::GrantState::Active);
     let resumed = SessionBinding::new(
         GrantSession::new(session, owner, *capsem_crypto::uuid_v4().as_bytes()).unwrap(),
         original.expires,
@@ -557,6 +563,11 @@ async fn preserved_approval_rebinds_only_the_same_owner_and_fences_old_runtime()
         .handle
         .unwrap();
     assert_ne!(old, new);
+    broker
+        .stop_runtime(session, runtime, crate::GrantStopPolicy::Revoke)
+        .await
+        .unwrap();
+    assert!(broker.grants(resumed, |_, _| true).await.unwrap().grants[0].runtime_bound);
     let target = crate::GrantTarget::new("GET", "https://example.test/probe").unwrap();
     assert!(authority
         .with_token(

@@ -25,6 +25,74 @@ impl SessionBinding {
 }
 
 impl ConnectionBroker {
+    /// Resume has no credential work when this canonical session has no
+    /// explicit approval. This bounded inventory check performs no file I/O.
+    pub async fn has_session_approval(&self, session: [u8; 16]) -> bool {
+        let id = uuid::Uuid::from_bytes(session).to_string();
+        let state = self.0.state.lock().await;
+        let found = state.grants.values().any(|entry| {
+            entry.record.summary.session_id == id && entry.record.summary.state == api::GrantState::Active
+        });
+        drop(state);
+        found
+    }
+    /// Fence the exact runtime before awaiting metadata, preserving finite
+    /// approval only when the lifecycle explicitly retains this session.
+    pub async fn stop_runtime(
+        &self,
+        session: [u8; 16],
+        runtime: [u8; 16],
+        policy: crate::GrantStopPolicy,
+    ) -> BrokerResult<()> {
+        self.0
+            .authority
+            .detach_runtime(session, runtime, policy)
+            .map_err(grant_error)?;
+        let mut state = self.0.state.lock().await;
+        let mut matched = false;
+        for entry in state.grants.values_mut().filter(|entry| {
+            entry.binding.is_some_and(|binding| {
+                let (bound_session, _, bound_runtime) = binding.identities();
+                bound_session == session && bound_runtime == runtime
+            })
+        }) {
+            matched = true;
+            match policy {
+                crate::GrantStopPolicy::Revoke => self.revoke_entry(entry)?,
+                crate::GrantStopPolicy::Preserve if entry.record.summary.runtime_bound => {
+                    entry.record.summary.runtime_bound = false;
+                    entry.record.summary.revision = next_revision(entry.record.summary.revision)?;
+                }
+                crate::GrantStopPolicy::Preserve => {}
+            }
+        }
+        if matched {
+            self.0.store.write(state.snapshot()).await?;
+        }
+        drop(state);
+        Ok(())
+    }
+    /// Canonical terminal deletion revokes all this session's approvals,
+    /// including unbound durable records recovered after service restart.
+    pub async fn retire_session(&self, session: [u8; 16]) -> BrokerResult<()> {
+        self.0.authority.revoke_session(session).map_err(grant_error)?;
+        let id = uuid::Uuid::from_bytes(session).to_string();
+        let mut state = self.0.state.lock().await;
+        let mut matched = false;
+        for entry in state
+            .grants
+            .values_mut()
+            .filter(|entry| entry.record.summary.session_id == id)
+        {
+            matched = true;
+            self.revoke_entry(entry)?;
+        }
+        if matched {
+            self.0.store.write(state.snapshot()).await?;
+        }
+        drop(state);
+        Ok(())
+    }
     /// Host-only material use under the same admission/fencing authority as
     /// managed retirement. The callback must not reenter the broker and no
     /// HTTP route may return its credential material to the caller.
@@ -236,7 +304,8 @@ impl ConnectionBroker {
         Ok(count)
     }
 
-    fn revoke_entry(&self, entry: &mut GrantEntry) -> BrokerResult<()> {
+    pub(super) fn revoke_entry(&self, entry: &mut GrantEntry) -> BrokerResult<()> {
+        entry.record.summary.runtime_bound = false;
         if let Some(handle) = entry.handle.take() {
             self.0.authority.revoke(handle).map_err(grant_error)?;
         }
@@ -245,7 +314,6 @@ impl ConnectionBroker {
             entry.record.summary.revision = next_revision(entry.record.summary.revision)?;
             entry.record.summary.revoked_at = Some(timestamp(SystemTime::now())?);
         }
-        entry.record.summary.runtime_bound = false;
         Ok(())
     }
 

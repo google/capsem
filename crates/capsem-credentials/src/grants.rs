@@ -140,6 +140,7 @@ pub struct GrantAuthority {
     limits: GrantLimits,
     grants: Mutex<HashMap<GrantHandle, Arc<Grant>>>,
 }
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum GrantVisibility {
     Active,
     Preserved,
@@ -319,26 +320,56 @@ impl GrantAuthority {
         if session == [0; 16] || ownership == [0; 16] {
             return Err(GrantError::Invalid);
         }
-        let mut grants = self.grants.lock().map_err(|_| GrantError::Unavailable)?;
-        let before = grants.len();
-        grants.retain(|_, grant| grant.session.session != session || grant.session.ownership != ownership);
-        let retired = before - grants.len();
-        drop(grants);
-        Ok(retired)
+        self.detach_matching(
+            |candidate| candidate.session == session && candidate.ownership == ownership,
+            GrantStopPolicy::Revoke,
+        )
     }
     pub fn detach(&self, session: GrantSession, policy: GrantStopPolicy) -> Result<(), GrantError> {
+        self.detach_matching(|candidate| *candidate == session, policy)
+            .map(|_| ())
+    }
+    /// A trusted original child identity fences every owner bound to that
+    /// runtime, without touching a resumed or replacement incarnation.
+    pub fn detach_runtime(
+        &self,
+        session: [u8; 16],
+        runtime: [u8; 16],
+        policy: GrantStopPolicy,
+    ) -> Result<usize, GrantError> {
+        if session == [0; 16] || runtime == [0; 16] {
+            return Err(GrantError::Invalid);
+        }
+        self.detach_matching(
+            |candidate| candidate.session == session && candidate.runtime == runtime,
+            policy,
+        )
+    }
+    /// Permanent canonical session deletion includes inactive approvals.
+    pub fn revoke_session(&self, session: [u8; 16]) -> Result<usize, GrantError> {
+        if session == [0; 16] {
+            return Err(GrantError::Invalid);
+        }
+        self.detach_matching(|candidate| candidate.session == session, GrantStopPolicy::Revoke)
+    }
+    fn detach_matching(
+        &self,
+        matches: impl Fn(&GrantSession) -> bool,
+        policy: GrantStopPolicy,
+    ) -> Result<usize, GrantError> {
         let mut grants = self.grants.lock().map_err(|_| GrantError::Unavailable)?;
+        let count = grants.values().filter(|grant| matches(&grant.session)).count();
         match policy {
-            GrantStopPolicy::Revoke => grants.retain(|_, g| g.session != session),
+            GrantStopPolicy::Revoke => grants.retain(|_, grant| !matches(&grant.session)),
             GrantStopPolicy::Preserve => {
-                for grant in grants.values_mut().filter(|g| g.session == session) {
+                for grant in grants.values_mut().filter(|grant| matches(&grant.session)) {
                     let mut detached = (**grant).clone();
                     detached.active = false;
                     *grant = Arc::new(detached);
                 }
             }
         }
-        Ok(())
+        Ok(count)
     }
     pub fn rebind(
         &self,

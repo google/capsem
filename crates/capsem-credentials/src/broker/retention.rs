@@ -23,6 +23,24 @@ impl ConnectionBroker {
         for (id, entry) in &mut state.grants {
             let expires = humantime::parse_rfc3339(&entry.record.summary.expires_at)
                 .map_err(|_| api::CredentialErrorCode::StorageUnavailable)?;
+            if entry.record.summary.state == api::GrantState::Active && expires > now {
+                if let (Some(handle), Some(binding)) = (entry.handle, entry.binding) {
+                    match self.0.authority.visibility(handle, binding, Instant::now()) {
+                        Some(crate::grants::GrantVisibility::Active) => {}
+                        Some(crate::grants::GrantVisibility::Preserved) => {
+                            if entry.record.summary.runtime_bound {
+                                entry.record.summary.runtime_bound = false;
+                                entry.record.summary.revision = next_revision(entry.record.summary.revision)?;
+                                changed = true;
+                            }
+                        }
+                        _ => {
+                            self.revoke_entry(entry)?;
+                            changed = true;
+                        }
+                    }
+                }
+            }
             if entry.record.summary.state == api::GrantState::Active && expires <= now {
                 if let Some(handle) = entry.handle.take() {
                     self.0
