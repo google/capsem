@@ -29,20 +29,22 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::{blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
 use capsem_archive::{
-    ArchiveCodecs, ArchiveError, ArchiveId, BodyLogSync, BodyLogWriter, BodyRef, FileHeader, GenerationId,
-    SegmentWritten,
+    ArchiveCodecs, ArchiveError, ArchiveId, BodyLogWriter, BodyRef, FileHeader, GenerationId, SegmentWritten,
 };
 use capsem_foundation::unix::contained::{ContainedDir, EntryKind};
 use capsem_foundation::unix::fs::{durable_sync_directory, ensure_private_dir};
 use capsem_foundation::unix::lock::{self, FileLock, LockAttempt, LockMode};
 use capsem_telemetry::db::{DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL, DB_ARCHIVE_BODIES_DROPPED_TOTAL};
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension, ToSql};
+use rusqlite::{params, Connection, OptionalExtension};
 use tracing::warn;
+
+mod index;
+mod sync_worker;
+use sync_worker::ArchiveSyncWorker;
 
 /// How long a block may stay open before the next body starts a new one.
 ///
@@ -107,66 +109,10 @@ struct BodyIndexRow {
     created_at: String,
 }
 
-type AppendedSegment = (SegmentWritten, Vec<BodyIndexRow>);
-
-struct ArchiveSyncWorker {
-    requests: Option<mpsc::SyncSender<()>>,
-    completions: mpsc::Receiver<Result<(), String>>,
-    join: Option<std::thread::JoinHandle<()>>,
-}
-
-impl ArchiveSyncWorker {
-    fn start(sync: BodyLogSync) -> std::io::Result<Self> {
-        let (requests, work) = mpsc::sync_channel(1);
-        let (completed, completions) = mpsc::sync_channel(1);
-        let join = std::thread::Builder::new()
-            .name("capsem-archive-sync".into())
-            .stack_size(128 * 1024)
-            .spawn(move || {
-                while work.recv().is_ok() {
-                    let result = sync.sync().map_err(|error| error.to_string());
-                    if completed.send(result).is_err() {
-                        break;
-                    }
-                }
-            })?;
-        Ok(Self {
-            requests: Some(requests),
-            completions,
-            join: Some(join),
-        })
-    }
-
-    fn request(&self) -> Result<(), String> {
-        self.requests
-            .as_ref()
-            .ok_or_else(|| "archive sync worker stopped".to_string())?
-            .send(())
-            .map_err(|_| "archive sync worker stopped".to_string())
-    }
-
-    fn try_complete(&self) -> Option<Result<(), String>> {
-        match self.completions.try_recv() {
-            Ok(result) => Some(result),
-            Err(mpsc::TryRecvError::Empty) => None,
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err("archive sync worker stopped".into())),
-        }
-    }
-
-    fn complete(&self) -> Result<(), String> {
-        self.completions
-            .recv()
-            .map_err(|_| "archive sync worker stopped".to_string())?
-    }
-}
-
-impl Drop for ArchiveSyncWorker {
-    fn drop(&mut self) {
-        self.requests.take();
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
-    }
+struct AppendedSegment {
+    segment: SegmentWritten,
+    rows: Vec<BodyIndexRow>,
+    block_committed: bool,
 }
 
 /// The writer thread's archive: one `session.bodies` beside `session.db`.
@@ -204,6 +150,10 @@ pub(super) struct BodyArchive {
     appended: Vec<AppendedSegment>,
     /// Segments whose device sync completed and whose rows may enter SQLite.
     synced: Vec<AppendedSegment>,
+    /// Rows written by the current SQLite transaction. They leave `synced`
+    /// and `reused` only after that transaction commits; a rollback retries
+    /// the same prefix on the next flush.
+    prepared_index_rows: Option<PreparedIndexRows>,
     /// Segments covered by the durability barrier currently running.
     syncing: Option<Vec<AppendedSegment>>,
     /// Lazily-created helper that keeps fdatasync off the admission thread.
@@ -220,6 +170,19 @@ pub(super) struct BodyArchive {
     steps: Vec<&'static str>,
 }
 
+#[derive(Default)]
+struct PreparedIndexRows {
+    synced: usize,
+    reused: usize,
+    blocks: Vec<usize>,
+}
+
+impl PreparedIndexRows {
+    const fn total(&self) -> usize {
+        self.synced + self.reused
+    }
+}
+
 /// Bodies shorter than this are not looked up in the archive index. Deflate's
 /// window already finds a repeat that small inside the block, and the lookup
 /// would cost more than the bytes it saves.
@@ -229,9 +192,6 @@ const MIN_ARCHIVE_DEDUP_BYTES: usize = 512;
 /// 999-variable ceiling. The statement and transient reference vector stay
 /// bounded while a busy flush pays statement dispatch once per 64 bodies
 /// instead of once per body.
-const BODY_INDEX_ROWS_PER_INSERT: usize = 64;
-const BODY_INDEX_VALUE_LIST: &str = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
 /// Where identical stored bytes already sit in a committed segment, if they
 /// do. Committed spans are immutable and synced, so pointing a new row at one
 /// is as safe as pointing at fresh bytes; retention keeps a block while any
@@ -537,6 +497,7 @@ impl BodyArchive {
             next_seq: 0,
             appended: Vec::new(),
             synced: Vec::new(),
+            prepared_index_rows: None,
             syncing: None,
             sync_worker: None,
             #[cfg(test)]
@@ -750,15 +711,15 @@ impl BodyArchive {
     pub(super) fn rollback_staged(&mut self, mark: u64) {
         self.staged.retain(|row| row.seq < mark);
         self.reused.retain(|row| row.seq < mark);
-        for (_, rows) in &mut self.appended {
-            rows.retain(|row| row.seq < mark);
+        for segment in &mut self.appended {
+            segment.rows.retain(|row| row.seq < mark);
         }
-        for (_, rows) in &mut self.synced {
-            rows.retain(|row| row.seq < mark);
+        for segment in &mut self.synced {
+            segment.rows.retain(|row| row.seq < mark);
         }
         if let Some(syncing) = &mut self.syncing {
-            for (_, rows) in syncing {
-                rows.retain(|row| row.seq < mark);
+            for segment in syncing {
+                segment.rows.retain(|row| row.seq < mark);
             }
         }
     }
@@ -836,7 +797,11 @@ impl BodyArchive {
         match written {
             Ok(Some(segment)) => {
                 let rows = std::mem::take(&mut self.staged);
-                self.appended.push((segment, rows));
+                self.appended.push(AppendedSegment {
+                    segment,
+                    rows,
+                    block_committed: false,
+                });
             }
             Ok(None) => {}
             Err(error) => {
@@ -950,87 +915,6 @@ impl BodyArchive {
         }
     }
 
-    /// Record every durably-written segment's block and the index rows it holds.
-    ///
-    /// Runs inside the caller's transaction, after `flush_segment` put the
-    /// bytes in the file. Nothing here can make a row visible before its
-    /// bytes.
-    ///
-    /// The archive is flushed to the device first. The segment write only
-    /// went through the page cache, so without this a power loss could leave
-    /// SQLite's durably-committed index rows naming segments that never
-    /// reached the disk. The cost is one `fdatasync` per flush that has
-    /// segments to index -- at most once per flush interval, never once per
-    /// body. A failed flush means those bytes may not be there, so their rows
-    /// are dropped and archiving stops. Losing bodies is recoverable; an index
-    /// that lies is not.
-    ///
-    /// `body_blocks` holds one row per block, and each segment grows it: the
-    /// upsert records the block's committed raw length and on-disk extent,
-    /// and never shrinks them, so a flush retried after a rollback is the
-    /// same as the first. Not `REPLACE`: that is a delete and an insert, which
-    /// under enforced foreign keys would take every index row naming the block
-    /// with it. The blocks are all written before any row, so a row always
-    /// names a block the transaction already holds.
-    ///
-    /// The segments stay in hand until the caller says the transaction
-    /// committed. An insert here can fail, and so can the memory-table copy
-    /// beside it and the commit after it; all three roll back every row, and
-    /// the next flush retries these with them.
-    pub(super) fn commit_index_rows(&mut self, conn: &Connection) -> rusqlite::Result<()> {
-        self.prepare_index_rows(true);
-        self.commit_prepared_index_rows(conn)
-    }
-
-    pub(super) fn commit_prepared_index_rows(&mut self, conn: &Connection) -> rusqlite::Result<()> {
-        if self.synced.is_empty() && self.reused.is_empty() {
-            return Ok(());
-        }
-        let synced = Instant::now();
-        // Recorded here, where the first row is actually written, and not
-        // beside the flush that precedes it: a trace whose two steps are
-        // pushed from one place proves their order only to itself.
-        #[cfg(test)]
-        self.steps.push("commit");
-        let sealed_at = format_timestamp((self.now)());
-        for (segment, _) in &self.synced {
-            upsert_block(conn, segment, &sealed_at)?;
-        }
-        let mut committed_end = None;
-        for (segment, _) in &self.synced {
-            let end = segment.block_offset.checked_add(segment.disk_len).ok_or_else(|| {
-                rusqlite::Error::InvalidParameterName("archive committed extent overflows u64".into())
-            })?;
-            committed_end = Some(committed_end.map_or(end, |current: u64| current.max(end)));
-        }
-        if let Some(committed_end) = committed_end {
-            let committed_end = i64::try_from(committed_end).map_err(|_| {
-                rusqlite::Error::InvalidParameterName("archive committed extent exceeds SQLite INTEGER".into())
-            })?;
-            conn.execute(
-                "UPDATE archive_state
-                 SET committed_end = MAX(committed_end, ?1)
-                 WHERE singleton = 1",
-                [committed_end],
-            )?;
-        }
-        let rows = self
-            .synced
-            .iter()
-            .flat_map(|(_, rows)| rows)
-            .chain(&self.reused)
-            .collect::<Vec<_>>();
-        insert_body_index_rows(conn, &rows)?;
-        Ok(())
-    }
-
-    /// The transaction that `commit_index_rows` wrote into has committed, so
-    /// those segments are indexed and this archive is done with them.
-    pub(super) fn index_rows_committed(&mut self) {
-        self.synced.clear();
-        self.reused.clear();
-    }
-
     /// Durability barrier for session close. The block was closed and its
     /// rows committed by the final flush; this makes sure the device has it.
     pub(super) fn sync(&mut self) {
@@ -1046,12 +930,12 @@ impl BodyArchive {
     /// and the rows of bytes not yet written are equally unreachable once the
     /// archive stops vouching for its own file.
     pub(super) fn abandon_uncommitted(&mut self, reason: &'static str) {
-        let dropped: usize = self.appended.iter().map(|(_, rows)| rows.len()).sum::<usize>()
-            + self.synced.iter().map(|(_, rows)| rows.len()).sum::<usize>()
+        let dropped: usize = self.appended.iter().map(|segment| segment.rows.len()).sum::<usize>()
+            + self.synced.iter().map(|segment| segment.rows.len()).sum::<usize>()
             + self
                 .syncing
                 .as_ref()
-                .map_or(0, |segments| segments.iter().map(|(_, rows)| rows.len()).sum())
+                .map_or(0, |segments| segments.iter().map(|segment| segment.rows.len()).sum())
             + self.staged.len()
             + self.reused.len();
         self.appended.clear();
@@ -1109,91 +993,4 @@ impl BodyArchive {
     pub(super) fn steps_for_tests(&self) -> &[&'static str] {
         &self.steps
     }
-}
-
-fn insert_body_index_rows(conn: &Connection, rows: &[&BodyIndexRow]) -> rusqlite::Result<()> {
-    for chunk in rows.chunks(BODY_INDEX_ROWS_PER_INSERT) {
-        let mut sql = String::from(
-            "INSERT OR REPLACE INTO event_body_blobs (
-                event_id, event_type, source_table, direction, content_type,
-                original_bytes, stored_bytes, truncated, body_hash,
-                block_offset, body_offset, body_len,
-                trace_id, turn_id, created_at
-             ) VALUES ",
-        );
-        for index in 0..chunk.len() {
-            if index > 0 {
-                sql.push_str(", ");
-            }
-            sql.push_str(BODY_INDEX_VALUE_LIST);
-        }
-
-        // References only: the rows keep ownership until the surrounding
-        // transaction commits, so batching does not clone any body metadata.
-        let mut values: Vec<&dyn ToSql> = Vec::with_capacity(chunk.len() * 15);
-        for row in chunk {
-            values.extend([
-                &row.event_id as &dyn ToSql,
-                &row.event_type as &dyn ToSql,
-                &row.source_table as &dyn ToSql,
-                &row.direction as &dyn ToSql,
-                &row.content_type as &dyn ToSql,
-                &row.original_bytes as &dyn ToSql,
-                &row.stored_bytes as &dyn ToSql,
-                &row.truncated as &dyn ToSql,
-                &row.body_hash as &dyn ToSql,
-                &row.block_offset as &dyn ToSql,
-                &row.body_offset as &dyn ToSql,
-                &row.stored_bytes as &dyn ToSql,
-                &row.trace_id as &dyn ToSql,
-                &row.turn_id as &dyn ToSql,
-                &row.created_at as &dyn ToSql,
-            ]);
-        }
-        execute_cached(conn, &sql, params_from_iter(values))?;
-    }
-    Ok(())
-}
-
-/// Record one written segment against its block: insert the block's row on
-/// its first segment, grow it on every later one.
-///
-/// `WHERE excluded.disk_len >= disk_len` keeps it monotone, so a retried
-/// flush that replays an older segment after a newer one committed cannot
-/// shrink the extent a reader or retention relies on. A retry that finds a
-/// *larger* extent recorded is the one case that should never happen, and
-/// is said out loud.
-///
-/// `sealed_at` moves only when the segment brought bodies. Retention cuts by
-/// it, and it closes the open block before it looks: an empty FINAL segment
-/// stamped "now" would make every idle block the newest thing in the archive
-/// at the very moment retention asked how old it was, and nothing would ever
-/// age out of a block that was open when retention ran.
-fn upsert_block(conn: &Connection, segment: &SegmentWritten, sealed_at: &str) -> rusqlite::Result<()> {
-    let recorded = execute_cached(
-        conn,
-        "INSERT INTO body_blocks (block_offset, raw_len, disk_len, sealed_at)
-         VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(block_offset) DO UPDATE SET
-            raw_len = excluded.raw_len,
-            disk_len = excluded.disk_len,
-            sealed_at = CASE WHEN excluded.raw_len > body_blocks.raw_len
-                             THEN excluded.sealed_at ELSE body_blocks.sealed_at END
-         WHERE excluded.disk_len >= body_blocks.disk_len",
-        params![
-            segment.block_offset as i64,
-            i64::from(segment.raw_len),
-            segment.disk_len as i64,
-            sealed_at,
-        ],
-    )?;
-    if recorded == 0 {
-        warn!(
-            block_offset = segment.block_offset,
-            raw_len = segment.raw_len,
-            disk_len = segment.disk_len,
-            "session body index already records a longer extent for this block; kept the longer one"
-        );
-    }
-    Ok(())
 }

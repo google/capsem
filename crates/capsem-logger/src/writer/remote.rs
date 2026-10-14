@@ -20,10 +20,7 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(not(test))]
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(test)]
-// Large body admission includes framing, archive compression, SQLite commit,
-// and its producer commitment. Two hundred milliseconds made the WARC
-// backpressure regression fail during fixture setup on otherwise healthy
-// macOS and loaded Linux builders.
+// Covers archive compression and SQLite commit on loaded builders.
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
 const BACKPRESSURE_MAX_WAIT: Duration = Duration::from_millis(5);
 

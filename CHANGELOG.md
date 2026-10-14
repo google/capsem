@@ -311,6 +311,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Ledger staging returns SQLite pages after each flush, caps each process's
+  file-backed map at 32 MiB, and publishes sync-completed body indexes in
+  bounded transactions without replaying block metadata. Busy sessions no
+  longer retain their largest burst or stall admission on an index backlog.
+
 - Ledger producers coalesce bounded consecutive security events into one
   commitment reservation, admission exchange and SQLite transaction, avoiding
   per-row scheduling and audit backpressure during concurrent DNS and gateway

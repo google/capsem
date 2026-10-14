@@ -259,6 +259,11 @@ pub(crate) fn with_memory_schema_lock<T>(operation: impl FnOnce() -> rusqlite::R
 pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Result<()> {
     integrity::validate(conn)?;
     attach_memory_schema(conn, memory_uri)?;
+    // DELETE alone leaves an in-memory SQLite database's freed pages attached
+    // to the process forever. The staging schema is emptied every flush, so
+    // return those pages at the same commit instead of retaining the largest
+    // burst for the rest of the VM's lifetime.
+    conn.execute_batch("PRAGMA mem.auto_vacuum = FULL")?;
     reconcile_memory_tables_from_disk(conn)
 }
 

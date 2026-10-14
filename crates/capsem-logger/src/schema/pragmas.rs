@@ -21,7 +21,7 @@ const READER_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Keep this in the DB layer: routes and security components should not know
 /// whether a query reads through SQLite's page cache, mmap, or DB-owned memory
 /// tables.
-pub const SQLITE_MMAP_SIZE_BYTES: i64 = 256 * 1024 * 1024;
+pub const SQLITE_MMAP_SIZE_BYTES: i64 = capsem_proto::LEDGER_SQLITE_MMAP_BYTES;
 
 fn apply_mmap_pragma(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "mmap_size", SQLITE_MMAP_SIZE_BYTES)
