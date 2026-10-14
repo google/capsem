@@ -20,6 +20,8 @@ use policy::{label, normalize_grant_request, normalize_profile, scope};
 pub use retention::BrokerPruned;
 mod sessions;
 pub use sessions::SessionBinding;
+mod approvals;
+pub use approvals::ApprovalOwner;
 mod storage;
 pub use storage::BrokerStorage;
 use storage::{ConnectionRecord, GrantRecord, Snapshot, Store, TransactionRecord};

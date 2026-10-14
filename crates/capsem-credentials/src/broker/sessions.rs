@@ -16,11 +16,14 @@ impl SessionBinding {
         Ok(Self { session, expires })
     }
     pub(super) fn ids(&self) -> (String, String) {
+        self.owner().ids()
+    }
+    pub fn owner(&self) -> ApprovalOwner {
         let (session, owner, _) = self.session.identities();
-        (
-            uuid::Uuid::from_bytes(session).to_string(),
-            uuid::Uuid::from_bytes(owner).to_string(),
-        )
+        ApprovalOwner {
+            session,
+            ownership: owner,
+        }
     }
 }
 
@@ -270,23 +273,7 @@ impl ConnectionBroker {
         binding: SessionBinding,
         id: &str,
     ) -> BrokerResult<api::RevokeSessionGrantResponse> {
-        let (session_id, owner_generation) = binding.ids();
-        let mut state = self.0.state.lock().await;
-        let entry = state
-            .grants
-            .get_mut(id)
-            .ok_or(api::CredentialErrorCode::GrantUnavailable)?;
-        if entry.record.summary.session_id != session_id || entry.record.summary.owner_generation != owner_generation {
-            return Err(api::CredentialErrorCode::OwnerChanged);
-        }
-        self.revoke_entry(entry)?;
-        let result = api::RevokeSessionGrantResponse {
-            grant: entry.record.summary.clone(),
-            local_authority: api::RevokedCredentialAuthority::Revoked,
-        };
-        self.0.store.write(state.snapshot()).await?;
-        drop(state);
-        Ok(result)
+        self.revoke_approval(binding.owner(), id).await
     }
 
     pub(super) fn retire_connection_grants(&self, state: &mut State, id: &str) -> BrokerResult<u32> {
@@ -356,11 +343,7 @@ impl ConnectionBroker {
             .map_err(|_| api::CredentialErrorCode::StorageUnavailable)?;
         let now = SystemTime::now();
         if expiry <= now {
-            if let Some(handle) = entry.handle.take() {
-                self.0.authority.revoke(handle).map_err(grant_error)?;
-            }
-            entry.record.summary.state = api::GrantState::Expired;
-            entry.record.summary.revision = next_revision(entry.record.summary.revision)?;
+            self.expire_entry(entry)?;
             return Ok(());
         }
         let Some(connection) = connections.get(&entry.record.summary.connection_id) else {
@@ -437,7 +420,7 @@ impl ConnectionBroker {
     }
 }
 
-fn grant_error(error: crate::GrantError) -> api::CredentialErrorCode {
+pub(super) fn grant_error(error: crate::GrantError) -> api::CredentialErrorCode {
     match error {
         crate::GrantError::Denied => api::CredentialErrorCode::PolicyDenied,
         crate::GrantError::Invalid => api::CredentialErrorCode::UnsupportedCapability,

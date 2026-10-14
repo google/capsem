@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retained credential approvals can be inspected and durably revoked using
+  their original session owner without creating or rebinding runtime authority.
+
 - Credential settings show account sign-in, cancellation and provider retirement;
   running sessions can explicitly grant and revoke selected account capabilities.
   Unsupported sign-in profiles remain disabled with an explanation.

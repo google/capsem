@@ -152,3 +152,80 @@ async fn lifecycle_runtime_terminal_delete_revokes_recovered_unbound_approval_du
         api::ConnectionState::Connected
     );
 }
+
+#[tokio::test]
+async fn stopped_approval_inventory_cannot_rebind_and_revoke_is_owner_scoped_and_durable() {
+    let root = tempfile::tempdir().unwrap();
+    let storage = || BrokerStorage::File {
+        path: root.path().join("private/broker.json"),
+        max_bytes: 65536,
+    };
+    let (_fixture, broker, provider, authority, original, grant) = granted(storage()).await;
+    let (session, owner, runtime) = original.session.identities();
+    let approval = crate::broker::ApprovalOwner::new(session, owner).unwrap();
+    let old = broker.0.state.lock().await.grants[&grant.id].handle.unwrap();
+    broker
+        .stop_runtime(session, runtime, crate::GrantStopPolicy::Preserve)
+        .await
+        .unwrap();
+    let result = broker.approvals(approval).await.unwrap();
+    assert_eq!(result.owner_generation, uuid::Uuid::from_bytes(owner).to_string());
+    assert_eq!(result.grants[0].state, api::GrantState::Active);
+    assert!(!result.grants[0].runtime_bound);
+    assert_eq!(
+        authority.visibility(old, original.session, Instant::now()),
+        Some(crate::grants::GrantVisibility::Preserved)
+    );
+    let wrong = crate::broker::ApprovalOwner::new(session, *capsem_crypto::uuid_v4().as_bytes()).unwrap();
+    assert!(broker.approvals(wrong).await.unwrap().grants.is_empty());
+    assert_eq!(
+        broker.revoke_approval(wrong, &grant.id).await.unwrap_err(),
+        api::CredentialErrorCode::OwnerChanged
+    );
+    let other_session = crate::broker::ApprovalOwner::new(*capsem_crypto::uuid_v4().as_bytes(), owner).unwrap();
+    assert_eq!(
+        broker.revoke_approval(other_session, &grant.id).await.unwrap_err(),
+        api::CredentialErrorCode::OwnerChanged
+    );
+    let result = broker.revoke_approval(approval, &grant.id).await.unwrap();
+    assert_eq!(result.grant.state, api::GrantState::Revoked);
+    assert_eq!(authority.visibility(old, original.session, Instant::now()), None);
+    drop(broker);
+    let restored = ConnectionBroker::open(storage(), vec![profile(provider)], super::super::authority(), limits())
+        .await
+        .unwrap();
+    let result = restored.approvals(approval).await.unwrap();
+    assert_eq!(result.grants[0].state, api::GrantState::Revoked);
+    assert!(!result.grants[0].runtime_bound);
+}
+
+#[tokio::test]
+async fn stopped_approval_inventory_expires_finite_approval_without_provider_fetch() {
+    let (_fixture, broker, _provider, authority, original, grant) = granted(BrokerStorage::Memory).await;
+    let (session, owner, runtime) = original.session.identities();
+    let handle = broker.0.state.lock().await.grants[&grant.id].handle.unwrap();
+    broker
+        .stop_runtime(session, runtime, crate::GrantStopPolicy::Preserve)
+        .await
+        .unwrap();
+    broker
+        .0
+        .state
+        .lock()
+        .await
+        .grants
+        .get_mut(&grant.id)
+        .unwrap()
+        .record
+        .summary
+        .expires_at = timestamp(SystemTime::UNIX_EPOCH).unwrap();
+    let inventory = broker
+        .approvals(crate::broker::ApprovalOwner::new(session, owner).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(inventory.grants[0].state, api::GrantState::Expired);
+    assert!(!inventory.grants[0].runtime_bound);
+    assert_eq!(authority.visibility(handle, original.session, Instant::now()), None);
+    assert!(crate::broker::ApprovalOwner::new([0; 16], owner).is_err());
+    assert!(crate::broker::ApprovalOwner::new(session, [0; 16]).is_err());
+}
