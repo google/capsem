@@ -22,12 +22,14 @@ impl BrokerLimits {
             self.max_identifier_bytes,
             self.max_label_bytes,
             self.max_scope_bytes,
+            self.max_metadata_bytes,
         ];
         let times = [
             self.enrollment_lifetime,
             self.grant_lifetime,
             self.retirement_timeout,
             self.retention_lifetime,
+            self.maintenance_interval,
         ];
         if counts.contains(&0)
             || times.iter().any(|duration| {

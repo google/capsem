@@ -15,6 +15,22 @@ fn bundled_limits_are_finite_and_closed_to_unknown_fields() {
 }
 
 #[test]
+fn broker_storage_and_maintenance_limits_are_config_owned_and_finite() {
+    let source = include_str!("../../../../../config/data/credential-broker-policy.json");
+    let mut value: serde_json::Value = serde_json::from_str(source).unwrap();
+    value["max_metadata_bytes"] = serde_json::json!(8192);
+    value["maintenance_interval"] = serde_json::json!(7);
+    let limits = BrokerLimits::parse(&value.to_string()).unwrap();
+    assert_eq!(limits.max_metadata_bytes, 8192);
+    assert_eq!(limits.maintenance_interval, Duration::from_secs(7));
+    for field in ["max_metadata_bytes", "maintenance_interval"] {
+        let mut invalid = value.clone();
+        invalid[field] = serde_json::json!(0);
+        assert!(BrokerLimits::parse(&invalid.to_string()).is_err());
+    }
+}
+
+#[test]
 fn grant_payload_normalization_preserves_instants_and_rejects_duplicates() {
     let mut request = api::CreateSessionGrantRequest {
         request_id: capsem_crypto::uuid_v4().to_string(),

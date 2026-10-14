@@ -145,6 +145,9 @@ pub struct BrokerLimits {
     pub max_identifier_bytes: usize,
     pub max_label_bytes: usize,
     pub max_scope_bytes: usize,
+    pub max_metadata_bytes: usize,
+    #[serde(deserialize_with = "policy::seconds")]
+    pub maintenance_interval: Duration,
     #[serde(deserialize_with = "policy::seconds")]
     pub enrollment_lifetime: Duration,
     #[serde(deserialize_with = "policy::seconds")]
