@@ -3346,6 +3346,14 @@ scenarios = [
     "mcp_tool_call",
 ]
 
+[benchmark.mitm_scale]
+# One low-contention HTTPS cohort per independent VM. Each level keeps the
+# per-VM work fixed, so aggregate RPS and resident pressure reveal whether
+# session isolation scales across host cores and memory.
+vm_counts = [1, 2, 4]
+per_vm_concurrency = 16
+duration_seconds = 10
+
 [benchmark_regression]
 # Product benchmarks use the latest checked-in result as evidence. A release
 # fails when a measured duration or allocated-byte metric grows by more than

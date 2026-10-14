@@ -131,6 +131,23 @@ class BenchmarkProtocolConfig(Strict):
     scenarios: list[str]
 
 
+class BenchmarkMitmScaleConfig(Strict):
+    """Independent-VM fanout used to measure aggregate HTTPS interception."""
+
+    vm_counts: tuple[PositiveInt, ...]
+    per_vm_concurrency: PositiveInt
+    duration_seconds: PositiveInt
+
+    @field_validator("vm_counts")
+    @classmethod
+    def fanout_starts_at_one_and_increases(cls, values: tuple[int, ...]) -> tuple[int, ...]:
+        if not values or values[0] != 1:
+            raise ValueError("MITM scale fanout must start at one VM")
+        if any(current <= previous for previous, current in zip(values, values[1:])):
+            raise ValueError("MITM scale VM counts must be strictly increasing")
+        return values
+
+
 class DiskIopsConfig(Strict):
     """A floor that is not the same number on every platform.
 
@@ -182,4 +199,5 @@ class BenchmarkConfig(Strict):
     route_health: RouteHealthConfig
     run: BenchmarkRunConfig
     protocol: BenchmarkProtocolConfig
+    mitm_scale: BenchmarkMitmScaleConfig
     gates: BenchmarkGatesConfig
