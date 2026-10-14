@@ -2,6 +2,7 @@ import {Client} from './client.js';
 import {Debug} from './debug.js';
 import {Images} from './images.js';
 import {Credentials} from './credentials.js';
+import {Connections} from './connections.js';
 import {ManagedSession} from './managed.js';
 import {registryAccess} from './registry.js';
 import {commandDeadlineMs, createDeadlineMs} from './execution.js';
@@ -27,6 +28,7 @@ export class Hypervisor extends Client {
   readonly debug: Debug;
   readonly images: Images;
   readonly credentials: Credentials;
+  readonly connections: Connections;
   constructor(url: string, token: string, options: TransportOptions = {}) {
     const transport = new Transport(url, token, options);
     super(transport);
@@ -35,6 +37,7 @@ export class Hypervisor extends Client {
     this.debug = new Debug(transport);
     this.images = new Images(transport);
     this.credentials = new Credentials(transport);
+    this.connections = new Connections(transport);
   }
   async info(options: CallOptions = {}): Promise<models.HypervisorInfo> {
     return api.getHypervisorInfo(this.transport, options);

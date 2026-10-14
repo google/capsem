@@ -236,6 +236,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TypeScript SDK connection and credential grant resources preserve explicit
+  consent, typed refusal codes, ownership checks, deadlines and cancellation.
+
 - Python SDK connection and credential grant resources support explicit consent,
   typed refusal codes, ownership checks and deadlines during VM name resolution.
 
