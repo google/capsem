@@ -64,6 +64,8 @@ fn bench_db_writer_body_bursts(c: &mut Criterion) {
     // The 4096 exchange case also exercises a large archive-index flush,
     // whose cost stalls bounded HTTP audit admission during periodic flushes.
     for burst_size in [256usize, 1024usize, 4096usize] {
+        // Ten measured large bursts took 26 seconds; retain rounded 20% margin.
+        group.measurement_time(Duration::from_secs(if burst_size == 4096 { 35 } else { 8 }));
         group.throughput(Throughput::Elements(burst_size as u64));
         group.bench_with_input(format!("net_bodies_{burst_size}"), &burst_size, |bench, &burst| {
             bench.iter_batched(
