@@ -20,7 +20,7 @@ pub(super) struct SigmaRule {
     #[serde(default, rename = "date")]
     _date: Option<String>,
     logsource: SigmaLogsource,
-    detection: BTreeMap<String, serde_yaml::Value>,
+    detection: BTreeMap<String, serde_json::Value>,
     #[serde(default, rename = "falsepositives")]
     _falsepositives: Vec<String>,
     level: DetectionLevel,
@@ -59,7 +59,7 @@ impl SigmaRule {
         let condition = self
             .detection
             .get("condition")
-            .and_then(serde_yaml::Value::as_str)
+            .and_then(serde_json::Value::as_str)
             .ok_or_else(|| format!("Sigma rule '{}' missing detection.condition", self.title))?;
         let selections = self.selection_clauses()?;
         let condition = sigma_condition_to_security_event_match(condition, &selections)?;
@@ -92,14 +92,12 @@ impl SigmaRule {
             }
             validate_identifier("Sigma selection id", name)?;
             let mapping = value
-                .as_mapping()
+                .as_object()
                 .ok_or_else(|| format!("Sigma selection '{name}' must be a mapping"))?;
             let mut positive = Vec::new();
             let mut negative = Vec::new();
             for (field, expected) in mapping {
-                let field = field
-                    .as_str()
-                    .ok_or_else(|| format!("Sigma selection '{name}' has a non-string field"))?;
+                let field = field.as_str();
                 validate_security_event_field(field)?;
                 let clause = sigma_field_clause(field, expected)?;
                 positive.push(clause.positive);
@@ -199,8 +197,8 @@ fn tokenize_sigma_condition(condition: &str) -> Result<Vec<String>, String> {
     }
 }
 
-fn sigma_field_clause(field: &str, expected: &serde_yaml::Value) -> Result<SigmaSelectionClause, String> {
-    if let Some(values) = expected.as_sequence() {
+fn sigma_field_clause(field: &str, expected: &serde_json::Value) -> Result<SigmaSelectionClause, String> {
+    if let Some(values) = expected.as_array() {
         if values.is_empty() {
             return Err(format!("Sigma field '{field}' sequence must not be empty"));
         }
@@ -221,7 +219,7 @@ fn sigma_field_clause(field: &str, expected: &serde_yaml::Value) -> Result<Sigma
     })
 }
 
-fn sigma_scalar_compare(field: &str, operator: &str, expected: &serde_yaml::Value) -> Result<String, String> {
+fn sigma_scalar_compare(field: &str, operator: &str, expected: &serde_json::Value) -> Result<String, String> {
     let expected = sigma_scalar_to_string(expected)
         .ok_or_else(|| format!("Sigma field '{field}' value must be a scalar or sequence"))?;
     Ok(format!("{field} {operator} {}", cel_string_literal(&expected)))
@@ -236,11 +234,11 @@ fn join_grouped(clauses: &[String], operator: &str) -> String {
     }
 }
 
-fn sigma_scalar_to_string(value: &serde_yaml::Value) -> Option<String> {
+fn sigma_scalar_to_string(value: &serde_json::Value) -> Option<String> {
     match value {
-        serde_yaml::Value::String(value) => Some(value.clone()),
-        serde_yaml::Value::Number(value) => Some(value.to_string()),
-        serde_yaml::Value::Bool(value) => Some(value.to_string()),
+        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
         _ => None,
     }
 }

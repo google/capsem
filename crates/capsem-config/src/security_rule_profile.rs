@@ -387,9 +387,9 @@ impl SecurityRuleProfile {
     pub fn parse_sigma_yaml(input: &str) -> Result<Self, String> {
         let mut profile = Self::default();
         let mut parsed_any = false;
-        for document in serde_yaml::Deserializer::from_str(input) {
-            let sigma_rule =
-                SigmaRule::deserialize(document).map_err(|error| format!("security rule Sigma YAML: {error}"))?;
+        for sigma_rule in serde_saphyr::from_multiple::<SigmaRule>(input)
+            .map_err(|error| format!("security rule Sigma YAML: {error}"))?
+        {
             let (rule_key, rule) = sigma_rule.into_security_rule()?;
             if profile.profiles.rules.insert(rule_key.clone(), rule).is_some() {
                 return Err(format!("duplicate Sigma-derived rule '{rule_key}'"));

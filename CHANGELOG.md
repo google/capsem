@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sigma YAML imports use a maintained safe Rust parser, reject duplicate
+  selection keys, and bound document, nesting and alias expansion.
+
 - Sigma selection lists and negated selections retain their logical grouping,
   so an alternative cannot bypass another required security rule field.
   Compiling grouped alternatives rejects excessive expansion before allocation.

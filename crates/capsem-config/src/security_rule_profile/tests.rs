@@ -2,6 +2,8 @@ use serde_json::json;
 
 use super::*;
 
+mod yaml_migration;
+
 #[test]
 fn sigma_sequence_alternatives_still_require_every_selection_field() {
     let profile = SecurityRuleProfile::parse_sigma_yaml(
