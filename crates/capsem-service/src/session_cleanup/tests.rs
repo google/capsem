@@ -94,7 +94,23 @@ async fn failed_session_route_preserves_runtime_ipc_evidence() {
     let session_dir = state.run_dir.join("sessions").join(id);
     std::fs::create_dir_all(&session_dir).unwrap();
     std::fs::write(session_dir.join("process.log"), b"process channel closed during doctor").unwrap();
-    insert_fake_instance_with_session_dir(&state, id, 0, session_dir.clone());
+    let child = crate::tests::isolated_test_command("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    insert_fake_instance_with_session_dir(&state, id, child.id().unwrap(), session_dir.clone());
+    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
+    let retirement = state.retirements.register(id, generation).unwrap();
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.into(),
+        id.into(),
+        Arc::clone(&state),
+        state.instance_socket_path(id).unwrap(),
+        session_dir.clone(),
+        retirement,
+    );
 
     let (status, body) = route_request(
         build_service_router(Arc::clone(&state)),
@@ -103,6 +119,7 @@ async fn failed_session_route_preserves_runtime_ipc_evidence() {
         None,
     )
     .await;
+    reaper.await.unwrap();
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["success"], true);
