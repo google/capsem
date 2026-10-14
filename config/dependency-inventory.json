@@ -739,6 +739,7 @@
    "capsem-crypto",
    "capsem-foundation",
    "capsem-proto",
+   "capsem-sdk",
    "clap",
    "clap_complete",
    "flate2",

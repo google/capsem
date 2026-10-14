@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 
-use crate::client::{self, ProvisionRequest, ProvisionResponse, UdsClient};
+use crate::client::{self, GatewayClient, ProvisionRequest, ProvisionResponse};
 use crate::container_image::{self, ImageArgs, Workload};
 use crate::container_run::ram_mb;
 use capsem_api::ContainerState;
@@ -33,7 +33,7 @@ pub(super) struct CreateArgs {
     pub image: ImageArgs,
 }
 
-pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> {
+pub(super) async fn create(client: &GatewayClient, args: &CreateArgs) -> Result<()> {
     let persistent = args.name.is_some() || args.from.is_some();
     let workload = Workload::of(&args.image, &args.env)?;
     // Resolve the environment before reading the image's registry inputs.
@@ -69,7 +69,7 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
 
 /// Follow the service until the workload is launched, then publish its
 /// ports. A VM this command could not start is not left behind.
-async fn start_image(client: &UdsClient, vm: &ProvisionResponse, workload: &Workload<'_>) -> Result<()> {
+async fn start_image(client: &GatewayClient, vm: &ProvisionResponse, workload: &Workload<'_>) -> Result<()> {
     let started = async {
         container_image::follow(client, &vm.id, |state| {
             matches!(state, ContainerState::Starting | ContainerState::Running)

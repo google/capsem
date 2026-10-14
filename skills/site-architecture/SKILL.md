@@ -16,7 +16,9 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
   (`vm-N` unless the user supplies a name) and sized by create flags with
   fixed defaults.
   `capsem shell` opens the TUI/session picker, creates or attaches through the
-  service, and talks to capsem-service over UDS HTTP. User-facing copy says
+  authenticated gateway, using the Rust SDK and shared API types. Direct UDS
+  HTTP is restricted to local status/asset administration and service startup.
+  Failed gateway authentication never falls back to UDS. User-facing copy says
   sessions; implementation/debug output may say VM when describing the
   virtualization layer.
 - **@capsem/mcp** (npm MCP server): separately installed stdio server for AI agents. Uses the TypeScript SDK and an explicit gateway URL/token; it has no UDS, VM-runtime, or virtualization access.

@@ -35,12 +35,12 @@ fn success(output: Output) -> String {
 }
 
 fn session(persistent: bool) -> Value {
-    json!({"id": "vm-canonical", "name": "work", "pid": 17, "status": "Stopped", "persistent": persistent,
+    json!({"id": "vm-canonical", "name": "work", "pid": 17, "available_actions": [], "status": "Stopped", "persistent": persistent,
         "ram_mb": 12288, "cpus": 4, "version": "0.7.0", "forked_from": "seed", "description": "project",
         "created_at": "2026-10-09T12:00:00Z", "uptime_secs": 3660, "total_input_tokens": 11,
         "total_output_tokens": 19, "total_estimated_cost": 0.12, "total_tool_calls": 3,
         "total_requests": 8, "allowed_requests": 6, "denied_requests": 2, "total_file_events": 5,
-        "model_call_count": 2, "last_error": null, "can_resume": false, "resume_blocked_reason": "image is missing"})
+        "model_call_count": 2, "can_resume": false, "resume_blocked_reason": "image is missing"})
 }
 
 fn listed(service: &FakeService, persistent: bool) {
@@ -193,9 +193,9 @@ async fn history_escapes_search_and_renders_the_actual_rows() {
     listed(&service, true);
     let rows = json!({"commands": [
         {"timestamp":"now", "layer":"exec", "command":"echo hello", "exit_code":0, "duration_ms":2,
-         "stdout_preview":"hello", "stderr_preview":null, "details":{"process_name":"shell"}},
+         "stdout_preview":"hello", "stderr_preview":null, "details":{"source":"cli", "exec_id":1, "trace_id":null, "process_name":"shell"}},
         {"timestamp":"later", "layer":"audit", "command":"cat data", "exit_code":null, "duration_ms":null,
-         "stdout_preview":null, "stderr_preview":null, "details":{"parent_exe":"/usr/bin/bash", "exe":"/bin/cat"}}
+         "stdout_preview":null, "stderr_preview":null, "details":{"parent_exe":"/usr/bin/bash", "exe":"/bin/cat", "pid":17,"ppid":16,"uid":1000,"comm":null,"cwd":null,"tty":null,"session_id":null,"audit_id":null}}
     ], "total":9, "has_more":true});
     service.route("GET", "/vms/vm-canonical/history", 200, rows.clone());
     let output = success(command(&service, &["history", "work", "--tail", "2", "--search", "a & b"]).await);
@@ -212,7 +212,7 @@ async fn history_escapes_search_and_renders_the_actual_rows() {
         service.calls(),
         [
             "GET /vms/list",
-            "GET /vms/vm-canonical/history?limit=2&layer=all&search=a%20%26%20b",
+            "GET /vms/vm-canonical/history?limit=2&layer=all&search=a+%26+b",
             "GET /vms/list",
             "GET /vms/vm-canonical/history?limit=100000&layer=all"
         ]
@@ -261,7 +261,7 @@ async fn unicode_table_cells_truncate_at_utf8_boundaries() {
         200,
         json!({
             "commands": [{"timestamp":"snowtime", "layer":"exec", "command":command_text,
-                "exit_code":0, "duration_ms":2, "stdout_preview":null, "stderr_preview":null, "details":{}}],
+                "exit_code":0, "duration_ms":2, "stdout_preview":null, "stderr_preview":null, "details":{"source":"cli","exec_id":1}}],
             "total":1, "has_more":false
         }),
     );

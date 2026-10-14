@@ -70,7 +70,7 @@ fn base_update_status() -> UpdateStatusResponse {
         checked_at: Some(1_718_444_400),
         channel_url: Some("https://release.capsem.org/health.json".into()),
         channel_hash: None,
-        validation_status: Some("valid".into()),
+        validation_status: Some(capsem_api::ValidationStatus::Valid),
         validation_error: None,
         stale: false,
         last_error: None,
@@ -1240,20 +1240,20 @@ fn shell_with_session_focuses_tui_session() {
     );
 }
 
-#[test]
-fn gateway_runtime_url_rejects_cross_instance_fallbacks() {
+#[tokio::test]
+async fn gateway_runtime_url_rejects_cross_instance_fallbacks() {
     let run_dir = tempfile::tempdir().unwrap();
-    assert!(gateway_url_from_runtime(run_dir.path()).is_none());
+    assert!(gateway_url_from_runtime(run_dir.path()).await.is_none());
 
     std::fs::write(run_dir.path().join("gateway.port"), "not-a-port\n").unwrap();
-    assert!(gateway_url_from_runtime(run_dir.path()).unwrap().is_err());
+    assert!(gateway_url_from_runtime(run_dir.path()).await.unwrap().is_err());
 
     std::fs::write(run_dir.path().join("gateway.port"), "0\n").unwrap();
-    assert!(gateway_url_from_runtime(run_dir.path()).unwrap().is_err());
+    assert!(gateway_url_from_runtime(run_dir.path()).await.unwrap().is_err());
 
     std::fs::write(run_dir.path().join("gateway.port"), "49152\n").unwrap();
     assert_eq!(
-        gateway_url_from_runtime(run_dir.path()).unwrap().unwrap(),
+        gateway_url_from_runtime(run_dir.path()).await.unwrap().unwrap(),
         "http://127.0.0.1:49152"
     );
 }

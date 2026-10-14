@@ -17,6 +17,7 @@ pub(crate) struct Recorded {
     pub method: String,
     pub path: String,
     pub body: Vec<u8>,
+    pub via_gateway: bool,
 }
 
 impl Recorded {
@@ -44,6 +45,7 @@ pub(crate) struct FakeService {
     pub socket: std::path::PathBuf,
     script: Arc<Mutex<Script>>,
     server: tokio::task::JoinHandle<()>,
+    gateway: tokio::task::JoinHandle<()>,
     _directory: tempfile::TempDir,
 }
 
@@ -58,7 +60,29 @@ impl FakeService {
             while let Ok((stream, _)) = listener.accept().await {
                 let script = shared.clone();
                 tokio::spawn(async move {
-                    let answer = hyper::service::service_fn(move |request| answer(script.clone(), request));
+                    let answer = hyper::service::service_fn(move |request| answer(script.clone(), request, false));
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), answer)
+                        .await;
+                });
+            }
+        });
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        tcp.set_nonblocking(true).unwrap();
+        let port = tcp.local_addr().unwrap().port();
+        let tcp = tokio::net::TcpListener::from_std(tcp).unwrap();
+        std::fs::write(directory.path().join("gateway.port"), port.to_string()).unwrap();
+        capsem_foundation::unix::fs::atomic_write_private(
+            &directory.path().join("gateway.token"),
+            b"cli-test-gateway-token",
+        )
+        .unwrap();
+        let shared = script.clone();
+        let gateway = tokio::spawn(async move {
+            while let Ok((stream, _)) = tcp.accept().await {
+                let script = shared.clone();
+                tokio::spawn(async move {
+                    let answer = hyper::service::service_fn(move |request| answer(script.clone(), request, true));
                     let _ = hyper::server::conn::http1::Builder::new()
                         .serve_connection(TokioIo::new(stream), answer)
                         .await;
@@ -69,6 +93,7 @@ impl FakeService {
             socket,
             script,
             server,
+            gateway,
             _directory: directory,
         }
     }
@@ -96,7 +121,16 @@ impl FakeService {
     }
 
     pub fn recorded(&self) -> Vec<Recorded> {
-        self.script.lock().unwrap().recorded.clone()
+        let recorded = self.script.lock().unwrap().recorded.clone();
+        for request in &recorded {
+            assert!(
+                request.via_gateway || matches!(request.path.as_str(), "/system/status" | "/assets/status"),
+                "ordinary CLI request used direct service access: {} {}",
+                request.method,
+                request.path
+            );
+        }
+        recorded
     }
 
     /// `METHOD path` of every request, in order.
@@ -118,13 +152,20 @@ impl FakeService {
 impl Drop for FakeService {
     fn drop(&mut self) {
         self.server.abort();
+        self.gateway.abort();
     }
 }
 
 async fn answer(
     script: Arc<Mutex<Script>>,
     request: Request<hyper::body::Incoming>,
+    via_gateway: bool,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    let authorized = !via_gateway
+        || request
+            .headers()
+            .get("authorization")
+            .is_some_and(|value| value == "Bearer cli-test-gateway-token");
     let method = request.method().to_string();
     let path = request
         .uri()
@@ -142,7 +183,14 @@ async fn answer(
             method: method.clone(),
             path,
             body,
+            via_gateway,
         });
+        if !authorized {
+            return Ok(Response::builder()
+                .status(401)
+                .body(Full::new(Bytes::from_static(br#"{"error":"bad gateway token"}"#)))
+                .unwrap());
+        }
         match script
             .routes
             .iter_mut()

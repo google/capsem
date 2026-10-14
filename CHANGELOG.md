@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Route ordinary CLI session, image, network and proxy commands through the
+  authenticated gateway using the Rust SDK. Missing or rejected credentials
+  fail without retrying mutations or falling back to the service socket.
+
 - Update rustls to 0.23.46, fixing unauthenticated certificate-decompression,
   ECH-rejection, key-exchange downgrade, and session-secret exposure flaws.
 

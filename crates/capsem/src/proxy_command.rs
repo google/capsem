@@ -7,7 +7,7 @@ use capsem_api::{
 };
 use clap::Args;
 
-use crate::client::{ApiResponse, UdsClient};
+use crate::client::{ApiResponse, GatewayClient};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -24,7 +24,7 @@ pub(crate) struct ProxyArgs {
     pub(crate) port: u16,
 }
 
-pub(crate) async fn run(client: &UdsClient, args: &ProxyArgs) -> Result<()> {
+pub(crate) async fn run(client: &GatewayClient, args: &ProxyArgs) -> Result<()> {
     let response: ApiResponse<CreateProxyResponse> = client
         .post(
             "/proxies",

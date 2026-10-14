@@ -1016,7 +1016,7 @@ When a session stops, the host ledger (`~/.capsem/sessions/host.db`) records thi
 
 | Access point | Protocol | Query type |
 |-------------|----------|------------|
-| `capsem info <id> --stats` | CLI -> service HTTP `/vms/{id}/info` | The ledger counter snapshot |
+| `capsem info <id> --stats` | CLI -> authenticated gateway -> service `/vms/{id}/info` | The ledger counter snapshot |
 | Frontend Stats tab | Gateway -> typed VM-scoped ledger routes | Per-table summaries and event inspection |
 | MCP `capsem_timeline` | MCP -> service HTTP `/vms/{id}/timeline` | Typed time-ordered event stream |
 | MCP logs/triage tools | MCP -> typed service routes | Logs, panic triage, and operational diagnostics |

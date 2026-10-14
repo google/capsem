@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use capsem_api::{ImageListResponse, ImagePullRequest, ImagePullResponse};
 
-use crate::client::{ApiResponse, UdsClient};
+use crate::client::{ApiResponse, GatewayClient};
 use crate::container_image::{check_image, registry_access};
 
 #[derive(clap::Args, Debug)]
@@ -38,7 +38,7 @@ pub(crate) enum ImageCommands {
     },
 }
 
-pub(crate) async fn run(client: &UdsClient, args: &ImagesArgs) -> Result<()> {
+pub(crate) async fn run(client: &GatewayClient, args: &ImagesArgs) -> Result<()> {
     match &args.command {
         None => {
             let path = if args.refresh {

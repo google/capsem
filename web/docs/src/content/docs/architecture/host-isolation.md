@@ -41,7 +41,8 @@ flowchart TB
 
     UI -->|"authenticated control"| Gateway
     HostMCP -->|"authenticated control"| Gateway
-    CLI -->|"local UDS control"| Service
+    CLI -->|"authenticated HTTP/WebSocket"| Gateway
+    CLI -.->|"local status/assets and startup"| Service
     Gateway -->|"granted service channels"| Service
     Service -->|"typed lifecycle control"| Owner
     Service -->|"generation-bound capabilities"| Proxy
@@ -93,7 +94,7 @@ grants fail closed.
 
 | Process | Permitted after readiness | Denied or absent |
 |---|---|---|
-| `capsem-service` | Global lifecycle, settings and corp policy, credential store, MCP discovery catalog, session registry, resource creation and capability grants, including exact loopback publication listeners; producer ordering and external commitment checkpoints | It is part of the trusted computing base; clients reach it through the local UDS or authenticated gateway routes |
+| `capsem-service` | Global lifecycle, settings and corp policy, credential store, MCP discovery catalog, session registry, resource creation and capability grants, including exact loopback publication listeners; producer ordering and external commitment checkpoints | It is part of the trusted computing base; ordinary clients use authenticated gateway routes, while explicit local administration/startup uses UDS |
 | `capsem-gateway` | Accept on listeners bound before confinement; use coordinator-granted service/owner channels; update its private readiness files | Ambient file reads, path-based UDS connects, outbound TCP, new binds, process execution |
 | `capsem-process` | One VM and its exact session runtime paths; read exact boot assets and initial active policy; receive policy reload bytes and use upstream, loopback-listener, and ledger capabilities granted by the coordinator; execute only the installed router helper | Other sessions, the global MCP discovery catalog, direct `session.db` access, ambient outbound connects/binds, unrelated host files and processes |
 | `capsem-proxy` | Consume granted HTTP, DNS, MCP, upstream, credential, ledger, metrics, private-name, policy, and one-way trace-hint channels | All filesystem access, arbitrary dial/bind/listen and control-socket access, process execution, signals to the coordinator |

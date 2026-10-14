@@ -292,7 +292,7 @@ pub async fn service_status() -> Result<ServiceStatus> {
 pub async fn start_service(socket: &std::path::Path) -> Result<()> {
     if crate::client::isolation_mode_active() {
         clear_explicit_stop_marker()?;
-        return crate::client::UdsClient::new(socket.to_path_buf(), true)
+        return crate::client::ServiceAdminClient::new(socket.to_path_buf(), true)
             .ensure_service()
             .await;
     }

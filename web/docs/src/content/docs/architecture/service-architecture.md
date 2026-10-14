@@ -18,7 +18,7 @@ The native host binaries are installed to
 
 | Binary | Role | Communication |
 |--------|------|---------------|
-| **capsem** | CLI client | HTTP over UDS to service |
+| **capsem** | CLI client | Rust SDK over authenticated gateway HTTP/WebSocket; local administration/startup uses UDS |
 | **capsem-service** | Background daemon and trusted producer-checkpoint authority | Axum HTTP over UDS (`~/.capsem/run/service.sock`) plus connected worker capabilities |
 | **capsem-process** | Per-VM process | Spawned by service, bounded MessagePack over UDS (after a MessagePack Hello) |
 | **capsem-proxy** | Per-session HTTP, DNS, model, and MCP policy worker | Generation-bound connected descriptor grants |
@@ -65,7 +65,8 @@ graph TD
     APP -->|HTTP| GW
     TRAY -->|HTTP| GW
 
-    CLI -->|HTTP/UDS| SVC
+    CLI -->|"authenticated HTTP/WebSocket"| GW
+    CLI -.->|"local status/assets and startup"| SVC
     MCP -->|"authenticated HTTP"| GW
     GW -->|HTTP/UDS| SVC
 
@@ -106,7 +107,8 @@ Each layer uses a different protocol optimized for its role:
 |-------|----------|--------|
 | Frontend/Tray -> gateway | HTTP/1.1 over TCP | `127.0.0.1:19222` (Bearer token auth) |
 | Gateway -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
-| CLI -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
+| CLI -> gateway | Rust SDK HTTP/WebSocket over TCP | discovered or explicit gateway URL (Bearer token auth) |
+| CLI local administration -> service | HTTP/1.1 over UDS | status/asset reads and startup only |
 | SDK/npm MCP -> gateway | HTTP/1.1 over TCP | configured gateway URL (Bearer token auth) |
 | Service -> process | 16 MiB bounded, big-endian length-prefixed MessagePack over UDS (after a MessagePack Hello) | `~/.capsem/run/instances/{id}.sock` |
 | Process -> guest | Binary frames over vsock | Ports 5000, 5001, 5002, 5004, 5005, 5006, 5007 |
@@ -145,12 +147,22 @@ Both are configured for auto-restart (`KeepAlive`/`Restart=always`) and run-at-l
 
 ### CLI auto-launch
 
-The CLI (`capsem`) auto-launches the service if it's not running. On every service-dependent command:
+For local VM commands, the CLI (`capsem`) ensures the service is running:
 
 1. Check socket connectivity
 2. Try service manager (LaunchAgent/systemd)
 3. Fall back to direct spawn
 4. Poll socket for up to 5 seconds
+
+It then reads `gateway.port` and `gateway.token` beside the administration
+socket and sends VM operations through the authenticated gateway using the
+Rust SDK and shared API types. `--uds-path` selects local administration and
+the gateway discovery directory; it does not enable direct VM requests.
+`CAPSEM_GATEWAY_URL` selects an explicit gateway without starting a local
+service, and `CAPSEM_GATEWAY_TOKEN` supplies its Bearer token. Remote gateways
+require an explicit token. Missing or rejected credentials fail without UDS
+fallback or mutation replay. Local status/asset reads and service startup
+retain their administration path.
 
 ## Per-session process isolation
 
@@ -353,7 +365,7 @@ from VM asset releases.
 | `capsem-proxy` | bin | Confined per-session HTTP, DNS, model, and MCP policy worker |
 | `capsem-ledger` | bin | Confined sole owner of one session ledger and body archive |
 | `capsem-router` | bin | Confined publication relay and named-network switch modes |
-| `capsem` | bin | CLI. HTTP over UDS to service; streams remain service-mediated |
+| `capsem` | bin | CLI. Rust SDK over authenticated gateway HTTP/WebSocket; streams remain service-mediated |
 | `capsem-mcp-aggregator` | bin | Isolated subprocess. Manages external MCP server connections over length-prefixed MessagePack frames |
 | `capsem-mcp-builtin` | bin | Isolated built-in HTTP MCP tools |
 | `capsem-gateway` | bin | HTTP gateway. Axum on TCP:19222, Bearer auth, `/vms/{id}/stream` WebSocket tunnel to the service |

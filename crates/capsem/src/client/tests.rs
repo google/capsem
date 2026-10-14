@@ -261,7 +261,7 @@ fn update_status_response_parses_service_contract() {
         status.channel_hash.as_deref(),
         Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
     );
-    assert_eq!(status.validation_status.as_deref(), Some("valid"));
+    assert_eq!(status.validation_status, Some(capsem_api::ValidationStatus::Valid));
     assert_eq!(status.validation_error, None);
     assert!(!status.stale);
     assert_eq!(status.binary.state, UpdateTrackState::UpdateAvailable);
@@ -417,18 +417,18 @@ fn provision_request_from_omitted_when_none() {
 
 #[test]
 fn list_response_empty_serde() {
-    let resp = ListResponse { sessions: vec![] };
+    let resp = ListResponse { sandboxes: vec![] };
     let json = serde_json::to_string(&resp).unwrap();
     // Wire format uses "sandboxes" key
     assert!(json.contains("sandboxes"));
     let resp2: ListResponse = serde_json::from_str(&json).unwrap();
-    assert!(resp2.sessions.is_empty());
+    assert!(resp2.sandboxes.is_empty());
 }
 
 #[test]
 fn list_response_with_entries() {
     let resp = ListResponse {
-        sessions: vec![
+        sandboxes: vec![
             SessionInfo {
                 id: "vm-1".into(),
                 name: None,
@@ -454,6 +454,7 @@ fn list_response_with_entries() {
                 last_error: None,
                 can_resume: false,
                 resume_blocked_reason: None,
+                ..SessionInfo::new(String::new(), 0, VmLifecycleState::Running, false)
             },
             SessionInfo {
                 id: "mydev".into(),
@@ -480,16 +481,17 @@ fn list_response_with_entries() {
                 last_error: None,
                 can_resume: true,
                 resume_blocked_reason: None,
+                ..SessionInfo::new(String::new(), 0, VmLifecycleState::Stopped, true)
             },
         ],
     };
     let json = serde_json::to_string(&resp).unwrap();
     let resp2: ListResponse = serde_json::from_str(&json).unwrap();
-    assert_eq!(resp2.sessions.len(), 2);
-    assert_eq!(resp2.sessions[0].id, "vm-1");
-    assert!(!resp2.sessions[0].persistent);
-    assert_eq!(resp2.sessions[1].id, "mydev");
-    assert!(resp2.sessions[1].persistent);
+    assert_eq!(resp2.sandboxes.len(), 2);
+    assert_eq!(resp2.sandboxes[0].id, "vm-1");
+    assert!(!resp2.sandboxes[0].persistent);
+    assert_eq!(resp2.sandboxes[1].id, "mydev");
+    assert!(resp2.sandboxes[1].persistent);
 }
 
 #[test]
@@ -498,7 +500,7 @@ fn list_response_as_api_response() {
     let json = r#"{"sandboxes":[]}"#;
     let resp: ApiResponse<ListResponse> = serde_json::from_str(json).unwrap();
     let list = resp.into_result().unwrap();
-    assert!(list.sessions.is_empty());
+    assert!(list.sandboxes.is_empty());
 }
 
 #[test]
@@ -666,7 +668,7 @@ fn logs_response_serde() {
 #[test]
 fn session_info_defaults() {
     // Missing optional fields should deserialize with defaults
-    let json = r#"{"id":"vm-1","pid":0,"status":"Running"}"#;
+    let json = r#"{"id":"vm-1","pid":0, "available_actions": [],"status":"Running"}"#;
     let info: SessionInfo = serde_json::from_str(json).unwrap();
     assert_eq!(info.id, "vm-1");
     assert!(!info.persistent);
@@ -691,7 +693,7 @@ fn session_info_defaults() {
 async fn connect_fail_fast_errors_immediately_on_missing_socket() {
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("ghost.sock");
-    let client = UdsClient::new(sock.clone(), false);
+    let client = ServiceAdminClient::new(sock.clone(), false);
 
     let start = std::time::Instant::now();
     let err = client.connect_with_timeout(ConnectMode::FailFast).await.unwrap_err();
@@ -723,7 +725,7 @@ async fn connect_await_startup_waits_for_late_binder() {
         UnixListener::bind(&sock_for_bind).unwrap()
     });
 
-    let client = UdsClient::new(sock.clone(), false);
+    let client = ServiceAdminClient::new(sock.clone(), false);
     let stream = client
         .connect_with_timeout(ConnectMode::AwaitStartup)
         .await
@@ -742,7 +744,7 @@ async fn connect_await_startup_eventually_times_out() {
     // the test completes in under a second.
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("never.sock");
-    let client = UdsClient::new(sock.clone(), false);
+    let client = ServiceAdminClient::new(sock.clone(), false);
 
     let start = std::time::Instant::now();
     let err = client
@@ -775,7 +777,7 @@ fn request_does_not_auto_launch_after_explicit_stop_marker() {
     let _run = EnvGuard::set("CAPSEM_RUN_DIR", run_dir.to_str().unwrap());
 
     std::fs::write(service_install::explicit_stop_marker_path(), b"stopped\n").unwrap();
-    let client = UdsClient::new(run_dir.join("missing.sock"), true);
+    let client = GatewayClient::new(run_dir.join("missing.sock"), true);
     let err = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -857,7 +859,8 @@ async fn bounded_direct_request_reaps_its_owned_service_and_socket_on_error() {
     let child = command.spawn().unwrap();
     let child_pid = child.id().unwrap();
 
-    let client = UdsClient::with_direct_service_lifetime(socket.clone(), true, DirectServiceLifetime::BoundToCommand);
+    let client =
+        ServiceAdminClient::with_direct_service_lifetime(socket.clone(), true, DirectServiceLifetime::BoundToCommand);
     *client.owned_direct_service.lock().await = Some(child);
 
     let error = client

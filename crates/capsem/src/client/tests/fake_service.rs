@@ -1,13 +1,13 @@
 //! The shared scripted socket fixture with the CLI unit-test client.
 
-use crate::client::UdsClient;
+use crate::client::GatewayClient;
 use std::ops::Deref;
 
 #[path = "../../../tests/helpers/service.rs"]
 mod service;
 
 pub(crate) struct FakeService {
-    pub client: UdsClient,
+    pub client: GatewayClient,
     service: service::FakeService,
 }
 
@@ -15,7 +15,7 @@ impl FakeService {
     pub fn start() -> Self {
         let service = service::FakeService::start();
         Self {
-            client: UdsClient::new(service.socket.clone(), false),
+            client: GatewayClient::new(service.socket.clone(), false),
             service,
         }
     }

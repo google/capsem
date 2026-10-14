@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::io::AsyncWriteExt;
 
-use crate::client::{self, ApiResponse, ExecRequest, ExecResponse, ProvisionRequest, RunRequest, UdsClient};
+use crate::client::{self, ApiResponse, ExecRequest, ExecResponse, GatewayClient, ProvisionRequest, RunRequest};
 use crate::container_image::{self, ImageArgs, Workload};
 use capsem_api::ContainerState;
 
@@ -65,7 +65,7 @@ impl From<ExecTarget> for capsem_api::ExecTarget {
     }
 }
 
-pub(super) async fn exec(client: &UdsClient, args: &ExecArgs) -> Result<i32> {
+pub(super) async fn exec(client: &GatewayClient, args: &ExecArgs) -> Result<i32> {
     client::validate_id(&args.session)?;
     let session_id = crate::route_ids::resolve_session_route_id(client, &args.session).await?;
     let request = ExecRequest {
@@ -83,7 +83,7 @@ pub(super) fn ram_mb(ram_gb: Option<u64>) -> Option<u64> {
     ram_gb.map(|gb| gb.saturating_mul(1024))
 }
 
-pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
+pub(super) async fn run(client: &GatewayClient, args: &RunArgs) -> Result<i32> {
     match Workload::of(&args.image, &args.env)? {
         Some(workload) => run_image(client, args, &workload).await,
         None => {
@@ -96,7 +96,7 @@ pub(super) async fn run(client: &UdsClient, args: &RunArgs) -> Result<i32> {
     }
 }
 
-async fn run_command(client: &UdsClient, args: &RunArgs) -> Result<i32> {
+async fn run_command(client: &GatewayClient, args: &RunArgs) -> Result<i32> {
     let request = RunRequest {
         command: args.command.clone().context("run needs a shell command, or --image")?,
         timeout_secs: args.timeout,
@@ -130,7 +130,7 @@ pub(super) async fn write_exec_output(
 
 /// The image's workload attached, in a VM destroyed however the run ends:
 /// its exit, a timeout, a signal, or a failure.
-async fn run_image(client: &UdsClient, args: &RunArgs, workload: &Workload<'_>) -> Result<i32> {
+async fn run_image(client: &GatewayClient, args: &RunArgs, workload: &Workload<'_>) -> Result<i32> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let cancel = async {

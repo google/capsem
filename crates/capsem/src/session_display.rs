@@ -141,7 +141,13 @@ pub(crate) fn print_network_info(network: &NetworkInfo) {
     }
     println!("Members:");
     for member in &network.members {
-        println!("  {:<38} {:<16} {}", member.vm_id, member.address, member.state);
+        let state = match member.state {
+            capsem_api::NetworkMemberState::Declared => "declared",
+            capsem_api::NetworkMemberState::Attaching => "attaching",
+            capsem_api::NetworkMemberState::Ready => "ready",
+            capsem_api::NetworkMemberState::Failed => "failed",
+        };
+        println!("  {:<38} {:<16} {}", member.vm_id, member.address, state);
     }
 }
 

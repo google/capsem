@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 capsem-crypto = { path = "../capsem-crypto" }
 capsem-api = { path = "../capsem-api" }
+capsem-sdk = { path = "../../sdk/rust" }
 capsem-assets = { path = "../capsem-assets" }
 capsem-core = { path = "../capsem-core" }
 capsem-foundation = { path = "../capsem-foundation" }
@@ -33,7 +34,6 @@ hyper-util.workspace = true
 http-body-util.workspace = true
 bytes.workspace = true
 futures.workspace = true
-tokio-tungstenite = "0.29.0"
 inquire = "0.9"
 semver = "1"
 clap_complete = "4"
@@ -44,6 +44,7 @@ urlencoding = "2"
 tempfile = "3"
 
 [dev-dependencies]
+tokio-tungstenite = "0.29.0"
 
 [lints]
 workspace = true

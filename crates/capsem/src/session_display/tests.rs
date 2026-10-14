@@ -27,6 +27,7 @@ fn session(status: client::VmLifecycleState) -> SessionInfo {
         last_error: None,
         can_resume: false,
         resume_blocked_reason: None,
+        ..SessionInfo::new(String::new(), 0, status, true)
     }
 }
 

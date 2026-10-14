@@ -42,7 +42,7 @@ then lead with a recommendation. The full contract is
 | `capsem-service` | Daemon service. Axum HTTP over UDS, VM lifecycle. | `main.rs` (routes, IPC), `api.rs` (request/response types) |
 | `capsem-process` | Per-VM process. Boots VM, bridges vsock, job store. | `main.rs` (vsock setup, IPC handler) |
 | `capsem-proxy` | Confined HTTP/DNS proxy worker for VM and standalone traffic. | `main.rs` |
-| `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
+| `capsem` | CLI client. Rust SDK over authenticated gateway HTTP; local status/asset administration and startup use UDS. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
 | `capsem-tui` | Terminal control UI over the gateway API. | `main.rs`, view/state modules |
 | `capsem-admin` | Runtime image build, asset, release, and config validation administration. | `main.rs` |
 | `@capsem/mcp` (`mcp/typescript`) | Separately installed host MCP server for AI agents. Stdio, typed SDK, authenticated gateway HTTP. | `cli.ts`, `server.ts`, tool modules |
@@ -124,7 +124,7 @@ When working on a specific area, consult the relevant skill:
 
 ```
 AI Agent    -> @capsem/mcp (stdio)     -> authenticated gateway HTTP -> capsem-service -> capsem-process -> vsock -> guest
-User CLI    -> capsem (HTTP/UDS)       -> capsem-service -> capsem-process -> vsock -> guest
+User CLI    -> capsem (Rust SDK)       -> authenticated gateway HTTP -> capsem-service -> capsem-process -> vsock -> guest
 Desktop UI  -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
 Tray app    -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
 Guest HTTPS -> iptables -> vsock:5002  -> Host MITM proxy -> upstream
