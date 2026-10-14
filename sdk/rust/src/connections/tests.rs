@@ -8,6 +8,28 @@ const SESSION: &str = "session /?&é";
 const GRANT: &str = "grant /?&é";
 const TRANSACTION: &str = "transaction /?&é";
 
+#[tokio::test]
+async fn connection_pages_forward_limit_and_cursor_to_the_authenticated_gateway() {
+    let cursor = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61";
+    let mut server = Server::reply(
+        200,
+        br#"{"connections":[],"scope_profiles":[],"next_cursor":null}"#,
+        None,
+    )
+    .await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    hv.connections()
+        .list_page(models::ConnectionListQuery {
+            limit: Some(2),
+            cursor: Some(cursor.into()),
+        })
+        .await
+        .unwrap();
+    let (request, _) = server.received.recv().await.unwrap();
+    assert_eq!(request.uri.to_string(), format!("/connections?limit=2&cursor={cursor}"));
+    assert_eq!(request.headers["authorization"], "Bearer private-token");
+}
+
 fn connection() -> Value {
     json!({"id":CONNECTION,"provider":"google","scope_profile_id":"agy-native",
         "account_label":null,"state":"connected","revision":1,"granted_scopes":["openid"],

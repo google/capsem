@@ -40,7 +40,7 @@ operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
 operation!(get_asset_status, "getAssetStatus");
 operation!(inject_credential, "injectCredential", InjectCredentialParams);
-operation!(list_connections, "listConnections");
+operation!(list_connections, "listConnections", ListConnectionsParams);
 operation!(
     authorize_google_connection,
     "authorizeGoogleConnection",

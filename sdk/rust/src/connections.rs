@@ -14,7 +14,19 @@ impl Connections<'_> {
     /// List redacted connections and configured capabilities. Consent alone
     /// does not establish that a native consumer supports credential handoff.
     pub async fn list(&self) -> Result<models::ConnectionListResponse> {
-        api::list_connections(&self.0.transport, self.0.options).await
+        self.list_page(models::ConnectionListQuery::default()).await
+    }
+
+    pub async fn list_page(&self, query: models::ConnectionListQuery) -> Result<models::ConnectionListResponse> {
+        api::list_connections(
+            &self.0.transport,
+            &api::ListConnectionsParams {
+                limit: query.limit,
+                cursor: query.cursor,
+            },
+            self.0.options,
+        )
+        .await
     }
 
     /// Begin consent using a host-configured profile. The caller decides how

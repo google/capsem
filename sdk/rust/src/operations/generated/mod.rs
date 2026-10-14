@@ -84,7 +84,7 @@ pub use get_vm_timeline::{get_vm_timeline, GetVmTimelineParams};
 mod inject_credential;
 pub use inject_credential::{inject_credential, InjectCredentialParams};
 mod list_connections;
-pub use list_connections::list_connections;
+pub use list_connections::{list_connections, ListConnectionsParams};
 mod list_images;
 pub use list_images::{list_images, ListImagesParams};
 mod list_mcp_servers;
