@@ -7,6 +7,15 @@ import {schemas, sample} from './contract.js';
 
 const validators: Record<string, z.ZodType> = generated;
 
+it('preserves credential timestamp strings and refuses unsafe revisions', () => {
+  const value = {...sample(schemas.ConnectionSummary ?? {}) as object, revision: Number.MAX_SAFE_INTEGER};
+  expect(generated.ConnectionSummarySchema.parse(value)).toEqual(value);
+  for (const updated_at of ['2026-02-30T12:00:00Z', '2026-10-14T12:00:00', '123', 123]) {
+    expect(generated.ConnectionSummarySchema.safeParse({...value, updated_at}).success).toBe(false);
+  }
+  expect(generated.ConnectionSummarySchema.safeParse({...value, revision: Number.MAX_SAFE_INTEGER + 1}).success).toBe(false);
+});
+
 it('validates ownership capabilities without exposing private values', () => {
   const valid = {request_id: 'fc120782-2272-4b3d-a2e6-a26ee2f8ab61', ownership_token: 'af'.repeat(32)};
   expect(generated.ManagedSessionCreateSchema.parse(valid)).toEqual(valid);

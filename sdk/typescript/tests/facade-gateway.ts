@@ -23,7 +23,8 @@ export class FacadeGateway {
       response.writeHead(this.exposureDeleteStatus).end('exposure delete failed');
       return;
     }
-    const status = operation.responses['200'] ? '200' : '202';
+    const status = Object.keys(operation.responses).find(status => /^2[0-9]{2}$/.test(status));
+    if (!status) throw new Error('Operation has no successful status');
     const schema = operation.responses[status]?.content['application/json']?.schema;
     response.statusCode = Number(status);
     let value: unknown = sample(schema ?? schemas.UploadResponse ?? {});

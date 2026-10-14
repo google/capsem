@@ -52,6 +52,7 @@ export function sample(schema: Schema, full = false, variant = 0, depth = 0): un
     case 'string':
       if (schema.format === 'ipv4') return '10.128.0.2';
       if (schema.format === 'uuid') return 'fc120782-2272-4b3d-a2e6-a26ee2f8ab61';
+      if (schema.format === 'date-time') return '2026-10-14T12:34:56.123456789+01:30';
       if (schema.pattern === '^[0-9a-f]{64}$') return 'af'.repeat(32);
       return 'value';
     case 'boolean': return true;
