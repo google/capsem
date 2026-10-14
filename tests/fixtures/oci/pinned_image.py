@@ -37,13 +37,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-if __package__ in (None, ""):
-    sys.path.insert(0, str(ROOT))
-
 from capsem_builder.cache.config import load_paths
 from capsem_builder.gate import config as gate_config
 from capsem_builder.release.tools.fetch_channel_source_manifest import github_token
+
+ROOT = Path(__file__).resolve().parents[3]
+if __package__ in (None, ""):
+    sys.path.insert(0, str(ROOT))
 
 MANIFEST_TYPES = (
     "application/vnd.oci.image.manifest.v1+json",
