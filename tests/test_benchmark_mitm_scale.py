@@ -62,3 +62,19 @@ def test_guest_command_fixes_one_cohort_per_vm() -> None:
     assert "CAPSEM_BENCH_CONCURRENCY=16" in command
     assert "CAPSEM_BENCH_DURATION_S=10" in command
     assert command.endswith("capsem-bench mitm-load")
+
+
+def test_fixture_pressure_is_namespaced_away_from_capsem_pressure() -> None:
+    measured = {}
+    collector()["add_resource_metrics"](
+        measured,
+        4,
+        {"resources.total.cpu_s": {"unit": "seconds", "samples": [9.5]}},
+        namespace="fixture",
+    )
+    assert measured == {
+        "levels.4.fixture.resources.total.cpu_s": {
+            "unit": "seconds",
+            "samples": [9.5],
+        }
+    }
