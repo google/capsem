@@ -371,7 +371,7 @@ fn update_channel_provenance_preserves_previous_cache_on_failure() {
 
 #[test]
 fn cache_ttl_constant() {
-    assert_eq!(CACHE_TTL_SECS, 86400);
+    assert_eq!(capsem_proto::CACHE_UPDATE_CHECK_TTL_SECONDS, 86400);
 }
 
 #[test]
