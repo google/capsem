@@ -7,8 +7,11 @@ import type {CallOptions, Transport} from './transport.js';
 export class Connections {
   constructor(private readonly transport: Transport) {}
 
-  async list(options: CallOptions = {}): Promise<models.ConnectionListResponse> {
-    return api.listConnections(this.transport, options);
+  async list(options: CallOptions & {limit?: number; cursor?: string} = {}): Promise<models.ConnectionListResponse> {
+    return api.listConnections(this.transport, {
+      ...(options.limit !== undefined ? {limit: options.limit} : {}),
+      ...(options.cursor !== undefined ? {cursor: options.cursor} : {}),
+    }, options);
   }
 
   /** Retain the request ID; opening the returned URL and polling are explicit. */

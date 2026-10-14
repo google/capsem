@@ -7,6 +7,19 @@ const OWNER = 'bb120782-2272-4b3d-a2e6-a26ee2f8ab61';
 const REQUEST = 'fc120782-2272-4b3d-a2e6-a26ee2f8ab61';
 const SESSION = 'session /?&é', CONNECTION = 'connection /?&é';
 const TRANSACTION = 'transaction /?&é', GRANT = 'grant /?&é';
+
+it('forwards bounded connection pages to the authenticated gateway', async () => {
+  await gateway((_request, response) => {
+    response.end(JSON.stringify({connections: [], scope_profiles: [], next_cursor: null}));
+  }, async (url, received) => {
+    const hv = new Hypervisor(url, 'gateway-token');
+    try {
+      await hv.connections.list({limit: 2, cursor: REQUEST});
+      expect(received[0]?.url).toBe(`/connections?limit=2&cursor=${REQUEST}`);
+      expect(received[0]?.headers.authorization).toBe('Bearer gateway-token');
+    } finally {hv.close();}
+  });
+});
 const connection = () => ({...sample(schemas.ConnectionSummary ?? {}) as object, id: CONNECTION});
 const transaction = () => ({...sample(schemas.AuthorizationTransaction ?? {}) as object, id: TRANSACTION});
 const grant = () => ({...sample(schemas.SessionGrantSummary ?? {}) as object,
