@@ -17,16 +17,10 @@ impl Client {
         })
     }
 
-    /// The service's ceiling for one exec or run, which is also its default.
-    const EXEC_TIMEOUT_CEILING: Duration = Duration::from_secs(60 * 60);
-    /// The gateway's budget for readiness, boot and teardown around a command.
-    const GATEWAY_REQUEST_BUDGET: Duration = Duration::from_secs(120);
-
     /// Call options for exec or run: the service answers only when the command
     /// ends, so wait at least as long as the gateway does for it.
     pub fn command_options(&self, timeout_secs: Option<u64>) -> CallOptions {
-        let command = timeout_secs.map_or(Self::EXEC_TIMEOUT_CEILING, Duration::from_secs);
-        let deadline = command.saturating_add(Self::GATEWAY_REQUEST_BUDGET);
+        let deadline = CallOptions::command_timeout(timeout_secs);
         CallOptions {
             timeout: Some(
                 self.options

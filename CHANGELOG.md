@@ -282,6 +282,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rust SDK transports preserve binary response content types and support
+  authenticated terminal/exec streams with bounded startup and frame sizes.
+
 - Concurrent OCI pulls wait for the owning blob download, and warm cache
   copies release the blob stripe lock before verification so large layers
   can be copied in parallel without cache-lock timeouts.

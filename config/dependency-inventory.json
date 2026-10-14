@@ -1271,6 +1271,7 @@
    "serde_json",
    "thiserror",
    "tokio",
+   "tokio-tungstenite",
    "tokio-util"
   ]
  },

@@ -22,6 +22,8 @@ pub enum Error {
     Http { status: u16, body: Vec<u8> },
     #[error("invalid gateway JSON: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("gateway stream failed: {0}")]
+    Stream(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
