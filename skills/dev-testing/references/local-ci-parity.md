@@ -6,6 +6,18 @@ Reference for /dev-testing: every portable release gate must be owned by just te
 
 ### Ironbank parity rule
 
+Native supervisor restart belongs to `glowup.pytest.managed-restart` in both
+local and pulled-package plans. Ordinary functional collection excludes its
+file. The owner prepares both SDKs, then starts supervisor setup outside
+inherited confinement. macOS uses its disposable launchd job; Linux creates
+one isolated systemd user manager with `PrivateNetwork=yes`, enters that
+loopback-only namespace and drops to the original UID/groups with
+`no_new_privs` before the SDK worker runs. The worker proves its kernel
+identity, privilege flag and denied numeric egress; original and restarted
+services must share its namespace and privilege restriction. Exact unit and
+process cleanup remain mandatory. A native host-only pass does not prove
+this boundary, and sudo inside the ordinary sealed caller cannot prepare it.
+
 The Ironbank parity rule is that every portable release gate must be owned by
 `just test`. Local development rebuilds every package and the runtime, then
 runs the complete gate. Release CI calls the same checked-in modules while
