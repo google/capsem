@@ -21,6 +21,13 @@ pub use crate::api::ErrorResponse;
 #[derive(Debug)]
 pub struct AppError(pub StatusCode, pub String);
 
+impl AppError {
+    /// Construct a plain `(status, error)` response without structured metadata.
+    pub fn new(status: StatusCode, error: String) -> Self {
+        Self(status, error)
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         let status = self.0;
@@ -78,7 +85,7 @@ macro_rules! app_error_logged {
             status = $status.as_u16(),
             "{}", __msg
         );
-        $crate::errors::AppError($status, __msg)
+        $crate::errors::AppError::new($status, __msg)
     }};
 }
 

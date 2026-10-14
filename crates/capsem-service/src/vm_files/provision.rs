@@ -18,11 +18,11 @@ async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Resul
     let _launch = state
         .lifecycle
         .admit()
-        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
-    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::CONFLICT, e.to_string()))?;
+    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
     let labels = non_empty_labels(payload.labels.clone());
     if let Some(reason) = state.off_worker(|state| vm_asset_block_reason(&state)).await? {
-        return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
+        return Err(AppError::new(StatusCode::PRECONDITION_FAILED, reason));
     }
 
     let existing = state.off_worker(|state| existing_session_names(&state)).await?;
@@ -32,7 +32,7 @@ async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Resul
         .unwrap_or_else(|| generate_session_name(existing.iter().map(|s| s.as_str())));
     let persistent = payload.persistent || payload.name.is_some() || payload.from.is_some();
     if existing.iter().any(|existing| existing == &name) {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::CONFLICT,
             format!("persistent VM \"{}\" already exists", name),
         ));
@@ -148,7 +148,7 @@ async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Resul
                 attempts = timed_out.attempts,
                 "provision: launchd-cleanup retries exhausted"
             );
-            Err(AppError(
+            Err(AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!(
                     "sandbox {id} could not be provisioned after {} attempts ({}). \
@@ -195,7 +195,7 @@ pub(crate) async fn complete_create(
     if let Some(socket) = socket {
         crate::credential_routes::sync_memory(state, &socket)
             .await
-            .map_err(|error| AppError(StatusCode::SERVICE_UNAVAILABLE, error))?;
+            .map_err(|error| AppError::new(StatusCode::SERVICE_UNAVAILABLE, error))?;
     }
     network_routes::attach_provisioned(state, id, networks).await?;
     if container.is_none() {

@@ -704,7 +704,7 @@ pub(crate) async fn wait_for_create(
 pub(crate) async fn require_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
     let status = wait_for_create(state, id).await.map_err(|timed_out| {
         warn!(vm_id = id, attempts = timed_out.attempts, "container workload readiness timed out");
-        AppError(
+        AppError::new(
             StatusCode::GATEWAY_TIMEOUT,
             format!(
                 "container workload for VM {id} did not become ready before the HTTP deadline; setup continues under service ownership"
@@ -713,7 +713,7 @@ pub(crate) async fn require_ready(state: &Arc<ServiceState>, id: &str) -> Result
     })?;
     match status.state {
         ContainerState::Running | ContainerState::Staged => Ok(()),
-        ContainerState::Exited | ContainerState::Failed => Err(AppError(
+        ContainerState::Exited | ContainerState::Failed => Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
                 "container workload for VM {id} reached {:?}: {}",
@@ -796,7 +796,7 @@ pub(crate) async fn handle_container_status(
         .off_worker(move |state| observe(&state, &id, live))
         .await??
         .map(Json)
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, "VM has no container workload".into()))
+        .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, "VM has no container workload".into()))
 }
 
 fn observe(

@@ -45,7 +45,7 @@ impl PolicyMutation<'_> {
     /// one out, so no route can read-modify-write outside the boundary.
     fn settings_edit(&self) -> Result<SettingsPolicyEdit, AppError> {
         let path = capsem_core::net::policy_config::settings_config_path()
-            .ok_or_else(|| AppError(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".to_string()))?;
+            .ok_or_else(|| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "HOME not set".to_string()))?;
         SettingsPolicyEdit::open(&path).map_err(bad_request)
     }
 }
@@ -151,7 +151,7 @@ async fn write_policy_mutation_event(
                 error = %error,
                 "policy mutation ledger write failed"
             );
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("policy mutation ledger write failed: {error}"),
             )
@@ -167,5 +167,5 @@ pub(crate) fn unix_timestamp_ms() -> i64 {
 }
 
 pub(crate) fn bad_request(error: String) -> AppError {
-    AppError(StatusCode::BAD_REQUEST, error)
+    AppError::new(StatusCode::BAD_REQUEST, error)
 }

@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 
 #[tokio::test]
 async fn app_error_formats_json() {
-    let err = AppError(StatusCode::BAD_REQUEST, "invalid sandbox name".into());
+    let err = AppError::new(StatusCode::BAD_REQUEST, "invalid sandbox name".into());
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let body = to_bytes(response.into_body(), 1024).await.unwrap();
@@ -20,7 +20,7 @@ async fn app_error_formats_json() {
 
 #[tokio::test]
 async fn app_error_internal_server() {
-    let err = AppError(StatusCode::INTERNAL_SERVER_ERROR, "db connection failed".into());
+    let err = AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "db connection failed".into());
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body = to_bytes(response.into_body(), 1024).await.unwrap();
@@ -30,7 +30,7 @@ async fn app_error_internal_server() {
 
 #[tokio::test]
 async fn app_error_conflict() {
-    let err = AppError(StatusCode::CONFLICT, "sandbox already exists".into());
+    let err = AppError::new(StatusCode::CONFLICT, "sandbox already exists".into());
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::CONFLICT);
     let body = to_bytes(response.into_body(), 1024).await.unwrap();
@@ -40,7 +40,7 @@ async fn app_error_conflict() {
 
 #[tokio::test]
 async fn app_error_preserves_arbitrary_status() {
-    let err = AppError(StatusCode::IM_A_TEAPOT, "no coffee here".into());
+    let err = AppError::new(StatusCode::IM_A_TEAPOT, "no coffee here".into());
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::IM_A_TEAPOT);
     let body = to_bytes(response.into_body(), 1024).await.unwrap();
@@ -50,7 +50,7 @@ async fn app_error_preserves_arbitrary_status() {
 
 #[tokio::test]
 async fn app_error_preserves_empty_message() {
-    let err = AppError(StatusCode::FORBIDDEN, String::new());
+    let err = AppError::new(StatusCode::FORBIDDEN, String::new());
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let body = to_bytes(response.into_body(), 1024).await.unwrap();

@@ -14,7 +14,7 @@ pub(super) struct McpPermissionEditRequest {
 /// The settings and corp files the MCP routes answer from. A settings.toml
 /// that does not load is an error here, never an empty configuration.
 fn policy_files() -> Result<(SettingsFile, SettingsFile), AppError> {
-    capsem_core::net::policy_config::load_policy_files().map_err(|error| AppError(StatusCode::BAD_REQUEST, error))
+    capsem_core::net::policy_config::load_policy_files().map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error))
 }
 
 fn merged_mcp(settings: &SettingsFile, corp: &SettingsFile) -> McpConfig {
@@ -23,7 +23,7 @@ fn merged_mcp(settings: &SettingsFile, corp: &SettingsFile) -> McpConfig {
 
 fn ensure_server_configured(mcp: &McpConfig, server_id: &str) -> Result<(), AppError> {
     if server_id.is_empty() {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
             "MCP server id must not be empty".to_string(),
         ));
@@ -31,7 +31,7 @@ fn ensure_server_configured(mcp: &McpConfig, server_id: &str) -> Result<(), AppE
     if mcp_server_configured(Some(mcp), server_id) {
         Ok(())
     } else {
-        Err(AppError(
+        Err(AppError::new(
             StatusCode::NOT_FOUND,
             format!("MCP server not configured: {server_id}"),
         ))
@@ -40,14 +40,14 @@ fn ensure_server_configured(mcp: &McpConfig, server_id: &str) -> Result<(), AppE
 
 pub(super) fn resolve_mcp_tool_id(server_id: &str, tool_id: &str) -> Result<String, AppError> {
     if server_id.is_empty() || tool_id.is_empty() {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
             "server id and tool id must not be empty".to_string(),
         ));
     }
     if let Some((prefix, _)) = tool_id.split_once("__") {
         if prefix != server_id {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::BAD_REQUEST,
                 format!("tool id {tool_id} does not belong to MCP server {server_id}"),
             ));
@@ -107,7 +107,7 @@ pub(super) async fn handle_mcp_default_info(
 ) -> Result<Json<api::McpDefaultPermissionResponse>, AppError> {
     let (settings, corp) = state.off_worker(|_| policy_files()).await??;
     let permission =
-        mcp_default_permission(&settings, &corp).map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
+        mcp_default_permission(&settings, &corp).map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error))?;
     Ok(Json(api::McpDefaultPermissionResponse {
         action: api::mcp_permission_action(permission.action),
         source: permission.source,
@@ -140,7 +140,7 @@ pub(super) async fn handle_mcp_server_tools(
         .map(|entry| {
             let permission =
                 mcp_tool_permission(&settings, &corp, &server_id, &entry.original_name).map_err(|error| {
-                    AppError(
+                    AppError::new(
                         StatusCode::BAD_REQUEST,
                         format!(
                             "resolve MCP tool permission {}/{}: {error}",
@@ -261,10 +261,10 @@ pub(super) async fn handle_mcp_tool_call(
         .values()
         .next()
         .map(|info| info.uds_path.clone())
-        .ok_or_else(|| AppError(StatusCode::SERVICE_UNAVAILABLE, "no running sessions".into()))?;
+        .ok_or_else(|| AppError::new(StatusCode::SERVICE_UNAVAILABLE, "no running sessions".into()))?;
 
     let arguments_json = serde_json::to_string(&arguments)
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, format!("invalid arguments: {e}")))?;
+        .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, format!("invalid arguments: {e}")))?;
     let msg = ServiceToProcess::McpCallTool {
         id: state.next_job_id(),
         namespaced_name,
@@ -272,19 +272,21 @@ pub(super) async fn handle_mcp_tool_call(
     };
     match send_ipc_command(&uds_path, msg, Some(60))
         .await
-        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?
+        .map_err(|e| AppError::new(StatusCode::BAD_GATEWAY, e.to_string()))?
     {
-        ProcessToService::McpCallToolResult { error: Some(err), .. } => Err(AppError(StatusCode::BAD_GATEWAY, err)),
+        ProcessToService::McpCallToolResult { error: Some(err), .. } => {
+            Err(AppError::new(StatusCode::BAD_GATEWAY, err))
+        }
         ProcessToService::McpCallToolResult { result_json, .. } => match result_json {
             Some(s) => serde_json::from_str(&s).map(Json).map_err(|e| {
-                AppError(
+                AppError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("bad result_json from process: {e}"),
                 )
             }),
             None => Ok(Json(serde_json::Value::Null)),
         },
-        _ => Err(AppError(
+        _ => Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected IPC response".into(),
         )),

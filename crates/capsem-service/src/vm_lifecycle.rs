@@ -103,7 +103,7 @@ pub(super) fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<Path
     if let Some(entry) = find_persistent_entry_by_route_id(state, id) {
         return Ok(entry.session_dir);
     }
-    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
 }
 
 /// GET /vms/{id}/history -- unified command history (exec + audit events).
@@ -170,18 +170,18 @@ pub(super) async fn acquire_vz_host_lock(
         tokio::task::spawn_blocking(move || startup::VzHostLock::acquire(mode, std::time::Duration::from_secs(60)))
             .await
             .map_err(|e| {
-                AppError(
+                AppError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("vz host lock task panicked: {e}"),
                 )
             })?;
     match result {
         Ok(Some(guard)) => Ok(Some(guard)),
-        Ok(None) => Err(AppError(
+        Ok(None) => Err(AppError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "another process holds the Apple VZ save/restore lock; retry shortly".into(),
         )),
-        Err(e) => Err(AppError(
+        Err(e) => Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("vz host lock acquire failed: {e:#}"),
         )),
@@ -208,7 +208,7 @@ pub(super) async fn wait_for_process_exit(
     )
     .await
     .map_err(|_| {
-        AppError(
+        AppError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "original VM child exit not confirmed".into(),
         )
@@ -233,7 +233,7 @@ pub(super) async fn signal_vm_process(
 
 fn child_owner_error(error: anyhow::Error) -> AppError {
     tracing::warn!(%error,"original VM child authority unavailable");
-    AppError(
+    AppError::new(
         StatusCode::SERVICE_UNAVAILABLE,
         "original VM child authority unavailable".into(),
     )
@@ -280,7 +280,7 @@ pub(super) async fn shutdown_vm_process(
             .get(id)
             .is_some_and(|i| expected_generation.is_some_and(|expected| expected != i.generation))
         {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::CONFLICT,
                 "VM spawn generation changed; cleanup ownership refused".into(),
             ));
@@ -306,7 +306,7 @@ pub(super) async fn shutdown_vm_process(
                 .retirements
                 .wait(id, generation)
                 .await
-                .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+                .map_err(|error| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
         }
         return Ok(None);
     };
@@ -326,7 +326,7 @@ pub(super) async fn shutdown_vm_process(
             .retirements
             .wait(id, generation)
             .await
-            .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+            .map_err(|error| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
         return Ok(None);
     }
     state.containers.cancel_and_wait(id).await;
@@ -381,7 +381,7 @@ pub(super) async fn shutdown_vm_process(
         .record_host_session_stopped(id, "stopped", mode.retains_state())
         .await
         .map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("host ledger stop failed for {id}: {error}"),
             )
@@ -394,9 +394,9 @@ pub(super) async fn shutdown_vm_process(
         .retirements
         .wait(id, generation)
         .await
-        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        .map_err(|error| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     if expected_generation.is_some() && !retired {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "original child retirement is unknown".into(),
         ));
@@ -419,9 +419,9 @@ pub(super) async fn handle_suspend(
         let mut instances = state.instances.lock().unwrap();
         let i = instances
             .get_mut(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+            .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         if !i.persistent {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::BAD_REQUEST,
                 "ephemeral VMs cannot be suspended (persist first)".into(),
             ));
@@ -432,13 +432,13 @@ pub(super) async fn handle_suspend(
     };
 
     let stream = tokio::net::UnixStream::connect(&uds_path).await.map_err(|e| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to connect to VM IPC: {e}"),
         )
     })?;
     let std_stream = stream.into_std().map_err(|e| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to convert stream: {e}"),
         )
@@ -449,9 +449,9 @@ pub(super) async fn handle_suspend(
         capsem_foundation::telemetry::current_parent_traceparent(),
     )
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("IPC handshake failed: {e}")))?;
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("IPC handshake failed: {e}")))?;
     let (tx, rx) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).map_err(|e| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to create IPC channel: {e}"),
         )
@@ -461,7 +461,7 @@ pub(super) async fn handle_suspend(
     tx.send(ServiceToProcess::Suspend { checkpoint_path })
         .await
         .map_err(|e| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("failed to send suspend command: {e}"),
             )
@@ -506,7 +506,7 @@ pub(super) async fn handle_suspend(
         state.instances.lock().unwrap().remove(&id);
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
-        return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error));
+        return Err(AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error));
     }
 
     // Channel closure proves the process released IPC; prove the process also
@@ -557,7 +557,7 @@ pub(super) async fn handle_stop(
                 .off_worker(move |state| state.delete_session_dir(&session_dir))
                 .await?
                 .map_err(|error| {
-                    AppError(
+                    AppError::new(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("ephemeral session cleanup failed: {error:#}"),
                     )
@@ -568,7 +568,7 @@ pub(super) async fn handle_stop(
             persistent,
         }))
     } else {
-        Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+        Err(AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
     }
 }
 
@@ -586,7 +586,7 @@ pub(super) async fn handle_delete(
             if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
                 entry.session_dir
             } else {
-                return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")));
+                return Err(AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")));
             }
         };
 
@@ -599,13 +599,13 @@ pub(super) async fn handle_delete(
     tokio::task::spawn_blocking(move || state_clone.delete_session_dir(&session_dir))
         .await
         .map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("delete session task failed: {error}"),
             )
         })?
         .map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("delete session state failed: {error:#}"),
             )
@@ -619,7 +619,7 @@ pub(super) async fn handle_delete(
             .off_worker(move |state| state.forget_persistent_entry(&key))
             .await?
             .map_err(|error| {
-                AppError(
+                AppError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("unregister deleted session failed: {error:#}"),
                 )
@@ -633,7 +633,7 @@ pub(super) async fn handle_delete(
 pub(super) fn provision_response_for_running(state: &ServiceState, id: String) -> Result<ProvisionResponse, AppError> {
     let instances = state.instances.lock().unwrap();
     let instance = instances.get(&id).ok_or_else(|| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("provisioned VM missing from runtime registry: {id}"),
         )
@@ -657,16 +657,16 @@ pub(super) async fn handle_persist(
     Json(payload): Json<PersistRequest>,
 ) -> Result<Json<PersistResponse>, AppError> {
     let name = &payload.name;
-    validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    validate_vm_name(name).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Find the running ephemeral instance
     let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env, generation, labels) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
-            .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
+            .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;
         if i.persistent {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::BAD_REQUEST,
                 format!("VM \"{}\" is already persistent", id),
             ));
@@ -690,14 +690,14 @@ pub(super) async fn handle_persist(
     // transfer it to persistence, including while create/recovery is pending.
     // The controller retains live intent when its durable metadata is lost.
     let binding = capsem_core::managed_sessions::VmBinding::new(id.clone(), generation)
-        .map_err(|_| AppError(StatusCode::INTERNAL_SERVER_ERROR, "invalid VM spawn identity".into()))?;
+        .map_err(|_| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "invalid VM spawn identity".into()))?;
     if state.managed.owns_vm(&binding).await.map_err(|_| {
-        AppError(
+        AppError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "managed ownership admission unavailable".into(),
         )
     })? {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::CONFLICT,
             "managed sessions cannot become persistent".into(),
         ));
@@ -734,7 +734,7 @@ pub(super) async fn handle_persist(
     let claim_state = Arc::clone(&state);
     tokio::task::spawn_blocking(move || claim_persistent_name(&claim_state, entry))
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("persist task failed: {e}")))??;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("persist task failed: {e}")))??;
 
     // Update instance info in-place; the session dir and its DB handle stay.
     {
@@ -855,13 +855,13 @@ pub(super) async fn handle_run(
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
     let timeout_secs =
-        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
     let _launch = state
         .lifecycle
         .admit()
-        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::CONFLICT, e.to_string()))?;
     if let Some(reason) = state.off_worker(|state| vm_asset_block_reason(&state)).await? {
-        return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
+        return Err(AppError::new(StatusCode::PRECONDITION_FAILED, reason));
     }
 
     let id = {
@@ -902,7 +902,7 @@ pub(super) async fn handle_run(
             })
         })
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
         provision_result.map_err(|e| provision_failure(&e))?;
         // The blocking worker has published its child. Executing the user's
         // command is no longer launch admission work for service shutdown.
@@ -914,7 +914,7 @@ pub(super) async fn handle_run(
         // sibling-service overlap this lock exists to prevent.
         let uds_path = state
             .instance_socket_path(&id)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
             drop(_vz_host_guard);
             drop(_vz_guard);
@@ -928,13 +928,13 @@ pub(super) async fn handle_run(
             // is still flushing.
             let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
             preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result).await?;
-            return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
+            return Err(AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e));
         }
     }
 
     let uds_path = state
         .instance_socket_path(&id)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // 2. Execute command.
     let job_id = state.next_job_id();
@@ -971,11 +971,14 @@ pub(super) async fn handle_run(
             exit_code,
             truncated,
         })),
-        Ok(_) => Err(AppError(
+        Ok(_) => Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected IPC response".into(),
         )),
-        Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {e}"))),
+        Err(e) => Err(AppError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("exec failed: {e}"),
+        )),
     };
     response
 }
