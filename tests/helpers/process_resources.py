@@ -16,6 +16,7 @@ SAMPLE_INTERVAL_SECONDS = 0.05
 TRACKED_PROCESS_NAMES = frozenset(
     {
         "capsem_network",
+        "capsem_ledger",
         "capsem_process",
         "capsem_proxy",
         "capsem_router",

@@ -131,6 +131,17 @@ def test_process_that_exits_keeps_its_last_cpu_sample() -> None:
     assert sampler.metrics()["resources.capsem_proxy.cpu_s"]["samples"] == [1.0]
 
 
+def test_sampler_attributes_dedicated_ledger_pressure() -> None:
+    sampler = ProcessTreeSampler(None)
+    sampler.observe(snapshot(usage(8, "capsem-ledger", cpu="2", rss=100, pss=80, uss=70, fds=5)))
+    sampler.observe(snapshot(usage(8, "capsem-ledger", cpu="3", rss=250, pss=220, uss=200, fds=7)))
+
+    metrics = sampler.metrics()
+    assert metrics["resources.capsem_ledger.cpu_s"]["samples"] == [1.0]
+    assert metrics["resources.capsem_ledger.peak_pss_bytes"]["samples"] == [220]
+    assert metrics["resources.capsem_ledger.peak_pss_delta_bytes"]["samples"] == [140]
+
+
 def test_platform_without_proportional_memory_omits_those_metrics() -> None:
     sampler = ProcessTreeSampler(None)
     sampler.observe(
