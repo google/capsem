@@ -12,19 +12,20 @@ CONFIG = ROOT / "config/data/runtime-limits.toml"
 
 RUNTIME_LIMIT_RATIONALE = """\
 The proxy, trusted upstream broker, host DNS session, guest DNS forwarder and
-security ledger must admit the same supported client burst. A pooled traffic
-client can have an active, idle and retiring connection at once, and each
-client can produce several audit rows, so downstream capacities must preserve
-their config-owned multiples. Local numeric ceilings previously let one stage
-accept work that the next stage shed, producing intermittent HTTP 502 and DNS
-SERVFAIL responses under load.
+security ledger must admit the same supported client burst. Runtime caches
+must also keep their capacities and freshness windows under the same product
+authority. A pooled traffic client can have an active, idle and retiring
+connection at once, and each client can produce several audit rows, so
+downstream capacities must preserve their config-owned multiples. Local
+numeric ceilings previously let one stage accept work that the next stage
+shed, producing intermittent HTTP 502 and DNS SERVFAIL responses under load.
 config/data/runtime-limits.toml is the authority; capsem-proto generates the
 shared constants and every consumer derives from them.
 See skills/dev-mitm-proxy/SKILL.md under Cross-process network limits.
 """
 
 NUMERIC_CONSTANT = re.compile(
-    r"\b(?:pub(?:\([^)]*\))?\s+)?const\s+([A-Z][A-Z0-9_]*)\s*:\s*(?:usize|u64)\s*=\s*(\d+)\s*;"
+    r"\b(?:pub(?:\([^)]*\))?\s+)?const\s+([A-Z][A-Z0-9_]*)\s*:\s*(?:usize|u64|u32|i64)\s*=\s*(\d+)\s*;"
 )
 CONFIG_OWNED_NAMES = {
     "NETWORK_CLIENT_CAPACITY",
@@ -42,6 +43,18 @@ CONFIG_OWNED_NAMES = {
     "LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS",
     "LEDGER_ARCHIVE_INDEX_ROWS_PER_FLUSH",
     "LEDGER_SQLITE_MMAP_BYTES",
+    "CACHE_DNS_ANSWER_ENTRIES",
+    "CACHE_DNS_MAX_TTL_SECONDS",
+    "CACHE_DNS_NEGATIVE_TTL_SECONDS",
+    "CACHE_TLS_LEAF_ENTRIES",
+    "CACHE_LEDGER_QUERY_BATCH_ENTRIES",
+    "CACHE_SQLITE_PREPARED_STATEMENTS",
+    "CACHE_SERVICE_STORAGE_DIAGNOSTICS_ENTRIES",
+    "CACHE_SERVICE_PERSISTENT_RESUME_ENTRIES",
+    "CACHE_UPDATE_CHECK_TTL_SECONDS",
+    "CACHE_IMAGE_CATALOG_REFRESH_SECONDS",
+    "CACHE_IMAGE_CATALOG_RETRY_SECONDS",
+    "CACHE_IMAGE_VERIFICATION_BATCH_KEYS",
 }
 
 REQUIRED_WIRING = {
@@ -76,6 +89,20 @@ REQUIRED_WIRING = {
         "pub const LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS: u64 = {ledger_disk_flush_interval_milliseconds}",
         'get("disk_flush_max_pending_events")',
         "pub const LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS: usize = {ledger_disk_flush_max_pending_events}",
+        'get("dns_answer_entries")',
+        'get("dns_max_ttl_seconds")',
+        'get("dns_negative_ttl_seconds")',
+        'get("tls_leaf_entries")',
+        'get("ledger_query_batch_entries")',
+        'get("sqlite_prepared_statements")',
+        'get("service_storage_diagnostics_entries")',
+        'get("service_persistent_resume_entries")',
+        'get("update_check_ttl_seconds")',
+        'get("image_catalog_refresh_seconds")',
+        'get("image_catalog_retry_seconds")',
+        'get("image_verification_batch_keys")',
+        "pub const CACHE_DNS_ANSWER_ENTRIES: usize = {cache_dns_answer_entries}",
+        "pub const CACHE_UPDATE_CHECK_TTL_SECONDS: u64 = {cache_update_check_ttl_seconds}",
     ),
     "crates/capsem-proto/src/lib.rs": (
         'include!(concat!(env!("OUT_DIR"), "/runtime_limits.rs"))',
@@ -116,6 +143,37 @@ REQUIRED_WIRING = {
     ),
     "crates/capsem-logger/src/schema/pragmas.rs": (
         "capsem_proto::LEDGER_SQLITE_MMAP_BYTES",
+    ),
+    "crates/capsem-logger/src/db.rs": (
+        "capsem_proto::CACHE_LEDGER_QUERY_BATCH_ENTRIES",
+    ),
+    "crates/capsem-logger/src/reader/open.rs": (
+        "capsem_proto::CACHE_SQLITE_PREPARED_STATEMENTS",
+    ),
+    "crates/capsem-core/src/net/cert_authority.rs": (
+        "capsem_proto::CACHE_TLS_LEAF_ENTRIES",
+    ),
+    "crates/capsem-core/src/net/dns/cache.rs": (
+        "capsem_proto::CACHE_DNS_ANSWER_ENTRIES",
+        "capsem_proto::CACHE_DNS_MAX_TTL_SECONDS",
+        "capsem_proto::CACHE_DNS_NEGATIVE_TTL_SECONDS",
+    ),
+    "crates/capsem-service/src/service_runtime.rs": (
+        "capsem_proto::CACHE_SERVICE_STORAGE_DIAGNOSTICS_ENTRIES",
+        "capsem_proto::CACHE_SERVICE_PERSISTENT_RESUME_ENTRIES",
+    ),
+    "crates/capsem-service/src/container_setup/images.rs": (
+        "capsem_proto::CACHE_IMAGE_CATALOG_REFRESH_SECONDS",
+        "capsem_proto::CACHE_IMAGE_CATALOG_RETRY_SECONDS",
+    ),
+    "crates/capsem-service/src/container_setup/registry.rs": (
+        "capsem_proto::CACHE_IMAGE_VERIFICATION_BATCH_KEYS",
+    ),
+    "crates/capsem-service/src/update_status.rs": (
+        "capsem_proto::CACHE_UPDATE_CHECK_TTL_SECONDS",
+    ),
+    "crates/capsem/src/update.rs": (
+        "capsem_proto::CACHE_UPDATE_CHECK_TTL_SECONDS",
     ),
     "crates/capsem-core/src/net/dns/session/mod.rs": ("DNS_SESSION_MAX_IN_FLIGHT",),
     "crates/capsem-agent/src/dns_proxy/session.rs": (
@@ -271,6 +329,32 @@ def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:
         and disk_flush_max_pending_events % admission_batch_capacity == 0
     ), RUNTIME_LIMIT_RATIONALE
 
+    cache = config.get("cache", {})
+    bounded_entries = (
+        "dns_answer_entries",
+        "tls_leaf_entries",
+        "ledger_query_batch_entries",
+        "sqlite_prepared_statements",
+        "service_storage_diagnostics_entries",
+        "service_persistent_resume_entries",
+        "image_verification_batch_keys",
+    )
+    for name in bounded_entries:
+        value = cache.get(name)
+        assert type(value) is int and 1 <= value <= 65_536, (
+            RUNTIME_LIMIT_RATIONALE + f"\ncache.{name} must be an integer from 1 through 65536"
+        )
+    dns_max_ttl = cache.get("dns_max_ttl_seconds")
+    dns_negative_ttl = cache.get("dns_negative_ttl_seconds")
+    assert type(dns_max_ttl) is int and 1 <= dns_max_ttl <= 86_400, RUNTIME_LIMIT_RATIONALE
+    assert type(dns_negative_ttl) is int and 1 <= dns_negative_ttl <= dns_max_ttl, RUNTIME_LIMIT_RATIONALE
+    update_ttl = cache.get("update_check_ttl_seconds")
+    assert type(update_ttl) is int and 60 <= update_ttl <= 604_800, RUNTIME_LIMIT_RATIONALE
+    catalog_refresh = cache.get("image_catalog_refresh_seconds")
+    catalog_retry = cache.get("image_catalog_retry_seconds")
+    assert type(catalog_refresh) is int and 60 <= catalog_refresh <= 86_400, RUNTIME_LIMIT_RATIONALE
+    assert type(catalog_retry) is int and 1 <= catalog_retry <= catalog_refresh, RUNTIME_LIMIT_RATIONALE
+
     missing = []
     for relative_path, required_fragments in REQUIRED_WIRING.items():
         source = (ROOT / relative_path).read_text()
@@ -300,6 +384,9 @@ def test_numeric_local_ceiling_is_rejected_adversarially() -> None:
             "process.rs": "const LEDGER_PRODUCER_QUEUE_CAPACITY: usize = 1024;",
             "logger.rs": "const LEDGER_ADMISSION_BATCH_CAPACITY: usize = 64;",
             "remote.rs": "const LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS: u64 = 100;",
+            "dns.rs": "const CACHE_DNS_ANSWER_ENTRIES: usize = 1024;",
+            "cert.rs": "const CACHE_TLS_LEAF_ENTRIES: usize = 1024;",
+            "service.rs": "const CACHE_SERVICE_PERSISTENT_RESUME_ENTRIES: usize = 256;",
         }
     )
-    assert len(violations) == 6, RUNTIME_LIMIT_RATIONALE
+    assert len(violations) == 9, RUNTIME_LIMIT_RATIONALE
