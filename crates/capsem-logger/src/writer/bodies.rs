@@ -760,9 +760,11 @@ impl BodyArchive {
         if self.appended.is_empty() && self.reused.is_empty() {
             return Ok(());
         }
+        let started = Instant::now();
         if !self.appended.is_empty() && !self.sync_appended_segments() {
             return Ok(());
         }
+        let synced = Instant::now();
         // Recorded here, where the first row is actually written, and not
         // beside the flush that precedes it: a trace whose two steps are
         // pushed from one place proves their order only to itself.
@@ -818,6 +820,13 @@ impl BodyArchive {
                 &row.created_at,
             ])?;
         }
+        tracing::debug!(
+            target: "capsem.db",
+            archive_sync_ms = synced.duration_since(started).as_secs_f64() * 1000.0,
+            index_sql_ms = synced.elapsed().as_secs_f64() * 1000.0,
+            index_rows = self.appended.iter().map(|(_, rows)| rows.len()).sum::<usize>() + self.reused.len(),
+            "db archive index flushed"
+        );
         Ok(())
     }
 
