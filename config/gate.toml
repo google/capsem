@@ -2884,14 +2884,6 @@ capsem-admin through Cargo and replace workspace outputs, then signs the exact
 post-generation bytes used by the VM and package lanes.
 """
 
-[[boundary.repeated_actions]]
-subject = "(in typescript) CI=true pnpm"
-reason = """
-The SDK and npm MCP are distinct package roots that share the basename
-`typescript`; the plan renderer shortens both working directories to that
-basename, so their separate dependency fetch and install actions render alike.
-"""
-
 # ---------------------------------------------------------------------------
 # The execution log
 # ---------------------------------------------------------------------------

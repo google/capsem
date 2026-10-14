@@ -11,24 +11,32 @@ from __future__ import annotations
 from . import host, pytestsuite, sdkchecks, toolchain
 from .actions import Run
 from .config import GateConfig
+from .content import RuntimeContent
 from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
 from .pythonenv import uv_run
 
 
-def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
+def fragment(
+    plan: Plan, config: GateConfig, *, after: tuple[Step, ...], content: RuntimeContent
+) -> Step:
     """Run the managed-restart suite once the SDK it drives is usable."""
     settings = config.suites.pytest
     suite = pytestsuite.Suite(
         label="pytest.managed-restart",
         paths=(settings.managed_restart,),
+        assets_dir=str(content.assets),
     )
     bundle = sdkchecks.typescript_bundle(config)
     if bundle.label in plan.labels:
         bundled = plan.step_named(bundle.label)
     else:
         node = toolchain.node(config, (config.sdk_typescript.project,))
-        installed = plan.step_named(node.label) if node.label in plan.labels else plan.shared(node)
+        installed = (
+            plan.step_named("fast.toolchain.node")
+            if "fast.toolchain.node" in plan.labels
+            else plan.step_named(node.label) if node.label in plan.labels else plan.shared(node)
+        )
         bundled = plan.shared(bundle, after=(installed,))
     argv = suite.argv(config)
     if not host.on_macos():
