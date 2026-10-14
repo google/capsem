@@ -299,29 +299,29 @@ impl ServiceState {
         ) {
             Ok(proxy) => proxy,
             Err(error) => {
-                instance_reaper::kill_and_reap(child);
+                let _reaper = instance_reaper::kill_and_reap(child, retirement);
                 return Err(error.context("start confined proxy worker"));
             }
         };
         if let Err(error) =
             tokio::runtime::Handle::current().block_on(self.grant_proxy_ledger(id, &session_dir, &proxy))
         {
-            instance_reaper::kill_and_reap(child);
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
             return Err(error);
         }
         if let Err(error) = tokio::runtime::Handle::current().block_on(self.grant_proxy_credentials(&proxy)) {
-            instance_reaper::kill_and_reap(child);
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
             return Err(error);
         }
         if let Err(error) = tokio::runtime::Handle::current().block_on(self.grant_proxy_private_names(id, &proxy)) {
-            instance_reaper::kill_and_reap(child);
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
             return Err(error);
         }
         if let Err(error) = tokio::runtime::Handle::current().block_on(proxy.grant(
             capsem_proto::proxy_control::ProxyCapability::Upstream,
             proxy_upstream.into(),
         )) {
-            instance_reaper::kill_and_reap(child);
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
             return Err(error.context("grant proxy upstream broker"));
         }
         let upstream_broker = upstream_broker.with_proxy(proxy.clone());
@@ -402,14 +402,14 @@ impl ServiceState {
         drop(instances);
         if let Err(error) = self.register_proxy_worker(id, generation, proxy.clone()) {
             self.evict_instance(id, generation);
-            instance_reaper::kill_and_reap(child);
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
             return Err(error.context("register proxy worker"));
         }
         if let Err(error) = tokio::runtime::Handle::current().block_on(
             crate::service_runtime::telemetry_export::grant_proxy_metric_broker(self, id, generation, &proxy),
         ) {
             self.evict_instance(id, generation);
-            instance_reaper::kill_and_reap(child);
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
             return Err(error);
         }
         let _upstream_broker = upstream_broker.start(upstream_grant);

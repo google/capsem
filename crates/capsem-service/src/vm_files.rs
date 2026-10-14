@@ -627,9 +627,16 @@ pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &s
 async fn failed_process_log_tail(state: &Arc<ServiceState>, id: &str) -> String {
     let vm_id = id.to_string();
     state
-        .off_worker(move |state| match find_failed_session_dir(&state.run_dir, &vm_id) {
-            Some(dir) => read_process_log_tail(&dir, 20),
-            None => "(no preserved log found)".to_string(),
+        .off_worker(move |state| {
+            if let Some(entry) = find_persistent_entry_by_route_id(&state, &vm_id) {
+                return entry
+                    .last_error
+                    .unwrap_or_else(|| read_process_log_tail(&entry.session_dir, 20));
+            }
+            match find_failed_session_dir(&state.run_dir, &vm_id) {
+                Some(dir) => read_process_log_tail(&dir, 20),
+                None => "(no preserved log found)".to_string(),
+            }
         })
         .await
         .unwrap_or_else(|error| format!("(log read failed: {})", error.1))
@@ -742,16 +749,9 @@ pub(super) async fn provision_attempt(
         launch::LaunchWait::Launched => ProvisionAttemptOutcome::Launched { uds_path },
         launch::LaunchWait::TimedOut => ProvisionAttemptOutcome::StillBootingTimedOut { uds_path },
         launch::LaunchWait::Crashed => {
-            // Crash before ready. Prefer the persistent entry's
-            // cached last_error (already computed by the child-exit
-            // handler) to avoid re-reading the log; fall back to
-            // find_failed_session_dir for ephemeral VMs whose dir was
-            // renamed to `-failed-*`.
-            let cached = find_persistent_entry_by_route_id(state, id).and_then(|e| e.last_error);
-            let tail = match cached {
-                Some(tail) => tail,
-                None => failed_process_log_tail(state, id).await,
-            };
+            // The instance may disappear before its persistent last_error is
+            // cached. Read its log during that window; ephemeral evidence lives in `-failed-*`.
+            let tail = failed_process_log_tail(state, id).await;
             if is_launchd_cleanup_transient(&tail) {
                 warn!(
                     id,
@@ -1017,83 +1017,6 @@ pub(super) async fn handle_stats_summary(
     let db_path = session_dir.join("session.db");
     let counters = ledger_routes::activity::read_counters(&state, &id, "stats_summary", &db_path).await?;
     Ok(Json(ledger_routes::activity::stats_summary(&counters)))
-}
-
-/// Wait until a VM signals readiness via a `.ready` sentinel file.
-/// The capsem-process creates this file once the guest handshake completes.
-///
-/// If `state` and `id` are provided, also checks on every poll iteration that
-/// the VM is still in the instance registry. The resume_sandbox / spawn child-
-/// exit handlers remove the instance when capsem-process dies; observing that
-/// removal lets us fail fast (within ~50ms) instead of polling the dead
-/// sentinel for the full timeout. Without this, a capsem-process that crashes
-/// or exits during boot/restore would hang the API for `timeout_secs` (was
-/// reproducibly 30s under heavy suspend/resume churn).
-#[tracing::instrument(skip_all, fields(timeout_secs))]
-pub(super) async fn wait_for_vm_ready(
-    uds_path: &std::path::Path,
-    timeout_secs: u64,
-    state: Option<&Arc<ServiceState>>,
-    id: Option<&str>,
-) -> Result<(), String> {
-    let ready_span = tracing::debug_span!(
-        target: "capsem.launch",
-        capsem_foundation::telemetry::LAUNCH_VSOCK_READY_SPAN,
-        status = tracing::field::Empty,
-    );
-    let ready_path = uds_path.with_extension("ready");
-    // Override the PollOpts::new defaults (50ms / 500ms): VM ready-time is
-    // sub-second in the common case and the sentinel check is a single stat,
-    // so 500ms max_delay overshoots readiness by ~500ms and blows the
-    // exec_ready / boot_ready latency gates. Peer callers (service-connect,
-    // gateway-ready) wait for remote processes with seconds-scale startup
-    // where 500ms is appropriate; this poll is different.
-    let opts = vm_ready_poll_opts(timeout_secs);
-    let died: Arc<std::sync::atomic::AtomicBool> = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let res = capsem_foundation::poll::poll_until(opts, || {
-        let ready = ready_path.clone();
-        let state = state.cloned();
-        let id = id.map(|s| s.to_string());
-        let died = Arc::clone(&died);
-        async move {
-            if launch::stamped(&ready, "ready") {
-                return Some(());
-            }
-            if let (Some(st), Some(name)) = (state.as_ref(), id.as_ref()) {
-                if !st.instances.lock().unwrap().contains_key(name) {
-                    died.store(true, std::sync::atomic::Ordering::Release);
-                    // Returning Some short-circuits the poll loop; the
-                    // outer caller distinguishes via `died`.
-                    return Some(());
-                }
-            }
-            None
-        }
-    })
-    .instrument(ready_span.clone())
-    .await;
-    if died.load(std::sync::atomic::Ordering::Acquire) {
-        ready_span.record("status", "error");
-        return Err("capsem-process exited before signalling ready".into());
-    }
-    match res {
-        Ok(()) => {
-            ready_span.record("status", "ok");
-            Ok(())
-        }
-        Err(error) => {
-            ready_span.record("status", "error");
-            Err(format!("{error}"))
-        }
-    }
-}
-
-pub(super) fn vm_ready_poll_opts(timeout_secs: u64) -> capsem_foundation::poll::PollOpts {
-    capsem_foundation::poll::PollOpts {
-        initial_delay: std::time::Duration::from_millis(5),
-        max_delay: std::time::Duration::from_millis(50),
-        ..capsem_foundation::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs))
-    }
 }
 
 pub(super) fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::path::PathBuf, AppError> {

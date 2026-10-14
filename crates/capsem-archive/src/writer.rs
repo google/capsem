@@ -325,7 +325,7 @@ impl BodyLogWriter {
                 raw_len: 0,
                 flushed_raw: 0,
                 disk_len: 0,
-                hasher: blake3::Hasher::new(),
+                hasher: capsem_crypto::blake3::Hasher::new(),
                 out: Vec::new(),
             });
         }

@@ -362,7 +362,7 @@ fn inflate_segment(cursor: &mut Cursor, header: &SegmentHeader, comp: &[u8], at:
     if raw.len() != want {
         return Err(ArchiveError::Integrity(at));
     }
-    if blake3::hash(&raw).as_bytes() != &header.hash {
+    if capsem_crypto::blake3::hash(&raw).as_bytes() != &header.hash {
         return Err(ArchiveError::Integrity(at));
     }
     cursor.raw.extend_from_slice(&raw);

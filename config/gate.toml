@@ -845,9 +845,12 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "integrations"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "integrations/inspect-ai"]
 # Already passes every rule, and must keep doing so.
-strict_roots = ["build_system/builder", "build_system/sdist_command.py", "integrations"]
+strict_roots = ["build_system/builder", "build_system/sdist_command.py", "integrations/inspect-ai"]
+# Resolve the separate carried namespace without treating builder/ as a
+# top-level package root and shadowing its installed capsem_builder identity.
+strict_ty_search_paths = ["integrations/inspect-ai"]
 # Match the import roots exercised by the sole pytest project plus the guest
 # trees and script bootstrap paths that are materialized at runtime. Keeping
 # these explicit lets Ty inspect a conventional capsem-builder install without
@@ -1104,7 +1107,7 @@ must_stay_below_lines = 3000
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 2041
 "crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2528
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1549
-"crates/capsem-core/src/security_engine/mod.rs" = 2048
+"crates/capsem-core/src/security_engine/mod.rs" = 2046
 "crates/capsem-core/tests/mitm_integration.rs" = 2087
 "crates/capsem-logger/src/writer/tests.rs" = 1237
 "crates/capsem-mock-server/src/main.rs" = 1167
@@ -1112,7 +1115,7 @@ must_stay_below_lines = 3000
 "crates/capsem-proto/src/lib.rs" = 1008
 "crates/capsem-proto/src/tests.rs" = 1446
 "crates/capsem-service/src/tests/assets_registry.rs" = 1111
-"crates/capsem-service/src/tests/lifecycle.rs" = 1404
+"crates/capsem-service/src/tests/lifecycle.rs" = 1367
 "crates/capsem-service/src/vm_files.rs" = 1031
 "crates/capsem/src/main.rs" = 2025
 "crates/capsem/src/tests.rs" = 1259
@@ -1127,6 +1130,7 @@ must_stay_below_lines = 3000
 #
 # They carry no suffix (`benchmarks/collectors/routes` is run by name), so they are
 # found by shebang, the same way suffix-less packaging helpers are.
+
 [boundary.bench]
 roots = ["benchmarks/collectors"]
 suffixes = [".py"]
@@ -1138,7 +1142,7 @@ max_lines = 300
 "build_system/packaging/macos/build-pkg.sh" = 317
 "build_system/packaging/macos/macos_release_glowup.py" = 360
 "build_system/packaging/macos/macos_tart_glowup.py" = 519
-"build_system/packaging/macos/macos_tart_guest.sh" = 310
+"build_system/packaging/macos/macos_tart_guest.sh" = 312
 
 # ---------------------------------------------------------------------------
 # What may not run beside what
@@ -2023,6 +2027,7 @@ building = ["frontend-build", "docs", "site"]
 # `tests/test_gate_*.py` to appear here, since by construction those need
 # neither.
 source_contract = [
+    "tests/test_benchmark_routes.py",
     "integrations/inspect-ai/tests/containers/test_compose_fields.py",
     "integrations/inspect-ai/tests/containers/test_compose_inputs.py",
     "integrations/inspect-ai/tests/containers/test_compose_interpolation.py",
@@ -2030,6 +2035,7 @@ source_contract = [
     "integrations/inspect-ai/tests/containers/test_dockerfile_ca.py",
     "integrations/inspect-ai/tests/containers/test_dockerfile_heredoc.py",
     "integrations/inspect-ai/tests/containers/test_dockerfile_metadata.py",
+    "tests/qualification/test_candidate.py",
     "build_system/tests/gate/test_gate_observation.py",
     "build_system/tests/gate/test_gate_observation_startup.py",
     "build_system/tests/gate/test_gate_observation_propagation.py",
@@ -3026,8 +3032,11 @@ internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservatio
 measured = [
     "/vms/managed/{request_id}/close",
     "/vms/managed/{request_id}/claim",
+    "/connections",
+    "/vms/{id}/credential-grants",
     "/vms/{id}/bodies/{event_id}",
     "/vms/{id}/status",
+    "/vms/{id}/exposures",
     "/vms/{id}/security/status",
     "/status",
     "/version",
@@ -3043,15 +3052,19 @@ measured = [
     "/update/status",
 ]
 unmeasured = [
-    # Exposure inventory is owned by a live VM process. The quick routes
-    # collector uses a stopped workspace so it can stay host-only; Ironbank's
-    # workload-surface fixture measures the real owner round trip.
-    "/vms/{id}/exposures",
     # Standalone proxy lifecycle mutations require a supervised worker fixture;
     # their functional acceptance owns successful create, lease, and teardown.
     "/proxies",
     "/proxies/{id}/heartbeat",
     "/proxies/{id}/stop",
+    # Provider authorization/poll/disconnect and concrete connection records
+    # need genuine provider lifecycle fixtures, not timed error responses.
+    "/connections/google/authorize",
+    "/connections/authorizations/{transaction_id}",
+    "/connections/{connection_id}",
+    # Claim/close mutate owned session lifetimes; grant revocation mutates
+    # credential authority. Their native acceptance owns the effects.
+    "/vms/{id}/credential-grants/{grant_id}",
     # Restart needs a disposable supervisor; the read-only route collector
     # cannot time accepted restarts. Its functional proof owns that lifecycle.
     "/restart",
@@ -3723,6 +3736,8 @@ specification = "sdk/specification/openapi.json"
 source = "sdk/python/capsem"
 tests = "sdk/python/tests"
 build_output = "cache/target/sdk/python"
+environment_python = "sdk/python/.venv/bin/python"
+package_build_requirements = "cache/target/sdk/python/package-build-requirements.txt"
 
 [sdk_rust]
 project = "sdk/rust"

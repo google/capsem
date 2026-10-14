@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
@@ -14,6 +13,7 @@ use capsem_proto::proxy_control::{
 };
 use capsem_proto::proxy_metrics::{ProxyMetricBrokerMessage, ProxyMetricRequest};
 use capsem_proto::proxy_policy::{ProxyPolicyRequest, ProxyPolicyResponse};
+use tokio::io::AsyncReadExt;
 
 type ControlSender = DescriptorSender<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
 type ControlReceiver = DescriptorReceiver<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
@@ -47,6 +47,10 @@ async fn event(receiver: &ControlReceiver) -> ProxyControlEvent {
 }
 
 fn spawn() -> (ChildGuard, ControlSender, ControlReceiver) {
+    spawn_with_stderr(Stdio::inherit())
+}
+
+fn spawn_with_stderr(stderr: Stdio) -> (ChildGuard, ControlSender, ControlReceiver) {
     let (coordinator, child_control) = UnixStream::pair().unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_capsem-proxy"))
         .arg("--parent-pid")
@@ -56,7 +60,7 @@ fn spawn() -> (ChildGuard, ControlSender, ControlReceiver) {
         .env("CAPSEM_PROXY_SECRET", "must-not-survive")
         .stdin(Stdio::from(OwnedFd::from(child_control)))
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(stderr)
         .spawn()
         .unwrap();
     let requests = ControlSender::new(coordinator.try_clone().unwrap()).unwrap();
@@ -71,7 +75,7 @@ async fn worker_rejects_http_traffic_until_runtime_is_ready() {
         event(&events).await,
         ProxyControlEvent::Ready { generation: GENERATION }
     );
-    let (mut peer, granted) = UnixStream::pair().unwrap();
+    let (peer, granted) = UnixStream::pair().unwrap();
     let grant = ProxyChannelGrant::new(GENERATION, 1, ProxyCapability::HttpTraffic).unwrap();
     requests
         .send(
@@ -89,8 +93,16 @@ async fn worker_rejects_http_traffic_until_runtime_is_ready() {
             reason: ProxyControlRejection::NotReady,
         }
     );
-    peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-    assert_eq!(peer.read(&mut [0; 1]).unwrap(), 0);
+    peer.set_nonblocking(true).unwrap();
+    let mut peer = tokio::net::UnixStream::from_std(peer).unwrap();
+    let mut byte = [0; 1];
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), peer.read(&mut byte))
+            .await
+            .expect("rejected proxy grant remained open")
+            .unwrap(),
+        0
+    );
 
     requests
         .send(
@@ -129,6 +141,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
     }
 
     let mut peers = Vec::new();
+    let mut metric_peer = None;
     for (index, capability) in [
         ProxyCapability::Upstream,
         ProxyCapability::Credential,
@@ -142,7 +155,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         let grant_id = index as u64 + 1;
         let (peer, granted) = UnixStream::pair().unwrap();
         if capability == ProxyCapability::Telemetry {
-            let (messages, _requests) =
+            let (messages, requests) =
                 capsem_foundation::ipc_channel::channel_from_std::<ProxyMetricBrokerMessage, ProxyMetricRequest>(peer)
                     .unwrap();
             messages
@@ -151,6 +164,9 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
                 })
                 .await
                 .unwrap();
+            // Match the service broker's lifetime. Closing both halves before
+            // granting the descriptor races the worker's first read on macOS.
+            metric_peer = Some((messages, requests));
         } else {
             peers.push(peer);
         }
@@ -204,6 +220,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         ProxyControlEvent::Stopped { generation: GENERATION }
     );
     drop(peers);
+    drop(metric_peer);
 
     let child = child.take();
     let output = tokio::task::spawn_blocking(move || child.wait_with_output())
@@ -324,7 +341,7 @@ async fn ledger_grant_is_authenticated_before_adoption() {
 
 #[tokio::test]
 async fn stale_generation_terminates_worker_and_releases_grants() {
-    let (mut child, requests, events) = spawn();
+    let (mut child, requests, events) = spawn_with_stderr(Stdio::piped());
     assert_eq!(
         event(&events).await,
         ProxyControlEvent::Ready { generation: GENERATION }

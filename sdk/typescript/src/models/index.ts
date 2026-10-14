@@ -28,6 +28,8 @@ export { ContainerSurfaceKind } from "./ContainerSurfaceKind.js";
 export type { CreateNetworkRequest } from "./CreateNetworkRequest.js";
 export type { CreateProxyRequest } from "./CreateProxyRequest.js";
 export type { CreateProxyResponse } from "./CreateProxyResponse.js";
+export type { CreateSessionGrantRequest } from "./CreateSessionGrantRequest.js";
+export { CredentialErrorCode } from "./CredentialErrorCode.js";
 export type { CredentialEvent } from "./CredentialEvent.js";
 export { CredentialEventType } from "./CredentialEventType.js";
 export { CredentialInjectProvider } from "./CredentialInjectProvider.js";

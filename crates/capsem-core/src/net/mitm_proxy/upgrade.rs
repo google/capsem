@@ -312,7 +312,7 @@ pub(super) async fn handle_upgrade(
         let tunnel_span = ws_span.clone();
         let model_context = responses_websocket.then(|| websocket::Context {
             pipeline: Arc::clone(&config.pipeline),
-            telemetry: Arc::clone(&config.telemetry),
+            engine: Arc::clone(&config.engine),
             conn: hooks::ConnMeta {
                 domain: domain.to_string(),
                 process_name: process_name.clone(),

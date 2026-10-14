@@ -278,7 +278,7 @@ async fn clone_ledger(
     let (stream, commitment, grant) = channel.into_parts();
     debug_assert!(commitment.is_none());
     let client = capsem_logger::ledger_client::LedgerClient::connect(stream, grant, database).await?;
-    let snapshot = client.snapshot(*uuid::Uuid::new_v4().as_bytes()).await?;
+    let snapshot = client.snapshot(*capsem_crypto::uuid_v4().as_bytes()).await?;
     let snapshot_copy = snapshot.clone();
     let destination = destination.to_path_buf();
     let copied = tokio::task::spawn_blocking(move || {

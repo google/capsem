@@ -4,12 +4,10 @@ use super::*;
 mod retirement;
 pub(crate) use retirement::{Registration, Retirements};
 
-pub(super) enum ExitedGeneration {
-    Current(Option<Box<InstanceInfo>>),
-    Replaced,
-}
-
-pub(super) fn kill_and_reap(mut child: tokio::process::Child) {
+pub(super) fn kill_and_reap(
+    mut child: tokio::process::Child,
+    mut retirement: Registration,
+) -> tokio::task::JoinHandle<()> {
     let _ = child.start_kill();
     tokio::spawn(async move {
         if retirement.wait_child(&mut child).await.is_ok() {
@@ -37,10 +35,32 @@ pub(super) fn spawn_exit_reaper(
     // task can be delayed across an exit/replacement or PID reuse.
     let generation = retirement.generation();
     tokio::spawn(async move {
-        let registration = revoke_exited_generation(&child, &id, &state, generation).await;
-        let Ok(exit_status) = child.wait().await else {
+        let Ok((exit_status, current)) = retirement
+            .wait_child_before_reap(&mut child, || {
+                state
+                    .connections
+                    .fence_runtime(&id, generation, capsem_credentials::GrantStopPolicy::Preserve);
+                let instances = state.instances.lock().unwrap();
+                let current = instances
+                    .get(&id)
+                    .is_none_or(|instance| instance.generation == generation);
+                if let Some(instance) = instances.get(&id).filter(|instance| instance.generation == generation) {
+                    instance.authority.revoke();
+                }
+                drop(instances);
+                if current {
+                    state.remove_proxy_worker(&id, generation);
+                }
+                current
+            })
+            .await
+        else {
             return;
         };
+        if !current {
+            retirement.complete();
+            return;
+        }
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
         // Even a delayed reaper must fence its exact old runtime. A resumed
         // replacement may already own the map, but never owns these handles.
@@ -70,9 +90,12 @@ pub(super) fn spawn_exit_reaper(
         // child exited without an explicit service-side shutdown removing it.
         // A clean process exit is a graceful shutdown regardless of whether
         // the guest or service initiated it; anything else is a crash.
-        let removed = match registration {
-            ExitedGeneration::Current(removed) => removed,
-            ExitedGeneration::Replaced => {
+        let removed = {
+            let mut instances = state.instances.lock().unwrap();
+            if instances
+                .get(&id)
+                .is_some_and(|instance| Some(instance.pid) != pid || instance.generation != generation)
+            {
                 // A cold fallback can replace a failed restore while holding
                 // the exclusive guard. Its registry, DB and sockets are not
                 // owned by this delayed reaper.
@@ -84,8 +107,11 @@ pub(super) fn spawn_exit_reaper(
                 retirement.complete();
                 return;
             }
+            instances.remove(&id)
         };
         if let Some(info) = &removed {
+            info.authority.revoke();
+            state.remove_proxy_worker(&id, generation);
             // The VM is gone: a container setup for it has nothing left to do.
             let policy = connection_routes::lifecycle::stop_policy(info.persistent, true);
             if let Err(error) = state.connections.stop_runtime(&id, generation, policy).await {
@@ -187,48 +213,4 @@ pub(super) fn spawn_exit_reaper(
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
         retirement.complete();
     })
-}
-
-pub(super) async fn revoke_exited_generation(
-    child: &tokio::process::Child,
-    id: &str,
-    state: &ServiceState,
-    generation: uuid::Uuid,
-) -> ExitedGeneration {
-    let pid = child.id();
-    if let Some(raw_pid) = pid {
-        match capsem_foundation::unix::process::ProcessId::try_from(raw_pid) {
-            Ok(pid) => {
-                match tokio::task::spawn_blocking(move || capsem_foundation::unix::process::wait_for_child_exit(pid))
-                    .await
-                {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        error!(id, ?pid, error = %error, "failed to retain child exit identity")
-                    }
-                    Err(error) => {
-                        error!(id, ?pid, error = %error, "child exit observer failed")
-                    }
-                }
-            }
-            Err(error) => error!(id, ?pid, error = %error, "child has invalid process identity"),
-        }
-    } else {
-        error!(id, "child process identity disappeared before exit observation");
-    }
-
-    let mut instances = state.instances.lock().unwrap();
-    if instances
-        .get(id)
-        .is_some_and(|instance| Some(instance.pid) != pid || instance.generation != generation)
-    {
-        return ExitedGeneration::Replaced;
-    }
-    let removed = instances.remove(id);
-    drop(instances);
-    if let Some(instance) = removed.as_ref() {
-        instance.authority.revoke();
-        state.remove_proxy_worker(id, generation);
-    }
-    ExitedGeneration::Current(removed.map(Box::new))
 }

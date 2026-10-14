@@ -11,8 +11,8 @@ use thiserror::Error;
 
 /// Version of the ledger handshake, request envelopes and logger-owned
 /// operation/reply enums. Bump it when any of those wire shapes changes.
-/// Version 3 adds maintainer-only coherent snapshot authority.
-pub const LEDGER_PROTOCOL_VERSION: u16 = 3;
+/// Version 4 carries the DB-owned read-cache epoch with counter snapshots.
+pub const LEDGER_PROTOCOL_VERSION: u16 = 4;
 /// Hash of ledger wire declarations, separate from the guest protocol hash.
 pub const LEDGER_SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/ledger_schema_hash.txt"));
 /// Largest diagnostic admitted into a response.

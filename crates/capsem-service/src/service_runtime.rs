@@ -468,8 +468,14 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
             }
         }
         info!("service shutting down, stopping VM processes and draining replies");
-        kill_all_vm_processes(&shutdown_state);
+        let deleted_ephemeral = kill_all_vm_processes(&shutdown_state).await;
         shutdown_state.stop_all_standalone_proxies().await;
+        shutdown_state.ledger_workers.shutdown_all().await;
+        for id in deleted_ephemeral {
+            if let Err(error) = shutdown_state.ledger_workers.retire(&id).await {
+                warn!(id, %error, "failed to retire ephemeral checkpoints during service shutdown");
+            }
+        }
     })
     .await;
 
@@ -559,7 +565,7 @@ pub(super) fn reap_orphan_capsem_processes(run_dir: &std::path::Path) -> Result<
 /// NOT orphan running guests. Without this, each service shutdown leaked one
 /// `capsem-process` per live VM, which in turn held Apple VZ memory -- making
 /// long test runs increasingly slow until boots timed out.
-pub(super) async fn kill_all_vm_processes(state: &Arc<ServiceState>) {
+pub(super) async fn kill_all_vm_processes(state: &Arc<ServiceState>) -> Vec<String> {
     state.lifecycle.begin_shutdown();
     state.lifecycle.wait_for_launches().await;
     let targets: Vec<_> = state
@@ -569,17 +575,20 @@ pub(super) async fn kill_all_vm_processes(state: &Arc<ServiceState>) {
         .values()
         .map(|instance| (instance.id.clone(), instance.generation))
         .collect();
+    let mut deleted_ephemeral = Vec::new();
     for (id, generation) in targets {
         match vm_lifecycle::shutdown_vm_process(state, &id, ShutdownMode::ServiceStop, Some(generation)).await {
             Ok(Some((directory, false, _))) => {
-                if let Err(error) = state
+                match state
                     .off_worker(move |state| state.delete_session_dir(&directory))
                     .await
                     .and_then(|result| {
                         result.map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
-                    })
-                {
-                    tracing::warn!(id,error = %error.1,"service shutdown session cleanup failed");
+                    }) {
+                    Ok(()) => deleted_ephemeral.push(id),
+                    Err(error) => {
+                        tracing::warn!(id,error = %error.1,"service shutdown session cleanup failed");
+                    }
                 }
             }
             Ok(_) => {}
@@ -590,6 +599,7 @@ pub(super) async fn kill_all_vm_processes(state: &Arc<ServiceState>) {
             ),
         }
     }
+    deleted_ephemeral
 }
 
 pub(super) async fn shutdown_signal() {

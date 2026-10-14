@@ -145,6 +145,15 @@ fn add_path_rule(ruleset: &OwnedFd, path: &std::path::Path, access: Access) -> i
         (Access::ReadOnly, false) => FS_READ_FILE,
         (Access::ReadWrite, true) => FS_WRITE,
         (Access::ReadWrite, false) => FS_READ_FILE | FS_WRITE_FILE | FS_TRUNCATE,
+        (Access::ReadWriteDevice, false) if kind.contains(SFlag::S_IFCHR) || kind.contains(SFlag::S_IFBLK) => {
+            FS_READ_FILE | FS_WRITE_FILE | FS_IOCTL_DEV
+        }
+        (Access::ReadWriteDevice, _) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("sandbox device grant is not a device: {}", path.display()),
+            ));
+        }
         (Access::Executable, false) => FS_READ_FILE | FS_EXECUTE,
         (Access::Executable, true) => {
             return Err(io::Error::new(

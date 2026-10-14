@@ -55,11 +55,14 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let stdin = io::stdin();
     let control = UnixStream::from(fd::duplicate(stdin.as_fd())?);
-    let session_dir = session_directory(&args.database)?;
-    validate_session_directory(&session_dir)?;
+    let session_dir = resolved_session_directory(&args.database)?;
+    // Seatbelt grants canonical path spellings. Keep every post-confinement
+    // open on that same spelling when an ancestor such as macOS `/var`
+    // resolves through a symlink.
+    let database = session_dir.join("session.db");
     let denied_file = std::env::current_exe().context("resolve ledger executable before confinement")?;
     let codecs = codec::archive_codecs().context("initialize confined archive codecs")?;
-    let prepared = LedgerServer::prepare_with_codecs(&args.database, codecs).context("prepare session ledger")?;
+    let prepared = LedgerServer::prepare_with_codecs(&database, codecs).context("prepare session ledger")?;
     // The current-thread runtime prepares Tokio's internal descriptors without
     // creating sibling threads. This keeps Landlock ABI 6 and 7 safe while
     // allowing tasks and blocking workers created after confinement to inherit
@@ -95,6 +98,12 @@ fn validate_session_directory(directory: &Path) -> Result<()> {
     Ok(())
 }
 
+fn resolved_session_directory(database: &Path) -> Result<PathBuf> {
+    let directory = session_directory(database)?;
+    validate_session_directory(&directory)?;
+    std::fs::canonicalize(&directory).context("resolve ledger session directory")
+}
+
 fn attest_confinement(
     session_dir: &Path,
     denied_file: &Path,
@@ -120,6 +129,10 @@ fn attest_confinement(
     std::fs::remove_file(&marker)?;
 
     require_denied(std::fs::read(denied_file), "read outside its session")?;
+    // Linux seccomp denies socket(2) itself. Seatbelt denies endpoint bind,
+    // listen and connect operations but permits authority-free private
+    // socketpairs, which Tokio and worker-internal channels may use.
+    #[cfg(target_os = "linux")]
     require_denied(UnixStream::pair(), "create a Unix socket")?;
     require_denied(
         std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)),

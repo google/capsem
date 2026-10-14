@@ -17,8 +17,10 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-archive`**: block-compressed body archive for session ledgers.
   Pure Rust (`miniz_oxide`); SQLite keeps the index, this crate keeps the
   bytes, and every block is blake3-verified before a body is returned.
-- **`capsem-crypto`**: central owner of hashing, randomness, TLS providers,
-  signatures, constant-time verification, and secret handling.
+- **`capsem-crypto`**: first-party Rust cryptographic operations: accelerated
+  hashes and bounded integrity verification, randomness, TLS key/provider
+  selection, JWT verification, signatures, constant-time verification, and
+  secret handling. Speed measurements belong in `capsem-bench`.
 - **`capsem-ledger`**: confined session-ledger worker and the sole runtime
   executor of body archive codecs.
 - **`capsem-telemetry`**: the one owner of every `metrics`-facade metric name,
@@ -37,11 +39,12 @@ Sharing alone is not a reason to put code in `capsem-core`.
 - **`capsem-logger`**: session DB schema, queries, storage, and async writer.
 - **`capsem-guard`**: parent-watch and singleton-flock lifecycle primitives.
 - **`capsem-service`**: daemon HTTP/UDS API and VM-process orchestration.
-- **`capsem-process`**: per-VM boot, vsock, IPC, and job runtime; still holds
-  only the paths and descriptors granted for its session and generation.
+- **`capsem-process`**: low-privilege per-VM boot, vsock, IPC, and job runtime;
+  it holds only the paths and descriptors granted for its session and generation.
 - **`capsem-proxy`**: confined HTTP/DNS worker for VM and standalone proxy
   traffic; upstream, ledger, credential, and MCP authority arrives by grant.
-- **`capsem`**: CLI client; HTTP/UDS to the service, including shell streams.
+- **`capsem`**: CLI client; HTTP/UDS to the service, including streamed shell
+  and terminal operations. It never dials a per-VM process socket.
 - **`capsem-tui`**: terminal control UI over the gateway API.
 - **`capsem-admin`**: runtime image build plus asset, release, and config validation.
 - **`@capsem/mcp`** (`mcp/typescript`): separately installed host MCP server;
@@ -72,6 +75,20 @@ upstream sockets. `capsem-proxy` receives connected DNS/TCP descriptors plus
 credential, MCP, and ledger channels. `capsem-ledger` receives the ledger files
 and typed producer channels; durable service-owned commitment checkpoints
 anchor the sequence outside that worker.
+
+1. **Minimal environment**: service uses `env_clear()` before spawn, then passes only `HOME`, `PATH`, `USER`, `TMPDIR`, `RUST_LOG`. API keys and tokens from the user's shell never reach the process.
+2. **Socket permissions 0600**: Per-VM owner sockets (`{id}.sock` IPC, `{id}-handoff.sock`) are chmod 0600 after bind; no client dials them -- terminals and attach go through the service `/vms/{id}/stream` route. Only the owning user can connect.
+3. **Session directory 0700**: created by the service via `create_virtiofs_session`. Contains workspace/, system/, serial.log (0600), session.db.
+4. **No guest-triggered process exit**: control channel read errors cause `break` (loop exit), not `process::exit()`. Guest cannot DoS the host process.
+5. **Gateway auth layer**: external access goes through capsem-gateway (Bearer token, rate limiting, localhost CORS). Per-VM sockets are not exposed to the network.
+6. **Rootfs read-only**: runtime rootfs asset mounted read-only. Guest binaries deployed chmod 555.
+7. **Guest binary security**: all injected binaries are read-only. Guest cannot modify its own agent.
+8. **VirtioFS boundary**: `session_dir/guest/` is the guest-writable share and
+   contains the workspace. The writable overlay image stays in host-only
+   `session_dir/system/`, alongside the host-only ledger, logs and checkpoint.
+   The separate `session_dir/image/` share contains immutable image blobs and
+   is read-only at the device. The workspace compatibility symlink points into
+   `guest/`; the system image must never be reachable through that share.
 
 Socket permissions remain 0600 and session directories 0700 as defense in
 depth. The guest sees only `session_dir/guest/` through VirtioFS; the writable

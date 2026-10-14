@@ -6,11 +6,15 @@ pub(super) fn writer_loop(
     conn: Connection,
     rx: WriterReceiver,
     db_path: Option<PathBuf>,
-    batch_capacity: usize,
+    schedule: WriterSchedule,
     pending_body_bytes: &AtomicU64,
     mut bodies: BodyArchive,
     mut tally: LedgerTally,
 ) {
+    let WriterSchedule {
+        capacity: batch_capacity,
+        interval,
+    } = schedule;
     let mut flush_watermarks =
         schema::with_memory_schema_lock(|| schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables()))
             .unwrap_or_else(|error| {
@@ -23,6 +27,7 @@ pub(super) fn writer_loop(
     let exec_floor = flush_watermarks.get("exec_events").copied().unwrap_or(0);
     let mut dirty_tables = BTreeSet::new();
     let mut dirty_ops = 0_usize;
+    let mut rejected_ops = 0_usize;
     let mut last_disk_flush = Instant::now();
     // 1. Block until at least one op arrives. Returns None when all
     //    Senders are dropped (clean shutdown) and ends the loop.
@@ -30,9 +35,10 @@ pub(super) fn writer_loop(
         let first_message = if dirty_ops == 0 && !bodies.has_work() {
             rx.recv().ok()
         } else {
-            match rx.recv_timeout(DISK_FLUSH_INTERVAL) {
+            match rx.recv_timeout(interval.saturating_sub(last_disk_flush.elapsed())) {
                 Ok(message) => Some(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
+                    last_disk_flush = Instant::now();
                     if let Err(error) = flush_dirty_tables_to_disk_recorded(
                         &conn,
                         &mut dirty_tables,
@@ -103,6 +109,7 @@ pub(super) fn writer_loop(
                         .in_scope(|| retry_batch_ops_individually(&conn, &batch, &mut bodies, exec_floor, &mut tally));
                     dirty_tables.extend(salvaged.tables);
                     dirty_ops += salvaged.written;
+                    rejected_ops = rejected_ops.saturating_add(salvaged.rejected);
                 }
             }
         }
@@ -111,11 +118,15 @@ pub(super) fn writer_loop(
         // wait for the next transaction; its bytes are already on disk.
         bodies.close_if_due();
         pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
-        let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
-            || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
-            || barriers.waiting();
-        let mut barrier_outcome: FlushOutcome = Ok(());
+        let disk_flush_due =
+            dirty_ops >= DISK_FLUSH_THRESHOLD_OPS || last_disk_flush.elapsed() >= interval || barriers.waiting();
+        let mut barrier_outcome: FlushOutcome = if rejected_ops == 0 {
+            Ok(())
+        } else {
+            Err(format!("db rejected {rejected_ops} accepted write operations"))
+        };
         if disk_flush_due {
+            last_disk_flush = Instant::now();
             match flush_dirty_tables_to_disk_recorded(
                 &conn,
                 &mut dirty_tables,
@@ -140,7 +151,11 @@ pub(super) fn writer_loop(
             }
         }
         ::metrics::gauge!(DB_MEMORY_UNFLUSHED_OPS).set(dirty_ops as f64);
+        let explicit_boundary = barriers.waiting();
         barriers.answer(&conn, &mut bodies, &barrier_outcome);
+        if explicit_boundary {
+            rejected_ops = 0;
+        }
     }
 
     // Test hook: lets `test_wal_absent_after_clean_shutdown`-style tests

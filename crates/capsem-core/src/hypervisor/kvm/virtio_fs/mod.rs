@@ -91,6 +91,18 @@ impl FuseProcessor {
         authority.set_times(relative.as_os_str().as_bytes(), atime, mtime)
     }
 
+    fn handle_request_into(&mut self, request_buf: &[u8], response: &mut Vec<u8>) {
+        if let Some(header) = fuse::read_struct::<FuseInHeader>(request_buf) {
+            if header.opcode == FUSE_READ {
+                self.do_read_into(&header, &request_buf[std::mem::size_of::<FuseInHeader>()..], response);
+                return;
+            }
+        }
+        response.clear();
+        response.extend_from_slice(&self.handle_non_read_request(request_buf));
+    }
+
+    #[cfg(test)]
     fn handle_request(&mut self, request_buf: &[u8]) -> Vec<u8> {
         let mut response = Vec::new();
         self.handle_request_into(request_buf, &mut response);

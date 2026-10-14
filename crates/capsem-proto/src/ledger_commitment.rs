@@ -141,7 +141,7 @@ impl LedgerCommitment {
     }
 
     fn calculate_hash(&self) -> [u8; 32] {
-        let mut hash = blake3::Hasher::new();
+        let mut hash = capsem_crypto::blake3::Hasher::new();
         hash.update(b"capsem-ledger-commitment-v1\0");
         hash.update(&self.generation.as_bytes());
         hash.update(&self.client_id.to_be_bytes());

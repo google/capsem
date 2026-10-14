@@ -60,6 +60,60 @@ fn isolated_exec_child_closes_ambient_descriptor_and_keeps_declared_grant() {
     assert!(child.wait().unwrap().success());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn counter_signals_are_owned_and_accumulate_completions() {
+    use nix::sys::eventfd::{EfdFlags, EventFd};
+    let counter = EventFd::from_flags(EfdFlags::EFD_CLOEXEC | EfdFlags::EFD_NONBLOCK).unwrap();
+    super::signal_counter(counter.as_fd()).unwrap();
+    assert_eq!(counter.read().unwrap(), 1);
+    super::signal_counter(counter.as_fd()).unwrap();
+    super::signal_counter(counter.as_fd()).unwrap();
+    assert_eq!(counter.read().unwrap(), 2);
+}
+
+#[test]
+fn positioned_io_preserves_cursor_and_reports_short_reads_and_eof() {
+    use std::io::{Seek, SeekFrom};
+    let mut file = tempfile::tempfile().unwrap();
+    file.write_all(b"abcdef").unwrap();
+    assert_eq!(super::regular_file_size(file.as_fd()).unwrap(), 6);
+    file.seek(SeekFrom::Start(2)).unwrap();
+    assert_eq!(super::write_at(file.as_fd(), b"XY", 4).unwrap(), 2);
+    assert_eq!(file.stream_position().unwrap(), 2);
+    let mut bytes = [0; 8];
+    assert_eq!(super::read_at(file.as_fd(), &mut bytes, 3).unwrap(), 3);
+    assert_eq!(&bytes[..3], b"dXY");
+    assert_eq!(super::read_at(file.as_fd(), &mut bytes, 6).unwrap(), 0);
+    assert_eq!(file.stream_position().unwrap(), 2);
+}
+
+#[test]
+fn positioned_io_rejects_unrepresentable_offsets_and_preserves_os_errors() {
+    let file = tempfile::tempfile().unwrap();
+    assert_eq!(
+        super::read_at(file.as_fd(), &mut [0], u64::MAX)
+            .unwrap_err()
+            .raw_os_error(),
+        Some(22)
+    );
+    assert_eq!(
+        super::write_at(file.as_fd(), b"x", u64::MAX)
+            .unwrap_err()
+            .raw_os_error(),
+        Some(22)
+    );
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    assert_eq!(
+        super::regular_file_size(socket.as_fd()).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        super::read_at(socket.as_fd(), &mut [0], 0).unwrap_err().kind(),
+        std::io::ErrorKind::NotSeekable
+    );
+}
+
 #[test]
 fn tcp_reset_waits_for_the_last_owned_descriptor_then_reaches_the_peer() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

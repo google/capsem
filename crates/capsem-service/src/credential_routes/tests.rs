@@ -68,6 +68,17 @@ async fn memory_handoff_uses_correlated_real_host_ipc_and_acknowledgement() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("owner.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let state = make_test_state();
+    state.instances.lock().unwrap().insert(
+        "vm".into(),
+        InstanceInfo {
+            id: "vm".into(),
+            name: "vm".into(),
+            uds_path: socket.clone(),
+            session_dir: dir.path().to_path_buf(),
+            ..crate::tests::test_instance()
+        },
+    );
     let reference = CredentialStore::global()
         .inject(
             CredentialProvider::Google,
@@ -111,13 +122,11 @@ async fn memory_handoff_uses_correlated_real_host_ipc_and_acknowledgement() {
     });
     // Readiness must include host credential admission, not just the guest's
     // sentinel. Exercise the real bootstrap wait against the live IPC peer.
-    std::fs::write(socket.with_extension("ready"), b"").unwrap();
-    vm_files::wait_for_vm_ready(&socket, 1, Some(&make_test_state()), None)
+    std::fs::write(socket.with_extension("ready"), b"ready\n").unwrap();
+    vm_files::wait_for_vm_ready(&socket, 1, Some(&state), Some("vm"))
         .await
         .unwrap();
     owner.await.unwrap();
-    assert!(sync_memory(&make_test_state(), &dir.path().join("absent.sock"))
-        .await
-        .is_err());
+    assert!(sync_memory(&state, &dir.path().join("absent.sock")).await.is_err());
     CredentialStore::global().clear_for_test();
 }

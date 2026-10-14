@@ -122,18 +122,6 @@ opt-level = 3
 [profile.dev.package.ryu]
 opt-level = 3
 
-# Periodic ledger flushes drain archive indexes and copy hot tables on the
-# writer actor. Unoptimized SQLite/adapter work filled its bounded producer
-# queue and held HTTP response completion for seconds (#350).
-[profile.dev.package.rusqlite]
-opt-level = 3
-
-[profile.dev.package.libsqlite3-sys]
-opt-level = 3
-
-[profile.dev.package.capsem-logger]
-opt-level = 3
-
 [profile.release]
 lto = "thin"
 strip = "symbols"

@@ -135,6 +135,7 @@ match = 'http.host == "worker.example"'
         mcp,
         capsem_proto::proxy_mcp::ProxyMcpHello::new(Vec::new(), 1, 1, 1, 1).unwrap(),
     );
+    state.attach_trace_hints(Arc::new(EmptyTraceHints));
     let config = state.http_config().unwrap().expect("complete capability set");
     assert!(config.upstream_grants.is_some());
     assert!(config.mcp_endpoint.is_some());
@@ -142,6 +143,18 @@ match = 'http.host == "worker.example"'
         config.engine.policy().snapshot().digest(),
         state.engine.as_ref().unwrap().policy().snapshot().digest()
     );
+}
+
+struct EmptyTraceHints;
+
+impl capsem_core::net::ai_traffic::TraceHintSink for EmptyTraceHints {
+    fn register<'a>(
+        &'a self,
+        _trace_id: &'a str,
+        _relative_paths: &'a [String],
+    ) -> capsem_core::net::ai_traffic::TraceHintFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 #[tokio::test]

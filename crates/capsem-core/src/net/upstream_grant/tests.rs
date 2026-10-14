@@ -18,6 +18,91 @@ const POLICY_A: &str = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const POLICY_B: &str = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 #[tokio::test]
+async fn loopback_listener_is_adopted_only_when_its_descriptor_matches_the_grant() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let broker_task = tokio::spawn(async move {
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenLoopbackListener { request_id: 1, port: 0 }
+        );
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::LoopbackListenerGranted {
+                request_id: 1,
+                grant_id: 21,
+                port,
+            },
+            Some(listener.as_raw_fd()),
+        )
+        .await;
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::Adopted { grant_id: 21 }
+        );
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::Release { resource_id: 21 }
+        );
+    });
+
+    let grant = client.open_loopback_listener(0).await.unwrap();
+    let (listener, lease) = grant.into_parts();
+    let address = listener.local_addr().unwrap();
+    assert_eq!(address.ip(), std::net::Ipv4Addr::LOCALHOST);
+    let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+    let connection = tokio::net::TcpStream::connect(address).await.unwrap();
+    let (accepted, peer) = listener.accept().await.unwrap();
+    assert_eq!(accepted.local_addr().unwrap(), address);
+    assert_eq!(peer, connection.local_addr().unwrap());
+    drop(listener);
+    drop(lease);
+    broker_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn wildcard_listener_descriptor_revokes_the_grant_channel() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let broker_task = tokio::spawn(async move {
+        assert!(matches!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenLoopbackListener { request_id: 1, .. }
+        ));
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::LoopbackListenerGranted {
+                request_id: 1,
+                grant_id: 22,
+                port,
+            },
+            Some(listener.as_raw_fd()),
+        )
+        .await;
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::Adopted { grant_id: 22 }
+        );
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::Release { resource_id: 22 }
+        );
+    });
+
+    let error = client.open_loopback_listener(0).await.unwrap_err().to_string();
+    assert!(error.contains("does not match 127.0.0.1"), "{error}");
+    broker_task.await.unwrap();
+    let error = client.open_loopback_listener(0).await.unwrap_err().to_string();
+    assert!(error.contains("closed") || error.contains("stopped"), "{error}");
+}
+
+#[tokio::test]
 async fn ledger_channel_preserves_grant_and_is_adopted_before_use() {
     let grant = LedgerChannelGrant::new(LedgerGeneration::new([0x6c; 16]), 44, LedgerClientRole::VmOwner).unwrap();
     let (broker, worker) = UnixStream::pair().unwrap();
@@ -119,6 +204,36 @@ async fn proxy_mcp_descriptor_is_surrendered_before_adoption_returns() {
     let mut proof = [0; 3];
     proxy.read_exact(&mut proof).unwrap();
     assert_eq!(&proof, b"mcp");
+    broker_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn proxy_trace_hint_descriptor_is_surrendered_before_adoption_returns() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let (capability, mut proxy) = UnixStream::pair().unwrap();
+    let broker_task = tokio::spawn(async move {
+        let frame = requests.recv().await.unwrap();
+        assert_eq!(frame.fds.len(), 1);
+        assert_eq!(
+            decode_upstream_grant_request(&frame.bytes).unwrap(),
+            UpstreamGrantRequest::AttachProxyTraceHints { request_id: 1 }
+        );
+        let mut adopted = UnixStream::from(frame.fds.into_iter().next().unwrap());
+        adopted.write_all(b"hint").unwrap();
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::ProxyTraceHintsAdopted { request_id: 1 },
+            None,
+        )
+        .await;
+    });
+
+    client.attach_proxy_trace_hints(capability.into()).await.unwrap();
+    let mut proof = [0; 4];
+    proxy.read_exact(&mut proof).unwrap();
+    assert_eq!(&proof, b"hint");
     broker_task.await.unwrap();
 }
 

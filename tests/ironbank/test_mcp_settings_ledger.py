@@ -131,6 +131,11 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
         assert isinstance(vm_id, str)
         assert created.get("name") == session_id
         assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
+        assert client.post("/mcp/servers/local/refresh", timeout=30) == {
+            "success": True,
+            "server_id": "local",
+            "instances": 1,
+        }
 
         with packed_npm_mcp(service.tmp_dir) as mcp:
             listed = mcp.request("tools/list")

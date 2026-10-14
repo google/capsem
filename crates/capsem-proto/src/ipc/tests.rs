@@ -416,10 +416,16 @@ fn job_ids_are_distinct() {
 
 #[test]
 fn reload_config_roundtrip() {
-    let msg = ServiceToProcess::ReloadConfig { id: 3 };
+    let msg = ServiceToProcess::ReloadConfig {
+        id: 3,
+        active_policy: b"[network]".to_vec(),
+    };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    assert!(matches!(msg2, ServiceToProcess::ReloadConfig { id: 3 }));
+    assert!(matches!(
+        msg2,
+        ServiceToProcess::ReloadConfig { id: 3, active_policy } if active_policy == b"[network]"
+    ));
 }
 
 // -----------------------------------------------------------------------

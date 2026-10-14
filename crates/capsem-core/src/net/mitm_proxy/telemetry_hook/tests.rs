@@ -3,7 +3,7 @@ use super::super::hooks::{ChunkCtx, ChunkHook, ConnMeta, HookState};
 use super::*;
 use crate::credential_broker::{CredentialInjection, CredentialObservation, CredentialProvider};
 use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
-use capsem_logger::{credential_reference, Decision};
+use capsem_logger::{credential_reference, DbWriter, Decision};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -180,10 +180,9 @@ async fn websocket_upgrade_is_network_admission_and_not_model_inference() {
     let trace = Arc::new(Mutex::new(TraceState::new()));
     let hook = TelemetryHook::new(Arc::new(TelemetryDeps {
         db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
         pricing: Arc::clone(&pricing),
         trace_state: Arc::clone(&trace),
-        security_rules: empty_security_rules(),
-        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
     }));
     let mut request = anthropic_req_ctx();
     request.domain = "api.openai.com".into();

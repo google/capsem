@@ -3,6 +3,10 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
+use capsem_proto::ledger_commitment::{
+    CommitmentClientMessage, CommitmentReply, CommitmentServerMessage, LedgerCommitment,
+    MAX_COMMITMENTS_PER_CHECKPOINT, ZERO_COMMITMENT_HASH,
+};
 
 use crate::ledger_protocol::{LedgerClientMessage, LedgerResponse, LedgerServerMessage};
 use crate::ledger_server::LedgerServer;

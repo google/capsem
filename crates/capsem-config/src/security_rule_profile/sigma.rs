@@ -97,6 +97,7 @@ impl SigmaRule {
             let mut positive = Vec::new();
             let mut negative = Vec::new();
             for (field, expected) in mapping {
+                let field = field.as_str();
                 validate_security_event_field(field)?;
                 let clause = sigma_field_clause(field, expected)?;
                 positive.push(clause.positive);
@@ -222,6 +223,15 @@ fn sigma_scalar_compare(field: &str, operator: &str, expected: &serde_json::Valu
     let expected = sigma_scalar_to_string(expected)
         .ok_or_else(|| format!("Sigma field '{field}' value must be a scalar or sequence"))?;
     Ok(format!("{field} {operator} {}", cel_string_literal(&expected)))
+}
+
+fn join_grouped(clauses: &[String], operator: &str) -> String {
+    let expression = clauses.join(operator);
+    if clauses.len() > 1 {
+        format!("({expression})")
+    } else {
+        expression
+    }
 }
 
 fn sigma_scalar_to_string(value: &serde_json::Value) -> Option<String> {

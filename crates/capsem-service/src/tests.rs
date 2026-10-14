@@ -45,6 +45,8 @@ mod asset_status;
 mod asset_wait;
 mod instance_reaper;
 mod policy_push;
+#[path = "tests/session_housekeeping.rs"]
+mod session_housekeeping_tests;
 
 pub(crate) static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -192,7 +194,7 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
 /// The fields every fake instance shares; a test names only what it varies.
 pub(crate) fn test_instance() -> InstanceInfo {
     InstanceInfo {
-        generation: uuid::Uuid::new_v4(),
+        generation: capsem_crypto::uuid_v4(),
         authority: Default::default(),
         upstream_policy: upstream_broker::test_policy_publisher(),
         id: String::new(),
@@ -236,7 +238,8 @@ pub(crate) fn spawn_fake_process(
     std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
     tokio::spawn(async move {
         let mut messages = Vec::new();
-        for received in 0..expected {
+        while messages.len() < expected {
+            let received = messages.len();
             // A route that stops talking to its VM used to hang the whole
             // binary here: tests serialized on SETTINGS_ENV_LOCK stalled
             // behind the one waiting forever. Fail with what was missing.
@@ -258,6 +261,12 @@ pub(crate) fn spawn_fake_process(
                 capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
             ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
             let message = rx.recv().await.unwrap();
+            if let ServiceToProcess::InjectCredentials { id, .. } = &message {
+                tx.send(ProcessToService::CredentialsInjected { id: *id, error: None })
+                    .await
+                    .unwrap();
+                continue;
+            }
             if let Some(reply) = handler(&message).await {
                 tx.send(reply).await.unwrap();
             }
@@ -338,24 +347,17 @@ pub(crate) fn spawn_fake_fork_owner(
 }
 
 /// A fake process that answers ping, and reloads by reporting the digest of
-/// the active policy it finds in its session, as capsem-process does.
+/// the exact active policy the service delivered, as capsem-process does.
 pub(crate) fn spawn_fake_process_reload_ack(
     uds_path: &StdPath,
     expected: usize,
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    let active_policy = uds_path
-        .parent()
-        .unwrap()
-        .join(ACTIVE_POLICY_DIR)
-        .join(ACTIVE_POLICY_FILE);
-    spawn_fake_process(uds_path, expected, move |message| {
+    spawn_fake_process(uds_path, expected, |message| {
         let reply = match message {
             ServiceToProcess::Ping => Some(ProcessToService::Pong),
-            ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
+            ServiceToProcess::ReloadConfig { id, active_policy } => Some(ProcessToService::ConfigReloadResult {
                 id: *id,
-                active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(
-                    &std::fs::read(&active_policy).unwrap(),
-                )),
+                active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(active_policy)),
                 error: None,
             }),
             _ => None,

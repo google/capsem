@@ -54,8 +54,11 @@ fn forget(path: &Path, host: u16) -> Result<bool> {
 }
 
 impl Publisher {
-    pub fn for_session(session_dir: &Path, budgets: capsem_config::router::RouterConfig) -> Result<Self> {
-        let state_dir = crate::session::prepare_owner_state_dir(session_dir)?;
+    /// Materialize and migrate publication state while the coordinator still
+    /// permits changes to the session root. The confined VM owner may mutate
+    /// only the resulting owner directory.
+    pub fn prepare_session(session_dir: &Path) -> Result<()> {
+        crate::session::prepare_owner_state_dir(session_dir)?;
         let root = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?;
         let state = root.descend(OsStr::new(crate::session::OWNER_STATE_DIR))?;
         let legacy = OsStr::new(SAVED_PUBLICATIONS_FILE);
@@ -66,12 +69,26 @@ impl Publisher {
             );
             root.rename_to(legacy, &state, legacy)?;
         }
+        Ok(())
+    }
+
+    /// Attach saved-publication state after [`Self::prepare_session`] ran.
+    /// This performs no access to the session root, which is outside the VM
+    /// owner's post-confinement authority.
+    pub fn for_prepared_session(session_dir: &Path, budgets: capsem_config::router::RouterConfig) -> Result<Self> {
         let mut publisher = Self::configured(budgets)?;
         publisher.saved = Some(Mappings {
-            path: state_dir.join(SAVED_PUBLICATIONS_FILE),
+            path: session_dir
+                .join(crate::session::OWNER_STATE_DIR)
+                .join(SAVED_PUBLICATIONS_FILE),
             lock: tokio::sync::Mutex::new(()),
         });
         Ok(publisher)
+    }
+
+    pub fn for_session(session_dir: &Path, budgets: capsem_config::router::RouterConfig) -> Result<Self> {
+        Self::prepare_session(session_dir)?;
+        Self::for_prepared_session(session_dir, budgets)
     }
 
     /// Re-open every saved publication; returns how many were restored.

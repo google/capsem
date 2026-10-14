@@ -451,7 +451,7 @@ pub(crate) async fn plug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) 
         drop(registry);
         (generation, address)
     };
-    let connection = Uuid::new_v4();
+    let connection = capsem_crypto::uuid_v4();
     match handshake(state, network, vm_id, address, generation).await {
         Ok((host, port, keepalive)) => {
             let mut registry = state.networks.lock().await;

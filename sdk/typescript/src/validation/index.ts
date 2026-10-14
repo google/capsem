@@ -28,6 +28,8 @@ export {ContainerSurfaceKindSchema} from "./ContainerSurfaceKind.js";
 export {CreateNetworkRequestSchema} from "./CreateNetworkRequest.js";
 export {CreateProxyRequestSchema} from "./CreateProxyRequest.js";
 export {CreateProxyResponseSchema} from "./CreateProxyResponse.js";
+export {CreateSessionGrantRequestSchema} from "./CreateSessionGrantRequest.js";
+export {CredentialErrorCodeSchema} from "./CredentialErrorCode.js";
 export {CredentialEventSchema} from "./CredentialEvent.js";
 export {CredentialEventTypeSchema} from "./CredentialEventType.js";
 export {CredentialInjectProviderSchema} from "./CredentialInjectProvider.js";

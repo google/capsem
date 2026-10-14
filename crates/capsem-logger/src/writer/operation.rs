@@ -82,7 +82,7 @@ pub fn commitment_event_hash(op: &WriteOp) -> Result<[u8; 32], String> {
 
 pub(crate) fn commitment_event_fingerprint(op: &WriteOp) -> Result<([u8; 32], usize), String> {
     let encoded = serde_json::to_vec(op).map_err(|error| format!("encode ledger event commitment: {error}"))?;
-    let mut hash = blake3::Hasher::new();
+    let mut hash = capsem_crypto::blake3::Hasher::new();
     hash.update(b"capsem-ledger-event-v1\0");
     hash.update(&encoded);
     Ok((*hash.finalize().as_bytes(), encoded.len()))

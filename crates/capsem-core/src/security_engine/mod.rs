@@ -23,6 +23,7 @@ mod container;
 mod credential_grants;
 pub use container::ContainerSecurityEvent;
 mod engine;
+pub use credential_grants::CredentialGrantAdmission;
 pub use engine::*;
 mod event_id;
 pub use event_id::SecurityEventId;

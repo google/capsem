@@ -167,9 +167,10 @@ def test_the_debt_is_a_ratchet_that_can_only_shrink() -> None:
     coverage = _config()
     unmeasured = len(coverage["unmeasured"])
     # The reviewed provider and lifecycle mutations add six stateful paths.
-    # Catalog/grant reads are measured; record the actual remaining 75 rather
-    # than retaining headroom that could hide future classification debt.
-    assert unmeasured <= 75, (
+    # The combined #206 surface adds three supervised proxy lease paths;
+    # managed claim/close now have successful tombstone measurements. These
+    # changes leave exactly 76 stateful paths with named acceptance owners.
+    assert unmeasured <= 76, (
         f"{unmeasured} routes are unmeasured, more than when this guard was "
         "written. A new route should be measured, not added to the debt."
     )

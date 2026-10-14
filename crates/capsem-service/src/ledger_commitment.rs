@@ -76,7 +76,7 @@ pub(crate) struct CommitmentAuthority {
 
 impl CommitmentAuthority {
     pub(crate) async fn open(root: &Path, session_id: &str) -> Result<Arc<Self>> {
-        let session_key = blake3::hash(session_id.as_bytes()).to_hex().to_string();
+        let session_key = capsem_crypto::blake3::hash(session_id.as_bytes()).to_hex().to_string();
         let path = root.join(session_key).join("checkpoints.log");
         let loaded_path = path.clone();
         let state = tokio::task::spawn_blocking(move || load(&loaded_path))
@@ -477,7 +477,7 @@ fn append(path: &Path, record: &CheckpointRecord) -> Result<()> {
     file.write_all(&CHECKPOINT_MAGIC)?;
     file.write_all(&(payload.len() as u32).to_be_bytes())?;
     file.write_all(&payload)?;
-    file.write_all(blake3::hash(&payload).as_bytes())?;
+    file.write_all(capsem_crypto::blake3::hash(&payload).as_bytes())?;
     file.sync_data()?;
     Ok(())
 }
@@ -519,7 +519,7 @@ fn read_records(path: &Path) -> Result<Vec<CheckpointRecord>> {
             }
             return Err(error.into());
         }
-        if checksum != *blake3::hash(&payload).as_bytes() {
+        if checksum != *capsem_crypto::blake3::hash(&payload).as_bytes() {
             bail!("ledger commitment checkpoint checksum is corrupt");
         }
         records.push(rmp_serde::from_slice(&payload).context("decode commitment checkpoint")?);

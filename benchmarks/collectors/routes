@@ -46,10 +46,13 @@ from helpers.stopped_workspace import (
     seed_stopped_workspace,
 )
 
+from benchmarks.helpers.route_measurements import route_metrics
+
 ROOT = Path(__file__).resolve().parents[2]
 WARMUP = 2
 MANAGED_REQUEST_ID = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
 MANAGED_TOKEN = "af" * 32
+LIVE_ROUTES = {"/vms/{id}/exposures", "/vms/{id}/security/status"}
 
 
 def measured_routes() -> list[str]:
@@ -62,11 +65,17 @@ def route_load_config() -> dict[str, int]:
     return dict(config["benchmark"]["route_load"])
 
 
-def request_path(route: str) -> str:
+def request_path(route: str, live_session_id: str | None = None) -> str:
     """Resolve a configured route template against the stopped VM fixture."""
     if route == BODY_ROUTE:
         return BODY_URL
-    return route.replace("{id}", VM_ID).replace("{request_id}", MANAGED_REQUEST_ID)
+    if route in LIVE_ROUTES and live_session_id is None:
+        raise ValueError(f"measured route requires a live owner fixture: {route}")
+    subject = live_session_id if route in LIVE_ROUTES else VM_ID
+    path = route.replace("{id}", subject).replace("{request_id}", MANAGED_REQUEST_ID)
+    if "{" in path or "}" in path:
+        raise ValueError(f"measured route has no successful fixture: {route}")
+    return path
 
 
 def request_input(path: str) -> tuple[str, bytes | None]:
@@ -219,8 +228,9 @@ def main() -> int:
     metrics: dict[str, dict] = {}
     try:
         seed_stopped_workspace(service.tmp_dir, service.assets_dir)
-        service.start()
-        gateway.start()
+        with redirect_stdout(sys.stderr):
+            service.start()
+            gateway.start()
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
         targets = (
@@ -242,61 +252,23 @@ def main() -> int:
                 },
             ),
         )
-        for path in routes:
-            concrete_path = request_path(path)
-            for target in targets:
-                print(f"{target.label} {path}", file=sys.stderr)
-                latencies, cpu = sample_warm_route(target, concrete_path, samples)
-                cold_latencies = sample_cold_route(target, concrete_path, samples)
-                metrics[f"{target.label}.{path}.latency_ms"] = {
-                    "unit": "milliseconds",
-                    "samples": latencies,
-                }
-                metrics[f"{target.label}.{path}.cold_latency_ms"] = {
-                    "unit": "milliseconds",
-                    "samples": cold_latencies,
-                }
-                for process_name, cpu_seconds in cpu.items():
-                    suffix = (
-                        "cpu_s"
-                        if process_name == target.label
-                        else f"{process_name}_cpu_s"
-                    )
-                    metrics[f"{target.label}.{path}.{suffix}"] = {
-                        "unit": "seconds",
-                        "samples": [cpu_seconds],
-                    }
-                concurrent_latencies, concurrent_cpu, rps = sample_concurrent_route(
-                    target, concrete_path, load_samples, concurrency
+        with ExitStack() as fixtures:
+            live_id = None
+            if LIVE_ROUTES.intersection(routes):
+                live_id = fixtures.enter_context(
+                    debug_session(service, service.home_dir / "route-registry", "route-live-owner")
                 )
-                metrics[f"{target.label}.{path}.concurrent_latency_ms"] = {
-                    "unit": "milliseconds",
-                    "samples": concurrent_latencies,
-                }
-                metrics[f"{target.label}.{path}.concurrent_rps"] = {
-                    "unit": "requests_per_second",
-                    "samples": [rps],
-                }
-                for process_name, cpu_seconds in concurrent_cpu.items():
-                    suffix = (
-                        "concurrent_cpu_s"
-                        if process_name == target.label
-                        else f"concurrent_{process_name}_cpu_s"
+            for path in routes:
+                concrete_path = request_path(path, live_id)
+                for target in targets:
+                    print(f"{target.label} {path}", file=sys.stderr)
+                    latencies, cpu = sample_warm_route(target, concrete_path, samples)
+                    cold_latencies = sample_cold_route(target, concrete_path, samples)
+                    metrics.update(route_metrics(target.label, path, latencies, cold_latencies, cpu))
+                    concurrent_latencies, concurrent_cpu, rps = sample_concurrent_route(
+                        target, concrete_path, load_samples, concurrency
                     )
-                    metrics[f"{target.label}.{path}.{suffix}"] = {
-                        "unit": "seconds",
-                        "samples": [cpu_seconds],
-                    }
-                    metrics[f"{target.label}.{path}.cold_latency_ms"] = {
-                        "unit": "milliseconds",
-                        "samples": cold_latencies,
-                    }
-                    for process_name, cpu_seconds in cpu.items():
-                        suffix = "cpu_s" if process_name == target.label else f"{process_name}_cpu_s"
-                        metrics[f"{target.label}.{path}.{suffix}"] = {
-                            "unit": "seconds",
-                            "samples": [cpu_seconds],
-                        }
+                    metrics.update(route_metrics(target.label, path, concurrent_latencies, None, concurrent_cpu, rps))
     finally:
         gateway.stop()
         service.stop()

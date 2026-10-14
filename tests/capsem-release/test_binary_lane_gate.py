@@ -48,7 +48,7 @@ def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
     assert "pub fn verify_package_contents_match_binary_inventory" in source
     assert 'format!("{:x}", Sha256::digest(&file.bytes))' in source
     assert "use capsem_crypto::{blake3::hash, Sha256};" in source
-    assert "hash(&file.bytes)" in source
+    assert "hash(&file.bytes).to_hex().to_string()" in source
     assert "sbom_component_refs" in source
     assert "missing SBOM component reference" in source
 
@@ -66,10 +66,7 @@ def test_sha1_only_spdx_is_rejected() -> None:
     tests = ADMIN_CHANNEL_BUILD_TESTS.read_text(encoding="utf-8")
 
     assert "fn validate_host_spdx_sbom_bytes" in render
-    assert (
-        "let blake3 = capsem_crypto::blake3::hash(&bytes).to_hex().to_string();"
-        in package_inspection
-    )
+    assert "let blake3 = capsem_crypto::blake3::hash(&bytes).to_hex().to_string();" in package_inspection
     assert "blake3: file.blake3.clone()" in render
     assert "channel manifest host binary {} has malformed blake3" in validation
     assert 'algorithm.eq_ignore_ascii_case("SHA256")' in render

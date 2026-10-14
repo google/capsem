@@ -13,7 +13,7 @@ pub(super) fn make_tls_client_config() -> rustls::ClientConfig {
     for cert in certs {
         root_store.add(cert).unwrap();
     }
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let provider = Arc::new(capsem_crypto::tls::provider());
     let mut config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .unwrap()

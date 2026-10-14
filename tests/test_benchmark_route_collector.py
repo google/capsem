@@ -24,9 +24,9 @@ def test_every_measured_route_resolves_to_a_concrete_fixture_request() -> None:
     request_path = collector["request_path"]
 
     unresolved = {
-        route: request_path(route)
+        route: request_path(route, "live-owner")
         for route in collector["measured_routes"]()
-        if "{" in request_path(route) or "}" in request_path(route)
+        if "{" in request_path(route, "live-owner") or "}" in request_path(route, "live-owner")
     }
 
     assert not unresolved, (

@@ -41,7 +41,13 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             Some(12),
         ),
         (ServiceToProcess::Ping, None),
-        (ServiceToProcess::ReloadConfig { id: 13 }, Some(13)),
+        (
+            ServiceToProcess::ReloadConfig {
+                id: 13,
+                active_policy: Vec::new(),
+            },
+            Some(13),
+        ),
         (
             ServiceToProcess::CloneStateComplete {
                 id: 14,

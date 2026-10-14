@@ -73,6 +73,8 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     monkeypatch.setattr(collector, "ServiceInstance", lambda: service)
     monkeypatch.setattr(collector, "GatewayInstance", lambda _: gateway)
     monkeypatch.setattr(collector, "seed_stopped_workspace", lambda *_: None)
+    monkeypatch.setattr(collector, "clone_benchmark_assets", lambda *_: tmp_path / "benchmark-assets")
+    original_process = collector.psutil.Process
     monkeypatch.setattr(collector.psutil, "Process", lambda _: None)
     monkeypatch.setattr(collector, "measured_routes", lambda: ["/status"])
     monkeypatch.setattr(
@@ -80,12 +82,21 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
         lambda target, *_: ([0.1], dict.fromkeys(target.cpu_processes, 0.0)),
     )
     monkeypatch.setattr(collector, "sample_cold_route", lambda *_: [0.2])
+    monkeypatch.setattr(
+        collector, "sample_concurrent_route",
+        lambda target, *_: ([0.3], dict.fromkeys(target.cpu_processes, 0.0), 10.0),
+    )
     monkeypatch.setattr(sys, "argv", ["routes", "--samples", "1"])
 
-    assert collector.main() == 0
+    try:
+        assert collector.main() == 0
+    finally:
+        # psutil is shared with the process-leak fixture, which tears down
+        # before monkeypatch's automatic undo.
+        monkeypatch.setattr(collector.psutil, "Process", original_process)
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert len(payload["metrics"]) == 7
+    assert len(payload["metrics"]) == 14
     assert "SERVICE LOG:" in captured.err
     assert "GATEWAY LOG:" in captured.err
     assert stopped == ["gateway", "service"]

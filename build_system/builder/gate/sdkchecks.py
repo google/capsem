@@ -55,6 +55,50 @@ def python_package(config: GateConfig) -> Step:
     )
 
 
+def python_package_prewarm(config: GateConfig) -> Step:
+    """Rehydrate build backends after the candidate cache-enforcement phase.
+
+    Clean consumers install the sdist offline, so uv must still have its
+    PEP 517 backend after the gate has enforced the shared cache budget.
+    """
+    settings = config.sdk_python
+    return step(
+        "sdk.python.package-prewarm",
+        Run(
+            [
+                "uv",
+                "export",
+                "--project",
+                settings.project,
+                "--frozen",
+                "--only-group",
+                "package-build",
+                "--no-emit-project",
+                "--format",
+                "requirements.txt",
+                "--output-file",
+                settings.package_build_requirements,
+            ],
+        ),
+        Run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                settings.environment_python,
+                "--reinstall",
+                "--requirements",
+                settings.package_build_requirements,
+            ],
+            outside_sandbox=True,
+        ),
+        kind=Kind.COMPILE,
+        needs=frozenset({Needs.DISK, Needs.NETWORK}),
+        speed=Speed.FAST,
+    )
+
+
 def typescript_package(config: GateConfig) -> Step:
     settings = config.sdk_typescript
     return step(

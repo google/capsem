@@ -46,6 +46,7 @@ mod owner_connection;
 mod owner_handoff;
 mod policy_mutation;
 use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
+mod connection_routes;
 mod credential_routes;
 mod ledger_commitment;
 mod ledger_worker;

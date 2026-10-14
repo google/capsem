@@ -56,7 +56,7 @@ fn require_metadata_authority(config: &VmConfig) -> Result<()> {
 }
 
 pub(crate) fn kvm_vsock_seed(config: &VmConfig) -> u32 {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = capsem_crypto::blake3::Hasher::new();
     hasher.update(config.kernel_path.to_string_lossy().as_bytes());
     if let Some(path) = config.scratch_disk_path.as_ref().or(config.disk_path.as_ref()) {
         hasher.update(path.to_string_lossy().as_bytes());

@@ -684,14 +684,14 @@ pub(crate) async fn handle_ipc_connection(
                     warn!(id, %error, "clone completion refused");
                 }
             }
-            ServiceToProcess::ReloadConfig { id } => {
+            ServiceToProcess::ReloadConfig { id, active_policy } => {
                 info!(
                     active_policy = %runtime_source.active_policy_path().display(),
                     "Reloading runtime policy"
                 );
                 // A policy that does not load leaves the previous one in
                 // force; the service is told why instead of losing the socket.
-                let reply = match runtime_source.load() {
+                let reply = match runtime_source.load_bytes(&active_policy) {
                     Ok(runtime_config) => {
                         let digest = runtime_config.active_policy_digest.clone();
                         runtime_config.apply(&net_state, &mcp_runtime);
@@ -802,7 +802,7 @@ pub(crate) async fn handle_ipc_connection(
                 let mcp_builtin_binary = mcp_builtin_binary.clone();
                 let mcp_builtin_env = mcp_builtin_env.clone();
                 tokio::spawn(async move {
-                    let runtime_config = match runtime_source.load() {
+                    let runtime_config = match runtime_source.current() {
                         Ok(config) => config,
                         Err(e) => {
                             capsem_core::try_send!(

@@ -46,6 +46,15 @@ fn every_request_round_trips_exactly() {
             service: ProxyTrafficService::Dns,
         },
         UpstreamGrantRequest::AttachProxyMcp { request_id: 8 },
+        UpstreamGrantRequest::AttachProxyTraceHints { request_id: 9 },
+        UpstreamGrantRequest::OpenLoopbackListener {
+            request_id: 10,
+            port: 0,
+        },
+        UpstreamGrantRequest::OpenLoopbackListener {
+            request_id: 11,
+            port: 41234,
+        },
         UpstreamGrantRequest::Adopted { grant_id: 51 },
         UpstreamGrantRequest::Release { resource_id: 61 },
         UpstreamGrantRequest::SetGuestMode {
@@ -115,6 +124,12 @@ fn every_response_round_trips_exactly() {
         },
         UpstreamGrantResponse::ProxyTrafficAdopted { request_id: 9 },
         UpstreamGrantResponse::ProxyMcpAdopted { request_id: 10 },
+        UpstreamGrantResponse::ProxyTraceHintsAdopted { request_id: 11 },
+        UpstreamGrantResponse::LoopbackListenerGranted {
+            request_id: 12,
+            grant_id: 17,
+            port: 41234,
+        },
     ] {
         response_roundtrip(response);
     }
@@ -225,11 +240,19 @@ fn descriptor_expectations_are_explicit() {
         1
     );
     assert_eq!(
+        UpstreamGrantRequest::AttachProxyTraceHints { request_id: 11 }.expected_descriptor_count(),
+        1
+    );
+    assert_eq!(
         UpstreamGrantResponse::ProxyTrafficAdopted { request_id: 9 }.expected_descriptor_count(),
         0
     );
     assert_eq!(
         UpstreamGrantResponse::ProxyMcpAdopted { request_id: 10 }.expected_descriptor_count(),
+        0
+    );
+    assert_eq!(
+        UpstreamGrantResponse::ProxyTraceHintsAdopted { request_id: 11 }.expected_descriptor_count(),
         0
     );
     assert_eq!(
@@ -246,6 +269,15 @@ fn descriptor_expectations_are_explicit() {
             grant_id: 2,
             kind: UpstreamDescriptorKind::DnsUdp,
             policy_digest: POLICY_DIGEST.into(),
+        }
+        .expected_descriptor_count(),
+        1
+    );
+    assert_eq!(
+        UpstreamGrantResponse::LoopbackListenerGranted {
+            request_id: 12,
+            grant_id: 17,
+            port: 41234,
         }
         .expected_descriptor_count(),
         1

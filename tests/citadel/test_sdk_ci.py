@@ -64,7 +64,14 @@ def _assert_mcp_owner(fast: dict[str, Any], ci: dict[str, Any], coverage: dict[s
     sdk = next(index for index, step in enumerate(steps) if step.get("working-directory") == "sdk/typescript")
     mcp = next(index for index, step in enumerate(steps) if step.get("working-directory") == MCP)
     assert sdk < mcp, "the MCP build links the SDK package the SDK step builds; " + RATIONALE
-    assert "pnpm test " in steps[mcp]["run"], RATIONALE
+    assert steps[mcp]["run"].splitlines() == [
+        "pnpm install --frozen-lockfile",
+        "pnpm run prewarm:packed",
+        (
+            "pnpm test --reporter=default --reporter=junit "
+            "--outputFile=../../cache/target/coverage/junit/mcp-typescript.xml"
+        ),
+    ], RATIONALE
     upload = next(step for step in steps if step.get("with", {}).get("flags") == "mcp-server")
     assert upload["with"]["files"] == MCP_LCOV, RATIONALE
     vitest = (ROOT / MCP / "vitest.config.ts").read_text()

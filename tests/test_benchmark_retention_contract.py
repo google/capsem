@@ -205,7 +205,7 @@ def test_lifecycle_startup_metric_spans_create_and_ready_boundary() -> None:
 
 def test_latest_benchmark_evidence_ignores_untracked_results(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    evidence = tmp_path / PRUNE.BENCHMARKS.relative_to(PROJECT_ROOT) / "fork"
+    evidence = tmp_path / PRUNE.BENCHMARKS.relative_to(PROJECT_ROOT) / BenchmarkCategory.FORK.value
     evidence.mkdir(parents=True)
     (evidence / "tracked.json").write_text(
         json.dumps({"timestamp": 1, "identity": "tracked"}), encoding="utf-8"

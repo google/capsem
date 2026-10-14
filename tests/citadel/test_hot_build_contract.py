@@ -33,6 +33,8 @@ HOT_DEV_OPTIMIZED_PACKAGES = {
     "ryu",
     "quick_cache",
     "rusqlite",
+    "libsqlite3-sys",
+    "capsem-logger",
 }
 
 RATIONALE = """\

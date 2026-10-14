@@ -246,6 +246,13 @@ fn linux_sandbox_child() {
             assert_eq!(std::fs::read(exact).unwrap(), b"one file");
             assert!(std::fs::write(readonly.join("value"), b"changed").is_err());
             std::fs::write(allowed.join("created"), b"ok").unwrap();
+            let atomic = allowed.join("atomic");
+            super::super::fs::atomic_write_private(&atomic, b"private").unwrap();
+            assert_eq!(std::fs::read(&atomic).unwrap(), b"private");
+            assert_eq!(
+                std::fs::symlink_metadata(&atomic).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
             assert!(std::fs::read(denied.join("secret")).is_err());
             assert!(UnixStream::connect(control).is_err());
             assert!(UnixStream::pair().is_err());

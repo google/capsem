@@ -86,10 +86,6 @@ fn main() -> Result<()> {
 }
 
 async fn run(args: Args) -> Result<()> {
-    anyhow::ensure!(
-        args.service_grant_stdin,
-        "capsem-gateway requires a coordinator descriptor grant channel"
-    );
     let run_dir = gateway_run_dir(&args);
     let _ = std::fs::create_dir_all(&run_dir);
     let log_path = run_dir.join("gateway.log");
@@ -109,6 +105,10 @@ async fn run(args: Args) -> Result<()> {
     let Some(_singleton) = capsem_guard::Singleton::try_acquire(&lock_path)? else {
         return Ok(());
     };
+    anyhow::ensure!(
+        args.service_grant_stdin,
+        "capsem-gateway requires a coordinator descriptor grant channel"
+    );
     let uds_path = args.uds_path.unwrap_or_else(|| run_dir.join("service.sock"));
     let service_socket_missing = !uds_path.exists();
 
@@ -303,6 +303,21 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/proxies", post(proxy::handle_proxy))
         .route("/proxies/{id}/heartbeat", post(proxy::handle_proxy))
         .route("/proxies/{id}/stop", post(proxy::handle_proxy))
+        .route("/connections", get(proxy::handle_proxy))
+        .route("/connections/google/authorize", post(proxy::handle_proxy))
+        .route(
+            "/connections/authorizations/{transaction_id}",
+            get(proxy::handle_proxy).delete(proxy::handle_proxy),
+        )
+        .route(
+            "/connections/{connection_id}",
+            get(proxy::handle_proxy).delete(proxy::handle_proxy),
+        )
+        .route(
+            "/vms/{id}/credential-grants",
+            get(proxy::handle_proxy).post(proxy::handle_proxy),
+        )
+        .route("/vms/{id}/credential-grants/{grant_id}", delete(proxy::handle_proxy))
         .route("/vms/create", post(proxy::handle_proxy))
         .route("/vms/managed/{request_id}/claim", post(proxy::handle_proxy))
         .route("/vms/managed/{request_id}/close", post(proxy::handle_proxy))

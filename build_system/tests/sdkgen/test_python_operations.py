@@ -26,29 +26,12 @@ SCHEMAS = read_schemas(SPEC)
 ROUTES = read_operations(SPEC)
 
 
-def sample(schema: Schema) -> object:
-    if schema.ref:
-        return sample(SCHEMAS[schema.ref.rsplit("/", 1)[1]])
-    if schema.type is None and not schema.one_of:
-        return {"nested": [True, None, {"number": 3}]}
-    if schema.one_of:
-        return sample(schema.one_of[0])
-    if schema.enum:
-        return schema.enum[0]
-    if isinstance(schema.type, list) or schema.type == "null":
-        return None
-    if schema.type == "object":
-        return {key: sample(schema.properties[key]) for key in schema.required}
-    if schema.type == "array":
-        return []
-    assert schema.type is not None
-    if schema.format == "ipv4":
-        return "10.128.0.2"
-    if schema.format == "uuid":
-        return "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
-    if schema.pattern == "^[0-9a-f]{64}$":
-        return "af" * 32
-    return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[schema.type]
+def test_uuid_query_uses_the_shared_alias_and_refuses_invalid_material(package: ModuleType) -> None:
+    async def run() -> None:
+        async with package._transport.Transport("http://127.0.0.1:1", "secret") as transport:
+            with pytest.raises(ValidationError):
+                await package.operations.list_connections(transport, limit=1, cursor="private-query")
+    asyncio.run(run())
 
 
 @pytest.fixture

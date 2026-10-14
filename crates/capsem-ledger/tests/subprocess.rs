@@ -106,7 +106,10 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
             .env("CAPSEM_LEDGER_SECRET", "must-not-survive")
             .stdin(Stdio::from(OwnedFd::from(child_control)))
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            // Startup failures happen before the worker can send Ready. Keep
+            // its exact confinement error in the test log instead of reducing
+            // every refusal to an opaque control-channel EOF.
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap(),
     ));

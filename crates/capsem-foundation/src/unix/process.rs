@@ -12,16 +12,6 @@ use super::errno;
 mod scope;
 pub use scope::ProcessScope;
 
-#[cfg(target_os = "linux")]
-mod pinned;
-#[cfg(target_os = "linux")]
-pub use pinned::ProcessHandle;
-
-#[cfg(target_os = "macos")]
-mod pinned_macos;
-#[cfg(target_os = "macos")]
-pub use pinned_macos::ProcessHandle;
-
 /// Erase the inherited environment and detach it from the C process image.
 ///
 /// `remove_var` alone leaves the original stack bytes visible through Linux
@@ -70,6 +60,16 @@ fn inherited_environment() -> *mut *mut libc::c_char {
 fn inherited_environment() -> *mut *mut libc::c_char {
     std::ptr::null_mut()
 }
+
+#[cfg(target_os = "linux")]
+mod pinned;
+#[cfg(target_os = "linux")]
+pub use pinned::ProcessHandle;
+
+#[cfg(target_os = "macos")]
+mod pinned_macos;
+#[cfg(target_os = "macos")]
+pub use pinned_macos::ProcessHandle;
 
 /// A positive process identifier representable by the host kernel ABI.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

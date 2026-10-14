@@ -118,7 +118,7 @@ pub(super) fn retain_bodies(
         return Ok(RetainOutcome::default());
     }
 
-    let generation_id = GenerationId::new_v4();
+    let generation_id = GenerationId::generate();
     let mut candidate = BodyLogWriter::create_generation_with_codecs(
         &directory,
         state.header.archive_id,

@@ -22,7 +22,14 @@ impl VisitMut for StripDocs {
 }
 
 fn main() {
-    let files = ["lib.rs", "ipc.rs", "handshake.rs", "router.rs", "exec_stream.rs"];
+    let files = [
+        "lib.rs",
+        "ipc.rs",
+        "handshake.rs",
+        "router.rs",
+        "exec_stream.rs",
+        "credential_injection.rs",
+    ];
     write_hash("schema_hash.txt", &files);
     write_hash(
         "ledger_schema_hash.txt",

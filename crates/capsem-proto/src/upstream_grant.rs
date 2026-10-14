@@ -153,6 +153,7 @@ pub enum UpstreamGrantDenial {
     ConnectFailed,
     Revoked,
     InvalidResource,
+    BindFailed,
 }
 
 impl UpstreamGrantDenial {
@@ -165,6 +166,7 @@ impl UpstreamGrantDenial {
             Self::ConnectFailed => 5,
             Self::Revoked => 6,
             Self::InvalidResource => 7,
+            Self::BindFailed => 8,
         }
     }
 
@@ -177,6 +179,7 @@ impl UpstreamGrantDenial {
             5 => Ok(Self::ConnectFailed),
             6 => Ok(Self::Revoked),
             7 => Ok(Self::InvalidResource),
+            8 => Ok(Self::BindFailed),
             _ => bail!("invalid upstream denial reason {code}"),
         }
     }
@@ -227,6 +230,13 @@ pub enum UpstreamGrantRequest {
     AttachProxyMcp {
         request_id: u64,
     },
+    AttachProxyTraceHints {
+        request_id: u64,
+    },
+    OpenLoopbackListener {
+        request_id: u64,
+        port: u16,
+    },
 }
 
 /// Coordinator-to-worker record. Ledger grants carry two independent fds.
@@ -265,13 +275,21 @@ pub enum UpstreamGrantResponse {
     ProxyMcpAdopted {
         request_id: u64,
     },
+    ProxyTraceHintsAdopted {
+        request_id: u64,
+    },
+    LoopbackListenerGranted {
+        request_id: u64,
+        grant_id: u64,
+        port: u16,
+    },
 }
 
 impl UpstreamGrantRequest {
     /// Requests never carry descriptors from the untrusted worker.
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
-            Self::AttachProxyTraffic { .. } | Self::AttachProxyMcp { .. } => 1,
+            Self::AttachProxyTraffic { .. } | Self::AttachProxyMcp { .. } | Self::AttachProxyTraceHints { .. } => 1,
             _ => 0,
         }
     }
@@ -282,14 +300,15 @@ impl UpstreamGrantResponse {
     /// the direct worker channel and the trusted checkpoint channel.
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
-            Self::DescriptorGranted { .. } => 1,
+            Self::DescriptorGranted { .. } | Self::LoopbackListenerGranted { .. } => 1,
             Self::LedgerGranted { .. } => 2,
             Self::TcpResolved { .. }
             | Self::Denied { .. }
             | Self::GuestModeSet { .. }
             | Self::GuestTimesSet { .. }
             | Self::ProxyTrafficAdopted { .. }
-            | Self::ProxyMcpAdopted { .. } => 0,
+            | Self::ProxyMcpAdopted { .. }
+            | Self::ProxyTraceHintsAdopted { .. } => 0,
         }
     }
 }
@@ -390,6 +409,17 @@ pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[
             require_nonzero("request id", *request_id)?;
             frame[KIND_OFFSET] = ATTACH_PROXY_MCP;
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
+        UpstreamGrantRequest::AttachProxyTraceHints { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = ATTACH_PROXY_TRACE_HINTS;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
+        UpstreamGrantRequest::OpenLoopbackListener { request_id, port } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = OPEN_LOOPBACK_LISTENER;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+            put_u16(&mut frame, PORT_RANGE, *port);
         }
     }
     Ok(frame)
@@ -521,6 +551,23 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
             require_empty_path(&relative_path)?;
             Ok(UpstreamGrantRequest::AttachProxyMcp { request_id })
         }
+        ATTACH_PROXY_TRACE_HINTS => {
+            require_nonzero("request id", request_id)?;
+            if resource_id != 0 {
+                bail!("proxy trace-hint request carries a resource");
+            }
+            require_empty_fields(port, detail, &name)?;
+            require_empty_path(&relative_path)?;
+            Ok(UpstreamGrantRequest::AttachProxyTraceHints { request_id })
+        }
+        OPEN_LOOPBACK_LISTENER => {
+            require_nonzero("request id", request_id)?;
+            if resource_id != 0 || detail != 0 || !name.is_empty() {
+                bail!("loopback listener request carries unrelated fields");
+            }
+            require_empty_path(&relative_path)?;
+            Ok(UpstreamGrantRequest::OpenLoopbackListener { request_id, port })
+        }
         kind => bail!("invalid upstream request kind {kind}"),
     }
 }
@@ -595,6 +642,26 @@ pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Resul
             frame[KIND_OFFSET] = PROXY_MCP_ADOPTED;
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
         }
+        UpstreamGrantResponse::ProxyTraceHintsAdopted { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = PROXY_TRACE_HINTS_ADOPTED;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
+        UpstreamGrantResponse::LoopbackListenerGranted {
+            request_id,
+            grant_id,
+            port,
+        } => {
+            require_nonzero("request id", *request_id)?;
+            require_nonzero("grant id", *grant_id)?;
+            if *port == 0 {
+                bail!("granted loopback listener port cannot be zero");
+            }
+            frame[KIND_OFFSET] = LOOPBACK_LISTENER_GRANTED;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+            put_u64(&mut frame, RESOURCE_ID_RANGE, *grant_id);
+            put_u16(&mut frame, PORT_RANGE, *port);
+        }
     }
     Ok(frame)
 }
@@ -612,7 +679,7 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
     let relative_path = get_path(frame)?;
     require_empty_path(&relative_path)?;
     require_nonzero("request id", request_id)?;
-    if port != 0 {
+    if port != 0 && frame[KIND_OFFSET] != LOOPBACK_LISTENER_GRANTED {
         bail!("upstream response cannot carry a port");
     }
     match frame[KIND_OFFSET] {
@@ -692,6 +759,23 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
                 bail!("proxy MCP adoption carries unrelated fields");
             }
             Ok(UpstreamGrantResponse::ProxyMcpAdopted { request_id })
+        }
+        PROXY_TRACE_HINTS_ADOPTED => {
+            if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {
+                bail!("proxy trace-hint adoption carries unrelated fields");
+            }
+            Ok(UpstreamGrantResponse::ProxyTraceHintsAdopted { request_id })
+        }
+        LOOPBACK_LISTENER_GRANTED => {
+            require_nonzero("grant id", resource_id)?;
+            if port == 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {
+                bail!("loopback listener grant carries invalid fields");
+            }
+            Ok(UpstreamGrantResponse::LoopbackListenerGranted {
+                request_id,
+                grant_id: resource_id,
+                port,
+            })
         }
         kind => bail!("invalid upstream response kind {kind}"),
     }
@@ -854,7 +938,7 @@ fn decode_hex_nibble(byte: u8) -> Result<u8> {
 
 fn validate_policy_digest(digest: &str) -> Result<()> {
     let Some(hash) = digest.strip_prefix("blake3:") else {
-        bail!("policy digest must use blake3");
+        bail!("policy digest must have the blake3 scheme");
     };
     if hash.len() != 64
         || !hash

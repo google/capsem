@@ -34,6 +34,10 @@ from .container_surface_kind import ContainerSurfaceKind as ContainerSurfaceKind
 from .create_network_request import CreateNetworkRequest as CreateNetworkRequest
 from .create_proxy_request import CreateProxyRequest as CreateProxyRequest
 from .create_proxy_response import CreateProxyResponse as CreateProxyResponse
+from .create_session_grant_request import (
+    CreateSessionGrantRequest as CreateSessionGrantRequest,
+)
+from .credential_error_code import CredentialErrorCode as CredentialErrorCode
 from .credential_event import CredentialEvent as CredentialEvent
 from .credential_event_type import CredentialEventType as CredentialEventType
 from .credential_inject_provider import (

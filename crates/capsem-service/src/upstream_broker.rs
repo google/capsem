@@ -75,6 +75,11 @@ struct ActiveGrant {
     adopted: bool,
 }
 
+struct ActiveListenerGrant {
+    descriptor: Option<OwnedFd>,
+    adopted: bool,
+}
+
 enum LedgerSource {
     #[cfg(test)]
     Ready(LedgerClient),
@@ -113,12 +118,13 @@ impl LedgerSource {
 enum AwaitingAdoption {
     Upstream(u64),
     Ledger(u64),
+    Listener(u64),
 }
 
 impl AwaitingAdoption {
     const fn grant_id(self) -> u64 {
         match self {
-            Self::Upstream(grant_id) | Self::Ledger(grant_id) => grant_id,
+            Self::Upstream(grant_id) | Self::Ledger(grant_id) | Self::Listener(grant_id) => grant_id,
         }
     }
 }
@@ -259,6 +265,7 @@ async fn run(
     });
     let mut selections = HashMap::new();
     let mut active = HashMap::new();
+    let mut listeners = HashMap::new();
     let mut next_resource_id = 1_u64;
     let mut awaiting_adoption = None;
     let ledger_configured = ledger.is_some();
@@ -571,6 +578,18 @@ async fn run(
                         awaiting_adoption = None;
                         continue;
                     }
+                    if awaiting_adoption == Some(AwaitingAdoption::Listener(grant_id)) {
+                        let Some(grant) = listeners.get_mut(&grant_id) else {
+                            break Err(format!("listener grant {grant_id} disappeared before adoption"));
+                        };
+                        if grant.adopted {
+                            break Err(format!("listener grant {grant_id} was already adopted"));
+                        }
+                        grant.adopted = true;
+                        drop(grant.descriptor.take());
+                        awaiting_adoption = None;
+                        continue;
+                    }
                     let Some(grant) = active.get_mut(&grant_id) else {
                         break Err(format!("adopted unknown descriptor grant {grant_id}"));
                     };
@@ -582,13 +601,18 @@ async fn run(
                 }
                 UpstreamGrantRequest::Release { resource_id } => {
                     if selections.remove(&resource_id).is_none() {
-                        let Some(grant) = active.remove(&resource_id) else {
+                        if let Some(grant) = active.remove(&resource_id) {
+                            if !grant.adopted {
+                                break Err(format!("released unadopted descriptor grant {resource_id}"));
+                            }
+                            revoke_grant(resource_id, grant)?;
+                        } else if let Some(grant) = listeners.remove(&resource_id) {
+                            if !grant.adopted {
+                                break Err(format!("released unadopted listener grant {resource_id}"));
+                            }
+                        } else {
                             break Err(format!("released unknown upstream resource {resource_id}"));
-                        };
-                        if !grant.adopted {
-                            break Err(format!("released unadopted descriptor grant {resource_id}"));
                         }
-                        revoke_grant(resource_id, grant)?;
                     }
                 }
                 UpstreamGrantRequest::SetGuestMode {
@@ -698,6 +722,34 @@ async fn run(
                         }
                         Err(error) => {
                             warn!(%error, "proxy worker refused MCP descriptor");
+                            send_denied(&responses, request_id, UpstreamGrantDenial::Revoked).await?;
+                        }
+                    }
+                }
+                UpstreamGrantRequest::AttachProxyTraceHints { request_id } => {
+                    let Some(proxy) = proxy.as_ref() else {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
+                        continue;
+                    };
+                    let descriptor = frame
+                        .fds
+                        .into_iter()
+                        .next()
+                        .expect("one validated trace-hint descriptor");
+                    match proxy
+                        .grant(capsem_proto::proxy_control::ProxyCapability::TraceHints, descriptor)
+                        .await
+                    {
+                        Ok(()) => {
+                            send_response(
+                                &responses,
+                                &UpstreamGrantResponse::ProxyTraceHintsAdopted { request_id },
+                                None,
+                            )
+                            .await?;
+                        }
+                        Err(error) => {
+                            warn!(%error, "proxy worker refused trace-hint descriptor");
                             send_denied(&responses, request_id, UpstreamGrantDenial::Revoked).await?;
                         }
                     }

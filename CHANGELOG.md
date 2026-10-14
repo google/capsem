@@ -15,6 +15,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fail DNS closed when any decision, rule or ask row is refused, and coalesce
   related supplemental admissions so concurrent queries do not serialize one
   ledger round trip per row.
+- Ledger event identifiers reject NUL suffixes, and host audit-chain hashes
+  require binary storage. Stale declarations fail integrity readiness.
+
+- Ledger digest and credential-reference checks reject nonhex characters and
+  NUL suffixes. Readers and writers refuse older checks without rewriting the ledger.
+
+- Session credential grants require the original runtime's acknowledged policy
+  and current policy; applied-policy receipts retire with stopped sessions.
+
+- Credential target preflight uses the existing security rules and plugins,
+  including corporate ask/block and method, query and port constraints.
+
+- Delayed process exit cleanup fences its exact old credential runtime even
+  after a resumed replacement has taken over the session registry.
+
+- Session stop, suspend, exit and terminal cleanup fence credential grants.
+  Ready resume rebinds valid approval, and deletion refuses a resumed replacement.
+
+- Credential runtime fences preserve finite same-session approval on retained
+  stops and retire terminal session approvals, including recovered metadata.
+
+- Invalid corporate policy now refuses security admission instead of being
+  treated as empty constraints; the settings UI remains available for repair.
+
+- Credential grant issuance checks current policy and runtime ownership inside
+  the same admission lock as terminal retirement, preventing stale permission
+  checks from inserting authority after its owner has retired.
 
 - VM boot admission retains an exclusive generation lifetime fence. Service
   restart cleanup confirms exit in the original kernel boot and PID namespace
@@ -65,6 +92,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parent watcher, ledger client, filesystem monitor, or metric workers;
   pre-bind only the exact IPC and VSOCK descriptors those workers inherit.
 
+- Keep dynamic port publication inside VM-owner confinement by having the
+  generation-bound coordinator channel grant an exact loopback listener. The
+  owner validates and admits that descriptor while retaining no ambient bind
+  authority, grants only `/dev/null` for the confined router's closed output,
+  persists restored mappings without mode-change authority, and preserves TCP
+  resets through descriptor closure without restoring outbound connect. The
+  service never accepts or forwards workload bytes.
+
 - Keep host-worker confinement fail-closed across supported Linux Landlock
   ABIs, including single-threaded startup on ABI 6 and 7, and canonicalize
   macOS Seatbelt grants so system path aliases cannot silently deny or widen
@@ -109,6 +144,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the matching checkpoint outside the ledger directory. Startup verification
   now rejects altered, substituted, reordered, or omitted checkpointed rows.
 
+- Split high-volume ledger flushes across bounded commitment checkpoints, so
+  filesystem and package-manager audit bursts cannot stop the fail-closed
+  security ledger and refuse later VM commands.
+
+- Retire trusted ledger checkpoints with every permanent session deletion and
+  move them with retained failure evidence, so a reused ephemeral session name
+  cannot inherit an earlier ledger's authority.
+
 - Pass the packaged ledger and proxy worker paths explicitly to installed and
   direct services, refuse incomplete confined-worker cohorts, and retire both
   children during reinstall or uninstall.
@@ -125,6 +168,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apply each proxy policy reload as one digest-keyed immutable revision across
   HTTP routing, security plugins, provider identity, response telemetry and
   guest DNS, preventing a request from combining authority from two revisions.
+
+- Deliver VM-owner policy reloads as exact authenticated IPC bytes and retain
+  the last valid snapshot for MCP refreshes, so atomic policy publication
+  cannot replace the file inode granted at confinement and leave a running VM
+  stuck on stale policy; drop that post-boot path grant.
+
+- Keep credential broker calls valid on the confined proxy's single-threaded
+  runtime, preventing credential capture during model requests from panicking
+  the proxy and tearing down its VM session.
 
 - Route proxy policy evaluation, credential capture, upstream substitution and
   redaction through a transport-independent engine with typed ledger and
@@ -208,6 +260,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticate the preview owner's kernel identity before transferring a
   browser connection descriptor.
 
+- Generated Python requests redact nested credential validation inputs,
+  including raw parent inputs retained when another required field is missing.
+
+- Vhost-vsock validates complete descriptor and ring ranges, queue sizes, and
+  index-cell arithmetic before exposing guest-controlled addresses to the
+  kernel backend.
+
+- Virtio descriptor and ring metadata validate their complete guest RAM span
+  and address arithmetic before host access, including PCI-hole crossings.
+
+- OAuth disconnect joins an in-flight refresh and retires the latest rotated
+  token under denial, including material whose durable publication failed.
+
+- Disconnect admission and reconnect publication share the credential owner's
+  state lock, so concurrent reauthorization cannot clear a pending denial.
+
+- Responses WebSocket messages cross the model security boundary before
+  forwarding requests or returning output, including changes to rules on an
+  open connection. Completed turns retain model, usage and caller telemetry.
+
 ### Fixed
 
 - The guest DNS listener sizes its UDP receive queue from the supported client,
@@ -251,6 +323,156 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The authenticated gateway forwards standalone proxy create, heartbeat and
   stop operations instead of returning 404 for documented SDK endpoints.
+- Staged release verification includes the shared crypto owner and can verify
+  SHA-256 without optional BLAKE3 packages. Missing BLAKE3 reports a setup hint.
+
+- Decision ledger flushes use the full snapshot index when recording
+  occurrences, avoiding repeated scans as distinct decisions accumulate.
+
+- Idle ledger writers honor the original flush deadline when a late event
+  arrives, and failed idle flushes retain their normal retry interval.
+
+- Connection inventory supports bounded `limit` and `cursor` pages through the
+  service and SDKs, with malformed queries refused.
+
+- Interrupted credential disconnects resume bounded provider revocation after
+  service restart; maintenance retries unresolved retirement while grants stay revoked.
+
+- Archive index flushes batch SQLite inserts within the existing atomic
+  archive/ledger transaction, reducing repeated statement execution.
+
+- Stopped named sessions offer a read-only Credentials view with explicit
+  revocation; inspecting approvals does not wait for the connection catalog.
+
+- Named stopped sessions expose retained approval inventory and revocation
+  through canonical session IDs; grant creation still requires a live runtime.
+
+- Default session grant expiry fits the trusted remaining owner lifetime,
+  including time spent checking policy; explicit expiry overruns remain refused.
+
+- Retained credential approvals can be inspected and durably revoked using
+  their original session owner without creating or rebinding runtime authority.
+
+- Credential settings show account sign-in, cancellation and provider retirement;
+  running sessions can explicitly grant and revoke selected account capabilities.
+  Unsupported sign-in profiles remain disabled with an explanation.
+
+- Frontend connection and session-grant requests use authenticated SDK calls,
+  validate returned ownership, and never replay consent or grant mutations.
+
+- Grant polling retires authority when its consent is unavailable and refuses
+  exhausted revisions instead of publishing numbers clients cannot represent.
+
+- Credential grant retries normalize capability sets and exact RFC3339 expiry
+  instants, including offsets, and share Google's documented scope aliases.
+  Broker input budgets and timeouts come from one checked-in policy; completed
+  retry records retire after its 24-hour window without evicting active work.
+
+- Sigma YAML imports use a maintained safe Rust parser, reject duplicate
+  selection keys, and bound document, nesting and alias expansion.
+
+- Sigma selection lists and negated selections retain their logical grouping,
+  so an alternative cannot bypass another required security rule field.
+  Compiling grouped alternatives rejects excessive expansion before allocation.
+
+- Test-image cache retention keeps the OCI and prepared EROFS working set for
+  concurrent checkouts instead of reclaiming every fixture during enforcement.
+
+- Development builds optimize SQLite, its adapter and the ledger writer, and
+  archive index flushes reuse their prepared statement to reduce HTTP completion
+  stalls under load.
+
+- Protocol throughput benchmarks explicitly identify guest execution and reject
+  host/guest comparisons with incorrect execution labels.
+
+- The shared gateway OpenAPI contract correctly declares network creation's
+  existing HTTP 201 response, with matching generated SDK contracts.
+
+- Managed close retains original exit and grant authority when network cleanup
+  fails. Already-retired switches are awaited even if another departure fails;
+  a retry completes networking before session deletion and ownership closure.
+
+- Last-member network departure and retirement commit atomically. Failed
+  retirement preserves the membership and address for retry instead of
+  leaving an empty active network that cleanup can no longer find.
+
+- Logger durability barriers report accepted operations rejected by SQLite
+  during batch salvage, preventing failed registry writes from returning a
+  successful flush while preserving valid rows in the same producer batch.
+
+- Managed policy reload narrows active leases from their original renewal time
+  and updates expiry workers without extending ownership. Stale admission or
+  claim completions cannot overwrite a tighter timer; responses report the
+  enforced lease and valid renewal timing. Invalid policy refuses admission
+  and renewal while original cleanup authority remains available.
+
+- Managed close retains its confirmed original native exit outside ephemeral
+  session files, so restart can finish cleanup after directory deletion and
+  before the ownership close commit. Receipts survive unresolved cleanup and
+  retire with ownership tombstones.
+
+- Normal VM exit persists its native retirement receipt before moving a named
+  session, preserving confirmed stop authority for resume after host reboot.
+
+- Registered VM launches release shutdown admission before ongoing exec or
+  image setup, so workload duration does not hold the launch drain.
+
+- Failed VM launches retain original child retirement authority. Observed
+  native spawn failures prove no child exists; failures after spawn kill and
+  reap that child before publishing retirement to managed cleanup.
+
+- Managed startup recovery closes durable reservations that never prepared a
+  VM target, preserving capability authentication without replaying creation.
+
+- Service shutdown seals launch admission and joins already admitted workers
+  before selecting children for teardown, including cancelled HTTP callers.
+
+- Managed ownership stops renewing after ordinary stop/delete or loss of its
+  original VM spawn. Authenticated claims join the existing cleanup barrier;
+  changed spawns and failed cleanup cannot regain active ownership.
+
+- Managed VM spawns cannot transfer to persistence through ordinary save.
+  Admission uses original spawn ownership and refuses uncertain storage before
+  any persistence side effect.
+
+- TypeScript managed scopes cancel the owned callback and join cleanup at
+  validated lease expiry, including while renewal is stalled.
+
+- Python managed scopes stop at the validated lease expiry, including while
+  a renewal request is stalled, and join original-generation cleanup.
+
+- The Rust SDK provides managed ephemeral scopes with finite renewal,
+  cancellation-surviving cleanup, original-generation validation and explicit
+  retry authority when the service cannot confirm closure.
+
+- Preview and app-surface routes validate VM identifiers using the same rule
+  as the service and streaming gateway, rejecting malformed leading characters.
+
+- Linux warm resume restores allocated checkpoint extents into lazy zeroed RAM
+  and immediately resets stale guest vsock connections. Checkpoints preserve
+  page-sized sparse holes and existing file and directory handles.
+
+- The pinned guest kernel honors negotiated FUSE I/O sizes for large explicit
+  reads while retaining the existing speculative read-ahead limits.
+
+- Linux VM RAM stays aligned for transparent huge pages, accelerating boot and
+  cold filesystem reads without eagerly allocating guest memory. VirtioFS
+  supports full one-MiB requests, event-index wakeups on fresh and resumed VMs,
+  and bounded reusable I/O buffers through the shared Unix owner.
+
+- Prepared EROFS images use a catalog-bound BLAKE3 integrity annotation for
+  accelerated host and guest verification. The version 2 artifact contract
+  retains OCI transport SHA-256 and exact size, subject and descriptor checks.
+
+- OCI cache and prepared filesystem verification use the existing accelerated
+  crypto backend on CPUs without dedicated SHA instructions, retaining SHA-256
+  identities and full integrity checks.
+
+- Explicitly admitted image references select their catalog-bound EROFS
+  filesystem instead of unnecessarily extracting OCI layers at startup.
+
+- CLI history and MCP tool tables truncate Unicode text at character
+  boundaries instead of panicking on a split UTF-8 character.
 
 - The authenticated gateway forwards host credential injection, so desktop
   settings and TCP SDK clients can use file and memory storage.
@@ -341,9 +563,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TypeScript SDK connection and credential grant resources preserve explicit
+  consent, typed refusal codes, ownership checks, deadlines and cancellation.
+
+- Python SDK connection and credential grant resources support explicit consent,
+  typed refusal codes, ownership checks and deadlines during VM name resolution.
+
+- Service-owned connection metadata and explicit credential grant routes share
+  managed ownership fences and enforce the current broker policy. Native AGY
+  enrollment remains unavailable pending its supported handoff integration.
+
+- Connection authorization and generation-bound credential grant operations in
+  the authenticated API contract and generated Rust, Python and TypeScript SDKs.
+
+- Credential-owned coordination for finite enrollment, redacted connection
+  state and explicit session grants, including durable request records and
+  same-owner resume fencing. Service activation and the supported native AGY
+  adapter remain under integration.
+
+- Rust SDK connection and session credential-grant resources implement the
+  nine approved calls with explicit consent, ownership checks and no automatic
+  replay. Live service activation and native AGY handoff remain pending.
+
+- TypeScript SDK managed scopes renew finite ownership and await cleanup
+  through caller abort, lease failure and uncertain creation without replay.
+
+- Python SDK managed scopes renew finite ownership leases and await the
+  original session's cleanup on exit, failure and cancellation without replaying create.
+
 - `capsem proxy` starts a leased, VM-free OpenAI-compatible endpoint for a
   configured provider, prints its base URL, keeps it alive while the command
   runs and tears down its confined worker and ledger on exit.
+
+- Ephemeral managed-session creation, capability-authenticated claim/renewal,
+  and awaited close use a finite service-owned lease and durable replay protection.
+
+- Desktop credential settings accept explicit API keys or tokens with file or
+  memory storage, clear submitted input, and return a copyable reference.
+
+- Rust SDK exposes the matching credential injection resource with file or
+  memory storage and opaque reference responses.
+
+- TypeScript SDK exposes credential injection with explicit storage, deadlines
+  and cancellation through the authenticated gateway.
+
+- Python SDK exposes credential injection with file or memory storage and
+  redacted request diagnostics.
+
+- Credential injection accepts explicitly selected host startup variables,
+  private file inputs, or an authenticated API. File and memory storage return
+  opaque references; memory material reaches VM owners only through host IPC.
+
+- The shared gateway contract describes credential injection with file or
+  memory storage and responses containing only opaque references.
 
 - Rust SDK exposes the registry image catalog and prefetch through
   `Hypervisor.images()`, with typed disk states and per-call registry access.
@@ -2028,9 +2300,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A half-close on a published connection is carried as a signal:
   a slow reply after the client stops sending, and an upload after the peer
   stops sending, both arrive in full.
-- Published TCP listeners stay with the VM owner. The confined router receives
-  only connected descriptor pairs; bounded acknowledgements and control failure
-  close both endpoints even when the router retains duplicate descriptors.
+- Published TCP listeners are granted to and held by the VM owner. The confined
+  router receives only connected descriptor pairs; bounded acknowledgements and
+  control failure close both endpoints even when the router retains duplicate
+  descriptors.
 - The confined network companion is now named `capsem-router`; package signing
   continues to exclude virtualization authority.
 - Shell runs flush captured output before exiting, preserving short output

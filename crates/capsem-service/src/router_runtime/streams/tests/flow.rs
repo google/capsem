@@ -128,7 +128,7 @@ async fn replaced_generation_output_is_rejected_and_the_old_exec_is_cancelled() 
         let ServiceToProcess::ExecStream { id, .. } = rx.recv().await.unwrap() else {
             panic!("expected ExecStream")
         };
-        state.instances.lock().unwrap().get_mut("box").unwrap().generation = uuid::Uuid::new_v4();
+        state.instances.lock().unwrap().get_mut("box").unwrap().generation = capsem_crypto::uuid_v4();
         tx.send(ProcessToService::ExecOutput {
             id,
             channel: capsem_proto::ExecOutputChannel::Stdout,

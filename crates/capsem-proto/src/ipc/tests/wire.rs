@@ -54,7 +54,10 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
             size: 1,
             mime_type: None,
         },
-        ServiceToProcess::ReloadConfig { id: 11 },
+        ServiceToProcess::ReloadConfig {
+            id: 11,
+            active_policy: b"[network]".to_vec(),
+        },
         ServiceToProcess::StartTerminalStream,
         ServiceToProcess::StopTerminalStream,
         ServiceToProcess::Suspend,

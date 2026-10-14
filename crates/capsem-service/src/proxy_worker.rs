@@ -748,7 +748,7 @@ fn fail_pending(requests: &mut mpsc::Receiver<CommandRequest>, reason: &str) {
 }
 
 fn fresh_generation() -> ProxyGeneration {
-    ProxyGeneration::new(*uuid::Uuid::new_v4().as_bytes())
+    ProxyGeneration::new(*capsem_crypto::uuid_v4().as_bytes())
 }
 
 fn generation_hex(generation: ProxyGeneration) -> String {
@@ -907,4 +907,4 @@ impl ServiceState {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -126,7 +126,7 @@ async fn replaced_generation_cannot_supply_an_accepted_command_reply() {
             .unwrap()
             .get_mut("replaced")
             .unwrap()
-            .generation = uuid::Uuid::new_v4();
+            .generation = capsem_crypto::uuid_v4();
         let reply = ProcessToService::ExecResult {
             id: *id,
             stdout: b"old generation".to_vec(),

@@ -38,7 +38,7 @@ pub enum MembershipState {
 
 /// A detached member and its optional last-member network retirement must
 /// commit in one database transaction. Neither half is independently durable.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NetworkDeparture {
     pub(crate) membership: NetworkMembership,
     pub(crate) retired: Option<NetworkRecord>,

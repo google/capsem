@@ -390,7 +390,7 @@ async fn preview_admission_rejects_a_reply_from_a_replaced_owner_generation() {
         let ServiceToProcess::AdmitPreviewConnection { id, .. } = message else {
             panic!("unexpected {message:?}")
         };
-        owner_state.instances.lock().unwrap().get_mut("box").unwrap().generation = uuid::Uuid::new_v4();
+        owner_state.instances.lock().unwrap().get_mut("box").unwrap().generation = capsem_crypto::uuid_v4();
         let reply = ProcessToService::PreviewConnectionAdmitted {
             id: *id,
             handoff_socket: expected.to_string_lossy().into_owned(),

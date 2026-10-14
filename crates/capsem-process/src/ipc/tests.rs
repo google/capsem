@@ -568,24 +568,23 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         } if error == "read fixture failed"
     ));
 
-    std::fs::write(
-        temp.path().join("active_policy.toml"),
-        "[user_rules]\n[corp_rules]\n[network]\n[network.dns]\nupstreams = [\"127.0.0.1:5353\"]\n",
-    )
-    .unwrap();
+    let active_policy =
+        b"[user_rules]\n[corp_rules]\n[network]\n[network.dns]\nupstreams = [\"127.0.0.1:5353\"]\n".to_vec();
     service_tx
-        .send(ServiceToProcess::ReloadConfig { id: 30 })
+        .send(ServiceToProcess::ReloadConfig {
+            id: 30,
+            active_policy: active_policy.clone(),
+        })
         .await
         .unwrap();
-    let applied = capsem_core::net::policy_config::active_policy_digest(
-        &std::fs::read(temp.path().join("active_policy.toml")).unwrap(),
-    );
+    let applied = capsem_core::net::policy_config::active_policy_digest(&active_policy);
     assert!(matches!(
         service_rx.recv().await.unwrap(),
         ProcessToService::ConfigReloadResult { id: 30, active_policy_digest: Some(digest), error: None }
             if digest == applied
     ));
     assert_eq!(dispatcher.mcp_runtime.proxy_policy.snapshot().digest(), applied);
+    std::fs::remove_file(dispatcher.runtime_source.active_policy_path()).unwrap();
 
     service_tx
         .send(ServiceToProcess::McpListServers { id: 15 })
@@ -819,7 +818,10 @@ fn classify_container_pull_admission() {
 #[test]
 fn classify_reload_config() {
     assert_eq!(
-        classify_ipc_message(&ServiceToProcess::ReloadConfig { id: 1 }),
+        classify_ipc_message(&ServiceToProcess::ReloadConfig {
+            id: 1,
+            active_policy: Vec::new(),
+        }),
         IpcAction::Reload
     );
 }

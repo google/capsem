@@ -14,7 +14,7 @@ fn fixture() -> (Arc<ServiceState>, OwnerConnection) {
 async fn replaced_generation_is_rejected_before_connect() {
     let (state, grant) = fixture();
     let listener = tokio::net::UnixListener::bind(&grant.uds_path).unwrap();
-    state.instances.lock().unwrap().get_mut("owner").unwrap().generation = uuid::Uuid::new_v4();
+    state.instances.lock().unwrap().get_mut("owner").unwrap().generation = capsem_crypto::uuid_v4();
     assert!(grant.open(&state, "capsem-service", false).await.is_err());
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(20), listener.accept())
@@ -42,7 +42,7 @@ async fn generation_changed_during_hello_cannot_receive_a_request() {
                 .unwrap()
                 .get_mut("owner")
                 .unwrap()
-                .generation = uuid::Uuid::new_v4();
+                .generation = capsem_crypto::uuid_v4();
             // The initiator may observe the replaced generation and close
             // before completing the hello. Either outcome must leave the
             // rejected connection with no request authority.
@@ -69,7 +69,7 @@ fn shutdown_grant_accepts_only_the_claimed_generation_or_an_empty_slot() {
     let mut instance = state.instances.lock().unwrap().remove("owner").unwrap();
     assert!(grant.validate(&state, false).is_err());
     assert!(grant.validate(&state, true).is_ok());
-    instance.generation = uuid::Uuid::new_v4();
+    instance.generation = capsem_crypto::uuid_v4();
     state.instances.lock().unwrap().insert("owner".into(), instance);
     assert!(grant.validate(&state, true).is_err());
 }

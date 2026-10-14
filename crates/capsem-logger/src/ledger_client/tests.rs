@@ -13,6 +13,7 @@ const EVENT_ID: &str = "0123456789ab";
 
 struct Fixture {
     _dir: tempfile::TempDir,
+    server: Arc<LedgerServer>,
     client: LedgerClient,
     writer: crate::DbWriter,
     producer_task: tokio::task::JoinHandle<Result<crate::ledger_server::LedgerClientExit, String>>,
@@ -47,6 +48,7 @@ impl Fixture {
             .unwrap();
         Self {
             _dir: dir,
+            server,
             client,
             writer,
             producer_task,
@@ -144,9 +146,10 @@ async fn reader_queries_counters_bodies_and_warc_through_one_serial_channel() {
 
     let counters = fixture.client.counters().await.unwrap();
     assert_eq!(counters.net.total, 1);
-    assert_eq!(fixture.client.read_cache_epoch(), 1);
+    let epoch = fixture.client.read_cache_epoch();
+    assert!(epoch > 0);
     assert_eq!(fixture.client.counters().await.unwrap().net.total, 1);
-    assert_eq!(fixture.client.read_cache_epoch(), 1);
+    assert_eq!(fixture.client.read_cache_epoch(), epoch);
 
     let sets = fixture.client.query(LedgerQuery::StatsDetail).await.unwrap();
     assert_eq!(sets.len(), 11);
@@ -168,13 +171,18 @@ async fn reader_queries_counters_bodies_and_warc_through_one_serial_channel() {
 }
 
 #[tokio::test]
-async fn counters_advance_the_cache_epoch_only_when_the_snapshot_changes() {
+async fn counters_carry_the_db_owned_cache_epoch_even_when_the_snapshot_is_unchanged() {
     let fixture = Fixture::start(LedgerClientRole::Reader).await;
-    assert_eq!(fixture.client.counters().await.unwrap().net.total, 0);
-    assert_eq!(fixture.client.read_cache_epoch(), 1);
+    let counters = fixture.client.counters().await.unwrap();
+    let initial_epoch = fixture.client.read_cache_epoch();
+    fixture.server.invalidate_read_cache_for_tests();
+    assert_eq!(fixture.client.counters().await.unwrap().as_ref(), counters.as_ref());
+    assert!(fixture.client.read_cache_epoch() > initial_epoch);
+
+    let invalidated_epoch = fixture.client.read_cache_epoch();
     fixture.write_network_body().await;
     assert_eq!(fixture.client.counters().await.unwrap().net.total, 1);
-    assert_eq!(fixture.client.read_cache_epoch(), 2);
+    assert!(fixture.client.read_cache_epoch() > invalidated_epoch);
     fixture.stop().await;
 }
 

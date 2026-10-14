@@ -503,13 +503,26 @@ pub(crate) struct PreparedDbWriter {
     held: capsem_foundation::unix::lock::FileLock,
     conn: Connection,
     db_path: PathBuf,
-    batch_capacity: usize,
+    schedule: WriterSchedule,
     pending_body_bytes: Arc<AtomicU64>,
     bodies: BodyArchive,
     tally: LedgerTally,
 }
 
 impl DbWriter {
+    #[cfg(test)]
+    fn open_once(path: &Path, schedule: WriterSchedule, now: LedgerClock) -> rusqlite::Result<Self> {
+        let mut prepared = Self::prepare_once(
+            path,
+            schedule.capacity,
+            schedule.capacity,
+            now,
+            ArchiveCodecs::default(),
+        )?;
+        prepared.schedule = schedule;
+        Ok(prepared.start())
+    }
+
     /// Spawn a dedicated writer thread that owns the DB connection.
     /// `capacity` controls the mpsc channel size (backpressure).
     pub fn open(path: &Path, capacity: usize) -> rusqlite::Result<Self> {
@@ -634,7 +647,7 @@ impl DbWriter {
             held,
             conn,
             db_path,
-            batch_capacity,
+            schedule: WriterSchedule::new(batch_capacity),
             pending_body_bytes,
             bodies,
             tally,
@@ -660,13 +673,27 @@ impl DbWriter {
         })?;
         let tally = LedgerTally::restored(counters::load(&conn)?);
 
-        let schedule = WriterSchedule::new(capacity);
-        let (tx, rx) = writer_channel(schedule.capacity);
+        let batch_capacity = if capacity == 0 {
+            DEFAULT_BATCH_CAPACITY
+        } else {
+            capacity
+        };
+        let (tx, rx) = writer_channel(batch_capacity);
         let pending_body_bytes = Arc::new(AtomicU64::new(0));
         let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, None, schedule, &loop_pending_body_bytes, bodies, tally))
+            .spawn(move || {
+                writer_loop(
+                    conn,
+                    rx,
+                    None,
+                    WriterSchedule::new(batch_capacity),
+                    &loop_pending_body_bytes,
+                    bodies,
+                    tally,
+                )
+            })
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -821,7 +848,7 @@ impl PreparedDbWriter {
             held,
             conn,
             db_path,
-            batch_capacity,
+            schedule,
             pending_body_bytes,
             bodies,
             tally,
@@ -836,7 +863,7 @@ impl PreparedDbWriter {
                     conn,
                     rx,
                     writer_loop_db_path,
-                    batch_capacity,
+                    schedule,
                     &loop_pending_body_bytes,
                     bodies,
                     tally,

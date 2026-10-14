@@ -11,7 +11,7 @@ interface Report {ok: boolean; sha256: string; version: string; httpPaths: strin
 
 const source = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(source, '../..');
-const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
+const sha = (path: string): string => sha256(readFileSync(path));
 const usableHome = (): string => process.env.HOME && existsSync(process.env.HOME) ? process.env.HOME : tmpdir();
 const npmCache = (): string => process.env.NPM_CONFIG_CACHE ?? join(usableHome(), '.npm');
 

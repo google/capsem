@@ -308,6 +308,11 @@ jobs:
           CAPSEM_FRONTEND_JUNIT: ${{ github.workspace }}/cache/target/coverage/junit/frontend.xml
         run: bash build_system/scripts/web/check-web-surface.sh frontend-verify
 
+      - name: Build Python SDK distributions
+        run: |
+          uv sync --project sdk/python --frozen --no-install-project
+          uv run --project sdk/python --frozen --no-sync python -m build --no-isolation --outdir cache/target/sdk/python sdk/python
+
       # Python schema tests with coverage
       - name: Python SDK tests with coverage
         working-directory: sdk/python
@@ -324,6 +329,7 @@ jobs:
         working-directory: sdk/typescript
         run: |
           pnpm install --frozen-lockfile
+          pnpm run prewarm:package
           pnpm test --reporter=default --reporter=junit --outputFile=../../cache/target/coverage/junit/typescript-sdk.xml
 
       # Builds against the SDK package the step above just built.
@@ -331,6 +337,7 @@ jobs:
         working-directory: mcp/typescript
         run: |
           pnpm install --frozen-lockfile
+          pnpm run prewarm:packed
           pnpm test --reporter=default --reporter=junit --outputFile=../../cache/target/coverage/junit/mcp-typescript.xml
 
       - name: Cross-system Python schema tests with coverage

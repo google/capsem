@@ -9,8 +9,8 @@ Every Capsem VM and standalone proxy session gets its own session ledger: a
 SQLite database (`session.db`) that records network requests, DNS queries, AI
 model calls, MCP tool invocations, exec activity, kernel audit events, file
 changes, security rule matches, and credential substitutions, and beside it a
-body archive (`session.bodies`) that holds the full request, response, tool,
-exec and security payloads those rows describe. The two files live in the
+body archive directory (`session.bodies/`) that holds the full request, response, tool,
+exec and security payloads those rows describe. The database and archive directory live in the
 session directory and follow its lifecycle; retained and forked VMs keep both
 for forensic review, and one without the other is not a ledger.
 
@@ -687,10 +687,10 @@ graph LR
     ORDER -->|"sync after ledger flush"| CHECKPOINTS
 ```
 
-The ledger worker owns both files; its writer thread owns the SQLite
+The ledger worker owns the database and archive directory; its writer thread owns the SQLite
 connection and archive writer. A body is fed to the open block's
 compressor as its event is written; each disk flush appends what the block
-produced since the last one to `session.bodies` as a segment, syncs it, and
+produced since the last one to the selected generation file as a segment, syncs it, and
 only then commits the body's index row and the block's grown extent in
 `body_blocks`.
 
@@ -736,8 +736,17 @@ removes any externally anchored identity.
 
 ## Body archive
 
-`session.bodies` is append-only: a 16-byte file header, then blocks. A block
-is one streaming codec instance: an 8-byte header (magic and codec), then segments.
+`session.bodies/` contains generation files named `g-<generation_id>.cbl`,
+where the generation ID is 32 hexadecimal digits. The database's singleton
+`archive_state` row selects the archive and generation identities,
+committed byte extent, and revision. Readers never select a file by its age.
+The ledger format is version 4; the generation byte format is version 3.
+
+Each generation is append-only: an 80-byte header followed by blocks.
+The header contains `CAPSEMBL`, version and flags, its length, 16-byte archive
+and generation identities, and a 32-byte BLAKE3 hash of the first 48 bytes.
+A block uses one streaming codec instance: an 8-byte header identifies its codec,
+followed by segments. Confined workers encode zstd; legacy deflate remains readable.
 Each disk flush sync-flushes the stream -- byte-aligned, dictionary kept -- and
 appends what it produced as a segment behind a 52-byte header (`raw_start`,
 `raw_len`, `comp_len` and the blake3 of the segment's raw bytes). The block
@@ -808,7 +817,7 @@ seek within it without Capsem code. It is streamed, not buffered.
 - At service start, failed-session directories older than the period are
   deleted.
 - When a persistent VM stops, its `capsem-ledger` worker drops the blocks sealed
-  before the cutoff, compacts `session.bodies`, and rewrites the index rows.
+  before the cutoff, compacts the selected archive generation, and rewrites the index rows atomically with its generation state.
   Commitment rows and event metadata remain intact.
 - Ephemeral sessions are deleted whole and are not trimmed.
 
@@ -1062,7 +1071,7 @@ projection.
 | File | Purpose |
 |------|---------|
 | `capsem-logger/src/schema.rs` | Table DDL and pragmas |
-| `capsem-archive/src/format.rs` | The `session.bodies` byte format |
+| `capsem-archive/src/format.rs` | The archive generation byte format |
 | `capsem-ledger/src/codec.rs` | Confined zstd codec implementation and legacy deflate registration |
 | `capsem-service/src/ledger_commitment.rs` | Trusted global ordering, external checkpoints, and startup verification |
 | `capsem-archive/src/warc.rs` | WARC record writer |

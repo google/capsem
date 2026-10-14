@@ -24,12 +24,12 @@ fn denied() -> CredentialError {
     api::CredentialErrorCode::PolicyDenied.into()
 }
 
-fn read_policy(path: &StdPath) -> Result<(String, Arc<ActivePolicyFile>), CredentialError> {
+fn read_policy(path: &StdPath) -> Result<(String, Arc<ActivePolicyFile>, Vec<u8>), CredentialError> {
     let bytes = capsem_foundation::unix::fs::read_regular_file_no_follow(path).map_err(|_| denied())?;
     let policy: ActivePolicyFile =
         toml::from_str(std::str::from_utf8(&bytes).map_err(|_| denied())?).map_err(|_| denied())?;
     policy.validate().map_err(|_| denied())?;
-    Ok((active_policy_digest(&bytes), Arc::new(policy)))
+    Ok((active_policy_digest(&bytes), Arc::new(policy), bytes))
 }
 
 fn record(state: &ServiceState, binding: &VmBinding, policy: Arc<ActivePolicyFile>) -> Result<(), CredentialError> {
@@ -75,7 +75,7 @@ pub(crate) async fn acknowledge(
         .filter(|instance| instance.generation == generation)
         .map(|instance| instance.session_dir.join(ACTIVE_POLICY_DIR).join(ACTIVE_POLICY_FILE))
         .ok_or(api::CredentialErrorCode::OwnerChanged)?;
-    let (digest, policy) = state
+    let (digest, policy, _) = state
         .off_worker(move |_| read_policy(&path))
         .await
         .map_err(|_| CredentialError(api::CredentialErrorCode::StorageUnavailable, false))??;
@@ -109,14 +109,20 @@ fn compute(
 
 async fn confirm(state: &Arc<ServiceState>, context: &Context) -> Result<Applied, CredentialError> {
     let path = context.policy_path.clone();
-    let (expected, applied) = state
-        .off_worker(move |_| read_policy(&path))
+    let (expected, applied, bytes, runtime) = state
+        .off_worker(move |_| {
+            let (digest, policy, bytes) = read_policy(&path)?;
+            let runtime = Arc::new(policy.compile_runtime().map_err(|_| denied())?);
+            Ok::<_, CredentialError>((digest, policy, bytes, runtime))
+        })
         .await
         .map_err(|_| CredentialError(api::CredentialErrorCode::StorageUnavailable, false))??;
     let response = send_ipc_command(
+        state,
         &context.uds_path,
         ServiceToProcess::ReloadConfig {
             id: state.next_job_id(),
+            active_policy: bytes.clone(),
         },
         Some(5),
     )
@@ -127,6 +133,24 @@ async fn confirm(state: &Arc<ServiceState>, context: &Context) -> Result<Applied
     {
         return Err(denied());
     }
+    let proxy = state
+        .proxy_worker(context.runtime.id(), context.runtime.generation())
+        .map_err(|_| denied())?;
+    if proxy.apply_policy(bytes).await.map_err(|_| denied())? != expected {
+        return Err(denied());
+    }
+    let publisher = {
+        let instances = state.instances.lock().unwrap();
+        instances
+            .get(context.runtime.id())
+            .filter(|instance| instance.generation == context.runtime.generation())
+            .map(|instance| instance.upstream_policy.clone())
+            .ok_or_else(denied)?
+    };
+    publisher
+        .publish(crate::upstream_broker::BrokerPolicy::new(expected, runtime))
+        .await
+        .map_err(|_| denied())?;
     record(state, &context.runtime, Arc::clone(&applied))?;
     Ok(Applied {
         policy: applied,

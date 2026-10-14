@@ -17,6 +17,10 @@ pub enum Role {
 pub enum Access {
     ReadOnly,
     ReadWrite,
+    /// Read, write, and issue device ioctls. Keep this narrower than a normal
+    /// writable path so a filesystem grant cannot accidentally gain device
+    /// control authority.
+    ReadWriteDevice,
     Executable,
 }
 

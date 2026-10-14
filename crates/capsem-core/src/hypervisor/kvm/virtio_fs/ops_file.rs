@@ -2,8 +2,9 @@
 
 use capsem_foundation::unix::fd;
 use std::io::{Seek, SeekFrom, Write};
-use std::os::unix::fs::FileExt;
+use std::os::fd::AsFd;
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::PermissionsExt;
 
 use super::FuseProcessor;
 use crate::hypervisor::fuse::{self, *};

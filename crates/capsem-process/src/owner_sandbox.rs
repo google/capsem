@@ -42,6 +42,19 @@ fn grant_owner_session_paths(
     Ok(policy)
 }
 
+fn grant_owner_null(
+    policy: capsem_foundation::unix::worker_sandbox::Policy,
+) -> Result<capsem_foundation::unix::worker_sandbox::Policy> {
+    use capsem_foundation::unix::worker_sandbox::Access;
+
+    let null = Path::new("/dev/null");
+    if null.exists() {
+        grant_owner_path(policy, null, Access::ReadWrite)
+    } else {
+        Ok(policy)
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub(super) fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
     use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
@@ -50,16 +63,16 @@ pub(super) fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
     policy = grant_owner_session_paths(policy, session_dir)?;
     policy = grant_owner_path(policy, &args.assets_dir, Access::ReadOnly)?;
     policy = grant_owner_path(policy, &args.rootfs, Access::ReadOnly)?;
-    policy = grant_owner_path(policy, &args.active_policy, Access::ReadOnly)?;
     for path in args.kernel.iter().chain(args.initrd.iter()) {
         policy = grant_owner_path(policy, path, Access::ReadOnly)?;
     }
     for path in ["/dev/kvm", "/dev/vhost-vsock"] {
         let path = Path::new(path);
         if path.exists() {
-            policy = grant_owner_path(policy, path, Access::ReadWrite)?;
+            policy = grant_owner_path(policy, path, Access::ReadWriteDevice)?;
         }
     }
+    policy = grant_owner_null(policy)?;
     let executable = std::env::current_exe().context("locate VM-owner executable")?;
     let router = executable.with_file_name("capsem-router");
     if router.exists() {
@@ -93,7 +106,6 @@ pub(super) fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
     policy = grant_owner_session_paths(policy, session_dir)?;
     policy = grant_owner_path(policy, &args.assets_dir, Access::ReadOnly)?;
     policy = grant_owner_path(policy, &args.rootfs, Access::ReadOnly)?;
-    policy = grant_owner_path(policy, &args.active_policy, Access::ReadOnly)?;
     for path in args.kernel.iter().chain(args.initrd.iter()) {
         policy = grant_owner_path(policy, path, Access::ReadOnly)?;
     }
@@ -116,10 +128,7 @@ pub(super) fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
             policy = grant_owner_path(policy, path, Access::ReadOnly)?;
         }
     }
-    let null = Path::new("/dev/null");
-    if null.exists() {
-        policy = grant_owner_path(policy, null, Access::ReadWrite)?;
-    }
+    policy = grant_owner_null(policy)?;
     capsem_foundation::unix::worker_sandbox::confine(&policy)?;
     Ok(())
 }
@@ -222,3 +231,6 @@ pub(super) async fn attest_owner(
     std::fs::remove_file(&attestation.direct_path)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

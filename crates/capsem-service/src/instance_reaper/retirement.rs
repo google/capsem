@@ -168,13 +168,27 @@ impl Registration {
         &mut self,
         child: &mut tokio::process::Child,
     ) -> std::io::Result<std::process::ExitStatus> {
-        let status = loop {
+        self.wait_child_before_reap(child, || ())
+            .await
+            .map(|(status, ())| status)
+    }
+
+    pub(crate) async fn wait_child_before_reap<T>(
+        &mut self,
+        child: &mut tokio::process::Child,
+        before_reap: impl FnOnce() -> T,
+    ) -> std::io::Result<(std::process::ExitStatus, T)> {
+        let pid = child
+            .id()
+            .ok_or_else(|| std::io::Error::other("original child identity unavailable"))?;
+        let pid = ProcessId::try_from(pid)?;
+        let mut observed = tokio::task::spawn_blocking(move || process::wait_for_child_exit(pid));
+        let observation = loop {
             tokio::select! {
-                // An already exited child is reaped and published before any
-                // queued signal. Otherwise it remains unreaped while signaling:
-                // its PID cannot be reused until this task next polls wait().
+                // Retain the original PID until generation authority is revoked,
+                // while continuing to service owned shutdown signals.
                 biased;
-                status = child.wait() => break status,
+                result = &mut observed => break result.map_err(std::io::Error::other).and_then(|result| result),
                 Some(request) = self.signals.recv() => {
                     let outcome = child.id().ok_or_else(|| std::io::Error::other("original child identity unavailable"))
                         .and_then(ProcessId::try_from)
@@ -183,6 +197,9 @@ impl Registration {
                 }
             }
         };
+        observation?;
+        let revoked = before_reap();
+        let status = child.wait().await;
         self.exited.send_replace(if status.is_ok() {
             Outcome::Complete
         } else {
@@ -197,7 +214,7 @@ impl Registration {
             };
             let _ = request.reply.send(outcome);
         }
-        status
+        status.map(|status| (status, revoked))
     }
     pub(crate) fn complete(mut self) {
         self.completed = true;

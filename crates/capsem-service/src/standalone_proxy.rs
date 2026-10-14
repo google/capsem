@@ -52,7 +52,7 @@ impl ServiceState {
             ));
         }
 
-        let session_id = format!("proxy-{}", uuid::Uuid::new_v4().simple());
+        let session_id = format!("proxy-{}", capsem_crypto::uuid_v4().simple());
         let session_dir = self.run_dir.join("sessions").join(&session_id);
         capsem_foundation::unix::fs::ensure_private_dir(&session_dir)
             .map_err(|error| internal(format!("create standalone proxy session: {error}")))?;
@@ -166,7 +166,7 @@ impl ServiceState {
         }
         let broker_task = broker.start(authority.grant());
         let accept_task = spawn_accept_loop(listener, worker.clone(), authority.grant());
-        let lease_token = uuid::Uuid::new_v4().simple().to_string();
+        let lease_token = capsem_crypto::uuid_v4().simple().to_string();
         Ok((
             StandaloneProxy {
                 lease_token,

@@ -43,7 +43,8 @@ impl ServiceState {
                 .map_err(anyhow::Error::msg)
                 .context("compile serialized active policy")?,
         );
-        // capsem-process reads this on every reload: publish it whole.
+        // Keep the durable audit copy whole; the same exact bytes are sent to
+        // capsem-process over its authenticated coordinator channel.
         capsem_foundation::unix::fs::atomic_write_private(&active_policy_path, serialized.as_bytes())
             .with_context(|| format!("write {}", active_policy_path.display()))?;
         Ok(PublishedActivePolicy {
@@ -76,7 +77,7 @@ impl ServiceState {
 }
 
 /// Deliver the current policy to every running VM: re-materialize each
-/// session's active policy, then ask capsem-process to reload it. Mutation
+/// session's active policy, then send those exact bytes to capsem-process. Mutation
 /// routes call this so an edit is enforced before the route returns.
 ///
 /// A VM counts as updated only when it reports applying the exact bytes this
@@ -137,6 +138,7 @@ pub(crate) async fn push_policy_to_running_instances(
         let expected = &published.digest;
         let request = ServiceToProcess::ReloadConfig {
             id: state.next_job_id(),
+            active_policy: published.bytes.clone(),
         };
         match send_ipc_command(state, uds_path, request, Some(5)).await {
             Ok(ProcessToService::ConfigReloadResult {
@@ -159,11 +161,15 @@ pub(crate) async fn push_policy_to_running_instances(
                             Err(error) => return Some(format!("{id}: {error}")),
                         };
                         match proxy.apply_policy(published.bytes.clone()).await {
-                            Ok(applied) if applied == *expected => publisher
-                                .publish(published.broker_policy())
-                                .await
-                                .err()
-                                .map(|error| format!("{id}: {error}")),
+                            Ok(applied) if applied == *expected => {
+                                if let Err(error) = publisher.publish(published.broker_policy()).await {
+                                    return Some(format!("{id}: {error}"));
+                                }
+                                connection_routes::policy::acknowledge(state, id, *generation, expected)
+                                    .await
+                                    .err()
+                                    .map(|_| format!("{id}: applied credential policy ownership unavailable"))
+                            }
                             Ok(applied) => Some(format!(
                                 "{id}: proxy applied active policy {applied}, expected {expected}"
                             )),

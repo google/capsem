@@ -1,11 +1,3 @@
-# The intentionally selected Cargo.lock for this tree, recorded on purpose.
-#
-# A lock change is the most expensive input in the repository: it changes the
-# identity of the guest Rust builder image, so every guest agent is recompiled
-# inside Docker, the initrd is repacked, and every host binary rebuilds. Four
-# measurement runs in one evening paid that cost because unrelated commits
-# each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
-# this record matches the lock again, so the cost is chosen, reviewed and
-# batched rather than discovered twenty minutes into a gate.
-sha256 = "bb76b3833746aa2a26714484474ceb59e004bd467097d6b9645c8415403ae7d4"
-reason = "The unified observable cache adds quick_cache 0.7.0. The 0.7 crypto ownership retrofit centralizes first-party hashes, entropy, TLS keys, JWT verification and secret primitives; BLAKE2b/BLAKE2s SIMD 1.0.5 support normal-harness comparisons. Managed-session APIs add zeroizing request capabilities, and Rust managed scopes add SDK edges to existing capsem-crypto random/secrets, futures, humantime and tokio-util rt. Central runtime-limit generation adds capsem-proto's direct toml edge, and exact benchmark reporting adds capsem-bench's direct capsem-proto edge. rustls 0.23.46 fixes RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and RUSTSEC-2026-0349. The host and sealed guest cohort will be rebuilt and qualified together."
+# Deliberately combined dependency graph for #206 on 0.7.
+sha256 = "00898cc7fd2bdb704d7f6fd494d0ef3ca677f91597731d25c63e09658213edf2"
+reason = "The unified observable cache adds quick_cache 0.7.0. The 0.7 crypto ownership retrofit centralizes first-party hashes, entropy, TLS keys, JWT verification and secret primitives; BLAKE2b/BLAKE2s SIMD 1.0.5 support normal-harness comparisons. Managed-session APIs add zeroizing request capabilities, and Rust managed scopes add SDK edges to existing capsem-crypto random/secrets, futures, humantime and tokio-util rt. Central runtime-limit generation adds capsem-proto's direct toml edge, and exact benchmark reporting adds capsem-bench's direct capsem-proto edge. rustls 0.23.46 fixes RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and RUSTSEC-2026-0349. The host and sealed guest cohort will be rebuilt and qualified together. Rebase onto shared 0.7 retains the approved time parsing and safe Sigma edges, while preserving the confined worker codecs, shared cache and patched rustls dependencies."

@@ -278,6 +278,8 @@ def test_standalone_proxy_serves_official_sdks_without_a_vm():
 
         proxy_proc.send_signal(signal.SIGTERM)
         assert proxy_proc.wait(timeout=15) == 0
+        assert proxy_proc.stdout is not None
+        proxy_proc.stdout.close()
         proxy_proc = None
         deadline = time.monotonic() + 5
         while session_dir.exists() and time.monotonic() < deadline:
@@ -291,6 +293,8 @@ def test_standalone_proxy_serves_official_sdks_without_a_vm():
         if proxy_proc is not None:
             proxy_proc.kill()
             proxy_proc.wait(timeout=5)
+            if proxy_proc.stdout is not None:
+                proxy_proc.stdout.close()
         service.stop()
         stop_process(mock_proc)
         if previous_corp is None:
