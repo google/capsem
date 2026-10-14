@@ -1,4 +1,5 @@
 use super::*;
+mod credential_grants;
 use crate::credential_broker::{broker_observed_credential, CredentialObservation, CredentialProvider};
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{

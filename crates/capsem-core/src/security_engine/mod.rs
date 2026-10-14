@@ -1,8 +1,4 @@
-use std::borrow::Cow;
-use std::collections::BTreeMap;
-use std::fmt;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{borrow::Cow, collections::BTreeMap, fmt, sync::Arc, time::Instant};
 
 use capsem_logger::{
     AuditEvent, DbWriter, ExecEvent, ExecEventComplete, FileAction, FileEvent, SecurityAskEvent, SecurityAskPending,
@@ -24,7 +20,9 @@ use crate::net::policy_config::{
 
 mod builtin_actions;
 mod container;
+mod credential_grants;
 pub use container::ContainerSecurityEvent;
+pub use credential_grants::CredentialGrantAdmission;
 mod event_id;
 pub use event_id::SecurityEventId;
 mod forensics;

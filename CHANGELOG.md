@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Credential target preflight uses the existing security rules and plugins,
+  including corporate ask/block and method, query and port constraints.
+
 - Delayed process exit cleanup fences its exact old credential runtime even
   after a resumed replacement has taken over the session registry.
 
