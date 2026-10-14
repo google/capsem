@@ -478,6 +478,62 @@ def test_identical_bytes_under_two_names_are_named(tmp_path: Path) -> None:
     assert "duplicate-content" in {fault.reason for fault in watch.faults}
 
 
+def test_deleted_content_is_not_compared_with_a_later_artifact(tmp_path: Path) -> None:
+    watch = Watch([], source_root=tmp_path)
+    first = tmp_path / "cache" / "target" / "first"
+    second = tmp_path / "cache" / "target" / "second"
+
+    watch._judge(
+        Event(
+            at=1.0,
+            kind="created",
+            path=first,
+            steps=(),
+            facts=Facts(inode=1, digest="deadbeef"),
+        )
+    )
+    watch._judge(Event(at=2.0, kind="deleted", path=first, steps=()))
+    watch._judge(
+        Event(
+            at=3.0,
+            kind="created",
+            path=second,
+            steps=(),
+            facts=Facts(inode=2, digest="deadbeef"),
+        )
+    )
+
+    assert "duplicate-content" not in {fault.reason for fault in watch.faults}
+
+
+def test_replaced_content_releases_its_old_digest(tmp_path: Path) -> None:
+    watch = Watch([], source_root=tmp_path)
+    replaced = tmp_path / "cache" / "target" / "replaced"
+    later = tmp_path / "cache" / "target" / "later"
+
+    for at, digest in ((1.0, "old"), (2.0, "new")):
+        watch._judge(
+            Event(
+                at=at,
+                kind="modified",
+                path=replaced,
+                steps=(),
+                facts=Facts(inode=1, digest=digest),
+            )
+        )
+    watch._judge(
+        Event(
+            at=3.0,
+            kind="created",
+            path=later,
+            steps=(),
+            facts=Facts(inode=2, digest="old"),
+        )
+    )
+
+    assert "duplicate-content" not in {fault.reason for fault in watch.faults}
+
+
 def test_copying_a_hardlinked_alias_tree_is_a_real_duplicate_fault(tmp_path: Path) -> None:
     """Canonical/hash aliases are zero-copy until a tree copy breaks them.
 

@@ -95,7 +95,8 @@ class Watch:
         self._observer: BaseObserver | None = None
         self._metadata_survey: MetadataSurvey | None = None
         self._modes: dict[Path, list[int]] = {}
-        self._digests: dict[str, Path] = {}
+        self._digests: dict[str, set[Path]] = {}
+        self._path_digests: dict[Path, str] = {}
         self._reported: set[tuple[Path, str]] = set()
         self._refusal: str | None = None
         self._source_stamps: dict[Path, tuple[int, ...]] = {}
