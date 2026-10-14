@@ -3,6 +3,9 @@
 import hashlib
 import json
 import ssl
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +13,25 @@ from tests.fixtures.oci.pinned_image import debug_image, reference_image
 from tests.fixtures.oci.registry import serve
 
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+
+
+def test_direct_launcher_can_import_repository_fixtures(tmp_path):
+    script = Path(__file__).with_name("pinned_image.py")
+    probe = (
+        "import runpy; "
+        f"runpy.run_path({str(script)!r}); "
+        "import tests.fixtures.oci.published_root"
+    )
+
+    launched = subprocess.run(
+        [sys.executable, "-I", "-c", probe],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert launched.returncode == 0, launched.stderr
 
 
 def _layout(root, *, architecture="arm64", media=MANIFEST):
