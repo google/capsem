@@ -172,9 +172,6 @@ impl GrantAuthority {
         if capabilities.is_empty() || ids.len() != capabilities.len() {
             return Err(GrantError::Invalid);
         }
-        if !capabilities.iter().all(|capability| policy(&session, capability)) {
-            return Err(GrantError::Denied);
-        }
         let scopes: BTreeSet<_> = capabilities
             .iter()
             .flat_map(|capability| capability.scopes.iter().cloned())
@@ -185,6 +182,12 @@ impl GrantAuthority {
         }
         let expires = now.checked_add(lifetime).ok_or(GrantError::Invalid)?;
         let mut grants = self.grants.lock().map_err(|_| GrantError::Unavailable)?;
+        // Observe the trusted current runtime/policy only after entering the
+        // same admission lock as terminal retirement. A stale pre-lock
+        // observation could otherwise issue after its owner was retired.
+        if !capabilities.iter().all(|capability| policy(&session, capability)) {
+            return Err(GrantError::Denied);
+        }
         grants.retain(|_, grant| grant.expires > now);
         if grants.len() >= self.limits.max_grants {
             return Err(GrantError::Capacity);

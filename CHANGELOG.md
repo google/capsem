@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Credential grant issuance checks current policy and runtime ownership inside
+  the same admission lock as terminal retirement, preventing stale permission
+  checks from inserting authority after its owner has retired.
+
 - VM boot admission retains an exclusive generation lifetime fence. Service
   restart cleanup confirms exit in the original kernel boot and PID namespace
   before retiring grants and session bytes; delayed children cannot replay boot.

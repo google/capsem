@@ -1,5 +1,38 @@
 use super::*;
 
+#[tokio::test]
+async fn issuance_checks_current_policy_inside_the_retirement_lock() {
+    let (_fixture, client, tokens) = test_connection(vec![]).await;
+    let connection = client
+        .open_connection(tokens, OAuthConnectionStorage::memory(65536).unwrap())
+        .await
+        .unwrap();
+    let authority = Arc::new(one_slot());
+    let (observed, received) = std::sync::mpsc::channel();
+    let held = authority.grants.lock().unwrap();
+    let issuer = Arc::clone(&authority);
+    let worker = std::thread::spawn(move || {
+        issuer.issue(
+            connection,
+            session(),
+            capability(),
+            Duration::from_secs(10),
+            Instant::now(),
+            |_, _| {
+                observed.send(()).unwrap();
+                true
+            },
+        )
+    });
+    let checked_before_retirement = received.recv_timeout(Duration::from_millis(30)).is_ok();
+    drop(held);
+    worker.join().unwrap().unwrap();
+    assert!(
+        !checked_before_retirement,
+        "policy/owner observations must follow admission to the same lock as terminal retirement"
+    );
+}
+
 fn other_target() -> GrantTarget {
     GrantTarget::new("POST", "https://api.example.test/v1/other").unwrap()
 }
