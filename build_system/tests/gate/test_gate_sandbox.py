@@ -70,11 +70,11 @@ unnested_only = pytest.mark.skipif(
 ONLINE_FAST = {
     "fast.audit.dependencies",
     "fast.audit.cargo",
-    # Exact lockfile dependency materialization. The paired install is
-    # explicitly offline and stays inside the kernel boundary.
+    # Lockfile dependency prewarm; paired install stays offline inside the sandbox.
     "sdk.python.prewarm",
     "fast.sdk.typescript.package-prewarm",
     "fast.mcp.typescript.package-prewarm",
+    "integrations.inspect-ai.prewarm",
     "fast.toolchain.node",
     "fast.toolchain.rust",
 }

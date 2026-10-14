@@ -1,17 +1,5 @@
 version = 1
 
-[[surface]]
-id = "inspect-extraction"
-state = "retained"
-current = ["integrations/inspect-ai/"]
-targets = ["integrations/inspect-ai/"]
-lint = ["python.ruff", "python.ty.strict", "fast.citadel"]
-tests = ["integrations/inspect-ai/tests/"]
-ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
-coverage = "Existing Python coverage sessions include integrations/inspect-ai/inspect_capsem and execute extraction tests in source contracts."
-debt = "none: pure extraction only; adapter, packaging and runtime acceptance belong to Pierre under issue #342"
-reason = "Preserve carried Dockerfile and Compose extraction with active source and CI owners, without claiming an installed Inspect adapter."
-
 # This is the transition join table. `current` classifies every tracked path;
 # `targets` is the approved final layout. Evidence names are deliberately
 # concrete so a move cannot erase its checker while keeping a vague owner.
@@ -303,3 +291,15 @@ ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
 coverage = "TypeScript line coverage floor plus packed-tarball stdio acceptance"
 debt = "none: the npm host has one SDK transport and no native packaging owner"
 reason = "The host MCP is a separately installed npm package backed exclusively by the typed gateway SDK."
+
+[[surface]]
+id = "integrations"
+state = "retained"
+current = ["integrations/"]
+targets = ["integrations/"]
+lint = ["fast.integrations.inspect-ai.lint", "fast.integrations.inspect-ai.types", "fast.audit.source-syntax", "fast.audit.markdown"]
+tests = ["fast.integrations.inspect-ai.tests", "fast.integrations.inspect-ai.build", "tests/citadel/test_sdk_quality.py"]
+ci = ["fast-gate", "test", "pr-gate"]
+coverage = "codecov inspect-ai flag; 90 percent line and branch floor"
+debt = "none: standalone integration package"
+reason = "First-party framework integrations (Inspect AI sandbox provider) live under integrations/ and depend on the gateway SDK."
