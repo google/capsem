@@ -161,9 +161,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
     @property
     def clean_path(self):
         """Strip http://localhost prefix that hyper sends over UDS."""
-        p = self.path
-        p = p.removeprefix("http://localhost")
-        return p
+        return self.path.removeprefix("http://localhost")
 
     def _read_body(self):
         length = int(self.headers.get("Content-Length", 0))
