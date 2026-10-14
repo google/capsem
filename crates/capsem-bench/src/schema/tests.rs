@@ -94,7 +94,15 @@ fn every_dimension_is_listed_once() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), listed, "a dimension is listed twice");
-    assert_eq!(listed, 20, "ALL must carry every dimension");
+    assert_eq!(listed, 21, "ALL must carry every dimension");
+}
+
+#[test]
+fn mitm_scale_is_a_multi_vm_measurement_outside_the_quick_lane() {
+    let scale: Dimension = serde_json::from_str("\"mitm-scale\"").expect("parses");
+    assert_eq!(scale, Dimension::MitmScale);
+    assert!(scale.needs_vm(), "it drives several live guests");
+    assert!(!scale.in_quick_lane(), "it measures sustained VM fanout");
 }
 
 #[test]
