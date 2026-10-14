@@ -114,16 +114,15 @@ def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
     for c in config.concurrency_levels:
         console.print(f"  concurrency={c} ...")
         row = _drive_at_concurrency(target, c, config.duration_s)
-        if row["errors"]:
-            raise RuntimeError(
-                f"mitm-load: {row['errors']} of {row['total_requests']} requests failed "
-                f"at concurrency {c}: {row['error_distribution']}; "
-                "the rail did not sustain the requested load"
-            )
         rows.append(row)
+        if row["errors"]:
+            # The collector is the quality gate. Return the failed row so it
+            # can reject the run without discarding the measurements that
+            # explain the failure.
+            break
 
     out = {
-        "version": "1.1",
+        "version": "1.2",
         "target": target,
         "concurrency_levels": rows,
     }

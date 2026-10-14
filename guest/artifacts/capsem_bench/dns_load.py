@@ -114,16 +114,15 @@ def dns_load_bench(qname=None, qtype=None, concurrency_levels=None, duration_s=N
             config.duration_s,
             timeout_s,
         )
-        if row["errors"]:
-            raise RuntimeError(
-                f"dns-load: {row['errors']} of {row['total_requests']} requests failed "
-                f"at concurrency {concurrency}: {row['error_distribution']}; "
-                "the rail did not sustain the requested load"
-            )
         rows.append(row)
+        if row["errors"]:
+            # Preserve the failed row and every lower successful level in the
+            # JSON artifact. The host collector rejects non-zero errors after
+            # recording the structured RPS, latency and pressure evidence.
+            break
 
     out = {
-        "version": "1.2",
+        "version": "1.3",
         "qname": qname,
         "qtype": qtype,
         "concurrency_levels": rows,

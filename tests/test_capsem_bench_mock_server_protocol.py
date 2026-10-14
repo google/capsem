@@ -58,7 +58,7 @@ def test_mitm_load_rejects_starved_driver(monkeypatch):
         mitm_load._drive_at_concurrency("https://fixture.test/tiny", 512, 10)
 
 
-def test_mitm_load_rejects_one_failed_request(monkeypatch):
+def test_mitm_load_preserves_failed_level_for_collector_rejection(monkeypatch):
     monkeypatch.setattr(
         mitm_load,
         "_drive_at_concurrency",
@@ -68,15 +68,34 @@ def test_mitm_load_rejects_one_failed_request(monkeypatch):
             "total_requests": 2,
             "errors": 1,
             "error_distribution": {"timed out": 1},
+            "rps": 2.0,
+            "p50_ms": 10.0,
+            "p95_ms": 20.0,
+            "p99_ms": 20.0,
+            "p999_ms": 20.0,
         },
     )
 
-    with pytest.raises(RuntimeError, match="1 of 2 requests failed"):
-        mitm_load.mitm_load_bench(
-            target="https://fixture.capsem.test/tiny",
-            concurrency_levels=[1],
-            duration_s=1,
-        )
+    result = mitm_load.mitm_load_bench(
+        target="https://fixture.capsem.test/tiny",
+        concurrency_levels=[1],
+        duration_s=1,
+    )
+
+    assert result["concurrency_levels"] == [
+        {
+            "concurrency": 1,
+            "duration_s": 1.0,
+            "total_requests": 2,
+            "errors": 1,
+            "error_distribution": {"timed out": 1},
+            "rps": 2.0,
+            "p50_ms": 10.0,
+            "p95_ms": 20.0,
+            "p99_ms": 20.0,
+            "p999_ms": 20.0,
+        }
+    ]
 
 
 def test_dns_load_delegates_to_async_rust_driver(monkeypatch):
@@ -166,7 +185,7 @@ def test_dns_load_rejects_starved_driver(monkeypatch):
         dns_load._drive_at_concurrency("fixture.test", 1, 512, 10, 5)
 
 
-def test_dns_load_rejects_one_failed_request(monkeypatch):
+def test_dns_load_preserves_failed_level_for_collector_rejection(monkeypatch):
     monkeypatch.setattr(
         dns_load,
         "_drive_at_concurrency",
@@ -176,16 +195,37 @@ def test_dns_load_rejects_one_failed_request(monkeypatch):
             "total_requests": 2,
             "errors": 1,
             "error_distribution": {"timed out": 1},
+            "decision_distribution": {"allow": 1},
+            "rps": 2.0,
+            "p50_ms": 10.0,
+            "p95_ms": 20.0,
+            "p99_ms": 20.0,
+            "p999_ms": 20.0,
         },
     )
 
-    with pytest.raises(RuntimeError, match="1 of 2 requests failed"):
-        dns_load.dns_load_bench(
-            qname="fixture.test",
-            qtype=1,
-            concurrency_levels=[1],
-            duration_s=1,
-        )
+    result = dns_load.dns_load_bench(
+        qname="fixture.test",
+        qtype=1,
+        concurrency_levels=[1],
+        duration_s=1,
+    )
+
+    assert result["concurrency_levels"] == [
+        {
+            "concurrency": 1,
+            "duration_s": 1.0,
+            "total_requests": 2,
+            "errors": 1,
+            "error_distribution": {"timed out": 1},
+            "decision_distribution": {"allow": 1},
+            "rps": 2.0,
+            "p50_ms": 10.0,
+            "p95_ms": 20.0,
+            "p99_ms": 20.0,
+            "p999_ms": 20.0,
+        }
+    ]
 
 
 class _StubConsole:
