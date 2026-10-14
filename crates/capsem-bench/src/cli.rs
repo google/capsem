@@ -151,6 +151,9 @@ pub(crate) struct ProtocolArgs {
     pub(crate) lane: String,
     #[arg(long, default_value = "/tmp/capsem-benchmark.json")]
     pub(crate) json_out: PathBuf,
+    /// Write raw samples in the shared collector protocol.
+    #[arg(long)]
+    pub(crate) collector_out: Option<PathBuf>,
     /// Also record into the host benchmark store.
     #[cfg(feature = "host")]
     #[arg(long)]
