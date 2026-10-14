@@ -100,6 +100,26 @@ fn provider_defaults_build_settings_defined_endpoint_registry() {
         registry.protocol_for_host("daily-cloudcode-pa.googleapis.com"),
         Some(ModelProtocol::Google)
     );
+    assert_eq!(
+        registry.protocol_for_host("aiplatform.googleapis.com"),
+        Some(ModelProtocol::Google)
+    );
+    assert_eq!(
+        registry.protocol_for_host("us-central1-aiplatform.googleapis.com"),
+        Some(ModelProtocol::Google)
+    );
+    assert_eq!(
+        registry.provider_for_target("aiplatform.googleapis.com", 443),
+        Some(ProviderKind::Google)
+    );
+    assert_eq!(
+        registry.provider_for_target("us-central1-aiplatform.googleapis.com", 443),
+        Some(ProviderKind::Google)
+    );
+    assert_eq!(
+        registry.provider_for_target("us-central1-aiplatform.googleapis.com", 80),
+        None
+    );
     assert_eq!(registry.protocol_for_host("127.0.0.1"), Some(ModelProtocol::Ollama));
     assert_eq!(registry.protocol_for_host("local.ollama"), Some(ModelProtocol::Ollama));
     assert_eq!(
@@ -115,6 +135,44 @@ fn provider_defaults_build_settings_defined_endpoint_registry() {
     let openai = registry.get("openai").expect("openai endpoint");
     assert_eq!(openai.listen_ports, vec![443]);
     assert_eq!(openai.allowed_remote_targets, vec!["api.openai.com:443"]);
+    let google = registry.get("google").expect("google endpoint");
+    assert!(google.matches_host("aiplatform.googleapis.com"));
+    assert!(google.matches_host("us-central1-aiplatform.googleapis.com"));
+    assert!(!google.matches_host("-aiplatform.googleapis.com"));
+    assert!(!google.matches_host("storage.googleapis.com"));
+}
+
+#[test]
+fn wildcard_endpoint_targets_match_subdomain_and_hyphen_prefixes() {
+    let endpoint = ModelEndpoint {
+        provider_id: "google".into(),
+        provider_kind: ProviderKind::Google,
+        display_name: "Google AI".into(),
+        protocol: ModelProtocol::Google,
+        upstream_url: "https://generativelanguage.googleapis.com/v1beta".into(),
+        listen_ports: vec![443],
+        allowed_remote_targets: vec![
+            "*.aiplatform.googleapis.com:443".into(),
+            "*-aiplatform.googleapis.com:443".into(),
+        ],
+    };
+    assert!(endpoint.matches_host("sub.aiplatform.googleapis.com"));
+    assert!(endpoint.matches_host("europe-west4-aiplatform.googleapis.com"));
+    assert!(endpoint.matches_target("sub.aiplatform.googleapis.com", 443));
+    assert!(endpoint.matches_target("europe-west4-aiplatform.googleapis.com", 443));
+    assert!(!endpoint.matches_target("europe-west4-aiplatform.googleapis.com", 80));
+    assert!(!endpoint.matches_host("aiplatform.googleapis.com"));
+    assert!(!endpoint.matches_host(".aiplatform.googleapis.com"));
+    assert!(!endpoint.matches_host("-aiplatform.googleapis.com"));
+
+    let bare_wildcard = ModelEndpoint {
+        allowed_remote_targets: vec!["*example.com:443".into(), "*.:443".into(), "*-:443".into()],
+        ..endpoint
+    };
+    assert!(!bare_wildcard.matches_host("badexample.com"));
+    assert!(!bare_wildcard.matches_host("example.com"));
+    assert!(!bare_wildcard.matches_host("a."));
+    assert!(!bare_wildcard.matches_host("a-"));
 }
 
 #[test]

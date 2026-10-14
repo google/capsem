@@ -53,7 +53,8 @@ impl ModelEndpoint {
         };
         self.hosts()
             .into_iter()
-            .any(|candidate| candidate.as_deref() == Some(host.as_str()))
+            .flatten()
+            .any(|candidate| host_pattern_matches(&candidate, &host))
     }
 
     pub fn matches_target(&self, host: &str, port: u16) -> bool {
@@ -64,7 +65,7 @@ impl ModelEndpoint {
             target
                 .host
                 .as_deref()
-                .is_some_and(|candidate| candidate == host.as_str())
+                .is_some_and(|candidate| host_pattern_matches(candidate, &host))
                 && target.port.is_none_or(|target_port| target_port == port)
         })
     }
@@ -176,6 +177,18 @@ fn normalize_host(host: &str) -> Option<String> {
     } else {
         Some(normalized)
     }
+}
+
+fn host_pattern_matches(pattern: &str, host: &str) -> bool {
+    if pattern == host {
+        return true;
+    }
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        return (suffix.starts_with('.') || suffix.starts_with('-'))
+            && suffix.len() > 1
+            && host.strip_suffix(suffix).is_some_and(|prefix| !prefix.is_empty());
+    }
+    false
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
