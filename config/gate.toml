@@ -2345,7 +2345,7 @@ context = "images/capsem-debug"
 script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/capsem-debug"
 cache_stage = "test-images"
-digests = { "linux/arm64" = "sha256:eb349ca15ee89715842252af6b253314d656ae41e9a685645393d8ec7a5666b6", "linux/amd64" = "sha256:3b0fd69477cfe0dccbad777608244664e72f828ba938db4a51ff7a2ac4635d95" }
+digests = { "linux/arm64" = "sha256:15395ce8120d3b2a0962eaed621b071bb06cf51ad1d26375d027f266289333b2", "linux/amd64" = "sha256:0db9f0c9b973081a1c3342610b691538f4b6a6682671b39e6ccc0fda1da5554d" }
 
 # The reference image: a pinned digest of the official `dev` image. Every
 # runtime test that boots a workload boots this one, so main development
@@ -2367,7 +2367,7 @@ cache_stage = "test-images"
 # replay) boot this image from the layout this variable names, mounted into
 # their container at its own path.
 layout_variable = "CAPSEM_REFERENCE_IMAGE_LAYOUT"
-digests = { "linux/arm64" = "sha256:64729596d6cdf9e5005c6d0d4745c842b1d159eea95b7e4025350d1d830b80b1", "linux/amd64" = "sha256:aa823bfde4361684dc3f496bd591b2d10c64f8a2c2654204b98f57d479786b3d" }
+digests = { "linux/arm64" = "sha256:206fb5037e1e3e25b798c00ad66867aaea67a667c169059f25b2cddcfd612719", "linux/amd64" = "sha256:d2ec6a385ec58e6fccbbf2860ed6944855b259c098a3ff04bd9a7d6b3bc26467" }
 
 [modules]
 # The build-chain suites that need built artifacts. The release-contracts
