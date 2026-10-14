@@ -1,9 +1,6 @@
 //! Explicit host consent and generation-bound grants through the authenticated gateway.
 
-use reqwest::Method;
-use serde::de::DeserializeOwned;
-
-use crate::{client::Client, models, transport::Request, Error, Result, VM};
+use crate::{client::Client, models, operations as api, Error, Result, VM};
 
 /// User-owned connections; connecting never grants a VM access implicitly.
 #[derive(Debug, Clone, Copy)]
@@ -13,37 +10,11 @@ pub struct Connections<'a>(pub(crate) &'a Client);
 #[derive(Debug, Clone, Copy)]
 pub struct CredentialGrants<'a>(pub(crate) &'a VM);
 
-// These approved operations are awaiting live service/OpenAPI registration.
-// Keep request execution in the existing transport: no discovery, browser,
-// retry, token export, or separate HTTP connection pool.
-async fn call<T: DeserializeOwned>(
-    client: &Client,
-    method: Method,
-    path: &str,
-    parameters: &[(&str, &str)],
-    body: Option<Vec<u8>>,
-) -> Result<T> {
-    let bytes = client
-        .transport
-        .request(
-            method,
-            path,
-            Request {
-                parameters,
-                body,
-                options: client.options,
-                ..Default::default()
-            },
-        )
-        .await?;
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
 impl Connections<'_> {
     /// List redacted connections and configured capabilities. Consent alone
     /// does not establish that a native consumer supports credential handoff.
     pub async fn list(&self) -> Result<models::ConnectionListResponse> {
-        call(self.0, Method::GET, "/connections", &[], None).await
+        api::list_connections(&self.0.transport, self.0.options).await
     }
 
     /// Begin consent using a host-configured profile. The caller decides how
@@ -53,23 +24,21 @@ impl Connections<'_> {
         &self,
         request: models::AuthorizeGoogleRequest,
     ) -> Result<models::AuthorizeGoogleResponse> {
-        call(
-            self.0,
-            Method::POST,
-            "/connections/google/authorize",
-            &[],
-            Some(serde_json::to_vec(&request)?),
+        api::authorize_google_connection(
+            &self.0.transport,
+            &api::AuthorizeGoogleConnectionParams { body: request },
+            self.0.options,
         )
         .await
     }
 
     pub async fn authorization(&self, id: &str) -> Result<models::AuthorizationTransaction> {
-        let result: models::AuthorizationTransaction = call(
-            self.0,
-            Method::GET,
-            "/connections/authorizations/{id}",
-            &[("id", id)],
-            None,
+        let result = api::get_connection_authorization(
+            &self.0.transport,
+            &api::GetConnectionAuthorizationParams {
+                transaction_id: id.into(),
+            },
+            self.0.options,
         )
         .await?;
         if result.id != id {
@@ -79,12 +48,12 @@ impl Connections<'_> {
     }
 
     pub async fn cancel_authorization(&self, id: &str) -> Result<models::AuthorizationTransaction> {
-        let result: models::AuthorizationTransaction = call(
-            self.0,
-            Method::DELETE,
-            "/connections/authorizations/{id}",
-            &[("id", id)],
-            None,
+        let result = api::cancel_connection_authorization(
+            &self.0.transport,
+            &api::CancelConnectionAuthorizationParams {
+                transaction_id: id.into(),
+            },
+            self.0.options,
         )
         .await?;
         if result.id != id {
@@ -94,8 +63,14 @@ impl Connections<'_> {
     }
 
     pub async fn get(&self, id: &str) -> Result<models::ConnectionSummary> {
-        let result: models::ConnectionSummary =
-            call(self.0, Method::GET, "/connections/{id}", &[("id", id)], None).await?;
+        let result = api::get_connection(
+            &self.0.transport,
+            &api::GetConnectionParams {
+                connection_id: id.into(),
+            },
+            self.0.options,
+        )
+        .await?;
         if result.id != id {
             return Err(Error::InvalidResponse("connection identity changed"));
         }
@@ -105,8 +80,14 @@ impl Connections<'_> {
     /// Fence local grants and begin provider retirement. A `revoking` result
     /// requires explicit status polling; it does not confirm completed cleanup.
     pub async fn disconnect(&self, id: &str) -> Result<models::DisconnectResponse> {
-        let result: models::DisconnectResponse =
-            call(self.0, Method::DELETE, "/connections/{id}", &[("id", id)], None).await?;
+        let result = api::disconnect_connection(
+            &self.0.transport,
+            &api::DisconnectConnectionParams {
+                connection_id: id.into(),
+            },
+            self.0.options,
+        )
+        .await?;
         if result.connection.id != id {
             return Err(Error::InvalidResponse("connection identity changed"));
         }
@@ -117,12 +98,10 @@ impl Connections<'_> {
 impl CredentialGrants<'_> {
     pub async fn list(&self) -> Result<models::SessionGrantListResponse> {
         let id = self.0.resolve().await?;
-        let result: models::SessionGrantListResponse = call(
-            &self.0.client,
-            Method::GET,
-            "/vms/{id}/credential-grants",
-            &[("id", &id)],
-            None,
+        let result = api::list_session_credential_grants(
+            &self.0.client.transport,
+            &api::ListSessionCredentialGrantsParams { id: id.clone() },
+            self.0.client.options,
         )
         .await?;
         if result.session_id != id
@@ -140,12 +119,13 @@ impl CredentialGrants<'_> {
     /// This never reconnects, acquires consent, or retries a mutation implicitly.
     pub async fn create(&self, request: models::CreateSessionGrantRequest) -> Result<models::SessionGrantSummary> {
         let id = self.0.resolve().await?;
-        let result: models::SessionGrantSummary = call(
-            &self.0.client,
-            Method::POST,
-            "/vms/{id}/credential-grants",
-            &[("id", &id)],
-            Some(serde_json::to_vec(&request)?),
+        let result = api::create_session_credential_grant(
+            &self.0.client.transport,
+            &api::CreateSessionCredentialGrantParams {
+                id: id.clone(),
+                body: request.clone(),
+            },
+            self.0.client.options,
         )
         .await?;
         let requested: std::collections::BTreeSet<_> = request.capability_ids.iter().collect();
@@ -165,12 +145,13 @@ impl CredentialGrants<'_> {
 
     pub async fn revoke(&self, grant_id: &str) -> Result<models::RevokeSessionGrantResponse> {
         let id = self.0.resolve().await?;
-        let result: models::RevokeSessionGrantResponse = call(
-            &self.0.client,
-            Method::DELETE,
-            "/vms/{id}/credential-grants/{grant_id}",
-            &[("id", &id), ("grant_id", grant_id)],
-            None,
+        let result = api::revoke_session_credential_grant(
+            &self.0.client.transport,
+            &api::RevokeSessionCredentialGrantParams {
+                id: id.clone(),
+                grant_id: grant_id.into(),
+            },
+            self.0.client.options,
         )
         .await?;
         if result.grant.session_id != id || result.grant.id != grant_id {

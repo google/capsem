@@ -40,6 +40,43 @@ operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
 operation!(get_asset_status, "getAssetStatus");
 operation!(inject_credential, "injectCredential", InjectCredentialParams);
+operation!(list_connections, "listConnections");
+operation!(
+    authorize_google_connection,
+    "authorizeGoogleConnection",
+    AuthorizeGoogleConnectionParams
+);
+operation!(
+    get_connection_authorization,
+    "getConnectionAuthorization",
+    GetConnectionAuthorizationParams
+);
+operation!(
+    cancel_connection_authorization,
+    "cancelConnectionAuthorization",
+    CancelConnectionAuthorizationParams
+);
+operation!(get_connection, "getConnection", GetConnectionParams);
+operation!(
+    disconnect_connection,
+    "disconnectConnection",
+    DisconnectConnectionParams
+);
+operation!(
+    list_session_credential_grants,
+    "listSessionCredentialGrants",
+    ListSessionCredentialGrantsParams
+);
+operation!(
+    create_session_credential_grant,
+    "createSessionCredentialGrant",
+    CreateSessionCredentialGrantParams
+);
+operation!(
+    revoke_session_credential_grant,
+    "revokeSessionCredentialGrant",
+    RevokeSessionCredentialGrantParams
+);
 operation!(get_mcp_info, "getMcpInfo");
 operation!(list_mcp_servers, "listMcpServers");
 operation!(get_mcp_default, "getMcpDefault");
