@@ -1,8 +1,20 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
 from .attach_network_member import attach_network_member as attach_network_member
+from .authorize_google_connection import (
+    authorize_google_connection as authorize_google_connection,
+)
 from .call_mcp_tool import call_mcp_tool as call_mcp_tool
+from .cancel_connection_authorization import (
+    cancel_connection_authorization as cancel_connection_authorization,
+)
+from .claim_managed_session import claim_managed_session as claim_managed_session
+from .close_managed_session import close_managed_session as close_managed_session
 from .create_network import create_network as create_network
+from .create_proxy import create_proxy as create_proxy
+from .create_session_credential_grant import (
+    create_session_credential_grant as create_session_credential_grant,
+)
 from .create_vm import create_vm as create_vm
 from .create_vm_exposure import create_vm_exposure as create_vm_exposure
 from .create_vm_preview_session import (
@@ -12,11 +24,16 @@ from .delete_network import delete_network as delete_network
 from .delete_vm import delete_vm as delete_vm
 from .delete_vm_exposure import delete_vm_exposure as delete_vm_exposure
 from .detach_network_member import detach_network_member as detach_network_member
+from .disconnect_connection import disconnect_connection as disconnect_connection
 from .download_vm_file import download_vm_file as download_vm_file
 from .exec_vm import exec_vm as exec_vm
 from .export_vm_bodies import export_vm_bodies as export_vm_bodies
 from .fork_vm import fork_vm as fork_vm
 from .get_asset_status import get_asset_status as get_asset_status
+from .get_connection import get_connection as get_connection
+from .get_connection_authorization import (
+    get_connection_authorization as get_connection_authorization,
+)
 from .get_hypervisor_info import get_hypervisor_info as get_hypervisor_info
 from .get_hypervisor_logs import get_hypervisor_logs as get_hypervisor_logs
 from .get_mcp_default import get_mcp_default as get_mcp_default
@@ -35,11 +52,16 @@ from .get_vm_stats_detail import get_vm_stats_detail as get_vm_stats_detail
 from .get_vm_stats_summary import get_vm_stats_summary as get_vm_stats_summary
 from .get_vm_status import get_vm_status as get_vm_status
 from .get_vm_timeline import get_vm_timeline as get_vm_timeline
+from .heartbeat_proxy import heartbeat_proxy as heartbeat_proxy
 from .inject_credential import inject_credential as inject_credential
+from .list_connections import list_connections as list_connections
 from .list_images import list_images as list_images
 from .list_mcp_servers import list_mcp_servers as list_mcp_servers
 from .list_mcp_tools import list_mcp_tools as list_mcp_tools
 from .list_networks import list_networks as list_networks
+from .list_session_credential_grants import (
+    list_session_credential_grants as list_session_credential_grants,
+)
 from .list_vm_exposures import list_vm_exposures as list_vm_exposures
 from .list_vm_files import list_vm_files as list_vm_files
 from .list_vms import list_vms as list_vms
@@ -50,11 +72,15 @@ from .purge_vms import purge_vms as purge_vms
 from .refresh_mcp_server import refresh_mcp_server as refresh_mcp_server
 from .restart_hypervisor import restart_hypervisor as restart_hypervisor
 from .resume_vm import resume_vm as resume_vm
+from .revoke_session_credential_grant import (
+    revoke_session_credential_grant as revoke_session_credential_grant,
+)
 from .revoke_vm_preview_sessions import (
     revoke_vm_preview_sessions as revoke_vm_preview_sessions,
 )
 from .run_vm import run_vm as run_vm
 from .start_vm import start_vm as start_vm
+from .stop_proxy import stop_proxy as stop_proxy
 from .stop_vm import stop_vm as stop_vm
 from .update_hypervisor import update_hypervisor as update_hypervisor
 from .upload_vm_file import upload_vm_file as upload_vm_file

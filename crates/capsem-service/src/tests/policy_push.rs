@@ -12,6 +12,62 @@ use capsem_core::net::policy_config::{ActivePolicyFile, DetectionLevel, Security
 
 const WIKI_SERVER: &str = "[[mcp.servers]]\nname = \"wiki\"\nurl = \"https://wiki.example.invalid/mcp\"\n";
 
+#[tokio::test]
+async fn managed_host_policy_reload_refuses_invalid_inputs_and_restores_valid_metadata() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_env, settings, _) = install_empty_settings_env(&dir);
+    let state = make_test_state();
+    let request = capsem_crypto::uuid_v4();
+    let registry = capsem_core::managed_sessions::Registry::open(&state.run_dir.join("managed-ownership")).unwrap();
+    registry
+        .close(
+            request,
+            &capsem_core::managed_sessions::Capability::from_bytes([0xaf; 32]),
+        )
+        .unwrap();
+    let mutation = state.policy_mutation.begin().await;
+    std::fs::write(
+        &settings,
+        "[managed_sessions]\nlease_seconds = 'policy-private-sentinel'\n",
+    )
+    .unwrap();
+    let error = crate::active_policy::push_policy_to_running_instances(&state, &mutation)
+        .await
+        .unwrap_err();
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(error.1, "managed lease policy invalid");
+    let app = build_service_router(Arc::clone(&state));
+    let claim = || {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri(format!("/vms/managed/{request}/claim"))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"ownership_token":"af".repeat(32)}).to_string()))
+            .unwrap()
+    };
+    let response = app.clone().oneshot(claim()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    std::fs::write(
+        &settings,
+        "[managed_sessions]\nlease_seconds = 120\nrenew_after_seconds = 30\n",
+    )
+    .unwrap();
+    assert_eq!(
+        crate::active_policy::push_policy_to_running_instances(&state, &mutation)
+            .await
+            .unwrap(),
+        0
+    );
+    drop(mutation);
+    let response = app.oneshot(claim()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    assert_eq!(body["state"], "closed");
+    assert_eq!(body["ownership"]["lease_seconds"], 120);
+    assert_eq!(body["ownership"]["renew_after_seconds"], 30);
+}
+
 /// A state whose settings.toml declares the `wiki` MCP server, with one
 /// running VM per id. Returns the state, each VM's session directory, and
 /// the guards that keep the settings redirect alive.
@@ -139,7 +195,7 @@ async fn a_reload_acknowledging_another_active_policy_fails_the_push() {
     let (state, _, _env) = state_with_running_vms(&dir, &["stale-ack-vm"]);
     let process = spawn_fake_process(&uds_path(&state, "stale-ack-vm"), 1, |message| {
         let reply = match message {
-            ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
+            ServiceToProcess::ReloadConfig { id, .. } => Some(ProcessToService::ConfigReloadResult {
                 id: *id,
                 active_policy_digest: Some("blake3:some-other-policy".to_string()),
                 error: None,
@@ -163,11 +219,48 @@ async fn a_reload_acknowledging_another_active_policy_fails_the_push() {
     process.await.unwrap();
 }
 
+#[tokio::test]
+async fn a_reload_ack_from_a_replaced_generation_cannot_update_its_broker() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (state, sessions, _env) = state_with_running_vms(&dir, &["replaced-vm"]);
+    let session_dir = sessions[0].clone();
+    let process = spawn_fake_process(&uds_path(&state, "replaced-vm"), 1, {
+        let state = Arc::clone(&state);
+        move |message| {
+            let ServiceToProcess::ReloadConfig { id, active_policy } = message else {
+                return Box::pin(async { None });
+            };
+            let id = *id;
+            let digest = capsem_core::net::policy_config::active_policy_digest(active_policy);
+            insert_fake_instance_with_session_dir(&state, "replaced-vm", std::process::id(), session_dir.clone());
+            Box::pin(async move {
+                Some(ProcessToService::ConfigReloadResult {
+                    id,
+                    active_policy_digest: Some(digest),
+                    error: None,
+                })
+            })
+        }
+    });
+
+    let error = handle_mcp_default_edit(State(Arc::clone(&state)), permission(SecurityRuleAction::Block))
+        .await
+        .expect_err("a stale generation cannot publish into its replacement's broker");
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        error.1.contains("replaced-vm: VM owner changed during IPC admission"),
+        "{}",
+        error.1
+    );
+    process.await.unwrap();
+}
+
 /// Start edit A, hold its VM acknowledgement, then start edit B. Release A
 /// once B is either waiting for A or has already rewritten A's session. The
-/// fake VM answers each reload with the digest of the active policy it finds
-/// when it answers, as capsem-process does. Returns the session's active
-/// policy after both edits.
+/// fake VM answers each reload with the digest of the active policy bytes in
+/// that request, as capsem-process does. Returns the session's active policy
+/// after both edits.
 async fn race_edit_b_against_held_edit_a(
     edit_b: impl FnOnce(Arc<ServiceState>) -> tokio::task::JoinHandle<Result<(), AppError>>,
 ) -> ActivePolicyFile {
@@ -179,13 +272,13 @@ async fn race_edit_b_against_held_edit_a(
     let (release, released) = tokio::sync::oneshot::channel::<()>();
     let released = Arc::new(std::sync::Mutex::new(Some(released)));
     let process = spawn_fake_process(&uds_path(&state, "race-vm"), 2, {
-        let (held, active_path) = (Arc::clone(&held), active_path.clone());
+        let held = Arc::clone(&held);
         move |message| {
-            let ServiceToProcess::ReloadConfig { id } = *message else {
+            let ServiceToProcess::ReloadConfig { id, active_policy } = message else {
                 return Box::pin(async { None });
             };
-            let (held, released, active_path) =
-                (Arc::clone(&held), released.lock().unwrap().take(), active_path.clone());
+            let (id, active_policy) = (*id, active_policy.clone());
+            let (held, released) = (Arc::clone(&held), released.lock().unwrap().take());
             Box::pin(async move {
                 if let Some(released) = released {
                     held.notify_one();
@@ -193,9 +286,7 @@ async fn race_edit_b_against_held_edit_a(
                 }
                 Some(ProcessToService::ConfigReloadResult {
                     id,
-                    active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(
-                        &std::fs::read(&active_path).unwrap(),
-                    )),
+                    active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(&active_policy)),
                     error: None,
                 })
             })

@@ -298,26 +298,26 @@ flowchart LR
 ```
 
 Corp entries win over user entries, which win over built-in defaults. Example
-entry:
+entry for enabling the service-supervised builtin tools:
 
 ```toml
-[mcp.capsem]
-name = "Capsem"
-description = "Built-in Capsem MCP server for HTTP tools"
-transport = "stdio"
-command = "/run/capsem-mcp-server"
-builtin = true
+[mcp.server_enabled]
+local = true
 ```
 
 Enterprises can add MCP servers in `corp.toml`:
 
 ```toml
-[mcp.internal_tools]
-name = "Internal Tools"
-transport = "stdio"
-command = "/opt/acme/mcp-server"
-args = ["--config", "/etc/acme.json"]
+[[mcp.servers]]
+name = "internal_tools"
+url = "https://tools.acme.example/mcp"
+enabled = true
 ```
+
+External server settings support HTTP endpoints, optional configured headers and
+broker credential references. Arbitrary host stdio commands and filesystem grants
+are not settings fields. The guest `/run/capsem-mcp-server` is a relay to Capsem's
+endpoint, not a host command to configure as an external server.
 
 ## Security Rules
 

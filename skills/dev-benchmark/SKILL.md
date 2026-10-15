@@ -15,6 +15,7 @@ replaced had ten producers each computing its own `p99`.
 just bench-quick                 # dev loop: no guest, bounded, records like any run
 just bench                       # every dimension that has a collector
 just bench routes criterion      # only these
+just bench-slow routes           # same harness, rebuilding intentionally stale VM assets
 just bench-report                # what each subject reads, and how it has moved
 ```
 
@@ -30,10 +31,12 @@ this repo took before it existed was taken on an unqualified machine.
 | `list` | every dimension and whether the quick lane covers it |
 | `run [dim...]` | measure, then record into the store |
 | `doctor` | is this machine fit to measure -- load, governor, KVM, strays |
-| `compare A B <dim>` | two stores, metric by metric |
+| `compare A B <dim>` | two stores, metric by metric; combines the latest two authoritative runs by default |
 | `verify` | ratchet a run against evidence; refuses on an unfit machine |
 | `report` | every subject and its trend |
 | `protocol`, `protocol-delta`, `delta` | the scenario engine: host-direct vs guest-through-Capsem |
+| `http-load` | duration-driven async HTTP load with pooled keep-alive connections and cold/warm latency |
+| `dns-load` | duration-driven async DNS load with one persistent UDP socket per logical client |
 
 Modules: `schema.rs` (the record), `stats.rs` (**all** statistics),
 `store.rs` (SQLite), `collector.rs` (the subprocess protocol), `machine.rs`
@@ -86,6 +89,47 @@ read their mode from `argv[0]` and drive the modules in
 manifests and reads raw per-iteration nanoseconds out of Criterion's
 `sample.json`, so a new `[[bench]]` target is measured without editing it.
 
+Load generation is part of the measurement system. Do not use one blocking
+thread per client: scheduler starvation can make a high-concurrency run issue
+fewer requests than its requested concurrency. The guest MITM lane delegates
+to `capsem-bench-rs http-load`; every client loop must attempt at least one
+request, and fewer total attempts than clients invalidates the run. Keep cold
+and warm latency separate so connection admission and TLS setup cannot be
+mistaken for steady-state request cost. Each logical client owns one HTTP
+client and reuses its keep-alive connection: a shared pool may open multiple
+connections per logical client under load and invalidate the requested
+concurrency. DNS load follows the same rule: the guest wrapper delegates to
+`capsem-bench-rs dns-load`, and each logical client reuses one UDP socket for
+the entire level. A Python thread per client or a fresh socket per query
+measures scheduler and socket churn rather than the DNS path. The host
+collector also reads the
+fully flushed service log and rejects proxy traffic-descriptor refusals that
+the HTTP client retried internally; zero client errors alone is insufficient.
+The DNS lane likewise rejects audit refusals and SERVFAIL responses. When DNS
+RPS flattens or errors rise with concurrency, correlate the failed level with
+the proxy log before raising a socket cap: synchronous ledger commitment and
+admission exchanges can make the audit queue the real bottleneck. Changes to
+that path belong in the shared benchmark lane and must keep its strict error
+gate; do not replace it with a one-off load script.
+
+Guest load collectors sample the complete Capsem process tree. Report CPU,
+file descriptors, RSS, and, where the platform exposes them, PSS and USS for
+the total tree and each named component. Use PSS when estimating many-VM host
+capacity because summing RSS counts shared pages once per process; use USS to
+show the memory that disappears with that process. Compare two unchanged runs
+before and two changed runs after any performance work.
+
+`just bench mitm-scale` is the aggregate HTTPS capacity proof. Its
+`[benchmark.mitm_scale]` config creates a fresh identical cohort at each VM
+count, fixes one keep-alive concurrency level per VM, samples the Capsem tree
+and mock upstream separately, and rejects request errors or hidden proxy
+refusals. It also records physical cores and logical CPUs. Judge scaling below
+physical-core saturation first; once total CPU reaches the host budget, a flat
+or falling aggregate RPS is host pressure rather than evidence of a shared
+Capsem lock. Report aggregate RPS, RPS per consumed CPU, PSS per loaded VM and
+per-VM latency together. Run the lane twice after changing VM ownership,
+network workers, proxy concurrency, ledger admission or their limits.
+
 ## Is the move real?
 
 `compare` and `verify` report `delta_abs`, `delta_pct`, `ratio`, and
@@ -120,6 +164,12 @@ router now: every registered route must be in `[benchmark.routes]` as
 in no class, a duplicate classification, an unexplained internal route, or
 service/gateway topology drift. `unmeasured` is debt that may only shrink;
 `internal` is a one-entry ratchet, not an easy exemption for new routes.
+
+For every route in `measured`, the `routes` collector records sequential warm
+and cold latency plus a 16-client kept-alive load window for both the service
+UDS and authenticated gateway. The load window emits raw concurrent latency,
+aggregate RPS, and CPU samples. Mutation and external-state routes remain in
+the explicit debt inventory until their owning fixture can replay them safely.
 
 ## Benchmarks that are still pytest
 

@@ -7,32 +7,33 @@ import hashlib
 import json
 import shlex
 import subprocess
-import tempfile
-from pathlib import Path
 
 import pytest
-from helpers.benchmark_output import benchmark_output_dir
 from helpers.constants import ASSETS_DIR, BIN_DIR, PROJECT_ROOT
 
 from tests.ironbank.kingslanding.test_publish import redis, service
+from tests.ironbank.kingslanding.test_publish_benchmark import (
+    benchmark_evidence,
+    qualify_benchmark_host,
+)
 from tests.ironbank.kingslanding.test_run import exec_output_text
 
 __all__ = ["redis", "service"]
 pytestmark = pytest.mark.integration
 
 
-def test_redis_guest_and_published_transport_samples(redis, service):
-    output = Path(
-        tempfile.mkdtemp(prefix="redis-", dir=benchmark_output_dir(PROJECT_ROOT, "kingslanding"))
-    )
+@pytest.fixture(autouse=True)
+def evidence():
+    output = benchmark_evidence("redis-")
+    qualify_benchmark_host(output)
+    return output
+
+
+def test_redis_guest_and_published_transport_samples(redis, service, evidence):
+    output = evidence
     bench = str(BIN_DIR / "capsem-bench-rs")
-    doctor = subprocess.run(
-        [bench, "doctor", "--json"], capture_output=True, timeout=15, check=False
-    )
-    (output / "doctor.json").write_bytes(doctor.stdout)
-    (output / "doctor.stderr").write_bytes(doctor.stderr)
     identity = {
-        "doctor_exit": doctor.returncode,
+        "doctor_exit": int((output / "doctor.exit").read_text()),
         "source_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, timeout=5, text=True
         ).strip(),

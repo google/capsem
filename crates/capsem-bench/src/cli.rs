@@ -20,6 +20,12 @@ pub(crate) enum Command {
     Udp(crate::udp::Args),
     /// ICMP echo against an address, without a ping binary.
     Ping(crate::ping::Args),
+    /// Drive sustained HTTP load with pooled async clients.
+    HttpLoad(crate::http_load::Args),
+    /// Drive sustained DNS load with async UDP clients.
+    DnsLoad(crate::dns_load::Args),
+    /// Print the config-owned capacities used to shape load curves.
+    RuntimeLimits,
     /// Run deterministic protocol scenarios against capsem-mock-server.
     Protocol(ProtocolArgs),
     /// Run host-direct and guest-through-Capsem protocol lanes, then report delta.
@@ -98,6 +104,9 @@ pub(crate) struct CompareArgs {
     pub(crate) baseline: PathBuf,
     pub(crate) current: PathBuf,
     pub(crate) dimension: String,
+    /// Most recent authoritative runs to combine on each side.
+    #[arg(long, default_value_t = 2)]
+    pub(crate) runs: usize,
     #[command(flatten)]
     pub(crate) thresholds: Thresholds,
 }
@@ -142,6 +151,9 @@ pub(crate) struct ProtocolArgs {
     pub(crate) lane: String,
     #[arg(long, default_value = "/tmp/capsem-benchmark.json")]
     pub(crate) json_out: PathBuf,
+    /// Write raw samples in the shared collector protocol.
+    #[arg(long)]
+    pub(crate) collector_out: Option<PathBuf>,
     /// Also record into the host benchmark store.
     #[cfg(feature = "host")]
     #[arg(long)]

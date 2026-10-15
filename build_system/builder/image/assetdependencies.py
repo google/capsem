@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 
+from .. import crypto as hashlib
 from .models import GuestImageConfig
 
 INPUT_KEY_LABEL = "org.capsem.asset-dependencies.input-key"

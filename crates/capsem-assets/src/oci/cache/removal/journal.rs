@@ -1,7 +1,7 @@
 //! A synced intent precedes each unlink; retries never invent a new target.
 
+use capsem_crypto::Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 
 use super::super::super::{
     removal::{preview_token, Witness},
@@ -126,7 +126,7 @@ impl Journal {
             let mut digest = Sha256::new();
             digest.update(self.token.as_bytes());
             digest.update(index.to_be_bytes());
-            chunk.copy_from_slice(&digest.finalize()[..chunk.len()]);
+            chunk.copy_from_slice(&digest.finalize().as_ref()[..chunk.len()]);
         }
         let mut reservations = Vec::new();
         for _ in 0..2 {

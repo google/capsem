@@ -1,15 +1,41 @@
 use crate::oci::{
     receipts::{BlobKind, BlobRef, CacheReceipt},
-    CacheIdentity, CacheKey, CacheState, Digest, ImageCache,
+    CacheIdentity, CacheInventory, CacheKey, CacheState, Digest, ImageCache,
 };
 use std::{
     fs::File,
     io::{Seek, SeekFrom, Write},
     os::unix::fs::MetadataExt,
+    sync::Arc,
 };
 
+async fn stable_inventory(owner: &ImageCache) -> Arc<CacheInventory> {
+    use capsem_foundation::poll::{poll_until, PollOpts};
+    // Busy shared ancestors may conservatively invalidate an observation.
+    // Each retry must obtain a real, still-valid inventory proof.
+    poll_until(
+        PollOpts::new("stable-cache-inventory", std::time::Duration::from_secs(2)),
+        || async {
+            match owner.refresh_inventory(64).await {
+                Ok(()) => owner.inventory_snapshot().unwrap(),
+                Err(error) if error.to_string() == "cache changed during inventory observation" => None,
+                Err(error) => panic!("inventory observation failed: {error:#}"),
+            }
+        },
+    )
+    .await
+    .unwrap()
+}
+
 async fn fixture() -> (tempfile::TempDir, ImageCache, CacheKey, CacheKey) {
-    let root = crate::oci::tests::private_dir();
+    // A watched cache must not descend from every other test's busy temp
+    // namespace. Keep a private sibling while retaining real path watches.
+    let temporary = std::env::temp_dir();
+    let parent = temporary
+        .parent()
+        .filter(|parent| *parent != std::path::Path::new("/"))
+        .unwrap_or(std::path::Path::new("/var/tmp"));
+    let root = crate::oci::tests::private_dir_in(parent);
     let owner = ImageCache::at(root.path()).unwrap();
     owner.inner.prepare().await.unwrap();
     let pin = format!("sha256:{}", "a".repeat(64));
@@ -127,8 +153,7 @@ async fn reused_materialization_controls_invalidate_inventory_on_acquire_and_aft
     // Reuse existing controls: flock transitions themselves emit no file
     // notification, so creating a fresh lock name would hide the mistake.
     drop(owner.inner.materialization_lease(&first).await.unwrap());
-    owner.refresh_inventory(64).await.unwrap();
-    let quiet = owner.inventory_snapshot().unwrap().unwrap();
+    let quiet = stable_inventory(&owner).await;
     assert!(quiet
         .images
         .iter()
@@ -138,8 +163,7 @@ async fn reused_materialization_controls_invalidate_inventory_on_acquire_and_aft
         owner.inventory_snapshot().unwrap().is_none(),
         "an owned live lease must obsolete the reclaim estimate"
     );
-    owner.refresh_inventory(64).await.unwrap();
-    let busy = owner.inventory_snapshot().unwrap().unwrap();
+    let busy = stable_inventory(&owner).await;
     assert!(busy
         .images
         .iter()
@@ -149,8 +173,7 @@ async fn reused_materialization_controls_invalidate_inventory_on_acquire_and_aft
         owner.inventory_snapshot().unwrap().is_none(),
         "lease release must obsolete the busy observation"
     );
-    owner.refresh_inventory(64).await.unwrap();
-    let released = owner.inventory_snapshot().unwrap().unwrap();
+    let released = stable_inventory(&owner).await;
     assert!(released
         .images
         .iter()
@@ -172,26 +195,28 @@ async fn cancelled_partial_materialization_releases_its_barrier_before_invalidat
     let LockAttempt::Acquired(other) = try_acquire_existing(&control, LockMode::Exclusive).unwrap() else {
         panic!("fixture image control unexpectedly held");
     };
-    owner.refresh_inventory(64).await.unwrap();
+    stable_inventory(&owner).await;
     let before = owner.snapshot(&first).unwrap().epoch;
     let source = owner.clone();
     let target = first.clone();
     let pending = tokio::spawn(async move { source.inner.materialization_lease(&target).await });
     poll_until(
         PollOpts::new("partial-materialization", std::time::Duration::from_secs(1)),
-        || async { (owner.snapshot(&first).unwrap().epoch > before).then_some(()) },
+        || async {
+            let barrier = root.path().join("locks/materialization.lock");
+            match try_acquire_existing(&barrier, LockMode::Exclusive).unwrap() {
+                LockAttempt::Contended => (owner.snapshot(&first).unwrap().epoch > before).then_some(()),
+                LockAttempt::Acquired(lease) => {
+                    drop(lease);
+                    None
+                }
+            }
+        },
     )
     .await
     .unwrap();
     assert!(owner.inventory_snapshot().unwrap().is_none());
-    owner.refresh_inventory(64).await.unwrap();
-    assert!(owner
-        .inventory_snapshot()
-        .unwrap()
-        .unwrap()
-        .images
-        .iter()
-        .all(|row| row.busy));
+    assert!(stable_inventory(&owner).await.images.iter().all(|row| row.busy));
     pending.abort();
     assert!(matches!(pending.await, Err(error) if error.is_cancelled()));
     assert!(owner.inventory_snapshot().unwrap().is_none());
@@ -202,14 +227,7 @@ async fn cancelled_partial_materialization_releases_its_barrier_before_invalidat
     };
     drop(barrier);
     drop(other);
-    owner.refresh_inventory(64).await.unwrap();
-    assert!(owner
-        .inventory_snapshot()
-        .unwrap()
-        .unwrap()
-        .images
-        .iter()
-        .all(|row| !row.busy));
+    assert!(stable_inventory(&owner).await.images.iter().all(|row| !row.busy));
 }
 
 #[tokio::test]

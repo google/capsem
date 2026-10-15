@@ -705,7 +705,7 @@ pub(super) fn json_digest(value: &serde_json::Value) -> Result<serde_json::Value
     let bytes = serde_json::to_vec(value).context("serialize json digest payload")?;
     Ok(serde_json::json!({
         "sha256": format!("{:x}", Sha256::digest(&bytes)),
-        "blake3": blake3::hash(&bytes).to_hex().to_string(),
+        "blake3": capsem_crypto::blake3::hash(&bytes).to_hex().to_string(),
     }))
 }
 
@@ -725,7 +725,7 @@ pub(super) fn copy_runtime_release_files(out_dir: &Path, copies: &[RuntimeReleas
 pub(super) fn file_digest(path: &Path) -> Result<(u64, serde_json::Value)> {
     let mut source = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut sha256 = Sha256::new();
-    let mut blake3 = blake3::Hasher::new();
+    let mut blake3 = capsem_crypto::blake3::Hasher::new();
     let mut bytes = 0_u64;
     let mut buffer = vec![0_u8; 1024 * 1024];
     loop {

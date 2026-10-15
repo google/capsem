@@ -7,6 +7,7 @@ use super::*;
 /// Module sources, so a name declared as a `pub const` but left out of its
 /// module's `SPECS` table fails here instead of recording without metadata.
 const SOURCES: &[(&str, &str)] = &[
+    ("cache", include_str!("cache.rs")),
     ("db", include_str!("db.rs")),
     ("dns", include_str!("dns.rs")),
     ("mitm", include_str!("mitm.rs")),

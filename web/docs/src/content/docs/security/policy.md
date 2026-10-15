@@ -449,11 +449,12 @@ capsem:
 Sigma import requires `logsource.product = capsem` and
 `logsource.service = security_event`. Selection fields must be first-party
 `SecurityEvent` roots. `level` maps to `detection_level`; `capsem.action`
-defaults to `allow` when omitted.
+defaults to `allow` when omitted. Duplicate YAML mapping keys are rejected;
+Capsem never silently chooses one of two conflicting detection definitions.
 
 The fixture used by tests lives at
 `tests/fixtures/config/security-rule-profile/detection.yaml`, and is checked by
-both the Rust importer and the Python Sigma parser compatibility gate.
+both the Rust importer and the runtime rule-compilation gate.
 
 ## Ledger
 

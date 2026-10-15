@@ -124,7 +124,7 @@
       </div>
     {:else if settingsStore.error && !settingsStore.model}
       <div class="flex flex-col items-center justify-center h-full gap-y-4">
-        <p class="text-sm text-destructive-foreground">{settingsStore.error}</p>
+        <p class="text-sm text-destructive-text">{settingsStore.error}</p>
         <button
           type="button"
           class="py-2 px-4 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors"

@@ -1,9 +1,6 @@
 //! Request registry transports borrow persistent credential-free cache owners.
 use super::*;
 
-// Bound queue metadata independently of the cache's content capacity.
-const CACHE_VERIFICATION_BATCH_KEYS: usize = 1024;
-
 #[derive(Clone, Default)]
 pub(crate) struct RegistryImages {
     cache: Arc<std::sync::OnceLock<capsem_assets::oci::ImageCache>>,
@@ -51,7 +48,7 @@ impl ImageSource for RegistryImages {
 
     fn observe_cache(&self, keys: &[capsem_assets::oci::CacheKey], parent: &StdPath) -> anyhow::Result<()> {
         anyhow::ensure!(
-            keys.len() <= CACHE_VERIFICATION_BATCH_KEYS,
+            keys.len() <= capsem_proto::CACHE_IMAGE_VERIFICATION_BATCH_KEYS,
             "catalog cache observation exceeds capacity"
         );
         if self.worker.get().is_none() {
@@ -61,7 +58,7 @@ impl ImageSource for RegistryImages {
             let worker = self.cache()?.reconciler(
                 stage::oci_architecture()?,
                 parent.to_owned(),
-                CACHE_VERIFICATION_BATCH_KEYS,
+                capsem_proto::CACHE_IMAGE_VERIFICATION_BATCH_KEYS,
             )?;
             let _ = self.worker.set((parent.to_owned(), worker));
         }

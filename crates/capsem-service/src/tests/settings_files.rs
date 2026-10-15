@@ -14,29 +14,6 @@ pub(crate) struct EnvVarGuard {
     previous: Option<std::ffi::OsString>,
 }
 
-/// Make the builtin MCP binary the profile routes look for exist beside the
-/// test executable. The route checks for it on every request.
-///
-/// Never removed: that directory is cargo's shared `deps` output, so every
-/// test process -- nextest's per-test processes, other worktrees' runs --
-/// sees the same file. A guard that deleted the placeholder it had created
-/// pulled it out from under another process mid-request, and the builtin
-/// `local` server vanished from its listing (#226). Created by rename so two
-/// processes racing to create it both succeed.
-pub(super) fn ensure_test_builtin_mcp_binary() {
-    let path = std::env::current_exe()
-        .expect("test binary path")
-        .parent()
-        .expect("test binary parent")
-        .join("capsem-mcp-builtin");
-    if path.exists() {
-        return;
-    }
-    let staged = path.with_extension(format!("tmp-{}", std::process::id()));
-    std::fs::write(&staged, "#!/bin/sh\n").expect("write test builtin MCP binary placeholder");
-    std::fs::rename(&staged, &path).expect("publish test builtin MCP binary placeholder");
-}
-
 impl EnvVarGuard {
     pub(crate) fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let previous = std::env::var_os(key);
@@ -187,7 +164,9 @@ fn resolve_rejects_symlink_escape() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
-            generation: uuid::Uuid::new_v4(),
+            generation: capsem_crypto::uuid_v4(),
+            authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: "test-vm".into(),
             name: "test-vm".into(),
             asset_pins: test_asset_pins(),
@@ -201,7 +180,6 @@ fn resolve_rejects_symlink_escape() {
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 
@@ -221,7 +199,9 @@ fn resolve_valid_path_inside_workspace() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
-            generation: uuid::Uuid::new_v4(),
+            generation: capsem_crypto::uuid_v4(),
+            authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: "test-vm".into(),
             name: "test-vm".into(),
             asset_pins: test_asset_pins(),
@@ -235,7 +215,6 @@ fn resolve_valid_path_inside_workspace() {
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 
@@ -516,7 +495,7 @@ async fn wait_for_vm_ready_uses_tight_poll_contract_and_detects_ready() {
     let ready_clone = ready_path.clone();
     let creator = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        std::fs::write(&ready_clone, b"").unwrap();
+        std::fs::write(&ready_clone, b"ready\n").unwrap();
     });
 
     wait_for_vm_ready(&uds_path, 30, None, None)

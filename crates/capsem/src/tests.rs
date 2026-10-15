@@ -70,7 +70,7 @@ fn base_update_status() -> UpdateStatusResponse {
         checked_at: Some(1_718_444_400),
         channel_url: Some("https://release.capsem.org/health.json".into()),
         channel_hash: None,
-        validation_status: Some("valid".into()),
+        validation_status: Some(capsem_api::ValidationStatus::Valid),
         validation_error: None,
         stale: false,
         last_error: None,
@@ -480,6 +480,38 @@ fn parse_uds_path_override() {
 fn parse_uds_path_default_none() {
     let cli = Cli::parse_from(["capsem", "list"]);
     assert_eq!(cli.uds_path, None);
+}
+
+#[test]
+fn parse_proxy_defaults_and_explicit_listener() {
+    let cli = Cli::parse_from(["capsem", "proxy"]);
+    let Some(Commands::Proxy(defaults)) = cli.command else {
+        panic!("expected Proxy");
+    };
+    assert_eq!(defaults.provider, "openai");
+    assert_eq!(defaults.bind, "127.0.0.1".parse::<std::net::IpAddr>().unwrap());
+    assert_eq!(defaults.port, 0);
+
+    let cli = Cli::parse_from([
+        "capsem",
+        "proxy",
+        "--provider",
+        "local",
+        "--bind",
+        "0.0.0.0",
+        "--port",
+        "8080",
+    ]);
+    let Some(Commands::Proxy(explicit)) = cli.command else {
+        panic!("expected Proxy");
+    };
+    assert_eq!(explicit.provider, "local");
+    assert_eq!(explicit.bind, "0.0.0.0".parse::<std::net::IpAddr>().unwrap());
+    assert_eq!(explicit.port, 8080);
+    assert_eq!(
+        direct_service_lifetime(&Commands::Proxy(explicit)),
+        client::DirectServiceLifetime::BoundToCommand
+    );
 }
 
 // RAM conversion
@@ -1205,23 +1237,5 @@ fn shell_with_session_focuses_tui_session() {
             "--session".to_string(),
             "profile-v2".to_string()
         ]
-    );
-}
-
-#[test]
-fn gateway_runtime_url_rejects_cross_instance_fallbacks() {
-    let run_dir = tempfile::tempdir().unwrap();
-    assert!(gateway_url_from_runtime(run_dir.path()).is_none());
-
-    std::fs::write(run_dir.path().join("gateway.port"), "not-a-port\n").unwrap();
-    assert!(gateway_url_from_runtime(run_dir.path()).unwrap().is_err());
-
-    std::fs::write(run_dir.path().join("gateway.port"), "0\n").unwrap();
-    assert!(gateway_url_from_runtime(run_dir.path()).unwrap().is_err());
-
-    std::fs::write(run_dir.path().join("gateway.port"), "49152\n").unwrap();
-    assert_eq!(
-        gateway_url_from_runtime(run_dir.path()).unwrap().unwrap(),
-        "http://127.0.0.1:49152"
     );
 }

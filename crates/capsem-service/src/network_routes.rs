@@ -23,13 +23,8 @@ pub(crate) async fn vm_deleted_checked(state: &Arc<ServiceState>, vm_id: &str) -
     // no membership and unplugs itself.
     let now_unix_ms = vm_lifecycle::unix_time_ms();
     let mut registry = state.networks.lock().await;
-    let retired: Vec<_> = registry
-        .vm_deleted(vm_id, now_unix_ms)
-        .await?
-        .iter()
-        .filter(|departure| departure.retired)
-        .map(|departure| departure.network)
-        .collect();
+    let departure = registry.vm_deleted(vm_id, now_unix_ms).await;
+    let retired = registry.retired_ids();
     sweep_retired(&mut registry, now_unix_ms);
     drop(registry);
     switches::unplug_everywhere(state, vm_id).await;
@@ -37,6 +32,7 @@ pub(crate) async fn vm_deleted_checked(state: &Arc<ServiceState>, vm_id: &str) -
         tracing::info!(vm_id, %network, "network retired with its last member");
         switches::retire(state, network).await;
     }
+    departure?;
     Ok(())
 }
 

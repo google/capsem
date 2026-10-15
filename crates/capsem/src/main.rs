@@ -6,12 +6,15 @@ mod create_command;
 mod doctor_bundle;
 mod doctor_output;
 use doctor_output::push_doctor_output_tail;
+mod gateway_runtime;
+use gateway_runtime::{gateway_url_from_runtime, wait_for_gateway_url};
 mod grouped_help;
 mod image_commands;
 use grouped_help::GROUPED_HELP;
 mod network_commands;
 mod paths;
 mod platform;
+mod proxy_command;
 mod route_ids;
 mod service_install;
 mod session_display;
@@ -45,9 +48,9 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 use client::UpdateTrackState;
 use client::{
-    ApiResponse, AssetStatus, ForkRequest, ForkResponse, HistoryResponse, ListResponse, LogsResponse, PersistRequest,
-    ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse, SessionInfo, UdsClient, UpdateStatusResponse,
-    VmLifecycleState,
+    ApiResponse, AssetStatus, ForkRequest, ForkResponse, GatewayClient, HistoryResponse, ListResponse, LogsResponse,
+    PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse, SessionInfo,
+    UpdateStatusResponse, VmLifecycleState,
 };
 
 const DOCTOR_MOCK_SERVER_ADDR: &str = "127.0.0.1:3713";
@@ -234,7 +237,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Path to the service Unix Domain Socket
+    /// Local administration socket; VM commands use this directory's authenticated gateway
     #[arg(long)]
     uds_path: Option<PathBuf>,
 }
@@ -258,6 +261,9 @@ enum Commands {
 
     /// List the image catalog, or pull an image ahead of a create
     Images(image_commands::ImagesArgs),
+
+    /// Run a VM-free OpenAI-compatible model API endpoint
+    Proxy(proxy_command::ProxyArgs),
 
     #[command(flatten)]
     Misc(MiscCommands),
@@ -653,54 +659,6 @@ fn capsem_shell_tui_args(session: Option<&str>, gateway_url: &str) -> Vec<String
     args
 }
 
-fn gateway_url_from_runtime(run_dir: &Path) -> Option<Result<String>> {
-    let port_path = run_dir.join("gateway.port");
-    let raw = match std::fs::read_to_string(&port_path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(error) => return Some(Err(error).with_context(|| format!("read {}", port_path.display()))),
-    };
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    let port = match raw.parse::<u16>() {
-        Ok(0) => return Some(Err(anyhow!("{} contains port 0", port_path.display()))),
-        Ok(port) => port,
-        Err(error) => {
-            return Some(Err(error).with_context(|| format!("parse gateway port from {}", port_path.display())))
-        }
-    };
-    Some(Ok(format!("http://127.0.0.1:{port}")))
-}
-
-async fn wait_for_gateway_url(run_dir: &Path) -> Result<String> {
-    if let Ok(url) = std::env::var("CAPSEM_GATEWAY_URL") {
-        let url = url.trim_end_matches('/');
-        if !url.is_empty() {
-            return Ok(url.to_string());
-        }
-    }
-
-    let run_dir = run_dir.to_path_buf();
-    match capsem_foundation::poll::poll_until(
-        capsem_foundation::poll::PollOpts::new("gateway-runtime-ready", Duration::from_secs(5)),
-        || {
-            let run_dir = run_dir.clone();
-            async move { gateway_url_from_runtime(&run_dir) }
-        },
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(timeout) => Err(anyhow!(
-            "Capsem gateway did not publish {} within {:?}",
-            run_dir.join("gateway.port").display(),
-            timeout.timeout
-        )),
-    }
-}
-
 fn resolve_capsem_tui_binary() -> PathBuf {
     if let Ok(path) = std::env::var("CAPSEM_SHELL_TUI_BINARY") {
         return PathBuf::from(path);
@@ -830,7 +788,7 @@ async fn check_service_health() -> Result<Vec<String>> {
         _ => issues.push("Gateway files not found (no token/port files)".into()),
     }
 
-    let status_client = client::UdsClient::new(sock, false);
+    let status_client = client::ServiceAdminClient::new(sock, false);
     match status_client.get::<ApiResponse<AssetStatus>>("/assets/status").await {
         Ok(response) => match response.into_result() {
             Ok(status) => issues.extend(asset_status_issues(&status)),
@@ -873,7 +831,7 @@ fn cli_gateway_token_path() -> PathBuf {
     cli_runtime_paths().gateway_token
 }
 
-async fn service_json(client: &UdsClient, path: &str) -> Option<serde_json::Value> {
+async fn service_json(client: &client::ServiceAdminClient, path: &str) -> Option<serde_json::Value> {
     client
         .get::<ApiResponse<serde_json::Value>>(path)
         .await
@@ -1025,7 +983,9 @@ fn should_start_background_update_refresh(command: Option<&Commands>) -> bool {
 
 fn direct_service_lifetime(command: &Commands) -> client::DirectServiceLifetime {
     match command {
-        Commands::Session(SessionCommands::Run(..)) => client::DirectServiceLifetime::BoundToCommand,
+        Commands::Session(SessionCommands::Run(..)) | Commands::Proxy(..) => {
+            client::DirectServiceLifetime::BoundToCommand
+        }
         _ => client::DirectServiceLifetime::Persistent,
     }
 }
@@ -1234,7 +1194,7 @@ async fn main() -> Result<()> {
 
             if status.running {
                 let sock = cli_service_socket_path();
-                let status_client = client::UdsClient::new(sock, false);
+                let status_client = client::ServiceAdminClient::new(sock, false);
                 println!();
                 match service_json(&status_client, "/system/status").await {
                     Some(system_status) => {
@@ -1262,14 +1222,14 @@ async fn main() -> Result<()> {
             // `capsem status`. One-line banner + hint at `capsem logs`.
             if status.running {
                 let sock = cli_service_socket_path();
-                let list_client = client::UdsClient::new(sock, false);
+                let list_client = GatewayClient::new(sock, false);
                 if let Ok(resp) = list_client
                     .get::<client::ApiResponse<client::ListResponse>>("/vms/list")
                     .await
                 {
                     if let Ok(list) = resp.into_result() {
                         let defunct: Vec<&client::SessionInfo> = list
-                            .sessions
+                            .sandboxes
                             .iter()
                             .filter(|s| s.status == VmLifecycleState::Defunct)
                             .collect();
@@ -1337,7 +1297,7 @@ async fn main() -> Result<()> {
     }
 
     let command = cli.command.as_ref().unwrap();
-    let client = UdsClient::with_direct_service_lifetime(uds_path, auto_launch, direct_service_lifetime(command));
+    let client = GatewayClient::with_direct_service_lifetime(uds_path, auto_launch, direct_service_lifetime(command));
 
     match command {
         Commands::Assets(command) => {
@@ -1400,17 +1360,17 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
             let resp = resp.into_result()?;
             if *quiet {
-                for s in &resp.sessions {
+                for s in &resp.sandboxes {
                     println!("{}", s.id);
                 }
-            } else if resp.sessions.is_empty() {
+            } else if resp.sandboxes.is_empty() {
                 println!("No sessions.");
             } else {
                 println!(
                     "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
                     "ID", "NAME", "STATUS", "RAM", "CPUs", "UPTIME"
                 );
-                for s in &resp.sessions {
+                for s in &resp.sandboxes {
                     let name = s.name.as_deref().unwrap_or("-");
                     let ram = s
                         .ram_mb
@@ -1434,7 +1394,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 let defunct = resp
-                    .sessions
+                    .sandboxes
                     .iter()
                     .filter(|s| s.status == VmLifecycleState::Defunct)
                     .count();
@@ -1477,8 +1437,8 @@ async fn main() -> Result<()> {
                 use std::io::Write;
                 let list_resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
                 let resp = list_resp.into_result()?;
-                let persistent_count = resp.sessions.iter().filter(|s| s.persistent).count();
-                let ephemeral_count = resp.sessions.iter().filter(|s| !s.persistent).count();
+                let persistent_count = resp.sandboxes.iter().filter(|s| s.persistent).count();
+                let ephemeral_count = resp.sandboxes.iter().filter(|s| !s.persistent).count();
                 print!(
                     "[!] This will destroy {} persistent and {} temporary sessions. Continue? [y/N] ",
                     persistent_count, ephemeral_count
@@ -1584,16 +1544,17 @@ async fn main() -> Result<()> {
                 }
                 for entry in &history.commands {
                     let exit = entry.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
-                    let process = match entry.layer.as_str() {
-                        "exec" => entry
-                            .details
-                            .get("process_name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("api")
-                            .to_string(),
-                        "audit" => {
-                            let parent = entry.details.get("parent_exe").and_then(|v| v.as_str()).unwrap_or("");
-                            let exe = entry.details.get("exe").and_then(|v| v.as_str()).unwrap_or("");
+                    let layer = match entry.layer {
+                        capsem_api::HistoryLayer::Exec => "exec",
+                        capsem_api::HistoryLayer::Audit => "audit",
+                    };
+                    let process = match &entry.details {
+                        capsem_api::HistoryDetails::Exec(details) => {
+                            details.process_name.as_deref().unwrap_or("api").to_string()
+                        }
+                        capsem_api::HistoryDetails::Audit(details) => {
+                            let parent = details.parent_exe.as_deref().unwrap_or("");
+                            let exe = details.exe.as_str();
                             if parent.is_empty() {
                                 exe.rsplit('/').next().unwrap_or(exe).to_string()
                             } else {
@@ -1604,17 +1565,16 @@ async fn main() -> Result<()> {
                                 )
                             }
                         }
-                        _ => "-".to_string(),
                     };
                     // Truncate command to terminal width
                     let cmd = if entry.command.len() > 80 {
-                        format!("{}...", &entry.command[..77])
+                        format!("{}...", session_display::table_prefix(&entry.command, 77))
                     } else {
                         entry.command.clone()
                     };
                     println!(
                         " {:<22} {:<7} {:<5} {:<10} {}",
-                        entry.timestamp, entry.layer, exit, process, cmd
+                        entry.timestamp, layer, exit, process, cmd
                     );
                 }
                 if history.has_more {
@@ -1653,6 +1613,10 @@ async fn main() -> Result<()> {
         }
         Commands::Network(command) => network_commands::run(&client, command).await?,
         Commands::Images(args) => image_commands::run(&client, args).await?,
+        Commands::Proxy(args) => {
+            let result = proxy_command::run(&client, args).await;
+            client.finish_direct_request(result).await?;
+        }
         Commands::Mcp(McpCommands::Servers) => {
             let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/servers/list").await?;
             let servers = resp.into_result()?;
@@ -1707,7 +1671,7 @@ async fn main() -> Result<()> {
                 }
                 for t in &tools {
                     let desc = t["description"].as_str().unwrap_or("-");
-                    let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };
+                    let short_desc = session_display::table_prefix(desc, 60);
                     println!(
                         "{:<40} {:<20} {:<10} {}",
                         t["namespaced_name"].as_str().unwrap_or("-"),
@@ -1759,7 +1723,7 @@ async fn main() -> Result<()> {
             | MiscCommands::Stop
             | MiscCommands::SupportBundle { .. }, /* handled before UDS */
         ) => {
-            unreachable!("handled before UdsClient creation")
+            unreachable!("handled before GatewayClient creation")
         }
         Commands::Misc(MiscCommands::Doctor { bundle }) => {
             use client::StreamEvent;
@@ -1795,7 +1759,7 @@ async fn main() -> Result<()> {
             let provisioned = resp.into_result()?;
             let vm_id = provisioned.id;
 
-            async fn cleanup_doctor_vm(client: &UdsClient, vm_id: &str, cleanup: DoctorSessionCleanup) {
+            async fn cleanup_doctor_vm(client: &GatewayClient, vm_id: &str, cleanup: DoctorSessionCleanup) {
                 let route = cleanup.route(vm_id);
                 let result: Result<ApiResponse<serde_json::Value>, _> = match cleanup {
                     DoctorSessionCleanup::Failed => client.post(&route, serde_json::json!({})).await,
@@ -1955,7 +1919,7 @@ fn parse_session_arg(arg: &str) -> Option<(&str, &str)> {
     arg.split_once(':')
 }
 
-async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<()> {
+async fn handle_cp(client: &GatewayClient, src: &str, dst: &str) -> Result<()> {
     use std::io::Write;
     let src_remote = parse_session_arg(src);
     let dst_remote = parse_session_arg(dst);

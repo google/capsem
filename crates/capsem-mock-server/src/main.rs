@@ -10,8 +10,6 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use rcgen::generate_simple_self_signed;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::convert::Infallible;
@@ -132,7 +130,7 @@ async fn main() -> Result<()> {
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "capsem_mock_server=warn".to_string()))
         .with_writer(std::io::stderr)
         .init();
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = capsem_crypto::tls::provider().install_default();
 
     let args = Args::parse();
     if args.parent_pid.is_some() {
@@ -245,10 +243,8 @@ async fn serve_https(listener: TcpListener, state: State, acceptor: TlsAcceptor)
 }
 
 fn tls_acceptor() -> Result<TlsAcceptor> {
-    let cert = generate_simple_self_signed(vec!["127.0.0.1".to_string(), "localhost".to_string()])
+    let (cert_der, key_der) = capsem_crypto::tls::self_signed(vec!["127.0.0.1".to_string(), "localhost".to_string()])
         .context("generate self-signed mock cert")?;
-    let cert_der = CertificateDer::from(cert.cert.der().to_vec());
-    let key_der = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
     let config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![cert_der], key_der)
@@ -433,6 +429,9 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         }
         (&Method::POST, "/v1/chat/completions") => {
             let payload = parse_json(&request_body);
+            if let Some(response) = openai_sdk_control(&payload).await {
+                return response;
+            }
             if payload.get("stream").and_then(Value::as_bool) == Some(true) {
                 response(StatusCode::OK, openai_chat_stream(), "text/event-stream")
             } else {
@@ -450,7 +449,13 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             "data": [{"b64_json": "Y2Fwc2VtLW1vY2staW1hZ2U="}],
             "usage": {"input_tokens": 11, "output_tokens": 17, "total_tokens": 28}
         })),
-        (&Method::POST, "/v1/responses") => responses::reply(parse_json(&request_body)),
+        (&Method::POST, "/v1/responses") => {
+            let payload = parse_json(&request_body);
+            if let Some(response) = openai_sdk_control(&payload).await {
+                return response;
+            }
+            responses::reply(payload)
+        }
         (&Method::POST, "/model/shape") => json_response(json!({
             "id": "chatcmpl_shape_fixture",
             "object": "chat.completion",
@@ -566,6 +571,26 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
     }
 }
 
+async fn openai_sdk_control(payload: &Value) -> Option<Response<RespBody>> {
+    match payload.get("model").and_then(Value::as_str) {
+        Some("capsem-sdk-cancel") => {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            None
+        }
+        Some("capsem-sdk-upstream-error") => Some(json_response_with_status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({
+                "error": {
+                    "message": "hermetic upstream unavailable",
+                    "type": "server_error",
+                    "code": "fixture_unavailable"
+                }
+            }),
+        )),
+        _ => None,
+    }
+}
+
 fn parse_json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).unwrap_or_else(|_| json!({}))
 }
@@ -594,8 +619,12 @@ fn echo_response(query: Option<&str>, headers: &HeaderMap, body_size: usize) -> 
 }
 
 fn json_response(value: Value) -> Response<RespBody> {
+    json_response_with_status(StatusCode::OK, value)
+}
+
+fn json_response_with_status(status: StatusCode, value: Value) -> Response<RespBody> {
     response(
-        StatusCode::OK,
+        status,
         Bytes::from(serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec())),
         "application/json",
     )

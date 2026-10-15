@@ -42,6 +42,7 @@ def test_guest_binary_identity_names_only_its_output_inputs() -> None:
         "rust-toolchain.toml",
         "crates/capsem-agent",
         "crates/capsem-bench",
+        "crates/capsem-crypto",
         "crates/capsem-foundation",
         "crates/capsem-guard",
         "crates/capsem-proto",

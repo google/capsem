@@ -2,11 +2,7 @@ use super::{assess, assess_for, Judgement, Objection};
 use capsem_foundation::proctable::Process;
 
 fn process(pid: u32, parent_pid: u32, arguments: &str) -> Process {
-    Process {
-        pid,
-        parent_pid,
-        arguments: arguments.to_string(),
-    }
+    Process::from_argv(pid, parent_pid, arguments.split_whitespace().map(Into::into).collect())
 }
 
 fn reasons(objections: &[Objection]) -> Vec<&str> {

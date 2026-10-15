@@ -1,55 +1,8 @@
 //! Named networks on the wire, and the calls that reach them.
-use super::{ApiResponse, Result, UdsClient};
-use serde::{Deserialize, Serialize};
+use super::{ApiResponse, GatewayClient, Result};
+use serde::Deserialize;
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CreateNetworkRequest {
-    pub name: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NetworkMemberInfo {
-    pub vm_id: String,
-    pub address: String,
-    pub state: String,
-    pub updated_unix_ms: i64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NetworkInfo {
-    pub id: String,
-    pub name: String,
-    /// Every member's address is inside it.
-    pub subnet: String,
-    pub created_unix_ms: i64,
-    #[serde(default)]
-    pub members: Vec<NetworkMemberInfo>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct NetworkListResponse {
-    pub networks: Vec<NetworkInfo>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NetworkLogEvent {
-    pub sequence: i64,
-    pub event_id: String,
-    pub timestamp_unix_ms: i64,
-    pub event_type: String,
-    #[serde(default)]
-    pub connection_id: Option<String>,
-    #[serde(default)]
-    pub event: serde_json::Value,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct NetworkLogsResponse {
-    pub events: Vec<NetworkLogEvent>,
-    pub cursor: String,
-    #[serde(default)]
-    pub next_cursor: Option<String>,
-}
+pub use capsem_api::{CreateNetworkRequest, NetworkInfo, NetworkListResponse, NetworkLogEvent, NetworkLogsResponse};
 
 /// The filters `capsem network logs` forwards; every one is optional.
 #[derive(Debug, Default, Clone)]
@@ -59,7 +12,7 @@ pub struct NetworkLogsFilter {
     pub decision: Option<String>,
 }
 
-impl UdsClient {
+impl GatewayClient {
     /// One page of a network's audit log; `cursor` continues a previous page.
     pub async fn network_logs(
         &self,

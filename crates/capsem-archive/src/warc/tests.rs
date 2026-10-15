@@ -58,7 +58,7 @@ fn a_record_is_one_gzip_member_with_the_standard_headers_in_order() {
          Content-Length: 16\r\n\
          \r\n\
          {{\"answer\":\"yes\"}}\r\n\r\n",
-        digest = blake3::hash(body).to_hex()
+        digest = capsem_crypto::blake3::hash(body).to_hex()
     );
     assert_eq!(
         text, expected,
@@ -73,7 +73,7 @@ fn the_block_digest_is_blake3_of_the_body() {
     assert!(
         text.contains(&format!(
             "WARC-Block-Digest: blake3:{}\r\n",
-            blake3::hash(body).to_hex()
+            capsem_crypto::blake3::hash(body).to_hex()
         )),
         "{text}"
     );

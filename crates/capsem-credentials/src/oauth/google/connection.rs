@@ -26,6 +26,17 @@ pub struct GoogleConnectionStatus {
     pub revocation: GoogleRevocationState,
 }
 
+/// A coherent owner snapshot. Account subjects and credential material stay
+/// private; polling cannot manufacture lifecycle times or consent history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoogleConnectionMetadata {
+    pub status: GoogleConnectionStatus,
+    pub granted_scopes: std::collections::BTreeSet<String>,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+    pub last_refresh_at_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GoogleRevocationState {
@@ -89,10 +100,14 @@ struct Record {
     tokens: Option<Arc<OAuthTokens>>,
     revocation: GoogleRevocationState,
     pending_revocation: Option<Arc<Secret>>,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+    last_refresh_at_ms: Option<u64>,
 }
 impl Record {
     fn advance(&self) -> Result<Self, GoogleConnectionError> {
         let mut next = self.clone();
+        next.updated_at_ms = self.updated_at_ms.max(storage::unix_ms()?);
         next.revision = self
             .revision
             .checked_add(1)
@@ -206,6 +221,7 @@ impl GoogleOAuthClient {
             .map_err(GoogleConnectionError::Identity)?;
         tokens.id_token = None;
         tokens.expected_nonce = None;
+        let created_at_ms = storage::unix_ms()?;
         let record = Record {
             client_id: Arc::from(tokens.client_id.as_str()),
             subject: Arc::new(Secret::new(identity.subject().to_owned())),
@@ -215,6 +231,9 @@ impl GoogleOAuthClient {
             tokens: Some(Arc::new(tokens)),
             revocation: GoogleRevocationState::NotNeeded,
             pending_revocation: None,
+            created_at_ms,
+            updated_at_ms: created_at_ms,
+            last_refresh_at_ms: None,
         };
         let client = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
@@ -230,6 +249,9 @@ impl GoogleOAuthClient {
 }
 
 impl GoogleConnection {
+    pub(crate) fn same_owner(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
     fn from_record(client: Arc<GoogleOAuthClient>, storage: OAuthConnectionStorage, record: Record) -> Self {
         let denied = record.state != GoogleConnectionState::Connected;
         Self(Arc::new(Core {
@@ -262,20 +284,39 @@ impl GoogleConnection {
         self.0
             .data
             .lock()
-            .map(|record| GoogleConnectionStatus {
-                revision: record.revision,
-                revocation: record.revocation,
-                state: if self.0.denied.load(Ordering::Acquire) && record.state == GoogleConnectionState::Connected {
-                    GoogleConnectionState::Disconnecting
-                } else {
-                    record.state
-                },
-            })
+            .map(|record| self.record_status(&record))
             .unwrap_or(GoogleConnectionStatus {
                 revision: 0,
                 state: GoogleConnectionState::Degraded,
                 revocation: GoogleRevocationState::Pending,
             })
+    }
+
+    fn record_status(&self, record: &Record) -> GoogleConnectionStatus {
+        GoogleConnectionStatus {
+            revision: record.revision,
+            revocation: record.revocation,
+            state: if self.0.denied.load(Ordering::Acquire) && record.state == GoogleConnectionState::Connected {
+                GoogleConnectionState::Disconnecting
+            } else {
+                record.state
+            },
+        }
+    }
+
+    pub fn metadata(&self) -> Result<GoogleConnectionMetadata, GoogleConnectionError> {
+        let record = self.0.data.lock().map_err(|_| GoogleConnectionError::Unavailable)?;
+        Ok(GoogleConnectionMetadata {
+            status: self.record_status(&record),
+            granted_scopes: record
+                .tokens
+                .as_ref()
+                .map(|tokens| tokens.scopes.clone())
+                .unwrap_or_default(),
+            created_at_ms: record.created_at_ms,
+            updated_at_ms: record.updated_at_ms,
+            last_refresh_at_ms: record.last_refresh_at_ms,
+        })
     }
 
     fn snapshot(&self) -> Result<Record, GoogleConnectionError> {
@@ -346,6 +387,7 @@ impl GoogleConnection {
                 tokens.expected_nonce = None;
                 let mut next = current.advance()?;
                 next.tokens = Some(Arc::new(tokens));
+                next.last_refresh_at_ms = Some(next.updated_at_ms);
                 self.publish(current.revision, next).await
             }
             Err(error) => {
@@ -375,7 +417,7 @@ impl GoogleConnection {
         self.lease(self.active_snapshot()?)
     }
 
-    async fn publish(&self, expected: u64, next: Record) -> Result<(), GoogleConnectionError> {
+    async fn publish(&self, expected: u64, mut next: Record) -> Result<(), GoogleConnectionError> {
         let owner = Arc::clone(&self.0);
         tokio::task::spawn_blocking(move || {
             let _writer = owner
@@ -397,6 +439,7 @@ impl GoogleConnection {
                     if owner.denied.load(Ordering::Acquire) {
                         Self::retain_for_retirement(&mut data, next);
                     } else {
+                        next.last_refresh_at_ms = data.last_refresh_at_ms;
                         *data = next;
                         data.state = GoogleConnectionState::Degraded;
                         owner.denied.store(true, Ordering::Release);
@@ -424,6 +467,7 @@ impl GoogleConnection {
     // A refresh may rotate material after denial began. Keep it solely for
     // disconnect's joined retirement, never as an admitted access lease.
     fn retain_for_retirement(data: &mut Record, mut next: Record) {
+        next.last_refresh_at_ms = data.last_refresh_at_ms;
         if next.state == GoogleConnectionState::Connected {
             next.state = GoogleConnectionState::Disconnecting;
             *data = next;

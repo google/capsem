@@ -61,10 +61,9 @@ class TestStatusEndpoint:
         assert manifest["assets_current"] == "2026.0613.1"
         assert manifest["binaries_current"] == "1.3.0"
 
-    def test_status_caches_within_ttl(self, gw_client):
-        """Two rapid calls return identical data (cache TTL is 2s)."""
+    def test_status_consecutive_reads_are_consistent(self, gw_client):
+        """Two rapid service snapshots return consistent inventory."""
         resp1 = gw_client.get("/status")
         resp2 = gw_client.get("/status")
-        # Same data (cache hit)
         assert resp1["vm_count"] == resp2["vm_count"]
         assert resp1["service"] == resp2["service"]

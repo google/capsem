@@ -1,4 +1,5 @@
 import {Client} from './client.js';
+import {CredentialGrants} from './connections.js';
 import {commandDeadlineMs, createDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
@@ -16,6 +17,7 @@ export class VM extends Client {
   readonly stats: Stats;
   readonly container: Container;
   readonly ports: Ports;
+  readonly credentialGrants: CredentialGrants;
 
   constructor(url: string, token: string, selector: VmSelector, options?: TransportOptions);
   /** @internal */
@@ -37,6 +39,7 @@ export class VM extends Client {
     this.stats = new Stats(context);
     this.container = new Container(context);
     this.ports = new Ports(context, call => this.portTarget(call));
+    this.credentialGrants = new CredentialGrants(context);
   }
   /** @internal */
   static bind(transport: Transport, id: string, name: string, hasContainer?: boolean): VM {

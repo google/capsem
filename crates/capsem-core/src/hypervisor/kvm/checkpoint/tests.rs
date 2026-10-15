@@ -386,6 +386,9 @@ fn zero_memory_is_written_as_sparse_holes() {
     );
 
     let restored_mem = GuestMemory::new(mem_size).unwrap();
+    restored_mem
+        .write_at(mem_size / 2, b"old data must not survive a hole")
+        .unwrap();
     read_checkpoint(&path, &restored_mem, 1, 0).unwrap();
     let mut front = [0u8; 5];
     let mut middle = [1u8; 16];
@@ -396,6 +399,51 @@ fn zero_memory_is_written_as_sparse_holes() {
     assert_eq!(&front, b"front");
     assert_eq!(middle, [0u8; 16]);
     assert_eq!(&tail, b"tail");
+    let address = restored_mem.as_ptr().addr();
+    let mut selected = false;
+    let mut resident_kb = None;
+    for line in std::fs::read_to_string("/proc/self/smaps").unwrap().lines() {
+        if let Some((start, end)) = line.split_whitespace().next().and_then(|word| word.split_once('-')) {
+            selected = usize::from_str_radix(start, 16).unwrap() <= address
+                && address < usize::from_str_radix(end, 16).unwrap();
+        } else if selected && line.starts_with("Rss:") {
+            resident_kb = Some(line.split_whitespace().nth(1).unwrap().parse::<u64>().unwrap());
+            break;
+        }
+    }
+    assert!(
+        resident_kb.unwrap() * 1024 < mem_size / 2,
+        "restore must not allocate sparse checkpoint holes; a 12-GiB VM once took 21.5s to resume"
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn scattered_guest_pages_do_not_allocate_whole_mebibyte_checkpoint_chunks() {
+    use std::os::fd::AsFd;
+    let dir = temp_dir("sparse-scattered-pages");
+    let path = dir.join("state.kvm");
+    let size = 64 * 1024 * 1024;
+    let memory = GuestMemory::new(size).unwrap();
+    for offset in (0..size).step_by(1024 * 1024) {
+        memory.write_at(offset + 7 * 4096 + 3, b"used page").unwrap();
+    }
+    write_checkpoint(&path, &memory, &[snapshot(0)], &vm_snapshot(), &[]).unwrap();
+    let file = capsem_foundation::unix::fs::open_regular_file_no_follow(&path).unwrap();
+    let metadata = capsem_foundation::unix::fd::regular_file_metadata(file.as_fd()).unwrap();
+    assert!(
+        metadata.allocated_bytes < size / 8,
+        "a single used 4-KiB page must not turn a one-MiB chunk into dense checkpoint data"
+    );
+    let restored = GuestMemory::new(size).unwrap();
+    read_checkpoint(&path, &restored, 1, 0).unwrap();
+    for offset in (0..size).step_by(1024 * 1024) {
+        let mut bytes = [0u8; 9];
+        restored.read_at(offset + 7 * 4096 + 3, &mut bytes).unwrap();
+        assert_eq!(&bytes, b"used page");
+        restored.read_at(offset + 30 * 4096, &mut bytes).unwrap();
+        assert_eq!(bytes, [0; 9]);
+    }
 }
 
 #[cfg(target_arch = "x86_64")]

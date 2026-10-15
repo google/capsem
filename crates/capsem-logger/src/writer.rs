@@ -1,24 +1,29 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime};
 
+use capsem_archive::ArchiveCodecs;
 use capsem_telemetry::db::{DB_MEMORY_UNFLUSHED_OPS, DB_SHUTDOWN_FLUSH_MS};
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
-use uuid::Uuid;
 
 use crate::counters::{self, LedgerCounters, LedgerTally};
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, HostEvent, McpCall, ModelCall, NetEvent,
-    NetworkMembership, NetworkRecord, PolicyMutationEvent, SecurityAskEvent, SecurityDecisionEvent, SecurityRuleEvent,
-    SubstitutionEvent, TransportEvent,
+    NetworkDeparture, NetworkMembership, NetworkRecord, PolicyMutationEvent, SecurityAskEvent, SecurityDecisionEvent,
+    SecurityRuleEvent, SubstitutionEvent, TransportEvent,
 };
 use crate::schema;
 
 mod bodies;
+mod flush;
 mod flush_faults;
+#[cfg(test)]
+use flush::flush_dirty_tables_to_disk;
+use flush::{flush_dirty_tables_to_disk_recorded, FlushRequest};
 mod legacy;
 mod model_rows;
 mod producer;
@@ -77,8 +82,27 @@ const DEFAULT_BATCH_CAPACITY: usize = 10_000;
 /// spent its accept path waiting on ten disk flushes and was accepted 3-4x
 /// slower (see `benches/db_read_write_micro.rs`), where the whole point of
 /// the memory schema is that accepting a row never waits on the disk.
-const DISK_FLUSH_THRESHOLD_OPS: usize = 1_000_000;
-const DISK_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
+const DISK_FLUSH_THRESHOLD_OPS: usize = capsem_proto::LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS;
+const DISK_FLUSH_INTERVAL: Duration = Duration::from_millis(capsem_proto::LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS);
+
+#[derive(Clone, Copy)]
+struct WriterSchedule {
+    capacity: usize,
+    interval: Duration,
+}
+
+impl WriterSchedule {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity: if capacity == 0 {
+                DEFAULT_BATCH_CAPACITY
+            } else {
+                capacity
+            },
+            interval: DISK_FLUSH_INTERVAL,
+        }
+    }
+}
 
 pub const DB_ENQUEUE_SPAN: &str = "capsem.db.enqueue";
 pub const DB_WRITE_BATCH_SPAN: &str = "capsem.db.write_batch";
@@ -96,7 +120,7 @@ pub type LedgerClock = fn() -> SystemTime;
 static IN_MEMORY_WRITER_ID: AtomicU64 = AtomicU64::new(0);
 
 fn new_event_id() -> String {
-    let value = Uuid::new_v4().simple().to_string();
+    let value = capsem_crypto::uuid_v4().simple().to_string();
     value[..12].to_string()
 }
 
@@ -180,15 +204,15 @@ pub fn output_preview(bytes: &[u8]) -> String {
 }
 
 fn blake3_ref(value: &str) -> String {
-    format!("blake3:{}", blake3::hash(value.as_bytes()).to_hex())
+    format!("blake3:{}", capsem_crypto::blake3::hash(value.as_bytes()).to_hex())
 }
 
 fn blake3_bytes_ref(value: &[u8]) -> String {
-    format!("blake3:{}", blake3::hash(value).to_hex())
+    format!("blake3:{}", capsem_crypto::blake3::hash(value).to_hex())
 }
 
 /// Typed write operations sent to the writer thread.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WriteOp {
     TransportEvent(TransportEvent),
     NetEvent(NetEvent),
@@ -209,6 +233,7 @@ pub enum WriteOp {
     /// Registry rows of a network database; upserted by key, disk-only.
     Network(NetworkRecord),
     NetworkMembership(NetworkMembership),
+    NetworkDeparture(NetworkDeparture),
 }
 
 /// What a flush barrier reports back: `Err` when the disk flush the barrier
@@ -234,7 +259,11 @@ type RetainReply = tokio::sync::oneshot::Sender<Result<RetainOutcome, String>>;
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum WriterMessage {
-    Write(WriteOp),
+    Write(WriteEnvelope),
+    /// A producer batch that must reach the SQLite transaction as one unit.
+    /// Keeping the vector intact avoids rebuilding a protocol batch through
+    /// one channel send and one scheduler wakeup per row.
+    WriteBatch(Vec<WriteEnvelope>),
     /// Commit everything queued before this and report whether the disk flush
     /// happened.
     Flush(tokio::sync::oneshot::Sender<FlushOutcome>),
@@ -248,11 +277,51 @@ enum WriterMessage {
 
 impl WriterMessage {
     fn write(op: WriteOp) -> Self {
-        Self::Write(op)
+        Self::Write(WriteEnvelope { op, commitment: None })
+    }
+
+    fn committed(op: WriteOp, commitment: capsem_proto::ledger_commitment::LedgerCommitment) -> Self {
+        Self::Write(WriteEnvelope {
+            op,
+            commitment: Some(commitment),
+        })
+    }
+
+    fn committed_batch(writes: Vec<(WriteOp, capsem_proto::ledger_commitment::LedgerCommitment)>) -> Self {
+        Self::WriteBatch(
+            writes
+                .into_iter()
+                .map(|(op, commitment)| WriteEnvelope {
+                    op,
+                    commitment: Some(commitment),
+                })
+                .collect(),
+        )
     }
 
     fn flush(reply: tokio::sync::oneshot::Sender<FlushOutcome>) -> Self {
         Self::Flush(reply)
+    }
+
+    fn event_count(&self) -> usize {
+        match self {
+            Self::Write(_) => 1,
+            Self::WriteBatch(writes) => writes.len(),
+            Self::Flush(_) | Self::Retain { .. } => 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct WriteEnvelope {
+    op: WriteOp,
+    commitment: Option<capsem_proto::ledger_commitment::LedgerCommitment>,
+}
+
+impl WriteEnvelope {
+    #[cfg(test)]
+    fn plain(op: WriteOp) -> Self {
+        Self { op, commitment: None }
     }
 }
 
@@ -261,21 +330,140 @@ impl WriterMessage {
 /// message that outgrows it by a lot deserves the question asked again.
 const _: () = assert!(std::mem::size_of::<WriterMessage>() <= 1024);
 
-type WriterSender = mpsc::SyncSender<WriterMessage>;
+#[derive(Clone)]
+struct WriterSender {
+    tx: mpsc::SyncSender<QueuedWriterMessage>,
+    budget: Arc<WriterQueueBudget>,
+}
 
-fn writer_channel(capacity: usize) -> (WriterSender, mpsc::Receiver<WriterMessage>) {
-    mpsc::sync_channel(capacity.max(1))
+type WriterReceiver = mpsc::Receiver<QueuedWriterMessage>;
+
+struct QueuedWriterMessage {
+    message: WriterMessage,
+    _permit: WriterQueuePermit,
+}
+
+impl QueuedWriterMessage {
+    fn into_message(self) -> WriterMessage {
+        self.message
+    }
+}
+
+struct WriterQueueBudget {
+    capacity: usize,
+    used: AtomicUsize,
+}
+
+struct WriterQueuePermit {
+    budget: Arc<WriterQueueBudget>,
+    weight: usize,
+}
+
+impl Drop for WriterQueuePermit {
+    fn drop(&mut self) {
+        self.budget.used.fetch_sub(self.weight, Ordering::Release);
+    }
+}
+
+impl WriterQueueBudget {
+    fn try_reserve(self: &Arc<Self>, weight: usize) -> Option<WriterQueuePermit> {
+        let mut used = self.used.load(Ordering::Acquire);
+        loop {
+            let next = used.checked_add(weight)?;
+            if next > self.capacity {
+                return None;
+            }
+            match self
+                .used
+                .compare_exchange_weak(used, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => {
+                    return Some(WriterQueuePermit {
+                        budget: Arc::clone(self),
+                        weight,
+                    })
+                }
+                Err(current) => used = current,
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum WriterTrySendError {
+    Full,
+    Disconnected,
+}
+
+impl WriterSender {
+    fn try_send(&self, message: &mut Option<WriterMessage>) -> Result<(), WriterTrySendError> {
+        let weight = message.as_ref().expect("writer message is present").event_count();
+        let Some(permit) = self.budget.try_reserve(weight) else {
+            return Err(WriterTrySendError::Full);
+        };
+        match self.tx.try_send(QueuedWriterMessage {
+            message: message.take().expect("writer message is present"),
+            _permit: permit,
+        }) {
+            Ok(()) => Ok(()),
+            Err(mpsc::TrySendError::Full(queued)) => {
+                *message = Some(queued.into_message());
+                Err(WriterTrySendError::Full)
+            }
+            Err(mpsc::TrySendError::Disconnected(queued)) => {
+                *message = Some(queued.into_message());
+                Err(WriterTrySendError::Disconnected)
+            }
+        }
+    }
+
+    fn send(&self, message: WriterMessage) -> Result<(), &'static str> {
+        let mut message = Some(message);
+        let mut wait = Duration::from_micros(50);
+        loop {
+            match self.try_send(&mut message) {
+                Ok(()) => return Ok(()),
+                Err(WriterTrySendError::Full) => {
+                    std::thread::sleep(wait);
+                    wait = (wait * 2).min(Duration::from_millis(5));
+                }
+                Err(WriterTrySendError::Disconnected) => return Err("db writer channel closed"),
+            }
+        }
+    }
+}
+
+fn writer_channel(capacity: usize) -> (WriterSender, WriterReceiver) {
+    let capacity = capacity.max(1);
+    let (tx, rx) = mpsc::sync_channel(capacity);
+    (
+        WriterSender {
+            tx,
+            budget: Arc::new(WriterQueueBudget {
+                capacity,
+                used: AtomicUsize::new(0),
+            }),
+        },
+        rx,
+    )
 }
 
 mod barriers;
 mod batch;
 mod operation;
+pub(crate) use operation::commitment_event_fingerprint;
+pub use operation::commitment_event_hash;
 mod recording;
+mod remote;
+#[cfg(test)]
+pub(crate) use remote::test_commitment_channel;
 mod retention;
 mod retention_faults;
+mod worker;
 mod writer_lock;
 #[cfg(test)]
 pub(crate) use retention_faults::{fail_retention_for_path_for_tests, RetentionFault};
+use worker::writer_loop;
 
 use barriers::Barriers;
 use batch::{execute_memory_batch, retry_batch_ops_individually};
@@ -306,13 +494,43 @@ pub struct DbWriter {
     /// Published by the writer thread after every batch so a test can prove
     /// the bound without a second view of the thread's state.
     pending_body_bytes: Arc<AtomicU64>,
+    remote: Option<remote::RemoteWriter>,
+}
+
+pub(crate) struct PreparedDbWriter {
+    tx: WriterSender,
+    rx: WriterReceiver,
+    held: capsem_foundation::unix::lock::FileLock,
+    conn: Connection,
+    db_path: PathBuf,
+    schedule: WriterSchedule,
+    pending_body_bytes: Arc<AtomicU64>,
+    bodies: BodyArchive,
+    tally: LedgerTally,
 }
 
 impl DbWriter {
+    #[cfg(test)]
+    fn open_once(path: &Path, schedule: WriterSchedule, now: LedgerClock) -> rusqlite::Result<Self> {
+        let mut prepared = Self::prepare_once(
+            path,
+            schedule.capacity,
+            schedule.capacity,
+            now,
+            ArchiveCodecs::default(),
+        )?;
+        prepared.schedule = schedule;
+        Ok(prepared.start())
+    }
+
     /// Spawn a dedicated writer thread that owns the DB connection.
     /// `capacity` controls the mpsc channel size (backpressure).
     pub fn open(path: &Path, capacity: usize) -> rusqlite::Result<Self> {
-        Self::open_with_clock(path, capacity, SystemTime::now)
+        Self::open_with_codecs(path, capacity, ArchiveCodecs::default())
+    }
+
+    pub fn open_with_codecs(path: &Path, capacity: usize, codecs: ArchiveCodecs) -> rusqlite::Result<Self> {
+        Self::prepare_with_clock_and_codecs(path, capacity, SystemTime::now, codecs).map(PreparedDbWriter::start)
     }
 
     /// `open`, with the archive index's timestamps read from `now`.
@@ -320,14 +538,42 @@ impl DbWriter {
     /// Only a replay of an existing ledger has any business supplying one; see
     /// `LedgerClock`.
     pub fn open_with_clock(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
+        Self::prepare_with_clock_and_codecs(path, capacity, now, ArchiveCodecs::default()).map(PreparedDbWriter::start)
+    }
+
+    pub(crate) fn prepare_with_capacities(
+        path: &Path,
+        channel_capacity: usize,
+        batch_capacity: usize,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
+        Self::prepare_with_clock_and_capacities(path, channel_capacity, batch_capacity, SystemTime::now, codecs)
+    }
+
+    fn prepare_with_clock_and_codecs(
+        path: &Path,
+        capacity: usize,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
+        Self::prepare_with_clock_and_capacities(path, capacity, capacity, now, codecs)
+    }
+
+    fn prepare_with_clock_and_capacities(
+        path: &Path,
+        channel_capacity: usize,
+        batch_capacity: usize,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
 
         let mut last_busy = None;
         for _ in 0..50 {
-            match Self::open_once(path, capacity, now) {
-                Ok(writer) => return Ok(writer),
+            match Self::prepare_once(path, channel_capacity, batch_capacity, now, codecs.clone()) {
+                Ok(prepared) => return Ok(prepared),
                 Err(error) if is_sqlite_busy(&error) => {
                     last_busy = Some(error);
                     std::thread::sleep(Duration::from_millis(20));
@@ -341,7 +587,13 @@ impl DbWriter {
         )))
     }
 
-    fn open_once(path: &Path, capacity: usize, now: LedgerClock) -> rusqlite::Result<Self> {
+    fn prepare_once(
+        path: &Path,
+        channel_capacity: usize,
+        batch_capacity: usize,
+        now: LedgerClock,
+        codecs: ArchiveCodecs,
+    ) -> rusqlite::Result<PreparedDbWriter> {
         let held = writer_lock::acquire(path)?;
         legacy::set_aside_pre_archive_ledger(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -352,18 +604,18 @@ impl DbWriter {
         conn.busy_timeout(Duration::from_secs(5))?;
         schema::apply_pragmas(&conn)?;
         // One statement per table per target; the default 16 would evict.
-        conn.set_prepared_statement_cache_capacity(64);
+        conn.set_prepared_statement_cache_capacity(capsem_proto::CACHE_SQLITE_PREPARED_STATEMENTS);
         schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
         let bodies = match schema::archive_schema_status(&conn)? {
             schema::ArchiveSchemaStatus::Fresh => {
-                let (bodies, archive_lock, header) = BodyArchive::prepare_new(path, now)?;
+                let (bodies, archive_lock, header) = BodyArchive::prepare_new(path, now, codecs)?;
                 schema::create_tables_with_archive_header(&conn, Some(header))?;
                 drop(archive_lock);
                 bodies
             }
             schema::ArchiveSchemaStatus::Current(_) => {
                 schema::create_tables(&conn)?;
-                BodyArchive::open_existing(path, now, &conn)?
+                BodyArchive::open_existing(path, now, &conn, codecs)?
             }
             // Moved aside above, under this same writer lock.
             schema::ArchiveSchemaStatus::PreArchive => {
@@ -381,38 +633,24 @@ impl DbWriter {
         // scan of its rows.
         let tally = LedgerTally::restored(counters::load(&conn)?);
 
-        let batch_capacity = if capacity == 0 {
+        let batch_capacity = if batch_capacity == 0 {
             DEFAULT_BATCH_CAPACITY
         } else {
-            capacity
+            batch_capacity
         };
-        let (tx, rx) = writer_channel(batch_capacity);
+        let (tx, rx) = writer_channel(channel_capacity);
         let db_path = path.to_path_buf();
-        let writer_loop_db_path = Some(db_path.clone());
         let pending_body_bytes = Arc::new(AtomicU64::new(0));
-        let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
-
-        let join_handle = std::thread::Builder::new()
-            .name("capsem-db-writer".into())
-            .spawn(move || {
-                let _held = held;
-                writer_loop(
-                    conn,
-                    rx,
-                    writer_loop_db_path,
-                    batch_capacity,
-                    &loop_pending_body_bytes,
-                    bodies,
-                    tally,
-                )
-            })
-            .expect("failed to spawn db writer thread");
-
-        Ok(Self {
-            tx: std::sync::Mutex::new(Some(tx)),
-            join_handle: std::sync::Mutex::new(Some(join_handle)),
+        Ok(PreparedDbWriter {
+            tx,
+            rx,
+            held,
+            conn,
             db_path,
+            schedule: WriterSchedule::new(batch_capacity),
             pending_body_bytes,
+            bodies,
+            tally,
         })
     }
 
@@ -421,7 +659,7 @@ impl DbWriter {
         let conn = Connection::open_in_memory()?;
         schema::apply_pragmas(&conn)?;
         // One statement per table per target; the default 16 would evict.
-        conn.set_prepared_statement_cache_capacity(64);
+        conn.set_prepared_statement_cache_capacity(capsem_proto::CACHE_SQLITE_PREPARED_STATEMENTS);
         schema::create_tables(&conn)?;
         let bodies = BodyArchive::disabled(SystemTime::now);
         let memory_uri = schema::memory_uri_for_name(&format!(
@@ -445,7 +683,17 @@ impl DbWriter {
         let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
         let join_handle = std::thread::Builder::new()
             .name("capsem-db-writer".into())
-            .spawn(move || writer_loop(conn, rx, None, batch_capacity, &loop_pending_body_bytes, bodies, tally))
+            .spawn(move || {
+                writer_loop(
+                    conn,
+                    rx,
+                    None,
+                    WriterSchedule::new(batch_capacity),
+                    &loop_pending_body_bytes,
+                    bodies,
+                    tally,
+                )
+            })
             .expect("failed to spawn db writer thread");
 
         Ok(Self {
@@ -453,6 +701,26 @@ impl DbWriter {
             join_handle: std::sync::Mutex::new(Some(join_handle)),
             db_path: PathBuf::from(":memory:"),
             pending_body_bytes,
+            remote: None,
+        })
+    }
+
+    /// Construct the familiar producer facade over a coordinator-minted
+    /// channel. This process retains no SQLite connection or writer lock; the
+    /// dedicated ledger worker owns both.
+    pub fn from_ledger_channel(
+        stream: std::os::unix::net::UnixStream,
+        commitment_stream: std::os::unix::net::UnixStream,
+        grant: capsem_proto::ledger::LedgerChannelGrant,
+        logical_path: &Path,
+        capacity: usize,
+    ) -> std::io::Result<Self> {
+        Ok(Self {
+            tx: std::sync::Mutex::new(None),
+            join_handle: std::sync::Mutex::new(None),
+            db_path: logical_path.to_path_buf(),
+            pending_body_bytes: Arc::new(AtomicU64::new(0)),
+            remote: Some(remote::RemoteWriter::start(stream, commitment_stream, grant, capacity)?),
         })
     }
 
@@ -469,6 +737,9 @@ impl DbWriter {
     /// Every reader reads the file, so an `Err` means no reader will see the
     /// rows yet, and the caller must not claim otherwise.
     pub async fn flush_checked(&self) -> Result<(), String> {
+        if let Some(remote) = &self.remote {
+            return remote.flush().await;
+        }
         let Some(tx) = self.clone_sender() else {
             return Ok(());
         };
@@ -491,6 +762,9 @@ impl DbWriter {
     /// halves of the ledger. A caller that holds no writer holds no right to
     /// rewrite either one.
     pub async fn retain_bodies_since(&self, cutoff: &str) -> Result<RetainOutcome, String> {
+        if let Some(remote) = &self.remote {
+            return remote.retain(cutoff).await;
+        }
         let Some(tx) = self.clone_sender() else {
             return Err("db writer is shut down; nothing was retained".to_string());
         };
@@ -526,6 +800,10 @@ impl DbWriter {
     /// and runs the final `PRAGMA wal_checkpoint(TRUNCATE)`. Call from a
     /// blocking thread (e.g. via `tokio::task::spawn_blocking`).
     pub fn shutdown_blocking(&self) {
+        if let Some(remote) = &self.remote {
+            remote.shutdown();
+            return;
+        }
         let _ = self.tx.lock().unwrap().take();
         let handle = self.join_handle.lock().unwrap().take();
         if let Some(handle) = handle {
@@ -537,6 +815,9 @@ impl DbWriter {
     /// It sees what the writer has flushed, not what it has only accepted.
     /// Returns Err for in-memory writers (no file to share between connections).
     pub fn reader(&self) -> rusqlite::Result<crate::reader::DbReader> {
+        if self.remote.is_some() {
+            return Err(rusqlite::Error::InvalidPath(self.db_path.clone()));
+        }
         if self.db_path.to_str() == Some(":memory:") {
             return Err(rusqlite::Error::InvalidPath(self.db_path.clone()));
         }
@@ -552,7 +833,50 @@ impl DbWriter {
     /// block but not yet written. They reach `session.bodies` at the next
     /// disk flush or when the block closes, so this is the backlog a crash would lose.
     pub fn pending_body_bytes(&self) -> u64 {
+        if self.remote.is_some() {
+            return 0;
+        }
         self.pending_body_bytes.load(Ordering::Acquire)
+    }
+}
+
+impl PreparedDbWriter {
+    pub(crate) fn start(self) -> DbWriter {
+        let Self {
+            tx,
+            rx,
+            held,
+            conn,
+            db_path,
+            schedule,
+            pending_body_bytes,
+            bodies,
+            tally,
+        } = self;
+        let writer_loop_db_path = Some(db_path.clone());
+        let loop_pending_body_bytes = Arc::clone(&pending_body_bytes);
+        let join_handle = std::thread::Builder::new()
+            .name("capsem-db-writer".into())
+            .spawn(move || {
+                let _held = held;
+                writer_loop(
+                    conn,
+                    rx,
+                    writer_loop_db_path,
+                    schedule,
+                    &loop_pending_body_bytes,
+                    bodies,
+                    tally,
+                )
+            })
+            .expect("failed to spawn db writer thread");
+        DbWriter {
+            tx: std::sync::Mutex::new(Some(tx)),
+            join_handle: std::sync::Mutex::new(Some(join_handle)),
+            db_path,
+            pending_body_bytes,
+            remote: None,
+        }
     }
 }
 
@@ -580,14 +904,14 @@ const BACKPRESSURE_MAX_WAIT: Duration = Duration::from_millis(5);
 /// backoff. Retrying immediately after `yield_now` pinned every producer task
 /// at full CPU for as long as the writer thread was inside a disk flush, which
 /// can be seconds with a large dirty set or a busy-timeout on the file.
-async fn send_with_backpressure(tx: &WriterSender, mut message: WriterMessage) -> Result<(), String> {
+async fn send_with_backpressure(tx: &WriterSender, message: WriterMessage) -> Result<(), String> {
+    let mut message = Some(message);
     let mut wait = Duration::from_micros(50);
     let mut attempts = 0u32;
     loop {
-        match tx.try_send(message) {
+        match tx.try_send(&mut message) {
             Ok(()) => return Ok(()),
-            Err(mpsc::TrySendError::Full(returned)) => {
-                message = returned;
+            Err(WriterTrySendError::Full) => {
                 if attempts == 0 {
                     tokio::task::yield_now().await;
                 } else {
@@ -596,7 +920,7 @@ async fn send_with_backpressure(tx: &WriterSender, mut message: WriterMessage) -
                 }
                 attempts += 1;
             }
-            Err(mpsc::TrySendError::Disconnected(_)) => {
+            Err(WriterTrySendError::Disconnected) => {
                 return Err("db writer channel closed".to_string());
             }
         }
@@ -604,183 +928,6 @@ async fn send_with_backpressure(tx: &WriterSender, mut message: WriterMessage) -
 }
 
 /// The writer thread loop: block-then-drain batching.
-fn writer_loop(
-    conn: Connection,
-    rx: mpsc::Receiver<WriterMessage>,
-    db_path: Option<PathBuf>,
-    batch_capacity: usize,
-    pending_body_bytes: &AtomicU64,
-    mut bodies: BodyArchive,
-    mut tally: LedgerTally,
-) {
-    let mut flush_watermarks =
-        schema::with_memory_schema_lock(|| schema::initial_memory_flush_watermarks(&conn, schema::hot_ledger_tables()))
-            .unwrap_or_else(|error| {
-                warn!(error = %error, "db initial memory flush watermark load failed");
-                schema::MemoryFlushWatermarks::new()
-            });
-    // Rows at or below the open-time watermark were written by an earlier
-    // writer; exec ids restart with the process, so a completion must not
-    // reach one of those.
-    let exec_floor = flush_watermarks.get("exec_events").copied().unwrap_or(0);
-    let mut dirty_tables = BTreeSet::new();
-    let mut dirty_ops = 0_usize;
-    let mut last_disk_flush = Instant::now();
-    // 1. Block until at least one op arrives. Returns None when all
-    //    Senders are dropped (clean shutdown) and ends the loop.
-    loop {
-        let first_message = if dirty_ops == 0 {
-            rx.recv().ok()
-        } else {
-            match rx.recv_timeout(DISK_FLUSH_INTERVAL) {
-                Ok(message) => Some(message),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if let Err(error) = flush_dirty_tables_to_disk(
-                        &conn,
-                        &mut dirty_tables,
-                        &mut flush_watermarks,
-                        db_path.as_deref(),
-                        &mut bodies,
-                        tally.counters(),
-                    ) {
-                        warn!(error = %error, "db interval flush failed");
-                    } else {
-                        dirty_ops = 0;
-                        last_disk_flush = Instant::now();
-                    }
-                    ::metrics::gauge!(DB_MEMORY_UNFLUSHED_OPS).set(dirty_ops as f64);
-                    continue;
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => None,
-            }
-        };
-        let Some(first_message) = first_message else {
-            break;
-        };
-
-        let mut batch = Vec::with_capacity(batch_capacity);
-        let mut barriers = Barriers::default();
-        let mut at_barrier = barriers.accept(first_message, &mut batch);
-
-        // 2. Drain any ops already queued (non-blocking).
-        while !at_barrier && batch.len() < batch_capacity {
-            match rx.try_recv() {
-                Ok(message) => at_barrier = barriers.accept(message, &mut batch),
-                Err(_) => break,
-            }
-        }
-
-        // 3. Execute entire batch in a single transaction.
-        let batch_size = batch.len();
-        let batch_bucket = batch_size_bucket(batch_size);
-        let span = tracing::debug_span!(
-            target: "capsem.db",
-            DB_WRITE_BATCH_SPAN,
-            batch_size_bucket = batch_bucket,
-            status = tracing::field::Empty,
-        );
-        let started = Instant::now();
-        let batch_capacity = batch.capacity();
-        if batch.is_empty() {
-            record_batch(started, batch_size, batch_capacity, batch_bucket, "ok", &span);
-        } else {
-            match span.in_scope(|| execute_memory_batch(&conn, &batch, &mut bodies, exec_floor, &mut tally)) {
-                Ok(outcome) => {
-                    dirty_tables.extend(outcome.tables);
-                    dirty_ops += outcome.written;
-                    record_batch(started, batch_size, batch_capacity, batch_bucket, "ok", &span);
-                }
-                Err(e) => {
-                    record_batch(started, batch_size, batch_capacity, batch_bucket, "error", &span);
-                    warn!(
-                        error = %e,
-                        count = batch.len(),
-                        "db memory write batch failed; retrying its ops individually"
-                    );
-                    let salvaged = span
-                        .in_scope(|| retry_batch_ops_individually(&conn, &batch, &mut bodies, exec_floor, &mut tally));
-                    dirty_tables.extend(salvaged.tables);
-                    dirty_ops += salvaged.written;
-                }
-            }
-        }
-        // A burst of large bodies closes its block as soon as the batch ends
-        // rather than growing it until the interval expires. Its index rows
-        // wait for the next transaction; its bytes are already on disk.
-        bodies.close_if_due();
-        pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
-        let disk_flush_due = dirty_ops >= DISK_FLUSH_THRESHOLD_OPS
-            || last_disk_flush.elapsed() >= DISK_FLUSH_INTERVAL
-            || barriers.waiting();
-        let mut barrier_outcome: FlushOutcome = Ok(());
-        if disk_flush_due {
-            match flush_dirty_tables_to_disk(
-                &conn,
-                &mut dirty_tables,
-                &mut flush_watermarks,
-                db_path.as_deref(),
-                &mut bodies,
-                tally.counters(),
-            ) {
-                Ok(()) => {
-                    dirty_ops = 0;
-                    last_disk_flush = Instant::now();
-                    pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
-                }
-                Err(error) => {
-                    warn!(error = %error, "db dirty table flush failed");
-                    barrier_outcome = Err(format!("db dirty table flush failed: {error}"));
-                }
-            }
-        }
-        ::metrics::gauge!(DB_MEMORY_UNFLUSHED_OPS).set(dirty_ops as f64);
-        barriers.answer(&conn, &mut bodies, &barrier_outcome);
-    }
-
-    // Test hook: lets `test_wal_absent_after_clean_shutdown`-style tests
-    // simulate a slow checkpoint so the explicit-cleanup path can be
-    // distinguished from implicit tokio-runtime-drop ordering. Gated on
-    // an env var so it's a no-op in production.
-    if let Ok(ms) = std::env::var("CAPSEM_TEST_SLOW_CHECKPOINT_MS") {
-        if let Ok(ms) = ms.parse::<u64>() {
-            std::thread::sleep(std::time::Duration::from_millis(ms));
-        }
-    }
-
-    // The open block ends with its FINAL segment, committed by this flush.
-    bodies.close_block();
-    if let Err(error) = flush_dirty_tables_to_disk(
-        &conn,
-        &mut dirty_tables,
-        &mut flush_watermarks,
-        db_path.as_deref(),
-        &mut bodies,
-        tally.counters(),
-    ) {
-        warn!(error = %error, "db shutdown dirty table flush failed");
-        // There is no next flush to retry into, so the bodies still waiting
-        // for an index row are lost here. Counted, so the drop counter closes
-        // over the session rather than ending on a number that is short by
-        // however much the last flush was carrying.
-        bodies.abandon_uncommitted("shutdown");
-    }
-    bodies.sync();
-    pending_body_bytes.store(bodies.pending_bytes() as u64, Ordering::Release);
-
-    // All senders dropped -- checkpoint WAL before closing connection.
-    let span = tracing::debug_span!(
-        target: "capsem.db",
-        DB_SHUTDOWN_FLUSH_SPAN,
-        status = tracing::field::Empty,
-    );
-    let started = Instant::now();
-    let result = span.in_scope(|| conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)"));
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    let status = if result.is_ok() { "ok" } else { "error" };
-    ::metrics::histogram!(DB_SHUTDOWN_FLUSH_MS, "status" => status).record(elapsed_ms);
-    span.record("status", status);
-}
-
 #[derive(Clone, Copy)]
 enum WriteTarget {
     Memory,
@@ -793,49 +940,6 @@ impl WriteTarget {
             WriteTarget::Memory => format!("main.{name}"),
         }
     }
-}
-
-fn flush_dirty_tables_to_disk(
-    conn: &Connection,
-    dirty_tables: &mut BTreeSet<&'static str>,
-    flush_watermarks: &mut schema::MemoryFlushWatermarks,
-    db_path: Option<&Path>,
-    bodies: &mut BodyArchive,
-    counters: &LedgerCounters,
-) -> rusqlite::Result<()> {
-    if dirty_tables.is_empty() && !bodies.has_work() {
-        return Ok(());
-    }
-    // Bytes before index: the segment reaches the archive file here, and the
-    // rows that name it are inserted in the transaction below. A crash in
-    // between costs unreferenced bytes, never a row pointing past EOF.
-    bodies.flush_segment();
-    let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
-    let tx = conn.unchecked_transaction()?;
-    bodies.commit_index_rows(&tx)?;
-    // Injected where a real flush failure lands: inside the transaction, with
-    // the archive's index rows already written into it. Everything here rolls
-    // back together, and the retry has to bring the bodies back with the rows.
-    if take_disk_flush_failure_for_tests(db_path) {
-        return Err(rusqlite::Error::InvalidParameterName(
-            "injected disk flush failure before copy".to_string(),
-        ));
-    }
-    let advanced_watermarks = schema::with_memory_schema_lock(|| {
-        schema::flush_memory_tables_to_disk(&tx, tables.iter().copied(), flush_watermarks)
-    })?;
-    // The snapshot lands with the rows it counts, or neither does.
-    counters::store(&tx, counters)?;
-    tx.commit()?;
-    // Only now are the written segments indexed: anything above this line rolls
-    // the transaction back, and the next flush retries both halves together.
-    bodies.index_rows_committed();
-    flush_watermarks.extend(advanced_watermarks);
-    if let Some(path) = db_path {
-        schema::record_sqlite_mmap_telemetry(conn, path, "writer", "flush");
-    }
-    dirty_tables.clear();
-    Ok(())
 }
 
 /// Execute through the connection's prepared-statement cache.

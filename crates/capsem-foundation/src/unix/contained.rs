@@ -13,7 +13,10 @@ use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
 use nix::fcntl::{openat, readlinkat, renameat, AtFlags, OFlag};
-use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
+use nix::sys::stat::{
+    fchmod, fchmodat, fstatat, futimens, mkdirat, utimensat, FchmodatFlags, Mode, SFlag, UtimensatFlags,
+};
+use nix::sys::time::TimeSpec;
 use nix::unistd::{linkat, symlinkat};
 use nix::unistd::{unlinkat, UnlinkatFlags};
 
@@ -31,6 +34,30 @@ pub struct ContainedOpenOptions {
     truncate: bool,
     exclusive: bool,
     mode: u32,
+}
+
+/// One timestamp update applied below a containment root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FileTimeSpec {
+    Omit,
+    Now,
+    Exact { seconds: i64, nanoseconds: u32 },
+}
+
+impl FileTimeSpec {
+    fn to_time_spec(self) -> io::Result<TimeSpec> {
+        match self {
+            Self::Omit => Ok(TimeSpec::UTIME_OMIT),
+            Self::Now => Ok(TimeSpec::UTIME_NOW),
+            Self::Exact { seconds, nanoseconds } if nanoseconds < 1_000_000_000 => {
+                Ok(TimeSpec::new(seconds, nanoseconds.into()))
+            }
+            Self::Exact { .. } => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "timestamp nanoseconds must be below one second",
+            )),
+        }
+    }
 }
 
 impl ContainedOpenOptions {
@@ -292,6 +319,80 @@ impl ContainedDir {
         Ok(metadata.permissions().mode() & 0o7777)
     }
 
+    /// Change one entry's permission bits below this open directory.
+    ///
+    /// Every parent component is opened without following links and the final
+    /// operation uses `AT_SYMLINK_NOFOLLOW`, so a guest cannot redirect a
+    /// metadata request outside the share between validation and mutation.
+    /// An empty relative path names this directory itself.
+    pub fn set_relative_mode(&self, rel: &Path, mode: u32) -> io::Result<()> {
+        let names = rel
+            .components()
+            .map(|component| match component {
+                Component::Normal(name) => Ok(name),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("relative path may only contain plain names: {}", rel.display()),
+                )),
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let Some((name, parents)) = names.split_last() else {
+            return fchmod(self.fd.as_raw_fd(), permission_mode(mode)).map_err(Into::into);
+        };
+        let mut parent = self.try_clone()?;
+        for component in parents {
+            parent = parent.descend(component)?;
+        }
+        if parent.entry_kind(name)? == Some(EntryKind::Other) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a file or directory", Path::new(name).display()),
+            ));
+        }
+        fchmodat(
+            Some(parent.fd.as_raw_fd()),
+            *name,
+            permission_mode(mode),
+            FchmodatFlags::NoFollowSymlink,
+        )
+        .map_err(Into::into)
+    }
+
+    /// Change one entry's timestamps below this open directory.
+    ///
+    /// Parent components are opened without following links and the final
+    /// operation uses `AT_SYMLINK_NOFOLLOW`. An empty relative path names this
+    /// directory itself through its already-open descriptor.
+    pub fn set_relative_times(&self, rel: &Path, atime: FileTimeSpec, mtime: FileTimeSpec) -> io::Result<()> {
+        let atime = atime.to_time_spec()?;
+        let mtime = mtime.to_time_spec()?;
+        let names = rel
+            .components()
+            .map(|component| match component {
+                Component::Normal(name) => Ok(name),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("relative path may only contain plain names: {}", rel.display()),
+                )),
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let Some((name, parents)) = names.split_last() else {
+            return futimens(self.fd.as_raw_fd(), &atime, &mtime).map_err(Into::into);
+        };
+        let mut parent = self.try_clone()?;
+        for component in parents {
+            parent = parent.descend(component)?;
+        }
+        utimensat(
+            Some(parent.fd.as_raw_fd()),
+            *name,
+            &atime,
+            &mtime,
+            UtimensatFlags::NoFollowSymlink,
+        )
+        .map_err(Into::into)
+    }
+
     /// Create a symlink child. An existing entry of any type is an error; the
     /// target is stored verbatim and never resolved.
     pub fn symlink(&self, name: &OsStr, target: &OsStr) -> io::Result<()> {
@@ -426,10 +527,20 @@ impl ContainedDir {
             | OFlag::O_NONBLOCK;
         let fd = openat(Some(self.fd.as_raw_fd()), name, flags, permission_mode(0o600))?;
         let file = File::from(owned(fd));
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        let metadata = file.metadata()?;
+        let mut metadata = file.metadata()?;
+        // Normal umasks leave an explicitly requested 0600 mode unchanged.
+        // Avoid a redundant fchmod so sandboxed workers can create private
+        // files while permission changes remain outside their authority.
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            metadata = file.metadata()?;
+        }
         let uid = super::process::current_uid();
-        if !metadata.is_file() || metadata.uid() != uid || metadata.nlink() != 1 {
+        if !metadata.is_file()
+            || metadata.uid() != uid
+            || metadata.nlink() != 1
+            || metadata.permissions().mode() & 0o777 != 0o600
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!("refusing newly created private file {}", Path::new(name).display()),

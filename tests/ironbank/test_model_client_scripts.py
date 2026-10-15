@@ -1,13 +1,72 @@
+import ast
+import json
+import socket
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
+from helpers.bounded import bounded
 from ironbank.model_client_config import (
     HERMETIC_AGY_MODEL_DISPLAY,
     HERMETIC_ANTHROPIC_MODEL,
     HERMETIC_GEMINI_MODEL,
 )
-from ironbank.model_client_scripts import agy_cli_script, gemini_api_script
+from ironbank.model_client_scripts import (
+    agy_cli_script,
+    claude_ollama_launch_script,
+    codex_cli_script,
+    codex_ollama_launch_script,
+    common_result_script_prelude,
+    gemini_api_script,
+    openai_responses_api_script,
+    openai_two_tool_calls_script,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _assigned_value(script: str, name: str, environment: dict):
+    assignments = [
+        node for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+    ]
+    assert len(assignments) == 1
+    # Execute the generated client's actual selection/expression without its
+    # DNS, filesystem or subprocess setup. The surrounding fixtures stay real.
+    probe = (
+        "import json,sys\n"
+        "globals().update(json.loads(sys.argv[1]))\n"
+        + ast.unparse(assignments[0]) + "\n"
+        + f"print(json.dumps({name}))"
+    )
+    result = subprocess.run(
+        bounded([sys.executable, "-c", probe, json.dumps(environment)], 10),
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("render", [openai_responses_api_script, openai_two_tool_calls_script])
+def test_streaming_client_uses_completed_tool_arguments(render) -> None:
+    completed = {"type": "function_call", "call_id": "call-1", "name": "exec_command", "arguments": '{"cmd":"true"}'}
+    events = [
+        {"type": "response.output_item.added", "item": {**completed, "arguments": ""}},
+        {"type": "response.function_call_arguments.delta", "delta": completed["arguments"]},
+        {"type": "response.output_item.done", "item": completed},
+    ]
+    assert _assigned_value(render("https://api.openai.com"), "tool_item", {"first_events": events}) == completed
+
+
+@pytest.mark.parametrize("render,key", [
+    (codex_cli_script, "cmd"), (codex_ollama_launch_script, "cmd"),
+    (claude_ollama_launch_script, "command"), (agy_cli_script, "CommandLine"),
+])
+def test_native_client_expected_arguments_keep_the_fixture_shell_quotes(render, key) -> None:
+    arguments = _assigned_value(render("http://fixture"), "call_args", {"NONCE": "nonce", "TARGET": "/workspace/file", "WORKSPACE": "/workspace"})
+    assert arguments[key] == r"printf '%s\n' 'nonce' > '/workspace/file'"
 
 
 def test_gemini_replay_uses_release_target_model() -> None:
@@ -20,14 +79,21 @@ def test_gemini_replay_uses_release_target_model() -> None:
 
 def test_anthropic_replay_uses_release_target_model() -> None:
     sdk_test = PROJECT_ROOT / "tests" / "ironbank" / "test_model_sdk_ledger.py"
-    mock_server = PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs"
+    mock_sources = [
+        PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / name
+        for name in ("anthropic.rs", "agent_mcp.rs")
+    ]
 
     assert HERMETIC_ANTHROPIC_MODEL == "claude-sonnet-4-6"
     sdk_text = sdk_test.read_text(encoding="utf-8")
-    mock_text = mock_server.read_text(encoding="utf-8")
     assert "HERMETIC_ANTHROPIC_MODEL" in sdk_text
-    assert HERMETIC_ANTHROPIC_MODEL in mock_text
-    for path, text in ((sdk_test, sdk_text), (mock_server, mock_text)):
+    sources = [
+        (sdk_test, sdk_text),
+        *[(path, path.read_text(encoding="utf-8")) for path in mock_sources],
+    ]
+    for path, text in sources:
+        if path in mock_sources:
+            assert HERMETIC_ANTHROPIC_MODEL in text, path
         assert "claude-sonnet-4-20250514" not in text, path
 
 
@@ -37,8 +103,38 @@ def test_agy_noninteractive_script_selects_model_explicitly() -> None:
     assert '"agy",' in script
     assert '"--model",' in script
     assert f'HERMETIC_AGY_MODEL_DISPLAY = "{HERMETIC_AGY_MODEL_DISPLAY}"' in script
-    assert 'emit_result("google", "daily-cloudcode-pa.googleapis.com", "/v1internal:streamGenerateContent"' in script
+    assert (
+        'emit_result("google", "daily-cloudcode-pa.googleapis.com", "/v1internal:streamGenerateContent"'
+        in script
+    )
     assert '"run_command"' in script
     assert '"CommandLine": "printf' in script
     assert '"/api/chat"' not in script
     assert '"write_to_file"' not in script
+
+
+def _client(tmp_path, monkeypatch):
+    namespace = {}
+    with monkeypatch.context() as patched:
+        patched.setattr(socket, "gethostbyname", lambda _: "127.0.0.1")
+        exec(common_result_script_prelude("http://127.0.0.1", "diagnostic"), namespace)
+    namespace["WORKSPACE"] = str(tmp_path)
+    return namespace["run_tool"]
+
+
+def test_tool_failure_preserves_exit_code_stdout_and_stderr(tmp_path, monkeypatch):
+    run_tool = _client(tmp_path, monkeypatch)
+    (tmp_path / "child.stdout").write_text("tool-stdout\n")
+    (tmp_path / "child.stderr").write_text("tool-stderr\n")
+    with pytest.raises(RuntimeError) as failure:
+        run_tool({"cmd": "cat child.stdout; cat child.stderr >&2; exit 2"})
+    message = str(failure.value)
+    assert "(exit 2)" in message
+    assert "stdout: tool-stdout\n" in message
+    assert "stderr: tool-stderr\n" in message
+
+
+def test_successful_tool_still_writes_the_file_and_reports_success(tmp_path, monkeypatch):
+    run_tool = _client(tmp_path, monkeypatch)
+    assert run_tool({"cmd": "printf 'written' > result.txt"}) == "Process exited with code 0"
+    assert (tmp_path / "result.txt").read_text() == "written"

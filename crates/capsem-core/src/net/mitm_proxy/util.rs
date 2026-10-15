@@ -4,6 +4,10 @@
 use crate::credential_broker::{detect_http_credential_with_provider, CredentialObservation};
 use crate::net::ai_traffic::provider::{ModelProtocol, ProviderKind};
 use crate::net::policy::NetworkMechanics;
+use crate::security_engine::{
+    IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
+};
+use std::net::IpAddr;
 
 use super::protocol::Protocol;
 
@@ -192,7 +196,7 @@ pub(super) fn format_headers_for_domain(
                 {
                     observations.push(observation);
                 }
-                let digest = blake3::hash(raw);
+                let digest = capsem_crypto::blake3::hash(raw);
                 let hex = &digest.to_hex()[..12];
                 format!("{}: hash:{}", name, hex)
             }
@@ -209,3 +213,42 @@ pub(super) fn format_headers_for_domain(
 
 #[cfg(test)]
 mod tests;
+
+pub(super) fn model_security_event(
+    event_type: RuntimeSecurityEventType,
+    provider: ProviderKind,
+    model: Option<String>,
+    request_body: Option<&[u8]>,
+    response_body: Option<&[u8]>,
+) -> SecurityEvent {
+    SecurityEvent::new(event_type).with_model(ModelSecurityEvent {
+        provider: Some(provider.as_str().to_string()),
+        name: model,
+        request_body: request_body.map(|body| String::from_utf8_lossy(body).to_string()),
+        response_body: response_body.map(|body| String::from_utf8_lossy(body).to_string()),
+        tool_calls: None,
+    })
+}
+
+/// Transport facts for the rules: the upstream port, and the address the dial
+/// reaches (`UpstreamTarget::judged_ip`), never one read off the guest's name.
+pub(super) fn security_event_with_transport(
+    mut event: SecurityEvent,
+    ip: Option<IpAddr>,
+    upstream_port: u16,
+) -> SecurityEvent {
+    event = event.with_tcp(TcpSecurityEvent {
+        port: Some(upstream_port.to_string()),
+    });
+    if let Some(ip) = ip {
+        event = event.with_ip(IpSecurityEvent {
+            value: Some(ip.to_string()),
+            version: Some(match ip {
+                IpAddr::V4(_) => "4".to_string(),
+                IpAddr::V6(_) => "6".to_string(),
+            }),
+        });
+    }
+
+    event
+}

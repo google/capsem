@@ -9,6 +9,7 @@ from pydantic import StrictStr, TypeAdapter
 from . import _operations as api
 from . import models
 from ._client import Client
+from ._connections import CredentialGrants
 from ._container import Container
 from ._networks import VmNetworks
 from ._ports import Ports
@@ -36,6 +37,7 @@ class VM(Client):
         self.container = Container(self)
         self._has_container: bool | None = None
         self.ports = Ports(self)
+        self.credential_grants = CredentialGrants(self)
 
     @classmethod
     def _bind(cls, transport: Transport, *, id: str, name: str | None = None,
@@ -55,9 +57,9 @@ class VM(Client):
     def name(self) -> str | None:
         return self._name
 
-    async def _resolve(self) -> str:
+    async def _resolve(self, *, request_timeout: float | None = None) -> str:
         if self._id is None:
-            response = await api.list_vms(self._transport)
+            response = await api.list_vms(self._transport, request_timeout=request_timeout)
             matches = [vm for vm in response.sandboxes if vm.name == self._name]
             if len(matches) != 1:
                 raise LookupError(f"expected one VM named {self._name!r}, found {len(matches)}")

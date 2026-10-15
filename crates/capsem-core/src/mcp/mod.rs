@@ -1,3 +1,4 @@
+pub mod aggregator_driver;
 pub mod builtin_ledger;
 pub mod builtin_tools;
 pub mod policy;
@@ -9,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::mcp::policy::McpConfig;
-use capsem_proto::mcp_contracts::{McpServerDef, McpToolDef, ToolAnnotations};
+use capsem_proto::mcp_contracts::{
+    McpServerDef, McpToolDef, ToolAnnotations, BUILTIN_SERVER_NAME, BUILTIN_SERVER_SOURCE,
+};
 
 /// Compute a CPU-proportional default for framed MCP in-flight handlers.
 ///
@@ -29,17 +32,6 @@ pub fn resolve_inflight_cap() -> usize {
         .filter(|n| *n > 0)
         .unwrap_or_else(default_inflight_cap)
 }
-
-/// The `source` of the one server definition that is Capsem's own builtin.
-///
-/// It is the only server whose tool results may carry ledger records (see
-/// `capsem_proto::mcp_contracts::builtin_ledger`), so it is identified by this
-/// field, which only `local_builtin_server_def` sets, and never by a name a
-/// configured server could also choose.
-pub const BUILTIN_SERVER_SOURCE: &str = "builtin";
-
-/// The name the builtin server's tools are namespaced under (`local__echo`).
-pub const BUILTIN_SERVER_NAME: &str = "local";
 
 /// Server names no configured server may take: the builtin's own, and the name it had
 /// before it was `local`. Reserved whether or not the builtin binary is
@@ -108,18 +100,30 @@ pub fn build_server_list(
     builtin_binary: Option<&Path>,
     builtin_env: HashMap<String, String>,
 ) -> Vec<McpServerDef> {
-    let mut servers = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    if let Some(bin) = builtin_binary {
-        if bin.exists() {
-            let enabled = config.server_enabled.get(BUILTIN_SERVER_NAME).copied().unwrap_or(true);
-            servers.push(local_builtin_server_def(bin, builtin_env, enabled));
-            seen.insert(BUILTIN_SERVER_NAME.to_string());
-            info!(bin = %bin.display(), "added local builtin MCP server");
-        } else {
+    let admitted = builtin_binary.filter(|bin| {
+        let available = bin.exists();
+        if !available {
             warn!(bin = %bin.display(), "builtin MCP server binary not found, skipping");
         }
+        available
+    });
+    build_server_list_from_admitted_binary(config, admitted, builtin_env)
+}
+
+/// Rebuild settings using executable availability admitted before confinement.
+/// No filesystem access occurs here; the service still owns process creation.
+pub fn build_server_list_from_admitted_binary(
+    config: &McpConfig,
+    builtin_binary: Option<&Path>,
+    builtin_env: HashMap<String, String>,
+) -> Vec<McpServerDef> {
+    let mut servers = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if let Some(bin) = builtin_binary {
+        let enabled = config.server_enabled.get(BUILTIN_SERVER_NAME).copied().unwrap_or(true);
+        servers.push(local_builtin_server_def(bin, builtin_env, enabled));
+        seen.insert(BUILTIN_SERVER_NAME.to_string());
+        info!(bin = %bin.display(), "added admitted local builtin MCP server");
     }
 
     for manual in &config.servers {
@@ -195,7 +199,7 @@ pub enum PinChange {
 /// Compute a deterministic BLAKE3 hash of a tool's definition.
 /// Includes name, description, inputSchema, and annotations.
 pub fn compute_tool_hash(tool: &McpToolDef) -> String {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = capsem_crypto::blake3::Hasher::new();
     hasher.update(tool.original_name.as_bytes());
     hasher.update(b"|");
     if let Some(desc) = &tool.description {

@@ -15,6 +15,11 @@ from capsem_builder.sdkgen.schema import Schema
 SPEC = Path(__file__).resolve().parents[3] / "sdk/specification/openapi.json"
 
 
+@pytest.mark.parametrize("minimum", [0, 1, 32])
+def test_nonnegative_integer_query_minimum_keeps_unsigned_type(minimum: int) -> None:
+    assert type_name(Schema(type="integer", format="int32", minimum=minimum)) == "u32"
+
+
 def test_all_routes_are_generated_in_small_modules() -> None:
     routes = read_operations(SPEC)
     sources = render_operations(routes)
@@ -75,7 +80,7 @@ def test_primitive_types(schema: dict, expected: str) -> None:
     assert type_name(Schema.model_validate(schema)) == expected
 
 
-@pytest.mark.parametrize("schema", [{"type": "number"}, {"type": "integer", "minimum": 2},
+@pytest.mark.parametrize("schema", [{"type": "number"},
                                     {"type": "string", "enum": ["A"]}])
 def test_unhandled_types_fail_closed(schema: dict) -> None:
     with pytest.raises(ValueError, match="unsupported Rust operation schema"):

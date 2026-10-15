@@ -1,5 +1,12 @@
 use super::*;
 
+pub(crate) fn configure_resume_storage(command: &mut tokio::process::Command, entry: &PersistentVmEntry) -> Result<()> {
+    command
+        .arg("--scratch-disk-size-gb")
+        .arg(session_rootfs_size_gb(entry)?.to_string());
+    Ok(())
+}
+
 impl ServiceState {
     /// Resume a stopped persistent VM by re-spawning capsem-process against its
     /// existing session directory.
@@ -65,13 +72,23 @@ impl ServiceState {
         service_runtime::remove_instance_sentinels(&uds_path);
 
         self.validate_persistent_entry(&entry)?;
-        let active_policy_path = self.materialize_active_policy(&entry.session_dir)?.path;
-        let scratch_disk_size_gb = session_rootfs_size_gb(&entry)?;
+        let active_policy = self.materialize_active_policy(&entry.session_dir)?;
+        let active_policy_path = active_policy.path.clone();
+        let (upstream_broker, owner_upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(
+            active_policy.broker_policy(),
+            entry.session_dir.clone(),
+        )?;
+        let upstream_broker =
+            upstream_broker.with_vm_ledger(Arc::clone(&self.ledger_workers), &vm_id, &entry.session_dir);
+        let upstream_stdio = upstream_broker.worker_stdio()?;
+        let (proxy_upstream_broker, proxy_upstream_policy) =
+            crate::upstream_broker::PendingBroker::pair(active_policy.broker_policy())?;
+        let proxy_upstream = proxy_upstream_broker.worker_stream()?;
+        let upstream_policy = owner_upstream_policy.merge(proxy_upstream_policy);
         let resolved = self.resolve_pinned_asset_paths(&entry.asset_pins)?;
         self.validate_pinned_asset_files(&resolved, &entry.asset_pins)?;
 
         let process_log_path = entry.session_dir.join("process.log");
-        let owner_secret = private_routes::mint_owner_secret(&entry.session_dir)?;
         let process_log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -82,12 +99,13 @@ impl ServiceState {
         if !self.process_binary.exists() {
             child_cmd = tokio::process::Command::new("cache/target/cargo/debug/capsem-process");
         }
+        configure_resume_storage(&mut child_cmd, &entry)?;
 
         // Inject VM identity so the guest knows its own name/ID.
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
         child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
         child_cmd.arg("--vm-name").arg(&name);
-        crate::service_runtime::telemetry_export::grant_metric_endpoint(
+        crate::service_runtime::telemetry_export::grant_metric_broker(
             &mut child_cmd,
             &capsem_core::net::policy_config::load_settings_and_corp_files().1,
         );
@@ -137,16 +155,15 @@ impl ServiceState {
             child_cmd.env(k, v);
         }
 
-        let generation = uuid::Uuid::new_v4();
+        let generation = capsem_crypto::uuid_v4();
         crate::instance::persist_spawn_identity(&entry.session_dir, &vm_id, generation)?;
-        let retirement = self.retirements.register(&vm_id, generation)?;
         let process_spawn_span = tracing::debug_span!(
             target: "capsem.launch",
             capsem_foundation::telemetry::LAUNCH_PROCESS_SPAWN_SPAN,
             boot_mode = "resume",
             status = tracing::field::Empty,
         );
-        let child = match process_spawn_span.in_scope(|| {
+        let (child, retirement) = match process_spawn_span.in_scope(|| {
             child_cmd
                 .env(
                     "RUST_LOG",
@@ -155,6 +172,10 @@ impl ServiceState {
                 )
                 .arg("--id")
                 .arg(&vm_id)
+                .arg("--parent-pid")
+                .arg(std::process::id().to_string())
+                .arg("--spawn-generation")
+                .arg(generation.to_string())
                 .arg("--assets-dir")
                 .arg(&self.assets_dir)
                 .arg("--rootfs")
@@ -179,8 +200,6 @@ impl ServiceState {
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
                 .arg(ram_mb.to_string())
-                .arg("--scratch-disk-size-gb")
-                .arg(scratch_disk_size_gb.to_string())
                 .arg("--uds-path")
                 .arg(&uds_path)
                 // Explicitly, because `uds_path` may have been shortened out
@@ -189,9 +208,10 @@ impl ServiceState {
                 .arg(&self.run_dir)
                 .arg("--service-socket")
                 .arg(&self.service_socket)
+                .stdin(upstream_stdio)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
-                .stderr(std::process::Stdio::from(process_log_file))
-                .spawn()
+                .stderr(std::process::Stdio::from(process_log_file));
+            self.retirements.spawn(&vm_id, generation, &mut child_cmd)
         }) {
             Ok(child) => {
                 process_spawn_span.record("status", "ok");
@@ -199,33 +219,65 @@ impl ServiceState {
             }
             Err(error) => {
                 process_spawn_span.record("status", "error");
-                return Err(anyhow::Error::new(error).context("failed to spawn capsem-process"));
+                return Err(error.context("failed to spawn capsem-process"));
             }
         };
 
         let pid = child.id().unwrap_or(0);
         info!(name, pid, "capsem-process resumed");
 
-        if session_db_path_for_session_dir(&entry.session_dir).exists() {
-            if let Err(error) = self.register_session_db_handle(&vm_id, &entry.session_dir) {
-                instance_reaper::kill_and_reap(child);
-                return Err(error);
+        let proxy = match crate::proxy_worker::spawn_for_session(
+            &self.proxy_binary,
+            active_policy.bytes,
+            &entry.session_dir.join("proxy.log"),
+        ) {
+            Ok(proxy) => proxy,
+            Err(error) => {
+                let _reaper = instance_reaper::kill_and_reap(child, retirement);
+                return Err(error.context("start confined proxy worker"));
             }
-        } else {
-            info!(
-                vm_id = vm_id,
-                operation = "defer_session_db_handle_registration",
-                session_dir = %entry.session_dir.display(),
-                "session DB not present yet; route will register the external reader lazily"
-            );
+        };
+        if let Err(error) =
+            tokio::runtime::Handle::current().block_on(self.grant_proxy_ledger(&vm_id, &entry.session_dir, &proxy))
+        {
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
+            return Err(error);
         }
+        if let Err(error) = tokio::runtime::Handle::current().block_on(self.grant_proxy_credentials(&proxy)) {
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
+            return Err(error);
+        }
+        if let Err(error) = tokio::runtime::Handle::current().block_on(self.grant_proxy_private_names(&vm_id, &proxy)) {
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
+            return Err(error);
+        }
+        if let Err(error) = tokio::runtime::Handle::current().block_on(proxy.grant(
+            capsem_proto::proxy_control::ProxyCapability::Upstream,
+            proxy_upstream.into(),
+        )) {
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
+            return Err(error.context("grant proxy upstream broker"));
+        }
+        let upstream_broker = upstream_broker.with_proxy(proxy.clone());
 
+        info!(
+            vm_id,
+            operation = "defer_session_db_handle_registration",
+            session_dir = %entry.session_dir.display(),
+            "session ledger reader will be granted lazily to the first route"
+        );
+
+        let authority = crate::instance::WorkerAuthority::default();
+        let upstream_grant = authority.grant();
+        let proxy_upstream_grant = authority.grant();
         let session_dir = entry.session_dir.clone();
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             vm_id.clone(),
             InstanceInfo {
                 generation,
+                authority,
+                upstream_policy,
                 id: vm_id.clone(),
                 name: entry.name.clone(),
                 asset_pins: entry.asset_pins.clone(),
@@ -239,10 +291,25 @@ impl ServiceState {
                 persistent: true,
                 env: None,
                 forked_from: entry.forked_from,
-                owner_secret,
             },
         );
         drop(instances);
+        if let Err(error) = self.register_proxy_worker(&vm_id, generation, proxy.clone()) {
+            self.evict_instance(&vm_id, generation);
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
+            return Err(error.context("register proxy worker"));
+        }
+        if let Err(error) = tokio::runtime::Handle::current().block_on(
+            crate::service_runtime::telemetry_export::grant_proxy_metric_broker(self, &vm_id, generation, &proxy),
+        ) {
+            self.evict_instance(&vm_id, generation);
+            let _reaper = instance_reaper::kill_and_reap(child, retirement);
+            return Err(error);
+        }
+        let retirement = retirement.with_brokers([
+            upstream_broker.start(upstream_grant),
+            proxy_upstream_broker.start(proxy_upstream_grant),
+        ]);
         let _reaper = instance_reaper::spawn_exit_reaper(
             child,
             vm_id.clone(),

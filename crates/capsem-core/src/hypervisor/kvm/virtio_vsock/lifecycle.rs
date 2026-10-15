@@ -10,6 +10,7 @@ impl VhostVsockDevice {
     /// short-circuit on `activated` forever, so after a rebind vhost kept the
     /// old ring addresses and the guest's new ones were never installed.
     pub(super) fn reset_with<I: VhostIoctl + ?Sized>(&mut self, ioctl: &mut I) -> Result<()> {
+        self.event_queue = None;
         if !self.activated {
             return Ok(());
         }

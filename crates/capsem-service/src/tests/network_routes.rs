@@ -4,6 +4,9 @@ use super::*;
 use axum::http::Method;
 use std::time::Duration;
 
+mod handoff;
+mod private_names;
+
 fn app(state: &Arc<ServiceState>) -> axum::Router {
     build_service_router(Arc::clone(state))
 }
@@ -272,10 +275,6 @@ async fn network_logs_page_with_a_cursor_and_refuse_a_foreign_one() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-fn owner_secret(state: &ServiceState, vm: &str, secret: &str) {
-    state.instances.lock().unwrap().get_mut(vm).unwrap().owner_secret = secret.into();
-}
-
 /// The TCP admission rows of a logs page; a running member's link rows
 /// (these fake owners have no seat, so theirs say `block`) sit beside them.
 /// A fake owner's link seat: answers LinkAttach with its handoff socket,
@@ -301,6 +300,7 @@ impl FakeLinkSeat {
 /// `detaches` is how many LinkDetach requests the owner answers besides
 /// its `links` LinkAttach ones.
 fn fake_link_seat(
+    state: &ServiceState,
     uds: &std::path::Path,
     refuse: bool,
     links: usize,
@@ -308,7 +308,7 @@ fn fake_link_seat(
 ) -> (Arc<FakeLinkSeat>, tokio::task::JoinHandle<Vec<ServiceToProcess>>) {
     use capsem_foundation::unix::router_channel::{Receiver, Sender};
     use std::os::fd::AsRawFd;
-    let handoff = uds.with_file_name("vm-b-handoff.sock");
+    let handoff = capsem_foundation::uds::private_handoff_socket_path(&state.run_dir, "vm-b").unwrap();
     let _ = std::fs::remove_file(&handoff);
     let listener = tokio::net::UnixListener::bind(&handoff).unwrap();
     let (released_tx, released_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -397,7 +397,7 @@ async fn attaching_a_running_member_links_it_to_the_networks_switch_until_it_lea
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, owner) = fake_link_seat(&uds_b, false, 1, 1);
+    let (seat, owner) = fake_link_seat(&state, &uds_b, false, 1, 1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
 
@@ -480,7 +480,7 @@ async fn a_rejoin_plugs_with_a_generation_newer_than_the_leave_before_it() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (_seat, owner) = fake_link_seat(&uds_b, false, 2, 1);
+    let (_seat, owner) = fake_link_seat(&state, &uds_b, false, 2, 1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let member = format!("/networks/{id}/members/vm-b");
@@ -524,7 +524,7 @@ async fn leaving_writes_the_close_row_with_the_switchs_counters_for_the_cable() 
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (_seat, _owner) = fake_link_seat(&uds_b, false, 1, 1);
+    let (_seat, _owner) = fake_link_seat(&state, &uds_b, false, 1, 1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, joined) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
@@ -597,7 +597,7 @@ async fn a_member_links_at_start_even_when_its_owner_binds_late() {
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let (_seat, owner) = fake_link_seat(&uds_b, false, 1, 0);
+    let (_seat, owner) = fake_link_seat(&state, &uds_b, false, 1, 0);
 
     let mut observed = String::new();
     for _ in 0..100 {
@@ -618,7 +618,7 @@ async fn a_member_whose_stream_ends_is_declared_and_then_linked_again() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, owner) = fake_link_seat(&uds_b, false, 2, 0);
+    let (seat, owner) = fake_link_seat(&state, &uds_b, false, 2, 0);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
@@ -674,7 +674,7 @@ async fn a_member_that_leaves_before_its_relink_is_not_linked_back_in() {
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
     // Room for a second plug that must never come, besides the plug and the
     // detach that do.
-    let (seat, owner) = fake_link_seat(&uds_b, false, 2, 1);
+    let (seat, owner) = fake_link_seat(&state, &uds_b, false, 2, 1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, _) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
@@ -708,7 +708,7 @@ async fn a_member_that_leaves_mid_handshake_keeps_no_link() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, _owner) = fake_link_seat(&uds_b, false, 1, 0);
+    let (seat, _owner) = fake_link_seat(&state, &uds_b, false, 1, 0);
     seat.answers.forget_permits(1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -753,7 +753,7 @@ async fn a_plug_that_finishes_inside_a_disconnect_leaves_no_port_behind() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (seat, _owner) = fake_link_seat(&uds_b, false, 1, 0);
+    let (seat, _owner) = fake_link_seat(&state, &uds_b, false, 1, 0);
     seat.answers.forget_permits(1);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
@@ -816,7 +816,7 @@ async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
     insert_fake_instance(&state, "vm-b", std::process::id());
     let uds_b = state.instances.lock().unwrap()["vm-b"].uds_path.clone();
     std::fs::create_dir_all(uds_b.parent().unwrap()).unwrap();
-    let (_seat, _owner) = fake_link_seat(&uds_b, true, 1, 0);
+    let (_seat, _owner) = fake_link_seat(&state, &uds_b, true, 1, 0);
     let (_, created) = create_network(&state, "team").await;
     let id = created["id"].as_str().unwrap().to_string();
     let (status, joined) = route_request(app(&state), Method::PUT, &format!("/networks/{id}/members/vm-b"), None).await;
@@ -835,7 +835,20 @@ async fn an_owner_that_refuses_the_link_leaves_a_failed_membership() {
 }
 
 async fn private_resolve(state: &Arc<ServiceState>, request: serde_json::Value) -> (StatusCode, serde_json::Value) {
-    route_request(app(state), Method::POST, "/networks/private/resolve", Some(request)).await
+    private_resolve_from(state, request, std::process::id()).await
+}
+
+async fn private_resolve_from(
+    state: &Arc<ServiceState>,
+    request: serde_json::Value,
+    pid: u32,
+) -> (StatusCode, serde_json::Value) {
+    let peer = ServicePeer(Some(capsem_foundation::unix::peer::PeerIdentity {
+        pid: capsem_foundation::unix::process::ProcessId::try_from(pid).unwrap(),
+        uid: capsem_foundation::unix::process::current_uid(),
+    }));
+    let app = app(state).layer(axum::extract::connect_info::MockConnectInfo(peer));
+    route_request(app, Method::POST, "/networks/private/resolve", Some(request)).await
 }
 
 #[tokio::test]
@@ -852,7 +865,6 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         insert_fake_instance(&state, id, std::process::id());
         state.instances.lock().unwrap().get_mut(id).unwrap().name = name.into();
     }
-    owner_secret(&state, "vm-a", "secret-a");
     // Each VM but vm-a is in one network, so its lease there is its address.
     let mut addresses: HashMap<&str, String> = HashMap::new();
     let (_, team) = create_network(&state, "team").await;
@@ -889,7 +901,7 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         addresses.insert(vm, lease);
     }
     let ask = |name: Option<&str>, address: Option<&str>| {
-        let mut request = json!({ "source_vm": "vm-a", "owner_secret": "secret-a" });
+        let mut request = json!({ "source_vm": "vm-a" });
         if let Some(name) = name {
             request["name"] = json!(name);
         }
@@ -935,9 +947,11 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
     let (status, _) = private_resolve(&state, ask(Some("beta.team"), Some(&addresses["vm-b"]))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    let mut forged = ask(Some("beta.team"), None);
-    forged["owner_secret"] = json!("wrong");
-    assert_eq!(private_resolve(&state, forged).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(
+        private_resolve_from(&state, ask(Some("beta.team"), None), 1).await.0,
+        StatusCode::FORBIDDEN,
+        "a same-UID process outside the registered owner PID is not authority"
+    );
 
     // Leaving takes the name with it at once.
     let (status, _) = route_request(

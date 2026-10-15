@@ -1,4 +1,4 @@
-use super::{history, insert, latest, open, prune, SCHEMA_VERSION};
+use super::{history, insert, latest, latest_many, open, prune, SCHEMA_VERSION};
 use crate::schema::{Dimension, Host, Metric, Record, Release, Unit, SCHEMA};
 use crate::stats::Summary;
 
@@ -96,6 +96,23 @@ fn the_latest_run_wins() {
         .expect("present");
     assert_eq!(found.recorded_at, "2026-08-21T12:00:00Z");
     assert_eq!(found.metrics[0].summary.median, 0.20);
+}
+
+#[test]
+fn latest_many_returns_repeated_authoritative_runs_newest_first() {
+    let (_dir, mut connection) = store();
+    for (at, value) in [
+        ("2026-08-19T12:00:00Z", 0.10),
+        ("2026-08-20T12:00:00Z", 0.20),
+        ("2026-08-21T12:00:00Z", 0.30),
+    ] {
+        insert(&mut connection, &record(Dimension::Routes, "x86_64", at, value)).expect("inserts");
+    }
+
+    let found = latest_many(&connection, Dimension::Routes, "x86_64", 2).expect("queries");
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0].metrics[0].summary.median, 0.30);
+    assert_eq!(found[1].metrics[0].summary.median, 0.20);
 }
 
 #[test]

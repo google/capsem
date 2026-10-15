@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime
-import hashlib
 import json
 import os
 import platform
@@ -17,12 +16,12 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
+from .. import crypto as hashlib
 from ..gate import auditfs
 from ..policy.dockerpolicy import (
     BuildNetwork,
@@ -878,7 +877,7 @@ def _container_output(
     shell_option: str = "-lc",
 ) -> str:
     safe_probe = re.sub(r"[^a-z0-9]+", "-", probe.lower()).strip("-") or "command"
-    container_name = f"capsem-probe-{safe_probe}-{uuid.uuid4().hex[:12]}"
+    container_name = f"capsem-probe-{safe_probe}-{hashlib.uuid_v4().hex[:12]}"
     run_command = [
         runtime,
         "run",
@@ -1189,7 +1188,7 @@ def generate_cyclonedx_obom(
 
 def _blake3_hex(path: Path) -> str:
     """Compute BLAKE3 hash of a file, returning the hex digest."""
-    import blake3
+    from .. import crypto as blake3
 
     hasher = blake3.blake3()
     with open(path, "rb") as f:
@@ -1200,7 +1199,7 @@ def _blake3_hex(path: Path) -> str:
 
 def _asset_digest_hex(path: Path) -> tuple[str, str]:
     """Stream one asset once and return its BLAKE3 and SHA-256 digests."""
-    import blake3
+    from .. import crypto as blake3
 
     blake3_hasher = blake3.blake3()
     sha256_hasher = hashlib.sha256()
@@ -1242,7 +1241,7 @@ def _directory_file_entries(directory: Path) -> list[dict[str, Any]]:
 
 def _directory_tree_hash(directory: Path) -> str:
     """Hash a directory tree from relative paths and file BLAKE3 hashes."""
-    import blake3
+    from .. import crypto as blake3
 
     hasher = blake3.blake3()
     for entry in _directory_file_entries(directory):

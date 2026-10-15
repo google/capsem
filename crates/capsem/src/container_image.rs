@@ -15,7 +15,7 @@ use capsem_api::{
 use capsem_core::container;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::client::{self, ApiResponse, ProvisionRequest, ProvisionResponse, StreamEvent, UdsClient};
+use crate::client::{self, ApiResponse, GatewayClient, ProvisionRequest, ProvisionResponse, StreamEvent};
 
 /// How often the CLI reads the setup status while the service works.
 const STATUS_POLL: Duration = Duration::from_millis(250);
@@ -123,7 +123,7 @@ pub(super) async fn registry_access(
 /// Create the VM. With a container workload the service pulls the image and
 /// waits for it before answering, so the pull is announced here: a pull that
 /// fails comes back as this call's error, before anything could follow it.
-pub(super) async fn provision(client: &UdsClient, request: &ProvisionRequest) -> Result<ProvisionResponse> {
+pub(super) async fn provision(client: &GatewayClient, request: &ProvisionRequest) -> Result<ProvisionResponse> {
     if let Some(container) = &request.container {
         eprintln!("Pulling {}", container.image);
     }
@@ -131,7 +131,7 @@ pub(super) async fn provision(client: &UdsClient, request: &ProvisionRequest) ->
     response.into_result()
 }
 
-pub(super) async fn destroy(client: &UdsClient, id: &str) -> Result<()> {
+pub(super) async fn destroy(client: &GatewayClient, id: &str) -> Result<()> {
     let response: ApiResponse<serde_json::Value> = client.delete(&format!("/vms/{id}/delete")).await?;
     response.into_result().map(drop)
 }
@@ -140,7 +140,7 @@ pub(super) async fn destroy(client: &UdsClient, id: &str) -> Result<()> {
 /// accepts, reporting the verified digest when it is known. A failed setup is
 /// an error carrying the service's reason.
 pub(super) async fn follow(
-    client: &UdsClient,
+    client: &GatewayClient,
     id: &str,
     done: impl Fn(ContainerState) -> bool,
 ) -> Result<ContainerStatusResponse> {
@@ -167,7 +167,7 @@ pub(super) async fn follow(
 
 /// Publish every `-p` mapping on the host loopback. Exposures belong to the
 /// VM owner and outlive this command.
-pub(super) async fn expose(client: &UdsClient, id: &str, mappings: &[container::PortMapping]) -> Result<()> {
+pub(super) async fn expose(client: &GatewayClient, id: &str, mappings: &[container::PortMapping]) -> Result<()> {
     for mapping in mappings {
         let request = ExposureRequest {
             guest_port: mapping.guest,
@@ -190,7 +190,7 @@ pub(super) async fn expose(client: &UdsClient, id: &str, mappings: &[container::
 
 /// Start the staged workload attached: its output streams here and its exit
 /// code is the container's.
-pub(super) async fn attach(client: &UdsClient, id: &str) -> Result<i32> {
+pub(super) async fn attach(client: &GatewayClient, id: &str) -> Result<i32> {
     let start = StreamControl::Start {
         kind: StreamKind::Container,
         command: None,

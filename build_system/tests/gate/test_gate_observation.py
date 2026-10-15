@@ -478,6 +478,62 @@ def test_identical_bytes_under_two_names_are_named(tmp_path: Path) -> None:
     assert "duplicate-content" in {fault.reason for fault in watch.faults}
 
 
+def test_deleted_content_is_not_compared_with_a_later_artifact(tmp_path: Path) -> None:
+    watch = Watch([], source_root=tmp_path)
+    first = tmp_path / "cache" / "target" / "first"
+    second = tmp_path / "cache" / "target" / "second"
+
+    watch._judge(
+        Event(
+            at=1.0,
+            kind="created",
+            path=first,
+            steps=(),
+            facts=Facts(inode=1, digest="deadbeef"),
+        )
+    )
+    watch._judge(Event(at=2.0, kind="deleted", path=first, steps=()))
+    watch._judge(
+        Event(
+            at=3.0,
+            kind="created",
+            path=second,
+            steps=(),
+            facts=Facts(inode=2, digest="deadbeef"),
+        )
+    )
+
+    assert "duplicate-content" not in {fault.reason for fault in watch.faults}
+
+
+def test_replaced_content_releases_its_old_digest(tmp_path: Path) -> None:
+    watch = Watch([], source_root=tmp_path)
+    replaced = tmp_path / "cache" / "target" / "replaced"
+    later = tmp_path / "cache" / "target" / "later"
+
+    for at, digest in ((1.0, "old"), (2.0, "new")):
+        watch._judge(
+            Event(
+                at=at,
+                kind="modified",
+                path=replaced,
+                steps=(),
+                facts=Facts(inode=1, digest=digest),
+            )
+        )
+    watch._judge(
+        Event(
+            at=3.0,
+            kind="created",
+            path=later,
+            steps=(),
+            facts=Facts(inode=2, digest="old"),
+        )
+    )
+
+    assert "duplicate-content" not in {fault.reason for fault in watch.faults}
+
+
 def test_copying_a_hardlinked_alias_tree_is_a_real_duplicate_fault(tmp_path: Path) -> None:
     """Canonical/hash aliases are zero-copy until a tree copy breaks them.
 
@@ -760,6 +816,42 @@ def test_the_exemption_does_not_blunt_the_rule_elsewhere(relative: str, tmp_path
     assert _duplicate_faults(tmp_path, relative, ("crates/capsem-app/gen",)), (
         f"duplicate content under {relative} went unreported; the exemption leaked"
     )
+
+
+def test_declared_mirror_roots_allow_only_matching_relative_files(tmp_path: Path) -> None:
+    """Architecture products may share inputs without hiding copies within one product."""
+    arm = "cache/target/tests/ironbank/build-arm64/arm64"
+    x86 = "cache/target/tests/ironbank/build-x86_64/x86_64"
+    watch = Watch(
+        [],
+        source_root=tmp_path,
+        duplicate_content_mirrors=((arm, x86),),
+    )
+
+    for index, relative in enumerate((f"{arm}/staging/init", f"{x86}/staging/init")):
+        watch._judge(
+            Event(
+                at=1.0,
+                kind="created",
+                path=tmp_path / relative,
+                steps=("assets.pack-initrds",),
+                facts=Facts(inode=index + 1, digest="shared-input"),
+            )
+        )
+
+    assert not [fault for fault in watch.faults if fault.reason == "duplicate-content"]
+
+    watch._judge(
+        Event(
+            at=2.0,
+            kind="created",
+            path=tmp_path / arm / "staging" / "copied-init",
+            steps=("assets.pack-initrds",),
+            facts=Facts(inode=3, digest="shared-input"),
+        )
+    )
+
+    assert [fault.reason for fault in watch.faults] == ["duplicate-content"]
 
 
 def test_a_declared_source_replica_is_not_judged_as_duplicate_or_empty_output(

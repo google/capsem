@@ -201,7 +201,10 @@ fn acquire_reserved(path: &Path, mode: LockMode, create: bool, after_open: impl 
         ));
     }
     let permissions = metadata.permissions().mode() & 0o777;
-    if create {
+    // A freshly opened 0600 lock already has the required mode under normal
+    // umasks. Avoid a redundant fchmod so confined workers can create locks
+    // while permission changes remain denied by their sandbox.
+    if create && permissions != 0o600 {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     } else if permissions != 0o600 {
         return Err(io::Error::new(

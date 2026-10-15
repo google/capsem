@@ -6,6 +6,8 @@ use futures::FutureExt;
 use std::{collections::HashMap, future::Future, panic::AssertUnwindSafe, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::{watch, Mutex, Semaphore};
 use tokio_util::sync::CancellationToken;
+mod credentials;
+pub use credentials::CredentialOwner;
 
 pub type EffectFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 
@@ -13,6 +15,9 @@ pub type EffectFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 /// exit, setup retirement, session cleanup and generation-scoped grant
 /// revocation. Reconcile must retire interrupted setup before reporting absence.
 pub trait Effects: Send + Sync {
+    /// Nonblocking observation of the exact tracked ephemeral spawn. Absence
+    /// or an error requires cleanup; this is never a retirement/closure proof.
+    fn is_live(&self, binding: &VmBinding) -> Result<bool>;
     fn create(&self, ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding>;
     fn cleanup(&self, ticket: Ticket, binding: VmBinding) -> EffectFuture<()>;
     fn reconcile(&self, ticket: Ticket, intent: Option<VmBinding>) -> EffectFuture<Option<VmBinding>>;
@@ -43,6 +48,10 @@ impl EffectBounds {
 /// credential-bearing upstream diagnostics.
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 pub enum Failure {
+    #[error("managed ownership capability denied")]
+    Forbidden,
+    #[error("managed request not found")]
+    NotFound,
     #[error("managed ownership store unavailable")]
     StoreUnavailable,
     #[error("managed request already registered; recover ownership instead")]
@@ -69,17 +78,33 @@ struct Inner {
 
 struct Work {
     recovering: bool,
+    capability_hash: Option<capsem_crypto::blake3::Hash>,
     ticket: std::sync::Mutex<Option<Ticket>>,
     binding: std::sync::Mutex<Option<VmBinding>>,
+    intent: std::sync::Mutex<Option<VmBinding>>,
     effects: Arc<dyn Effects>,
     cancel: CancellationToken,
     created: watch::Sender<Option<ControlResult<Snapshot>>>,
-    deadline: watch::Sender<tokio::time::Instant>,
+    deadline: watch::Sender<Option<LeaseDeadline>>,
     cleanup: Mutex<Option<watch::Sender<Option<ControlResult<Snapshot>>>>>,
 }
 
 impl Work {
+    fn update_deadline(&self, deadline: LeaseDeadline) {
+        self.deadline.send_if_modified(|current| {
+            if current.is_none_or(|previous| deadline.revision > previous.revision) {
+                *current = Some(deadline);
+                true
+            } else {
+                false
+            }
+        });
+    }
+
     fn remember_binding(&self, binding: VmBinding) -> ControlResult<()> {
+        if self.intent.lock().map_err(|_| Failure::RecoveryPending)?.as_ref() != Some(&binding) {
+            return Err(Failure::CreationFailed);
+        }
         let mut known = self.binding.lock().map_err(|_| Failure::RecoveryPending)?;
         if known.as_ref().is_some_and(|original| original != &binding) {
             return Err(Failure::CreationFailed);
@@ -103,7 +128,14 @@ impl BindingReporter {
     /// Must complete before any VM spawn side effect. The selected canonical
     /// ID and generation survive a crash before registration can be reported.
     pub async fn prepare(&self, binding: VmBinding) -> ControlResult<Snapshot> {
-        self.work.upgrade().ok_or(Failure::RecoveryPending)?;
+        let work = self.work.upgrade().ok_or(Failure::RecoveryPending)?;
+        {
+            let mut intent = work.intent.lock().map_err(|_| Failure::RecoveryPending)?;
+            if intent.as_ref().is_some_and(|original| original != &binding) {
+                return Err(Failure::CreationFailed);
+            }
+            *intent = Some(binding.clone());
+        }
         let ticket = self.ticket.clone();
         self.owner
             .io(move |registry| registry.prepare_spawn(&ticket, binding, LeaseClock::now()?))
@@ -145,17 +177,28 @@ impl Controller {
     ) -> ControlResult<Snapshot> {
         let work = Arc::new(Work {
             recovering: false,
+            capability_hash: Some(capability.hash(request)),
             ticket: std::sync::Mutex::new(None),
             binding: std::sync::Mutex::new(None),
+            intent: std::sync::Mutex::new(None),
             effects,
             cancel: CancellationToken::new(),
             created: watch::channel(None).0,
-            deadline: watch::channel(tokio::time::Instant::now()).0,
+            deadline: watch::channel(None).0,
             cleanup: Mutex::new(None),
         });
         {
             let mut works = self.0.works.lock().await;
-            if works.contains_key(&request) {
+            if let Some(existing) = works.get(&request) {
+                let existing_hash = existing.capability_hash;
+                drop(works);
+                if let Some(hash) = existing_hash {
+                    if hash != capability.hash(request) {
+                        return Err(Failure::Forbidden);
+                    }
+                } else {
+                    self.inspect(request, capability).await?.ok_or(Failure::NotFound)?;
+                }
                 return Err(Failure::DuplicateRequest);
             }
             works.insert(request, Arc::clone(&work));
@@ -173,8 +216,141 @@ impl Controller {
         self.io(move |registry| registry.inspect(request, &capability)).await
     }
 
+    /// Reload never renews a lease. Timer revisions prevent delayed admission
+    /// or claim completions from overwriting a newer tightened deadline.
+    pub async fn set_lease_limit(&self, policy: LeasePolicy) -> ControlResult<usize> {
+        let revision = self
+            .0
+            .registry
+            .publish_lease_limit(policy)
+            .map_err(|_| Failure::StoreUnavailable)?;
+        let owner = self.clone();
+        tokio::spawn(async move { owner.limit_worker(revision).await })
+            .await
+            .map_err(|_| Failure::StoreUnavailable)?
+    }
+
+    pub async fn deny_lease_admission(&self) -> ControlResult<()> {
+        let revision = self
+            .0
+            .registry
+            .deny_lease_admission()
+            .map_err(|_| Failure::StoreUnavailable)?;
+        let owner = self.clone();
+        tokio::spawn(async move {
+            let works = owner.0.works.lock().await;
+            if owner
+                .0
+                .registry
+                .admission_denied(revision)
+                .map_err(|_| Failure::StoreUnavailable)?
+            {
+                for work in works.values() {
+                    work.cancel.cancel();
+                }
+            }
+            drop(works);
+            Ok(())
+        })
+        .await
+        .map_err(|_| Failure::StoreUnavailable)?
+    }
+
+    async fn limit_worker(&self, revision: u64) -> ControlResult<usize> {
+        let updated = self
+            .io(move |registry| {
+                registry
+                    .apply_lease_limit(LeaseClock::now()?)?
+                    .into_iter()
+                    .map(|snapshot| {
+                        let ticket = Ticket {
+                            request: snapshot.request,
+                            generation: snapshot.generation,
+                        };
+                        let deadline = if matches!(snapshot.state, State::Reserved | State::Creating | State::Active)
+                            && snapshot.lease_duration().is_some()
+                        {
+                            Some(registry.runtime_deadline(&ticket)?)
+                        } else {
+                            None
+                        };
+                        Ok((snapshot, deadline))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .await;
+        let works = self.0.works.lock().await;
+        match updated {
+            Ok(updated) => {
+                let count = updated.len();
+                for (snapshot, deadline) in updated {
+                    if let Some(work) = works.get(&snapshot.request) {
+                        match deadline {
+                            Some(deadline) => work.update_deadline(deadline),
+                            None => work.cancel.cancel(),
+                        }
+                    }
+                }
+                drop(works);
+                Ok(count)
+            }
+            Err(error) => {
+                // Persistence uncertainty cannot preserve permissive live
+                // effects. The original owner still performs awaited cleanup.
+                if self
+                    .0
+                    .registry
+                    .policy_revision()
+                    .map_err(|_| Failure::StoreUnavailable)?
+                    == revision
+                {
+                    for work in works.values() {
+                        work.cancel.cancel();
+                    }
+                }
+                drop(works);
+                Err(error)
+            }
+        }
+    }
+
     pub async fn recovery_inventory(&self) -> ControlResult<Vec<Snapshot>> {
         self.io(Registry::recovery_inventory).await
+    }
+
+    /// Trusted host-side ownership query for persistence admission. Live
+    /// prepared authority remains binding even if its durable record is lost.
+    /// Failed inventory cannot establish that an unrelated VM is unowned.
+    pub async fn owns_vm(&self, binding: &VmBinding) -> ControlResult<bool> {
+        let works = self.0.works.lock().await;
+        for work in works.values() {
+            let intent = work.intent.lock().map_err(|_| Failure::RecoveryPending)?;
+            let owned = intent.as_ref() == Some(binding);
+            drop(intent);
+            if owned {
+                drop(works);
+                return Ok(true);
+            }
+        }
+        drop(works);
+        Ok(self
+            .recovery_inventory()
+            .await?
+            .iter()
+            .any(|snapshot| snapshot.vm() == Some(binding) || snapshot.spawn_intent() == Some(binding)))
+    }
+
+    pub async fn prune_closed(&self, retention: Duration) -> ControlResult<usize> {
+        self.io(move |registry| registry.prune_closed(retention, LeaseClock::now()?))
+            .await
+    }
+
+    pub async fn prune_native_retirements(&self, path: std::path::PathBuf) -> ControlResult<usize> {
+        self.io(move |registry| {
+            let store = crate::session::spawn_owner::RetirementStore::open(&path)?;
+            registry.prune_native_retirements(&store)
+        })
+        .await
     }
 
     /// Trusted startup recovery after prior continuations have retired. This
@@ -195,12 +371,14 @@ impl Controller {
         }
         let work = Arc::new(Work {
             recovering: true,
+            capability_hash: None,
             ticket: std::sync::Mutex::new(None),
             binding: std::sync::Mutex::new(None),
+            intent: std::sync::Mutex::new(None),
             effects,
             cancel: CancellationToken::new(),
             created: watch::channel(None).0,
-            deadline: watch::channel(tokio::time::Instant::now()).0,
+            deadline: watch::channel(None).0,
             cleanup: Mutex::new(None),
         });
         works.insert(request, Arc::clone(&work));
@@ -237,6 +415,7 @@ impl Controller {
         };
         *work.ticket.lock().map_err(|_| Failure::RecoveryPending)? = Some(ticket.clone());
         *work.binding.lock().map_err(|_| Failure::RecoveryPending)? = snapshot.vm.clone();
+        *work.intent.lock().map_err(|_| Failure::RecoveryPending)? = snapshot.spawn_intent.clone();
         work.cancel.cancel();
         work.created.send_replace(Some(Ok(snapshot.clone())));
         if snapshot.state == State::Closed {
@@ -259,7 +438,7 @@ impl Controller {
         let snapshot = self
             .inspect(request, capability.clone())
             .await?
-            .ok_or(Failure::RecoveryPending)?;
+            .ok_or(Failure::NotFound)?;
         if !matches!(snapshot.state, State::Reserved | State::Creating | State::Active) {
             return Ok(snapshot);
         }
@@ -280,6 +459,12 @@ impl Controller {
         if ticket.generation != snapshot.generation {
             return Err(Failure::RecoveryPending);
         }
+        if snapshot.state == State::Active {
+            let binding = snapshot.vm.as_ref().ok_or(Failure::RecoveryPending)?;
+            if !work.effects.is_live(binding).unwrap_or(false) {
+                return self.close(request, capability).await;
+            }
+        }
         let (renewed, deadline) = self
             .io(move |registry| {
                 let renewed = registry.renew_lease(request, &capability, LeaseClock::now()?)?;
@@ -292,7 +477,7 @@ impl Controller {
             })
             .await?;
         if let Some(deadline) = deadline {
-            work.deadline.send_replace(tokio::time::Instant::from_std(deadline));
+            work.update_deadline(deadline);
         } else {
             work.cancel.cancel();
         }
@@ -314,14 +499,18 @@ impl Controller {
         })
         .await
         .map_err(|_| Failure::StoreUnavailable)?
-        .map_err(|_| Failure::StoreUnavailable)
+        .map_err(|error| match error.downcast_ref::<Rejection>() {
+            Some(Rejection::Forbidden) => Failure::Forbidden,
+            Some(Rejection::DuplicateRequest) => Failure::DuplicateRequest,
+            None => Failure::StoreUnavailable,
+        })
     }
 
     async fn create_worker(&self, request: Uuid, capability: Capability, policy: LeasePolicy, work: Arc<Work>) {
         let admission = self
             .io(move |registry| {
                 let Reservation::New(ticket) = registry.reserve(request, &capability)? else {
-                    anyhow::bail!("managed duplicate reservation");
+                    return Err(Rejection::DuplicateRequest.into());
                 };
                 registry.start_lease(&ticket, policy, LeaseClock::now()?)?;
                 ensure!(
@@ -341,7 +530,7 @@ impl Controller {
             }
         };
         *work.ticket.lock().expect("worker ticket lock poisoned") = Some(ticket.clone());
-        work.deadline.send_replace(tokio::time::Instant::from_std(deadline));
+        work.update_deadline(deadline);
         let owner = self.clone();
         let expiry = Arc::clone(&work);
         let expiry_ticket = ticket.clone();
@@ -357,6 +546,7 @@ impl Controller {
             ticket: ticket.clone(),
         };
         let created = bounded(self.0.bounds.create, async move {
+            ensure!(!cancel.is_cancelled(), "managed creation cancelled before effects");
             effects.create(effect_ticket, cancel, reporter).await
         })
         .await;
@@ -383,7 +573,27 @@ impl Controller {
     }
 
     async fn close_worker(&self, request: Uuid, capability: Capability) -> ControlResult<Snapshot> {
-        let snapshot = self.io(move |registry| registry.close(request, &capability)).await?;
+        let work = self.0.works.lock().await.get(&request).cloned();
+        let authenticated = work.as_ref().is_some_and(|work| work.capability_hash.is_some());
+        if let Some(hash) = work.as_ref().and_then(|work| work.capability_hash) {
+            if hash != capability.hash(request) {
+                return Err(Failure::Forbidden);
+            }
+        }
+        let snapshot = self.io(move |registry| registry.close(request, &capability)).await;
+        if let Some(work) = work {
+            // Only independently authenticated live ownership can retire under
+            // a failed store. Recovery still needs its durable authority.
+            if snapshot.is_ok() || authenticated {
+                work.cancel.cancel();
+                let _creation = wait_created(&work).await;
+                let original = work.ticket.lock().map_err(|_| Failure::RecoveryPending)?.clone();
+                if let Some(ticket) = original {
+                    return self.cleanup_work(ticket, work, true).await;
+                }
+            }
+        }
+        let snapshot = snapshot?;
         if snapshot.state == State::Closed {
             return Ok(snapshot);
         }
@@ -391,17 +601,11 @@ impl Controller {
             request,
             generation: snapshot.generation,
         };
-        let work = self.0.works.lock().await.get(&request).cloned();
-        if let Some(work) = work {
-            work.cancel.cancel();
-            self.cleanup_work(ticket, work, true).await
+        let latest = self.snapshot(ticket).await?;
+        if latest.state == State::Closed {
+            Ok(latest)
         } else {
-            let latest = self.snapshot(ticket).await?;
-            if latest.state == State::Closed {
-                Ok(latest)
-            } else {
-                Err(Failure::RecoveryPending)
-            }
+            Err(Failure::RecoveryPending)
         }
     }
 
@@ -440,10 +644,6 @@ impl Controller {
 
     async fn cleanup_attempt(&self, ticket: Ticket, work: Arc<Work>) -> ControlResult<Snapshot> {
         let _creation = wait_created(&work).await;
-        let snapshot = self.snapshot(ticket.clone()).await?;
-        if snapshot.state == State::Closed {
-            return Ok(snapshot);
-        }
         let original = work
             .ticket
             .lock()
@@ -453,6 +653,7 @@ impl Controller {
         if original.generation != ticket.generation {
             return Err(Failure::RecoveryPending);
         }
+        let snapshot = self.snapshot(ticket.clone()).await;
         let effects = Arc::clone(&work.effects);
         let cleanup_ticket = ticket.clone();
         let known = work
@@ -460,34 +661,62 @@ impl Controller {
             .lock()
             .map_err(|_| Failure::RecoveryPending)?
             .clone()
-            .or(snapshot.vm);
+            .or_else(|| snapshot.as_ref().ok().and_then(|snapshot| snapshot.vm.clone()));
+        let intent = work
+            .intent
+            .lock()
+            .map_err(|_| Failure::RecoveryPending)?
+            .clone()
+            .or_else(|| {
+                snapshot
+                    .as_ref()
+                    .ok()
+                    .and_then(|snapshot| snapshot.spawn_intent.clone())
+            });
+        let publish_binding = snapshot.as_ref().is_ok_and(|snapshot| snapshot.state != State::Closed);
         let registry_owner = self.clone();
-        let intent = snapshot.spawn_intent;
-        let cleaned = bounded(self.0.bounds.cleanup, async move {
+        let (binding, publication_error) = bounded(self.0.bounds.cleanup, async move {
             let binding = match known {
                 Some(binding) => Some(binding),
-                None => effects.reconcile(cleanup_ticket.clone(), intent).await?,
+                None => effects.reconcile(cleanup_ticket.clone(), intent.clone()).await?,
             };
-            if let Some(binding) = binding {
-                let bind_ticket = cleanup_ticket.clone();
-                let verified = binding.clone();
-                registry_owner
-                    .io(move |registry| registry.reconcile_vm(&bind_ticket, verified))
-                    .await?;
-                effects.cleanup(cleanup_ticket.clone(), binding.clone()).await?;
-                registry_owner
-                    .io(move |registry| registry.complete_cleanup(&cleanup_ticket, &binding))
-                    .await
-                    .map_err(anyhow::Error::from)
-            } else {
-                registry_owner
-                    .io(move |registry| registry.confirm_absent(&cleanup_ticket))
-                    .await
-                    .map_err(anyhow::Error::from)
+            let mut publication_error = None;
+            if let Some(binding) = &binding {
+                ensure!(
+                    intent.as_ref().is_none_or(|original| original == binding),
+                    "managed cleanup target differs from trusted spawn intent"
+                );
+                if publish_binding {
+                    let bind_ticket = cleanup_ticket.clone();
+                    let verified = binding.clone();
+                    publication_error = registry_owner
+                        .io(move |registry| registry.reconcile_vm(&bind_ticket, verified))
+                        .await
+                        .err();
+                }
+                effects.cleanup(cleanup_ticket, binding.clone()).await?;
             }
+            Ok((binding, publication_error))
         })
         .await
         .map_err(|()| Failure::CleanupFailed)?;
+        // Trusted live effects must retire even if disk authority is missing.
+        // That grants no permission to acknowledge Closed or recreate a VM.
+        let snapshot = snapshot?;
+        if let Some(error) = publication_error {
+            return Err(error);
+        }
+        let cleaned = if snapshot.state == State::Closed {
+            snapshot
+        } else if let Some(binding) = binding {
+            let cleanup_ticket = ticket.clone();
+            self.io(move |registry| registry.complete_cleanup(&cleanup_ticket, &binding))
+                .await?
+        } else {
+            let cleanup_ticket = ticket.clone();
+            self.io(move |registry| registry.confirm_absent(&cleanup_ticket))
+                .await?
+        };
         self.remove_work(ticket.request, &work).await;
         Ok(cleaned)
     }
@@ -497,17 +726,30 @@ impl Controller {
         let mut retry = false;
         loop {
             let next = *deadline.borrow_and_update();
+            let elapsed = async {
+                match next {
+                    Some(next) => tokio::time::sleep_until(tokio::time::Instant::from_std(next.at)).await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
             tokio::select! {
                 () = work.cancel.cancelled() => {},
-                () = tokio::time::sleep_until(next) => {},
+                () = elapsed => {},
                 changed = deadline.changed() => { if changed.is_err() { return; } continue; }
             }
             let expire_ticket = ticket.clone();
+            let cancelled = work.cancel.is_cancelled();
             let snapshot = self
-                .io(move |registry| registry.expire_lease(&expire_ticket, LeaseClock::now()?))
+                .io(move |registry| {
+                    if cancelled {
+                        registry.begin_owned_cleanup(&expire_ticket)
+                    } else {
+                        registry.expire_lease(&expire_ticket, LeaseClock::now()?)
+                    }
+                })
                 .await;
             let closing = matches!(snapshot, Ok(ref snapshot) if matches!(snapshot.state, State::Closing | State::Closed | State::Unknown));
-            if closing || work.cancel.is_cancelled() {
+            if closing || snapshot.is_err() || work.cancel.is_cancelled() {
                 work.cancel.cancel();
                 match self.cleanup_work(ticket.clone(), Arc::clone(&work), retry).await {
                     Ok(_) => return,

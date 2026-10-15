@@ -3,6 +3,10 @@ use super::*;
 mod provision;
 mod resume;
 mod resume_process;
+mod run;
+#[cfg(test)]
+pub(crate) use resume_process::configure_resume_storage;
+pub(crate) use run::handle_run;
 mod session_dirs;
 pub(crate) use resume::handle_resume;
 #[cfg(test)]
@@ -59,7 +63,7 @@ pub(super) fn persistent_resume_state_fingerprint(state: &ServiceState, entry: &
 pub(super) fn small_file_fingerprint(path: &StdPath) -> Option<String> {
     std::fs::read(path)
         .ok()
-        .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
+        .map(|bytes| capsem_crypto::blake3::hash(&bytes).to_hex().to_string())
 }
 
 pub(super) fn file_metadata_fingerprint(path: &StdPath) -> Option<(u64, u128)> {
@@ -188,38 +192,55 @@ pub(super) async fn acquire_vz_host_lock(
     }
 }
 
-/// Wait for a process to exit, force-killing after timeout.
-/// Wait for a VM process to exit, SIGKILLing it if it outstays `timeout`.
-///
-/// Returns whether it left on its own. A caller that asked to retain state
-/// needs to know: everything the guest had not flushed when it was killed is
-/// gone, and reporting that stop as a success is how acknowledged writes went
-/// missing without a word.
-pub(super) async fn wait_for_process_exit(pid: u32, timeout: std::time::Duration) -> bool {
-    if pid == 0 {
-        return true;
+/// Await the original child owner, then force its exact unreaped child after timeout.
+/// The exit publication is separate from reaper filesystem retirement because
+/// suspend/restore can hold the lifecycle lock that retirement must acquire.
+pub(super) async fn wait_for_process_exit(
+    state: &ServiceState,
+    id: &str,
+    generation: uuid::Uuid,
+    timeout: std::time::Duration,
+) -> Result<bool, AppError> {
+    match tokio::time::timeout(timeout, state.retirements.wait_exit(id, generation)).await {
+        Ok(result) => return result.map_err(child_owner_error),
+        Err(_) => tracing::warn!(id, "original VM child did not exit within timeout"),
     }
-    let mut probe = process_control::ProcessProbe::new("wait-for-vm-process-exit");
-    if poll_until(process_exit_poll_options(timeout), || {
-        std::future::ready(probe.is_gone(pid).then_some(()))
-    })
-    .await
-    .is_ok()
-    {
-        return true;
-    }
-    tracing::warn!(pid, "VM process did not exit within timeout, sending SIGKILL");
-    process_control::send_or_log(pid, process_control::Signal::Kill, "vm-process-timeout-escalation");
-    if poll_until(
-        PollOpts::new("vm-process-sigkill", std::time::Duration::from_secs(2)),
-        || std::future::ready(probe.is_gone(pid).then_some(())),
+    signal_vm_process(state, id, generation, process_control::Signal::Kill).await?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        state.retirements.wait_exit(id, generation),
     )
     .await
-    .is_err()
-    {
-        tracing::error!(pid, "VM process survived SIGKILL");
-    }
-    false
+    .map_err(|_| {
+        AppError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "original VM child exit not confirmed".into(),
+        )
+    })?
+    .map_err(child_owner_error)?;
+    Ok(false)
+}
+
+pub(super) async fn signal_vm_process(
+    state: &ServiceState,
+    id: &str,
+    generation: uuid::Uuid,
+    signal: process_control::Signal,
+) -> Result<(), AppError> {
+    state
+        .retirements
+        .signal(id, generation, signal)
+        .await
+        .map_err(child_owner_error)?;
+    Ok(())
+}
+
+fn child_owner_error(error: anyhow::Error) -> AppError {
+    tracing::warn!(%error,"original VM child authority unavailable");
+    AppError(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "original VM child authority unavailable".into(),
+    )
 }
 
 /// Shutdown a running VM process by ID. Returns (session_dir, persistent, pid).
@@ -275,12 +296,13 @@ pub(super) async fn shutdown_vm_process(
                 i.pid,
                 i.persistent,
                 i.generation,
+                owner_connection::OwnerConnection::capture(i),
             )
         });
         drop(instances);
         result
     };
-    let Some((uds_path, session_dir, pid, persistent, generation)) = snapshot else {
+    let Some((uds_path, session_dir, pid, persistent, generation, owner)) = snapshot else {
         drop(_shutdown_guard);
         drop(_vz_host_guard);
         drop(_vz_guard);
@@ -297,6 +319,7 @@ pub(super) async fn shutdown_vm_process(
     // Claim before signalling. The watcher may already have claimed a process
     // which exited independently; otherwise this intentional shutdown owns
     // the record and the watcher must not preserve it as a crash.
+    state.retirements.is_live(id, generation).map_err(child_owner_error)?;
     let shutdown_claimed = claim_shutdown_instance(state, id, generation);
     if !shutdown_claimed {
         // A watcher or replacement owns this ID now. A stale observation has
@@ -314,39 +337,43 @@ pub(super) async fn shutdown_vm_process(
     state.containers.cancel_and_wait(id).await;
     state.unregister_session_db_handle(id);
 
-    if mode.retains_state() {
+    let grant_retirement = state
+        .connections
+        .stop_runtime(
+            id,
+            generation,
+            connection_routes::lifecycle::stop_policy(persistent, mode.retains_state()),
+        )
+        .await;
+
+    if mode == ShutdownMode::FailedCreate {
+        // No workload was acknowledged. The guest agent may not exist yet;
+        // the host signal handler stops the VM and drains its producer instead.
+        signal_vm_process(state, id, generation, process_control::Signal::Terminate).await?;
+    } else if mode.retains_state() {
         // Send shutdown command via IPC (or SIGTERM as fallback).
-        let stream_res = tokio::net::UnixStream::connect(&uds_path).await;
-        if let Ok(stream) = stream_res {
-            if let Ok(std_stream) = stream.into_std() {
-                if let Ok((std_stream, _)) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-                    std_stream,
-                    "capsem-service",
-                    capsem_foundation::telemetry::current_parent_traceparent(),
-                )
-                .await
-                {
-                    if let Ok((tx, _)) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream) {
-                        capsem_core::try_send!("ipc_graceful_shutdown", tx.send(ServiceToProcess::Shutdown).await);
-                    }
-                }
-            }
-        } else if pid > 0 {
-            process_control::send_or_log(pid, process_control::Signal::Terminate, "vm-ipc-shutdown-fallback");
+        let channel = match owner {
+            Ok(owner) => owner.open(state, "capsem-service", true).await,
+            Err(error) => Err(error),
+        };
+        if let Ok((tx, _)) = channel {
+            capsem_core::try_send!("ipc_graceful_shutdown", tx.send(ServiceToProcess::Shutdown).await);
+        } else {
+            signal_vm_process(state, id, generation, process_control::Signal::Terminate).await?;
         }
-    } else if pid > 0 {
+    } else {
         // Destructive delete has no state to flush. SIGKILL also prevents the
         // ordinary signal handler from doing a full workspace reconciliation
         // whose output would be deleted immediately afterward.
-        process_control::send_or_log(pid, process_control::Signal::Kill, "discard-vm-process");
+        signal_vm_process(state, id, generation, process_control::Signal::Kill).await?;
     }
 
     tracing::debug!(id, shutdown_claimed, "shutdown_vm_process removing instance");
 
-    // Wait for actual exit (poll_until + SIGKILL fallback), then clean up
+    // Await original child exit (owned SIGKILL fallback), then clean up
     // sockets. Synchronous: callers must not see "shutdown returned" while
     // the process is still alive (leak detector + suspend/resume rely on it).
-    let exited_cleanly = wait_for_process_exit(pid, mode.exit_timeout()).await;
+    let exited_cleanly = wait_for_process_exit(state, id, generation, mode.exit_timeout()).await?;
     if !exited_cleanly && mode.retains_state() {
         // The guest was killed mid-sync on a shutdown that promised to keep
         // its state. Whatever had not reached the disk is gone, and this is
@@ -357,6 +384,12 @@ pub(super) async fn shutdown_vm_process(
             "VM was killed before it finished flushing; writes made just before              stop may be lost"
         );
     }
+    state.ledger_workers.shutdown(id).await.map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to stop session ledger worker for {id}: {error}"),
+        )
+    })?;
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
     state
@@ -383,6 +416,7 @@ pub(super) async fn shutdown_vm_process(
             "original child retirement is unknown".into(),
         ));
     }
+    grant_retirement?;
     Ok(Some((session_dir, persistent, pid)))
 }
 
@@ -397,7 +431,7 @@ pub(super) async fn handle_suspend(
     // The host-wide flock also serializes pytest-xdist service processes.
     let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Exclusive).await?;
 
-    let (uds_path, pid) = {
+    let owner = {
         let mut instances = state.instances.lock().unwrap();
         let i = instances
             .get_mut(&id)
@@ -408,46 +442,24 @@ pub(super) async fn handle_suspend(
                 "ephemeral VMs cannot be suspended (persist first)".into(),
             ));
         }
-        let result = (i.uds_path.clone(), i.pid);
+        let result = owner_connection::OwnerConnection::capture(i);
         drop(instances);
         result
-    };
-
-    let stream = tokio::net::UnixStream::connect(&uds_path).await.map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to connect to VM IPC: {e}"),
-        )
-    })?;
-    let std_stream = stream.into_std().map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to convert stream: {e}"),
-        )
-    })?;
-    let (std_stream, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-        std_stream,
-        "capsem-service",
-        capsem_foundation::telemetry::current_parent_traceparent(),
-    )
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("IPC handshake failed: {e}")))?;
-    let (tx, rx) = channel_from_std::<ServiceToProcess, ProcessToService>(std_stream).map_err(|e| {
-        AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to create IPC channel: {e}"),
-        )
-    })?;
-
-    let checkpoint_path = RESUME_CHECKPOINT_NAME.to_string();
-    tx.send(ServiceToProcess::Suspend { checkpoint_path })
+    }
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let uds_path = owner.uds_path.clone();
+    let generation = owner.generation();
+    let (tx, rx) = owner
+        .open(&state, "capsem-service", false)
         .await
-        .map_err(|e| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to send suspend command: {e}"),
-            )
-        })?;
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    tx.send(ServiceToProcess::Suspend).await.map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to send suspend command: {e}"),
+        )
+    })?;
 
     // Wait for process exit (channel closed). The process sends StateChanged {"Suspended"}
     // right before exiting. We must wait for full exit to avoid a race condition where
@@ -476,17 +488,21 @@ pub(super) async fn handle_suspend(
         Ok(confirmation) => confirmation,
         Err(_) => SuspendConfirmation::TimedOut,
     };
+    // A normal owner exit may already have removed its registry entry; a
+    // replacement must never inherit the old suspend's cleanup or result.
+    owner
+        .validate(&state, true)
+        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
 
     if let Some((outcome, error)) = suspend_failure(confirmation) {
         // The guest never acknowledged suspend. Leaving the process alive
         // would leak a wedged Apple VZ instance (seen in the wild: 945
         // orphan temp dirs accumulated over one test run). SIGKILL the
         // child, reclaim the instance slot, and surface the error.
-        if pid > 0 {
-            process_control::send_or_log(pid, process_control::Signal::Kill, "failed-suspend-cleanup");
-        }
+        signal_vm_process(&state, &id, generation, process_control::Signal::Kill).await?;
+        wait_for_process_exit(&state, &id, generation, std::time::Duration::from_millis(500)).await?;
         tracing::warn!(id, outcome, "handle_suspend removing failed instance");
-        state.instances.lock().unwrap().remove(&id);
+        state.evict_instance(&id, owner.generation());
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
         return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error));
@@ -496,10 +512,18 @@ pub(super) async fn handle_suspend(
     // released its VZ checkpoint and VirtioFS share before resume can spawn a
     // replacement. The helper bounds natural exit, then SIGKILLs and waits for
     // reaping instead of guessing that a fixed post-kill sleep was sufficient.
-    wait_for_process_exit(pid, std::time::Duration::from_millis(500)).await;
+    wait_for_process_exit(&state, &id, generation, std::time::Duration::from_millis(500)).await?;
+    owner
+        .validate(&state, true)
+        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
+
+    state
+        .connections
+        .stop_runtime(&id, generation, capsem_credentials::GrantStopPolicy::Preserve)
+        .await?;
 
     tracing::warn!(id, "handle_suspend (success) removing instance");
-    state.instances.lock().unwrap().remove(&id);
+    state.evict_instance(&id, owner.generation());
     state.unregister_session_db_handle(&id);
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
@@ -545,6 +569,12 @@ pub(super) async fn handle_stop(
                         format!("ephemeral session cleanup failed: {error:#}"),
                     )
                 })?;
+            state.ledger_workers.retire(&id).await.map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("ephemeral checkpoint cleanup failed: {error:#}"),
+                )
+            })?;
         }
         Ok(Json(api::StopResponse {
             success: true,
@@ -573,11 +603,20 @@ pub(super) async fn handle_delete(
             }
         };
 
+    let _deletion_guard = connection_routes::lifecycle::deletion(&state, &id).await?;
+
     // DELETE is a destructive contract. Validate registry-derived paths,
     // perform the blocking removal off the async runtime, and do not report
     // success until the directory is actually gone. Failed VM exits use the
     // separate `preserve_failed_session_dir` path; a clean delete must never
     // be relabelled as a failure.
+    state.unregister_session_db_handle(&id);
+    state.ledger_workers.shutdown(&id).await.map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to stop session ledger worker for {id}: {error}"),
+        )
+    })?;
     let state_clone = Arc::clone(&state);
     tokio::task::spawn_blocking(move || state_clone.delete_session_dir(&session_dir))
         .await
@@ -593,6 +632,12 @@ pub(super) async fn handle_delete(
                 format!("delete session state failed: {error:#}"),
             )
         })?;
+    state.ledger_workers.retire(&id).await.map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("delete session checkpoints failed: {error:#}"),
+        )
+    })?;
 
     // Unregister from persistent registry only after filesystem deletion
     // succeeds. An unsafe or failed delete therefore remains discoverable
@@ -622,14 +667,14 @@ pub(super) fn provision_response_for_running(state: &ServiceState, id: String) -
         )
     })?;
     let status = VmLifecycleState::Running;
-    let response = ProvisionResponse {
-        name: instance.name.clone(),
+    let response = ProvisionResponse::new(
         id,
+        instance.name.clone(),
         status,
-        persistent: instance.persistent,
-        can_resume: false,
-        available_actions: status.available_actions(false),
-    };
+        instance.persistent,
+        false,
+        status.available_actions(false),
+    );
     drop(instances);
     Ok(response)
 }
@@ -643,7 +688,7 @@ pub(super) async fn handle_persist(
     validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Find the running ephemeral instance
-    let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env) = {
+    let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env, generation) = {
         let instances = state.instances.lock().unwrap();
         let i = instances
             .get(&id)
@@ -662,10 +707,28 @@ pub(super) async fn handle_persist(
             i.base_version.clone(),
             i.forked_from.clone(),
             i.env.clone(),
+            i.generation,
         );
         drop(instances);
         result
     };
+
+    // Managed ownership is immutable for this actual spawn. A save cannot
+    // transfer it to persistence, including while create/recovery is pending.
+    // The controller retains live intent when its durable metadata is lost.
+    let binding = capsem_core::managed_sessions::VmBinding::new(id.clone(), generation)
+        .map_err(|_| AppError(StatusCode::INTERNAL_SERVER_ERROR, "invalid VM spawn identity".into()))?;
+    if state.managed.owns_vm(&binding).await.map_err(|_| {
+        AppError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "managed ownership admission unavailable".into(),
+        )
+    })? {
+        return Err(AppError(
+            StatusCode::CONFLICT,
+            "managed sessions cannot become persistent".into(),
+        ));
+    }
 
     // Claim the name and register the session where it lives. The directory
     // moves under persistent/ once the process has exited (see
@@ -810,131 +873,4 @@ pub(super) async fn handle_purge(
         persistent_purged,
         ephemeral_purged,
     }))
-}
-
-/// One-shot exec: provision a temp VM, run a command, return output, destroy VM.
-pub(super) async fn handle_run(
-    State(state): State<Arc<ServiceState>>,
-    Json(payload): Json<RunRequest>,
-) -> Result<Json<ExecResponse>, AppError> {
-    let timeout_secs =
-        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let _launch = state
-        .lifecycle
-        .admit()
-        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
-    if let Some(reason) = state.off_worker(|state| vm_asset_block_reason(&state)).await? {
-        return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
-    }
-
-    let id = {
-        let existing = state.off_worker(|state| existing_session_names(&state)).await?;
-        generate_session_name(existing.iter().map(|s| s.as_str()))
-    };
-
-    let resources = resolve_vm_resources(payload.ram_mb, payload.cpus);
-    let ram_mb = resources.ram_mb;
-    let cpus = resources.cpus;
-    let scratch_disk_size_gb = resources.scratch_disk_size_gb;
-
-    // 1. Provision ephemeral VM. `provision_sandbox` is synchronous and
-    // does heavy I/O (APFS clonefile, rootfs.img fsync, child spawn);
-    // offload to the blocking pool, matching `handle_provision` -- the
-    // tokio::process::Command::spawn inside still works because
-    // spawn_blocking preserves the runtime handle via thread-locals.
-    let state_clone = Arc::clone(&state);
-    let id_clone = id.clone();
-    let version = state.current_version.clone();
-    let env = payload.env.clone();
-    {
-        let _vz_guard = state.lifecycle.vz.read().await;
-        let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
-        let provision_result = tokio::task::spawn_blocking(move || {
-            state_clone.provision_sandbox(ProvisionOptions {
-                id: &id_clone,
-                name: &id_clone,
-                ram_mb,
-                cpus,
-                scratch_disk_size_gb,
-                version_override: Some(version),
-                persistent: false,
-                env,
-                from: None,
-                description: None,
-            })
-        })
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
-        provision_result.map_err(|e| provision_failure(&e))?;
-
-        // 3. Wait for VM socket to appear while still holding the VZ
-        // lifecycle rail. The child does its Apple VZ start/restore before it
-        // writes the ready sentinel; releasing earlier reintroduces the
-        // sibling-service overlap this lock exists to prevent.
-        let uds_path = state
-            .instance_socket_path(&id)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
-            drop(_vz_host_guard);
-            drop(_vz_guard);
-            // Wait for the child to actually exit before renaming. Rename on
-            // an open-for-write dir is safe (fds survive) but any path-based
-            // reopens the child might do during shutdown (log rotation, db
-            // reopen) would ENOENT -- so we let it finish flushing first.
-            // shutdown_vm_process now blocks until exit (5s budget, SIGKILL
-            // fallback) and cleans the UDS socket inline. Graceful because
-            // preserve_failed_session_dir inspects session logs that capsem-process
-            // is still flushing.
-            let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
-            preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result).await?;
-            return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
-        }
-    }
-
-    let uds_path = state
-        .instance_socket_path(&id)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // 2. Execute command.
-    let job_id = state.next_job_id();
-    let exec_result = send_ipc_command(
-        &uds_path,
-        ServiceToProcess::Exec {
-            id: job_id,
-            command: payload.command,
-            // A one-shot run boots a VM with no workload.
-            target: capsem_proto::ipc::ExecTarget::Vm,
-        },
-        Some(timeout_secs),
-    )
-    .await;
-
-    // 3. Tear down VM process and build response. shutdown_vm_process
-    // blocks until the process is actually gone -- the leak detector needs
-    // that guarantee. Route handlers must not mine session.db before returning;
-    // durable telemetry is recovered by the ledger rails.
-    let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
-    let failed = !matches!(&exec_result, Ok(ProcessToService::ExecResult { .. }));
-    finalize_one_shot_session(Arc::clone(&state), id.clone(), shutdown_result, failed).await?;
-
-    let response = match exec_result {
-        Ok(ProcessToService::ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            truncated,
-            ..
-        }) => Ok(Json(ExecResponse {
-            stdout: ExecOutput::from_bytes(stdout),
-            stderr: ExecOutput::from_bytes(stderr),
-            exit_code,
-            truncated,
-        })),
-        Ok(_) => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response".into(),
-        )),
-        Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {e}"))),
-    };
-    response
 }

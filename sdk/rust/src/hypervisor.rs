@@ -67,6 +67,10 @@ impl Hypervisor {
         crate::Credentials(&self.client)
     }
 
+    pub fn connections(&self) -> crate::Connections<'_> {
+        crate::Connections(&self.client)
+    }
+
     /// The MCP servers every VM runs, from settings and corp config.
     pub fn mcp(&self) -> Mcp<'_> {
         Mcp(&self.client)
@@ -76,7 +80,7 @@ impl Hypervisor {
         Debug(&self.client)
     }
 
-    pub async fn create(&self, options: CreateOptions) -> Result<VM> {
+    pub(crate) fn provision_request(options: CreateOptions) -> Result<models::ProvisionRequest> {
         if options.cpus == Some(0) {
             return Err(Error::InvalidInput("cpus must be positive"));
         }
@@ -84,7 +88,6 @@ impl Hypervisor {
             return Err(Error::InvalidInput("container command and registry require an image"));
         }
         let name = options.name.filter(|name| !name.is_empty());
-        let has_container = options.image.is_some();
         let (env, container) = match options.image {
             Some(image) if !image.is_empty() => (
                 None,
@@ -102,16 +105,25 @@ impl Hypervisor {
         // Every local check first: an invalid argument must be refused before
         // the client asks the gateway anything.
         let ram_mb = Self::memory_mb(options.memory)?;
-        let body = models::ProvisionRequest {
+        Ok(models::ProvisionRequest {
             persistent: name.is_some(),
             name,
             cpus: options.cpus,
             ram_mb,
             env,
-            from: None,
             networks: options.networks.into_iter().map(|network| network.name).collect(),
             container,
-        };
+            ..Default::default()
+        })
+    }
+
+    pub(crate) fn managed_client(&self) -> Client {
+        self.client.clone()
+    }
+
+    pub async fn create(&self, options: CreateOptions) -> Result<VM> {
+        let has_container = options.image.is_some();
+        let body = Self::provision_request(options)?;
         let result = api::create_vm(
             &self.client.transport,
             &api::CreateVmParams { body },

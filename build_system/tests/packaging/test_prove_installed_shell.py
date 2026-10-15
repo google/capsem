@@ -74,11 +74,13 @@ def test_fail_fast_reads_the_fields_capsem_info_actually_serializes() -> None:
     timeout again -- the exact failure this detection exists to end.
     """
     client = production(CLI_CLIENT)
+    assert "SandboxInfo as SessionInfo" in client, "CLI must use the public session DTO"
+    lifecycle = production(API_LIFECYCLE)
+    session = lifecycle.split("pub struct SandboxInfo {", 1)[1].split("\n}", 1)[0]
 
     for field in ("pub status:", "pub can_resume:", "pub last_error:", "pub resume_blocked_reason:"):
-        assert field in client, f"SessionInfo no longer serializes {field}"
-    assert "VmLifecycleState" in client, "SessionInfo no longer carries the API lifecycle state"
-    lifecycle = production(API_LIFECYCLE)
+        assert field in session, f"SessionInfo no longer serializes {field}"
+    assert "pub status: VmLifecycleState" in session, "SessionInfo no longer carries the API lifecycle state"
     assert "pub enum VmLifecycleState {" in lifecycle
     for variant in ("Running", "Defunct", "Incompatible"):
         assert f"    {variant},\n" in lifecycle, f"VmLifecycleState no longer spells {variant}"

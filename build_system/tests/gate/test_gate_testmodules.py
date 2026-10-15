@@ -134,7 +134,7 @@ def test_artifacts_owns_the_frontend_bundle_before_build_chain() -> None:
     assert _wave_of(ArtifactsModule, node) < _wave_of(ArtifactsModule, bundle)
     assert _wave_of(ArtifactsModule, bundle) < _wave_of(ArtifactsModule, consumer)
     assert plan.after_of(consumer) >= {bundle}
-    workspace = CONFIG.path(CONFIG.frontend.workspace).name
+    workspace = CONFIG.path(CONFIG.frontend.workspace)
     assert f"(in {workspace})" in "\n".join(plan.step_named(node).render())
 
 

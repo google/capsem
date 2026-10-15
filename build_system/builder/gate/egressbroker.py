@@ -7,13 +7,13 @@ command at a time and exits when its pre-sandbox parent or capability goes.
 
 from __future__ import annotations
 
-import hmac
 import os
 import socket
 import subprocess
 import sys
 from pathlib import Path
 
+from .. import crypto as hmac
 from .egress import _receive, _send
 
 

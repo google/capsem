@@ -354,7 +354,10 @@ fn content_identity(path: &Path) -> Result<(String, u64), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(error) => return Err(format!("read {}: {error}", path.display())),
     };
-    Ok((format!("blake3:{}", blake3::hash(&bytes).to_hex()), bytes.len() as u64))
+    Ok((
+        format!("blake3:{}", capsem_crypto::blake3::hash(&bytes).to_hex()),
+        bytes.len() as u64,
+    ))
 }
 
 fn cel_string(value: &str) -> String {

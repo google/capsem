@@ -140,6 +140,8 @@ pub struct PreviewConnectionAdmissionResponse {
     pub handoff_socket: String,
     pub handoff_token: u64,
     pub owner_generation: String,
+    pub owner_pid: u32,
+    pub owner_uid: u32,
 }
 
 #[cfg(test)]

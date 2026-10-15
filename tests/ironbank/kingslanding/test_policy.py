@@ -6,7 +6,7 @@ import re
 import socket
 
 import pytest
-from helpers.body_archive import served_security_payload, session_archive
+from helpers.body_archive import served_security_payload_if_ready, session_archive
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.session_ledger import open_session_ledger
 from helpers.settings_policy import apply_settings_rule, write_settings_rule
@@ -195,11 +195,13 @@ def test_expose_security_prevents_redis_accept_and_retains_trusted_facts(redis, 
             latest = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
             for row in latest:
                 if row["event_type"] == "network.connect" and row["event_id"] not in payloads:
-                    payloads[row["event_id"]] = served_security_payload(client, vm_id, row["event_id"])
+                    payload = served_security_payload_if_ready(client, vm_id, row["event_id"])
+                    if payload is not None:
+                        payloads[row["event_id"]] = payload
             rows[:] = [
                 {**row, "event": payloads[row["event_id"]]}
                 for row in latest
-                if row["event_type"] == "network.connect"
+                if row["event_type"] == "network.connect" and row["event_id"] in payloads
             ]
             seen = {row["event"]["network"]["source"]["address"] for row in rows}
             return denied_peers <= seen

@@ -5,6 +5,11 @@ use super::super::{
 use capsem_foundation::poll::{poll_until, PollOpts};
 use std::time::Duration;
 
+// Receipt proof hashes cache content on a background worker. Full coverage
+// runs can leave that worker CPU-starved well beyond the subsecond focused
+// runtime; keep cancellation tests on their tighter deadlines below.
+const CACHE_PROOF_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[tokio::test]
 async fn inventory_worker_publishes_only_quiet_bounded_observations_and_tracks_nested_changes() {
     let root = super::super::tests::private_dir();
@@ -210,13 +215,10 @@ async fn incompatible_receipts_are_observed_once_until_their_metadata_changes() 
         std::fs::write(&path, &bytes).unwrap();
         let worker = cache.reconciler("arm64", parent.path().to_owned(), 1).unwrap();
         assert!(worker.request(std::slice::from_ref(&key)).unwrap());
-        let observed = poll_until(
-            PollOpts::new("foreign-cache-observed", Duration::from_secs(2)),
-            || async {
-                let observed = cache.snapshot(&key).unwrap();
-                (!observed.verification_pending).then_some(observed)
-            },
-        )
+        let observed = poll_until(PollOpts::new("foreign-cache-observed", CACHE_PROOF_TIMEOUT), || async {
+            let observed = cache.snapshot(&key).unwrap();
+            (!observed.verification_pending).then_some(observed)
+        })
         .await
         .unwrap();
         assert_eq!(observed.state, CacheState::Unknown);
@@ -239,7 +241,7 @@ async fn incompatible_receipts_are_observed_once_until_their_metadata_changes() 
         .await
         .unwrap();
         poll_until(
-            PollOpts::new("foreign-cache-reobserved", Duration::from_secs(2)),
+            PollOpts::new("foreign-cache-reobserved", CACHE_PROOF_TIMEOUT),
             || async { (!cache.snapshot(&key).unwrap().verification_pending).then_some(()) },
         )
         .await

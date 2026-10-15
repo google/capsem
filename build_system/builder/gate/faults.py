@@ -6,13 +6,14 @@ of facts, without a disk, a scheduler, or a sixty-minute gate behind them.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
+
+from .. import crypto as hashlib
 
 #: Directories under the checkout a run may write. Everything else is input:
 #: the gate reads it, and changing it mid-run means the thing being qualified
@@ -79,6 +80,24 @@ def duplication_expected(path: Path, root: Path, exempt: tuple[str, ...]) -> boo
         relative.parts[: len(PurePosixPath(entry).parts)] == PurePosixPath(entry).parts
         for entry in exempt
     )
+
+
+def mirrored_paths(
+    path: Path, root: Path, mirrors: tuple[tuple[str, ...], ...]
+) -> frozenset[Path]:
+    """Exact peer paths allowed to hold the same bytes in mirrored products."""
+    try:
+        relative = path.resolve().relative_to(root)
+    except (ValueError, OSError):
+        return frozenset()
+    for group in mirrors:
+        for entry in group:
+            prefix = PurePosixPath(entry)
+            if relative.parts[: len(prefix.parts)] != prefix.parts:
+                continue
+            suffix = relative.parts[len(prefix.parts) :]
+            return frozenset((root / peer).joinpath(*suffix).resolve() for peer in group)
+    return frozenset()
 
 
 def is_source(path: Path, root: Path) -> bool:

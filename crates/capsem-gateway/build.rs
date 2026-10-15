@@ -3,7 +3,7 @@
 //! listed there fails the build: the gateway serves exactly the bytes the pin
 //! in `vendor/xpra-html5/SOURCE.toml` produced, or nothing.
 
-use sha2::{Digest, Sha256};
+use capsem_crypto::Sha256;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

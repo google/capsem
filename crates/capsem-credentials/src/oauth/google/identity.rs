@@ -6,14 +6,11 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use capsem_crypto::jwt::{decode, decode_header, DecodingKey, JwtAlgorithm as Algorithm, Validation};
+use capsem_crypto::Sha256;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
 
 use super::{GoogleOAuthClient, OAuthTokenError, OAuthTokens, Secret};
-
-mod crypto;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OAuthIdentityError {
@@ -193,7 +190,7 @@ fn verify(
     key: &DecodingKey,
     now: u64,
 ) -> Result<GoogleIdentity, OAuthIdentityError> {
-    crypto::install()?;
+    capsem_crypto::jwt::install().map_err(|_| OAuthIdentityError::CryptoUnavailable)?;
     let mut validation = Validation::new(Algorithm::RS256);
     validation.set_issuer(&["https://accounts.google.com", "accounts.google.com"]);
     validation.set_audience(&[client_id]);
@@ -216,14 +213,14 @@ fn verify(
         || claims.nbf.is_some_and(|nbf| nbf > now)
         || !super::valid_token(claims.sub.expose())
         || claims.sub.expose().len() > 255
-        || !bool::from(claims.nonce.expose().as_bytes().ct_eq(nonce.expose().as_bytes()))
+        || !capsem_crypto::secrets::constant_time_eq(claims.nonce.expose().as_bytes(), nonce.expose().as_bytes())
     {
         return Err(OAuthIdentityError::InvalidIdentity);
     }
     if let Some(hash) = claims.at_hash {
         let digest = Sha256::digest(access.expose().as_bytes());
         let expected = URL_SAFE_NO_PAD.encode(&digest[..16]);
-        if !bool::from(hash.expose().as_bytes().ct_eq(expected.as_bytes())) {
+        if !capsem_crypto::secrets::constant_time_eq(hash.expose().as_bytes(), expected.as_bytes()) {
             return Err(OAuthIdentityError::InvalidIdentity);
         }
     }

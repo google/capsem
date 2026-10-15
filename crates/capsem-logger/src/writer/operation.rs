@@ -21,6 +21,7 @@ impl WriteOp {
             WriteOp::HostEvent(_) => "host_event",
             WriteOp::Network(_) => "network",
             WriteOp::NetworkMembership(_) => "network_membership",
+            WriteOp::NetworkDeparture(_) => "network_departure",
         }
     }
 
@@ -46,7 +47,8 @@ impl WriteOp {
             WriteOp::ExecEventComplete(_)
             | WriteOp::HostEvent(_)
             | WriteOp::Network(_)
-            | WriteOp::NetworkMembership(_) => None,
+            | WriteOp::NetworkMembership(_)
+            | WriteOp::NetworkDeparture(_) => None,
         }
     }
 
@@ -68,9 +70,22 @@ impl WriteOp {
             WriteOp::ExecEventComplete(_)
             | WriteOp::HostEvent(_)
             | WriteOp::Network(_)
-            | WriteOp::NetworkMembership(_) => None,
+            | WriteOp::NetworkMembership(_)
+            | WriteOp::NetworkDeparture(_) => None,
         }
     }
+}
+
+pub fn commitment_event_hash(op: &WriteOp) -> Result<[u8; 32], String> {
+    commitment_event_fingerprint(op).map(|(hash, _)| hash)
+}
+
+pub(crate) fn commitment_event_fingerprint(op: &WriteOp) -> Result<([u8; 32], usize), String> {
+    let encoded = serde_json::to_vec(op).map_err(|error| format!("encode ledger event commitment: {error}"))?;
+    let mut hash = capsem_crypto::blake3::Hasher::new();
+    hash.update(b"capsem-ledger-event-v1\0");
+    hash.update(&encoded);
+    Ok((*hash.finalize().as_bytes(), encoded.len()))
 }
 
 fn ensure_option_event_id(event_id: &mut Option<String>) -> Option<String> {
@@ -130,7 +145,7 @@ pub(super) fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'stati
             tables.insert("host_events");
         }
         // Disk-only registry tables: written to main directly, nothing to flush.
-        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => {}
+        WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => {}
     }
 }
 

@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 import yaml
+from capsem_builder.gate.actions import Run
 from capsem_builder.gate.devloop import DevCommand
 from capsem_builder.gate.hostpackage import BuildUiCommand
 from citadel.test_sdk_quality import CONFIG, ROOT
@@ -35,8 +37,38 @@ def _ancestors(plan, label: str) -> set[str]:
 def _assert_order(plan, node: str, build: str, consumers: tuple[str, ...]) -> None:
     assert node in _ancestors(plan, build), RATIONALE
     assert all(build in _ancestors(plan, consumer) for consumer in consumers), RATIONALE
-    rendered = "\n".join(plan.step_named(node).render())
-    assert "(in typescript) CI=true pnpm install --offline --frozen-lockfile" in rendered, RATIONALE
+    assert any(
+        isinstance(action, Run)
+        and action._command.cwd == CONFIG.path(CONFIG.sdk_typescript.project)
+        and action._command.argv == CONFIG.toolchain.node_install
+        and action._command.env == dict(CONFIG.toolchain.node_env)
+        for action in plan.step_named(node).actions
+    ), RATIONALE
+
+
+@pytest.mark.parametrize("command", [
+    "candidate", "test-candidate", "test-fast", "test-functional", "test-static", "test-artifacts", "test-glowup",
+])
+def test_sdk_dist_has_one_writer_before_every_consumer(command: str) -> None:
+    plan = gate_plan(command)
+    compilations = [node.label for node in plan.steps for action in node.actions
+                    if isinstance(action, Run)
+                    and action._command.cwd == CONFIG.path(CONFIG.sdk_typescript.project)
+                    and action._command.argv == ("pnpm", "run", "build")]
+    assert len(compilations) == 1, RATIONALE
+    compiled = compilations[0]
+    for node in plan.steps:
+        for action in node.actions:
+            if not isinstance(action, Run):
+                continue
+            argv = action._command.argv
+            packing = action._command.cwd == CONFIG.path(CONFIG.sdk_typescript.project) and argv[:2] == ("pnpm", "pack")
+            consumer = node.label.endswith(("web.frontend-build", "web.frontend-verify", "web.frontend-bundle",
+                                            "mcp.typescript.build", "mcp.typescript.tests"))
+            if packing:
+                assert "--config.ignore-scripts=true" in argv, RATIONALE
+            if packing or consumer:
+                assert compiled in _ancestors(plan, node.label), RATIONALE
 
 
 @pytest.mark.parametrize(("command", "prefix", "consumers"), [
@@ -46,7 +78,7 @@ def _assert_order(plan, node: str, build: str, consumers: tuple[str, ...]) -> No
 ])
 def test_sdk_build_precedes_all_frontend_consumers(command: str, prefix: str, consumers: tuple[str, ...]) -> None:
     plan = gate_plan(command)
-    build = f"{prefix}.sdk.typescript.{'build' if prefix == 'fast' else 'bundle'}"
+    build = "fast.sdk.typescript.build" if prefix == "fast" else "sdk.typescript.bundle"
     _assert_order(plan, f"{prefix}.toolchain.node", build, consumers)
 
 
@@ -117,6 +149,25 @@ def test_missing_sdk_predecessors_are_rejected(removed: str) -> None:
                              after_of=lambda label: set() if label == victim else plan.after_of(label))
     with pytest.raises(AssertionError, match="compiled SDK"):
         _assert_order(broken, "fast.toolchain.node", build,
+                      ("fast.web.frontend-build", "fast.web.frontend-verify"))
+
+
+def test_mcp_install_cannot_stand_in_for_the_sdk_install() -> None:
+    plan = gate_plan("test-fast")
+    node = plan.step_named("fast.toolchain.node")
+    broken_node = replace(node, actions=tuple(
+        action for action in node.actions
+        if not (isinstance(action, Run)
+                and action._command.cwd == CONFIG.path(CONFIG.sdk_typescript.project)
+                and action._command.argv == CONFIG.toolchain.node_install)
+    ))
+    assert len(broken_node.actions) == len(node.actions) - 1
+    broken = SimpleNamespace(
+        step_named=lambda label: broken_node if label == node.label else plan.step_named(label),
+        after_of=plan.after_of,
+    )
+    with pytest.raises(AssertionError, match="compiled SDK"):
+        _assert_order(broken, node.label, "fast.sdk.typescript.build",
                       ("fast.web.frontend-build", "fast.web.frontend-verify"))
 
 

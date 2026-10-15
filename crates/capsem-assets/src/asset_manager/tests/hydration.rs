@@ -47,11 +47,11 @@ fn copy_missing_local_assets_materializes_hash_named_layout() {
                     }}
                 }}
             }}"#,
-        blake3::hash(kernel).to_hex(),
+        capsem_crypto::blake3::hash(kernel).to_hex(),
         kernel.len(),
-        blake3::hash(initrd).to_hex(),
+        capsem_crypto::blake3::hash(initrd).to_hex(),
         initrd.len(),
-        blake3::hash(rootfs).to_hex(),
+        capsem_crypto::blake3::hash(rootfs).to_hex(),
         rootfs.len(),
     ))
     .unwrap();
@@ -64,7 +64,7 @@ fn copy_missing_local_assets_materializes_hash_named_layout() {
         ("initrd.img", initrd.as_slice()),
         ("rootfs.erofs", rootfs.as_slice()),
     ] {
-        let digest = blake3::hash(bytes).to_hex().to_string();
+        let digest = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
         let target = install.join("arm64").join(hash_filename(logical, &digest));
         assert_eq!(std::fs::read(&target).unwrap(), bytes);
         #[cfg(unix)]
@@ -84,8 +84,8 @@ fn copy_missing_local_assets_rejects_hash_mismatch() {
     std::fs::write(source.join("arm64").join("vmlinuz"), b"wrong").unwrap();
     std::fs::write(source.join("arm64").join("initrd.img"), b"initrd").unwrap();
     std::fs::write(source.join("arm64").join("rootfs.erofs"), b"rootfs").unwrap();
-    let initrd_hash = blake3::hash(b"initrd").to_hex().to_string();
-    let rootfs_hash = blake3::hash(b"rootfs").to_hex().to_string();
+    let initrd_hash = capsem_crypto::blake3::hash(b"initrd").to_hex().to_string();
+    let rootfs_hash = capsem_crypto::blake3::hash(b"rootfs").to_hex().to_string();
 
     let manifest = ManifestV2::from_json(
         &format!(
@@ -142,7 +142,7 @@ async fn download_missing_assets_skips_direct_arch_dev_layout() {
     ];
     let mut assets = std::collections::HashMap::new();
     for (name, bytes) in files {
-        let hash = blake3::hash(bytes).to_hex().to_string();
+        let hash = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
         assets.insert(
             name.to_string(),
             AssetEntry {
@@ -233,7 +233,7 @@ fn copy_missing_local_assets_hydrates_every_compatible_release() {
     let entry = |bytes: &[u8]| {
         format!(
             r#"{{ "hash": "{}", "size": {} }}"#,
-            blake3::hash(bytes).to_hex(),
+            capsem_crypto::blake3::hash(bytes).to_hex(),
             bytes.len()
         )
     };
@@ -279,7 +279,7 @@ fn copy_missing_local_assets_hydrates_every_compatible_release() {
         ("vmlinuz-co-work", cowork_kernel.as_slice()),
         ("rootfs.erofs", rootfs.as_slice()),
     ] {
-        let digest = blake3::hash(bytes).to_hex().to_string();
+        let digest = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
         let target = install.join("arm64").join(hash_filename(logical, &digest));
         assert!(
             target.exists(),
@@ -301,7 +301,7 @@ fn materializing_keeps_both_releases_images_when_they_share_a_logical_name() {
     let entry = |bytes: &[u8]| {
         format!(
             r#"{{ "hash": "{}", "size": {} }}"#,
-            blake3::hash(bytes).to_hex(),
+            capsem_crypto::blake3::hash(bytes).to_hex(),
             bytes.len()
         )
     };
@@ -328,7 +328,7 @@ fn materializing_keeps_both_releases_images_when_they_share_a_logical_name() {
 
     assert_eq!(wanted.len(), 2, "one release's kernel was dropped: {hashes:?}");
     for bytes in [code.as_slice(), cowork.as_slice()] {
-        assert!(hashes.contains(&blake3::hash(bytes).to_hex().to_string().as_str()));
+        assert!(hashes.contains(&capsem_crypto::blake3::hash(bytes).to_hex().to_string().as_str()));
     }
     // Each carries the release it came from, because that is what names its URL.
     let versions: Vec<&str> = wanted.iter().map(|(version, _, _)| *version).collect();
@@ -414,7 +414,7 @@ fn declared_manifest(asset_base: String) -> ManifestV2 {
         assets.insert(
             name.to_string(),
             AssetEntry {
-                hash: blake3::hash(bytes).to_hex().to_string(),
+                hash: capsem_crypto::blake3::hash(bytes).to_hex().to_string(),
                 sha256: String::new(),
                 size: bytes.len() as u64,
             },

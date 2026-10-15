@@ -3,9 +3,7 @@
 No ServiceInstance. No UdsHttpClient. Every operation goes through the
 actual capsem CLI binary via subprocess, exactly as a user would.
 
-The readiness check matches production: socket exists AND accepts
-HTTP connections. If this diverges from what just run-service does,
-we have a test infrastructure bug.
+Readiness uses the authenticated CLI path, including gateway startup.
 """
 
 import os
@@ -21,16 +19,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers import failures
-from helpers.constants import ASSETS_DIR, EXEC_READY_TIMEOUT
-from helpers.http_transport import Transport
+from helpers.constants import ASSETS_DIR, BIN_DIR, EXEC_READY_TIMEOUT
 from helpers.service import make_service_home_run_dirs, preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
 from log_streams import read_log_stream
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-SERVICE_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem-service"
-PROCESS_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem-process"
-CLI_BINARY = PROJECT_ROOT / "cache/target/cargo/debug/capsem"
+SERVICE_BINARY = BIN_DIR / "capsem-service"
+PROCESS_BINARY = BIN_DIR / "capsem-process"
+CLI_BINARY = BIN_DIR / "capsem"
 
 pytestmark = pytest.mark.e2e
 
@@ -40,12 +36,7 @@ def _vm_name(prefix="e2e"):
 
 
 class RealService:
-    """Starts capsem-service the way just run-service does.
-
-    Readiness check: socket file exists AND a GET /vms/list succeeds.
-    This is intentionally the same logic as the justfile run-service
-    recipe. If they diverge, tests pass but the product breaks.
-    """
+    """Start a real service and prove its authenticated CLI gateway is ready."""
 
     def __init__(self):
         # The installed layout: CAPSEM_HOME owns run/, and sessions/host.db
@@ -85,6 +76,7 @@ class RealService:
                 "--uds-path", str(self.uds_path),
                 "--assets-dir", str(assets_dir),
                 "--process-binary", str(PROCESS_BINARY),
+                "--gateway-port", "0",
                 "--parent-pid", str(os.getpid()),
                 "--foreground",
             ],
@@ -93,19 +85,15 @@ class RealService:
             stderr=self._stderr_file,
         )
 
-        # Readiness check: matches production (just run-service).
-        # Socket file exists AND service responds to HTTP.
+        # The service socket can answer before its gateway is ready.
         start = time.time()
         while time.time() - start < 15:
             if self.uds_path.exists():
-                probe = Transport(socket_path=str(self.uds_path))
                 try:
-                    probe.request("GET", "/vms/list", timeout=2)
-                    return
-                except Exception:
+                    if self.cli("list", timeout=2).returncode == 0:
+                        return
+                except subprocess.TimeoutExpired:
                     pass
-                finally:
-                    probe.close()
             time.sleep(0.5)
 
         self._dump_logs()
@@ -137,7 +125,7 @@ class RealService:
         """Run the real capsem CLI binary. Returns CompletedProcess."""
         cmd = [str(CLI_BINARY), "--uds-path", str(self.uds_path), *list(args)]
         return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
+            cmd, capture_output=True, text=True, timeout=timeout, check=False,
         )
 
     def cli_ok(self, *args, timeout=60):

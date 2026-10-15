@@ -10,6 +10,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))
         .route("/system/status", get(handle_system_status))
+        .route("/internal/gateway/status", get(handle_gateway_status))
         .route("/update/check", post(handle_update_check))
         .route("/update/apply", post(handle_update_apply))
         .route(
@@ -30,12 +31,41 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             post(private_routes::handle_private_resolve),
         )
         .route(
+            "/internal/vms/{id}/metrics",
+            post(service_runtime::telemetry_export::handle_metric_relay).layer(axum::extract::DefaultBodyLimit::max(
+                capsem_core::service_uds::MAX_BODY_BYTES,
+            )),
+        )
+        .route(
             "/networks/{id}/members/{vm_id}",
             put(network_routes::handle_network_attach).delete(network_routes::handle_network_detach),
         )
         .route("/images", get(container_setup::images::handle_list_images))
         .route("/images/pull", post(container_setup::images::handle_pull_image))
+        .route("/connections", get(connection_routes::list))
+        .route("/connections/google/authorize", post(connection_routes::authorize))
+        .route(
+            "/connections/authorizations/{transaction_id}",
+            get(connection_routes::authorization).delete(connection_routes::cancel),
+        )
+        .route(
+            "/connections/{connection_id}",
+            get(connection_routes::get_connection).delete(connection_routes::disconnect),
+        )
+        .route(
+            "/vms/{id}/credential-grants",
+            get(connection_routes::grants).post(connection_routes::create_grant),
+        )
+        .route(
+            "/vms/{id}/credential-grants/{grant_id}",
+            delete(connection_routes::revoke_grant),
+        )
         .route("/vms/create", post(handle_provision))
+        .route("/proxies", post(standalone_proxy::handle_create))
+        .route("/proxies/{id}/heartbeat", post(standalone_proxy::handle_heartbeat))
+        .route("/proxies/{id}/stop", post(standalone_proxy::handle_stop))
+        .route("/vms/managed/{request_id}/claim", post(managed_routes::claim))
+        .route("/vms/managed/{request_id}/close", post(managed_routes::close))
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
@@ -154,6 +184,10 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         // refused file uploads the API documents.
         .layer(axum::extract::DefaultBodyLimit::max(capsem_api::MAX_REQUEST_BODY_BYTES))
         .layer(TraceLayer::new_for_http().on_request(()).on_response(()))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            service_peer::restrict_owner_routes,
+        ))
         .with_state(state)
 }
 
@@ -195,6 +229,32 @@ pub(super) async fn handle_system_status(
         corp: corp_info_value()?,
         updates,
     }))
+}
+
+#[derive(Serialize)]
+struct GatewayStatusResponse {
+    #[serde(flatten)]
+    list: api::ListResponse,
+    assets: api::AssetStatus,
+    updates: api::UpdateStatusResponse,
+}
+
+/// One service snapshot for the gateway's polled overview. Keeping the three
+/// sections in one HTTP exchange avoids tripling broker and parser work while
+/// preserving a fresh `/vms/list` read for every gateway status refresh.
+async fn handle_gateway_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<GatewayStatusResponse>, AppError> {
+    let list = sandbox_info::list_response(&state).await?;
+    let (assets, updates) = state
+        .off_worker(|state| {
+            Ok::<_, AppError>((
+                asset_routes::asset_status(&state)?,
+                asset_routes::update_status_response(&state),
+            ))
+        })
+        .await??;
+    Ok(Json(GatewayStatusResponse { list, assets, updates }))
 }
 
 pub(super) fn read_installed_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {
@@ -462,7 +522,7 @@ pub(super) fn reload_activated_update_runtime(state: &ServiceState) -> Result<Up
         })?
         .replace(Arc::new(manifest));
     // Resume state is derived from the installed manifest (revoked pins).
-    state.persistent_resume_state_cache.lock().unwrap().clear();
+    state.persistent_resume_state_cache.clear();
 
     if selected_binary != state.current_version {
         info!(

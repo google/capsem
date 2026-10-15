@@ -397,6 +397,59 @@ fn mode_reads_permission_bits_from_the_descriptor() {
 }
 
 #[test]
+fn timestamp_updates_are_exact_descriptor_relative_and_never_follow_links() {
+    let tree = tree();
+    let file_path = tree.root_path.join("file");
+    std::fs::write(&file_path, b"data").unwrap();
+    tree.root
+        .set_relative_times(
+            Path::new("file"),
+            FileTimeSpec::Exact {
+                seconds: 1_234_567,
+                nanoseconds: 123_456_789,
+            },
+            FileTimeSpec::Exact {
+                seconds: 2_345_678,
+                nanoseconds: 987_654_321,
+            },
+        )
+        .unwrap();
+    let metadata = std::fs::metadata(&file_path).unwrap();
+    assert_eq!((metadata.atime(), metadata.atime_nsec()), (1_234_567, 123_456_789));
+    assert_eq!((metadata.mtime(), metadata.mtime_nsec()), (2_345_678, 987_654_321));
+
+    let target = tree.outside.join("target");
+    std::fs::write(&target, b"outside").unwrap();
+    let before = std::fs::metadata(&target).unwrap().modified().unwrap();
+    symlink(&target, tree.root_path.join("link")).unwrap();
+    tree.root
+        .set_relative_times(Path::new("link"), FileTimeSpec::Now, FileTimeSpec::Now)
+        .unwrap();
+    assert_eq!(std::fs::metadata(&target).unwrap().modified().unwrap(), before);
+}
+
+#[test]
+fn timestamp_updates_reject_invalid_paths_and_nanoseconds() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("file"), b"data").unwrap();
+    assert!(tree
+        .root
+        .set_relative_times(Path::new("../file"), FileTimeSpec::Omit, FileTimeSpec::Now)
+        .is_err());
+    assert!(tree
+        .root
+        .set_relative_times(
+            Path::new("file"),
+            FileTimeSpec::Omit,
+            FileTimeSpec::Exact {
+                seconds: 1,
+                nanoseconds: 1_000_000_000,
+            },
+        )
+        .is_err());
+}
+
+#[test]
 fn rename_moves_a_link_as_a_link_and_never_its_target() {
     let tree = tree();
     std::fs::write(tree.outside.join("secret"), b"host").unwrap();
@@ -575,4 +628,48 @@ fn only_filesystem_limits_count_as_a_link_that_cannot_be_made() {
     for errno in [Errno::EEXIST, Errno::ENOENT, Errno::EACCES, Errno::ELOOP] {
         assert!(!is_link_unsupported(&io::Error::from(errno)), "{errno}");
     }
+}
+
+#[test]
+fn relative_mode_changes_stay_beneath_the_open_root() {
+    let tree = tree();
+    std::fs::create_dir_all(tree.root_path.join("nested/dir")).unwrap();
+    std::fs::write(tree.root_path.join("nested/file"), b"data").unwrap();
+
+    tree.root.set_relative_mode(Path::new("nested/file"), 0o751).unwrap();
+    tree.root.set_relative_mode(Path::new("nested/dir"), 0o710).unwrap();
+
+    assert_eq!(
+        std::fs::metadata(tree.root_path.join("nested/file")).unwrap().mode() & 0o7777,
+        0o751
+    );
+    assert_eq!(
+        std::fs::metadata(tree.root_path.join("nested/dir")).unwrap().mode() & 0o7777,
+        0o710
+    );
+}
+
+#[test]
+fn relative_mode_changes_refuse_links_and_traversal() {
+    let tree = tree();
+    let secret = tree.outside.join("secret");
+    std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+    symlink(&secret, tree.root_path.join("link")).unwrap();
+    symlink(&tree.outside, tree.root_path.join("dir-link")).unwrap();
+    let _socket = std::os::unix::net::UnixListener::bind(tree.root_path.join("socket")).unwrap();
+
+    for path in [
+        "link",
+        "dir-link/secret",
+        "socket",
+        "../outside/secret",
+        "/tmp/file",
+        "a/../b",
+    ] {
+        assert!(
+            tree.root.set_relative_mode(Path::new(path), 0o777).is_err(),
+            "accepted {path}"
+        );
+    }
+    assert_eq!(std::fs::metadata(secret).unwrap().mode() & 0o7777, 0o600);
 }

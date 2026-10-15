@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from helpers.constants import ASSETS_DIR
-from helpers.managed_service import launchd_service
+from helpers.managed_service import managed_service
 from helpers.service import ServiceInstance
 from helpers.stopped_workspace import VM_ID, seed_stopped_workspace
 
@@ -24,13 +24,15 @@ def workspace_digest(root: Path) -> dict[str, str]:
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(sys.platform != "darwin", reason="disposable launchd supervisor proof")
 @pytest.mark.parametrize("language", ["python", "typescript"])
 def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -> None:
     service = ServiceInstance()
     seed_stopped_workspace(service.tmp_dir, ASSETS_DIR)
-    with launchd_service(service) as managed:
+    with managed_service(service) as managed:
         before = managed.ready()
+        if sys.platform == "linux":
+            assert os.readlink(f"/proc/{before.service_pid}/ns/net") == os.readlink("/proc/self/ns/net")
+            assert "NoNewPrivs:\t1" in Path(f"/proc/{before.service_pid}/status").read_text()
         status, inventory = before.get("/vms/list")
         assert status == 200
         registry = json.loads((service.tmp_dir / "persistent_registry.json").read_text())
@@ -44,6 +46,9 @@ def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -
         assert result.returncode == 0, result.stdout + result.stderr
         assert "SDK_RESTART_ACCEPTED" in result.stdout
         after = managed.ready(before)
+        if sys.platform == "linux":
+            assert os.readlink(f"/proc/{after.service_pid}/ns/net") == os.readlink("/proc/self/ns/net")
+            assert "NoNewPrivs:\t1" in Path(f"/proc/{after.service_pid}/status").read_text()
         assert after.get("/vms/list", token=before.token)[0] == 401
         assert after.get("/vms/list") == (200, inventory)
         assert json.loads((service.tmp_dir / "persistent_registry.json").read_text()) == registry
@@ -60,3 +65,16 @@ def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -
         assert reconnect.returncode == 0, reconnect.stdout + reconnect.stderr
         assert "BRAAVOS_SDK_ACCEPTANCE_OK" in reconnect.stdout
         print(f"{language}: acknowledgement delivered; service and gateway PIDs changed; token rotated; stopped VM unchanged")
+
+
+@pytest.mark.integration
+def test_supervisor_worker_refuses_a_forged_native_uid() -> None:
+    result = subprocess.run([
+        sys.executable, "-m", "tests.helpers.run_native_restart", "--inside",
+        "--uid", str(os.getuid() + 1), "--gid", str(os.getgid()), "--",
+        sys.executable, "-c", "print('UNEXPECTED_KERNEL_COMMAND')",
+    ], cwd=ROOT, capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode != 0
+    assert "AssertionError: native supervisor UID/GID changed" in result.stderr
+    assert "SDK_SUPERVISOR_KERNEL_PROOF_OK" not in result.stdout
+    assert "UNEXPECTED_KERNEL_COMMAND" not in result.stdout

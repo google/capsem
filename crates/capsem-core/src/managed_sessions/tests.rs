@@ -5,7 +5,7 @@ fn recovery_inventory_is_canonical_and_refuses_unknown_or_linked_records() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("ownership");
     let store = Registry::open(&path).unwrap();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([51; 32]);
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
@@ -33,21 +33,21 @@ fn prepared_spawn_identity_survives_restart_without_claiming_a_live_vm() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("ownership");
     let store = Registry::open(&path).unwrap();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([30; 32]);
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
     };
     initialize_test_lease(&store, &ticket);
     store.begin_create(&ticket, test_lease_clock()).unwrap();
-    let intent = VmBinding::new("chosen-before-spawn".into(), Uuid::new_v4()).unwrap();
+    let intent = VmBinding::new("chosen-before-spawn".into(), capsem_crypto::uuid_v4()).unwrap();
     let prepared = store
         .prepare_spawn(&ticket, intent.clone(), test_lease_clock())
         .unwrap();
     assert_eq!(prepared.state(), State::Creating);
     assert!(prepared.vm().is_none());
     assert_eq!(prepared.spawn_intent(), Some(&intent));
-    let other = VmBinding::new(intent.id().into(), Uuid::new_v4()).unwrap();
+    let other = VmBinding::new(intent.id().into(), capsem_crypto::uuid_v4()).unwrap();
     assert!(store.prepare_spawn(&ticket, other.clone(), test_lease_clock()).is_err());
     assert!(store.bind_created(&ticket, other, test_lease_clock()).is_err());
     drop(store);
@@ -67,7 +67,7 @@ fn close_and_expiry_refuse_unprepared_vm_side_effects() {
     let cap = Capability::from_bytes([31; 32]);
     let now = Instant::now();
     for closing in [false, true] {
-        let request = Uuid::new_v4();
+        let request = capsem_crypto::uuid_v4();
         let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
             panic!()
         };
@@ -88,7 +88,7 @@ fn close_and_expiry_refuse_unprepared_vm_side_effects() {
         assert!(store
             .prepare_spawn(
                 &ticket,
-                VmBinding::new("never-spawn".into(), Uuid::new_v4()).unwrap(),
+                VmBinding::new("never-spawn".into(), capsem_crypto::uuid_v4()).unwrap(),
                 clock
             )
             .is_err());
@@ -116,7 +116,7 @@ fn initialize_test_lease(store: &Registry, ticket: &Ticket) {
 fn reservation_is_durable_hash_only_and_never_replays_creation() {
     let root = tempfile::tempdir().unwrap();
     let store = Registry::open(&root.path().join("ownership")).unwrap();
-    let request = uuid::Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let capability = Capability::from_bytes(*b"high-entropy-test-capability-123");
     assert!(!format!("{capability:?}").contains("high-entropy"));
     let first = store.reserve(request, &capability).unwrap();
@@ -152,7 +152,7 @@ fn reservation_is_durable_hash_only_and_never_replays_creation() {
 fn contained_ownership_record_refuses_links_corruption_and_nil_request() {
     let root = tempfile::tempdir().unwrap();
     let store = Registry::open(&root.path().join("ownership")).unwrap();
-    let request = uuid::Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let capability = Capability::from_bytes([7; 32]);
     store.reserve(request, &capability).unwrap();
     let path = root.path().join("ownership").join(format!("{request}.json"));
@@ -175,7 +175,7 @@ fn close_before_create_is_a_durable_tombstone() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("ownership");
     let store = Registry::open(&path).unwrap();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([3; 32]);
     let closed = store.close(request, &cap).unwrap();
     assert_eq!(closed.state(), State::Closed);
@@ -192,7 +192,7 @@ fn close_before_create_is_a_durable_tombstone() {
 fn close_racing_create_requires_matching_vm_cleanup() {
     let root = tempfile::tempdir().unwrap();
     let store = Registry::open(&root.path().join("ownership")).unwrap();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([5; 32]);
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
@@ -200,7 +200,7 @@ fn close_racing_create_requires_matching_vm_cleanup() {
     initialize_test_lease(&store, &ticket);
     assert!(store.begin_create(&ticket, test_lease_clock()).unwrap());
     assert!(!store.begin_create(&ticket, test_lease_clock()).unwrap());
-    let binding = VmBinding::new("vm-123".into(), Uuid::new_v4()).unwrap();
+    let binding = VmBinding::new("vm-123".into(), capsem_crypto::uuid_v4()).unwrap();
     store
         .prepare_spawn(&ticket, binding.clone(), test_lease_clock())
         .unwrap();
@@ -210,7 +210,7 @@ fn close_racing_create_requires_matching_vm_cleanup() {
         .unwrap();
     assert_eq!(late.state(), State::Closing);
     assert_eq!(late.vm(), Some(&binding));
-    let wrong = VmBinding::new("vm-123".into(), Uuid::new_v4()).unwrap();
+    let wrong = VmBinding::new("vm-123".into(), capsem_crypto::uuid_v4()).unwrap();
     assert!(store.complete_cleanup(&ticket, &wrong).is_err());
     assert_eq!(store.close(request, &cap).unwrap().state(), State::Closing);
     let closed = store.complete_cleanup(&ticket, &binding).unwrap();
@@ -227,7 +227,7 @@ fn close_racing_create_requires_matching_vm_cleanup() {
 fn create_and_close_transitions_refuse_stale_tickets_and_vm_rebinding() {
     let root = tempfile::tempdir().unwrap();
     let store = Registry::open(&root.path().join("ownership")).unwrap();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([6; 32]);
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
@@ -235,11 +235,11 @@ fn create_and_close_transitions_refuse_stale_tickets_and_vm_rebinding() {
     initialize_test_lease(&store, &ticket);
     let stale = Ticket {
         request,
-        generation: Uuid::new_v4(),
+        generation: capsem_crypto::uuid_v4(),
     };
     assert!(store.begin_create(&stale, test_lease_clock()).is_err());
     assert!(store.begin_create(&ticket, test_lease_clock()).unwrap());
-    let binding = VmBinding::new("vm-456".into(), Uuid::new_v4()).unwrap();
+    let binding = VmBinding::new("vm-456".into(), capsem_crypto::uuid_v4()).unwrap();
     store
         .prepare_spawn(&ticket, binding.clone(), test_lease_clock())
         .unwrap();
@@ -254,7 +254,7 @@ fn create_and_close_transitions_refuse_stale_tickets_and_vm_rebinding() {
     assert!(store
         .bind_created(
             &ticket,
-            VmBinding::new("other".into(), Uuid::new_v4()).unwrap(),
+            VmBinding::new("other".into(), capsem_crypto::uuid_v4()).unwrap(),
             test_lease_clock()
         )
         .is_err());
@@ -269,7 +269,7 @@ fn create_and_close_transitions_refuse_stale_tickets_and_vm_rebinding() {
     assert!(store.complete_cleanup(&stale, &binding).is_err());
     store.complete_cleanup(&ticket, &binding).unwrap();
     assert!(!store.begin_create(&ticket, test_lease_clock()).unwrap());
-    assert!(VmBinding::new("".into(), Uuid::new_v4()).is_err());
+    assert!(VmBinding::new("".into(), capsem_crypto::uuid_v4()).is_err());
     assert!(VmBinding::new("valid".into(), Uuid::nil()).is_err());
 }
 
@@ -279,7 +279,7 @@ fn restart_never_replays_unfinished_create_and_keeps_unknown_outcome() {
     let path = root.path().join("ownership");
     let store = Registry::open(&path).unwrap();
     let cap = Capability::from_bytes([8; 32]);
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
     };
@@ -296,7 +296,7 @@ fn restart_never_replays_unfinished_create_and_keeps_unknown_outcome() {
         restarted.inspect(request, &cap).unwrap().unwrap().state(),
         State::Unknown
     );
-    let binding = VmBinding::new("orphan".into(), Uuid::new_v4()).unwrap();
+    let binding = VmBinding::new("orphan".into(), capsem_crypto::uuid_v4()).unwrap();
     assert!(restarted
         .bind_created(&recovered, binding.clone(), test_lease_clock())
         .is_err());
@@ -318,7 +318,7 @@ fn recovery_of_reserved_and_active_records_is_conservative_and_durable() {
     let path = root.path().join("ownership");
     let store = Registry::open(&path).unwrap();
     let cap = Capability::from_bytes([10; 32]);
-    let reserved = Uuid::new_v4();
+    let reserved = capsem_crypto::uuid_v4();
     let Reservation::New(ticket) = store.reserve(reserved, &cap).unwrap() else {
         panic!()
     };
@@ -327,13 +327,13 @@ fn recovery_of_reserved_and_active_records_is_conservative_and_durable() {
     assert!(!store.begin_create(&ticket, test_lease_clock()).unwrap());
     store.close(reserved, &cap).unwrap();
     store.confirm_absent(&recovered).unwrap();
-    let active = Uuid::new_v4();
+    let active = capsem_crypto::uuid_v4();
     let Reservation::New(active_ticket) = store.reserve(active, &cap).unwrap() else {
         panic!()
     };
     initialize_test_lease(&store, &active_ticket);
     store.begin_create(&active_ticket, test_lease_clock()).unwrap();
-    let binding = VmBinding::new("live".into(), Uuid::new_v4()).unwrap();
+    let binding = VmBinding::new("live".into(), capsem_crypto::uuid_v4()).unwrap();
     store
         .prepare_spawn(&active_ticket, binding.clone(), test_lease_clock())
         .unwrap();
@@ -348,7 +348,7 @@ fn recovery_of_reserved_and_active_records_is_conservative_and_durable() {
     assert!(restarted
         .reconcile_vm(
             &recovered_active,
-            VmBinding::new("live".into(), Uuid::new_v4()).unwrap()
+            VmBinding::new("live".into(), capsem_crypto::uuid_v4()).unwrap()
         )
         .is_err());
     assert!(restarted.confirm_absent(&recovered_active).is_err());
@@ -356,7 +356,7 @@ fn recovery_of_reserved_and_active_records_is_conservative_and_durable() {
     restarted.complete_cleanup(&recovered_active, &binding).unwrap();
     let (_, terminal) = restarted.recover_interrupted(active).unwrap().unwrap();
     assert_eq!(terminal.state(), State::Closed);
-    assert!(restarted.inspect(Uuid::new_v4(), &cap).unwrap().is_none());
+    assert!(restarted.inspect(capsem_crypto::uuid_v4(), &cap).unwrap().is_none());
     let original = restarted.inspect(reserved, &cap).unwrap().unwrap();
     assert_eq!(original.state(), State::Closed);
     assert_eq!(original.generation(), ticket.generation());
@@ -368,7 +368,7 @@ fn managed_lease_renewal_is_bounded_and_cannot_resurrect_expired_ownership() {
     let root = tempfile::tempdir().unwrap();
     let store = Registry::open(&root.path().join("ownership")).unwrap();
     let cap = Capability::from_bytes([11; 32]);
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
     };
@@ -379,7 +379,7 @@ fn managed_lease_renewal_is_bounded_and_cannot_resurrect_expired_ownership() {
     assert_eq!(leased.expires_wall_ms(), Some(11000));
     assert!(store.start_lease(&ticket, policy, clock).is_err());
     store.begin_create(&ticket, clock).unwrap();
-    let binding = VmBinding::new("leased".into(), Uuid::new_v4()).unwrap();
+    let binding = VmBinding::new("leased".into(), capsem_crypto::uuid_v4()).unwrap();
     store.prepare_spawn(&ticket, binding.clone(), clock).unwrap();
     store.bind_created(&ticket, binding.clone(), clock).unwrap();
     let renewed = store
@@ -425,7 +425,7 @@ fn restart_and_wall_rollback_cannot_extend_a_managed_lease() {
     let now = Instant::now();
     let mut requests = Vec::new();
     for id in ["rollback", "restarted", "monotonic"] {
-        let request = Uuid::new_v4();
+        let request = capsem_crypto::uuid_v4();
         let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
             panic!()
         };
@@ -437,7 +437,7 @@ fn restart_and_wall_rollback_cannot_extend_a_managed_lease() {
             )
             .unwrap();
         store.begin_create(&ticket, LeaseClock::new(10000, now)).unwrap();
-        let binding = VmBinding::new(id.into(), Uuid::new_v4()).unwrap();
+        let binding = VmBinding::new(id.into(), capsem_crypto::uuid_v4()).unwrap();
         store
             .prepare_spawn(&ticket, binding.clone(), LeaseClock::new(10000, now))
             .unwrap();
@@ -486,14 +486,14 @@ fn expired_reservation_cannot_admit_a_create_side_effect() {
     use std::time::{Duration, Instant};
     let root = tempfile::tempdir().unwrap();
     let store = Registry::open(&root.path().join("ownership")).unwrap();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([14; 32]);
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
     };
     let earlier = Instant::now()
         .checked_sub(Duration::from_secs(2))
-        .expect("earlier test instant");
+        .expect("the monotonic clock has at least two seconds of history");
     store
         .start_lease(
             &ticket,
@@ -513,7 +513,7 @@ fn late_create_result_after_lease_expiry_is_bound_only_for_cleanup() {
     use std::time::{Duration, Instant};
     let root = tempfile::tempdir().unwrap();
     let store = Registry::open(&root.path().join("ownership")).unwrap();
-    let request = Uuid::new_v4();
+    let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([15; 32]);
     let Reservation::New(ticket) = store.reserve(request, &cap).unwrap() else {
         panic!()
@@ -531,7 +531,7 @@ fn late_create_result_after_lease_expiry_is_bound_only_for_cleanup() {
         )
         .unwrap();
     assert!(store.begin_create(&ticket, LeaseClock::new(1000, now)).unwrap());
-    let binding = VmBinding::new("late-leased".into(), Uuid::new_v4()).unwrap();
+    let binding = VmBinding::new("late-leased".into(), capsem_crypto::uuid_v4()).unwrap();
     store
         .prepare_spawn(&ticket, binding.clone(), LeaseClock::new(1000, now))
         .unwrap();

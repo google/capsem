@@ -709,7 +709,7 @@ async fn completing_mcp_logging_then_shutting_down_preserves_rule_rows() {
     let response = ok_response(json!({"content":[{"type":"text","text":"pong"}]}));
     let logged = log_mcp_call_with_policy(
         Arc::clone(&db),
-        &endpoint.security_rules,
+        &endpoint,
         &req,
         &response,
         McpCaller::frame("codex"),

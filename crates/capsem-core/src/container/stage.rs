@@ -30,6 +30,7 @@ pub struct ImageBlobs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RootfsFile<'a> {
     pub digest: &'a str,
+    pub integrity: &'a str,
     pub size: u64,
 }
 
@@ -125,13 +126,15 @@ pub fn stage_plan<'a>(
     });
     if let Some(rootfs) = image.rootfs {
         digest_hex(rootfs.digest)?;
+        capsem_crypto::verify::blake3_digest(rootfs.integrity)?;
         // The published-root wire contract has the image puller's 4 GiB
         // ceiling; the guest enforces it independently before mounting.
         anyhow::ensure!(
             0 < rootfs.size && rootfs.size <= 4 * 1024u64.pow(3),
             "invalid published rootfs size"
         );
-        options["rootfs"] = serde_json::json!({"digest": rootfs.digest, "size": rootfs.size});
+        options["rootfs"] =
+            serde_json::json!({"digest": rootfs.digest, "integrity": rootfs.integrity, "size": rootfs.size});
     }
     Ok(vec![
         StagedFile {

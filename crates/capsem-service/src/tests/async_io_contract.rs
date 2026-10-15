@@ -59,6 +59,8 @@ const BLOCKING_HELPERS: &[&str] = &[
     "archive_failed_restore_checkpoint(",
     "clear_resume_checkpoint(",
     "preserve_failed_session_dir(",
+    "persist_spawn_identity(",
+    "persist_native_exit(",
 ];
 
 /// Startup runs before the service accepts a request; a stall there delays

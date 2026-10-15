@@ -151,6 +151,7 @@ pub(crate) async fn run_protocol_delta(args: ProtocolDeltaArgs) -> Result<Protoc
         scenarios: Some(selected_names.clone()),
         lane: "host_direct".to_string(),
         json_out: temp_artifact_path("host"),
+        collector_out: None,
         // The delta lane compares two artifacts; recording is the caller's
         // decision, made once for the pair rather than twice inside it.
         #[cfg(feature = "host")]
@@ -478,7 +479,6 @@ pub(crate) fn summarize(
         transfer_bytes,
         bytes_per_sec: round1(transfer_bytes as f64 / duration_s),
         latency_ms: latency_summary(samples.iter().map(|sample| sample.latency_ms).collect()),
-        #[cfg(feature = "host")]
         latency_samples: samples.iter().map(|sample| sample.latency_ms).collect(),
         errors,
         secret_shaped_fixture_seen: secret_seen,
@@ -511,6 +511,9 @@ pub(crate) fn build_delta_report(
     host: &Artifact,
     guest: &Artifact,
 ) -> Result<DeltaReport> {
+    if host.mock_server_protocol.lane != "host_direct" || guest.mock_server_protocol.lane != "guest_capsem" {
+        bail!("protocol comparison requires explicit host_direct and guest_capsem lanes");
+    }
     validate_successful_scenarios(&host.mock_server_protocol.scenarios, &host.mock_server_protocol.lane)?;
     validate_successful_scenarios(&guest.mock_server_protocol.scenarios, &guest.mock_server_protocol.lane)?;
     let host_rows = rows_by_name(&host.mock_server_protocol.scenarios);
@@ -577,6 +580,8 @@ pub(crate) fn guest_protocol_command(
     let mut parts = vec![
         "capsem-bench-rs".to_string(),
         "protocol".to_string(),
+        "--lane".to_string(),
+        "guest_capsem".to_string(),
         "--base-url".to_string(),
         shell_quote(base_url),
         "--requests".to_string(),

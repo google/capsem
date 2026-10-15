@@ -5,6 +5,17 @@ pub mod builtin_ledger;
 pub use crate::mcp::{McpAuthConfig, McpAuthKind};
 use serde::{Deserialize, Serialize};
 
+/// The `source` of the one server definition that is Capsem's own builtin.
+///
+/// It is the only server whose tool results may carry ledger records (see
+/// `capsem_proto::mcp_contracts::builtin_ledger`), so it is identified by this
+/// field, which only `local_builtin_server_def` sets, and never by a name a
+/// configured server could also choose.
+pub const BUILTIN_SERVER_SOURCE: &str = "builtin";
+
+/// The name the builtin server's tools are namespaced under (`local__echo`).
+pub const BUILTIN_SERVER_NAME: &str = "local";
+
 /// Namespace separator for MCP tool/prompt/resource names.
 pub const NS_SEP: &str = "__";
 

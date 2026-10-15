@@ -30,8 +30,9 @@ def type_name(schema: Schema) -> str:
         return "capsem_api::" + schema.ref.rsplit("/", 1)[1]
     if schema.type == "array" and schema.items:
         return f"Vec<{type_name(schema.items)}>"
-    if schema.type == "integer" and schema.minimum in (None, 0):
-        return ("u" if schema.minimum == 0 else "i") + ("32" if schema.format == "int32" else "64")
+    if schema.type == "integer":
+        unsigned = schema.minimum is not None and schema.minimum >= 0
+        return ("u" if unsigned else "i") + ("32" if schema.format == "int32" else "64")
     if schema.type == "string" and not schema.enum:
         return "Vec<u8>" if schema.format == "binary" else "String"
     if schema.type == "boolean":

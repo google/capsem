@@ -71,6 +71,7 @@ class Watch:
         declared: Mapping[str, frozenset[str]] | None = None,
         on_fault: Callable[[Fault], None] | None = None,
         duplicate_content_exempt: Iterable[str] = (),
+        duplicate_content_mirrors: Iterable[tuple[str, ...]] = (),
         source_replica_roots: Iterable[str] = (),
         observer_timeout: float = 5.0,
         survey_interval: float = 1.0,
@@ -83,6 +84,7 @@ class Watch:
         self._declared = dict(declared or {})
         self._on_fault = on_fault
         self._duplicate_exempt = tuple(duplicate_content_exempt)
+        self._duplicate_mirrors = tuple(tuple(group) for group in duplicate_content_mirrors)
         self._source_replicas = tuple(source_replica_roots)
         self.faults: list[Fault] = []
         self.events: list[Event] = []
@@ -95,7 +97,8 @@ class Watch:
         self._observer: BaseObserver | None = None
         self._metadata_survey: MetadataSurvey | None = None
         self._modes: dict[Path, list[int]] = {}
-        self._digests: dict[str, Path] = {}
+        self._digests: dict[str, set[Path]] = {}
+        self._path_digests: dict[Path, str] = {}
         self._reported: set[tuple[Path, str]] = set()
         self._refusal: str | None = None
         self._source_stamps: dict[Path, tuple[int, ...]] = {}

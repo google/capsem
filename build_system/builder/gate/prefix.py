@@ -27,10 +27,10 @@ Two things are easy to get wrong here and both are expensive:
 from __future__ import annotations
 
 import os
-import secrets
 import shutil
 from pathlib import Path
 
+from .. import crypto as secrets
 from . import buildcache, cachelayout, cachetooling, cargotarget, runtransfer, snapshot
 from .config import GateConfig
 from .errors import GateError, PrefixBusy

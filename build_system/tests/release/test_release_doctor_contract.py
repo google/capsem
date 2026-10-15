@@ -17,6 +17,7 @@ from typing import ClassVar
 
 import pytest
 import yaml
+from capsem_builder import crypto
 from capsem_builder.gate.shellnodes import arm_named
 from capsem_builder.gate.shellparse import parse as parse_shell
 from capsem_builder.gate.tools.audit import release_selections
@@ -997,8 +998,7 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     for text in (docs, release_skill, asset_skill):
         assert "release-channel-staging.yaml" in text
         assert (
-            "without invoking `build-assets`" in text
-            or "without invoking VM asset builds" in text
+            "without invoking `build-assets`" in text or "without invoking VM asset builds" in text
         )
 
 
@@ -1315,8 +1315,8 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
         "uv run --project build_system --frozen python build_system/release_site/scripts/check-release-site-contract.py"
         in workflow
     )
-    assert "import hashlib" in script
-    assert "import blake3" in script
+    assert "from ... import crypto as hashlib" in script
+    assert "hashlib.blake3()" in script
     assert "def fetch_and_verify_evidence_artifact" in script
     assert 'site, sbom, "sha256", "host SBOM evidence", "spdx"' in script
     assert 'site, obom, "blake3", "VM OBOM evidence", "rootfs_cyclonedx"' in script
@@ -1477,7 +1477,7 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     cli_status = _source_text("crates/capsem/src/tests.rs")
     service = _source_text("crates/capsem-service/src/tests/update_routes.rs")
     tray = _source_text("crates/capsem-tray/src/menu/tests.rs")
-    tui = _source_text("crates/capsem-tui/src/tests.rs")
+    tui = _source_text("crates/capsem-tui/src/tests/updates.rs")
     frontend_api = _source_text("web/app/src/lib/__tests__/api.test.ts")
 
     assert "Run `capsem update --assets` separately to refresh VM assets." not in cli
@@ -2016,7 +2016,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'test -d "/Applications/Capsem.app"' in macos
     assert 'test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"' in macos
     assert (
-        "for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
+        "for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-ledger capsem-proxy capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in macos
     )
     assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in macos
@@ -2043,7 +2043,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
         "install-manifest-request.sh write"
     )
     assert (
-        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
+        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-ledger capsem-proxy capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in linux
     )
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$VERSION\"" in linux
@@ -2228,7 +2228,7 @@ def _install_release_graph_contract_fixture(
     def digest(data: bytes) -> dict[str, str]:
         return {
             "sha256": hashlib.sha256(data).hexdigest(),
-            "blake3": checker.blake3.blake3(data).hexdigest(),
+            "blake3": crypto.blake3(data).hexdigest(),
         }
 
     artifacts = {
@@ -3685,7 +3685,7 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ]
@@ -3696,7 +3696,7 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ],
@@ -3753,7 +3753,8 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
     assert '"sha256", "host SBOM evidence", "spdx"' in script
     assert '"blake3", "VM OBOM evidence", "rootfs_cyclonedx"' in script
     assert "hashlib.sha256" in script
-    assert "blake3.blake3" in script
+    assert "from ... import crypto as hashlib" in script
+    assert "hashlib.blake3(artifact.data).hexdigest()" in script
     assert "attestation subject {subject} missing from published file lists" in script
     assert "attestation_predicate_evidence_urls" in script
     assert "attestation predicate_url {predicate_url} missing from {predicate_label}" in script
@@ -3820,7 +3821,7 @@ def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> No
         "arch": "arm64",
         "logical_name": "rootfs.erofs",
         "url": rootfs_url,
-        "hash": module.blake3.blake3(rootfs_bytes).hexdigest(),
+        "hash": crypto.blake3(rootfs_bytes).hexdigest(),
         "size": len(rootfs_bytes),
     }
 
@@ -3870,7 +3871,7 @@ def test_remote_release_readiness_rejects_evidence_content_drift() -> None:
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(bad_obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(bad_obom_bytes).hexdigest(),
                     "size": len(bad_obom_bytes),
                 }
             ]
@@ -3881,7 +3882,7 @@ def test_remote_release_readiness_rejects_evidence_content_drift() -> None:
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(bad_obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(bad_obom_bytes).hexdigest(),
                     "size": len(bad_obom_bytes),
                 }
             ],
@@ -3995,7 +3996,7 @@ def test_remote_readiness_allows_first_channel_bootstrap_without_host_evidence()
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ]
@@ -4006,7 +4007,7 @@ def test_remote_readiness_allows_first_channel_bootstrap_without_host_evidence()
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ],
@@ -4073,7 +4074,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ]
@@ -4084,7 +4085,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ],
@@ -4172,7 +4173,7 @@ def test_remote_readiness_rejects_attestation_rail_drift() -> None:
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ]
@@ -4183,7 +4184,7 @@ def test_remote_readiness_rejects_attestation_rail_drift() -> None:
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ],
@@ -4819,6 +4820,8 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         "capsem",
         "capsem-service",
         "capsem-process",
+        "capsem-ledger",
+        "capsem-proxy",
         "capsem-tui",
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
@@ -4832,6 +4835,8 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         "capsem-gateway",
         "capsem-tray",
         "capsem-process",
+        "capsem-ledger",
+        "capsem-proxy",
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
     ]
@@ -4979,6 +4984,7 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
     forbidden = [
         "UdsClient",
         "client::UdsClient",
+        "GatewayClient",
         "service_json",
         "/corp/info",
         "/vms/list",
@@ -4991,7 +4997,7 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
         assert needle not in body, f"`capsem stop` must not touch {needle}"
 
     client_creation = re.search(
-        r"^\s*let client = (?:client::)?UdsClient::[a-z_][a-z0-9_]*\(",
+        r"^\s*let client = (?:client::)?GatewayClient::[a-z_][a-z0-9_]*\(",
         source,
         re.MULTILINE,
     )
@@ -5775,7 +5781,7 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
 
     asset_pos = block.find("bash build_system/scripts/test/prepare-install-test-assets.sh")
     build_pos = block.find(
-        "cargo build -p capsem-process -p capsem-service -p capsem "
+        "cargo build -p capsem-process -p capsem-ledger -p capsem-proxy -p capsem-service -p capsem "
         "-p capsem-mock-server -p capsem-bench"
     )
     bench_package_pos = block.find("-p capsem-bench")
@@ -6344,16 +6350,18 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
 
 
 def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
-    """A running fork is cloned by its own process with the guest frozen.
+    """A running fork is coordinator-cloned while its owner holds the freeze.
 
     The fork used to run `sync; true` in the guest and copy the live ext4
-    overlay, which a slow sparse copy could tear. The freeze and the thaw must
-    live in one process, so no other process's failure can leave a guest
-    frozen, and the service must not fall back to an unfrozen copy.
+    overlay, which a slow sparse copy could tear. The VM owner holds the freeze
+    while the trusted coordinator owns host paths and asks the ledger owner for
+    a flushed snapshot. No component can substitute an unfrozen copy or regain
+    another owner's path.
     """
     service = PROJECT_ROOT / "crates" / "capsem-service" / "src"
     parent = (service / "vm_files.rs").read_text()
     fork = (service / "vm_files" / "fork.rs").read_text()
+    ledger = (PROJECT_ROOT / "crates" / "capsem-logger" / "src" / "ledger_server.rs").read_text()
     owner = (
         PROJECT_ROOT / "crates" / "capsem-process" / "src" / "vsock" / "clone_state.rs"
     ).read_text()
@@ -6362,13 +6370,18 @@ def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
     assert "ServiceToProcess::CloneState {" in fork
     assert "sync; true" not in fork
     assert "with_quiescence(" in owner
-    # The clone runs under the freeze, after the ledger flush (#243): a fork
-    # copies every row the source accepted, and a failed flush fails the fork.
-    assert "flush_then_clone(" in owner.split("with_quiescence(", 1)[1]
-    flush_then_clone = owner.split("async fn flush_then_clone(", 1)[1].split("\n}\n", 1)[0]
-    assert flush_then_clone.index("flush_checked()") < flush_then_clone.index(
-        "clone_sandbox_state("
-    )
+    assert "await_coordinator_copy(" in owner.split("with_quiescence(", 1)[1]
+    running = fork.split("async fn clone_guest_state(", 1)[1].split(
+        "async fn receive_clone_message(", 1
+    )[0]
+    coordinator_copy = "let copied = clone_coordinator_state("
+    assert running.index("ClonePhase::Ready") < running.index(coordinator_copy)
+    assert running.index(coordinator_copy) < running.index("ServiceToProcess::CloneStateComplete")
+    assert "client.snapshot(" in fork
+    snapshot = ledger.split("LedgerCommand::Snapshot {", 1)[1].split("LedgerCommand::Shutdown", 1)[
+        0
+    ]
+    assert snapshot.index("self.db.flush().await") < snapshot.index("snapshot_session_ledger(")
 
 
 def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:

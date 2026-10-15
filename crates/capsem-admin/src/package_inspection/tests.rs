@@ -24,7 +24,10 @@ fn binary_files_from_deb_records_contained_executable_inventory() {
     assert_eq!(binary.installed_path, "/usr/bin/capsem-app");
     assert_eq!(binary.size, executable.len() as u64);
     assert_eq!(binary.sha256, format!("{:x}", Sha256::digest(executable)));
-    assert_eq!(binary.blake3, blake3::hash(executable).to_hex().to_string());
+    assert_eq!(
+        binary.blake3,
+        capsem_crypto::blake3::hash(executable).to_hex().to_string()
+    );
     assert_eq!(binary.sbom_component_ref, "SPDXRef-File-capsem-app");
 }
 

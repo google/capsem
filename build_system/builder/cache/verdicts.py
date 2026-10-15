@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import secrets
 import time
 from pathlib import Path
 from typing import Annotated, Literal
 
-import blake3
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -18,6 +16,8 @@ from pydantic import (
     ValidationError,
 )
 
+from .. import crypto as blake3
+from .. import crypto as secrets
 from .paths import CachePaths
 
 SCHEMA = "capsem.clean-verdict.v1"

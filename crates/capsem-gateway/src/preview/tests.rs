@@ -9,6 +9,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tower::ServiceExt;
 
 #[test]
+fn preview_vm_ids_follow_the_service_and_stream_identifier_rule() {
+    for valid in ["a", "9lives", "my-vm", "project_alpha", &"a".repeat(64)] {
+        assert!(safe_id(valid), "valid VM ID {valid:?} was refused");
+    }
+    for invalid in ["", "-vm", "_vm", "my/vm", "my.vm", "vm\0id", "naïve", &"a".repeat(65)] {
+        assert!(!safe_id(invalid), "invalid VM ID {invalid:?} was admitted");
+    }
+    assert!(safe_dns_label("preview-1"));
+    for invalid in ["_preview", "-preview", "preview-", "project_alpha", &"a".repeat(64)] {
+        assert!(
+            !safe_dns_label(invalid),
+            "invalid exposure label {invalid:?} was admitted"
+        );
+    }
+}
+
+#[test]
 fn preview_origin_requires_one_safe_localhost_label() {
     let parsed = parse_head(
         b"GET /assets/app.js HTTP/1.1\r\nHost: 0199df26-d0f2-74f2-a304-ef67b79d1217.localhost:19444\r\nCookie: app=x; capsem_preview=session-secret\r\n\r\n",

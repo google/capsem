@@ -482,9 +482,9 @@ fn hash_verification_succeeds_with_correct_blake3() {
     std::fs::write(&initrd, b"test initrd data").unwrap();
     std::fs::write(&rootfs, b"test rootfs data").unwrap();
 
-    let kh = blake3::hash(b"test kernel data").to_hex().to_string();
-    let ih = blake3::hash(b"test initrd data").to_hex().to_string();
-    let rh = blake3::hash(b"test rootfs data").to_hex().to_string();
+    let kh = capsem_crypto::blake3::hash(b"test kernel data").to_hex().to_string();
+    let ih = capsem_crypto::blake3::hash(b"test initrd data").to_hex().to_string();
+    let rh = capsem_crypto::blake3::hash(b"test rootfs data").to_hex().to_string();
 
     let config = VmConfig::builder()
         .kernel_path(&kernel)
@@ -506,7 +506,7 @@ fn algorithm_tagged_pins_verify_against_the_same_digest_as_bare_hex() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
     std::fs::write(&kernel, b"test kernel data").unwrap();
-    let hex = blake3::hash(b"test kernel data").to_hex().to_string();
+    let hex = capsem_crypto::blake3::hash(b"test kernel data").to_hex().to_string();
 
     VmConfig::verify_hash(&kernel, &hex).unwrap();
     VmConfig::verify_hash(&kernel, &format!("blake3:{hex}")).unwrap();
@@ -517,7 +517,7 @@ fn a_tagged_pin_still_rejects_the_wrong_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
     std::fs::write(&kernel, b"test kernel data").unwrap();
-    let wrong = blake3::hash(b"other kernel data").to_hex().to_string();
+    let wrong = capsem_crypto::blake3::hash(b"other kernel data").to_hex().to_string();
 
     let result = VmConfig::verify_hash(&kernel, &format!("blake3:{wrong}"));
     assert!(
@@ -548,7 +548,7 @@ fn hash_verification_cache_is_metadata_and_hash_bound() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
     std::fs::write(&kernel, b"test kernel data").unwrap();
-    let hash = blake3::hash(b"test kernel data").to_hex().to_string();
+    let hash = capsem_crypto::blake3::hash(b"test kernel data").to_hex().to_string();
 
     VmConfig::verify_hash(&kernel, &hash).unwrap();
     let cache = VmConfig::hash_cache_path(&kernel);
@@ -569,7 +569,7 @@ fn hash_verification_fails_on_corrupted_kernel() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
     std::fs::write(&kernel, b"corrupted kernel").unwrap();
-    let wrong_hash = blake3::hash(b"correct kernel").to_hex().to_string();
+    let wrong_hash = capsem_crypto::blake3::hash(b"correct kernel").to_hex().to_string();
 
     let result = VmConfig::builder()
         .kernel_path(&kernel)

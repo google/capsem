@@ -254,6 +254,8 @@ def test_lifecycle_benchmark():
     for op in ("provision_ms", "exec_ready_ms", "exec_ms", "delete_ms"):
         summary["operations"][op] = _summary([r[op] for r in runs])
 
+    startup_values = [r["provision_ms"] + r["exec_ready_ms"] for r in runs]
+    summary["operations"]["startup_ms"] = _summary([round(v, 1) for v in startup_values])
     total_values = [
         r["provision_ms"] + r["exec_ready_ms"] + r["exec_ms"] + r["delete_ms"] for r in runs
     ]
@@ -272,6 +274,7 @@ def test_lifecycle_benchmark():
     for op, label in [
         ("provision_ms", "provision"),
         ("exec_ready_ms", "exec_ready"),
+        ("startup_ms", "STARTUP"),
         ("exec_ms", "exec"),
         ("delete_ms", "delete"),
         ("total_ms", "TOTAL"),
@@ -290,7 +293,7 @@ def test_lifecycle_benchmark():
         return
     for metric in (
         BenchmarkMetric.LIFECYCLE_PROVISION,
-        BenchmarkMetric.LIFECYCLE_READY,
+        BenchmarkMetric.LIFECYCLE_STARTUP,
         BenchmarkMetric.LIFECYCLE_EXEC,
         BenchmarkMetric.LIFECYCLE_DELETE,
     ):

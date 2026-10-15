@@ -39,7 +39,7 @@ fn verify_image(path: &Path, digest: &str, label: &str) -> Result<()> {
         bail!("{label} BLAKE3 is malformed");
     }
     let mut input = std::fs::File::open(path).with_context(|| format!("open {label} {}", path.display()))?;
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = capsem_crypto::blake3::Hasher::new();
     let mut buffer = vec![0_u8; 64 * 1024];
     loop {
         let read = input
@@ -106,6 +106,7 @@ fn run() -> Result<()> {
         tag: "capsem".to_string(),
         host_path: guest_dir,
         read_only: false,
+        metadata_authority: None,
     }];
 
     let result = (|| -> Result<()> {

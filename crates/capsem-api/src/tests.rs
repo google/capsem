@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn provision_response_constructor_preserves_the_supplied_lifecycle_and_actions() {
+    let response = ProvisionResponse::new(
+        "vm-id".into(),
+        "named".into(),
+        VmLifecycleState::Suspended,
+        true,
+        true,
+        vec![VmAction::Delete],
+    );
+    assert_eq!(
+        serde_json::to_value(response).unwrap(),
+        serde_json::json!({
+            "id": "vm-id", "name": "named", "status": "Suspended",
+            "persistent": true, "can_resume": true, "available_actions": ["delete"],
+        })
+    );
+}
+
+#[test]
 fn restart_contract_acknowledges_202_and_requires_fresh_authentication() {
     let doc = serde_json::to_value(openapi()).unwrap();
     let operation = &doc["paths"]["/restart"]["post"];
@@ -232,6 +251,20 @@ fn openapi_describes_binary_copy_and_required_vm_identity() {
 }
 
 #[test]
+fn openapi_describes_standalone_proxy_leases() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let paths = &document["paths"];
+
+    assert_eq!(paths["/proxies"]["post"]["operationId"], "createProxy");
+    assert_eq!(
+        paths["/proxies/{id}/heartbeat"]["post"]["operationId"],
+        "heartbeatProxy"
+    );
+    assert_eq!(paths["/proxies/{id}/stop"]["post"]["operationId"], "stopProxy");
+    assert_eq!(crate::CONTRACT_VERSION, "3.3.0");
+}
+
+#[test]
 fn openapi_exec_output_is_byte_safe_and_retires_ambiguous_file_json() {
     let document = serde_json::to_value(crate::openapi()).unwrap();
     let paths = &document["paths"];
@@ -277,6 +310,12 @@ fn exec_output_roundtrips_utf8_and_arbitrary_bytes() {
 #[test]
 fn openapi_describes_network_mutations_and_both_member_path_parameters() {
     let document = serde_json::to_value(crate::openapi()).unwrap();
+    let responses = &document["paths"]["/networks"]["post"]["responses"];
+    assert!(responses.get("200").is_none(), "network creation returns 201 Created");
+    assert_eq!(
+        responses["201"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/NetworkInfo"
+    );
     let paths = &document["paths"];
     assert_eq!(paths["/networks"]["post"]["operationId"], "createNetwork");
     assert_eq!(paths["/networks"]["get"]["operationId"], "listNetworks");
@@ -421,4 +460,43 @@ fn exec_target_defaults_to_the_workload_only_where_there_is_one() {
     assert!(serde_json::from_value::<ExecRequest>(json!({"command": "true", "target": "container"})).is_err());
     // An absent target stays absent on the wire, so older services decode it.
     assert_eq!(serde_json::to_value(&absent).unwrap(), json!({"command": "id -u"}));
+}
+
+#[test]
+fn validate_name_enforces_shared_vm_identifier_rule() {
+    for valid in [
+        "a",
+        "9lives",
+        "my-vm",
+        "project_alpha",
+        "vm-1712678400",
+        &"a".repeat(64),
+    ] {
+        assert_eq!(validate_name("VM name", valid), Ok(()), "{valid}");
+        assert_eq!(validate_name("VM id", valid), Ok(()), "{valid}");
+    }
+
+    assert_eq!(validate_name("VM name", ""), Err("VM name cannot be empty".to_string()));
+    assert_eq!(validate_name("VM id", ""), Err("VM id cannot be empty".to_string()));
+    assert_eq!(
+        validate_name("VM name", &"a".repeat(65)),
+        Err("VM name too long (max 64 characters)".to_string())
+    );
+    for bad_start in ["-bad", "_bad", ".bad"] {
+        assert_eq!(
+            validate_name("VM id", bad_start),
+            Err("VM id must start with a letter or digit".to_string()),
+            "{bad_start}"
+        );
+    }
+    for bad_body in ["my/vm", "../escape", "my vm", "my.vm", "vm\0id", "nai\u{00ef}ve"] {
+        assert!(
+            validate_name("VM name", bad_body).is_err(),
+            "{bad_body} should be rejected"
+        );
+    }
+    assert_eq!(
+        validate_name("VM name", "my.vm"),
+        Err("VM name must contain only letters, digits, hyphens, and underscores".to_string())
+    );
 }

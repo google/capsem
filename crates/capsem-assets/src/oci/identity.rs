@@ -1,7 +1,7 @@
 //! Cache identity describes retained bytes, never permission to execute them.
 
 use anyhow::{ensure, Context, Result};
-use sha2::{Digest as _, Sha256};
+use capsem_crypto::Sha256;
 
 use super::{image_reference, Digest, ImageReference, ResolvedImage};
 

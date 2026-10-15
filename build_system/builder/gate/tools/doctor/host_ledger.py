@@ -14,7 +14,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-import blake3
+from .... import crypto as blake3
 
 GENESIS_HASH = bytes(32)
 SESSION_CREATED = "session_created"

@@ -2,11 +2,16 @@
 
 pub use capsem_api as models;
 mod client;
+mod connections;
 mod credentials;
 mod error;
 mod hypervisor;
 mod images;
+mod managed;
+pub use connections::{Connections, CredentialGrants};
 pub use credentials::Credentials;
+pub use managed::ManagedSession;
+pub use tokio_util::sync::CancellationToken;
 pub mod operations;
 mod options;
 pub mod resources;

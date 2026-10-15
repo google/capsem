@@ -34,6 +34,7 @@ name = "capsem-tun"
 path = "src/tun_pump.rs"
 
 [dependencies]
+capsem-crypto = { path = "../capsem-crypto", default-features = false }
 nix = { version = "0.29", features = ["fs", "ioctl", "poll", "term", "signal", "process"] }
 serde_json = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }

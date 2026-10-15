@@ -115,6 +115,7 @@ CLI_ONLY: dict[str, str] = {
     "stop": "stop the background service daemon",
     "support-bundle": "host-side bug-report bundler; no service round-trip, not an AI concept",
     "cp": "host/session file copy convenience; MCP uses capsem_read_file/capsem_write_file",
+    "proxy": "long-lived local HTTP proxy process; MCP tools use the service gateway",
     "version": "human CLI build metadata; MCP status reports typed gateway state",
     "assets status": "runtime asset diagnostics; MCP status includes aggregate asset health",
     "assets ensure": "local runtime asset repair; host MCP owns no asset download authority",

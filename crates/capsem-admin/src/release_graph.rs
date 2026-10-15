@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{anyhow, bail, Context, Result};
 pub use capsem_assets::asset_manager::{Architecture, PackageArchitecture};
+use capsem_crypto::{blake3::hash, Sha256};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as ShaDigest, Sha256};
 
 use crate::source_commit::{deserialize_optional, SourceCommit};
 
@@ -251,7 +251,7 @@ impl DigestSet {
         if sha256 != self.sha256 {
             bail!("{context} sha256 mismatch");
         }
-        let blake3 = blake3::hash(bytes).to_hex().to_string();
+        let blake3 = hash(bytes).to_hex().to_string();
         if blake3 != self.blake3 {
             bail!("{context} blake3 mismatch");
         }
@@ -442,7 +442,7 @@ pub fn executable_inventory_from_package_files(
             bytes: file.bytes.len() as u64,
             digest: DigestSet {
                 sha256: format!("{:x}", Sha256::digest(&file.bytes)),
-                blake3: blake3::hash(&file.bytes).to_hex().to_string(),
+                blake3: hash(&file.bytes).to_hex().to_string(),
             },
             status: package.status,
             sbom_component_ref,
@@ -513,7 +513,7 @@ pub fn verify_package_contents_match_binary_inventory(
         if row.digest.sha256 != sha256 {
             bail!("binary inventory sha256 mismatch for {}", file.installed_path);
         }
-        let blake3 = blake3::hash(&file.bytes).to_hex().to_string();
+        let blake3 = hash(&file.bytes).to_hex().to_string();
         if row.digest.blake3 != blake3 {
             bail!("binary inventory blake3 mismatch for {}", file.installed_path);
         }

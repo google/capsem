@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -269,6 +270,26 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
     assert not missing, "CI jobs missing tool provisioning:\n" + "\n".join(missing)
 
 
+def test_macos_ci_builds_python_sdk_distributions_before_testing_them() -> None:
+    """The package acceptance tests consume the wheel and sdist from the
+    configured build output; a fresh runner has neither until this job builds
+    them."""
+    workflow = yaml.safe_load((PROJECT_ROOT / ".github/workflows/ci.yaml").read_text())
+    steps = workflow["jobs"]["test"]["steps"]
+    names = [step.get("name") for step in steps]
+    build = names.index("Build Python SDK distributions")
+    tested = names.index("Python SDK tests with coverage")
+    assert build < tested
+
+    command = steps[build]["run"]
+    settings = CONFIG.sdk_python
+    assert f"uv sync --project {settings.project} --frozen --no-install-project" in command
+    assert (
+        f"uv run --project {settings.project} --frozen --no-sync python -m build "
+        f"--no-isolation --outdir {settings.build_output} {settings.project}"
+    ) in command
+
+
 def _source_digest_module():
     script = PROJECT_ROOT / "build_system" / "scripts" / "build" / "source-state-digest.py"
     spec = importlib.util.spec_from_file_location("source_state_digest", script)
@@ -371,14 +392,18 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
         # the nested build-system project explicit after the root facade is gone.
         "ruff check --config build_system/pyproject.toml .",
         (
-            "ty check --project build_system --error-on-warning --python-platform all "
-            "build_system/builder"
+            "ty check --project build_system --error-on-warning --python-platform all"
         ),
         "clippy-workspace-wrapper.sh\"' --workspace --all-targets",
         "check-web-surface.sh frontend",
         "check-web-surface.sh release-site",
     ):
         assert required in planned, f"the fast plan does not run {required}"
+
+    strict = shlex.split(" ".join(_plan("test-fast").step_named("python.ty.strict").render()))
+    assert "--ignore" not in strict
+    for root in CONFIG.lint.strict_roots:
+        assert strict.count(root) == 1 + CONFIG.lint.strict_ty_search_paths.count(root)
 
     assert "just _test-release-contracts" in fast
 

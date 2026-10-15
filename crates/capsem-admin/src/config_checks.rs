@@ -244,7 +244,7 @@ pub(super) fn manifest_report(
 
 pub(super) fn hash_file(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = capsem_crypto::blake3::Hasher::new();
     let mut buffer = vec![0_u8; 128 * 1024];
     loop {
         let read = file

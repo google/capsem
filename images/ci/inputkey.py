@@ -12,10 +12,11 @@ Usage: inputkey.py <path>... [--with <value>]...
 from __future__ import annotations
 
 import argparse
-import hashlib
 import stat
 from collections.abc import Sequence
 from pathlib import Path
+
+from capsem_builder import crypto as hashlib
 
 ROOT = Path(__file__).resolve().parents[2]
 #: Bumped when the key's construction changes, so no old tag is mistaken for

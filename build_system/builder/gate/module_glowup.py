@@ -81,7 +81,8 @@ def glowup(
     phase = plan.phase("glowup")
     if qualification.pulled:
         content = staged or RuntimeContent.standalone(config)
-        return pulled_package(phase, config, qualification, after, content)
+        native = managedrestart.fragment(plan, config, after=after, content=content)
+        return pulled_package(phase, config, qualification, (*after, native), content)
     content = local_content or RuntimeContent.standalone(config)
     return _build_and_prove(
         plan,
@@ -281,7 +282,11 @@ def _build_and_prove(
                 after=previous,
             ),
         )
-        previous = (managedrestart.fragment(plan, config, after=(*previous, *filter(None, (runtime,)))),)
+    previous = (
+        managedrestart.fragment(
+            plan, config, after=(*previous, *filter(None, (runtime,))), content=content
+        ),
+    )
 
     sbom = phase.add(hostpackage.sbom_step(config), after=previous)
     exact_install_image = installplan.fragment(plan, config)

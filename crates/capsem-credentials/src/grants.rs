@@ -33,6 +33,9 @@ pub struct GrantSession {
     runtime: [u8; 16],
 }
 impl GrantSession {
+    pub fn identities(&self) -> ([u8; 16], [u8; 16], [u8; 16]) {
+        (self.session, self.ownership, self.runtime)
+    }
     pub fn new(session: [u8; 16], ownership: [u8; 16], runtime: [u8; 16]) -> Result<Self, GrantError> {
         if session == [0; 16] || ownership == [0; 16] || runtime == [0; 16] {
             return Err(GrantError::Invalid);
@@ -53,6 +56,12 @@ pub struct GrantTarget {
     url: url::Url,
 }
 impl GrantTarget {
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+    pub fn destination(&self) -> &url::Url {
+        &self.url
+    }
     pub fn new(method: &str, destination: &str) -> Result<Self, GrantError> {
         if !matches!(method, "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS") {
             return Err(GrantError::Invalid);
@@ -72,7 +81,7 @@ impl GrantTarget {
         })
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantCapability {
     id: String,
     scopes: BTreeSet<String>,
@@ -93,10 +102,20 @@ impl GrantCapability {
         {
             return Err(GrantError::Invalid);
         }
+        let scopes = scopes
+            .iter()
+            .map(|value| crate::oauth::canonical_scope(value).to_owned())
+            .collect();
         Ok(Self { id, scopes, targets })
     }
     pub fn id(&self) -> &str {
         &self.id
+    }
+    pub fn required_scopes(&self) -> &BTreeSet<String> {
+        &self.scopes
+    }
+    pub fn targets(&self) -> &[GrantTarget] {
+        &self.targets
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -121,7 +140,8 @@ struct Grant {
     connection: GoogleConnection,
     generation: u64,
     session: GrantSession,
-    capability: GrantCapability,
+    capabilities: Vec<GrantCapability>,
+    scopes: BTreeSet<String>,
     expires: Instant,
     active: bool,
 }
@@ -129,7 +149,34 @@ pub struct GrantAuthority {
     limits: GrantLimits,
     grants: Mutex<HashMap<GrantHandle, Arc<Grant>>>,
 }
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum GrantVisibility {
+    Active,
+    Preserved,
+    Expired,
+}
 impl GrantAuthority {
+    pub(crate) fn visibility(
+        &self,
+        handle: GrantHandle,
+        session: GrantSession,
+        now: Instant,
+    ) -> Option<GrantVisibility> {
+        let grants = self.grants.lock().ok()?;
+        let grant = grants.get(&handle)?;
+        if grant.session != session || !Self::consent_current(grant) {
+            return None;
+        }
+        let visibility = if now >= grant.expires {
+            GrantVisibility::Expired
+        } else if grant.active {
+            GrantVisibility::Active
+        } else {
+            GrantVisibility::Preserved
+        };
+        drop(grants);
+        Some(visibility)
+    }
     pub fn new(limits: GrantLimits) -> Result<Self, GrantError> {
         if limits.max_grants == 0 || limits.max_lifetime.is_zero() {
             return Err(GrantError::Invalid);
@@ -150,18 +197,43 @@ impl GrantAuthority {
         now: Instant,
         policy: impl Fn(&GrantSession, &GrantCapability) -> bool,
     ) -> Result<GrantHandle, GrantError> {
+        self.issue_set(connection, session, vec![capability], lifetime, now, policy)
+    }
+
+    /// Issue the whole explicit capability set as one revocable grant. Every
+    /// precondition is checked before inserting authority or consuming capacity.
+    pub fn issue_set(
+        &self,
+        connection: GoogleConnection,
+        session: GrantSession,
+        capabilities: Vec<GrantCapability>,
+        lifetime: Duration,
+        now: Instant,
+        policy: impl Fn(&GrantSession, &GrantCapability) -> bool,
+    ) -> Result<GrantHandle, GrantError> {
         if lifetime.is_zero() || lifetime > self.limits.max_lifetime {
             return Err(GrantError::Invalid);
         }
-        if !policy(&session, &capability) {
-            return Err(GrantError::Denied);
+        let ids: BTreeSet<_> = capabilities.iter().map(GrantCapability::id).collect();
+        if capabilities.is_empty() || ids.len() != capabilities.len() {
+            return Err(GrantError::Invalid);
         }
+        let scopes: BTreeSet<_> = capabilities
+            .iter()
+            .flat_map(|capability| capability.scopes.iter().cloned())
+            .collect();
         let authorization = connection.authorization().map_err(|_| GrantError::Denied)?;
-        if !capability.scopes.is_subset(&authorization.granted_scopes) {
+        if !scopes.is_subset(&authorization.granted_scopes) {
             return Err(GrantError::Denied);
         }
         let expires = now.checked_add(lifetime).ok_or(GrantError::Invalid)?;
         let mut grants = self.grants.lock().map_err(|_| GrantError::Unavailable)?;
+        // Observe the trusted current runtime/policy only after entering the
+        // same admission lock as terminal retirement. A stale pre-lock
+        // observation could otherwise issue after its owner was retired.
+        if !capabilities.iter().all(|capability| policy(&session, capability)) {
+            return Err(GrantError::Denied);
+        }
         grants.retain(|_, grant| grant.expires > now);
         if grants.len() >= self.limits.max_grants {
             return Err(GrantError::Capacity);
@@ -173,7 +245,8 @@ impl GrantAuthority {
                 connection,
                 generation: authorization.generation,
                 session,
-                capability,
+                capabilities,
+                scopes,
                 expires,
                 active: true,
             }),
@@ -183,7 +256,7 @@ impl GrantAuthority {
     }
     fn new_handle(grants: &HashMap<GrantHandle, Arc<Grant>>) -> Result<GrantHandle, GrantError> {
         let mut bytes = [0; 32];
-        getrandom::fill(&mut bytes).map_err(|_| GrantError::Unavailable)?;
+        capsem_crypto::random::fill(&mut bytes).map_err(|_| GrantError::Unavailable)?;
         let handle = GrantHandle(bytes);
         if grants.contains_key(&handle) {
             return Err(GrantError::Unavailable);
@@ -194,7 +267,7 @@ impl GrantAuthority {
         grant
             .connection
             .authorization()
-            .is_ok_and(|a| a.generation == grant.generation && grant.capability.scopes.is_subset(&a.granted_scopes))
+            .is_ok_and(|a| a.generation == grant.generation && grant.scopes.is_subset(&a.granted_scopes))
     }
     fn admits(
         grant: &Grant,
@@ -206,8 +279,10 @@ impl GrantAuthority {
         grant.active
             && grant.session == session
             && now < grant.expires
-            && grant.capability.targets.contains(target)
-            && policy(&session, &grant.capability)
+            && grant
+                .capabilities
+                .iter()
+                .any(|capability| capability.targets.contains(target) && policy(&session, capability))
             && Self::consent_current(grant)
     }
     /// The callback must be short synchronous host work and must not reenter
@@ -239,7 +314,7 @@ impl GrantAuthority {
             return Err(GrantError::Denied);
         }
         let result = lease
-            .with_authorization(checked_now, grant.generation, &grant.capability.scopes, use_token)
+            .with_authorization(checked_now, grant.generation, &grant.scopes, use_token)
             .map_err(|_| GrantError::Denied);
         drop(grants);
         result
@@ -254,26 +329,56 @@ impl GrantAuthority {
         if session == [0; 16] || ownership == [0; 16] {
             return Err(GrantError::Invalid);
         }
-        let mut grants = self.grants.lock().map_err(|_| GrantError::Unavailable)?;
-        let before = grants.len();
-        grants.retain(|_, grant| grant.session.session != session || grant.session.ownership != ownership);
-        let retired = before - grants.len();
-        drop(grants);
-        Ok(retired)
+        self.detach_matching(
+            |candidate| candidate.session == session && candidate.ownership == ownership,
+            GrantStopPolicy::Revoke,
+        )
     }
     pub fn detach(&self, session: GrantSession, policy: GrantStopPolicy) -> Result<(), GrantError> {
+        self.detach_matching(|candidate| *candidate == session, policy)
+            .map(|_| ())
+    }
+    /// A trusted original child identity fences every owner bound to that
+    /// runtime, without touching a resumed or replacement incarnation.
+    pub fn detach_runtime(
+        &self,
+        session: [u8; 16],
+        runtime: [u8; 16],
+        policy: GrantStopPolicy,
+    ) -> Result<usize, GrantError> {
+        if session == [0; 16] || runtime == [0; 16] {
+            return Err(GrantError::Invalid);
+        }
+        self.detach_matching(
+            |candidate| candidate.session == session && candidate.runtime == runtime,
+            policy,
+        )
+    }
+    /// Permanent canonical session deletion includes inactive approvals.
+    pub fn revoke_session(&self, session: [u8; 16]) -> Result<usize, GrantError> {
+        if session == [0; 16] {
+            return Err(GrantError::Invalid);
+        }
+        self.detach_matching(|candidate| candidate.session == session, GrantStopPolicy::Revoke)
+    }
+    fn detach_matching(
+        &self,
+        matches: impl Fn(&GrantSession) -> bool,
+        policy: GrantStopPolicy,
+    ) -> Result<usize, GrantError> {
         let mut grants = self.grants.lock().map_err(|_| GrantError::Unavailable)?;
+        let count = grants.values().filter(|grant| matches(&grant.session)).count();
         match policy {
-            GrantStopPolicy::Revoke => grants.retain(|_, g| g.session != session),
+            GrantStopPolicy::Revoke => grants.retain(|_, grant| !matches(&grant.session)),
             GrantStopPolicy::Preserve => {
-                for grant in grants.values_mut().filter(|g| g.session == session) {
+                for grant in grants.values_mut().filter(|grant| matches(&grant.session)) {
                     let mut detached = (**grant).clone();
                     detached.active = false;
                     *grant = Arc::new(detached);
                 }
             }
         }
-        Ok(())
+        Ok(count)
     }
     pub fn rebind(
         &self,
@@ -289,7 +394,7 @@ impl GrantAuthority {
             || grant.session.ownership != session.ownership
             || grant.session.runtime == session.runtime
             || now >= grant.expires
-            || !policy(&session, &grant.capability)
+            || !grant.capabilities.iter().all(|capability| policy(&session, capability))
             || !Self::consent_current(grant)
         {
             return Err(GrantError::Denied);

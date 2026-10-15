@@ -42,7 +42,10 @@ See `/dev-just` for the full recipe reference and dependency chains.
 
 ```
 crates/capsem-foundation/      Low-level paths, UDS, logging, polling, and IPC handshake
+crates/capsem-cache/           Bounded cache primitives, freshness publication, and cache telemetry
+crates/capsem-crypto/          Accelerated hashes, randomness, TLS keys, JWT verification, secrets
 crates/capsem-archive/  Block-compressed body archive for session ledgers (pure Rust)
+crates/capsem-ledger/           Confined session-ledger worker and archive codec executor
 crates/capsem-telemetry/       Every metrics-facade metric name, kind, unit, and description
 crates/capsem-assets/          Asset manifest compatibility, resolution, download, and verification
 crates/capsem-api/             Gateway wire types and OpenAPI contract shared by clients
@@ -52,6 +55,7 @@ crates/capsem-credentials/     Credential provider contracts and durable credent
 crates/capsem-core/            VM, hypervisor, security engine, and host network runtime
 crates/capsem-service/         Daemon service (axum HTTP over UDS, VM lifecycle)
 crates/capsem-process/         Per-VM process (boots VM, bridges vsock, job store)
+crates/capsem-proxy/           Confined HTTP/DNS proxy worker for VM and standalone traffic
 crates/capsem/                 CLI client (create, shell, exec, list, install, assets, update)
 crates/capsem-tui/             Terminal control UI (reads and drives state via the gateway)
 crates/capsem-admin/           Runtime image/asset/release administration (validate, materialize, publish)
@@ -59,6 +63,7 @@ crates/capsem-gateway/         TCP-to-UDS HTTP gateway (frontend + tray + remote
 mcp/typescript/                SDK-backed npm host MCP server for AI agents (stdio, authenticated gateway HTTP)
 crates/capsem-router/     Confined TCP publication companion (data descriptors only)
 crates/capsem-network/    Host end of a guest tun0: smoltcp over a framed VSOCK packet stream
+crates/capsem-mcp-transport/   Connected HTTP capabilities and native MCP role bootstrap
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
 crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP)
 crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil + tun pump (musl)
@@ -328,6 +333,22 @@ Telemetry and security ledgers are database-owned.
   ledger shape as empty data.
 
 Every change touching logged data needs tests that guard this boundary.
+
+## Cryptographic Boundary
+
+Every first-party Rust cryptographic operation goes through `capsem-crypto`,
+including build scripts, tests, and SDK code. Do not depend on or import raw
+hash, random, certificate, JWT, signature, constant-time or secret-erasure
+providers elsewhere. TLS configuration may use rustls transport types, while
+provider selection and key operations belong to `capsem-crypto::tls`.
+
+Use BLAKE3 for new internal content fingerprints. Preserve SHA-256 wherever
+OCI, OAuth, release manifests or existing persisted identities require it;
+the owner supplies CPU-dispatched AWS-LC rather than a per-caller SHA backend.
+An algorithm identity change is a format migration, not a performance patch.
+Benchmark candidates on the actual CPU and I/O path before changing defaults.
+`tests/citadel/test_crypto_boundary.py` rejects direct providers and renamed
+dependencies, and the hot-build guard keeps hashing optimized in dev builds.
 
 ## Host Unix Boundary
 

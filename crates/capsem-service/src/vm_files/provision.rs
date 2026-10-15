@@ -2,8 +2,19 @@ use super::*;
 
 pub(crate) async fn handle_provision(
     State(state): State<Arc<ServiceState>>,
-    Json(payload): Json<ProvisionRequest>,
-) -> Result<Json<ProvisionResponse>, AppError> {
+    payload: Result<Json<ProvisionRequest>, axum::extract::rejection::JsonRejection>,
+) -> axum::response::Response {
+    let Json(payload) = match payload {
+        Ok(payload) => payload,
+        Err(_) => return crate::managed_routes::ManagedError::invalid().into_response(),
+    };
+    if payload.managed.is_some() {
+        return crate::managed_routes::create(state, payload).await.into_response();
+    }
+    provision(state, payload).await.into_response()
+}
+
+async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Result<Json<ProvisionResponse>, AppError> {
     let _launch = state
         .lifecycle
         .admit()
@@ -75,7 +86,17 @@ pub(crate) async fn handle_provision(
                         let _ = state.persistent_registry.lock().unwrap().unregister(&stale_name);
                     })
                     .await;
-                state.instances.lock().unwrap().remove(&id);
+                let generation = {
+                    state
+                        .instances
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .map(|instance| instance.generation)
+                };
+                if let Some(generation) = generation {
+                    state.evict_instance(&id, generation);
+                }
                 warn!(id, attempt, "retrying provision after launchd-cleanup transient");
             }
 
@@ -115,6 +136,10 @@ pub(crate) async fn handle_provision(
         }
     })
     .await;
+
+    // All spawn/retry attempts have published or failed. Image setup has its
+    // own cancellation owner and must not hold shutdown's launch drain.
+    drop(_launch);
 
     match result {
         Ok(Ok(_)) => finish_create(&state, &id, &networks, payload.container).await.map(Json),
@@ -192,13 +217,13 @@ pub(crate) async fn complete_create(
 
 /// The VM goes and its name is freed, but its ledger and logs are kept as a
 /// failed session: they hold the record of why the create failed -- a
-/// policy-refused pull's audit row lives in this VM's own ledger. Retain, not
-/// Discard: the owner exits cleanly so that ledger is flushed before it moves.
+/// policy-refused pull's audit row lives in this VM's own ledger. The host
+/// owner drains it directly, without waiting for the guest to finish booting.
 async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
     // Resolved first: a teardown that fails -- a ledger too damaged to read --
     // must not also lose the ledger it could not read.
     let session_dir = resolve_session_dir(state, id).ok();
-    if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::Retain, None).await {
+    if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::FailedCreate, None).await {
         error!(vm_id = id, error = %error.1, "failed create did not shut down cleanly");
     }
     if let Some(session_dir) = session_dir {

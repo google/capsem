@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import os
 import platform
-import secrets
 import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .. import crypto as secrets
 from ..gatelaunch import PYCACHE
 from . import digestreport, runledger
 from .cancellation import Terminated

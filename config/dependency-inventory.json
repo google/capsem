@@ -67,6 +67,17 @@
    "libc"
   ]
  },
+ "annotate-snippets": {
+  "build_script": false,
+  "dependencies": [
+   "anstream",
+   "anstyle",
+   "divan",
+   "memchr",
+   "snapbox",
+   "unicode-width"
+  ]
+ },
  "anstream": {
   "build_script": false,
   "dependencies": [
@@ -134,6 +145,10 @@
    "num-complex",
    "num-traits"
   ]
+ },
+ "arraydeque": {
+  "build_script": false,
+  "dependencies": []
  },
  "arrayvec": {
   "build_script": false,
@@ -525,14 +540,6 @@
    "strum"
   ]
  },
- "bincode": {
-  "build_script": false,
-  "dependencies": [
-   "serde",
-   "serde_bytes",
-   "serde_derive"
-  ]
- },
  "bit-set": {
   "build_script": false,
   "dependencies": [
@@ -725,13 +732,14 @@
   "build_script": true,
   "dependencies": [
    "anyhow",
-   "blake3",
    "bytes",
    "capsem-api",
    "capsem-assets",
    "capsem-core",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-proto",
+   "capsem-sdk",
    "clap",
    "clap_complete",
    "flate2",
@@ -745,7 +753,6 @@
    "semver",
    "serde",
    "serde_json",
-   "sha2",
    "tar",
    "tempfile",
    "tokio",
@@ -759,16 +766,15 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
-   "blake3",
    "capsem-assets",
    "capsem-core",
+   "capsem-crypto",
    "clap",
    "flate2",
    "reqwest",
    "semver",
    "serde",
    "serde_json",
-   "sha2",
    "tar",
    "tempfile",
    "time",
@@ -779,7 +785,9 @@
  "capsem-agent": {
   "build_script": false,
   "dependencies": [
+   "capsem-crypto",
    "capsem-foundation",
+   "capsem-guard",
    "capsem-proto",
    "nix",
    "serde",
@@ -793,6 +801,7 @@
   "build_script": false,
   "dependencies": [
    "base64",
+   "capsem-crypto",
    "serde",
    "serde_json",
    "utoipa"
@@ -820,7 +829,7 @@
  "capsem-archive": {
   "build_script": false,
   "dependencies": [
-   "blake3",
+   "capsem-crypto",
    "capsem-foundation",
    "flate2",
    "miniz_oxide",
@@ -834,14 +843,13 @@
   "dependencies": [
    "anyhow",
    "axum",
-   "blake3",
+   "capsem-crypto",
    "capsem-foundation",
    "futures",
    "oci-client",
    "reqwest",
    "serde",
    "serde_json",
-   "sha2",
    "tempfile",
    "tokio",
    "toml",
@@ -853,6 +861,7 @@
   "dependencies": [
    "anyhow",
    "capsem-foundation",
+   "capsem-proto",
    "clap",
    "futures",
    "reqwest",
@@ -864,14 +873,22 @@
    "tokio"
   ]
  },
+ "capsem-cache": {
+  "build_script": false,
+  "dependencies": [
+   "capsem-telemetry",
+   "metrics",
+   "quick_cache"
+  ]
+ },
  "capsem-config": {
   "build_script": false,
   "dependencies": [
    "capsem-proto",
    "regex",
    "serde",
+   "serde-saphyr",
    "serde_json",
-   "serde_yaml",
    "toml",
    "tracing"
   ]
@@ -882,14 +899,16 @@
    "anyhow",
    "async-compression",
    "axum",
-   "blake3",
    "block2",
    "bytes",
    "capsem-assets",
+   "capsem-cache",
    "capsem-config",
    "capsem-credentials",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-logger",
+   "capsem-mcp-transport",
    "capsem-proto",
    "capsem-router",
    "capsem-telemetry",
@@ -907,7 +926,6 @@
    "hyper-util",
    "io-uring",
    "libc",
-   "lru",
    "metrics",
    "metrics-util",
    "nix",
@@ -916,13 +934,11 @@
    "objc2-virtualization",
    "pin-project-lite",
    "proptest",
-   "rcgen",
    "regex",
    "reqwest",
    "rmcp",
    "rusqlite",
    "rustls",
-   "rustls-pemfile",
    "scraper",
    "serde",
    "serde_json",
@@ -932,6 +948,7 @@
    "time",
    "tokio",
    "tokio-rustls",
+   "tokio-tungstenite",
    "tokio-util",
    "toml",
    "tracing",
@@ -944,19 +961,56 @@
  "capsem-credentials": {
   "build_script": false,
   "dependencies": [
+   "base64",
+   "bytes",
+   "capsem-api",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-proto",
+   "futures",
+   "http-body-util",
+   "humantime",
+   "hyper",
+   "hyper-util",
+   "reqwest",
    "serde",
    "serde_json",
    "tempfile",
-   "tracing"
+   "time",
+   "tokio",
+   "tracing",
+   "url",
+   "uuid"
+  ]
+ },
+ "capsem-crypto": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "aws-lc-rs",
+   "blake2b_simd",
+   "blake2s_simd",
+   "blake3",
+   "getrandom",
+   "jsonwebtoken",
+   "rand",
+   "rcgen",
+   "ring",
+   "rustls",
+   "serde",
+   "serde_json",
+   "sha2",
+   "signature",
+   "subtle",
+   "time",
+   "uuid",
+   "zeroize"
   ]
  },
  "capsem-foundation": {
   "build_script": false,
   "dependencies": [
-   "bincode",
-   "blake3",
+   "capsem-crypto",
    "capsem-proto",
    "libc",
    "nix",
@@ -971,12 +1025,13 @@
   ]
  },
  "capsem-gateway": {
-  "build_script": false,
+  "build_script": true,
   "dependencies": [
    "anyhow",
    "axum",
    "bytes",
    "capsem-api",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-guard",
    "capsem-proto",
@@ -986,7 +1041,6 @@
    "http-body-util",
    "hyper",
    "hyper-util",
-   "rand",
    "serde",
    "serde_json",
    "tempfile",
@@ -1009,12 +1063,29 @@
    "tracing"
   ]
  },
+ "capsem-ledger": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "capsem-archive",
+   "capsem-foundation",
+   "capsem-guard",
+   "capsem-logger",
+   "capsem-proto",
+   "clap",
+   "tempfile",
+   "tokio",
+   "tracing",
+   "zstd"
+  ]
+ },
  "capsem-logger": {
   "build_script": false,
   "dependencies": [
    "anyhow",
-   "blake3",
    "capsem-archive",
+   "capsem-cache",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-proto",
    "capsem-telemetry",
@@ -1024,10 +1095,11 @@
    "memmap2",
    "metrics",
    "metrics-util",
+   "rmp-serde",
    "rusqlite",
    "serde",
+   "serde_bytes",
    "serde_json",
-   "sha2",
    "tempfile",
    "tokio",
    "tracing",
@@ -1042,10 +1114,14 @@
    "capsem-credentials",
    "capsem-foundation",
    "capsem-guard",
+   "capsem-mcp-transport",
    "capsem-proto",
    "clap",
    "futures",
    "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
    "reqwest",
    "rmcp",
    "serde",
@@ -1064,14 +1140,34 @@
    "capsem-core",
    "capsem-foundation",
    "capsem-guard",
+   "capsem-mcp-transport",
    "capsem-proto",
-   "regex",
+   "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
    "rmcp",
    "serde",
    "serde_json",
    "tempfile",
    "tokio",
-   "toml",
+   "tracing"
+  ]
+ },
+ "capsem-mcp-transport": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "bytes",
+   "capsem-foundation",
+   "capsem-proto",
+   "futures",
+   "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "reqwest",
+   "tokio",
    "tracing"
   ]
  },
@@ -1081,6 +1177,7 @@
    "anyhow",
    "base64",
    "bytes",
+   "capsem-crypto",
    "capsem-guard",
    "clap",
    "flate2",
@@ -1088,12 +1185,10 @@
    "http-body-util",
    "hyper",
    "hyper-util",
-   "rcgen",
    "reqwest",
    "rustls",
    "serde",
    "serde_json",
-   "sha1",
    "tempfile",
    "tokio",
    "tokio-rustls",
@@ -1112,15 +1207,21 @@
   "build_script": false,
   "dependencies": [
    "anyhow",
+   "async-trait",
    "axum",
+   "bytes",
    "capsem-assets",
    "capsem-core",
    "capsem-foundation",
+   "capsem-guard",
    "capsem-logger",
    "capsem-proto",
+   "capsem-telemetry",
    "clap",
    "core-foundation-sys",
    "futures",
+   "http",
+   "opentelemetry-http",
    "serde",
    "serde_json",
    "tempfile",
@@ -1133,7 +1234,7 @@
   "build_script": true,
   "dependencies": [
    "anyhow",
-   "blake3",
+   "capsem-crypto",
    "quote",
    "rmp-serde",
    "serde",
@@ -1142,7 +1243,28 @@
    "syn",
    "tempfile",
    "thiserror",
-   "tokio"
+   "tokio",
+   "toml"
+  ]
+ },
+ "capsem-proxy": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "async-trait",
+   "bytes",
+   "capsem-core",
+   "capsem-foundation",
+   "capsem-guard",
+   "capsem-logger",
+   "capsem-proto",
+   "capsem-telemetry",
+   "clap",
+   "http",
+   "opentelemetry-http",
+   "tempfile",
+   "tokio",
+   "tracing"
   ]
  },
  "capsem-router": {
@@ -1167,35 +1289,54 @@
   "dependencies": [
    "axum",
    "capsem-api",
+   "capsem-crypto",
+   "futures",
+   "humantime",
    "reqwest",
    "serde",
    "serde_json",
    "thiserror",
-   "tokio"
+   "tokio",
+   "tokio-tungstenite",
+   "tokio-util"
   ]
  },
  "capsem-service": {
   "build_script": false,
   "dependencies": [
    "anyhow",
+   "async-trait",
    "axum",
    "base64",
-   "blake3",
+   "bytes",
    "capsem-api",
    "capsem-assets",
+   "capsem-cache",
    "capsem-config",
    "capsem-core",
+   "capsem-credentials",
+   "capsem-crypto",
    "capsem-foundation",
    "capsem-guard",
    "capsem-logger",
+   "capsem-mcp-transport",
    "capsem-proto",
    "capsem-router",
+   "capsem-telemetry",
    "clap",
    "filetime",
    "futures",
+   "http",
+   "http-body-util",
    "humantime",
-   "rand",
+   "hyper",
+   "hyper-util",
+   "metrics",
+   "opentelemetry",
+   "opentelemetry-http",
+   "opentelemetry_sdk",
    "reqwest",
+   "rmp-serde",
    "rusqlite",
    "serde",
    "serde_json",
@@ -1203,6 +1344,7 @@
    "tokio",
    "tokio-stream",
    "tokio-tungstenite",
+   "tokio-util",
    "toml",
    "tower",
    "tower-http",
@@ -1213,14 +1355,23 @@
  "capsem-telemetry": {
   "build_script": false,
   "dependencies": [
+   "async-trait",
+   "bytes",
+   "http",
    "metrics",
-   "metrics-util"
+   "metrics-util",
+   "opentelemetry",
+   "opentelemetry-http",
+   "opentelemetry-otlp",
+   "opentelemetry_sdk",
+   "reqwest"
   ]
  },
  "capsem-tray": {
   "build_script": true,
   "dependencies": [
    "anyhow",
+   "capsem-api",
    "capsem-foundation",
    "capsem-guard",
    "clap",
@@ -1620,6 +1771,12 @@
    "bitflags",
    "core-foundation",
    "libc"
+  ]
+ },
+ "core_detect": {
+  "build_script": false,
+  "dependencies": [
+   "cupid"
   ]
  },
  "cpufeatures": {
@@ -2136,6 +2293,29 @@
   "build_script": false,
   "dependencies": []
  },
+ "encoding_rs": {
+  "build_script": true,
+  "dependencies": [
+   "any_all_workaround",
+   "bincode",
+   "cfg-if",
+   "core_detect",
+   "multiversion",
+   "multiversion_no_op",
+   "rustversion",
+   "scopeguard",
+   "serde",
+   "serde_derive",
+   "serde_json",
+   "simdutf8"
+  ]
+ },
+ "encoding_rs_io": {
+  "build_script": false,
+  "dependencies": [
+   "encoding_rs"
+  ]
+ },
  "endi": {
   "build_script": false,
   "dependencies": []
@@ -2464,14 +2644,6 @@
    "thread_local"
   ]
  },
- "fxhash": {
-  "build_script": false,
-  "dependencies": [
-   "byteorder",
-   "fnv",
-   "seahash"
-  ]
- },
  "gdk": {
   "build_script": false,
   "dependencies": [
@@ -2700,6 +2872,14 @@
    "tempfile"
   ]
  },
+ "granit-parser": {
+  "build_script": false,
+  "dependencies": [
+   "arraydeque",
+   "libtest-mimic",
+   "smallvec"
+  ]
+ },
  "gtk": {
   "build_script": true,
   "dependencies": [
@@ -2745,6 +2925,31 @@
    "proc-macro2",
    "quote",
    "syn"
+  ]
+ },
+ "h2": {
+  "build_script": false,
+  "dependencies": [
+   "atomic-waker",
+   "bytes",
+   "env_logger",
+   "fnv",
+   "futures-core",
+   "futures-sink",
+   "hex",
+   "http",
+   "indexmap",
+   "quickcheck",
+   "rand",
+   "serde",
+   "serde_json",
+   "slab",
+   "tokio",
+   "tokio-rustls",
+   "tokio-util",
+   "tracing",
+   "walkdir",
+   "webpki-roots"
   ]
  },
  "half": {
@@ -3213,9 +3418,6 @@
    "crossterm",
    "dyn-clone",
    "fuzzy-matcher",
-   "fxhash",
-   "newline-converter",
-   "once_cell",
    "rstest",
    "tempfile",
    "termion",
@@ -3484,6 +3686,32 @@
    "serde_json",
    "syn",
    "toml"
+  ]
+ },
+ "jsonwebtoken": {
+  "build_script": false,
+  "dependencies": [
+   "aws-lc-rs",
+   "base64",
+   "criterion",
+   "ed25519-dalek",
+   "getrandom",
+   "hmac",
+   "js-sys",
+   "p256",
+   "p384",
+   "pem",
+   "rand",
+   "rand_core",
+   "rsa",
+   "serde",
+   "serde_json",
+   "sha2",
+   "signature",
+   "simple_asn1",
+   "time",
+   "wasm-bindgen-test",
+   "zeroize"
   ]
  },
  "jwt": {
@@ -3872,6 +4100,10 @@
    "wry"
   ]
  },
+ "multiversion_no_op": {
+  "build_script": false,
+  "dependencies": []
+ },
  "ndk": {
   "build_script": false,
   "dependencies": [
@@ -3895,17 +4127,6 @@
  "new_debug_unreachable": {
   "build_script": false,
   "dependencies": []
- },
- "newline-converter": {
-  "build_script": false,
-  "dependencies": [
-   "criterion",
-   "fancy-regex",
-   "lazy-regex",
-   "once_cell",
-   "quickcheck",
-   "unicode-segmentation"
-  ]
  },
  "nibble_vec": {
   "build_script": false,
@@ -4343,6 +4564,102 @@
    "dunce",
    "is-wsl",
    "libc"
+  ]
+ },
+ "opentelemetry": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "futures-core",
+   "futures-sink",
+   "js-sys",
+   "pin-project-lite",
+   "rand",
+   "thiserror",
+   "tokio",
+   "tracing"
+  ]
+ },
+ "opentelemetry-http": {
+  "build_script": false,
+  "dependencies": [
+   "async-trait",
+   "bytes",
+   "futures-executor",
+   "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "opentelemetry",
+   "reqwest",
+   "tokio",
+   "tower-service"
+  ]
+ },
+ "opentelemetry-otlp": {
+  "build_script": false,
+  "dependencies": [
+   "async-trait",
+   "flate2",
+   "futures-executor",
+   "futures-util",
+   "http",
+   "httpdate",
+   "opentelemetry",
+   "opentelemetry-http",
+   "opentelemetry-proto",
+   "opentelemetry_sdk",
+   "prost",
+   "reqwest",
+   "serde_json",
+   "temp-env",
+   "thiserror",
+   "tokio",
+   "tokio-stream",
+   "tonic",
+   "tonic-types",
+   "zstd"
+  ]
+ },
+ "opentelemetry-proto": {
+  "build_script": false,
+  "dependencies": [
+   "base64",
+   "const-hex",
+   "opentelemetry",
+   "opentelemetry_sdk",
+   "prost",
+   "schemars",
+   "serde",
+   "serde_json",
+   "tempfile",
+   "tonic",
+   "tonic-prost",
+   "tonic-prost-build"
+  ]
+ },
+ "opentelemetry_sdk": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "futures-channel",
+   "futures-executor",
+   "futures-util",
+   "http",
+   "opentelemetry",
+   "opentelemetry-http",
+   "percent-encoding",
+   "portable-atomic",
+   "pprof",
+   "rand",
+   "rstest",
+   "serde",
+   "serde_json",
+   "temp-env",
+   "thiserror",
+   "tokio",
+   "tokio-stream",
+   "url"
   ]
  },
  "option-ext": {
@@ -4803,6 +5120,26 @@
    "x86"
   ]
  },
+ "prost": {
+  "build_script": false,
+  "dependencies": [
+   "bytes",
+   "criterion",
+   "proptest",
+   "prost-derive",
+   "rand"
+  ]
+ },
+ "prost-derive": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "itertools",
+   "proc-macro2",
+   "quote",
+   "syn"
+  ]
+ },
  "quanta": {
   "build_script": false,
   "dependencies": [
@@ -4838,6 +5175,21 @@
    "serde_derive",
    "tokio",
    "tokio-test"
+  ]
+ },
+ "quick_cache": {
+  "build_script": false,
+  "dependencies": [
+   "criterion",
+   "crossbeam-utils",
+   "equivalent",
+   "foldhash",
+   "hashbrown",
+   "parking_lot",
+   "rand",
+   "rand_distr",
+   "shuttle",
+   "tokio"
   ]
  },
  "quinn": {
@@ -5373,6 +5725,7 @@
    "rand",
    "reqwest",
    "rmcp-macros",
+   "rstest",
    "schemars",
    "serde",
    "serde_json",
@@ -5504,13 +5857,6 @@
    "x509-parser",
    "zeroize",
    "zlib-rs"
-  ]
- },
- "rustls-pemfile": {
-  "build_script": false,
-  "dependencies": [
-   "bencher",
-   "rustls-pki-types"
   ]
  },
  "rustls-pki-types": {
@@ -5663,6 +6009,41 @@
   "dependencies": [
    "serde_core",
    "serde_derive"
+  ]
+ },
+ "serde-saphyr": {
+  "build_script": false,
+  "dependencies": [
+   "annotate-snippets",
+   "anyhow",
+   "base64",
+   "encoding_rs_io",
+   "erased-serde",
+   "figment",
+   "figment2",
+   "garde",
+   "granit-parser",
+   "indoc",
+   "miette",
+   "nohash-hasher",
+   "num-traits",
+   "proptest",
+   "regex",
+   "rstest",
+   "serde",
+   "serde-transcode",
+   "serde_bytes",
+   "serde_core",
+   "serde_ignored",
+   "serde_json",
+   "serde_path_to_error",
+   "serde_repr",
+   "smallvec",
+   "tempfile",
+   "trybuild",
+   "typetag",
+   "validator",
+   "zmij"
   ]
  },
  "serde-untagged": {
@@ -5821,19 +6202,6 @@
    "trybuild"
   ]
  },
- "serde_yaml": {
-  "build_script": false,
-  "dependencies": [
-   "anyhow",
-   "indexmap",
-   "indoc",
-   "itoa",
-   "ryu",
-   "serde",
-   "serde_derive",
-   "unsafe-libyaml"
-  ]
- },
  "serialize-to-javascript": {
   "build_script": false,
   "dependencies": [
@@ -5917,6 +6285,16 @@
    "errno",
    "libc",
    "signal-hook"
+  ]
+ },
+ "signature": {
+  "build_script": false,
+  "dependencies": [
+   "digest",
+   "hex-literal",
+   "rand_core",
+   "sha2",
+   "signature_derive"
   ]
  },
  "simd-adler32": {
@@ -7263,7 +7641,6 @@
  "unicode-width": {
   "build_script": false,
   "dependencies": [
-   "compiler_builtins",
    "rustc-std-workspace-core",
    "rustc-std-workspace-std"
   ]
@@ -7272,12 +7649,6 @@
   "build_script": false,
   "dependencies": [
    "criterion"
-  ]
- },
- "unsafe-libyaml": {
-  "build_script": false,
-  "dependencies": [
-   "pretty_assertions"
   ]
  },
  "untrusted": {
@@ -8209,6 +8580,14 @@
   "dependencies": [
    "serde",
    "zeroize_derive"
+  ]
+ },
+ "zeroize_derive": {
+  "build_script": false,
+  "dependencies": [
+   "proc-macro2",
+   "quote",
+   "syn"
   ]
  },
  "zerotrie": {

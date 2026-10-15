@@ -10,6 +10,8 @@ export interface CreateOptions extends CallOptions {
   env?: Record<string, string>; networks?: readonly NetworkInfo[];
   image?: string; command?: readonly string[]; registry?: Registry;
 }
+/** Managed ownership is always unnamed and ephemeral. */
+export type ManagedCreateOptions = Omit<CreateOptions, 'name'> & {name?: never};
 export interface RunOptions extends CallOptions {
   timeout_secs?: number; cpus?: number; memory?: number; env?: Record<string, string>;
 }

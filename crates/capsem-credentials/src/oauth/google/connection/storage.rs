@@ -3,13 +3,13 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use capsem_crypto::secrets::Zeroizing;
 use capsem_foundation::unix::{
     contained::ContainedDir,
     fs,
     lock::{self, FileLock, LockAttempt, LockMode},
 };
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
 
 use super::*;
 
@@ -63,6 +63,14 @@ impl OAuthConnectionStorage {
 
     pub(super) fn write(&self, record: &Record) -> Result<(), GoogleConnectionError> {
         let epoch = unix_ms()?;
+        if !valid_history(
+            record.created_at_ms,
+            record.updated_at_ms,
+            record.last_refresh_at_ms,
+            epoch,
+        ) {
+            return Err(GoogleConnectionError::InvalidRecord);
+        }
         let now = Instant::now();
         let tokens = record
             .tokens
@@ -87,7 +95,7 @@ impl OAuthConnectionStorage {
             })
             .transpose()?;
         let view = RecordView {
-            version: 3,
+            version: 4,
             client_id: &record.client_id,
             subject: record.subject.expose(),
             revision: record.revision,
@@ -97,6 +105,9 @@ impl OAuthConnectionStorage {
             tokens,
             revocation: record.revocation,
             pending_revocation: record.pending_revocation.as_ref().map(|token| token.expose()),
+            created_at_ms: record.created_at_ms,
+            updated_at_ms: record.updated_at_ms,
+            last_refresh_at_ms: record.last_refresh_at_ms,
         };
         let bytes = Zeroizing::new(serde_json::to_vec(&view).map_err(|_| GoogleConnectionError::InvalidRecord)?);
         if bytes.len() > self.max_bytes {
@@ -135,7 +146,13 @@ impl OAuthConnectionStorage {
         let stored: Stored = serde_json::from_slice(&bytes).map_err(|_| GoogleConnectionError::InvalidRecord)?;
         let epoch = unix_ms()?;
         let now = Instant::now();
-        if stored.version != 3
+        if stored.version != 4
+            || !valid_history(
+                stored.created_at_ms,
+                stored.updated_at_ms,
+                stored.last_refresh_at_ms,
+                stored.saved_at_ms,
+            )
             || stored.client_id != client.registration.client_id
             || stored.revision == 0
             || stored.revision > (1_u64 << 53) - 1
@@ -201,16 +218,26 @@ impl OAuthConnectionStorage {
             tokens,
             revocation: stored.revocation,
             pending_revocation: stored.pending_revocation.map(Arc::new),
+            created_at_ms: stored.created_at_ms,
+            updated_at_ms: stored.updated_at_ms,
+            last_refresh_at_ms: stored.last_refresh_at_ms,
         }))
     }
 }
 
-fn unix_ms() -> Result<u64, GoogleConnectionError> {
+pub(super) fn unix_ms() -> Result<u64, GoogleConnectionError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|time| time.as_millis().try_into().ok())
         .ok_or(GoogleConnectionError::InvalidRecord)
+}
+
+fn valid_history(created: u64, updated: u64, refresh: Option<u64>, saved: u64) -> bool {
+    created > 0
+        && updated >= created
+        && updated <= saved
+        && refresh.is_none_or(|time| time >= created && time <= updated)
 }
 #[derive(Serialize)]
 struct RecordView<'a> {
@@ -224,6 +251,9 @@ struct RecordView<'a> {
     tokens: Option<TokenView<'a>>,
     revocation: GoogleRevocationState,
     pending_revocation: Option<&'a str>,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+    last_refresh_at_ms: Option<u64>,
 }
 #[derive(Serialize)]
 struct TokenView<'a> {
@@ -245,6 +275,9 @@ struct Stored {
     tokens: Option<StoredTokens>,
     revocation: GoogleRevocationState,
     pending_revocation: Option<Secret>,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+    last_refresh_at_ms: Option<u64>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

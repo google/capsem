@@ -14,6 +14,7 @@ use capsem_foundation::unix::contained::{ContainedOpenOptions, EntryKind};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
+use tracing::debug;
 
 mod activity;
 mod cache_owners;
@@ -314,6 +315,7 @@ pub(crate) fn start(state: &Arc<ServiceState>, id: String, spec: ContainerSpec) 
 }
 
 async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: ContainerSpec) -> Result<(), String> {
+    let started = std::time::Instant::now();
     // One resolver for every entrypoint: a catalog name becomes the pinned
     // digest it names here, and is an explicit reference from then on.
     let mut decision = images::Decision::new(state).await?;
@@ -351,7 +353,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         LaunchWait::Crashed => return Err("container owner exited before launch".into()),
         LaunchWait::TimedOut => return Err("container owner did not launch within 30s".into()),
     }
-    match send_ipc_command(&uds_path, admission, Some(5)).await? {
+    match send_ipc_command(state, &uds_path, admission, Some(5)).await? {
         ProcessToService::ContainerPullAdmission { error: None, .. } => {}
         ProcessToService::ContainerPullAdmission {
             error: Some(error),
@@ -367,6 +369,13 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         }
         other => return Err(format!("unexpected container pull admission reply: {other:?}")),
     }
+    debug!(
+        vm_id = id,
+        stage = "owner_admission",
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "container startup stage"
+    );
+    let started = std::time::Instant::now();
     let access = spec.registry.unwrap_or_default();
     let image = state
         .containers
@@ -379,11 +388,25 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         )
         .await
         .map_err(|e| format!("pull {}: {e:#}", requested.pull))?;
+    debug!(
+        vm_id = id,
+        stage = "image_pull",
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "container startup stage"
+    );
+    let started = std::time::Instant::now();
     // Admission is on the resolved digest, before anything is staged.
     let resolved = decision.admit(&requested, &image).await?;
     let rootfs = decision
         .published_root(&requested, &image, &resolved, access, ImageFetch::PreferCached)
         .await?;
+    debug!(
+        vm_id = id,
+        stage = "published_root",
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "container startup stage"
+    );
+    let started = std::time::Instant::now();
     // An image whose surface labels are not exactly one valid declaration is
     // refused here, before staging: nothing of it runs and nothing is exposed.
     let declared = tokio::task::spawn_blocking({
@@ -421,9 +444,11 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     }
     let staged_image = stage::StageImage {
         manifest: &manifest,
-        rootfs: rootfs
-            .as_ref()
-            .map(|(digest, size)| stage::RootfsFile { digest, size: *size }),
+        rootfs: rootfs.as_ref().map(|(digest, integrity, size)| stage::RootfsFile {
+            digest,
+            integrity,
+            size: *size,
+        }),
     };
     let plan = stage::stage_plan(staged_image, &spec.args, &spec.env, resources, declared)
         .map_err(|e| format!("plan stage: {e:#}"))?;
@@ -433,10 +458,23 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         }
         stage_file(state, id, generation, file).await?;
     }
+    debug!(
+        vm_id = id,
+        stage = "image_stage",
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "container startup stage"
+    );
+    let started = std::time::Instant::now();
 
     wait_for_vm_ready(&uds_path, 30, Some(state), Some(id))
         .await
         .map_err(|error| format!("container guest did not become ready: {error}"))?;
+    debug!(
+        vm_id = id,
+        stage = "guest_ready_wait",
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "container startup stage"
+    );
     if attach {
         // A `container` stream starts it; the launch record is written then.
         state
@@ -451,7 +489,9 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         return Ok(());
     }
     let uds_path = running_uds_path(state, id).map_err(|e| e.1)?;
+    let started = std::time::Instant::now();
     let reply = send_ipc_command(
+        state,
         &uds_path,
         ServiceToProcess::Exec {
             id: state.next_job_id(),
@@ -466,7 +506,20 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
         ProcessToService::ExecResult { exit_code, .. } => return Err(format!("container launcher exited {exit_code}")),
         other => return Err(format!("unexpected launch reply: {other:?}")),
     }
+    debug!(
+        vm_id = id,
+        stage = "launcher_dispatch",
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "container startup stage"
+    );
+    let started = std::time::Instant::now();
     grant_surface(state, id, generation).await;
+    debug!(
+        vm_id = id,
+        stage = "workload_ready",
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "container startup stage"
+    );
     Ok(())
 }
 
@@ -815,7 +868,7 @@ async fn share_image(
     generation: u64,
     image: &PulledImage,
     rootfs: Option<capsem_assets::oci::RootfsLayout>,
-) -> Result<(String, Option<(String, u64)>), String> {
+) -> Result<(String, Option<(String, String, u64)>), String> {
     let lease = state
         .containers
         .work_lease(id, generation)
@@ -846,7 +899,7 @@ async fn share_image(
                         .ok_or_else(|| anyhow::anyhow!("rootfs name is not UTF-8"))?
                         .to_owned(),
                 );
-                Ok((rootfs.digest().to_string(), size))
+                Ok((rootfs.digest().to_string(), rootfs.integrity().to_owned(), size))
             })
             .transpose()?;
         capsem_core::session::publish_image_share(&session_dir, &blobs, &image.blobs)?;

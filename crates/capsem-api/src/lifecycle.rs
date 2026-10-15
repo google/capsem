@@ -15,6 +15,27 @@ pub struct StopResponse {
     pub persistent: bool,
 }
 
+/// Validate a VM name or identifier (`1..=64` ASCII `[A-Za-z0-9_-]` characters,
+/// starting with an ASCII letter or digit) so service paths and gateway routes
+/// enforce one rule.
+pub fn validate_name(kind: &str, value: &str) -> Result<(), String> {
+    let Some(first) = value.chars().next() else {
+        return Err(format!("{kind} cannot be empty"));
+    };
+    if value.len() > 64 {
+        return Err(format!("{kind} too long (max 64 characters)"));
+    }
+    if !first.is_ascii_alphanumeric() {
+        return Err(format!("{kind} must start with a letter or digit"));
+    }
+    if !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!(
+            "{kind} must contain only letters, digits, hyphens, and underscores"
+        ));
+    }
+    Ok(())
+}
+
 /// Unknown fields are refused rather than ignored.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +63,9 @@ pub struct ProvisionRequest {
     /// OCI image the service pulls, stages and starts as this VM's workload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container: Option<crate::ContainerSpec>,
+    /// Optional finite ownership for an unnamed ephemeral SDK session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<crate::ManagedSessionCreate>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -68,6 +92,29 @@ pub struct ProvisionResponse {
     #[serde(default)]
     pub can_resume: bool,
     pub available_actions: Vec<VmAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<crate::ManagedSessionOwnership>,
+}
+
+impl ProvisionResponse {
+    pub fn new(
+        id: String,
+        name: String,
+        status: VmLifecycleState,
+        persistent: bool,
+        can_resume: bool,
+        available_actions: Vec<VmAction>,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            status,
+            persistent,
+            can_resume,
+            available_actions,
+            ownership: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]

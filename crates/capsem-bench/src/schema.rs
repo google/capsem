@@ -38,6 +38,8 @@ pub enum Dimension {
     Resources,
     Vsock,
     Criterion,
+    /// CPU hashing and cached EROFS verification, through the crypto owner.
+    Crypto,
     Protocol,
     /// Members of a private network, VM to VM through the network's switch.
     Network,
@@ -48,6 +50,8 @@ pub enum Dimension {
     Startup,
     McpLoad,
     MitmLoad,
+    /// Aggregate HTTPS interception throughput as independent VMs fan out.
+    MitmScale,
     DnsLoad,
 }
 
@@ -64,6 +68,7 @@ impl Dimension {
         Dimension::Resources,
         Dimension::Vsock,
         Dimension::Criterion,
+        Dimension::Crypto,
         Dimension::Protocol,
         Dimension::Network,
         Dimension::Disk,
@@ -72,6 +77,7 @@ impl Dimension {
         Dimension::Startup,
         Dimension::McpLoad,
         Dimension::MitmLoad,
+        Dimension::MitmScale,
         Dimension::DnsLoad,
     ];
 
@@ -87,6 +93,7 @@ impl Dimension {
             Dimension::Resources => "resources",
             Dimension::Vsock => "vsock",
             Dimension::Criterion => "criterion",
+            Dimension::Crypto => "crypto",
             Dimension::Protocol => "protocol",
             Dimension::Network => "network",
             Dimension::Disk => "disk",
@@ -95,6 +102,7 @@ impl Dimension {
             Dimension::Startup => "startup",
             Dimension::McpLoad => "mcp-load",
             Dimension::MitmLoad => "mitm-load",
+            Dimension::MitmScale => "mitm-scale",
             Dimension::DnsLoad => "dns-load",
         }
     }
@@ -103,7 +111,7 @@ impl Dimension {
     pub fn needs_vm(self) -> bool {
         !matches!(
             self,
-            Dimension::Criterion | Dimension::Protocol | Dimension::Routes | Dimension::Websocket
+            Dimension::Criterion | Dimension::Crypto | Dimension::Protocol | Dimension::Routes | Dimension::Websocket
         )
     }
 

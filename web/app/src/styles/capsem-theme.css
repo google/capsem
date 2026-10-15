@@ -148,6 +148,7 @@
 
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-text: var(--destructive-text);
   --color-destructive-hover: var(--destructive-hover);
   --color-destructive-focus: var(--destructive-focus);
 
@@ -352,6 +353,7 @@
 
   --destructive: var(--color-purple-600);
   --destructive-foreground: var(--color-white);
+  --destructive-text: var(--color-purple-700);
   --destructive-hover: var(--color-purple-700);
   --destructive-focus: var(--color-purple-700);
 
@@ -613,6 +615,7 @@
 
   --destructive: var(--color-purple-400);
   --destructive-foreground: var(--color-purple-950);
+  --destructive-text: var(--color-purple-300);
   --destructive-hover: var(--color-purple-300);
   --destructive-focus: var(--color-purple-300);
 

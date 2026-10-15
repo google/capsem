@@ -40,7 +40,7 @@ PULL = {"image": "code", "resolved": PIN, "digest": "sha256:" + "b" * 64}
 
 
 @asynccontextmanager
-async def gateway(*, response=None, status=200):
+async def gateway(*, response=None, status=200, response_delay=0, on_request=None):
     received = []
 
     async def handle(request):
@@ -49,6 +49,10 @@ async def gateway(*, response=None, status=200):
         received.append(
             (request.method, request.path_qs, json.loads(body) if body else None)
         )
+        if on_request is not None:
+            on_request()
+        if response_delay:
+            await asyncio.sleep(response_delay)
         return web.json_response(
             response
             if response is not None

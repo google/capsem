@@ -26,7 +26,7 @@ pub(crate) async fn wait_for_vm_ready(
         let id = id.map(|s| s.to_string());
         let died = Arc::clone(&died);
         async move {
-            if ready.exists() {
+            if super::launch::stamped(&ready, "ready") {
                 return Some(());
             }
             if let (Some(st), Some(name)) = (state.as_ref(), id.as_ref()) {

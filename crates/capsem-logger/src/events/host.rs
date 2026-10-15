@@ -87,6 +87,7 @@ pub struct HostEvent {
     pub session_id: Option<String>,
     pub actor: String,
     #[serde(default)]
+    #[serde(with = "serde_bytes")]
     pub detail: Vec<u8>,
     #[serde(default)]
     pub trace_id: Option<String>,
@@ -95,7 +96,7 @@ pub struct HostEvent {
 /// The hash of `event` chained from `previous`: every field, length-prefixed
 /// in a fixed order, so no serializer's choices can change it.
 pub fn chain_hash(previous: &[u8; 32], event: &HostEvent) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = capsem_crypto::blake3::Hasher::new();
     hasher.update(previous);
     hasher.update(&event.timestamp_unix_ms.to_le_bytes());
     let mut field = |bytes: Option<&[u8]>| match bytes {

@@ -596,7 +596,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         let ca_path = home.join("config").join("capsem-ca.crt");
         let entry_path = format!("{bundle_root}/system/mitm-ca-fingerprint.txt");
         if let Ok(bytes) = fs::read(&ca_path) {
-            let hash = blake3::hash(&bytes); // fast; not crypto -- this is just a fingerprint
+            let hash = capsem_crypto::blake3::hash(&bytes); // fast; not crypto -- this is just a fingerprint
             let s = format!("blake3: {}\n", hash.to_hex());
             let bytes = s.into_bytes();
             let len = bytes.len() as u64;

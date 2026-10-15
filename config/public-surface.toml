@@ -3,12 +3,14 @@
 # drive-by addition, deletion, rename, or stale count fails closed.
 
 [just]
-count = 24
+count = 25
 approved = [
   # Measuring is a public verb now. It had no entry point at all: nine
   # Criterion targets existed and nothing ran them, and a release failed on a
   # gateway CPU figure no run had ever recorded.
   "bench",
+  # Full benchmark dimensions may rebuild stale guest assets before measuring.
+  "bench-slow",
   "bench-quick",
   "bench-report",
   "build",
@@ -37,7 +39,7 @@ approved = [
 ]
 
 [capsem_cli]
-count = 41
+count = 42
 approved = [
   "assets ensure",
   "assets status",
@@ -67,6 +69,7 @@ approved = [
   "network list",
   "network logs",
   "persist",
+  "proxy",
   "purge",
   "restart",
   "resume",
@@ -83,8 +86,20 @@ approved = [
 ]
 
 [http]
-count = 95
+count = 111
 approved = [
+  # All nine connection/grant routes approved by the user on 2026-10-14.
+  "GET /connections",
+  "POST /connections/google/authorize",
+  "GET /connections/authorizations/{transaction_id}",
+  "DELETE /connections/authorizations/{transaction_id}",
+  "GET /connections/{connection_id}",
+  "DELETE /connections/{connection_id}",
+  "GET /vms/{id}/credential-grants",
+  "POST /vms/{id}/credential-grants",
+  "DELETE /vms/{id}/credential-grants/{grant_id}",
+  "POST /vms/managed/{request_id}/claim",
+  "POST /vms/managed/{request_id}/close",
   "DELETE /networks/{id}",
   "DELETE /networks/{id}/members/{vm_id}",
   "DELETE /vms/{id}/delete",
@@ -95,6 +110,7 @@ approved = [
   "GET /enforcement/status",
   "GET /host-logs/{name}",
   "GET /images",
+  "GET /internal/gateway/status",
   "GET /panics",
   "GET /security/latest",
   "GET /security/status",
@@ -143,11 +159,15 @@ approved = [
   "POST /corp/reload",
   "POST /corp/validate",
   "POST /purge",
+  "POST /proxies",
+  "POST /proxies/{id}/heartbeat",
+  "POST /proxies/{id}/stop",
   "POST /restart",
   "POST /run",
   "POST /internal/vms/{id}/exposures/{exposure_id}/preview-admission",
   "POST /internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap",
   "POST /internal/vms/{id}/exposures/{exposure_id}/preview-session",
+  "POST /internal/vms/{id}/metrics",
   "POST /update/apply",
   "POST /update/check",
   "POST /images/pull",

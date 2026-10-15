@@ -33,9 +33,15 @@ pub(super) async fn count(db: &DbHandle, sql: &str) -> i64 {
 #[test]
 fn interactive_capture_refuses_id_and_metadata_budgets_before_unbounded_work() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
-    let error = crate::db::bodies::capture_body_rows(&conn, std::path::Path::new("unused.db"), Vec::new(), 10_001)
-        .err()
-        .expect("too many ids are rejected before archive acquisition");
+    let error = crate::db::bodies::capture_body_rows(
+        &conn,
+        std::path::Path::new("unused.db"),
+        Vec::new(),
+        10_001,
+        &capsem_archive::ArchiveCodecs::default(),
+    )
+    .err()
+    .expect("too many ids are rejected before archive acquisition");
     assert!(error.contains("limit is 10000"), "{error}");
 
     let limit = 16 * 1024 * 1024;
@@ -427,7 +433,7 @@ async fn ledger_snapshot_copies_the_archive_the_db_references() {
     drop(source_conn);
     let source_archive = crate::writer::archive_path_for_db(&src_dir.join("session.db"));
     let source_directory = capsem_foundation::unix::contained::ContainedDir::open_root(&source_archive).unwrap();
-    let orphan_id = capsem_archive::GenerationId::new_v4();
+    let orphan_id = capsem_archive::GenerationId::generate();
     let mut orphan =
         capsem_archive::BodyLogWriter::create_generation(&source_directory, captured.header.archive_id, orphan_id)
             .unwrap();
@@ -708,18 +714,22 @@ async fn a_rejected_op_does_not_leave_the_archive_holding_a_block() {
         credential_ref: Some("not-a-credential-reference".into()),
     }];
     db.write(WriteOp::ModelCall(call)).await.expect("write is accepted");
-    db.flush().await.expect("flush");
+    let error = db
+        .flush()
+        .await
+        .expect_err("the rejected row must surface at the barrier");
+    assert_eq!(error, "db rejected 1 accepted write operations");
     drop(db);
 
     let reader = DbHandle::open_external_reader(&p).expect("reopen the ledger");
     reader.ready().await.expect("the ledger is still sound");
     // The block reached the file: a writer that closed still holding it
-    // would leave the archive at its bare 16-byte header, and the archive's
+    // would leave the archive at its bare header, and the archive's
     // own drop assertion -- which the writer thread swallows on join -- would
     // be the only other sign.
     let archive = std::fs::metadata(archive_path(&p)).expect("stat archive");
     assert!(
-        archive.len() > 16,
+        archive.len() > capsem_archive::FILE_HEADER_BYTES as u64,
         "the rejected op's bytes must be sealed at shutdown, not held; archive is {} bytes",
         archive.len()
     );

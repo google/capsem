@@ -17,14 +17,26 @@ pub fn openapi() -> OpenApi {
     doc.add("/restart", HttpMethod::Post, restart);
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
+    doc.post::<ManagedSessionClaimRequest, ManagedSessionClaimResponse>(
+        "/vms/managed/{request_id}/claim",
+        "claimManagedSession",
+    );
+    doc.post::<ManagedSessionCloseRequest, ManagedSessionCloseResponse>(
+        "/vms/managed/{request_id}/close",
+        "closeManagedSession",
+    );
     doc.post::<RunRequest, ExecResponse>("/run", "runVm");
     doc.post::<PurgeRequest, PurgeResponse>("/purge", "purgeVms");
+    doc.post::<CreateProxyRequest, CreateProxyResponse>("/proxies", "createProxy");
+    doc.post::<ProxyLeaseRequest, ProxyHeartbeatResponse>("/proxies/{id}/heartbeat", "heartbeatProxy");
+    doc.post::<ProxyLeaseRequest, StopProxyResponse>("/proxies/{id}/stop", "stopProxy");
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
     doc.get::<ContainerStatusResponse>("/vms/{id}/container", "getVmContainer");
     doc.images();
     doc.post::<CredentialInjectRequest, CredentialInjectResponse>("/credentials/inject", "injectCredential");
+    doc.connections();
     doc.exposures();
     doc.post::<ExecRequest, ExecResponse>("/vms/{id}/exec", "execVm");
     doc.post::<ForkRequest, ForkResponse>("/vms/{id}/fork", "forkVm");
@@ -87,9 +99,49 @@ struct Document {
 /// force every generated SDK to be regenerated, and an SDK built against the
 /// contract keeps working across binary releases. Raise it when the contract
 /// changes in a way clients must notice.
-pub const CONTRACT_VERSION: &str = "3.0.0";
+pub const CONTRACT_VERSION: &str = "3.3.0";
 
 impl Document {
+    fn connections(&mut self) {
+        let catalog = self
+            .operation::<ConnectionListResponse>("/connections", "listConnections")
+            .parameters(Some(ConnectionListQuery::into_params(|| Some(ParameterIn::Query))));
+        self.add("/connections", HttpMethod::Get, catalog);
+        self.post_status::<AuthorizeGoogleRequest, AuthorizeGoogleResponse>(
+            "/connections/google/authorize",
+            "authorizeGoogleConnection",
+            "202",
+        );
+        self.get::<AuthorizationTransaction>(
+            "/connections/authorizations/{transaction_id}",
+            "getConnectionAuthorization",
+        );
+        let cancel = self.operation::<AuthorizationTransaction>(
+            "/connections/authorizations/{transaction_id}",
+            "cancelConnectionAuthorization",
+        );
+        self.add(
+            "/connections/authorizations/{transaction_id}",
+            HttpMethod::Delete,
+            cancel,
+        );
+        self.get::<ConnectionSummary>("/connections/{connection_id}", "getConnection");
+        let disconnect =
+            self.operation_status::<DisconnectResponse>("/connections/{connection_id}", "disconnectConnection", "202");
+        self.add("/connections/{connection_id}", HttpMethod::Delete, disconnect);
+        self.get::<SessionGrantListResponse>("/vms/{id}/credential-grants", "listSessionCredentialGrants");
+        self.post_status::<CreateSessionGrantRequest, SessionGrantSummary>(
+            "/vms/{id}/credential-grants",
+            "createSessionCredentialGrant",
+            "201",
+        );
+        let revoke = self.operation::<RevokeSessionGrantResponse>(
+            "/vms/{id}/credential-grants/{grant_id}",
+            "revokeSessionCredentialGrant",
+        );
+        self.add("/vms/{id}/credential-grants/{grant_id}", HttpMethod::Delete, revoke);
+    }
+
     fn schema<T: ToSchema>(&mut self) -> Ref {
         let mut nested = Vec::new();
         T::schemas(&mut nested);
@@ -152,8 +204,12 @@ impl Document {
     }
 
     fn post<Q: ToSchema, T: ToSchema>(&mut self, path: &str, id: &str) {
+        self.post_status::<Q, T>(path, id, "200");
+    }
+
+    fn post_status<Q: ToSchema, T: ToSchema>(&mut self, path: &str, id: &str, status: &str) {
         let request = self.schema::<Q>();
-        let operation = self.operation::<T>(path, id).request_body(Some(
+        let operation = self.operation_status::<T>(path, id, status).request_body(Some(
             RequestBodyBuilder::new()
                 .required(Some(Required::True))
                 .content("application/json", Content::new(Some(request)))
@@ -192,7 +248,7 @@ impl Document {
 
     fn networks(&mut self) {
         self.get::<NetworkListResponse>("/networks", "listNetworks");
-        self.post::<CreateNetworkRequest, NetworkInfo>("/networks", "createNetwork");
+        self.post_status::<CreateNetworkRequest, NetworkInfo>("/networks", "createNetwork", "201");
         self.get::<NetworkInfo>("/networks/{id}", "getNetwork");
 
         let delete = self.operation::<VmActionResponse>("/networks/{id}", "deleteNetwork");

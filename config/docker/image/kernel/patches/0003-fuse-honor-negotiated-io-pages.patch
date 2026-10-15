@@ -1,0 +1,33 @@
+From: Jim Harris <jim.harris@nvidia.com>
+Subject: [PATCH] fuse: honor negotiated I/O pages for explicit buffered reads
+
+Backport upstream 98b4ca2378e1f6b6c06a74f699623ebecfb3549d to 6.18.44:
+https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=98b4ca2378e1f6b6c06a74f699623ebecfb3549d
+
+The guest requests one MiB at a time and our VirtioFS backend negotiates
+256 pages, but the FUSE backing device leaves io_pages at its default.
+Large reads therefore split into 128-KiB round trips. A 352-MB prepared
+image generated about 2,700 FUSE_READ requests and spent 1.5 seconds in
+read(), while its BLAKE3 hash took only 76 ms.
+
+Set the optimal I/O pages to the negotiated maximum for every FUSE mount.
+This increases only explicitly requested reads above the read-ahead window;
+speculative read-ahead and small/random reads retain their existing bounds.
+It also applies to workspace I/O and retained mounts after warm resume.
+Remove the backport when the pinned kernel carries the upstream change.
+
+---
+ fs/fuse/inode.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/fs/fuse/inode.c b/fs/fuse/inode.c
+--- a/fs/fuse/inode.c
++++ b/fs/fuse/inode.c
+@@ -1463,6 +1463,7 @@ static void process_init_reply(struct fuse_mount *fm, struct fuse_args *args,
+ 
+ 		fm->sb->s_bdi->ra_pages =
+ 				min(fm->sb->s_bdi->ra_pages, ra_pages);
++		fm->sb->s_bdi->io_pages = fc->max_pages;
+ 		fc->minor = arg->minor;
+ 		fc->max_write = arg->minor < 5 ? 4096 : arg->max_write;
+ 		fc->max_write = max_t(unsigned, 4096, fc->max_write);

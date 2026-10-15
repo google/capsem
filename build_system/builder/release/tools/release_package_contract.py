@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-import blake3
+from ... import crypto as blake3
+from ... import crypto as hashlib
 
 USER_AGENT = {"User-Agent": "capsem-package-storage/1"}
 

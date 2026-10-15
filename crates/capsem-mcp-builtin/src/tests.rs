@@ -1,4 +1,8 @@
 use super::*;
+use std::time::Duration;
+
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(capsem_proto::MCP_HTTP_TIMEOUT_SECONDS);
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(capsem_proto::MCP_STARTUP_TIMEOUT_SECONDS);
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// A non-public address is reachable only through an explicit allow rule,
@@ -404,32 +408,4 @@ async fn grep_and_header_tools_refuse_a_blocked_url_with_a_ledger_record() {
         };
         assert_eq!(request.decision, builtin_ledger::HttpDecision::Denied);
     }
-}
-
-#[test]
-fn pooled_peers_each_get_their_own_singleton_lock() {
-    assert_eq!(lock_file_name(0), "mcp-builtin.lock");
-    assert_eq!(lock_file_name(3), "mcp-builtin-3.lock");
-    assert_eq!(peer_index(None), 0);
-    assert_eq!(peer_index(Some("2".into())), 2);
-    assert_eq!(
-        peer_index(Some("not-a-number".into())),
-        0,
-        "a malformed index is the singleton"
-    );
-}
-
-#[test]
-fn a_missing_or_malformed_active_policy_names_the_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let missing = dir.path().join("absent.toml");
-    let missing = missing.to_str().unwrap();
-    let error = format!("{:#}", load_active_policy(missing).unwrap_err());
-    assert!(error.contains(&format!("read active policy {missing}")), "{error}");
-
-    let malformed = dir.path().join("malformed.toml");
-    std::fs::write(&malformed, "this is = = not toml").unwrap();
-    let malformed = malformed.to_str().unwrap();
-    let error = format!("{:#}", load_active_policy(malformed).unwrap_err());
-    assert!(error.contains(&format!("parse active policy {malformed}")), "{error}");
 }

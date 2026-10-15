@@ -2191,15 +2191,18 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         assert final_http_request["stream"] is True
         assert len(final_http_request["tools"]) == 14
         final_inputs = final_http_request["input"]
-        assert final_inputs[-2]["type"] == "function_call"
-        assert final_inputs[-2]["name"] == "exec_command"
-        assert final_inputs[-2]["call_id"] == expected_call_id
-        assert nonce in final_inputs[-2]["arguments"]
-        assert f"/workspace/{filename}" in final_inputs[-2]["arguments"]
-        assert final_inputs[-1]["type"] == "function_call_output"
-        assert final_inputs[-1]["call_id"] == expected_call_id
-        assert "Process exited with code 0" in final_inputs[-1]["output"]
-        assert nonce not in final_inputs[-1]["output"]
+        assert [item["type"] for item in final_inputs] == [
+            "message", "message", "message", "function_call", "reasoning", "function_call_output",
+        ]
+        call, reasoning, response = final_inputs[-3:]
+        assert call["name"] == "exec_command"
+        assert call["call_id"] == expected_call_id
+        assert nonce in call["arguments"]
+        assert f"/workspace/{filename}" in call["arguments"]
+        assert reasoning["type"] == "reasoning"
+        assert response["call_id"] == expected_call_id
+        assert "Process exited with code 0" in response["output"]
+        assert nonce not in response["output"]
         final_sse_events = [
             json.loads(line.removeprefix("data: "))
             for line in final_http_record["response_body"].splitlines()
@@ -2273,8 +2276,8 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_model["input_tokens"] == 31
             assert tool_model["output_tokens"] == 17
             assert tool_model["text_content"] is None
-            assert tool_model["thinking_content"] is None
-            assert tool_model["stop_reason"] == "end_turn"
+            assert tool_model["thinking_content"] == "ledger reasoning"
+            assert tool_model["stop_reason"] == "tool_use"
             assert tool_model["request_bytes"] > 0
             assert tool_model["response_bytes"] > 0
             _assert_credential_ref(tool_model["credential_ref"])
@@ -2326,7 +2329,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert tool_row["tool_name"] == "exec_command"
             tool_args = json.loads(tool_row["arguments"])
             assert tool_args["cmd"] == (
-                f"printf '%s\\n' {nonce} > /workspace/{filename}"
+                f"printf '%s\\n' '{nonce}' > '/workspace/{filename}'"
             )
             assert f"/workspace/{filename}" in tool_args["cmd"]
             assert tool_args["yield_time_ms"] == 1000
@@ -2408,11 +2411,15 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             codex_net_request = _archived_request(conn, codex_net, "net_events")
             assert "capsem_test_codex_cli_key" not in codex_net_request
             assert expected_call_id in codex_net_request
-            assert "response.reasoning_summary_text.delta" in (
-                codex_net["response_body_preview"] or ""
-            )
-            assert "response.output_text.delta" in (codex_net["response_body_preview"] or "")
-            assert nonce in (codex_net["response_body_preview"] or "")
+            # Reasoning starts beyond the bounded preview. Compare the full
+            # archived response with the upstream's exact transcript.
+            with session_archive(conn) as archive:
+                codex_response = archive.read(codex_net["event_id"], "net_events", "response")
+            assert codex_response is not None
+            assert codex_response.decode() == final_http_record["response_body"]
+            assert b"response.reasoning_summary_text.delta" in codex_response
+            assert b"response.output_text.delta" in codex_response
+            assert nonce.encode() in codex_response
 
             security_rows = _eventually(
                 lambda: conn.execute(
@@ -2526,7 +2533,12 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                     "SELECT * FROM fs_events WHERE path = ? ORDER BY id",
                     (filename,),
                 ).fetchall(),
-                lambda rows: any(row["action"] in {"created", "modified"} for row in rows),
+                lambda rows: any(
+                    row["action"] in {"created", "modified"}
+                    and row["size"] == len((nonce + "\n").encode())
+                    and row["trace_id"] == tool_row["trace_id"]
+                    for row in rows
+                ),
             )
             assert all(row["credential_ref"] is None for row in file_rows)
             created_file_rows = [

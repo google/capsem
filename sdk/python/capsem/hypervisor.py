@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from . import _operations as api
 from . import models
 from ._client import Client
+from ._connections import Connections
 from ._credentials import Credentials
 from ._debug import Debug
 from ._images import Images
@@ -18,6 +19,7 @@ from .execution import (
     ExecResult,
     command_deadline,
 )
+from .managed import ManagedSession
 from .registry import Registry
 from .vm import VM
 
@@ -30,6 +32,39 @@ def _memory_mb(memory: int | None) -> int | None:
     return memory * 1024
 
 
+def _provision_request(*, name: str = "", cpus: int | None = None,
+                       memory: int | None = None, env: dict[str, str] | None = None,
+                       networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
+                       command: Sequence[str] = (), registry: Registry | None = None) -> models.ProvisionRequest:
+    if cpus is not None and (isinstance(cpus, bool) or not isinstance(cpus, int) or cpus < 1):
+        raise ValueError("cpus must be positive")
+    if image is None and (command or registry is not None):
+        raise ValueError("container command and registry require an image")
+    if registry is not None and not isinstance(registry, Registry):
+        raise TypeError("registry must be a Registry object")
+    if image is not None and (not isinstance(image, str) or not image):
+        raise ValueError("image must be a nonempty string")
+    network_names: list[str] = []
+    for network in networks:
+        if not isinstance(network, models.NetworkInfo):
+            raise TypeError("networks must contain NetworkInfo objects returned by capsem.networks")
+        network_names.append(network.name)
+    wire: models.ContainerSpec | None = None
+    if image is not None:
+        wire = models.ContainerSpec(
+            image=image, args=list(command), env=env or {}, attach=False,
+        ) if registry is None else models.ContainerSpec(
+            image=image, args=list(command), env=env or {}, registry=registry._wire(), attach=False,
+        )
+    request = models.ProvisionRequest(
+        name=name or None, persistent=bool(name), cpus=cpus, ram_mb=_memory_mb(memory),
+        env=env if image is None else None, networks=network_names,
+    )
+    if wire is not None:
+        request.container = wire
+    return request
+
+
 class Hypervisor(Client):
     def __init__(self, url: str, token: str, *, timeout: float = 30) -> None:
         super().__init__(url, token, timeout=timeout)
@@ -38,6 +73,7 @@ class Hypervisor(Client):
         self.debug = Debug(self._transport)
         self.images = Images(self._transport)
         self.credentials = Credentials(self._transport)
+        self.connections = Connections(self._transport)
 
     async def info(self) -> models.HypervisorInfo:
         return await api.get_hypervisor_info(self._transport)
@@ -56,33 +92,8 @@ class Hypervisor(Client):
                      memory: int | None = None, env: dict[str, str] | None = None,
                      networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                      command: Sequence[str] = (), registry: Registry | None = None) -> VM:
-        if cpus is not None and (isinstance(cpus, bool) or not isinstance(cpus, int) or cpus < 1):
-            raise ValueError("cpus must be positive")
-        if image is None and (command or registry is not None):
-            raise ValueError("container command and registry require an image")
-        if registry is not None and not isinstance(registry, Registry):
-            raise TypeError("registry must be a Registry object")
-        if image is not None and (not isinstance(image, str) or not image):
-            raise ValueError("image must be a nonempty string")
-        network_names: list[str] = []
-        for network in networks:
-            if not isinstance(network, models.NetworkInfo):
-                raise TypeError("networks must contain NetworkInfo objects returned by capsem.networks")
-            network_names.append(network.name)
-        wire: models.ContainerSpec | None = None
-        if image is not None:
-            wire = models.ContainerSpec(
-                image=image, args=list(command), env=env or {}, attach=False,
-            ) if registry is None else models.ContainerSpec(
-                image=image, args=list(command), env=env or {}, registry=registry._wire(), attach=False,
-            )
-        request = models.ProvisionRequest(
-            name=name or None, persistent=bool(name),
-            cpus=cpus, ram_mb=_memory_mb(memory),
-            env=env if image is None else None, networks=network_names,
-        )
-        if wire is not None:
-            request.container = wire
+        request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, networks=networks,
+                                     image=image, command=command, registry=registry)
         # The service answers only once a container workload is ready, so
         # wait at least as long as it does before giving up on the create.
         response = await api.create_vm(
@@ -90,6 +101,13 @@ class Hypervisor(Client):
             request_timeout=max(self._transport.timeout, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS),
         )
         return VM._bind(self._transport, id=response.id, name=response.name, container=image is not None)
+
+    def managed(self, *, cpus: int | None = None, memory: int | None = None,
+                env: dict[str, str] | None = None, networks: Sequence[models.NetworkInfo] = (),
+                image: str | None = None, command: Sequence[str] = (), registry: Registry | None = None) -> ManagedSession:
+        """An ephemeral ownership scope: renew while entered, await cleanup on exit."""
+        return ManagedSession(self._transport, _provision_request(
+            cpus=cpus, memory=memory, env=env, networks=networks, image=image, command=command, registry=registry))
 
     async def log(self, source: models.HostLogSource = models.HostLogSource.SERVICE, *,
                   grep: str | None = None, tail: int | None = None,

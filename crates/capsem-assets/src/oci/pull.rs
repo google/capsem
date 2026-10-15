@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use capsem_crypto::Sha256;
 use futures::{stream, StreamExt, TryStreamExt};
 use oci_client::{
     client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol},
@@ -14,7 +15,6 @@ use oci_client::{
     Client, Reference, RegistryOperation,
 };
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use super::receipts::{BlobKind, BlobRef, CacheReceipt, RootReceipt};
@@ -23,12 +23,11 @@ use super::{
     catalog::{Catalog, CATALOG_MEDIA_TYPE},
     digest_hex, image_reference,
     selector::Digest as ContentDigest,
-    verify_platform, CacheIdentity, ImageReference, METADATA_LIMIT, RUNTIME_CONTRACT,
+    verify_platform, CacheIdentity, ImageReference, METADATA_LIMIT, PULL_TIMEOUT, RUNTIME_CONTRACT,
 };
 
 const LAYER_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
-const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 const CATALOG_LIMIT: u64 = 1024 * 1024;
 
 pub(super) fn validate_architecture(architecture: &str) -> Result<()> {
@@ -52,13 +51,14 @@ enum BlobUse {
     PublishedRootCacheOnly,
 }
 /// The CI-produced filesystem artifact and its sole layer use the same type.
-pub const ROOTFS_MEDIA_TYPE: &str = "application/vnd.capsem.rootfs.erofs.v1";
+pub const ROOTFS_MEDIA_TYPE: &str = "application/vnd.capsem.rootfs.erofs.v2";
 
 /// Verified, opaque read-only filesystem bytes. Its staging link may retain
 /// an immutable cache generation; dropping the layout reclaims only the link.
 pub struct RootfsLayout {
     directory: tempfile::TempDir,
     digest: ContentDigest,
+    integrity: String,
     receipt: RootReceipt,
 }
 
@@ -72,6 +72,10 @@ impl RootfsLayout {
 
     pub fn digest(&self) -> &ContentDigest {
         &self.digest
+    }
+
+    pub fn integrity(&self) -> &str {
+        &self.integrity
     }
 }
 
@@ -272,6 +276,13 @@ impl Puller {
                 && layer.urls.as_ref().is_none_or(Vec::is_empty),
             "unsupported rootfs layer media type, size or external URLs"
         );
+        let integrity = manifest
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.get("org.capsem.rootfs.blake3"))
+            .context("rootfs artifact has no BLAKE3 integrity identity")?
+            .clone();
+        capsem_crypto::verify::blake3_digest(&integrity)?;
         let digest = ContentDigest::parse(&layer.digest)?;
         let directory = staging(parent).await?;
         let usage = if cache_only {
@@ -279,7 +290,8 @@ impl Puller {
         } else {
             BlobUse::PublishedRoot
         };
-        self.blob(&reference, layer, directory.path(), usage).await?;
+        self.blob(&reference, layer, directory.path(), usage, Some(&integrity))
+            .await?;
         if !cache_only {
             if let Some(cache) = &self.cache {
                 cache
@@ -300,6 +312,7 @@ impl Puller {
             },
             directory,
             digest,
+            integrity,
         })
     }
 
@@ -338,7 +351,8 @@ impl Puller {
             "external catalog URLs are unsupported"
         );
         let directory = staging(parent).await?;
-        self.blob(&reference, layer, directory.path(), BlobUse::Private).await?;
+        self.blob(&reference, layer, directory.path(), BlobUse::Private, None)
+            .await?;
         let document = tokio::fs::read(directory.path().join(digest_hex(&layer.digest)?)).await?;
         Ok((identity, Catalog::parse(&document)?))
     }
@@ -425,7 +439,7 @@ impl Puller {
         } else {
             BlobUse::Private
         };
-        self.blob(&reference, &manifest.config, &blob_dir, usage).await?;
+        self.blob(&reference, &manifest.config, &blob_dir, usage, None).await?;
         let config = tokio::fs::read(blob_dir.join(digest_hex(&manifest.config.digest)?)).await?;
         verify_platform(&config, &self.architecture)?;
         // Deduplicate shared layer descriptors before concurrent, create-new writes.
@@ -436,7 +450,7 @@ impl Puller {
             .collect();
         let downloads: Vec<_> = layers
             .values()
-            .map(|layer| self.blob(&reference, layer, &blob_dir, usage))
+            .map(|layer| self.blob(&reference, layer, &blob_dir, usage, None))
             .collect();
         stream::iter(downloads)
             .buffer_unordered(4)
@@ -562,21 +576,27 @@ impl Puller {
         descriptor: &OciDescriptor,
         directory: &Path,
         usage: BlobUse,
+        integrity: Option<&str>,
     ) -> Result<()> {
         let destination = directory.join(digest_hex(&descriptor.digest)?);
         let cache = self.cache.as_ref().map(|cache| cache.for_repository(reference));
         let _lease = match &cache {
             Some(cache) => {
-                let lease = cache.lease(&descriptor.digest).await?;
+                let mut lease = Some(cache.lease(&descriptor.digest).await?);
                 let hit = match usage {
                     BlobUse::Private | BlobUse::CacheOnly => {
                         cache
-                            .copy_hit(&descriptor.digest, descriptor.size as u64, &destination)
+                            .copy_hit_with_lease(&descriptor.digest, descriptor.size as u64, &destination, &mut lease)
                             .await?
                     }
                     BlobUse::PublishedRoot | BlobUse::PublishedRootCacheOnly => {
                         cache
-                            .link_root_hit(&descriptor.digest, descriptor.size as u64, &destination)
+                            .link_root_hit(
+                                &descriptor.digest,
+                                descriptor.size as u64,
+                                &destination,
+                                integrity.context("published root requires BLAKE3 integrity")?,
+                            )
                             .await?
                     }
                 };
@@ -584,7 +604,10 @@ impl Puller {
                     tracing::debug!(digest = %descriptor.digest, "OCI blob cache hit");
                     return Ok(());
                 }
-                Some(lease)
+                if lease.is_none() {
+                    lease = Some(cache.lease(&descriptor.digest).await?);
+                }
+                lease
             }
             None => None,
         };
@@ -604,16 +627,24 @@ impl Puller {
             .await?;
         let mut count = 0u64;
         let mut digest = Sha256::new();
+        let mut root_integrity = integrity.map(capsem_crypto::verify::Verifier::new).transpose()?;
         while let Some(chunk) = chunks.try_next().await? {
             count += chunk.len() as u64;
             ensure!(count <= descriptor.size as u64, "blob exceeds declared size");
             digest.update(&chunk);
+            if let Some(verifier) = &mut root_integrity {
+                verifier.update(&chunk);
+            }
             file.write_all(&chunk).await?;
         }
         ensure!(count == descriptor.size as u64, "blob size mismatch");
         ensure!(
             format!("sha256:{:x}", digest.finalize()) == descriptor.digest,
             "blob digest mismatch"
+        );
+        ensure!(
+            root_integrity.is_none_or(capsem_crypto::verify::Verifier::finish),
+            "rootfs BLAKE3 integrity mismatch"
         );
         file.flush().await?;
         drop(file);

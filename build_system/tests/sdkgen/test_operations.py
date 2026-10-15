@@ -36,15 +36,16 @@ def test_upload_download_and_csv_parameters_are_preserved() -> None:
     assert layer.style == "form" and layer.explode is False
 
 
-def test_a_single_accepted_response_preserves_its_schema(tmp_path: Path) -> None:
+@pytest.mark.parametrize("status", ["201", "202"])
+def test_a_single_success_response_preserves_its_schema(tmp_path: Path, status: str) -> None:
     document = json.loads(SPEC.read_text())
     operation = document["paths"]["/vms/{id}/info"]["get"]
     success = operation["responses"].pop("200")
-    operation["responses"]["202"] = success
+    operation["responses"][status] = success
     path = tmp_path / "accepted.json"
     path.write_text(json.dumps(document))
     parsed = next(route.operation for route in read_operations(path) if route.operation.operation_id == "getVmInfo")
-    assert parsed.success_status == "202"
+    assert parsed.success_status == status
     assert parsed.success.model_dump(by_alias=True, exclude_unset=True) == success
 
 

@@ -11,10 +11,10 @@ use axum::{
 };
 use oci_client::{client::ClientProtocol, secrets::RegistryAuth};
 
+use capsem_crypto::Sha256;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
-const ROOTFS_MEDIA: &str = "application/vnd.capsem.rootfs.erofs.v1";
+const ROOTFS_MEDIA: &str = "application/vnd.capsem.rootfs.erofs.v2";
 pub(super) const ROOTFS_BYTES: &[u8] = b"opaque published EROFS bytes: never unpack these on the host";
 
 pub(super) fn rootfs_subject() -> ContentDigest {
@@ -33,6 +33,7 @@ pub(super) async fn rootfs_registry(change: impl FnOnce(&mut Value, &mut BTreeMa
             "config": descriptor("application/vnd.oci.empty.v1+json", empty),
             "subject": {"mediaType": OCI_IMAGE_MEDIA_TYPE, "digest": rootfs_subject().as_str(), "size": 100},
             "layers": [descriptor(ROOTFS_MEDIA, rootfs)],
+            "annotations": {"org.capsem.rootfs.blake3": format!("blake3:{}", capsem_crypto::blake3::hash(rootfs).to_hex())},
         });
         change(manifest, blobs);
     })
@@ -57,6 +58,33 @@ async fn published_rootfs_is_verified_opaque_and_lifetime_owned() {
     assert!(path.starts_with(parent.path()));
     drop(layout);
     assert!(!path.exists(), "the returned layout owns the disposable payload");
+}
+
+#[tokio::test]
+async fn published_rootfs_requires_bound_blake3_metadata_and_rejects_a_wrong_hash() {
+    for integrity in [
+        None,
+        Some(format!("blake3:{}", "0".repeat(64))),
+        Some("blake3:../root".into()),
+    ] {
+        let registry = rootfs_registry(move |manifest, _| {
+            if let Some(value) = integrity {
+                manifest["annotations"] = json!({"org.capsem.rootfs.blake3": value});
+            } else {
+                manifest.as_object_mut().unwrap().remove("annotations");
+            }
+        })
+        .await;
+        let parent = tempfile::tempdir().unwrap();
+        let result = registry
+            .puller()
+            .fetch_rootfs(&rootfs_reference(&registry), &rootfs_subject(), parent.path())
+            .await;
+        assert!(
+            result.is_err(),
+            "an EROFS payload requires its authenticated BLAKE3 integrity identity"
+        );
+    }
 }
 
 #[tokio::test]
@@ -366,7 +394,8 @@ impl Registry {
             "schemaVersion": 2, "mediaType": OCI_IMAGE_MEDIA_TYPE, "artifactType": ROOTFS_MEDIA_TYPE,
             "config": descriptor("application/vnd.oci.empty.v1+json", b"{}"),
             "subject": {"mediaType": IMAGE_MANIFEST_MEDIA_TYPE, "digest": subject, "size": subject_size.unwrap_or(size)},
-            "layers": [descriptor(ROOTFS_MEDIA_TYPE, ROOTFS_BYTES)]
+            "layers": [descriptor(ROOTFS_MEDIA_TYPE, ROOTFS_BYTES)],
+            "annotations": {"org.capsem.rootfs.blake3": format!("blake3:{}", capsem_crypto::blake3::hash(ROOTFS_BYTES).to_hex())}
         })).unwrap();
         let artifact = digest(&manifest);
         blobs.insert(format!("/v2/team/image/manifests/{artifact}"), manifest);

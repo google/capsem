@@ -5,9 +5,9 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use capsem_crypto::secrets::Zeroizing;
 use serde::Deserialize;
 use url::Url;
-use zeroize::Zeroizing;
 
 use super::{AuthorizationParameters, CallbackExchange, LoopbackRedirect, Secret};
 
@@ -18,8 +18,9 @@ pub(crate) use connection::tests::setup as test_connection;
 pub(crate) use tests::fixture::Reply as TestReply;
 mod identity;
 pub use connection::{
-    GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionState,
-    GoogleConnectionStatus, GoogleRevocationOutcome, GoogleRevocationState, OAuthConnectionStorage,
+    GoogleAccessLease, GoogleAuthorization, GoogleConnection, GoogleConnectionError, GoogleConnectionMetadata,
+    GoogleConnectionState, GoogleConnectionStatus, GoogleRevocationOutcome, GoogleRevocationState,
+    OAuthConnectionStorage,
 };
 pub use identity::{GoogleIdentity, OAuthIdentityError};
 
@@ -506,7 +507,7 @@ fn valid_scope(value: &str) -> bool {
 fn base64url_nonce(value: &str) -> bool {
     value.len() == 43 && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
 }
-fn canonical_scope(value: &str) -> &str {
+pub(crate) fn canonical_scope(value: &str) -> &str {
     match value {
         "email" => "https://www.googleapis.com/auth/userinfo.email",
         "profile" => "https://www.googleapis.com/auth/userinfo.profile",

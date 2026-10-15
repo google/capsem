@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import secrets
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
+from .. import crypto as secrets
 from .leases import shared_use
 from .objects import ObjectRef, import_file, materialize, verify
 from .paths import CachePaths

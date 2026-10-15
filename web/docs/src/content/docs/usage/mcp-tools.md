@@ -51,7 +51,24 @@ for the guest deadline. Cancelling a tool call cancels its local HTTP request;
 it does not delete the VM and cannot undo a mutation the gateway already
 accepted. Mutations are not retried automatically.
 
+## Images
+
+| Tool | Main parameters | Purpose |
+| --- | --- | --- |
+| `capsem_image_list` | `refresh?` | List service-admitted images, compatible immutable pins and reported cache state. Unknown cache state does not prove readiness. |
+| `capsem_image_pull` | `image` | Prefetch an admitted image and return its resolved pin. |
+
+Image pulls preserve service-owned admission and registry credentials. They
+create no VM and are not retried automatically.
+
 ## VM lifecycle and files
+
+The image catalog and prefetch tools work without creating a VM:
+
+| Tool | Main parameters | Purpose |
+| --- | --- | --- |
+| `capsem_image_list` | `refresh?` | Read the admitted catalog, immutable image pins, and reported disk-cache state. Unknown state does not establish readiness. |
+| `capsem_image_pull` | `image` | Prefetch an admitted image and return its resolved pin. Registry credentials stay service-owned. |
 
 All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 `capsem_list`.

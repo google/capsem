@@ -27,7 +27,7 @@ fn stored(bytes: Vec<u8>, truncated: bool) -> StoredBody {
         content_type: Some("application/json".to_string()),
         original_bytes,
         truncated,
-        body_hash: format!("blake3:{}", blake3::hash(&bytes).to_hex()),
+        body_hash: format!("blake3:{}", capsem_crypto::blake3::hash(&bytes).to_hex()),
         bytes,
     }
 }
@@ -220,7 +220,7 @@ async fn the_route_returns_one_entry_per_stored_direction() {
         assert!(!body.truncated && !body.truncated_for_transport);
         assert_eq!(
             body.body_hash,
-            format!("blake3:{}", blake3::hash(expected.as_bytes()).to_hex()),
+            format!("blake3:{}", capsem_crypto::blake3::hash(expected.as_bytes()).to_hex()),
             "{direction}"
         );
     }

@@ -12,7 +12,7 @@ import pytest
 from helpers.image_session import session_of
 
 from tests.ironbank.kingslanding.test_run import service as runtime_service
-from tests.qualification.candidate import Candidate, resolve
+from tests.qualification.candidate import Candidate, resolve, selected_capabilities
 from tests.qualification.test_agent import model_service
 
 __all__ = ["model_service", "runtime_service"]
@@ -25,15 +25,11 @@ def service(request, candidate):
     return request.getfixturevalue(fixture)
 
 
-def pytest_configure(config):
-    config.addinivalue_line("markers", "capability(name): runs only for a candidate declaring it")
-
-
 def pytest_collection_modifyitems(config, items):
     marked = [(item, item.get_closest_marker("capability")) for item in items]
     if not any(marker for _, marker in marked):
         return  # the harness's own unit tests need no candidate
-    declared = resolve().capabilities
+    declared = selected_capabilities()
     kept, dropped = [], []
     for item, marker in marked:
         (dropped if marker and marker.args[0] not in declared else kept).append(item)

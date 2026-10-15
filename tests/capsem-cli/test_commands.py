@@ -1,5 +1,6 @@
 """CLI command integration tests: create, list, exec, info, status, delete, run, resume, persist, purge."""
 
+import os
 import subprocess
 import uuid
 from pathlib import Path
@@ -16,13 +17,13 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 CLI_BINARY = BIN_DIR / "capsem"
 
 
-def run_cli(*args, uds_path=None, timeout=60):
+def run_cli(*args, uds_path=None, timeout=60, env=None):
     """Run capsem CLI and return (stdout, stderr, returncode)."""
     cmd = [str(CLI_BINARY)]
     if uds_path:
         cmd += ["--uds-path", str(uds_path)]
     cmd += list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False, env=env)
     return result.stdout, result.stderr, result.returncode
 
 pytestmark = pytest.mark.integration
@@ -183,7 +184,7 @@ class TestPurge:
         _provision_vm(uds_path, name, persistent=True)
         # Pipe "n" to stdin -- should abort without destroying
         cmd = [str(CLI_BINARY), "--uds-path", str(uds_path), "purge", "--all"]
-        result = subprocess.run(cmd, input="n\n", capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, input="n\n", capture_output=True, text=True, timeout=30, check=False)
         assert result.returncode == 0, f"purge --all with 'n' failed: {result.stderr}"
         assert "Aborted" in result.stdout, (
             f"purge --all should print 'Aborted' when user says no, got: {result.stdout}"
@@ -203,7 +204,7 @@ class TestPurge:
         name = f"pry-{uuid.uuid4().hex[:4]}"
         _provision_vm(uds_path, name, persistent=True)
         cmd = [str(CLI_BINARY), "--uds-path", str(uds_path), "purge", "--all"]
-        result = subprocess.run(cmd, input="y\n", capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, input="y\n", capture_output=True, text=True, timeout=30, check=False)
         assert result.returncode == 0, f"purge --all with 'y' failed: {result.stderr}"
         assert "Purged" in result.stdout
         # VM should be gone
@@ -341,8 +342,15 @@ class TestEnv:
 
 class TestErrors:
 
-    def test_no_service(self):
+    def test_non_utf8_explicit_gateway_url_does_not_select_local_service(self, uds_path):
+        env = os.environ.copy()
+        env["CAPSEM_GATEWAY_URL"] = os.fsdecode(b"\xff")
+        _, stderr, rc = run_cli("list", uds_path=uds_path, env=env, timeout=5)
+        assert rc != 0, "a malformed explicit gateway must not select the available local service"
+        assert "CAPSEM_GATEWAY_URL must be UTF-8" in stderr
+
+    def test_no_service(self, tmp_path):
         """CLI should fail gracefully when service socket doesn't exist."""
-        _, stderr, rc = run_cli("list", uds_path="/tmp/nonexistent.sock", timeout=5)
+        _, stderr, rc = run_cli("list", uds_path=tmp_path / "service.sock", timeout=5)
         assert rc != 0
         assert "connect" in stderr.lower() or "error" in stderr.lower()

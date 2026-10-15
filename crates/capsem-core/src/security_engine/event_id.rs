@@ -1,11 +1,9 @@
-use uuid::Uuid;
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SecurityEventId(String);
 
 impl SecurityEventId {
     pub fn new_uuid4() -> Self {
-        let value = Uuid::new_v4().simple().to_string();
+        let value = capsem_crypto::uuid_v4().simple().to_string();
         Self(value[..12].to_string())
     }
 

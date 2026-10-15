@@ -2,6 +2,10 @@
 //! and networks on screen.
 use crate::client::{NetworkInfo, NetworkLogEvent, SessionInfo};
 
+pub(crate) fn table_prefix(text: &str, max_bytes: usize) -> &str {
+    &text[..text.floor_char_boundary(max_bytes)]
+}
+
 pub(crate) fn format_uptime(secs: Option<u64>) -> String {
     match secs {
         None | Some(0) => "-".into(),
@@ -137,7 +141,13 @@ pub(crate) fn print_network_info(network: &NetworkInfo) {
     }
     println!("Members:");
     for member in &network.members {
-        println!("  {:<38} {:<16} {}", member.vm_id, member.address, member.state);
+        let state = match member.state {
+            capsem_api::NetworkMemberState::Declared => "declared",
+            capsem_api::NetworkMemberState::Attaching => "attaching",
+            capsem_api::NetworkMemberState::Ready => "ready",
+            capsem_api::NetworkMemberState::Failed => "failed",
+        };
+        println!("  {:<38} {:<16} {}", member.vm_id, member.address, state);
     }
 }
 

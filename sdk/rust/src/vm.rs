@@ -40,6 +40,10 @@ impl VM {
         VmNetworks(self)
     }
 
+    pub fn credential_grants(&self) -> crate::CredentialGrants<'_> {
+        crate::CredentialGrants(self)
+    }
+
     pub fn new(url: &str, token: &str, selector: VmSelector) -> Result<Self> {
         Self::bind(Client::new(url, token)?, selector)
     }

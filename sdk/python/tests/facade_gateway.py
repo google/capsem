@@ -95,7 +95,7 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         for path, methods in SPEC["paths"].items():
             if re.fullmatch(re.sub(r"\{\w+\}", "[^/]+", path), request.path):
                 operation = methods[request.method.lower()]
-                status = "200" if "200" in operation["responses"] else "202"
+                status = next(status for status in operation["responses"] if status.startswith("2"))
                 return web.json_response(sample(operation["responses"][status]["content"]["application/json"]["schema"]), status=int(status))
         raise AssertionError(f"unhandled SDK request {request.method} {request.path}")
 

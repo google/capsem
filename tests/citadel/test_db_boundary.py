@@ -40,6 +40,8 @@ FORBIDDEN_PATTERNS: tuple[tuple[str, str], ...] = (
     ("route_projection", "route/service projection cache must be burned"),
     ("_route_projection", "route/service projection cache must be burned"),
     ("live_session_counter_projection", "route/service projection cache must be burned"),
+    ("stats_detail_response_cache", "route/service projection cache must be burned"),
+    ("session_response_cache", "route/service projection cache must be burned"),
     ("missing_optional_ledger_shape", "missing schema must fail loudly"),
     ("no such table", "missing schema fallback must not be special-cased"),
     ("no such column", "missing schema fallback must not be special-cased"),
@@ -93,6 +95,9 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/reader.rs"),
     Path("crates/capsem-logger/src/reader/open.rs"),
     Path("crates/capsem-logger/src/schema.rs"),
+    # The DB object's schema validator receives its owned connection to check
+    # canonical integrity declarations; it never opens a second ledger.
+    Path("crates/capsem-logger/src/schema/integrity.rs"),
     Path("crates/capsem-logger/src/schema/pragmas.rs"),
     Path("crates/capsem-logger/src/schema/security_event_types.rs"),
     Path("crates/capsem-logger/src/schema/transport.rs"),

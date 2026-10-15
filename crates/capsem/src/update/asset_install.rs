@@ -674,7 +674,7 @@ pub(super) fn verify_release_channel_asset_file(path: &Path, download: &ReleaseC
     use std::io::Read;
 
     let mut file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut blake3_hasher = blake3::Hasher::new();
+    let mut blake3_hasher = capsem_crypto::blake3::Hasher::new();
     let mut sha256_hasher = Sha256::new();
     let mut bytes_done = 0u64;
     let mut buffer = vec![0u8; 1024 * 1024];
@@ -710,7 +710,7 @@ pub(super) fn download_release_channel_runtime_asset_from_file(
     let _ = std::fs::remove_file(&tmp);
     let mut source = std::fs::File::open(&source_path).with_context(|| format!("open {}", source_path.display()))?;
     let mut dest = std::fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
-    let mut blake3_hasher = blake3::Hasher::new();
+    let mut blake3_hasher = capsem_crypto::blake3::Hasher::new();
     let mut sha256_hasher = Sha256::new();
     let mut bytes_done = 0u64;
     let mut buffer = vec![0u8; 1024 * 1024];
@@ -752,7 +752,7 @@ pub(super) async fn download_release_channel_runtime_asset_from_http(
     let tmp = target.with_extension("tmp");
     let _ = std::fs::remove_file(&tmp);
     let bytes_done = bytes.len() as u64;
-    let actual_blake3 = blake3::hash(&bytes).to_hex().to_string();
+    let actual_blake3 = capsem_crypto::blake3::hash(&bytes).to_hex().to_string();
     let actual_sha256 = sha256_hex(&bytes);
     if let Err(error) = std::fs::write(&tmp, &bytes) {
         let _ = std::fs::remove_file(&tmp);

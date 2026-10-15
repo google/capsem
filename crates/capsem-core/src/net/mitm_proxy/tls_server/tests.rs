@@ -15,7 +15,7 @@ fn ca() -> Arc<CertAuthority> {
 fn client_config(ca: &CertAuthority) -> Arc<ClientConfig> {
     let mut roots = RootCertStore::empty();
     roots.add(ca.ca_cert_der().clone()).unwrap();
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let provider = Arc::new(capsem_crypto::tls::provider());
     Arc::new(
         ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()

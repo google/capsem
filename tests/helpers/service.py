@@ -510,6 +510,8 @@ class ServiceInstance:
 
         start = time.time()
         while time.time() - start < 15:
+            if self.proc.poll() is not None:
+                break
             if self.uds_path.exists():
                 # Socket file exists -- verify server is actually accepting connections
                 probe = Transport(socket_path=str(self.uds_path))
@@ -522,11 +524,15 @@ class ServiceInstance:
                     probe.close()
             time.sleep(0.5)
 
+        returncode = self.proc.poll()
+        service_log = self.stop_and_read_log()
+        preserve_tmp_dir_on_failure(self.home_dir, force=True)
+        self._failure_evidence_preserved = True
         self.stop()
-        service_log = read_log_stream(log_path)
         if service_log:
             print(f"\n--- SERVICE LOG ---\n{service_log}\n---", file=sys.stderr)
-        raise RuntimeError("capsem-service failed to accept connections within 15s")
+        state = f" (process exited with code {returncode})" if returncode is not None else ""
+        raise RuntimeError(f"capsem-service failed to accept connections within 15s{state}")
 
     def client(self):
         return UdsHttpClient(

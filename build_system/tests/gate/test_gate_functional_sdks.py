@@ -11,11 +11,16 @@ from __future__ import annotations
 
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import host
+from capsem_builder.gate.content import RuntimeContent
+from capsem_builder.gate.module_glowup import glowup
+from capsem_builder.gate.plan import Plan
+from capsem_builder.gate.qualification import BinaryQualification, RuntimeQualification
 from helpers.gate import PROJECT_ROOT, gate_plan
 
 PREPARED = (
     "sdk.python.sync", "functional.sdk.rust.example", "fast.sdk.python.build",
     "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm",
+    "functional.sdk.python.package-prewarm",
 )
 
 
@@ -74,6 +79,19 @@ def test_functional_installed_sdks_use_current_archives_and_declared_network_pre
     assert "--no-isolation" in plan.step_named(python).actions[0].render()
 
 
+def test_candidate_rehydrates_python_build_backends_after_cache_enforcement() -> None:
+    from capsem_builder.gate.execution import Needs
+
+    plan = gate_plan("candidate")
+    label = "functional.sdk.python.package-prewarm"
+    warmed = plan.step_named(label)
+    assert {"fast.sdk.python.build", "prepare.cache-enforcement"} <= _ancestors(plan, label)
+    assert Needs.NETWORK in warmed.needs
+    exported, installed = (action.render() for action in warmed.actions)
+    assert "--only-group package-build" in exported
+    assert "--reinstall" in installed and "[outside kernel sandbox]" in installed
+
+
 def test_composed_sdk_packages_have_one_producer_and_no_dependency_cycle() -> None:
     plan = gate_plan("candidate")
     labels = plan.labels
@@ -109,18 +127,50 @@ def test_sdk_preparation_stays_offline_inside_the_sandbox() -> None:
     assert "--frozen" in example, "cargo must not reach the registry from inside the sandbox"
 
 
-def test_the_managed_restart_proof_runs_under_real_launchd_not_the_sandbox() -> None:
-    """launchd refuses `bootstrap` from a Seatbelt-sandboxed caller, so the
-    managed-restart suite is kept out of the sandboxed suites and run by the
-    macOS glow-up lane outside the sandbox, after the SDK it drives is ready."""
+def test_native_supervisor_restart_is_owned_by_glowup_on_both_platforms() -> None:
+    """Native supervisor setup precedes inherited privilege confinement;
+    Linux then confines its test worker to the manager's closed network."""
     config = gate_config.load(PROJECT_ROOT)
     managed = config.suites.pytest.managed_restart
     assert managed in config.suites.pytest.broad_ignores
     plan = gate_plan("test-glowup")
     label = "glowup.pytest.managed-restart"
-    if not host.on_macos():
-        assert label not in plan.labels
-        return
     rendered = plan.step_named(label).actions[0].render()
     assert managed in rendered and "[outside kernel sandbox]" in rendered
-    assert {"sdk.python.sync", "prepare.sign"} <= _ancestors(plan, label)
+    assert f"{config.environment.assets_dir}={RuntimeContent.built(config).assets} " in rendered
+    assert "sdk.python.sync" in _ancestors(plan, label)
+    assert "sdk.typescript.bundle" in _ancestors(plan, label)
+    if host.on_macos():
+        assert "prepare.sign" in _ancestors(plan, label)
+    else:
+        assert config.suites.pytest.managed_restart_driver in rendered
+
+
+def test_pulled_package_lanes_keep_native_restart_and_sdk_prerequisites() -> None:
+    config = gate_config.load(PROJECT_ROOT)
+    for owner in (BinaryQualification, RuntimeQualification):
+        qualification = owner(input_dir="/staged", package="/candidate.deb", bin_dir="/candidate-bin")
+        plan = gate_plan("test-glowup", qualification=qualification)
+        label = "glowup.pytest.managed-restart"
+        assert {"sdk.python.sync", "sdk.typescript.bundle"} <= _ancestors(plan, label)
+        assert label in _ancestors(plan, "glowup.package")
+        rendered = plan.step_named(label).actions[0].render()
+        assert config.suites.pytest.managed_restart in rendered
+        assert f"{config.environment.assets_dir}={RuntimeContent.standalone(config).assets} " in rendered
+
+
+def test_pulled_restart_uses_the_handed_runtime_assets() -> None:
+    config = gate_config.load(PROJECT_ROOT)
+    content = RuntimeContent.staged(config, PROJECT_ROOT / "cache/target/selected-cohort")
+    for owner in (BinaryQualification, RuntimeQualification):
+        qualification = owner(input_dir="/staged", package="/candidate.deb", bin_dir="/candidate-bin")
+        plan = Plan("selected-cohort")
+        glowup(plan, config, qualification=qualification, staged=content)
+        rendered = plan.step_named("glowup.pytest.managed-restart").actions[0].render()
+        assert f"{config.environment.assets_dir}={content.assets} " in rendered
+
+
+def test_candidate_restart_reuses_the_prepared_sdk_dependencies() -> None:
+    plan = gate_plan("candidate")
+    assert "fast.toolchain.node" in _ancestors(plan, "sdk.typescript.bundle")
+    assert "toolchain.node" not in plan.labels

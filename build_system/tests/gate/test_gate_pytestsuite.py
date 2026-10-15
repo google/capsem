@@ -329,6 +329,7 @@ def test_collection_is_cache_contained_strict_and_artifact_independent() -> None
 def test_collection_uses_one_locked_project_for_both_roots() -> None:
     collection = pytestsuite.collection(CONFIG)
     rendered = " ".join(collection.render())
+    assert "integrations/inspect-ai/tests/" in rendered
 
     assert rendered.count("python -m pytest") == 1
     assert "tests/ build_system/tests/" in rendered

@@ -34,7 +34,7 @@ fn rules_for<'a>(filter: &'a Value, name: &str) -> Vec<&'a Value> {
 #[test]
 fn the_vendored_allowlist_is_the_recorded_file() {
     assert_eq!(
-        blake3::hash(MOBY_DEFAULT.as_bytes()).to_hex().as_str(),
+        capsem_crypto::blake3::hash(MOBY_DEFAULT.as_bytes()).to_hex().as_str(),
         MOBY_DEFAULT_BLAKE3,
         "an edit to the vendored allowlist must update its recorded hash"
     );

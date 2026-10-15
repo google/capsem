@@ -12,6 +12,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use capsem_mcp_transport::http_transport::BrokerHttpClient;
+use capsem_mcp_transport::native_worker::McpSpawnClient;
+use capsem_proto::mcp_worker::MCP_SERVER_HEADER;
 use futures::{stream::BoxStream, StreamExt};
 use http::header::{ACCEPT, WWW_AUTHENTICATE};
 use http::{HeaderName, HeaderValue};
@@ -81,18 +84,32 @@ const JSON_MIME_TYPE: &str = "application/json";
 #[derive(Clone)]
 struct CapsemMcpHttpClient {
     client: reqwest::Client,
+    broker: Option<(BrokerHttpClient, String)>,
 }
 
 impl CapsemMcpHttpClient {
     fn new(client: reqwest::Client) -> Self {
-        Self { client }
+        Self { client, broker: None }
+    }
+
+    async fn send(&self, builder: reqwest::RequestBuilder) -> std::io::Result<reqwest::Response> {
+        let mut request = builder.build().map_err(std::io::Error::other)?;
+        if let Some((broker, server)) = &self.broker {
+            request.headers_mut().insert(
+                MCP_SERVER_HEADER,
+                HeaderValue::from_str(server).map_err(std::io::Error::other)?,
+            );
+            broker.execute(request).await
+        } else {
+            self.client.execute(request).await.map_err(std::io::Error::other)
+        }
     }
 }
 
 fn apply_mcp_custom_headers(
     mut builder: reqwest::RequestBuilder,
     custom_headers: HashMap<HeaderName, HeaderValue>,
-) -> Result<reqwest::RequestBuilder, StreamableHttpError<reqwest::Error>> {
+) -> Result<reqwest::RequestBuilder, StreamableHttpError<std::io::Error>> {
     for (name, value) in custom_headers {
         validate_mcp_custom_header(&name).map_err(StreamableHttpError::ReservedHeaderConflict)?;
         builder = builder.header(name, value);
@@ -140,7 +157,7 @@ fn parse_mcp_json_rpc_error(body: &str) -> Option<ServerJsonRpcMessage> {
 }
 
 impl StreamableHttpClient for CapsemMcpHttpClient {
-    type Error = reqwest::Error;
+    type Error = std::io::Error;
 
     async fn get_stream(
         &self,
@@ -162,11 +179,13 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             request_builder = request_builder.bearer_auth(auth_header);
         }
         request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
-        let response = request_builder.send().await.map_err(StreamableHttpError::Client)?;
+        let response = self.send(request_builder).await.map_err(StreamableHttpError::Client)?;
         if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
             return Err(StreamableHttpError::ServerDoesNotSupportSse);
         }
-        let response = response.error_for_status().map_err(StreamableHttpError::Client)?;
+        let response = response
+            .error_for_status()
+            .map_err(|e| StreamableHttpError::Client(std::io::Error::other(e)))?;
         match response.headers().get(reqwest::header::CONTENT_TYPE) {
             Some(content_type) => {
                 if !content_type.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes())
@@ -197,12 +216,14 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             request_builder = request_builder.bearer_auth(auth_header);
         }
         request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
-        let response = request_builder.send().await.map_err(StreamableHttpError::Client)?;
+        let response = self.send(request_builder).await.map_err(StreamableHttpError::Client)?;
         if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
             tracing::debug!("this server doesn't support deleting session");
             return Ok(());
         }
-        response.error_for_status().map_err(StreamableHttpError::Client)?;
+        response
+            .error_for_status()
+            .map_err(|e| StreamableHttpError::Client(std::io::Error::other(e)))?;
         Ok(())
     }
 
@@ -226,9 +247,8 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
         if let Some(session_id) = session_id {
             request = request.header(MCP_HEADER_SESSION_ID, session_id.as_ref());
         }
-        let response = request
-            .json(&message)
-            .send()
+        let response = self
+            .send(request.json(&message))
             .await
             .map_err(StreamableHttpError::Client)?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -337,6 +357,7 @@ pub struct McpServerManager {
     definitions: Vec<McpServerDef>,
     running: HashMap<String, ServerPool>,
     http_client: reqwest::Client,
+    capabilities: Option<(BrokerHttpClient, McpSpawnClient)>,
     // Unified, namespaced catalogs
     tool_catalog: Vec<McpToolDef>,
     resource_catalog: Vec<McpResourceDef>,
@@ -353,6 +374,7 @@ impl McpServerManager {
             definitions: defs,
             running: HashMap::new(),
             http_client,
+            capabilities: None,
             tool_catalog: Vec::new(),
             resource_catalog: Vec::new(),
             prompt_catalog: Vec::new(),
@@ -360,6 +382,19 @@ impl McpServerManager {
             resource_routing: HashMap::new(),
             prompt_routing: HashMap::new(),
         }
+    }
+
+    /// Native workers use only inherited capabilities, including after refresh.
+    pub fn confined(defs: Vec<McpServerDef>, http: BrokerHttpClient, spawn: McpSpawnClient) -> Self {
+        let mut manager = Self::new(defs, reqwest::Client::new());
+        manager.capabilities = Some((http, spawn));
+        manager
+    }
+
+    pub(crate) fn replacement(&self, defs: Vec<McpServerDef>) -> Self {
+        let mut manager = Self::new(defs, self.http_client.clone());
+        manager.capabilities = self.capabilities.clone();
+        manager
     }
 
     /// Connect to all enabled servers (HTTP and stdio), run MCP handshake,
@@ -403,6 +438,9 @@ impl McpServerManager {
         // level. Clamp `pool_size` to ≥ 1 (and to 1 for HTTP).
         let requested_pool = def.pool_size.unwrap_or(1).max(1) as usize;
         let pool_size = if def.is_stdio() { requested_pool } else { 1 };
+        if self.capabilities.is_some() && pool_size > capsem_proto::MCP_BUILTIN_PEERS_PER_SESSION {
+            bail!("MCP stdio pool exceeds its granted peer count");
+        }
 
         let client = if def.is_stdio() {
             self.connect_stdio(def, 0).await?
@@ -551,7 +589,7 @@ impl McpServerManager {
     /// Connect to an HTTP MCP server.
     async fn connect_http(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
         let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
-        if let Some(auth) = &def.auth {
+        if let Some(auth) = def.auth.as_ref().filter(|_| self.capabilities.is_none()) {
             let token = capsem_credentials::resolve_broker_reference_for_provider(
                 capsem_credentials::CredentialProvider::Mcp,
                 &auth.credential_ref,
@@ -565,7 +603,7 @@ impl McpServerManager {
             })?;
             config = config.auth_header(token);
         }
-        if !def.headers.is_empty() {
+        if self.capabilities.is_none() && !def.headers.is_empty() {
             let mut headers = HashMap::new();
             for (key, val) in &def.headers {
                 let name: http::header::HeaderName =
@@ -576,8 +614,12 @@ impl McpServerManager {
             }
             config = config.custom_headers(headers);
         }
-        let transport =
-            StreamableHttpClientTransport::with_client(CapsemMcpHttpClient::new(self.http_client.clone()), config);
+        let mut client = CapsemMcpHttpClient::new(self.http_client.clone());
+        client.broker = self
+            .capabilities
+            .as_ref()
+            .map(|(http, _)| (http.clone(), def.name.clone()));
+        let transport = StreamableHttpClientTransport::with_client(client, config);
         ().serve(transport)
             .await
             .with_context(|| format!("failed to connect to HTTP MCP server '{}'", def.name))
@@ -590,6 +632,15 @@ impl McpServerManager {
     /// builtin can pick a per-peer lockfile and avoid the singleton
     /// guard's "another instance holds the lock; exiting 0" path.
     async fn connect_stdio(&self, def: &McpServerDef, peer_index: u32) -> Result<RunningService<RoleClient, ()>> {
+        if let Some((_, spawn)) = &self.capabilities {
+            if def.name != capsem_proto::mcp_contracts::BUILTIN_SERVER_NAME {
+                bail!("stdio MCP server has no approved native spawn capability");
+            }
+            let socket = spawn.builtin(peer_index).await?;
+            capsem_foundation::unix::fd::set_nonblocking(std::os::fd::AsFd::as_fd(&socket), true)?;
+            let socket = tokio::net::UnixStream::from_std(socket)?;
+            return ().serve(socket.into_split()).await.context("initialize confined builtin MCP peer");
+        }
         let command = def
             .command
             .as_deref()

@@ -29,6 +29,7 @@ struct Turn {
     request: String,
     response: Vec<String>,
     response_bytes: usize,
+    policy_snapshot: Arc<crate::net::proxy_engine::ProxyPolicySnapshot>,
     state: HookState,
 }
 
@@ -57,7 +58,7 @@ impl Turns {
             wire.generate != Some(false) && wire.kind == "response.create",
             ctx,
         );
-        let result = turn.evaluate(None, ctx)?;
+        let result = turn.evaluate(None, ctx).await?;
         if !result.enforcement.is_allowed() {
             let error = refusal(&turn.lane, &result.enforcement);
             turn.deny(&result.enforcement);
@@ -145,7 +146,7 @@ impl Turns {
         }
         let turn = self.active.get(&wire.stream_id).unwrap();
         let response = turn.response.join("\n") + "\n";
-        let evaluation = turn.evaluate(Some(&response), ctx)?;
+        let evaluation = turn.evaluate(Some(&response), ctx).await?;
         let output = if evaluation.enforcement.is_allowed() {
             let runtime = evaluation
                 .event
@@ -206,8 +207,10 @@ impl Turns {
 
 impl Turn {
     fn new(text: &str, lane: Option<String>, inference: bool, ctx: &Context) -> Self {
+        let policy_snapshot = ctx.engine.policy().snapshot();
         let mut state = HookState::default();
         state.set::<Option<TelemetryRequestContext>>(Some(TelemetryRequestContext {
+            policy_snapshot: Arc::clone(&policy_snapshot),
             domain: ctx.conn.domain.clone(),
             process_name: ctx.conn.process_name.clone(),
             ai_provider: ctx.conn.ai_provider,
@@ -249,11 +252,12 @@ impl Turn {
             request: text.to_owned(),
             response: vec![],
             response_bytes: 0,
+            policy_snapshot,
             state,
         }
     }
 
-    fn evaluate(
+    async fn evaluate(
         &self,
         response: Option<&str>,
         ctx: &Context,
@@ -284,11 +288,7 @@ impl Turn {
             ..Default::default()
         });
         let event = security_event_with_transport(event, ctx.ip, ctx.conn.port);
-        let rules = ctx.telemetry.security_rules.read().unwrap().clone();
-        let plugins = ctx.telemetry.plugin_policy.read().unwrap().clone();
-        Ok(crate::security_engine::evaluate_security_boundary(
-            &rules, plugins, event,
-        )?)
+        Ok(ctx.engine.evaluate(&self.policy_snapshot, event).await?)
     }
 
     fn decision(&mut self, decision: &crate::security_engine::SecurityEnforcementDecision) {

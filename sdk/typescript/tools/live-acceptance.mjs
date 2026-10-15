@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {createHash, randomUUID} from 'node:crypto';
+import {sha256, uuidV4} from './crypto.mjs';
 import process from 'node:process';
 
 const packageName = '@capsem/sdk';
@@ -17,7 +17,7 @@ function assertOutput(output, expected) {
   assert.equal(output.data, expected);
 }
 const hv = new Hypervisor(url, token, {timeoutMs: 120_000});
-const name = `sdk-ts-${randomUUID().slice(0, 8)}`;
+const name = `sdk-ts-${uuidV4().slice(0, 8)}`;
 try {
   const vm = await hv.create({name, cpus: 2, memory: 2});
   assertOutput((await vm.exec('printf SDK_EXEC_READY')).stdout, 'SDK_EXEC_READY');
@@ -30,7 +30,7 @@ try {
   assert(upload.success && upload.size === data.length);
   assert.deepEqual(await vm.files.read('sdk-proof.bin'), data);
   assert((await vm.files.list()).entries.some(entry => entry.name === 'sdk-proof.bin'));
-  const digest = createHash('sha256').update(data).digest('hex');
+  const digest = sha256(data);
   const exec = await vm.exec('sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7');
   assert.equal(exec.exit_code, 7);
   assert.equal(exec.stdout.data.split(' ')[0], digest);

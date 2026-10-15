@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
-import hashlib
 import json
 import os
 import platform
@@ -23,6 +22,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+from ... import crypto as hashlib
 from . import repository_root
 from .package_payload import package_payload_files
 from .release_manifest_rows import dead_rows
@@ -590,6 +590,8 @@ def run_docker_install_smoke(
             "capsem-mcp-aggregator",
             "capsem-mcp-builtin",
             "capsem-process",
+            "capsem-ledger",
+            "capsem-proxy",
             "capsem-service",
             "capsem-tray",
             "capsem-tui",

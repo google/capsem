@@ -66,6 +66,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
+name = "annotate-snippets"
+version = "0.12.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f211a51805bc641f3ad5b7664c77d2547af685cc33b4cd8d31964027a46f13f1"
+dependencies = [
+ "anstyle",
+ "memchr",
+ "unicode-width",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -129,6 +140,12 @@ checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
 dependencies = [
  "num-traits",
 ]
+
+[[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
 name = "arrayvec"
@@ -522,6 +539,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake2b_simd"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3560a7b1951efe814fcd721938313adc56753ca39f4b23847d7e9a2402f5dbff"
+dependencies = [
+ "arrayvec",
+ "constant_time_eq",
+]
+
+[[package]]
+name = "blake2s_simd"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2380c0236432f7b22a70229df30f218f5293870c056beb76f5ca068e3273a366"
+dependencies = [
+ "arrayvec",
+ "constant_time_eq",
+]
+
+[[package]]
 name = "blake3"
 version = "1.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -667,13 +704,14 @@ name = "capsem"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "blake3",
  "bytes",
  "capsem-api",
  "capsem-assets",
  "capsem-core",
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-proto",
+ "capsem-sdk",
  "clap",
  "clap_complete",
  "flate2",
@@ -687,7 +725,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2",
  "tar",
  "tempfile",
  "tokio",
@@ -702,16 +739,15 @@ name = "capsem-admin"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "blake3",
  "capsem-assets",
  "capsem-core",
+ "capsem-crypto",
  "clap",
  "flate2",
  "reqwest 0.12.28",
  "semver",
  "serde",
  "serde_json",
- "sha2",
  "tar",
  "tempfile",
  "time",
@@ -723,6 +759,7 @@ dependencies = [
 name = "capsem-agent"
 version = "0.7.0"
 dependencies = [
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-guard",
  "capsem-proto",
@@ -739,6 +776,7 @@ name = "capsem-api"
 version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
+ "capsem-crypto",
  "serde",
  "serde_json",
  "utoipa",
@@ -768,7 +806,7 @@ dependencies = [
 name = "capsem-archive"
 version = "0.7.0"
 dependencies = [
- "blake3",
+ "capsem-crypto",
  "capsem-foundation",
  "flate2",
  "miniz_oxide 0.8.9",
@@ -783,14 +821,13 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
- "blake3",
+ "capsem-crypto",
  "capsem-foundation",
  "futures",
  "oci-client",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "tokio",
  "toml 0.8.2",
@@ -803,6 +840,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "capsem-foundation",
+ "capsem-proto",
  "clap",
  "futures",
  "reqwest 0.12.28",
@@ -815,14 +853,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-cache"
+version = "0.7.0"
+dependencies = [
+ "capsem-telemetry",
+ "metrics",
+ "quick_cache",
+]
+
+[[package]]
 name = "capsem-config"
 version = "0.7.0"
 dependencies = [
  "capsem-proto",
  "regex",
  "serde",
+ "serde-saphyr",
  "serde_json",
- "serde_yaml",
  "toml 0.8.2",
  "tracing",
 ]
@@ -834,14 +881,16 @@ dependencies = [
  "anyhow",
  "async-compression",
  "axum",
- "blake3",
  "block2",
  "bytes",
  "capsem-assets",
+ "capsem-cache",
  "capsem-config",
  "capsem-credentials",
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-logger",
+ "capsem-mcp-transport",
  "capsem-proto",
  "capsem-router",
  "capsem-telemetry",
@@ -859,7 +908,6 @@ dependencies = [
  "hyper-util",
  "io-uring",
  "libc",
- "lru",
  "metrics",
  "metrics-util",
  "nix 0.29.0",
@@ -868,7 +916,6 @@ dependencies = [
  "objc2-virtualization",
  "pin-project-lite",
  "proptest",
- "rcgen",
  "regex",
  "reqwest 0.12.28",
  "rmcp",
@@ -899,25 +946,48 @@ version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "capsem-api",
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-proto",
  "futures",
- "getrandom 0.3.4",
  "http-body-util",
+ "humantime",
  "hyper",
  "hyper-util",
- "jsonwebtoken",
  "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "capsem-crypto"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "aws-lc-rs",
+ "blake2b_simd",
+ "blake2s_simd",
+ "blake3",
+ "getrandom 0.3.4",
+ "jsonwebtoken",
+ "rand 0.9.5",
+ "rcgen",
  "ring",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
  "signature",
  "subtle",
- "tempfile",
- "tokio",
- "tracing",
- "url",
+ "time",
+ "uuid",
  "zeroize",
 ]
 
@@ -925,7 +995,7 @@ dependencies = [
 name = "capsem-foundation"
 version = "0.7.0"
 dependencies = [
- "blake3",
+ "capsem-crypto",
  "capsem-proto",
  "libc",
  "nix 0.29.0",
@@ -947,6 +1017,7 @@ dependencies = [
  "axum",
  "bytes",
  "capsem-api",
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-guard",
  "capsem-proto",
@@ -956,10 +1027,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "rand 0.9.5",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
@@ -982,12 +1051,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "capsem-ledger"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "capsem-archive",
+ "capsem-foundation",
+ "capsem-guard",
+ "capsem-logger",
+ "capsem-proto",
+ "clap",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "zstd",
+]
+
+[[package]]
 name = "capsem-logger"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "blake3",
  "capsem-archive",
+ "capsem-cache",
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-proto",
  "capsem-telemetry",
@@ -997,10 +1084,11 @@ dependencies = [
  "memmap2",
  "metrics",
  "metrics-util",
+ "rmp-serde",
  "rusqlite",
  "serde",
+ "serde_bytes",
  "serde_json",
- "sha2",
  "tempfile",
  "tokio",
  "tracing",
@@ -1016,10 +1104,14 @@ dependencies = [
  "capsem-credentials",
  "capsem-foundation",
  "capsem-guard",
+ "capsem-mcp-transport",
  "capsem-proto",
  "clap",
  "futures",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "reqwest 0.12.28",
  "rmcp",
  "serde",
@@ -1039,14 +1131,35 @@ dependencies = [
  "capsem-core",
  "capsem-foundation",
  "capsem-guard",
+ "capsem-mcp-transport",
  "capsem-proto",
- "regex",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "rmcp",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
- "toml 0.8.2",
+ "tracing",
+]
+
+[[package]]
+name = "capsem-mcp-transport"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "capsem-foundation",
+ "capsem-proto",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest 0.12.28",
+ "tokio",
  "tracing",
 ]
 
@@ -1057,6 +1170,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bytes",
+ "capsem-crypto",
  "capsem-guard",
  "clap",
  "flate2",
@@ -1064,12 +1178,10 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "rcgen",
  "reqwest 0.12.28",
  "rustls",
  "serde",
  "serde_json",
- "sha1",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -1090,16 +1202,21 @@ name = "capsem-process"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
+ "bytes",
  "capsem-assets",
  "capsem-core",
  "capsem-foundation",
+ "capsem-guard",
  "capsem-logger",
  "capsem-proto",
  "capsem-telemetry",
  "clap",
  "core-foundation-sys",
  "futures",
+ "http",
+ "opentelemetry-http",
  "serde",
  "serde_json",
  "tempfile",
@@ -1113,7 +1230,7 @@ name = "capsem-proto"
 version = "0.7.0"
 dependencies = [
  "anyhow",
- "blake3",
+ "capsem-crypto",
  "quote",
  "rmp-serde",
  "serde",
@@ -1123,6 +1240,28 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "toml 0.8.2",
+]
+
+[[package]]
+name = "capsem-proxy"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "capsem-core",
+ "capsem-foundation",
+ "capsem-guard",
+ "capsem-logger",
+ "capsem-proto",
+ "capsem-telemetry",
+ "clap",
+ "http",
+ "opentelemetry-http",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1149,11 +1288,16 @@ version = "0.7.0"
 dependencies = [
  "axum",
  "capsem-api",
+ "capsem-crypto",
+ "futures",
+ "humantime",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1161,28 +1305,38 @@ name = "capsem-service"
 version = "0.7.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.22.1",
- "blake3",
+ "bytes",
  "capsem-api",
  "capsem-assets",
+ "capsem-cache",
  "capsem-config",
  "capsem-core",
  "capsem-credentials",
+ "capsem-crypto",
  "capsem-foundation",
  "capsem-guard",
  "capsem-logger",
+ "capsem-mcp-transport",
  "capsem-proto",
  "capsem-router",
  "capsem-telemetry",
  "clap",
  "filetime",
  "futures",
+ "http",
+ "http-body-util",
  "humantime",
+ "hyper",
+ "hyper-util",
+ "metrics",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry_sdk",
- "rand 0.8.8",
  "reqwest 0.12.28",
+ "rmp-serde",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1196,7 +1350,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "uuid",
- "zeroize",
 ]
 
 [[package]]
@@ -1604,6 +1757,12 @@ dependencies = [
  "core-foundation",
  "libc",
 ]
+
+[[package]]
+name = "core_detect"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "cpufeatures"
@@ -2224,6 +2383,29 @@ name = "embed_plist"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
+
+[[package]]
+name = "encoding_rs"
+version = "0.8.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e985e0451871ad22fb8d2b6b076e2028a502a0d3950998c2c5c0a4f9b5d9679"
+dependencies = [
+ "cfg-if",
+ "core_detect",
+ "multiversion_no_op",
+ "rustversion",
+ "scopeguard",
+ "simdutf8",
+]
+
+[[package]]
+name = "encoding_rs_io"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fba3fe847045ecff794b9c138293a80db914678c453ad63fbf0c6a9eb6e00b22"
+dependencies = [
+ "encoding_rs",
+]
 
 [[package]]
 name = "endi"
@@ -2856,6 +3038,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "granit-parser"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e20f99e46474f56bd905c56e817ebddcf377a611f94c53ac4649e4d3fa3c0cd0"
+dependencies = [
+ "arraydeque",
+ "smallvec",
+]
+
+[[package]]
 name = "gtk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2905,6 +3097,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "h2"
+version = "0.4.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "fnv",
+ "futures-core",
+ "futures-sink",
+ "http",
+ "indexmap 2.14.2",
+ "slab",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -3115,6 +3326,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "httparse",
@@ -4076,6 +4288,12 @@ dependencies = [
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "multiversion_no_op"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "ndk"
@@ -5151,7 +5369,7 @@ dependencies = [
  "bitflags 2.13.2",
  "num-traits",
  "rand 0.9.5",
- "rand_chacha 0.9.0",
+ "rand_chacha",
  "rand_xorshift",
  "regex-syntax",
  "rusty-fork",
@@ -5210,6 +5428,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "quick_cache"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "403c1a912fec895cafb223201e368234842acb9220aaf08ab042ae89ba5f135c"
+dependencies = [
+ "equivalent",
+ "foldhash 0.2.0",
+ "hashbrown 0.17.1",
+ "parking_lot",
 ]
 
 [[package]]
@@ -5305,8 +5535,6 @@ version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
- "libc",
- "rand_chacha 0.3.1",
  "rand_core 0.6.4",
 ]
 
@@ -5316,7 +5544,7 @@ version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
- "rand_chacha 0.9.0",
+ "rand_chacha",
  "rand_core 0.9.5",
 ]
 
@@ -5329,16 +5557,6 @@ dependencies = [
  "chacha20",
  "getrandom 0.4.3",
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -5862,9 +6080,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -6076,6 +6294,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-saphyr"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8050abb251097357e24aff63ba2c52a6309ecb7d23a5474023df960a02694d8"
+dependencies = [
+ "annotate-snippets",
+ "encoding_rs_io",
+ "granit-parser",
+ "num-traits",
+ "serde_core",
+ "smallvec",
+]
+
+[[package]]
 name = "serde-untagged"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6235,19 +6467,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap 2.14.2",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -7306,8 +7525,12 @@ checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -7319,6 +7542,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",
@@ -7640,6 +7864,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.20",
 ]
@@ -7769,12 +7995,6 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

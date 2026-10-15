@@ -12,13 +12,18 @@ BASE = '''"""Shared validation for JSON values and optional nonnullable fields."
 
 from __future__ import annotations
 
+import json
 from math import isfinite
 from typing import Annotated, ClassVar, TypeAlias
 
 from pydantic import (
     AfterValidator,
+    AwareDatetime,
     BaseModel,
     ConfigDict,
+    Field,
+    StrictStr,
+    TypeAdapter,
     ValidationError,
     ValidatorFunctionWrapHandler,
     model_validator,
@@ -40,6 +45,19 @@ def _finite_json(value: PydanticJsonValue) -> PydanticJsonValue:
 
 
 JsonValue: TypeAlias = Annotated[PydanticJsonValue, AfterValidator(_finite_json)]
+UuidString: TypeAlias = Annotated[StrictStr, Field(
+    pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+)]
+
+
+def _datetime_string(value: str) -> str:
+    TypeAdapter(AwareDatetime).validate_json(json.dumps(value), strict=True)
+    return value
+
+
+DateTimeString: TypeAlias = Annotated[StrictStr, Field(
+    pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$",
+), AfterValidator(_datetime_string)]
 
 
 class Model(BaseModel):
@@ -111,12 +129,38 @@ def type_name(schema: Schema) -> str:
         primitive = "bytes"
     elif schema.format == "ipv4":
         primitive = "IPv4Address"
+    elif schema.format == "uuid":
+        primitive = "UuidString"
+    elif schema.format == "date-time":
+        primitive = "DateTimeString"
+    if schema.pattern is not None:
+        primitive = f"Annotated[{primitive}, Field(pattern={schema.pattern!r}, min_length={schema.pattern_width}, max_length={schema.pattern_width})]"
     if schema.minimum is not None:
         primitive = f"Annotated[{primitive}, Field(ge={schema.minimum!r})]"
+    if schema.maximum is not None:
+        primitive = f"Annotated[{primitive}, Field(le={schema.maximum!r})]"
     return primitive
 
 
-def _body(name: str, schema: Schema) -> str:
+def _contains_private(schema: Schema, schemas: dict[str, Schema]) -> bool:
+    pending = [schema]
+    visited = set()
+    while pending:
+        item = pending.pop()
+        if item.write_only:
+            return True
+        if item.ref is not None:
+            name = item.ref.rsplit("/", 1)[1]
+            if name not in visited:
+                visited.add(name)
+                pending.append(schemas[name])
+        pending.extend(item.properties.values())
+        pending.extend(item.one_of or [])
+        pending.extend(child for child in (item.items, item.additional_properties) if isinstance(child, Schema))
+    return False
+
+
+def _body(name: str, schema: Schema, private: bool) -> str:
     if schema.enum is not None:
         members = [re.sub(r"\W", "_", value).upper() for value in schema.enum]
         if len(set(members)) != len(members) or not all(member.isidentifier() for member in members):
@@ -126,7 +170,7 @@ def _body(name: str, schema: Schema) -> str:
     if schema.type != "object":
         return f"{name}: TypeAlias = {type_name(schema)}\n"
     lines = [f"class {name}(Model):"]
-    if any(field.write_only for field in schema.properties.values()):
+    if private:
         lines.append("    private_input = True")
     optional = [alias for key, field in schema.properties.items()
                 if key not in schema.required and not nullable(field)
@@ -134,7 +178,7 @@ def _body(name: str, schema: Schema) -> str:
     if optional:
         lines.append(f"    nonnullable_optional = frozenset({optional!r})")
     if schema.additional_properties is False:
-        privacy = ", hide_input_in_errors=True" if any(field.write_only for field in schema.properties.values()) else ""
+        privacy = ", hide_input_in_errors=True" if private else ""
         lines.append(f'    model_config = ConfigDict(strict=True, populate_by_name=True, extra="forbid"{privacy})')
     for key, field in schema.properties.items():
         attr = key + "_" if keyword.iskeyword(key) else key
@@ -161,7 +205,7 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
     for name, schema in sorted(schemas.items()):
         if not name.isidentifier() or keyword.iskeyword(name):
             raise ValueError(f"invalid schema identifier: {name}")
-        body = _body(name, schema)
+        body = _body(name, schema, _contains_private(schema, schemas))
         imports = []
         if "(StrEnum)" in body:
             imports.append("from enum import StrEnum")
@@ -179,10 +223,14 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
         dependencies = schema.references() - {name}
         local = [f"from .{module_name(dep)} import {dep}" for dep in sorted(dependencies)]
         base_names = (["JsonValue"] if re.search(r"\bJsonValue\b", body) else [])
+        if re.search(r"\bUuidString\b", body):
+            base_names.append("UuidString")
+        if re.search(r"\bDateTimeString\b", body):
+            base_names.append("DateTimeString")
         if "(Model)" in body:
             base_names.append("Model")
         if base_names:
-            local.append(f"from .model_base import {', '.join(base_names)}")
+            local.append(f"from .model_base import {', '.join(sorted(base_names))}")
         imports += sorted(local)
         source = HEADER + "from __future__ import annotations\n\n"
         spacing = "\n\n\n" if body.startswith("class ") else "\n\n"

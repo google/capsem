@@ -10,10 +10,10 @@ import shutil
 import subprocess
 import sys
 import urllib.request
-import uuid
 from pathlib import Path
 from typing import NoReturn
 
+from ... import crypto
 from .release_glowup import (
     GlowupContractError,
     artifact_identity_from_manifest_package,
@@ -52,7 +52,7 @@ def positive_integer(metadata: dict[str, object], field: str) -> int:
 
 def verify_failed_session_logs(capsem: Path, capsem_home: Path) -> None:
     """Prove the installed CLI can read service-preserved boot evidence."""
-    session_id = str(uuid.uuid4())
+    session_id = str(crypto.uuid_v4())
     failed_dir = capsem_home / "run" / "sessions" / f"{session_id}-failed-installed-proof"
     failed_dir.mkdir(parents=True)
     (failed_dir / "process.log").write_text(f"{FAILED_LOG_MARKER}\n", encoding="utf-8")

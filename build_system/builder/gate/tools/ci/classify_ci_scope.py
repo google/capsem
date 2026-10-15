@@ -55,6 +55,7 @@ KNOWN_DIRECTORIES = frozenset(
         "docker",
         "guest",
         "images",
+        "integrations",
         "mcp",
         "scripts",
         "sdk",
@@ -134,6 +135,7 @@ SHARED_ROOTS = frozenset(
         ".github",
         "skills",
         "sprints",
+        "integrations",
         "tests",
         "tmp",
     }
@@ -198,6 +200,10 @@ def _path_scopes(path: str) -> frozenset[str]:
             scopes = {"build_system"}
         else:
             raise ValueError(f"unowned build_system subtree: {path}")
+    elif root == "integrations":
+        if not remainder.startswith("inspect-ai/"):
+            raise ValueError(f"unowned integrations subtree: {path}")
+        scopes = {"build_system"}
     elif root in BUILD_SYSTEM_ROOTS or path in BUILD_SYSTEM_FILES:
         scopes = {"build_system"}
     elif root in {"bench", "benchmarks"}:

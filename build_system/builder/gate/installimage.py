@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import time
 from enum import StrEnum
 from pathlib import Path
 
+from .. import crypto as hashlib
 from . import config as gate_config
 from . import imagecache, installbuilder, installreceipt, sourcecapture
 from .actions import Action

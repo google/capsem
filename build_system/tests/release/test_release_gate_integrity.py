@@ -6,6 +6,8 @@ import re
 import tomllib
 from pathlib import Path
 
+from helpers.gate import plan_ancestors
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
 PINNED_RUST = "1.97.1"
@@ -244,7 +246,8 @@ def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
 
     root = Path(__file__).resolve().parents[3]
     config = gate_config.load(root)
-    labels = list(_gate_plan().labels)
+    plan = _gate_plan()
+    labels = list(plan.labels)
     workspace = (root / "build_system/builder/gate/workspace.py").read_text(encoding="utf-8")
 
     assert config.workspace.benchmark_root == "cache/target/tests/benchmarks"
@@ -253,8 +256,11 @@ def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
     assert "Deliberately not the benchmark root" in workspace
 
     cleared = _step_at(labels, "prepare.cache-enforcement")
-    assert cleared < _step_at(labels, "functional.")
+    assert cleared < labels.index("functional.content")
     assert cleared < _step_at(labels, "glowup.")
+    for label in labels:
+        if label.startswith("functional.") and label != "functional.sdk.rust.example":
+            assert "prepare.cache-enforcement" in plan_ancestors(plan, label), label
 
 
 def test_full_gate_runs_capsem_bench_baseline_exactly_once() -> None:

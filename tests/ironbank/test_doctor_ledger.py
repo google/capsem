@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 from helpers.body_archive import (
-    SessionArchive,
     archived_bodies,
     ledger_path,
     security_payload,
@@ -34,7 +33,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
 from helpers.uds_client import UdsHttpClient
 from log_streams import log_stream_files
 
@@ -293,15 +292,14 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             for row in security_latest
         )
         assert all(json.loads(row["rule_json"]) for row in security_latest)
-        # The forensic payload left the row for the archive; every match the
-        # route lists must still have one, and it must still parse.
-        with SessionArchive(vm_session_db_path(service.tmp_dir, client, vm_id)) as archive:
-            assert all(archive.security_payload(row["event_id"]) for row in security_latest)
-
         mcp_default = client.get("/mcp/default/info", timeout=30)
         assert set(mcp_default) == {"action", "source", "rule_id"}
         assert mcp_default["action"] in {"allow", "ask", "block", "disable"}
         assert mcp_default["source"] in {"corp", "settings", "default"}
+
+        mcp_refresh = client.post("/mcp/servers/local/refresh", timeout=30)
+        assert mcp_refresh["success"] is True
+        assert mcp_refresh["instances"] >= 1
 
         mcp_servers = client.get("/mcp/servers/list", timeout=30)
         assert isinstance(mcp_servers, list)
@@ -331,7 +329,14 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             assert tool["permission_action"] in {"allow", "ask", "block", "disable"}
             assert tool["permission_source"] in {"corp", "settings", "default"}
 
+        # Live routes above read accepted events; offline archive proof needs
+        # every producer and its body indexes drained first.
+        stop_session_for_ledger_read(
+            client, vm_id, vm_session_db_path(service.tmp_dir, client, vm_id)
+        )
         conn = ledgers.enter_context(contextlib.closing(_connect_session_db(service, client, vm_id)))
+        with session_archive(conn) as archive:
+            assert all(archive.security_payload(row["event_id"]) for row in security_latest)
         assert "mcp_calls" not in {
             row["name"]
             for row in conn.execute(
@@ -764,6 +769,19 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert read_status == 200
         assert read_body.decode() == EICAR_TEXT
 
+        plugins = client.get("/plugins/list", timeout=30)
+        by_id = {plugin["id"]: plugin for plugin in plugins["plugins"]}
+        assert by_id["dummy_pre_eicar"]["runtime"]["enabled"] is False
+        assert by_id["dummy_post_allow"]["runtime"]["enabled"] is True
+        assert by_id["dummy_post_allow"]["runtime"]["execution_count"] == 0
+        # The info route aggregates the plugin's runtime across sessions.
+        dummy_post_detail = client.get("/plugins/dummy_post_allow/info", timeout=30)
+        assert dummy_post_detail["runtime"]["enabled"] is True
+        assert dummy_post_detail["runtime"]["execution_count"] >= 1
+        # Stop awaits the owner and its DB flush before inspecting disk rows.
+        stopped = client.post(f"/vms/{vm_id}/stop", timeout=60)
+        assert stopped is not None
+
         conn = ledgers.enter_context(contextlib.closing(_connect_session_db(service, client, vm_id)))
         security_rows = conn.execute(
             """
@@ -883,16 +901,6 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
             for row in allowed_security
         )
 
-        plugins = client.get("/plugins/list", timeout=30)
-        by_id = {plugin["id"]: plugin for plugin in plugins["plugins"]}
-        assert by_id["dummy_pre_eicar"]["runtime"]["enabled"] is False
-        assert by_id["dummy_post_allow"]["runtime"]["enabled"] is True
-        assert by_id["dummy_post_allow"]["runtime"]["execution_count"] == 0
-        # The plugin info route answers with the plugin's runtime across
-        # sessions.
-        dummy_post_detail = client.get("/plugins/dummy_post_allow/info", timeout=30)
-        assert dummy_post_detail["runtime"]["enabled"] is True
-        assert dummy_post_detail["runtime"]["execution_count"] >= 1
     finally:
         ledgers.close()
         if client is not None:

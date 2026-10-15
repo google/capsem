@@ -26,13 +26,13 @@ import time
 from .helpers import console
 from .load_harness import (
     DurationLoadConfig,
+    capacity_concurrency_levels,
     render_load_table,
     summarize_load_level,
 )
-from .mcp_transport import StdioClient
+from .mcp_transport import McpError, StdioClient
 
 MCP_SERVER = "/run/capsem-mcp-server"
-DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
 DEFAULT_PAYLOAD = "ping"
 
@@ -58,7 +58,7 @@ async def _drive_at_concurrency(client, concurrency, duration_s, payload):
                 ms = (time.monotonic() - t0) * 1000
                 async with lat_lock:
                     latencies.append(ms)
-            except Exception:
+            except (McpError, OSError):
                 errors += 1
 
     await asyncio.gather(*(worker() for _ in range(concurrency)))
@@ -90,9 +90,10 @@ async def _run_async(concurrency_levels, duration_s, payload):
 
 def mcp_load_bench(concurrency_levels=None, duration_s=None, payload=None):
     """Drive local__echo at each concurrency level; return the result dict."""
+    default_concurrency = capacity_concurrency_levels() if concurrency_levels is None else ()
     config = DurationLoadConfig.from_inputs(
         "mcp-load",
-        default_concurrency=DEFAULT_CONCURRENCY,
+        default_concurrency=default_concurrency,
         default_duration_s=DEFAULT_DURATION_S,
         concurrency_levels=concurrency_levels,
         duration_s=duration_s,

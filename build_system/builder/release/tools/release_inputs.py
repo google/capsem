@@ -7,15 +7,16 @@ that manifest before any byte can enter a release test harness.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 from urllib.parse import unquote, urljoin, urlparse
 
-import blake3
 from capsem_builder.release.input_paths import safe_component, safe_relative
+
+from ... import crypto as blake3
+from ... import crypto as hashlib
 
 
 def safe_name(url: str, fallback: str) -> str:

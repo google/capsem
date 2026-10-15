@@ -137,9 +137,9 @@ pub(super) fn decode_rows<T: DeserializeOwned>(
     vm_id: &str,
     db_path: &StdPath,
     query_name: &str,
-    raw: &str,
+    rows: capsem_logger::ledger_protocol::LedgerRows,
 ) -> Result<Vec<T>, AppError> {
-    route_query_objects(vm_id, "stats_detail", query_name, db_path, raw)?
+    ledger_rows_to_objects(rows)
         .into_iter()
         .map(|mut row| {
             for name in BOOLEAN_FLAGS {
@@ -205,15 +205,10 @@ pub(crate) async fn read_stats_detail_payload_from_session_db(
     let db = session_db(state, vm_id, "stats_detail", db_path).await?;
     let statements = stats_detail_statements();
     let raw = db
-        .query_many(
-            statements
-                .iter()
-                .map(|(_, sql, params)| (sql.to_string(), params.clone()))
-                .collect(),
-        )
+        .query(capsem_logger::ledger_protocol::LedgerQuery::StatsDetail)
         .await
         .map_err(|error| ledger_route_error(vm_id, "stats_detail", "query", db_path, error))?;
-    let raw = <[String; 11]>::try_from(raw).map_err(|raw| {
+    let raw = <[capsem_logger::ledger_protocol::LedgerRows; 11]>::try_from(raw).map_err(|raw| {
         ledger_route_error(
             vm_id,
             "stats_detail",
@@ -222,7 +217,7 @@ pub(crate) async fn read_stats_detail_payload_from_session_db(
             format!("batch returned {} results, expected {}", raw.len(), statements.len()),
         )
     })?;
-    let [body_blobs, models, tools, model_events, tool_events, http, dns, files, processes, audit, credentials] = &raw;
+    let [body_blobs, models, tools, model_events, tool_events, http, dns, files, processes, audit, credentials] = raw;
     let name = |index: usize| statements[index].0;
     let bodies: Vec<api::EventBody> = decode_rows(vm_id, db_path, name(0), body_blobs)?;
     let mut body_blobs: BTreeMap<String, Vec<api::EventBody>> = BTreeMap::new();

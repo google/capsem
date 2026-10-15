@@ -113,7 +113,17 @@ digest, so every checkout and gate prefix uses one copy:
   layout, and only when it is absent pulls it from `repository` by digest,
   verbatim, before the suites run with no network;
 - the suites call `debug_image.ready()`, which verifies and never fetches,
-  and serve the layout through `registry.layout_registry`.
+  and serve the layout through `registry.layout_registry`. Normal pinned
+  sessions require the subject-bound prepared EROFS in the layout's `rootfs/`
+  OCI artifact. The local registry advertises its binding in a catalog and
+  streams its bytes; the guest verifies and mounts it without extracting layers.
+  Raw OCI extraction remains covered by the small dedicated OCI fixtures.
+
+Local image builds use `images/ci/rootfs.py` to generate and retain the EROFS
+artifact alongside the image. Prefetch downloads the image's EROFS referrer
+before offline tests and refuses missing, conflicting, foreign or corrupt
+artifacts. A cached layout needs both the image and prepared filesystem;
+having only compressed image layers is insufficient for normal boot proof.
 
 A workload has its own loopback; it never reaches the VM's. Clients in one
 reach the hermetic mock upstream by name: `start_mock_server(dns_answers="routable")`
@@ -153,10 +163,29 @@ the broker's hermetic OAuth endpoint -- stays a `"target": "vm"` exec.
    OBOM the way the official images do:
    `uv run --project build_system --frozen python images/ci/rootfs.py --image capsem-debug:<arch> --arch <arch> --repository ghcr.io/google/capsem/capsem-debug --digest sha256:<hex digest> --out <dir>`
    and `oras attach --artifact-type application/vnd.cyclonedx+json ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/obom.cdx.json:application/vnd.cyclonedx+json`.
+   Attach the prepared filesystem to the same platform subject too:
+   `oras attach --artifact-type application/vnd.capsem.rootfs.erofs.v2 --annotation org.capsem.rootfs.blake3="$(cat <dir>/rootfs.blake3)" ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/rootfs.erofs:application/vnd.capsem.rootfs.erofs.v2`.
+   The pinned manifest binds the BLAKE3 annotation to the platform subject.
+   OCI transport retains SHA-256; host and guest verify the prepared EROFS
+   bytes with BLAKE3 before use. Version 1 roots are not admitted.
    The package must be public, or CI's anonymous pull by digest fails.
 5. x86_64: repeat 2-4 on a Linux x86_64 host (Colima on Apple Silicon has no
    amd64 emulator here) and add its `linux/amd64` digest beside the arm64 one.
    Until then the x86_64 lanes fail at the prefetch, naming the missing pin.
+
+### Building and pinning the reference image (maintainers)
+
+The official `images/dev` image follows the same immutable-layout workflow.
+Run `capsem-gate reference-image` on each native architecture, qualify the
+printed layout with `capsem-gate image-qualify --image dev --layout
+<built-layout>`, and update `[functional.reference_image] digests` only after
+that native qualification passes. Publish the exact layout bytes to
+`ghcr.io/google/capsem/dev` with `oras cp`; rebuilding or using `docker push`
+can produce a different manifest digest. Attach the OBOM with
+`images/ci/rootfs.py --image dev:<arch>`, make the package public, and verify an
+anonymous manifest fetch by digest before relying on the pin in CI. The pinned
+layout is also mounted read-only into installed-package proofs through
+`CAPSEM_REFERENCE_IMAGE_LAYOUT`.
 
 ## Artifact identities and evidence
 

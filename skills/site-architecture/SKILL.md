@@ -89,9 +89,11 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 - **capsem** (CLI): user-facing CLI. Sessions are named by the service
   (`vm-N` unless the user supplies a name) and sized by create flags with
   fixed defaults.
-  `capsem shell` opens the TUI over existing VMs; it creates nothing. VM
-  creation and control go through the service. User-facing documentation calls
-  the environment a VM consistently and uses complete CLI command names.
+  `capsem shell` opens the TUI/session picker, creates or attaches through the
+  authenticated gateway, using the Rust SDK and shared API types. Direct UDS
+  HTTP is restricted to local status/asset administration and service startup.
+  Failed gateway authentication never falls back to UDS. User-facing documentation calls the environment a VM consistently and uses
+  complete CLI command names such as `capsem fork`.
 - **@capsem/mcp** (npm MCP server): separately installed stdio server for AI agents. Uses the TypeScript SDK and an explicit gateway URL/token; it has no UDS, VM-runtime, or virtualization access.
 - **capsem-gateway** (HTTP gateway): TCP-to-UDS reverse proxy (default port 19222). Bearer token auth, CORS, 10MB body limit. Provides an explicit route table plus `/status` (cached 1s) and `/vms/{id}/stream` (authenticated `capsem.stream.v1` WebSocket upgrade tunneled unchanged to the service, which translates it to typed VM-owner IPC). Unknown routes return 404; the frontend and tray app connect through the gateway. Writes runtime files to `~/.capsem/run/` (gateway.token, gateway.port, gateway.pid).
 - **capsem-app** (Tauri GUI): thin webview shell. Connects to gateway at `http://127.0.0.1:19222`. No VM logic, no capsem-core dependency. Only 2 IPC commands: `open_url` (opens URL in system browser) and `check_for_app_update` (Tauri updater). Bundles `web/app/dist` so the app can render the service-unavailable screen when gateway is unreachable.
@@ -152,9 +154,12 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 - Workspace and overlay bytes are session state, never
   a hidden image-authoring rail; package changes go through the runtime
   package set (`/build-images`) or an OCI image under `images/`.
-- `capsem-process` stays low privilege: a cleared allowlisted environment,
-  0600 sockets, a 0700 session directory, read-only assets and guest binaries,
-  and only `session_dir/guest/` shared with the VM.
+- `capsem-process` clears its inherited environment, uses 0600 sockets and a
+  0700 session directory, attaches read-only assets and guest binaries, and
+  shares only `session_dir/guest/` with the VM. These controls do not confine
+  a compromised same-UID host worker by themselves. The VM owner, proxy, ledger
+  and native MCP workers enforce OS confinement before readiness. The service
+  retains native MCP child handles and generation-bound cleanup authority.
 - capsem-app contains no VM logic or `capsem-core` dependency. Gateway and tray
   are service-owned companions and must self-exit with their parent.
 

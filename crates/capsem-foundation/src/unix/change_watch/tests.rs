@@ -7,10 +7,24 @@ use std::{
     os::unix::fs::PermissionsExt,
 };
 
+fn namespace_fixture() -> tempfile::TempDir {
+    // Keep unrelated tests' temporary-directory churn outside the watched
+    // ancestor chain; deliberate sibling and backlog stimuli remain real.
+    let temporary = std::env::temp_dir();
+    let parent = temporary
+        .parent()
+        .filter(|parent| *parent != std::path::Path::new("/"))
+        .unwrap_or(std::path::Path::new("/var/tmp"));
+    tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir_in(parent)
+        .unwrap()
+}
+
 #[test]
 fn directory_path_watch_tracks_ancestor_replacement_and_retains_original_root() {
     use std::os::unix::fs::MetadataExt;
-    let parent = tempfile::tempdir().unwrap();
+    let parent = namespace_fixture();
     let ancestor = parent.path().join("ancestor");
     let path = ancestor.join("cache");
     std::fs::create_dir_all(&path).unwrap();
@@ -18,14 +32,11 @@ fn directory_path_watch_tracks_ancestor_replacement_and_retains_original_root() 
     let root = watch.open_directory(&path).unwrap();
     let original = root.metadata().unwrap().ino();
     assert!(!watch.changed().unwrap());
-    #[cfg(target_os = "linux")]
-    {
-        std::fs::write(parent.path().join("unrelated"), b"sibling").unwrap();
-        assert!(
-            !watch.changed().unwrap(),
-            "unrelated ancestor siblings must not invalidate"
-        );
-    }
+    std::fs::write(parent.path().join("unrelated"), b"sibling").unwrap();
+    assert!(
+        !watch.changed().unwrap(),
+        "unrelated ancestor siblings must not invalidate"
+    );
     std::fs::rename(&ancestor, parent.path().join("moved")).unwrap();
     std::fs::create_dir_all(&path).unwrap();
     assert!(
@@ -42,7 +53,7 @@ fn directory_path_watch_tracks_ancestor_replacement_and_retains_original_root() 
 #[test]
 fn directory_path_watch_tracks_alias_rebinding_without_redirecting_held_descriptors() {
     use std::os::unix::fs::MetadataExt;
-    let parent = tempfile::tempdir().unwrap();
+    let parent = namespace_fixture();
     let original = parent.path().join("original");
     let replacement = parent.path().join("replacement");
     std::fs::create_dir_all(original.join("cache")).unwrap();
@@ -79,7 +90,7 @@ fn directory_path_watch_refuses_relative_or_parent_components() {
 #[cfg(target_os = "linux")]
 #[test]
 fn ancestor_notification_backlog_cannot_hide_rebinding() {
-    let parent = tempfile::tempdir().unwrap();
+    let parent = namespace_fixture();
     let ancestor = parent.path().join("ancestor");
     let path = ancestor.join("cache");
     std::fs::create_dir_all(&path).unwrap();
@@ -94,6 +105,23 @@ fn ancestor_notification_backlog_cannot_hide_rebinding() {
         "excess ignored siblings must not hide a queued binding change"
     );
     assert!(watch.changed().unwrap());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn unrelated_ancestor_backlog_does_not_invalidate_the_binding() {
+    let parent = namespace_fixture();
+    let path = parent.path().join("ancestor/cache");
+    std::fs::create_dir_all(&path).unwrap();
+    let mut watch = ChangeWatch::new().unwrap();
+    let _held = watch.open_directory(&path).unwrap();
+    for index in 0..400 {
+        std::fs::write(parent.path().join(format!("unrelated-{index}")), b"sibling").unwrap();
+    }
+    assert!(
+        !watch.changed().unwrap(),
+        "a bounded burst of unrelated siblings must be fully drained"
+    );
 }
 
 #[test]

@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import importlib.metadata
 import json
+import re
 import sys
 import tarfile
 import threading
@@ -39,7 +40,13 @@ def archive_payload(archive: Path) -> dict[str, bytes]:
                 file = stream.extractfile(member)
                 assert file is not None
                 result[str(Path(*parts))] = file.read()
-        return result
+    return result
+
+
+def normalized_requirement(requirement: str) -> tuple[str, tuple[str, ...]]:
+    match = re.fullmatch(r"([A-Za-z0-9._-]+)(.*)", requirement.replace(" ", ""))
+    assert match is not None
+    return match[1].lower(), tuple(sorted(filter(None, match[2].split(","))))
 
 
 def main() -> None:
@@ -63,6 +70,9 @@ def main() -> None:
         manifest = tomllib.load(file)["project"]
     assert distribution.version == manifest["version"]
     assert distribution.metadata["Requires-Python"] == manifest["requires-python"]
+    assert {
+        normalized_requirement(requirement) for requirement in distribution.requires or []
+    } == {normalized_requirement(requirement) for requirement in manifest["dependencies"]}
     installed = {dist.metadata["Name"].lower() for dist in importlib.metadata.distributions()}
     assert not installed.intersection({"pytest", "build", "hatchling", "editables", "ruff", "ty"})
     payload = archive_payload(args.archive)

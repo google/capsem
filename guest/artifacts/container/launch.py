@@ -86,6 +86,10 @@ RUNC = ("runc", "--rootless=true", "--root", str(RUNTIME / "state"))
 TERMINAL_SHELL = ["/bin/sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l; exec sh -l"]
 TERMINAL_TYPE = "TERM=xterm-256color"
 ATTACH_INTERVAL = 1.0
+COMMAND_TIMEOUT = 30
+# Large test-tooling images can take longer to materialize when several VMs
+# unpack in parallel. Keep this below the service's 110-second create wait.
+IMAGE_UNPACK_TIMEOUT = 90
 # A detached workload's terminal: runc runs in the foreground on a PTY this
 # launcher holds (runc gives the container its own and relays the two; it
 # allows a console socket only when it detaches, which would lose the exit
@@ -338,10 +342,17 @@ def _launcher_hook(argument):
     }
 
 
+def startup_mark(stage):
+    """Private, best-effort clock observations; never workload or secret data."""
+    with contextlib.suppress(OSError), (RUNTIME / "startup-timing.jsonl").open("a") as output:
+        output.write(json.dumps({"stage": stage, "monotonic_s": time.monotonic()}) + "\n")
+
+
 def workload_started(stage):
     """Mark the workload running: runc's poststart hook, once its process
     started. The service reads this marker, so `running` -- and a create
     that waited for it -- means an exec can enter the workload."""
+    startup_mark("workload_started")
     (stage / RUNNING).write_text("1\n")
 
 
@@ -480,8 +491,8 @@ def idmap_workspace(id_map, target):
         os.waitpid(child, 0)
 
 
-def command(*args, check=True, **kwargs):
-    return subprocess.run(args, check=check, timeout=30, **kwargs)
+def command(*args, check=True, timeout=COMMAND_TIMEOUT, **kwargs):
+    return subprocess.run(args, check=check, timeout=timeout, **kwargs)
 
 
 def hosts_file():
@@ -654,7 +665,7 @@ def manifest_digest(options):
 
 
 @contextlib.contextmanager
-def verified_blob(share, digest, size=None, limit=None, destination=None):
+def verified_blob(share, digest, size=None, limit=None, destination=None, integrity=None):
     """Hold the exact regular blob verified, optionally copying its bytes.
 
     A filesystem mount uses this descriptor, so checking and using cannot
@@ -665,12 +676,24 @@ def verified_blob(share, digest, size=None, limit=None, destination=None):
     if size is not None and not (type(size) is int and size >= 0):
         raise ValueError(f"refusing OCI blob size {size!r} for {digest}")
     hexdigest = digest.removeprefix("sha256:")
-    hasher = hashlib.sha256()
     count = 0
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
     with os.fdopen(os.open(share / hexdigest, flags), "rb") as source:
         if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
             raise ValueError(f"OCI blob {digest} is not a regular file")
+        if integrity is not None:
+            if destination is not None or size is None or os.fstat(source.fileno()).st_size != size:
+                raise ValueError("invalid prepared root integrity bounds")
+            if not re.fullmatch(r"blake3:[0-9a-f]{64}", integrity):
+                raise ValueError("invalid prepared root BLAKE3 integrity digest")
+            try:
+                command("/run/capsem-sysutil", "verify-blob", integrity, str(size), stdin=source)
+            except subprocess.CalledProcessError as error:
+                raise ValueError("prepared root BLAKE3 integrity mismatch") from error
+            source.seek(0)
+            yield source, size
+            return
+        hasher = hashlib.sha256()
         output_context = (
             destination.open("xb") if destination is not None else contextlib.nullcontext()
         )
@@ -755,9 +778,11 @@ def published_root(options, id_map, share=None, run=None):
     descriptor = options.get("rootfs")
     if (
         not isinstance(descriptor, dict)
-        or set(descriptor) != {"digest", "size"}
+        or set(descriptor) != {"digest", "integrity", "size"}
         or not isinstance(descriptor["digest"], str)
         or not DIGEST.fullmatch(descriptor["digest"])
+        or not isinstance(descriptor["integrity"], str)
+        or not re.fullmatch(r"blake3:[0-9a-f]{64}", descriptor["integrity"])
         or type(descriptor["size"]) is not int
         or not 0 < descriptor["size"] <= ROOTFS_LIMIT
     ):
@@ -771,6 +796,7 @@ def published_root(options, id_map, share=None, run=None):
     lower.mkdir(mode=0o711, parents=True)
     bundle.chmod(0o711)
     with share() as blobs:
+        startup_mark("image_metadata_start")
         assemble(blobs, digest, layout, layers=False)
         manifest = json.loads(
             (layout / "blobs/sha256" / digest.removeprefix("sha256:")).read_bytes()
@@ -780,9 +806,11 @@ def published_root(options, id_map, share=None, run=None):
                 layout / "blobs/sha256" / manifest["config"]["digest"].removeprefix("sha256:")
             ).read_bytes()
         )
+        startup_mark("erofs_verify_start")
         with verified_blob(
-            blobs, descriptor["digest"], size=descriptor["size"], limit=ROOTFS_LIMIT
+            blobs, descriptor["digest"], size=descriptor["size"], limit=ROOTFS_LIMIT, integrity=descriptor["integrity"]
         ) as (blob, _):
+            startup_mark("erofs_verified")
             try:
                 run(
                     "mount",
@@ -794,6 +822,7 @@ def published_root(options, id_map, share=None, run=None):
                     str(lower),
                     pass_fds=(blob.fileno(),),
                 )
+                startup_mark("erofs_mounted")
                 mapping = f"{id_map['containerID']}:{id_map['hostID']}:{id_map['size']}"
                 run(
                     "umoci",
@@ -809,6 +838,7 @@ def published_root(options, id_map, share=None, run=None):
                     str(lower),
                     str(bundle / "config.json"),
                 )
+                startup_mark("runtime_configured")
                 runtime = json.loads((bundle / "config.json").read_bytes())
                 shutil.rmtree(layout)
                 yield bundle, image, runtime
@@ -840,6 +870,7 @@ def unpacked_root(digest, id_map, share=image_share):
         command(
             "umoci", "unpack", "--uid-map", mapping, "--gid-map", mapping,
             "--image", f"{layout}:image", str(root / "bundle"),
+            timeout=IMAGE_UNPACK_TIMEOUT,
         )
         (root / "bundle").chmod(0o711)
         shutil.copyfile(root / "bundle" / "config.json", root / "runtime.json")
@@ -883,6 +914,7 @@ def run(stage, detached=False):
     # bundle and the resolver file through here.
     RUNTIME.mkdir(mode=0o711)
     RUNTIME.chmod(0o711)
+    startup_mark("launch_start")
     state = RUNTIME / "state"
     process = None
     code = None
@@ -910,6 +942,7 @@ def run(stage, detached=False):
         config_path.write_text(json.dumps(config))
         (RUNTIME / "resolv.conf").write_text(resolv_conf())
         (RUNTIME / "hosts").write_text(hosts_file())
+        startup_mark("workload_configured")
         (stage / "ready").write_text("1\n")
         pid_file = RUNTIME / "workload.pid"
         argv = [*RUNC, "run", "--no-new-keyring", "--pid-file", str(pid_file), "--bundle", str(bundle)]

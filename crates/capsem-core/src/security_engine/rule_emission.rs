@@ -120,17 +120,17 @@ async fn emit_rule_rows(
     let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
     let mut decision_state = enriched_event.decision.clone();
     let mut rule_events = Vec::new();
+    let mut writes = Vec::new();
     if let Some(rule) = selected_rule {
-        emit_security_decision_transition(
-            db,
+        let decision_event = security_decision_event(
             event_id.clone(),
             event_type,
             rule,
             &enriched_event,
             &mut decision_state,
             timestamp_unix_ms,
-        )
-        .await?;
+        )?;
+        writes.push(WriteOp::SecurityDecisionEvent(decision_event));
         if recorded == RuleRowDecision::Enforced {
             enriched_event.decision = decision_state.clone();
         }
@@ -138,7 +138,7 @@ async fn emit_rule_rows(
     for rule in evaluation.matched_rules() {
         let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
         trace_security_rule_match(&rule_event, rule);
-        emit_security_write(db, WriteOp::SecurityRuleEvent(rule_event.clone())).await;
+        writes.push(WriteOp::SecurityRuleEvent(rule_event.clone()));
         rule_events.push(rule_event);
         emitted += 1;
     }
@@ -146,16 +146,21 @@ async fn emit_rule_rows(
         let Some(rule) = selected_rule else {
             return Err("ask enforcement decision did not carry a rule".to_string());
         };
-        let ask_id = emit_security_ask_pending(
-            db,
+        let ask_id = SecurityEventId::new_uuid4();
+        let ask_event = security_ask_pending_event(
+            ask_id.clone(),
             event_id.clone(),
             event_type,
             rule,
             &enriched_event,
             timestamp_unix_ms,
-        )
-        .await?;
+        )?;
+        writes.push(WriteOp::SecurityAskEvent(ask_event));
         enforcement.ask_id = Some(ask_id);
+    }
+    let admitted = futures::future::join_all(writes.into_iter().map(|write| emit_security_write(db, write))).await;
+    if admitted.iter().any(Option::is_none) {
+        return Err("ledger refused one or more supplemental security rows".to_string());
     }
     Ok(SecurityRuleEmission {
         event_id,
@@ -200,7 +205,8 @@ fn emit_rule_rows_blocking(
     for rule in evaluation.matched_rules() {
         let rule_event = security_rule_event(event_id.clone(), event_type, rule, &enriched_event, timestamp_unix_ms)?;
         trace_security_rule_match(&rule_event, rule);
-        emit_security_write_blocking(db, WriteOp::SecurityRuleEvent(rule_event.clone()));
+        emit_security_write_blocking(db, WriteOp::SecurityRuleEvent(rule_event.clone()))
+            .ok_or_else(|| "ledger refused security rule row".to_string())?;
         rule_events.push(rule_event);
         emitted += 1;
     }

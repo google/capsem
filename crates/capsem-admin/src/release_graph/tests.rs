@@ -183,7 +183,7 @@ fn release_graph_digest_verifier_rejects_tampered_runtime_ref() {
     let bytes = br#"{"revision":"1.2.0"}"#;
     let digest = DigestSet {
         sha256: format!("{:x}", Sha256::digest(bytes)),
-        blake3: blake3::hash(bytes).to_hex().to_string(),
+        blake3: hash(bytes).to_hex().to_string(),
     };
 
     digest
@@ -546,7 +546,7 @@ fn executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs(
     assert_eq!(rows[0].name, "capsem");
     assert_eq!(rows[0].installed_path, "/usr/local/bin/capsem");
     assert_eq!(rows[0].digest.sha256, format!("{:x}", Sha256::digest(b"capsem-bin")));
-    assert_eq!(rows[0].digest.blake3, blake3::hash(b"capsem-bin").to_hex().to_string());
+    assert_eq!(rows[0].digest.blake3, hash(b"capsem-bin").to_hex().to_string());
     assert_eq!(rows[0].sbom_component_ref, "SPDXRef-File-capsem");
     assert_eq!(rows[1].sbom_component_ref, "SPDXRef-File-capsem-service");
 }

@@ -1,6 +1,131 @@
 use super::*;
 
 #[tokio::test]
+async fn vm_shutdown_targets_owned_child_even_when_cached_pid_names_an_unrelated_process() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = "owned-signal-target";
+    let session = state.run_dir.join("sessions").join(id);
+    std::fs::create_dir_all(&session).unwrap();
+    let child = tokio::process::Command::new("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut unrelated = tokio::process::Command::new("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    insert_fake_instance_with_session_dir(&state, id, unrelated.id().unwrap(), session.clone());
+    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
+    let registration = state.retirements.register(id, generation).unwrap();
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.into(),
+        id.into(),
+        state.clone(),
+        state.instance_socket_path(id).unwrap(),
+        session,
+        registration,
+    );
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        shutdown_vm_process(&state, id, ShutdownMode::Discard, Some(generation)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(result.is_some());
+    assert!(
+        unrelated.try_wait().unwrap().is_none(),
+        "shutdown signaled a cached/recycled PID"
+    );
+    reaper.await.unwrap();
+    assert!(state.retirements.wait(id, generation).await.unwrap());
+    unrelated.kill().await.unwrap();
+}
+
+#[tokio::test]
+async fn vm_shutdown_without_original_child_authority_cannot_acknowledge_exit() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = "missing-child-authority";
+    let session = state.run_dir.join("sessions").join(id);
+    std::fs::create_dir_all(&session).unwrap();
+    let mut unrelated = tokio::process::Command::new("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    insert_fake_instance_with_session_dir(&state, id, unrelated.id().unwrap(), session.clone());
+    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
+    let result = shutdown_vm_process(&state, id, ShutdownMode::Discard, Some(generation)).await;
+    assert!(matches!(result, Err(AppError(StatusCode::SERVICE_UNAVAILABLE, _))));
+    assert!(unrelated.try_wait().unwrap().is_none());
+    assert!(session.exists(), "unknown exit must not remove owned session bytes");
+    assert!(
+        state.instances.lock().unwrap().contains_key(id),
+        "unknown owner cannot claim the instance"
+    );
+    unrelated.kill().await.unwrap();
+}
+
+#[tokio::test]
+async fn service_shutdown_uses_original_child_owner_before_removing_session_bytes() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let launch = state.lifecycle.admit().unwrap();
+    let id = "service-owned-shutdown";
+    let session = state.run_dir.join("sessions").join(id);
+    std::fs::create_dir_all(&session).unwrap();
+    std::fs::write(session.join("marker"), b"original").unwrap();
+    let child = tokio::process::Command::new("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut unrelated = tokio::process::Command::new("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let shutdown = {
+        let state = state.clone();
+        tokio::spawn(async move { kill_all_vm_processes(&state).await })
+    };
+    capsem_foundation::poll::poll_until(
+        capsem_foundation::poll::PollOpts::new("shutdown-seals-admission", std::time::Duration::from_secs(1)),
+        || std::future::ready(state.lifecycle.admit().is_err().then_some(())),
+    )
+    .await
+    .unwrap();
+    assert!(!shutdown.is_finished(), "shutdown missed the admitted original worker");
+    insert_fake_instance_with_session_dir(&state, id, unrelated.id().unwrap(), session.clone());
+    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
+    let registration = state.retirements.register(id, generation).unwrap();
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.into(),
+        id.into(),
+        state.clone(),
+        state.instance_socket_path(id).unwrap(),
+        session.clone(),
+        registration,
+    );
+    drop(launch);
+    tokio::time::timeout(std::time::Duration::from_secs(4), shutdown)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        unrelated.try_wait().unwrap().is_none(),
+        "service stop targeted unrelated cached PID"
+    );
+    reaper.await.unwrap();
+    assert!(state.retirements.wait(id, generation).await.unwrap());
+    assert!(!session.exists());
+    unrelated.kill().await.unwrap();
+}
+
+#[tokio::test]
 async fn generation_retirement_waits_for_reaper_after_instance_map_removal() {
     let (state, _dir) = make_test_state_with_tempdir();
     let id = "retirement-owner";
@@ -274,7 +399,11 @@ async fn exit_cleanup_waits_for_resume_and_preserves_the_replacement() {
         session_dir.clone(),
         retirement,
     );
-    assert!(wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await);
+    assert!(
+        wait_for_process_exit(&state, &id, generation, std::time::Duration::from_secs(5))
+            .await
+            .unwrap()
+    );
     let blocked_during_resume = !reaper.is_finished();
 
     // A warm-restore fallback can replace the exited child while holding the
@@ -350,7 +479,11 @@ async fn a_crashed_restore_reports_exit_before_the_resume_lock_is_released() {
         session_dir,
         retirement,
     );
-    assert!(wait_for_process_exit(pid, std::time::Duration::from_secs(5)).await);
+    assert!(
+        wait_for_process_exit(&state, id, generation, std::time::Duration::from_secs(5))
+            .await
+            .unwrap()
+    );
     let result = wait_for_vm_ready(&uds_path, 1, Some(&state), Some(id)).await;
     drop(resume);
     tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
@@ -449,4 +582,62 @@ async fn stale_reaper_cannot_remove_replacement_with_the_same_pid() {
     assert_eq!(state.instances.lock().unwrap().get(id).unwrap().generation, replacement);
     assert!(std::os::unix::net::UnixStream::connect(&uds_path).is_ok());
     drop(listener);
+}
+
+#[tokio::test]
+async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let vm_id = new_persistent_vm_id();
+    let session_dir = state.run_dir.join("persistent").join(&vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let uds_path = state.run_dir.join("instances").join(format!("{vm_id}.sock"));
+    std::fs::create_dir_all(uds_path.parent().unwrap()).unwrap();
+    std::fs::write(&uds_path, b"stale socket").unwrap();
+    std::fs::write(uds_path.with_extension("ready"), b"stale ready").unwrap();
+
+    let child = tokio::process::Command::new("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let generation = capsem_crypto::uuid_v4();
+    state.instances.lock().unwrap().insert(
+        vm_id.clone(),
+        InstanceInfo {
+            id: vm_id.clone(),
+            name: "resume-vm".into(),
+            uds_path: uds_path.clone(),
+            session_dir: session_dir.clone(),
+            pid: child.id().unwrap(),
+            generation,
+            persistent: true,
+            ..test_instance()
+        },
+    );
+
+    let retirement = state.retirements.register(&vm_id, generation).unwrap();
+    let guard = state.lifecycle.vz.write().await;
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        vm_id.clone(),
+        "resume-vm".into(),
+        state.clone(),
+        uds_path.clone(),
+        session_dir,
+        retirement,
+    );
+    stop_failed_restore_process_under_lock(&state, &vm_id).await.unwrap();
+    assert!(state.retirements.wait_exit(&vm_id, generation).await.unwrap());
+    drop(guard);
+    reaper.await.unwrap();
+
+    assert!(
+        !state.instances.lock().unwrap().contains_key(&vm_id),
+        "failed warm restore must not remain registered before cold fallback"
+    );
+    assert!(!uds_path.exists(), "stale UDS socket should be removed");
+    assert!(
+        !uds_path.with_extension("ready").exists(),
+        "stale ready sentinel should be removed"
+    );
 }

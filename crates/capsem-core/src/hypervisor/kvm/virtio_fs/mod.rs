@@ -14,6 +14,7 @@ mod ops_dir;
 mod ops_file;
 mod ops_meta;
 
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -26,14 +27,17 @@ use tracing::{debug, trace, warn};
 
 use super::memory::GuestMemoryRef;
 use super::virtio_mmio::{QueueConfig, VirtioDevice};
-use super::virtio_queue::{DescriptorChain, VirtQueue};
+use super::virtio_queue::{DescriptorChain, VirtQueue, VIRTIO_RING_F_EVENT_IDX};
 
 use crate::hypervisor::fuse::{self, *};
+use crate::GuestMetadataAuthority;
 use checkpoint_state::VirtioFsBackendSnapshot;
 
 const VIRTIO_ID_FS: u32 = 26;
 const VIRTIO_F_VERSION_1: u64 = 1 << 32;
-const QUEUE_SIZE: u16 = 256;
+// A one-MiB request needs 256 data pages plus the FUSE headers. Linux
+// clamps max_pages to the ring size minus four; 256 silently truncates I/O.
+const QUEUE_SIZE: u16 = 512;
 const TAG_LEN: usize = 36;
 
 /// Maximum single-read size (matches FUSE_INIT max_read negotiation).
@@ -56,10 +60,56 @@ pub(super) struct FuseProcessor {
     pub(super) read_only: bool,
     pub(super) inodes: InodeTable,
     pub(super) file_handles: FileHandleTable,
+    pub(super) metadata_authority: Option<Arc<dyn GuestMetadataAuthority>>,
 }
 
 impl FuseProcessor {
+    fn set_guest_mode(&self, path: &Path, mode: u32) -> std::io::Result<()> {
+        let authority = self
+            .metadata_authority
+            .as_ref()
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EPERM))?;
+        let relative = path
+            .strip_prefix(&self.root_path)
+            .map_err(|_| std::io::Error::from_raw_os_error(libc::EACCES))?;
+        authority.set_mode(relative.as_os_str().as_bytes(), (mode & 0o7777) as u16)
+    }
+
+    fn set_guest_times(
+        &self,
+        path: &Path,
+        atime: capsem_proto::upstream_grant::GuestFileTime,
+        mtime: capsem_proto::upstream_grant::GuestFileTime,
+    ) -> std::io::Result<()> {
+        let authority = self
+            .metadata_authority
+            .as_ref()
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EPERM))?;
+        let relative = path
+            .strip_prefix(&self.root_path)
+            .map_err(|_| std::io::Error::from_raw_os_error(libc::EACCES))?;
+        authority.set_times(relative.as_os_str().as_bytes(), atime, mtime)
+    }
+
+    fn handle_request_into(&mut self, request_buf: &[u8], response: &mut Vec<u8>) {
+        if let Some(header) = fuse::read_struct::<FuseInHeader>(request_buf) {
+            if header.opcode == FUSE_READ {
+                self.do_read_into(&header, &request_buf[std::mem::size_of::<FuseInHeader>()..], response);
+                return;
+            }
+        }
+        response.clear();
+        response.extend_from_slice(&self.handle_non_read_request(request_buf));
+    }
+
+    #[cfg(test)]
     fn handle_request(&mut self, request_buf: &[u8]) -> Vec<u8> {
+        let mut response = Vec::new();
+        self.handle_request_into(request_buf, &mut response);
+        response
+    }
+
+    fn handle_non_read_request(&mut self, request_buf: &[u8]) -> Vec<u8> {
         let header: FuseInHeader = match fuse::read_struct(request_buf) {
             Some(h) => h,
             None => return fuse::error_response(0, -libc::EIO),
@@ -72,7 +122,6 @@ impl FuseProcessor {
             FUSE_GETATTR => self.do_getattr(&header),
             FUSE_SETATTR => self.do_setattr(&header, body),
             FUSE_OPEN => self.do_open(&header, body),
-            FUSE_READ => self.do_read(&header, body),
             FUSE_WRITE => self.do_write(&header, body),
             FUSE_RELEASE => self.do_release(&header, body),
             FUSE_CREATE => self.do_create(&header, body),
@@ -126,7 +175,12 @@ impl FuseProcessor {
         self.encode_checkpoint_with_tag([0; TAG_LEN])
     }
 
-    fn restore_snapshot(root_path: &Path, read_only: bool, snapshot: &VirtioFsBackendSnapshot) -> Result<Self> {
+    fn restore_snapshot(
+        root_path: &Path,
+        read_only: bool,
+        metadata_authority: Option<Arc<dyn GuestMetadataAuthority>>,
+        snapshot: &VirtioFsBackendSnapshot,
+    ) -> Result<Self> {
         ensure!(
             snapshot.read_only == read_only,
             "VirtioFS checkpoint read-only identity mismatch"
@@ -138,13 +192,14 @@ impl FuseProcessor {
             read_only,
             inodes,
             file_handles,
+            metadata_authority,
         })
     }
 
     #[cfg(test)]
     fn restore_checkpoint(root_path: &Path, read_only: bool, encoded: &[u8]) -> Result<Self> {
         let snapshot = VirtioFsBackendSnapshot::decode(encoded)?;
-        Self::restore_snapshot(root_path, read_only, &snapshot)
+        Self::restore_snapshot(root_path, read_only, None, &snapshot)
     }
 }
 
@@ -154,8 +209,8 @@ impl FuseProcessor {
 
 /// Gather readable descriptor data into a contiguous buffer.
 /// Returns `None` if the total exceeds `MAX_GATHER_SIZE` (protocol violation).
-fn gather_readable(mem: &GuestMemoryRef, chain: &DescriptorChain) -> Option<Vec<u8>> {
-    let mut buf = Vec::new();
+fn gather_readable(mem: &GuestMemoryRef, chain: &DescriptorChain, buf: &mut Vec<u8>) -> Option<()> {
+    buf.clear();
     for desc in &chain.descriptors {
         if !desc.is_write_only() {
             let new_len = buf.len() + desc.len as usize;
@@ -165,10 +220,21 @@ fn gather_readable(mem: &GuestMemoryRef, chain: &DescriptorChain) -> Option<Vec<
             // Validate the whole [addr, addr+len) range, not just the first
             // byte: a guest descriptor near the RAM boundary with a large len
             // must never read host memory past the mmap.
-            mem.read_guest_buffer(desc.addr, desc.len as usize, &mut buf);
+            if !mem.read_guest_buffer(desc.addr, desc.len as usize, buf) {
+                buf.clear();
+                return None;
+            }
         }
     }
-    Some(buf)
+    Some(())
+}
+
+/// Scratch storage belongs to the worker, so idle notifications and checkpoint
+/// drains keep the allocation. Payload lengths are reset for every request.
+#[derive(Default)]
+struct IoBuffers {
+    request: Vec<u8>,
+    response: Vec<u8>,
 }
 
 fn write_response(mem: &GuestMemoryRef, chain: &DescriptorChain, data: &[u8]) -> u32 {
@@ -217,10 +283,11 @@ fn worker_loop(
     debug!(event_name = "virtio.fs.worker_start", "virtio-fs worker started");
     let mut hiprio_processed_total = 0u64;
     let mut request_processed_total = 0u64;
+    let mut buffers = IoBuffers::default();
     while let Ok(command) = rx.recv() {
         match command {
             WorkerCommand::Notify(0) => {
-                let processed = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
+                let processed = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem, &mut buffers.request);
                 hiprio_processed_total = hiprio_processed_total.saturating_add(u64::from(processed));
                 let should_interrupt = hiprio_queue.prepare_kick();
                 log_queue_drain("hiprio", processed, should_interrupt);
@@ -229,7 +296,7 @@ fn worker_loop(
                 }
             }
             WorkerCommand::Notify(1) => {
-                let processed = drain_request_queue(&mut proc, &mut request_queue, &mem);
+                let processed = drain_request_queue(&mut proc, &mut request_queue, &mem, &mut buffers);
                 request_processed_total = request_processed_total.saturating_add(u64::from(processed));
                 let should_interrupt = request_queue.prepare_kick();
                 log_queue_drain("request", processed, should_interrupt);
@@ -247,8 +314,8 @@ fn worker_loop(
                 return;
             }
             WorkerCommand::Checkpoint { tag, done } => {
-                let hiprio = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
-                let request = drain_request_queue(&mut proc, &mut request_queue, &mem);
+                let hiprio = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem, &mut buffers.request);
+                let request = drain_request_queue(&mut proc, &mut request_queue, &mem, &mut buffers);
                 hiprio_processed_total = hiprio_processed_total.saturating_add(u64::from(hiprio));
                 request_processed_total = request_processed_total.saturating_add(u64::from(request));
                 let hiprio_interrupt = hiprio_queue.prepare_kick();
@@ -274,47 +341,59 @@ fn worker_loop(
     debug!("virtio-fs worker exiting");
 }
 
-fn drain_hiprio_queue(proc: &mut FuseProcessor, hiprio_queue: &mut VirtQueue, mem: &GuestMemoryRef) -> u32 {
+fn drain_hiprio_queue(
+    proc: &mut FuseProcessor,
+    hiprio_queue: &mut VirtQueue,
+    mem: &GuestMemoryRef,
+    buf: &mut Vec<u8>,
+) -> u32 {
     // High-priority queue: FORGET ops (fire-and-forget, no response)
     let mut processed = 0u32;
-    while let Some(chain) = hiprio_queue.pop() {
+    while let Some(chain) = hiprio_queue.pop_or_enable_notification() {
         processed += 1;
-        let buf = gather_readable(mem, &chain).unwrap_or_default();
-        if let Some(header) = fuse::read_struct::<FuseInHeader>(&buf) {
-            let body = &buf[std::mem::size_of::<FuseInHeader>()..];
-            trace!(
-                event_name = "virtio.fs.request",
-                queue = "hiprio",
-                opcode = header.opcode,
-                unique = header.unique,
-                "virtio-fs FUSE request"
-            );
-            match header.opcode {
-                FUSE_FORGET => proc.do_forget(&header, body),
-                FUSE_BATCH_FORGET => proc.do_batch_forget(body),
-                _ => {}
+        if gather_readable(mem, &chain, buf).is_some() {
+            if let Some(header) = fuse::read_struct::<FuseInHeader>(buf) {
+                let body = &buf[std::mem::size_of::<FuseInHeader>()..];
+                trace!(
+                    event_name = "virtio.fs.request",
+                    queue = "hiprio",
+                    opcode = header.opcode,
+                    unique = header.unique,
+                    "virtio-fs FUSE request"
+                );
+                match header.opcode {
+                    FUSE_FORGET => proc.do_forget(&header, body),
+                    FUSE_BATCH_FORGET => proc.do_batch_forget(body),
+                    _ => {}
+                }
             }
         }
-        hiprio_queue.push_used(chain.head, 0);
+        hiprio_queue.push_used_deferred(chain.head, 0);
     }
+    hiprio_queue.flush_used();
     processed
 }
 
-fn drain_request_queue(proc: &mut FuseProcessor, request_queue: &mut VirtQueue, mem: &GuestMemoryRef) -> u32 {
+fn drain_request_queue(
+    proc: &mut FuseProcessor,
+    request_queue: &mut VirtQueue,
+    mem: &GuestMemoryRef,
+    buffers: &mut IoBuffers,
+) -> u32 {
     // Request queue: full FUSE operations
     let mut processed = 0u32;
-    while let Some(chain) = request_queue.pop() {
+    while let Some(chain) = request_queue.pop_or_enable_notification() {
         processed += 1;
-        let request_buf = match gather_readable(mem, &chain) {
-            Some(buf) => buf,
+        match gather_readable(mem, &chain, &mut buffers.request) {
+            Some(()) => {}
             None => {
                 let response = fuse::error_response(0, -libc::ENOMEM);
                 let written = write_response(mem, &chain, &response);
-                request_queue.push_used(chain.head, written);
+                request_queue.push_used_deferred(chain.head, written);
                 continue;
             }
-        };
-        if let Some(header) = fuse::read_struct::<FuseInHeader>(&request_buf) {
+        }
+        if let Some(header) = fuse::read_struct::<FuseInHeader>(&buffers.request) {
             trace!(
                 event_name = "virtio.fs.request",
                 queue = "request",
@@ -323,10 +402,11 @@ fn drain_request_queue(proc: &mut FuseProcessor, request_queue: &mut VirtQueue, 
                 "virtio-fs FUSE request"
             );
         }
-        let response = proc.handle_request(&request_buf);
-        let written = write_response(mem, &chain, &response);
-        request_queue.push_used(chain.head, written);
+        proc.handle_request_into(&buffers.request, &mut buffers.response);
+        let written = write_response(mem, &chain, &buffers.response);
+        request_queue.push_used_deferred(chain.head, written);
     }
+    request_queue.flush_used();
     processed
 }
 
@@ -376,9 +456,13 @@ impl VirtioFsDevice {
         tag: &str,
         root_path: &Path,
         read_only: bool,
+        metadata_authority: Option<Arc<dyn GuestMetadataAuthority>>,
         irq_fd: RawFd,
         interrupt_status: Arc<AtomicU32>,
     ) -> Result<Self> {
+        let root_path = root_path
+            .canonicalize()
+            .with_context(|| format!("canonicalize VirtioFS root: {}", root_path.display()))?;
         let mut tag_buf = [0u8; TAG_LEN];
         let len = tag.len().min(TAG_LEN);
         tag_buf[..len].copy_from_slice(&tag.as_bytes()[..len]);
@@ -386,10 +470,11 @@ impl VirtioFsDevice {
         Ok(Self {
             tag: tag_buf,
             processor: Some(FuseProcessor {
-                root_path: root_path.to_path_buf(),
+                root_path: root_path.clone(),
                 read_only,
-                inodes: InodeTable::new(root_path)?,
+                inodes: InodeTable::new(&root_path)?,
                 file_handles: FileHandleTable::new(),
+                metadata_authority,
             }),
             notify_tx: None,
             worker_handle: None,
@@ -418,20 +503,22 @@ impl VirtioFsDevice {
             .filter(|queue| queue.size > 0)
             .context("VirtioFS hiprio queue is unavailable for activation")?;
         let hiprio_queue = if hiprio_config.warm_restore {
-            VirtQueue::new_restored(
+            VirtQueue::new_restored_with_event_idx(
                 mem.clone(),
                 hiprio_config.desc_addr,
                 hiprio_config.driver_addr,
                 hiprio_config.device_addr,
                 hiprio_config.size,
+                hiprio_config.event_idx,
             )
         } else {
-            VirtQueue::new(
+            VirtQueue::new_with_event_idx(
                 mem.clone(),
                 hiprio_config.desc_addr,
                 hiprio_config.driver_addr,
                 hiprio_config.device_addr,
                 hiprio_config.size,
+                hiprio_config.event_idx,
             )
         };
         let request_config = queues
@@ -439,20 +526,22 @@ impl VirtioFsDevice {
             .filter(|queue| queue.size > 0)
             .context("VirtioFS request queue is unavailable for activation")?;
         let request_queue = if request_config.warm_restore {
-            VirtQueue::new_restored(
+            VirtQueue::new_restored_with_event_idx(
                 mem.clone(),
                 request_config.desc_addr,
                 request_config.driver_addr,
                 request_config.device_addr,
                 request_config.size,
+                request_config.event_idx,
             )
         } else {
-            VirtQueue::new(
+            VirtQueue::new_with_event_idx(
                 mem.clone(),
                 request_config.desc_addr,
                 request_config.driver_addr,
                 request_config.device_addr,
                 request_config.size,
+                request_config.event_idx,
             )
         };
 
@@ -493,7 +582,7 @@ impl VirtioDevice for VirtioFsDevice {
         VIRTIO_ID_FS
     }
     fn features(&self) -> u64 {
-        VIRTIO_F_VERSION_1
+        VIRTIO_F_VERSION_1 | VIRTIO_RING_F_EVENT_IDX
     }
     fn queue_max_sizes(&self) -> &[u16] {
         &[QUEUE_SIZE, QUEUE_SIZE]
@@ -619,7 +708,12 @@ impl VirtioDevice for VirtioFsDevice {
             snapshot.read_only == current.read_only,
             "VirtioFS checkpoint read-only identity mismatch"
         );
-        let restored = FuseProcessor::restore_snapshot(&current.root_path, current.read_only, &snapshot)?;
+        let restored = FuseProcessor::restore_snapshot(
+            &current.root_path,
+            current.read_only,
+            current.metadata_authority.clone(),
+            &snapshot,
+        )?;
         self.processor = Some(restored);
         self.checkpoint_state = Some(encoded.to_vec());
         Ok(())
@@ -633,6 +727,9 @@ impl VirtioDevice for VirtioFsDevice {
 #[cfg(test)]
 #[path = "tests/containment.rs"]
 mod containment_tests;
+#[cfg(test)]
+#[path = "tests/metadata.rs"]
+mod metadata_tests;
 #[cfg(test)]
 #[path = "tests/ownership.rs"]
 mod ownership_tests;

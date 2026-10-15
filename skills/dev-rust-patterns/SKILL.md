@@ -142,6 +142,18 @@ one that `nix` already wraps, and catches aliased imports (`use ::libc as sys`),
 dependencies. Before it did, foundation's own internals were unscanned and
 raw calls with `nix` wrappers accumulated there unnoticed.
 
+## Guest RAM and VirtioFS performance
+
+Before changing guest RAM, KVM storage or OCI boot, read
+[Guest RAM and VirtioFS performance](references/guest-memory-performance.md).
+Keep RAM and KVM slot offsets aligned to 2 MiB and request transparent huge
+pages through `capsem_foundation::unix::guest_memory::GuestRam`. A regular
+4-KiB-backed mapping once made kernel startup take 1.1 seconds and a 352-MB
+EROFS scan wait 1.5 seconds in reads. The allocation and slot regression is
+`guest_ram_and_kvm_slot_offsets_preserve_huge_page_alignment` in
+`hypervisor/kvm/memory/tests.rs`; alignment alone is insufficient without the
+per-mapping huge-page hint.
+
 ## Bidirectional I/O -- thread per direction
 
 When bridging two blocking file descriptors bidirectionally (e.g., TCP socket to vsock in `net_proxy.rs`, or master PTY to vsock in `capsem-pty-agent`), doing both reads and writes in a single thread using `poll(2)` causes deadlocks. If both outgoing buffers fill simultaneously, a single thread blocks on writing and stops reading, creating mutual lockup. Always spawn a dedicated thread for at least one direction (`std::thread::spawn` for `fd_b -> fd_a` while the main thread handles `fd_a -> fd_b`).
@@ -183,9 +195,21 @@ struct FunctionCall {
 
 ## Concurrency patterns
 
-- **RwLock for caches**: Cert authority uses `RwLock<HashMap>` -- many readers, rare writers. Use `read()` first, upgrade to `write()` only on cache miss.
+- **Shared runtime caches**: Use `capsem-cache` primitives instead of a local
+  map and eviction policy. Import capacities and freshness windows from the
+  generated `capsem_proto::CACHE_*` constants; their only numeric source is
+  `[cache]` in `config/data/runtime-limits.toml`.
 - **Arc for shared state**: VM state, proxy config, and telemetry handles are `Arc`-wrapped for sharing across tasks.
 - **Per-connection tasks**: The MITM proxy spawns a new tokio task per connection. Each task owns its TLS state and upstream connection. No shared mutable state between connections.
+- **Config-owned runtime ceilings**: Network concurrency and in-memory cache
+  policy are owned by
+  `config/data/runtime-limits.toml` and generated into `capsem-proto`. Import
+  the shared protocol constant in host and guest consumers; never duplicate a
+  numeric capacity in individual crates. Ledger queue and batch capacities
+  derive from the same supported-client ceiling, and bounded coalescing waits
+  use the generated duration rather than a local sleep literal. Extend the
+  runtime-limit Citadel guard for every new consumer. See `/dev-mitm-proxy` for
+  the load proof required when a limit changes.
 
 ### Host-serialization locks for per-host critical sections
 

@@ -8,6 +8,44 @@ use crate::status::StatusCache;
 mod hostile;
 mod route_forwarding;
 
+#[test]
+fn entry_closes_ambient_descriptors_before_runtime_construction() {
+    let source = include_str!("main.rs");
+    let entry = source.split_once("fn main() -> Result<()> {").unwrap().1;
+    let close = entry
+        .find("close_inherited_descriptors()")
+        .expect("gateway closes ambient descriptors at process entry");
+    let runtime = entry.find("tokio::runtime::Builder").unwrap();
+    assert!(entry[runtime..].starts_with("tokio::runtime::Builder::new_current_thread()"));
+    let run = entry.find("runtime.block_on(run(args))").unwrap();
+    assert!(close < runtime && runtime < run);
+}
+
+#[test]
+fn platform_confinement_precedes_gateway_readiness() {
+    let source = include_str!("main.rs");
+    let run = source.split_once("async fn run(args: Args) -> Result<()> {").unwrap().1;
+    let prepare = run.find("AuthState::prepare").unwrap();
+    let confine = run
+        .find("confine_gateway(&auth_state")
+        .expect("all supported platforms install the worker policy");
+    let telemetry = run.find("telemetry::init").expect("telemetry starts after confinement");
+    let watcher = run
+        .find("watch_parent_or_exit")
+        .expect("parent watcher starts after confinement");
+    let grant_client = run
+        .find("GatewayGrantClient::start")
+        .expect("grant task starts after confinement");
+    let publish = run.find("auth_state.publish").unwrap();
+    assert!(
+        prepare < confine
+            && confine < telemetry
+            && telemetry < watcher
+            && watcher < grant_client
+            && grant_client < publish
+    );
+}
+
 struct EnvGuard {
     key: &'static str,
     prev: Option<String>,

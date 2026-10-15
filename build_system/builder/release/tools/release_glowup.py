@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from pathlib import Path
 from typing import cast
+
+from ... import crypto as hashlib
 
 REPORT_SCHEMA = "capsem.release_glowup.v1"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")

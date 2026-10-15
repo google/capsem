@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import tomllib
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .. import crypto as hashlib
 from . import project_root
 from .releasechannel import FirstPartyChannel
 

@@ -26,7 +26,7 @@ fn a_read_only_share_refuses_every_mutating_request() {
     let dir = temp_share("image-share-read-only");
     std::fs::write(dir.join("blob"), b"verified").unwrap();
     std::fs::create_dir(dir.join("directory")).unwrap();
-    let mut device = VirtioFsDevice::new("capsem-image", &dir, true, -1, Arc::new(AtomicU32::new(0))).unwrap();
+    let mut device = VirtioFsDevice::new("capsem-image", &dir, true, None, -1, Arc::new(AtomicU32::new(0))).unwrap();
     let mut proc = device
         .processor
         .take()

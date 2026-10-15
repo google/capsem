@@ -1,20 +1,32 @@
 use super::*;
 use capsem_api::stream::{decode_client_frame, encode_data, encode_status, ClientFrame, StreamKind};
+use capsem_api::stream::{StreamChannel, StreamStatus};
+use futures::{SinkExt, StreamExt};
+use std::path::PathBuf;
+use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+use tokio_tungstenite::tungstenite::{http::HeaderValue, Message};
 
 /// A fake service socket that checks the upgrade, then runs `script`.
-fn fake_service<F, Fut>(dir: &std::path::Path, script: F) -> (PathBuf, tokio::task::JoinHandle<()>)
+async fn fake_service<F, Fut>(dir: &std::path::Path, script: F) -> (PathBuf, tokio::task::JoinHandle<()>)
 where
-    F: FnOnce(tokio_tungstenite::WebSocketStream<UnixStream>) -> Fut + Send + 'static,
+    F: FnOnce(tokio_tungstenite::WebSocketStream<TcpStream>) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = ()> + Send,
 {
     let path = dir.join("service.sock");
-    let listener = tokio::net::UnixListener::bind(&path).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    std::fs::write(
+        dir.join("gateway.port"),
+        listener.local_addr().unwrap().port().to_string(),
+    )
+    .unwrap();
+    capsem_foundation::unix::fs::atomic_write_private(&dir.join("gateway.token"), b"stream-test-token").unwrap();
     let handle = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.unwrap();
         #[allow(clippy::result_large_err)] // tungstenite's handshake callback signature
         let callback = |request: &Request, mut response: Response| {
             assert_eq!(request.uri().path(), "/vms/vm-1/stream");
+            assert_eq!(request.headers()["authorization"], "Bearer stream-test-token");
             assert_eq!(request.headers()["sec-websocket-protocol"], "capsem.stream.v1");
             response
                 .headers_mut()
@@ -27,7 +39,7 @@ where
     (path, handle)
 }
 
-async fn expect_start(socket: &mut tokio_tungstenite::WebSocketStream<UnixStream>) -> StreamControl {
+async fn expect_start(socket: &mut tokio_tungstenite::WebSocketStream<TcpStream>) -> StreamControl {
     let Some(Ok(Message::Binary(bytes))) = socket.next().await else {
         panic!("expected start")
     };
@@ -88,8 +100,9 @@ async fn a_stream_starts_then_delivers_output_and_exit() {
             ))
             .await
             .unwrap();
-    });
-    let client = UdsClient::new(path, false);
+    })
+    .await;
+    let client = GatewayClient::new(path, false);
     let mut attached = client
         .open_stream(
             "vm-1",
@@ -134,8 +147,9 @@ async fn a_refused_or_ended_stream_is_an_error_with_the_services_reason() {
             ))
             .await
             .unwrap();
-    });
-    let client = UdsClient::new(path, false);
+    })
+    .await;
+    let client = GatewayClient::new(path, false);
     let error = client
         .open_stream(
             "vm-1",

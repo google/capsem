@@ -1,6 +1,6 @@
 // Run from a clean installed consumer against an admitted hermetic OCI pin.
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import {uuidV4} from './crypto.mjs';
 import {readFileSync} from 'node:fs';
 import process from 'node:process';
 
@@ -12,7 +12,7 @@ const url = process.env.SDK_GATEWAY_URL, token = process.env.SDK_GATEWAY_TOKEN;
 const reference = process.env.SDK_IMAGE, certificate = process.env.SDK_REGISTRY_CA;
 assert(url && token && reference && certificate, 'Hermetic gateway/image fixture is required');
 const ca = readFileSync(certificate, 'utf8');
-const name = `sdk-ts-oci-${randomUUID().slice(0, 8)}`;
+const name = `sdk-ts-oci-${uuidV4().slice(0, 8)}`;
 const workload = 'printf SDK_OCI_WORKLOAD; test -x /usr/local/bin/redis-cli; test ! -e /var/tmp/capsem-container/workload.pid';
 const guest = 'printf SDK_OCI_VM; test -s /var/tmp/capsem-container/workload.pid';
 

@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 
-import blake3
+from capsem_builder import crypto as blake3
+from capsem_builder import crypto as hashlib
 
 ASSET_VERSION = "2030.0101.1"
 BINARY_VERSION = "1.4.0"

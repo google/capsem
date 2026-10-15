@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
+
+from ... import crypto as hashlib
 
 
 def _record(channel: str, route: str, manifest: Path, blake3: str) -> dict[str, object]:

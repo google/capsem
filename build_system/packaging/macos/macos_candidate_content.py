@@ -77,9 +77,14 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
     # Launchers share their real release implementation; the clean guest has
     # neither an editable builder install nor the repository bootstrap path.
     for name in (
-        "__init__.py", "release/__init__.py", "release/tools/__init__.py",
-        "release/tools/release_fixture_server.py", "release/tools/release_glowup.py",
-        "release/tools/release_transition.py", "release/tools/verify_installed_release.py",
+        "__init__.py",
+        "crypto.py",
+        "release/__init__.py",
+        "release/tools/__init__.py",
+        "release/tools/release_fixture_server.py",
+        "release/tools/release_glowup.py",
+        "release/tools/release_transition.py",
+        "release/tools/verify_installed_release.py",
     ):
         stage_file(root / "build_system/builder" / name, share / "capsem_builder" / name)
     stage_file(root / "build_system/packaging/macos" / "macos_tart_guest.sh", share / "guest.sh")

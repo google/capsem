@@ -6,6 +6,7 @@ const MANIFEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
     let rootfs = RootfsFile {
         digest: MANIFEST,
+        integrity: "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         size: 12345,
     };
     let image = StageImage {
@@ -22,7 +23,7 @@ fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
     assert_eq!(options["manifest"], MANIFEST);
     assert_eq!(
         options["rootfs"],
-        serde_json::json!({"digest": MANIFEST, "size": 12345})
+        serde_json::json!({"digest": MANIFEST, "integrity": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 12345})
     );
     assert_eq!(
         options["id_map"],
@@ -44,7 +45,11 @@ fn published_root_stage_metadata_rejects_bad_digests_and_out_of_bound_sizes() {
     for (digest, size) in [("sha256:../bad", 1), (MANIFEST, 0), (MANIFEST, 4 * 1024u64.pow(3) + 1)] {
         let image = StageImage {
             manifest: MANIFEST,
-            rootfs: Some(RootfsFile { digest, size }),
+            rootfs: Some(RootfsFile {
+                digest,
+                integrity: "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                size,
+            }),
         };
         assert!(stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).is_err());
     }

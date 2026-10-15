@@ -10,6 +10,7 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 mod grants;
+pub(super) mod recovery;
 
 /// Mandatory broker authority supplied by the service, never inferred from
 /// the ownership capability. Failure leaves managed close pending.
@@ -66,7 +67,7 @@ impl ManagedLifecycle {
             request.name.is_none() && !request.persistent,
             "managed sessions must be unnamed and ephemeral"
         );
-        let binding = VmBinding::new(new_persistent_vm_id(), uuid::Uuid::new_v4())?;
+        let binding = VmBinding::new(new_persistent_vm_id(), capsem_crypto::uuid_v4())?;
         let work = Arc::new(Work {
             scope: Default::default(),
             continuation: tokio::sync::Mutex::new(None),
@@ -251,6 +252,7 @@ impl ManagedLifecycle {
             })
             .await
             .map_err(app_error)??;
+        drop(_launch);
         anyhow::ensure!(
             self.matching_instance(&self.binding)?,
             "managed VM exited before registration"
@@ -287,20 +289,34 @@ impl ManagedLifecycle {
         .await
         .map_err(app_error)?;
         if stopped.is_none() {
-            anyhow::ensure!(
-                self.state.retirements.wait(binding.id(), binding.generation()).await?,
-                "managed child retirement is unknown"
-            );
+            self.state.retirements.wait(binding.id(), binding.generation()).await?;
         }
+        self.confirm_native_exit(binding.clone(), false).await?;
         self.state.containers.cancel_and_wait(binding.id()).await;
         self.grants.revoke(ticket, binding.clone()).await?;
+        self.state
+            .connections
+            .retire_session(binding.id())
+            .await
+            .map_err(app_error)?;
         network_routes::vm_deleted_checked(&self.state, binding.id()).await?;
         self.remove_session(binding, true).await
+    }
+
+    async fn confirm_native_exit(&self, binding: VmBinding, never_spawned: bool) -> Result<()> {
+        self.state
+            .off_worker(move |state| {
+                let directory = state.run_dir.join("sessions").join(binding.id());
+                state.persist_native_exit(&directory, &binding, never_spawned)
+            })
+            .await
+            .map_err(app_error)?
     }
 
     async fn remove_session(&self, binding: VmBinding, require_identity: bool) -> Result<()> {
         let state = Arc::clone(&self.state);
         let target = binding;
+        let id = target.id().to_string();
         self.state
             .off_worker(move |_| {
                 let directory = state.run_dir.join("sessions").join(target.id());
@@ -319,11 +335,19 @@ impl ManagedLifecycle {
                 Ok(())
             })
             .await
-            .map_err(app_error)?
+            .map_err(app_error)??;
+        self.state.ledger_workers.retire(&id).await
     }
 }
 
 impl Effects for ManagedLifecycle {
+    fn is_live(&self, binding: &VmBinding) -> Result<bool> {
+        anyhow::ensure!(*binding == self.binding, "managed liveness target changed");
+        if !self.matching_instance(binding)? {
+            return Ok(false);
+        }
+        self.state.retirements.is_live(binding.id(), binding.generation())
+    }
     fn create(&self, ticket: Ticket, cancel: CancellationToken, reporter: BindingReporter) -> EffectFuture<VmBinding> {
         let owner = self.clone();
         Box::pin(async move {
@@ -365,11 +389,11 @@ impl Effects for ManagedLifecycle {
                     return Ok(Some(intent));
                 }
                 let retired = owner.state.retirements.wait(intent.id(), intent.generation()).await?;
-                if !retired {
+                if !retired && owned_continuation {
                     // The service producer registers retirement before spawn.
                     // With its owned continuation finished, no registration
                     // proves that this exact new target never spawned a child.
-                    anyhow::ensure!(owned_continuation, "managed absence requires original child authority");
+                    owner.confirm_native_exit(intent.clone(), true).await?;
                     owner.grants.revoke(ticket, intent.clone()).await?;
                     network_routes::vm_deleted_checked(&owner.state, intent.id()).await?;
                     owner.remove_session(intent, false).await?;

@@ -14,11 +14,11 @@ resolution fixes it without a second mechanism.
 
 from __future__ import annotations
 
-import hashlib
 import platform
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import crypto as hashlib
 from .models import BuildConfig
 
 # Every spelling `platform.machine()` returns for the two supported CPUs.

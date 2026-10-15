@@ -359,7 +359,7 @@ fn staged_runtime_fixture(release_dir: &Path, corrupt_rootfs: bool) -> (Vec<u8>,
     let digest = |bytes: &[u8]| {
         serde_json::json!({
             "sha256": sha256_hex(bytes),
-            "blake3": blake3::hash(bytes).to_hex().to_string(),
+            "blake3": capsem_crypto::blake3::hash(bytes).to_hex().to_string(),
         })
     };
     let artifact = |kind: &str, name: &str, bytes: &[u8]| {
@@ -443,7 +443,7 @@ async fn stage_verified_update_downloads_every_runtime_image_without_mutating_in
                 .join(capsem_assets::asset_manager::host_manifest_arch())
                 .join(capsem_assets::asset_manager::hash_filename(
                     "vmlinuz",
-                    blake3::hash(&kernel).to_hex().as_ref(),
+                    capsem_crypto::blake3::hash(&kernel).to_hex().as_ref(),
                 )),
         )
         .unwrap(),
@@ -512,7 +512,7 @@ async fn activate_staged_update_switches_runtime_assets_and_manifest_together() 
                 .join(capsem_assets::asset_manager::host_manifest_arch())
                 .join(capsem_assets::asset_manager::hash_filename(
                     "vmlinuz",
-                    blake3::hash(&kernel).to_hex().as_ref(),
+                    capsem_crypto::blake3::hash(&kernel).to_hex().as_ref(),
                 )),
         )
         .unwrap(),
@@ -548,7 +548,7 @@ async fn activate_staged_update_rolls_back_every_selected_path_on_manifest_failu
         .join(capsem_assets::asset_manager::host_manifest_arch())
         .join(capsem_assets::asset_manager::hash_filename(
             "vmlinuz",
-            blake3::hash(&kernel).to_hex().as_ref(),
+            capsem_crypto::blake3::hash(&kernel).to_hex().as_ref(),
         ));
     let installed_kernel =
         installed_assets.join(staged_kernel.strip_prefix(staged.assets_dir.as_ref().unwrap()).unwrap());

@@ -7,6 +7,38 @@ fn root() -> (tempfile::TempDir, PathBuf) {
 }
 
 #[tokio::test]
+async fn failed_last_member_retirement_preserves_membership_for_delete_retry() {
+    let (_directory, path) = root();
+    let mut registry = NetworkRegistry::new(path.clone());
+    let network = registry.create("retry", 1000).await.unwrap();
+    let address = registry.attach(network.id, "vm", 1001).await.unwrap();
+    assert!(registry.vm_deleted("vm", 999).await.is_err());
+    assert_eq!(registry.address_of(network.id, "vm"), Some(address));
+    assert_eq!(registry.memberships_of("vm"), vec![network.id]);
+    let reader = registry.reader(network.id).unwrap();
+    let rows = reader
+        .query("SELECT state FROM network_members WHERE vm_id = ?1", &["vm".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&rows).unwrap()["rows"][0][0],
+        "declared"
+    );
+    let departed = registry.vm_deleted("vm", 1002).await.unwrap();
+    assert_eq!(
+        departed,
+        vec![Departure {
+            network: network.id,
+            retired: true
+        }]
+    );
+    assert!(registry.summary(network.id).is_none());
+    drop(reader);
+    drop(registry);
+    assert!(NetworkRegistry::load(path).await.unwrap().summary(network.id).is_none());
+}
+
+#[tokio::test]
 async fn names_are_unique_among_active_networks_and_reuse_makes_a_new_network() {
     let (_dir, root) = root();
     let mut registry = NetworkRegistry::new(root.clone());
@@ -319,7 +351,7 @@ async fn a_restart_rebuilds_active_networks_and_members_from_their_databases() {
 #[tokio::test]
 async fn a_database_that_cannot_be_read_fails_startup_loudly() {
     let (_dir, root) = root();
-    let id = Uuid::new_v4();
+    let id = capsem_crypto::uuid_v4();
     let path = network_db_path_in(&root, &id.to_string());
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, b"not a database").unwrap();
@@ -590,7 +622,7 @@ async fn a_retired_network_keeps_its_history_and_a_new_same_name_network_starts_
     );
     let fresh = reloaded.logs(new.id, &LogQuery::default()).await.unwrap();
     assert!(fresh.events.is_empty());
-    let unknown = Uuid::new_v4();
+    let unknown = capsem_crypto::uuid_v4();
     assert_eq!(
         reloaded.logs(unknown, &LogQuery::default()).await.unwrap_err(),
         NetworkError::NotFound(unknown)
@@ -711,7 +743,7 @@ async fn a_recorded_event_is_durable_and_readable_before_the_call_returns() {
     let page = registry.logs(net.id, &LogQuery::default()).await.unwrap();
     assert_eq!(page.events.len(), 1);
     assert_eq!(page.events[0].event_type, "network.connect");
-    let unknown = Uuid::new_v4();
+    let unknown = capsem_crypto::uuid_v4();
     let event = TransportEvent::new(
         "0000000000ac".into(),
         1_001,

@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+import type { ManagedSessionOwnership } from "./ManagedSessionOwnership.js";
 import type { VmAction } from "./VmAction.js";
 import type { VmLifecycleState } from "./VmLifecycleState.js";
 
@@ -8,6 +9,7 @@ export interface ProvisionResponse {
   "can_resume"?: boolean;
   "id": string;
   "name": string;
+  "ownership"?: null | ManagedSessionOwnership;
   "persistent"?: boolean;
   "status": VmLifecycleState;
 }

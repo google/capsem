@@ -7,13 +7,13 @@ fn private_spawn_identity_reopens_and_replaces_without_touching_old_inode() {
     let root = tempfile::tempdir().unwrap();
     let session = ContainedDir::open_root(root.path()).unwrap();
     assert!(read_spawn_identity(&session).unwrap().is_none());
-    let original = VmBinding::new("vm-original".into(), uuid::Uuid::new_v4()).unwrap();
+    let original = VmBinding::new("vm-original".into(), capsem_crypto::uuid_v4()).unwrap();
     write_spawn_identity(&session, &original).unwrap();
     let reopened = ContainedDir::open_root(root.path()).unwrap();
     assert_eq!(read_spawn_identity(&reopened).unwrap(), Some(original));
     let held = std::fs::read(root.path().join(SPAWN_IDENTITY_FILE)).unwrap();
     std::fs::hard_link(root.path().join(SPAWN_IDENTITY_FILE), root.path().join("held-original")).unwrap();
-    let replacement = VmBinding::new("vm-replacement".into(), uuid::Uuid::new_v4()).unwrap();
+    let replacement = VmBinding::new("vm-replacement".into(), capsem_crypto::uuid_v4()).unwrap();
     write_spawn_identity(&session, &replacement).unwrap();
     assert_eq!(read_spawn_identity(&reopened).unwrap(), Some(replacement));
     assert_eq!(std::fs::read(root.path().join("held-original")).unwrap(), held);
@@ -33,7 +33,7 @@ fn private_spawn_identity_reopens_and_replaces_without_touching_old_inode() {
 fn spawn_identity_refuses_symlinks_corrupt_records_and_nil_generations() {
     let root = tempfile::tempdir().unwrap();
     let session = ContainedDir::open_root(root.path()).unwrap();
-    let binding = VmBinding::new("vm".into(), uuid::Uuid::new_v4()).unwrap();
+    let binding = VmBinding::new("vm".into(), capsem_crypto::uuid_v4()).unwrap();
     let outside = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(outside.path(), b"outside survives").unwrap();
     let record = root.path().join(SPAWN_IDENTITY_FILE);

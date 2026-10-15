@@ -7,10 +7,319 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- VM-owner help and version commands work without a running service or an
+  inherited worker grant.
+
+- Proxy credential operations yield the I/O runtime while awaiting the
+  coordinator, keeping concurrent HTTP and WebSocket traffic responsive.
+
+- Failed image creation stops its host owner promptly and retains its ledger
+  and logs, without waiting for the guest to finish booting.
+
+- Service crash recovery confirms exiting orphan identities and retires the
+  previous gateway before starting its replacement.
+
+- CLI commands fail promptly when their explicitly selected local service is
+  absent, while retaining the gateway startup wait for a running service.
+
+- MCP worker RPC errors preserve upstream timeout and failure causes for tool,
+  resource and prompt requests.
+
+- MCP settings refresh preserves the builtin admitted before VM-owner
+  confinement, without reopening its host executable path.
+
 ### Security
 
 - Sigma translation preserves field-list and selection grouping, so alternatives
   and negated selections cannot bypass another condition in an access rule.
+
+- Invalidly encoded explicit gateway URLs fail closed instead of selecting a
+  local gateway.
+
+- Forks preserve the service-owned ledger commitment history and reserved
+  sequence boundary, keeping security logging available after fork and resume;
+  the trusted copy remains fenced if its caller is canceled.
+
+- The service owns native MCP child creation and waits for their confirmed
+  exit before completing session retirement; VM owners receive only scoped RPC.
+
+- Native MCP aggregator and builtin Linux profiles deny forked processes while
+  retaining runtime threads; alternate x32 syscall aliases cannot bypass filters.
+
+- Native MCP aggregators install and attest filesystem, network, execution
+  and signal confinement before readiness, and use inherited session capabilities.
+- Native builtin MCP workers apply the same confinement and use current service
+  HTTP admission, without reading policy files or inheriting host credentials.
+
+- Builtin HTTP-header tools evaluate policy and record the method actually
+  sent, preventing unsupported method arguments from bypassing a HEAD block.
+
+- Route ordinary CLI session, image, network and proxy commands through the
+  authenticated gateway using the Rust SDK. Missing or rejected credentials
+  fail without retrying mutations or falling back to the service socket.
+
+- Update rustls to 0.23.46, fixing unauthenticated certificate-decompression,
+  ECH-rejection, key-exchange downgrade, and session-secret exposure flaws.
+
+- Fail DNS closed when any decision, rule or ask row is refused, and coalesce
+  related supplemental admissions so concurrent queries do not serialize one
+  ledger round trip per row.
+- Ledger event identifiers reject NUL suffixes, and host audit-chain hashes
+  require binary storage. Stale declarations fail integrity readiness.
+
+- Ledger digest and credential-reference checks reject nonhex characters and
+  NUL suffixes. Readers and writers refuse older checks without rewriting the ledger.
+
+- Session credential grants require the original runtime's acknowledged policy
+  and current policy; applied-policy receipts retire with stopped sessions.
+
+- Credential target preflight uses the existing security rules and plugins,
+  including corporate ask/block and method, query and port constraints.
+
+- Delayed process exit cleanup fences its exact old credential runtime even
+  after a resumed replacement has taken over the session registry.
+
+- Session stop, suspend, exit and terminal cleanup fence credential grants.
+  Ready resume rebinds valid approval, and deletion refuses a resumed replacement.
+
+- Credential runtime fences preserve finite same-session approval on retained
+  stops and retire terminal session approvals, including recovered metadata.
+
+- Invalid corporate policy now refuses security admission instead of being
+  treated as empty constraints; the settings UI remains available for repair.
+
+- Credential grant issuance checks current policy and runtime ownership inside
+  the same admission lock as terminal retirement, preventing stale permission
+  checks from inserting authority after its owner has retired.
+
+- VM boot admission retains an exclusive generation lifetime fence. Service
+  restart cleanup confirms exit in the original kernel boot and PID namespace
+  before retiring grants and session bytes; delayed children cannot replay boot.
+
+- Startup retirement verifies loss of the original service parent and uses
+  stable native identity on Linux and Mac. Hosts without guarded signals await
+  the owner's parent-loss exit and refuse unconfirmed retirement.
+
+- Fresh and resumed VM launches carry the service's original PID and exact
+  spawn generation into process lifetime and boot admission.
+
+- VM processes verify their original service parent and trusted spawn
+  generation before boot, and terminate when that service disappears.
+
+- Linux startup pins original orphan processes and verifies fresh native
+  arguments before signalling. TERM/KILL and exit waits retain those handles;
+  uncertain identity or exit refuses startup before stale socket removal.
+
+- VM teardown signals and awaits its original owned child rather than a
+  cached PID. Shutdown, suspend and failed restore refuse uncertain exit;
+  service shutdown retires the child before deleting ephemeral session bytes.
+
+- Service startup orphan selection preserves native argument boundaries and
+  requires one session path directly under its own run roots. Neighbouring
+  root prefixes, incidental command text, duplicate options and traversal
+  targets cannot select unrelated workloads.
+
+- Managed VM expiry and authenticated close retire the original trusted
+  effects even when ownership storage is missing or corrupt. Failed persistence
+  cannot acknowledge a replacement generation as closed.
+
+- Replace the archived `serde_yaml`/`unsafe-libyaml` Sigma-rule parser with a
+  maintained safe-Rust parser, rejecting duplicate detection keys instead of
+  silently accepting the last value.
+
+- Preserve HTTP/security trace IDs and model-to-filesystem attribution after
+  proxy isolation through coordinator-derived process identity and a bounded,
+  acknowledged, one-way trace-hint capability to the VM owner. Preopen the
+  contained workspace before owner confinement and fail VM startup if its
+  filesystem audit rail cannot start.
+
+- Reject symlink and special-entry targets before descriptor-relative mode
+  changes, preserving the contained-filesystem contract on macOS as well as
+  Linux without following a guest-controlled link.
+
+- Install VM-owner confinement before starting its runtime, hypervisor,
+  parent watcher, ledger client, filesystem monitor, or metric workers;
+  pre-bind only the exact IPC and VSOCK descriptors those workers inherit.
+
+- Keep dynamic port publication inside VM-owner confinement by having the
+  generation-bound coordinator channel grant an exact loopback listener. The
+  owner validates and admits that descriptor while retaining no ambient bind
+  authority, grants only `/dev/null` for the confined router's closed output,
+  persists restored mappings without mode-change authority, and preserves TCP
+  resets through descriptor closure without restoring outbound connect. The
+  service never accepts or forwards workload bytes.
+
+- Keep host-worker confinement fail-closed across supported Linux Landlock
+  ABIs, including single-threaded startup on ABI 6 and 7, and canonicalize
+  macOS Seatbelt grants so system path aliases cannot silently deny or widen
+  the intended authority.
+
+- Bind each standalone model-proxy lease to one service-selected provider and
+  one revocable worker generation; client traffic receives only connected
+  descriptors and cannot choose an upstream with `Host` or proxy semantics.
+
+- Restrict VM owners to the guest share, system overlay, read-only image share,
+  and a dedicated mutable owner-state directory; attest after confinement that
+  the owner cannot open `session.db`, and fix suspend checkpoints to that
+  confined directory instead of accepting a path over IPC.
+
+- Coordinate live forks through a path-free freeze/copy/thaw handshake and
+  copy coherent database state only from the session ledger worker's
+  maintainer-scoped snapshot, keeping both VM owners and the service from
+  opening session SQLite storage.
+
+- Export confined proxy metrics through a bounded, generation-bound broker
+  capability that fixes session attribution and keeps collector destinations,
+  credentials and environment state in the trusted service.
+
+- Move guest HTTP interception, DNS framing, private-name resolution, policy
+  enforcement and audit admission into the confined per-session proxy, with
+  the VM owner surrendering each connection through its generation-bound
+  broker.
+
+- Serve live and stopped-session inspection through coordinator-granted,
+  role-bound ledger channels and bounded named operations, eliminating the
+  service's per-session SQLite readers and closing ledger workers before a
+  session is deleted. Ledger counter replies carry the DB-owned read-cache
+  epoch, while logger-owned query caches invalidate security rows after every
+  commit without a second service projection cache.
+
+- Give each VM owner one coordinator-minted, generation- and role-bound
+  ledger channel and route its existing event writer through the supervised
+  session owner, eliminating the VM process's direct SQLite open.
+
+- Bind every producer record to a producer-authored content and order
+  commitment, and acknowledge a flush only after the trusted service syncs
+  the matching checkpoint outside the ledger directory. Startup verification
+  now rejects altered, substituted, reordered, or omitted checkpointed rows.
+
+- Split high-volume ledger flushes across bounded commitment checkpoints, so
+  filesystem and package-manager audit bursts cannot stop the fail-closed
+  security ledger and refuse later VM commands.
+
+- Retire trusted ledger checkpoints with every permanent session deletion and
+  move them with retained failure evidence, so a reused ephemeral session name
+  cannot inherit an earlier ledger's authority.
+
+- Pass the packaged ledger and proxy worker paths explicitly to installed and
+  direct services, refuse incomplete confined-worker cohorts, and retire both
+  children during reinstall or uninstall.
+
+- Ship the confined ledger and proxy workers in every supported package and
+  sign them without macOS virtualization authority, so clean installs cannot
+  fall back to privileged in-process execution or grant VM capabilities to
+  data-plane helpers.
+
+- Start one fresh-generation confined proxy worker with every live VM, apply
+  exact active-policy bytes before registration, revoke it with the VM owner,
+  and terminate only the matching owner generation if its proxy dies.
+
+- Apply each proxy policy reload as one digest-keyed immutable revision across
+  HTTP routing, security plugins, provider identity, response telemetry and
+  guest DNS, preventing a request from combining authority from two revisions.
+
+- Deliver VM-owner policy reloads as exact authenticated IPC bytes and retain
+  the last valid snapshot for MCP refreshes, so atomic policy publication
+  cannot replace the file inode granted at confinement and leave a running VM
+  stuck on stale policy; drop that post-boot path grant.
+
+- Keep credential broker calls valid on the confined proxy's single-threaded
+  runtime, preventing credential capture during model requests from panicking
+  the proxy and tearing down its VM session.
+
+- Route proxy policy evaluation, credential capture, upstream substitution and
+  redaction through a transport-independent engine with typed ledger and
+  credential capabilities, so a confined proxy needs no credential-store or
+  session-database path authority.
+
+- Confine each session-ledger owner before readiness to its one database and
+  inherited channels, denying sibling sessions, ambient network and control
+  sockets, execution, signals and files; erase inherited environment bytes and
+  reject symlinked session grants before serving clients.
+
+- Compress new session body blocks with streaming zstd only inside the
+  confined ledger owner, retaining durable cross-flush history and legacy
+  deflate reads without linking the native decoder into privileged workers.
+
+- Confine the Linux API gateway before readiness to its inherited listeners
+  and coordinator-minted service and VM-owner channels, denying filesystem
+  access, process execution and direct network or control-socket dialing.
+
+- Confine the macOS API gateway and VM owner with role-specific Seatbelt
+  policies before readiness, retaining only explicit session, asset, listener,
+  runtime-file and broker grants while denying ambient files, execution,
+  signals and direct network or control-socket dialing.
+
+- Confine Linux VM-owner runtime threads before readiness to their session,
+  read-only boot assets, prepared service channels and inherited network
+  grants; deny sibling files, path-based control connections and direct
+  network dialing after startup.
+
+- Keep the global MCP discovery cache under coordinator ownership. VM owners
+  return complete tool schemas over authenticated IPC without receiving a
+  cross-session cache-file grant.
+
+- Broker guest VirtioFS permission and timestamp changes through the
+  coordinator beneath the session's guest share, keeping direct host metadata
+  syscalls denied and refusing path traversal without following guest-controlled
+  links.
+
+- Restrict registered VM-owner service connections to private-name lookup and
+  that owner's metrics route, preventing a compromised worker from invoking
+  the coordinator's public API over its same-user control socket.
+
+- Add the Linux worker confinement primitive that restricts every runtime
+  thread to explicit filesystem grants, inherited network descriptors and its
+  signal domain while denying ambient control sockets and process execution.
+
+- Broker VM DNS and TCP upstream access through generation-bound connected
+  descriptors selected from the service's trusted active-policy snapshot.
+  Policy reload, worker replacement, release and malformed ownership attempts
+  revoke live sockets; workers cannot choose DNS servers or dial addresses.
+
+- Route VM-owner metrics through a generation-authenticated service broker
+  with a fixed corporate collector destination, bounded protobuf bodies and
+  no redirects, keeping collector addresses and credentials out of workers;
+  revoking or replacing a worker generation cancels its in-flight exports.
+
+- Authenticate private-network name lookups with the registered VM owner's
+  kernel Unix identity, eliminating the reusable bearer secret previously
+  written into each session directory and carried in lookup requests.
+
+- Close ambient inherited file descriptors before each VM owner or gateway
+  initializes, preventing service resources from leaking across worker exec
+  boundaries.
+
+- Keep an exited VM owner's process identity under coordinator custody until
+  its registered generation has been revoked, preventing PID reuse from
+  inheriting worker and broker authority.
+
+- Authenticate coordinator connections against each registered VM owner's kernel
+  process and user identity before sending protocol bytes. Refuse stale owner
+  generations for commands, streams and private-network descriptor handoffs;
+  cancel streaming commands when their authority is revoked.
+
+- Authenticate VM-owner control connections with the kernel's process and user
+  identity before reading protocol claims. Owners retain a session singleton
+  and exit when their launching coordinator dies.
+
+- Bind private-network and preview handoff endpoints to the coordinator's
+  session identity and VM-owner spawn generation. Refuse worker replies that
+  name another endpoint or arrive after that owner has been replaced, and
+  authenticate the preview owner's kernel identity before transferring a
+  browser connection descriptor.
+
+- Generated Python requests redact nested credential validation inputs,
+  including raw parent inputs retained when another required field is missing.
+
+- Vhost-vsock validates complete descriptor and ring ranges, queue sizes, and
+  index-cell arithmetic before exposing guest-controlled addresses to the
+  kernel backend.
+
+- Virtio descriptor and ring metadata validate their complete guest RAM span
+  and address arithmetic before host access, including PCI-hole crossings.
 
 - OAuth disconnect joins an in-flight refresh and retires the latest rotated
   token under denial, including material whose durable publication failed.
@@ -24,8 +333,213 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The documentation preview root opens Installation instead of returning 404,
-  including navigation through the header logo.
+- Rust SDK transports preserve binary response content types and support
+  authenticated terminal/exec streams with bounded startup and frame sizes.
+
+- Concurrent OCI pulls wait for the owning blob download, and warm cache
+  copies release the blob stripe lock before verification so large layers
+  can be copied in parallel without cache-lock timeouts.
+
+- Ledger flushes reject missing tables or ID columns even when empty, keeping
+  pending rows available for retry instead of acknowledging broken schema.
+
+- The guest DNS listener sizes its UDP receive queue from the supported client,
+  session and EDNS datagram limits, preventing kernel receive drops during a
+  512-client dual-stack burst.
+
+- Sustain the configured 512 concurrent intercepted connections in the guest
+  network relay by raising its inherited descriptor limit to the centralized
+  runtime budget. Linux shells commonly supplied only 1,024 descriptors while
+  each relayed connection needs both a TCP and a VSOCK descriptor.
+
+- The confined HTTP proxy admits 512 concurrent clients while pooled idle and
+  retiring connections overlap instead of closing valid handoffs during churn.
+  Network-facing host processes raise their descriptor floor from the
+  same runtime budget, and the trusted upstream broker and DNS sessions derive
+  their ceilings from that config instead of intermittently returning 502 or
+  SERVFAIL during a resolve burst.
+
+- Multiplexed DNS sessions admit the dual-stack query burst from 512 concurrent
+  clients instead of shedding valid A or AAAA lookups as SERVFAIL.
+
+- Gateway `/status` reads VM, asset and update state in one coordinator
+  snapshot, cutting service CPU for the polled overview without caching stale
+  VM lifecycle state.
+
+- Confined Linux VM owners retain ioctl authority only for their KVM and
+  vhost devices, and prepare saved-publication state before confinement, so
+  VMs boot without reopening authority to the session root or ordinary files.
+
+- Persistent VMs that crash during creation report their `process.log` tail
+  even when the child reaper has not yet cached it in the registry.
+
+- Confined macOS ledger and proxy workers now distinguish private unnamed
+  socketpairs from external endpoint authority during readiness attestation,
+  allowing worker-internal channels while Seatbelt continues to deny bind,
+  listen and connect operations.
+
+- OCI cache inventory no longer watches the flock-only control directory or
+  its files, preventing macOS from invalidating observations on the inventory's
+  own lock probes.
+
+- The authenticated gateway forwards standalone proxy create, heartbeat and
+  stop operations instead of returning 404 for documented SDK endpoints.
+- Staged release verification includes the shared crypto owner and can verify
+  SHA-256 without optional BLAKE3 packages. Missing BLAKE3 reports a setup hint.
+
+- Decision ledger flushes use the full snapshot index when recording
+  occurrences, avoiding repeated scans as distinct decisions accumulate.
+
+- Idle ledger writers honor the original flush deadline when a late event
+  arrives, and failed idle flushes retain their normal retry interval.
+
+- Connection inventory supports bounded `limit` and `cursor` pages through the
+  service and SDKs, with malformed queries refused.
+
+- Interrupted credential disconnects resume bounded provider revocation after
+  service restart; maintenance retries unresolved retirement while grants stay revoked.
+
+- Archive index flushes batch SQLite inserts within the existing atomic
+  archive/ledger transaction, reducing repeated statement execution.
+
+- Stopped named sessions offer a read-only Credentials view with explicit
+  revocation; inspecting approvals does not wait for the connection catalog.
+
+- Named stopped sessions expose retained approval inventory and revocation
+  through canonical session IDs; grant creation still requires a live runtime.
+
+- Default session grant expiry fits the trusted remaining owner lifetime,
+  including time spent checking policy; explicit expiry overruns remain refused.
+
+- Retained credential approvals can be inspected and durably revoked using
+  their original session owner without creating or rebinding runtime authority.
+
+- Credential settings show account sign-in, cancellation and provider retirement;
+  running sessions can explicitly grant and revoke selected account capabilities.
+  Unsupported sign-in profiles remain disabled with an explanation.
+
+- Frontend connection and session-grant requests use authenticated SDK calls,
+  validate returned ownership, and never replay consent or grant mutations.
+
+- Grant polling retires authority when its consent is unavailable and refuses
+  exhausted revisions instead of publishing numbers clients cannot represent.
+
+- Credential grant retries normalize capability sets and exact RFC3339 expiry
+  instants, including offsets, and share Google's documented scope aliases.
+  Broker input budgets and timeouts come from one checked-in policy; completed
+  retry records retire after its 24-hour window without evicting active work.
+
+- Sigma YAML imports use a maintained safe Rust parser, reject duplicate
+  selection keys, and bound document, nesting and alias expansion.
+
+- Sigma selection lists and negated selections retain their logical grouping,
+  so an alternative cannot bypass another required security rule field.
+  Compiling grouped alternatives rejects excessive expansion before allocation.
+
+- Test-image cache retention keeps the OCI and prepared EROFS working set for
+  concurrent checkouts instead of reclaiming every fixture during enforcement.
+
+- Development builds optimize SQLite, its adapter and the ledger writer, and
+  archive index flushes reuse their prepared statement to reduce HTTP completion
+  stalls under load.
+
+- Protocol throughput benchmarks explicitly identify guest execution and reject
+  host/guest comparisons with incorrect execution labels.
+
+- The shared gateway OpenAPI contract correctly declares network creation's
+  existing HTTP 201 response, with matching generated SDK contracts.
+
+- Managed close retains original exit and grant authority when network cleanup
+  fails. Already-retired switches are awaited even if another departure fails;
+  a retry completes networking before session deletion and ownership closure.
+
+- Last-member network departure and retirement commit atomically. Failed
+  retirement preserves the membership and address for retry instead of
+  leaving an empty active network that cleanup can no longer find.
+
+- Logger durability barriers report accepted operations rejected by SQLite
+  during batch salvage, preventing failed registry writes from returning a
+  successful flush while preserving valid rows in the same producer batch.
+
+- Managed policy reload narrows active leases from their original renewal time
+  and updates expiry workers without extending ownership. Stale admission or
+  claim completions cannot overwrite a tighter timer; responses report the
+  enforced lease and valid renewal timing. Invalid policy refuses admission
+  and renewal while original cleanup authority remains available.
+
+- Managed close retains its confirmed original native exit outside ephemeral
+  session files, so restart can finish cleanup after directory deletion and
+  before the ownership close commit. Receipts survive unresolved cleanup and
+  retire with ownership tombstones.
+
+- Normal VM exit persists its native retirement receipt before moving a named
+  session, preserving confirmed stop authority for resume after host reboot.
+
+- Registered VM launches release shutdown admission before ongoing exec or
+  image setup, so workload duration does not hold the launch drain.
+
+- Failed VM launches retain original child retirement authority. Observed
+  native spawn failures prove no child exists; failures after spawn kill and
+  reap that child before publishing retirement to managed cleanup.
+
+- Managed startup recovery closes durable reservations that never prepared a
+  VM target, preserving capability authentication without replaying creation.
+
+- Service shutdown seals launch admission and joins already admitted workers
+  before selecting children for teardown, including cancelled HTTP callers.
+
+- Managed ownership stops renewing after ordinary stop/delete or loss of its
+  original VM spawn. Authenticated claims join the existing cleanup barrier;
+  changed spawns and failed cleanup cannot regain active ownership.
+
+- Managed VM spawns cannot transfer to persistence through ordinary save.
+  Admission uses original spawn ownership and refuses uncertain storage before
+  any persistence side effect.
+
+- TypeScript managed scopes cancel the owned callback and join cleanup at
+  validated lease expiry, including while renewal is stalled.
+
+- Python managed scopes stop at the validated lease expiry, including while
+  a renewal request is stalled, and join original-generation cleanup.
+
+- The Rust SDK provides managed ephemeral scopes with finite renewal,
+  cancellation-surviving cleanup, original-generation validation and explicit
+  retry authority when the service cannot confirm closure.
+
+- Preview and app-surface routes validate VM identifiers using the same rule
+  as the service and streaming gateway, rejecting malformed leading characters.
+
+- Linux warm resume restores allocated checkpoint extents into lazy zeroed RAM
+  and immediately resets stale guest vsock connections. Checkpoints preserve
+  page-sized sparse holes and existing file and directory handles.
+
+- The pinned guest kernel honors negotiated FUSE I/O sizes for large explicit
+  reads while retaining the existing speculative read-ahead limits.
+
+- Linux VM RAM stays aligned for transparent huge pages, accelerating boot and
+  cold filesystem reads without eagerly allocating guest memory. VirtioFS
+  supports full one-MiB requests, event-index wakeups on fresh and resumed VMs,
+  and bounded reusable I/O buffers through the shared Unix owner.
+
+- Prepared EROFS images use a catalog-bound BLAKE3 integrity annotation for
+  accelerated host and guest verification. The version 2 artifact contract
+  retains OCI transport SHA-256 and exact size, subject and descriptor checks.
+
+- OCI cache and prepared filesystem verification use the existing accelerated
+  crypto backend on CPUs without dedicated SHA instructions, retaining SHA-256
+  identities and full integrity checks.
+
+- Explicitly admitted image references select their catalog-bound EROFS
+  filesystem instead of unnecessarily extracting OCI layers at startup.
+
+- CLI history and MCP tool tables truncate Unicode text at character
+  boundaries instead of panicking on a split UTF-8 character.
+
+- The authenticated gateway forwards host credential injection, so desktop
+  settings and TCP SDK clients can use file and memory storage.
+
+- Settings error text and negative badges remain readable on light and dark
+  surfaces without changing solid-button foregrounds.
 
 - Credential file-lock waits stop after five seconds instead of indefinitely
   delaying startup or an explicit injection behind another writer.
@@ -39,6 +553,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - WebSocket upgrade handshakes retain network telemetry without inflating
   model call counts with an empty inference record.
+
+- Keep a confined proxy generation alive when an ordinary HTTP or DNS client
+  disconnects, while still terminating it for unknown, stale or required
+  capability closure events.
+
+- Reject an over-capacity HTTP or DNS attachment without terminating its
+  healthy confined proxy generation, so later traffic can proceed after
+  capacity becomes available.
+
+- Keep SQLite writer scratch state in memory so a confined VM owner can flush
+  high-volume session-ledger bursts without ambient temporary-directory access.
+
+- Launch OCI workloads without mutating the guest-owned staging file, so the
+  Linux VM-owner sandbox can keep host permission syscalls denied.
+
+- KVM image workloads retain write access to their workspace after VM-root
+  access by expiring caller-owned VirtioFS attributes across user namespaces.
 
 - Rust SDK start and resume cover workload readiness with the same deadline
   budget as creation, retaining larger client defaults and cancellation.
@@ -66,32 +597,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Security engine sandboxing describes the completed design and OS enforcement
-  mechanisms directly instead of linking to implementation progress.
+- Ledger staging returns SQLite pages after each flush, caps each process's
+  file-backed map at 32 MiB, and publishes sync-completed body indexes in
+  bounded transactions without replaying block metadata. Busy sessions no
+  longer retain their largest burst or stall admission on an index backlog.
 
-- Security engine architecture separates protocol parsing and MITM certificate
-  trust, model/MCP logging, and an illustrative security-event structure.
+- Ledger producers coalesce bounded consecutive security events into one
+  commitment reservation, admission exchange and SQLite transaction, avoiding
+  per-row scheduling and audit backpressure during concurrent DNS and gateway
+  traffic. Their config-derived queues absorb bounded handoff bursts, and a
+  one-second disk flush interval keeps each durable copy inside the fail-closed
+  network admission budget. SQLite mmap and file-size diagnostics run at open
+  and shutdown instead of pausing live admissions after every flush. Body
+  archive durability runs on a small ledger-owned helper, and SQLite publishes
+  an archive index row only after the matching bytes reach durable storage.
 
-- Security engine prose describes request and response handling directly,
-  without mixing diagram notation into the explanation.
-
-- Security engine architecture names the network analysis engine and shows
-  TOML rule files and Sigma detection files as inputs to the shared rule set.
-
-- Security diagrams use a shared permission-color legend and separate per-VM
-  ownership groups from hardware boundaries; redundant ownership labels are removed.
-
-- Security architecture uses a short introduction, component diagrams, and a
-  process/role/sandboxing table covering clients, MCP, proxy/security engine,
-  log writers, exposed ports, and private VM networks.
-
-- SDK onboarding uses one page with Python, TypeScript, and Rust language tabs,
-  shared package Markdown and SDK-specific guide TODOs. Simplified examples
-  track pending local connection and output ergonomics fixes.
-
-- Python and TypeScript SDK getting-started documentation uses package Markdown
-  READMEs shared with the docs preview through symlinks, with installation,
-  usage, and links to guides and reference.
+- Runtime memory caches use one bounded, concurrent implementation with
+  uniform hit, miss, mutation, load-time and entry metrics. DNS retains its
+  TTL and policy checks, while concurrent TLS handshakes share one leaf mint.
 
 - Host MCP packages identify as 0.7.0 and depend on the matching TypeScript SDK.
 
@@ -101,11 +624,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Access-rule and Sigma detection-rule guides link to complete supported CEL
-  and Sigma syntax references, with navigation from the security engine.
+- TypeScript SDK connection and credential grant resources preserve explicit
+  consent, typed refusal codes, ownership checks, deadlines and cancellation.
 
-- Security engine architecture explains event processing, plugins and rules,
-  credential handling, enforcement, and the separate sanitized ledger path.
+- Python SDK connection and credential grant resources support explicit consent,
+  typed refusal codes, ownership checks and deadlines during VM name resolution.
+
+- Service-owned connection metadata and explicit credential grant routes share
+  managed ownership fences and enforce the current broker policy. Native AGY
+  enrollment remains unavailable pending its supported handoff integration.
+
+- Connection authorization and generation-bound credential grant operations in
+  the authenticated API contract and generated Rust, Python and TypeScript SDKs.
+
+- Credential-owned coordination for finite enrollment, redacted connection
+  state and explicit session grants, including durable request records and
+  same-owner resume fencing. Service activation and the supported native AGY
+  adapter remain under integration.
+
+- Rust SDK connection and session credential-grant resources implement the
+  nine approved calls with explicit consent, ownership checks and no automatic
+  replay. Live service activation and native AGY handoff remain pending.
+
+- TypeScript SDK managed scopes renew finite ownership and await cleanup
+  through caller abort, lease failure and uncertain creation without replay.
+
+- Python SDK managed scopes renew finite ownership leases and await the
+  original session's cleanup on exit, failure and cancellation without replaying create.
+
+- `capsem proxy` starts a leased, VM-free OpenAI-compatible endpoint for a
+  configured provider, prints its base URL, keeps it alive while the command
+  runs and tears down its confined worker and ledger on exit.
+
+- Ephemeral managed-session creation, capability-authenticated claim/renewal,
+  and awaited close use a finite service-owned lease and durable replay protection.
+
+- Desktop credential settings accept explicit API keys or tokens with file or
+  memory storage, clear submitted input, and return a copyable reference.
 
 - Rust SDK exposes the matching credential injection resource with file or
   memory storage and opaque reference responses.
@@ -1806,9 +2361,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A half-close on a published connection is carried as a signal:
   a slow reply after the client stops sending, and an upload after the peer
   stops sending, both arrive in full.
-- Published TCP listeners stay with the VM owner. The confined router receives
-  only connected descriptor pairs; bounded acknowledgements and control failure
-  close both endpoints even when the router retains duplicate descriptors.
+- Published TCP listeners are granted to and held by the VM owner. The confined
+  router receives only connected descriptor pairs; bounded acknowledgements and
+  control failure close both endpoints even when the router retains duplicate
+  descriptors.
 - The confined network companion is now named `capsem-router`; package signing
   continues to exclude virtualization authority.
 - Shell runs flush captured output before exiting, preserving short output

@@ -1,6 +1,6 @@
 // Run after an ordinary package install outside the checkout.
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
+import {sha256} from './crypto.mjs';
 import {execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import {createServer} from 'node:http';
@@ -72,13 +72,13 @@ function inventory(directory) {
       const key = relative(packageRoot, path);
       const bytes = readFileSync(path);
       if (key !== 'package.json') assert.deepEqual(bytes, readFileSync(join(source, 'sdk/typescript', key)));
-      hashes[key] = createHash('sha256').update(bytes).digest('hex');
+      hashes[key] = sha256(bytes);
     }
   }
 }
 inventory(packageRoot);
 const receipt = /** @type {{archiveSha256:string,files:Record<string,string>}} */ (readJson(payloadReceipt));
-assert.equal(receipt.archiveSha256, createHash('sha256').update(readFileSync(archive)).digest('hex'));
+assert.equal(receipt.archiveSha256, sha256(readFileSync(archive)));
 assert.deepEqual(hashes, receipt.files);
 const pin = `registry.example/code@sha256:${'a'.repeat(64)}`;
 const secret = 'fixture-injected-secret', reference = `credential:blake3:${'c'.repeat(64)}`;
@@ -178,5 +178,5 @@ assert.deepEqual(lifecycleRequests, [
 ]);
 assert.deepEqual(received[1]?.body, {image: 'code', registry: {username: 'fixture', password: 'fixture-access'}});
 assert.deepEqual(received[2]?.body, {image: 'code'});
-writeFileSync(output, JSON.stringify({archive, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex'), version: manifest.version, engines: manifest.engines, dependencies: manifest.dependencies, origins, payloadFiles: Object.keys(hashes).length, payloadHashes: hashes, httpPaths: imageRequests.map(request => request.path), lifecyclePaths: lifecycleRequests.map(request => request.path), credentialPaths: credentialRequests.map(request => request.path), nodeVersion: process.version, nodeExecutable: process.execPath, nodeArgs: process.execArgv, ok: true}, null, 2) + '\n');
+writeFileSync(output, JSON.stringify({archive, sha256: sha256(readFileSync(archive)), version: manifest.version, engines: manifest.engines, dependencies: manifest.dependencies, origins, payloadFiles: Object.keys(hashes).length, payloadHashes: hashes, httpPaths: imageRequests.map(request => request.path), lifecyclePaths: lifecycleRequests.map(request => request.path), credentialPaths: credentialRequests.map(request => request.path), nodeVersion: process.version, nodeExecutable: process.execPath, nodeArgs: process.execArgv, ok: true}, null, 2) + '\n');
 process.stdout.write('SDK_IMAGE_PACKAGE_ACCEPTANCE_OK\n');

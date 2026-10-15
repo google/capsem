@@ -1,14 +1,104 @@
 //! Owned descriptor operations with atomic inheritance guarantees.
 
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::time::Duration;
 
 use nix::errno::Errno;
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 use nix::sys::socket::{self, Shutdown};
 
 use super::errno;
+
+/// Close every inherited descriptor except standard streams.
+///
+/// # Safety
+/// Call only at process entry, before any other code owns descriptors above 2
+/// or another thread can open and reuse them.
+pub unsafe fn close_inherited_descriptors() -> io::Result<()> {
+    unsafe { close_inherited_descriptors_except(&[]) }
+}
+
+/// Close ambient inherited descriptors while retaining explicit grants.
+///
+/// # Safety
+/// Call only at process entry, before any other code owns descriptors above 2
+/// or another thread can open and reuse them. Every descriptor in `preserved`
+/// must be an intentional grant whose ownership the caller establishes next.
+pub unsafe fn close_inherited_descriptors_except(preserved: &[RawFd]) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        close_inherited_ranges(preserved)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        #[cfg(target_os = "macos")]
+        let directory = "/dev/fd";
+        #[cfg(not(target_os = "macos"))]
+        let directory = "/proc/self/fd";
+        let mut descriptors = Vec::new();
+        for entry in std::fs::read_dir(directory)? {
+            let name = entry?.file_name();
+            let fd: RawFd = name
+                .to_str()
+                .ok_or_else(|| io::Error::other("invalid descriptor name"))?
+                .parse()
+                .map_err(io::Error::other)?;
+            if should_close_inherited_descriptor(fd, preserved) {
+                descriptors.push(fd);
+            }
+        }
+        for fd in descriptors {
+            // The caller guarantees no live Rust owner or fd reuse. The directory
+            // iterator itself has closed; EBADF for that fd is expected.
+            match nix::unistd::close(fd) {
+                Ok(()) | Err(Errno::EBADF) => {}
+                Err(error) => return Err(errno::io(error)),
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn close_inherited_ranges(preserved: &[RawFd]) -> io::Result<()> {
+    let mut preserved: Vec<u32> = preserved
+        .iter()
+        .copied()
+        .filter(|descriptor| *descriptor > 2)
+        .map(|descriptor| descriptor as u32)
+        .collect();
+    preserved.sort_unstable();
+    preserved.dedup();
+    let mut first = 3u32;
+    for descriptor in preserved {
+        if first < descriptor {
+            close_range(first, descriptor - 1)?;
+        }
+        first = descriptor.saturating_add(1);
+    }
+    close_range(first, u32::MAX)
+}
+
+#[cfg(target_os = "linux")]
+fn close_range(first: u32, last: u32) -> io::Result<()> {
+    if first > last {
+        return Ok(());
+    }
+    // nix 0.29 has no close_range wrapper. The zero flags select the kernel's
+    // atomic close behavior and avoid opening /proc/self/fd, which remains
+    // usable after a parent installs Landlock before exec.
+    let result = unsafe { libc::syscall(libc::SYS_close_range, first, last, 0u32) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+fn should_close_inherited_descriptor(fd: RawFd, preserved: &[RawFd]) -> bool {
+    fd > 2 && !preserved.contains(&fd)
+}
 
 /// Which half of a connected socket to close.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,6 +126,71 @@ pub fn duplicate(fd: BorrowedFd<'_>) -> io::Result<OwnedFd> {
     let raw = retry_eintr(|| fcntl(fd.as_raw_fd(), FcntlArg::F_DUPFD_CLOEXEC(0))).map_err(errno::io)?;
     // SAFETY: F_DUPFD_CLOEXEC returned a new descriptor owned by this call.
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+/// Prevent an existing descriptor from crossing a later exec boundary.
+/// Returns whether `FD_CLOEXEC` was already set and preserves other flags.
+pub fn set_close_on_exec(fd: BorrowedFd<'_>) -> io::Result<bool> {
+    let raw_flags = retry_eintr(|| fcntl(fd.as_raw_fd(), FcntlArg::F_GETFD)).map_err(errno::io)?;
+    let flags = FdFlag::from_bits_truncate(raw_flags);
+    let was_enabled = flags.contains(FdFlag::FD_CLOEXEC);
+    if !was_enabled {
+        retry_eintr(|| fcntl(fd.as_raw_fd(), FcntlArg::F_SETFD(flags | FdFlag::FD_CLOEXEC))).map_err(errno::io)?;
+    }
+    Ok(was_enabled)
+}
+
+/// Read at a checked file offset without changing the descriptor's cursor.
+/// Interrupted operations are retried; EOF and short reads remain visible.
+pub fn read_at(fd: BorrowedFd<'_>, bytes: &mut [u8], offset: u64) -> io::Result<usize> {
+    let offset = i64::try_from(offset).map_err(|_| io::Error::from_raw_os_error(Errno::EINVAL as i32))?;
+    retry_eintr(|| nix::sys::uio::pread(fd, bytes, offset)).map_err(errno::io)
+}
+
+/// Write at a checked file offset without changing the descriptor's cursor.
+/// Callers own any short-write loop so their protocol can account for progress.
+pub fn write_at(fd: BorrowedFd<'_>, bytes: &[u8], offset: u64) -> io::Result<usize> {
+    let offset = i64::try_from(offset).map_err(|_| io::Error::from_raw_os_error(Errno::EINVAL as i32))?;
+    retry_eintr(|| nix::sys::uio::pwrite(fd, bytes, offset)).map_err(errno::io)
+}
+
+/// Exact logical size of an already-open regular file, retaining descriptor identity.
+pub fn regular_file_size(fd: BorrowedFd<'_>) -> io::Result<u64> {
+    regular_file_metadata(fd).map(|metadata| metadata.len)
+}
+
+/// Descriptor-owned logical and allocated sizes for a regular file.
+#[derive(Debug, Clone, Copy)]
+pub struct RegularFileMetadata {
+    pub len: u64,
+    pub allocated_bytes: u64,
+}
+
+pub fn regular_file_metadata(fd: BorrowedFd<'_>) -> io::Result<RegularFileMetadata> {
+    use nix::sys::stat::{fstat, SFlag};
+    let stat = retry_eintr(|| fstat(fd.as_raw_fd())).map_err(errno::io)?;
+    if SFlag::from_bits_truncate(stat.st_mode) & SFlag::S_IFMT != SFlag::S_IFREG {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "descriptor is not a regular file",
+        ));
+    }
+    let len = u64::try_from(stat.st_size)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "file length is negative"))?;
+    let allocated_bytes = u64::try_from(stat.st_blocks)
+        .ok()
+        .and_then(|blocks| blocks.checked_mul(512))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "file allocation is invalid"))?;
+    Ok(RegularFileMetadata { len, allocated_bytes })
+}
+
+/// Signal one eventfd completion without borrowing raw Unix mechanics at callers.
+pub fn signal_counter(fd: BorrowedFd<'_>) -> io::Result<()> {
+    let count = retry_eintr(|| nix::unistd::write(fd, &1u64.to_ne_bytes())).map_err(errno::io)?;
+    if count != std::mem::size_of::<u64>() {
+        return Err(io::Error::new(io::ErrorKind::WriteZero, "short eventfd counter write"));
+    }
+    Ok(())
 }
 
 /// Set or clear `O_NONBLOCK`, returning its previous state.
@@ -166,12 +321,7 @@ pub fn tcp_clear_reset_on_close(fd: BorrowedFd<'_>) -> io::Result<bool> {
 /// Linux accounts up to twice the requested bytes for TCP bookkeeping. VSOCK
 /// uses separate credit-buffer options, so those are fixed as well on Linux.
 pub fn set_stream_buffers(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
-    if bytes == 0 || bytes > i32::MAX as usize {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid socket buffer size",
-        ));
-    }
+    validate_socket_buffer_size(bytes)?;
     socket::setsockopt(&fd, socket::sockopt::SndBuf, &bytes).map_err(errno::io)?;
     socket::setsockopt(&fd, socket::sockopt::RcvBuf, &bytes).map_err(errno::io)?;
     #[cfg(target_os = "linux")]
@@ -203,6 +353,22 @@ pub fn set_stream_buffers(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
                 .map_err(errno::io)?;
             }
         }
+    }
+    Ok(())
+}
+
+/// Size a datagram receive queue for a known bounded burst.
+pub fn set_receive_buffer(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
+    validate_socket_buffer_size(bytes)?;
+    socket::setsockopt(&fd, socket::sockopt::RcvBuf, &bytes).map_err(errno::io)
+}
+
+fn validate_socket_buffer_size(bytes: usize) -> io::Result<()> {
+    if bytes == 0 || bytes > i32::MAX as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid socket buffer size",
+        ));
     }
     Ok(())
 }

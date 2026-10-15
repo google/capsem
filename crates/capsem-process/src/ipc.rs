@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
+use capsem_foundation::unix::peer::PeerIdentity;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::HostToGuest;
 use std::collections::HashMap;
@@ -57,7 +58,15 @@ const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker
 /// threads, then hand the verified socket to the typed async IPC transport.
 /// A peer mismatch is a refused connection, not a process-fatal error.
-async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<(ProcessIpcChannel, bool)>> {
+async fn open_ipc_channel(
+    stream: tokio::net::UnixStream,
+    controller: PeerIdentity,
+) -> Result<Option<(ProcessIpcChannel, bool)>> {
+    use std::os::fd::AsFd;
+    if let Err(error) = capsem_foundation::unix::peer::require(stream.as_fd(), controller) {
+        warn!(target: "ipc", %error, "unauthorized IPC peer; refusing connection before Hello");
+        return Ok(None);
+    }
     let std_stream = stream.into_std()?;
     let traceparent = capsem_foundation::telemetry::current_parent_traceparent();
     let (std_stream, handshake) = tokio::task::spawn_blocking(move || {
@@ -122,6 +131,7 @@ async fn record_guest_write(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_ipc_connection(
     stream: tokio::net::UnixStream,
+    controller: PeerIdentity,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     ipc_tx: broadcast::Sender<ProcessToService>,
     term_relay: Arc<TerminalRelay>,
@@ -136,7 +146,7 @@ pub(crate) async fn handle_ipc_connection(
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream).await? else {
+    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream, controller).await? else {
         return Ok(());
     };
 
@@ -632,7 +642,7 @@ pub(crate) async fn handle_ipc_connection(
             message @ ServiceToProcess::LogFileBoundary { .. } => {
                 file_boundary::spawn(&net_state, &mcp_runtime, &ipc_tx_out, message);
             }
-            ServiceToProcess::CloneState { id, destination } => {
+            ServiceToProcess::CloneState { id } => {
                 let job_store = job_store.clone();
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
@@ -641,7 +651,7 @@ pub(crate) async fn handle_ipc_connection(
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(
                         "ctrl_clone_state",
-                        ctrl_tx.send(ServiceToProcess::CloneState { id, destination }).await
+                        ctrl_tx.send(ServiceToProcess::CloneState { id }).await
                     );
                     let result = match tokio::time::timeout(CLONE_STATE_TIMEOUT, j_rx).await {
                         Ok(Ok(JobResult::CloneState { result })) => result,
@@ -664,14 +674,24 @@ pub(crate) async fn handle_ipc_connection(
                     );
                 });
             }
-            ServiceToProcess::ReloadConfig { id } => {
+            ServiceToProcess::CloneStateComplete { id, size_bytes, error } => {
+                let result = match (size_bytes, error) {
+                    (Some(size), None) => Ok(size),
+                    (None, Some(error)) => Err(error),
+                    _ => Err("coordinator returned an invalid clone completion".to_string()),
+                };
+                if let Err(error) = job_store.complete_clone(id, result) {
+                    warn!(id, %error, "clone completion refused");
+                }
+            }
+            ServiceToProcess::ReloadConfig { id, active_policy } => {
                 info!(
                     active_policy = %runtime_source.active_policy_path().display(),
                     "Reloading runtime policy"
                 );
                 // A policy that does not load leaves the previous one in
                 // force; the service is told why instead of losing the socket.
-                let reply = match runtime_source.load() {
+                let reply = match runtime_source.load_bytes(&active_policy) {
                     Ok(runtime_config) => {
                         let digest = runtime_config.active_policy_digest.clone();
                         runtime_config.apply(&net_state, &mcp_runtime);
@@ -700,12 +720,9 @@ pub(crate) async fn handle_ipc_connection(
                 info!("Received Shutdown command, exiting IPC loop gracefully");
                 break;
             }
-            ServiceToProcess::Suspend { checkpoint_path } => {
+            ServiceToProcess::Suspend => {
                 info!("Received Suspend command, forwarding to ctrl channel");
-                capsem_core::try_send!(
-                    "ctrl_suspend",
-                    ctrl_tx.send(ServiceToProcess::Suspend { checkpoint_path }).await
-                );
+                capsem_core::try_send!("ctrl_suspend", ctrl_tx.send(ServiceToProcess::Suspend).await);
             }
             ServiceToProcess::McpListServers { id } => {
                 let mcp = Arc::clone(&mcp_runtime);
@@ -756,6 +773,7 @@ pub(crate) async fn handle_ipc_connection(
                                     namespaced_name: t.namespaced_name,
                                     original_name: t.original_name,
                                     description: t.description,
+                                    input_schema: t.input_schema,
                                     server_name: t.server_name,
                                     annotations: t.annotations,
                                 })
@@ -784,7 +802,7 @@ pub(crate) async fn handle_ipc_connection(
                 let mcp_builtin_binary = mcp_builtin_binary.clone();
                 let mcp_builtin_env = mcp_builtin_env.clone();
                 tokio::spawn(async move {
-                    let runtime_config = match runtime_source.load() {
+                    let runtime_config = match runtime_source.current() {
                         Ok(config) => config,
                         Err(e) => {
                             capsem_core::try_send!(

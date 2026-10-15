@@ -6,6 +6,8 @@ import re
 import socket
 import ssl
 import struct
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -32,6 +34,37 @@ def test_mock_server_freshness_tracks_the_shared_parent_guard() -> None:
     assert mock_server_launcher.GUARD_CRATE / "src/lib.rs" in sources
 
 
+def test_address_lease_contends_across_different_process_temp_directories(tmp_path: Path) -> None:
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        host, port = holder.getsockname()
+    addr = f"{host}:{port}"
+    child_temp = tmp_path / "child-temp"
+    child_temp.mkdir()
+    code = """
+import sys
+sys.path.insert(0, "tests")
+from build_system.tests.helpers.mock_server import _acquire_lock
+try:
+    with _acquire_lock(sys.argv[1], timeout_s=0.2):
+        print("acquired")
+except TimeoutError:
+    print("contended")
+"""
+    with mock_server_launcher._acquire_lock(addr):
+        result = subprocess.run(
+            [sys.executable, "-c", code, addr],
+            cwd=mock_server_launcher.PROJECT_ROOT,
+            env={**os.environ, "TMPDIR": str(child_temp)},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    assert result.stdout.strip() == "contended", result.stdout
+
+
 def test_mock_server_launcher_waits_for_busy_address_then_starts() -> None:
     holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -52,6 +85,26 @@ def test_mock_server_launcher_waits_for_busy_address_then_starts() -> None:
         assert ready["base_url"] == f"http://{addr}"
     finally:
         stop_process(proc)
+
+
+def test_ephemeral_mock_listeners_can_remain_alive_together(monkeypatch) -> None:
+    monkeypatch.setenv("CAPSEM_MOCK_SERVER_LOCK_TIMEOUT_S", "2")
+    processes = []
+    ready_servers = []
+    try:
+        for _ in range(2):
+            process, ready = start_mock_server(addr="127.0.0.1:0", timeout_s=2)
+            processes.append(process)
+            ready_servers.append(ready)
+        for key in ("http_addr", "https_addr", "dns_udp_addr", "dns_tcp_addr"):
+            assert ready_servers[0][key] != ready_servers[1][key]
+        for process, ready in zip(processes, ready_servers, strict=True):
+            assert process.poll() is None
+            with urlopen(f"{ready['base_url']}/tiny", timeout=2) as response:
+                assert response.read() == b"capsem-mock-server:tiny\n"
+    finally:
+        for process in processes:
+            stop_process(process)
 
 
 def test_mock_server_serves_https_fixture() -> None:
@@ -721,8 +774,8 @@ def test_mock_server_replays_agy_code_assist_stream_envelope() -> None:
         assert function_call["args"]["Cwd"] == "/root"
         assert function_call["args"]["WaitMsBeforeAsync"] == 1000
         assert function_call["args"]["CommandLine"] == (
-            "printf '%s\\n' 0123456789abcdef0123456789abcdef "
-            "> /root/agy-cli-0123456789abcdef0123456789abcdef.txt"
+            "printf '%s\\n' '0123456789abcdef0123456789abcdef' "
+            "> '/root/agy-cli-0123456789abcdef0123456789abcdef.txt'"
         )
         assert first_candidate.get("finishReason") is None
         assert first_response["usageMetadata"]["thoughtsTokenCount"] > 0

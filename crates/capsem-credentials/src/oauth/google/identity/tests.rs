@@ -3,8 +3,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use ring::rand::SystemRandom;
-use ring::signature::{RsaKeyPair, RSA_PKCS1_SHA256};
 use serde_json::{json, Value};
 
 use super::super::super::{LoopbackRedirect, OAuthAttempt, OAuthPolicy};
@@ -21,16 +19,8 @@ fn now() -> u64 {
 }
 
 fn signed(header: &str, claims: &str) -> String {
-    let pair = RsaKeyPair::from_der(KEY).unwrap();
     let input = format!("{}.{}", URL_SAFE_NO_PAD.encode(header), URL_SAFE_NO_PAD.encode(claims));
-    let mut signature = vec![0; pair.public().modulus_len()];
-    pair.sign(
-        &RSA_PKCS1_SHA256,
-        &SystemRandom::new(),
-        input.as_bytes(),
-        &mut signature,
-    )
-    .unwrap();
+    let signature = capsem_crypto::jwt::sign_rs256_fixture(KEY, input.as_bytes()).unwrap();
     format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature))
 }
 

@@ -19,7 +19,7 @@ const READ_ROWS: usize = 1_000_000;
 /// of the block that is still being written.
 const ARCHIVE_EXCHANGES: usize = 140;
 /// A disk flush every this many exchanges, standing in for the writer's
-/// five-second timer on a live session.
+/// periodic timer on a live session.
 const ARCHIVE_FLUSH_EVERY: usize = 10;
 
 /// Timings of the archive path a polled route sees.

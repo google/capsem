@@ -48,7 +48,14 @@ impl IntoResponse for AppError {
             );
         }
 
-        (self.0, Json(ErrorResponse { error: self.1 })).into_response()
+        (
+            self.0,
+            Json(ErrorResponse {
+                error: self.1,
+                code: None,
+            }),
+        )
+            .into_response()
     }
 }
 

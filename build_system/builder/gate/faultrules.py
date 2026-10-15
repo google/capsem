@@ -16,7 +16,7 @@ import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .faults import duplication_expected
+from .faults import duplication_expected, mirrored_paths
 
 #: The one fault reason a publishing run treats as fatal; `observing` reads it.
 SOURCE_TREE = "source-tree"
@@ -64,15 +64,28 @@ def judge(watch: Watch, event: Event) -> None:
                 event, "over-permission", f"mode {event.mode:04o} is writable beyond its owner"
             )
 
+    previous_digest = watch._path_digests.pop(event.path, None)
+    if previous_digest is not None:
+        previous_paths = watch._digests[previous_digest]
+        previous_paths.discard(event.path)
+        if not previous_paths:
+            del watch._digests[previous_digest]
+
     exempt = duplication_expected(
         event.path,
         watch._source_root,
         (*watch._duplicate_exempt, *watch._source_replicas),
     )
     if event.digest is not None and not exempt:
-        first = watch._digests.setdefault(event.digest, event.path)
-        if first != event.path and event.inode is not None:
+        matches = watch._digests.setdefault(event.digest, set())
+        unexpected = matches - mirrored_paths(
+            event.path, watch._source_root, watch._duplicate_mirrors
+        )
+        if unexpected and event.inode is not None:
+            first = min(unexpected, key=str)
             watch.fault(event, "duplicate-content", f"identical bytes already at {first}")
+        matches.add(event.path)
+        watch._path_digests[event.path] = event.digest
 
     if event.attribution == "exact" and len(event.steps) >= 2 and not source:
         shared = set.intersection(

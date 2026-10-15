@@ -11,6 +11,8 @@
 .claude
 # Local sprint records and diagnostics belong to the agent, not build containers.
 **/.sprinty
+# Local qualification artifacts are generated release products, not source inputs.
+/.qualification
 .git
 **/.pnpm-store
 # Local benchmark-framework experiments are source checkouts with their own

@@ -208,12 +208,20 @@ def test_the_phases_run_in_the_order_the_gate_depends_on() -> None:
     the line order of a shell body, and the sequence of `plan.add` calls in
     four separate commands.
     """
-    labels = list(_plan().labels)
+    from helpers.gate import plan_ancestors
+
+    plan = _plan()
+    labels = list(plan.labels)
 
     assert _at(labels, "fast.") < _at(labels, "static.")
     assert _at(labels, "static.") < _at(labels, "artifacts.")
-    assert _at(labels, "artifacts.") < _at(labels, "functional.")
-    assert _at(labels, "functional.") < _at(labels, "glowup.")
+    assert _at(labels, "artifacts.") < labels.index("functional.content")
+    assert labels.index("functional.content") < _at(labels, "glowup.")
+    # The shared Rust SDK example is compilation, so it may run early. Every
+    # remaining functional step consumes the qualified artifact frontier.
+    for label in labels:
+        if label.startswith("functional.") and label != "functional.sdk.rust.example":
+            assert "artifacts.build-chain" in plan_ancestors(plan, label), label
 
 
 def test_every_local_functional_vm_step_selects_the_exact_ironbank_runtime() -> None:

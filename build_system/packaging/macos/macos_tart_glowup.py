@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import platform
@@ -17,6 +16,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
+from capsem_builder import crypto as hashlib
 from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.runtimemodels import TartRuntimePolicy
 from capsem_builder.release.tools.release_glowup import (

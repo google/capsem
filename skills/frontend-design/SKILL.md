@@ -80,6 +80,7 @@ Use Capsem's semantic token classes for all UI components. Historical pattern re
 - **Navigation**: `bg-navbar border-navbar-border text-navbar-nav-foreground hover:bg-navbar-nav-hover`
 - **Overlays**: `bg-overlay border-overlay-border`, `bg-dropdown text-dropdown-item-foreground`
 - **Text hierarchy**: `text-foreground` (primary), `text-muted-foreground-1` (secondary), `text-muted-foreground` (tertiary)
+- **Errors**: `text-destructive-text` on neutral surfaces; `text-destructive-foreground` over solid `bg-destructive` buttons or badges.
 
 Do NOT use raw Tailwind colors (`bg-gray-200`, `text-blue-600`) for UI chrome. Always use semantic tokens so themes work.
 

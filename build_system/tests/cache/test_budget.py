@@ -16,6 +16,7 @@ from capsem_builder.cache import budget
 from capsem_builder.cache.budget import BudgetError, BudgetPolicy
 from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
+from capsem_builder.gate.config import load as load_gate_config
 
 ROOT = Path(__file__).resolve().parents[3]
 GIB = 1024**3
@@ -60,6 +61,18 @@ def test_the_checked_in_cargo_maximum_is_tens_of_gib() -> None:
     """With line tables only and no incremental sessions a full gate run adds
     single-digit GiB; 180 GiB kept a month of dead checkouts instead."""
     assert load_policy(ROOT).stages["cargo"].max_size_bytes <= 64 * GIB
+
+
+def test_pinned_fixture_cache_retains_the_complete_platform_matrix() -> None:
+    """A gate needs both images locally before its network sandbox closes."""
+    functional = load_gate_config(ROOT).functional
+    entries = sum(
+        len(image.digests) for image in (functional.debug_image, functional.reference_image)
+    )
+    stage = load_policy(ROOT).stages["test-images"]
+
+    assert stage.maximum_count is not None and stage.maximum_count >= entries
+    assert stage.warm_size_bytes >= entries * (3 * GIB // 2)
 
 
 def test_maxima_beyond_the_budget_are_refused_at_load() -> None:

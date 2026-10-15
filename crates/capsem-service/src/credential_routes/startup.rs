@@ -1,7 +1,7 @@
 //! Host startup inputs never enter a VM owner's launch environment.
+use capsem_crypto::secrets::Zeroizing;
 use capsem_foundation::unix::contained::ContainedDir;
 use std::io::Read;
-use zeroize::Zeroizing;
 
 use super::*;
 

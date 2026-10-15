@@ -35,6 +35,7 @@ APPROVED_DIRECTORIES = frozenset(
         "crates",
         "guest",
         "images",
+        "integrations",
         "mcp",
         "sdk",
         "skills",

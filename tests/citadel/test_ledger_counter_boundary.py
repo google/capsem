@@ -50,11 +50,17 @@ AGGREGATE_DEBT: dict[str, str] = {
         "retention reports the blocks it keeps; runs on an explicit retention request, over the block index"
     ),
     "crates/capsem-service/src/ledger_routes/history.rs:b803454453eb": (
+        "live GET /history search total; the stopped-session ledger worker executes the equivalent typed query"
+    ),
+    "crates/capsem-service/src/ledger_routes/stats_detail/interactions.rs:b3cfe18c894d": (
+        "live stats detail rows fold tool responses into one error flag per item; this is a bounded detail page"
+    ),
+    "crates/capsem-logger/src/ledger_server/queries.rs:003d2ea18b92": (
         "GET /history total when a search is given: how many exec/audit rows match a literal substring. "
         "No snapshot can hold a count per search text and the ledger has no full-text index yet, so this is "
         "a scan bounded by the reader's 5-second interrupt; without a search the total is the counter snapshot"
     ),
-    "crates/capsem-service/src/ledger_routes/stats_detail/interactions.rs:b3cfe18c894d": (
+    "crates/capsem-logger/src/ledger_server/queries.rs:df35421e7776": (
         "stats detail rows: folds each model item's tool responses into one error flag per item; a detail "
         "view over a bounded page of rows, not a polled total"
     ),

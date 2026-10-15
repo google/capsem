@@ -39,7 +39,8 @@ def braavos(plan: Plan, phase: Phase, config: GateConfig, *, after: tuple[Step, 
     ), after=after)
     synced = python_environment(plan, config)
     python = phase.shared(python_package(config), after=(synced,))
-    typescript = phase.shared(typescript_package(config), after=after)
+    compiled = typescript_compiled(plan, config, after=after)
+    typescript = phase.shared(typescript_package(config), after=(compiled,))
     warmed = phase.shared(typescript_prewarm(config), after=(typescript,))
     return python, example, typescript, warmed
 
@@ -55,11 +56,55 @@ def python_package(config: GateConfig) -> Step:
     )
 
 
+def python_package_prewarm(config: GateConfig) -> Step:
+    """Rehydrate build backends after the candidate cache-enforcement phase.
+
+    Clean consumers install the sdist offline, so uv must still have its
+    PEP 517 backend after the gate has enforced the shared cache budget.
+    """
+    settings = config.sdk_python
+    return step(
+        "sdk.python.package-prewarm",
+        Run(
+            [
+                "uv",
+                "export",
+                "--project",
+                settings.project,
+                "--frozen",
+                "--only-group",
+                "package-build",
+                "--no-emit-project",
+                "--format",
+                "requirements.txt",
+                "--output-file",
+                settings.package_build_requirements,
+            ],
+        ),
+        Run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                settings.environment_python,
+                "--reinstall",
+                "--requirements",
+                settings.package_build_requirements,
+            ],
+            outside_sandbox=True,
+        ),
+        kind=Kind.COMPILE,
+        needs=frozenset({Needs.DISK, Needs.NETWORK}),
+        speed=Speed.FAST,
+    )
+
+
 def typescript_package(config: GateConfig) -> Step:
     settings = config.sdk_typescript
     return step(
         "fast.sdk.typescript.build",
-        Run(["pnpm", "pack", "--pack-destination", str(config.path(settings.build_output))],
+        Run(["pnpm", "pack", "--config.ignore-scripts=true", "--pack-destination", str(config.path(settings.build_output))],
             cwd=config.path(settings.project)),
         kind=Kind.PACKAGE, speed=Speed.FAST,
     )
@@ -107,7 +152,8 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         label, Run(["pnpm", "run", command], cwd=root),
         kind=Kind.LINT, speed=Speed.FAST,
     ), after=after) for label, command in (("lint", "lint"), ("types", "check")))
-    built = phase.shared(typescript_package(config), after=after)
+    compiled = typescript_compiled(plan, config, after=after)
+    built = phase.shared(typescript_package(config), after=(compiled,))
     warmed = phase.shared(typescript_prewarm(config), after=(built,))
     for shared in (built, warmed):
         plan.record_stage(shared.label, "fast.sdk.typescript")
@@ -171,3 +217,14 @@ def typescript_bundle(config: GateConfig) -> Step:
         Run(["pnpm", "run", "build"], cwd=config.path(config.sdk_typescript.project)),
         kind=Kind.COMPILE, speed=Speed.FAST,
     )
+
+
+def typescript_compiled(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
+    """Reuse earlier output without moving its producer behind later consumers."""
+    bundle = typescript_bundle(config)
+    # A standalone functional/artifact lane may install Node after runtime
+    # preparation. When a prior phase already compiled the SDK, adding that
+    # later setup as its prerequisite closes a cycle. Keep those dependencies
+    # on the consumer; shared still verifies the producer's actions match.
+    existing = any(node.label == bundle.label for node in plan.steps)
+    return plan.shared(bundle, after=() if existing else after)

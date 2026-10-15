@@ -13,6 +13,7 @@ import pytest
 from helpers.body_archive import SessionArchive
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_session_db_path
+from helpers.session_ledger import stop_session_for_ledger_read
 
 from tests.fixtures.oci.registry import registry
 from tests.ironbank.kingslanding.test_run import (
@@ -161,6 +162,9 @@ def test_container_egress_is_intercepted_policed_and_audited(egress, tmp_path):
     # to rather than carried by every row of the latest route.
     latest = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
     session_db = vm_session_db_path(service.tmp_dir, client, vm_id)
+    # Live routes include accepted rows before their archive indexes reach disk.
+    # Drain every producer before comparing that page with the offline archive.
+    stop_session_for_ledger_read(client, vm_id, session_db)
     http = []
     dns = []
     with SessionArchive(session_db) as archive:

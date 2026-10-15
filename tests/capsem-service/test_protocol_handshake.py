@@ -1,59 +1,55 @@
-"""Regression test for the W3 IPC handshake.
+"""A silent unauthorized IPC client is refused without poisoning its VM."""
 
-Asserts that a client which connects to capsem-service's per-VM IPC
-socket but does NOT send a Hello frame fails fast (within HELLO_TIMEOUT,
-~5s) instead of hanging the connection forever the way the
-pre-observability-sprint code did. Verifies the structured handshake
-error is also emitted to service.log.
-"""
-
+import json
 import socket
-import time
 from pathlib import Path
 
+import psutil
 import pytest
+from helpers.service import exec_output_text, vm_session_dir, wait_exec_ready
 from log_streams import read_log_stream
 
 pytestmark = pytest.mark.integration
 
 
 def _per_vm_socket(service_env, vm_id: str) -> Path:
-    """Resolve the per-VM IPC socket path (matches capsem-service's
-    `{run_dir}/instances/{vm_id}.sock` layout)."""
-    return Path(service_env.tmp_dir) / "instances" / f"{vm_id}.sock"
+    """Observe the service-owned child's selected socket, including short paths."""
+    assert service_env.proc is not None
+    commands = [child.cmdline() for child in psutil.Process(service_env.proc.pid).children()]
+    owners = [
+        args for args in commands
+        if args and Path(args[0]).name == "capsem-process"
+        and "--id" in args and args[args.index("--id") + 1] == vm_id
+    ]
+    assert len(owners) == 1, owners
+    args = owners[0]
+    return Path(args[args.index("--uds-path") + 1])
 
 
 def test_pre_handshake_client_disconnects_quickly(service_env, fresh_vm):
-    """A connection that opens the socket and never writes Hello must
-    not pin a service worker indefinitely. Pre-W3: the v0 silent timeout
-    pattern is exactly what kept investigations stuck."""
-    name, _ = fresh_vm()
-    # Wait briefly for the per-VM socket to appear (provision is async).
-    sock_path = _per_vm_socket(service_env, name)
-    deadline = time.time() + 10
-    while time.time() < deadline and not sock_path.exists():
-        time.sleep(0.1)
+    """Only the owning service may negotiate Hello or dispatch VM commands."""
+    _, created = fresh_vm()
+    assert isinstance(created, dict) and created.get("id"), created
+    vm_id = created["id"]
+    client = service_env.client()
+    assert wait_exec_ready(client, vm_id), "VM never became exec-ready"
+    sock_path = _per_vm_socket(service_env, vm_id)
+    assert sock_path.is_socket(), sock_path
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+        peer.settimeout(2)
+        peer.connect(str(sock_path))
+        # Keep the peer open and send no Hello: the owner must close it first.
+        assert peer.recv(1) == b"", "unauthorized peer received IPC bytes"
 
-    if not sock_path.exists():
-        pytest.skip(f"per-VM socket never appeared at {sock_path}")
-
-    # Connect, immediately drop the connection without sending a Hello.
-    # The service-side responder must time out via HELLO_TIMEOUT (5s),
-    # log a structured error, and not leak the worker.
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(8.0)
-    s.connect(str(sock_path))
-    s.close()
-
-    # Give the service a moment to flush the handshake-failed log line.
-    time.sleep(0.5)
-
-    # Verify service.log saw the handshake error. We don't pin an exact
-    # message because the wording may shift; the `target=ipc` prefix is
-    # the load-bearing contract.
-    log_path = Path(service_env.tmp_dir) / "service.log"
-    text = read_log_stream(log_path)
-    if text:
-        assert (
-            '"target":"ipc"' in text or "ipc" in text
-        ), "expected an ipc-targeted log line in service.log"
+    result = client.post(f"/vms/{vm_id}/exec", {
+        "target": "vm", "command": "printf IPC_STILL_READY", "timeout_secs": 10,
+    })
+    assert result and result["exit_code"] == 0, result
+    assert exec_output_text(result) == "IPC_STILL_READY"
+    session = vm_session_dir(service_env.tmp_dir, client, vm_id)
+    records = [json.loads(line) for line in read_log_stream(session / "process.log").splitlines()]
+    assert any(
+        record.get("target") == "ipc"
+        and record.get("fields", {}).get("message") == "unauthorized IPC peer; refusing connection before Hello"
+        for record in records
+    ), "owner did not record its pre-Hello peer refusal"

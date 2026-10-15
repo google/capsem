@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sys
@@ -22,6 +21,7 @@ except ModuleNotFoundError:
     from bootstrap import mount_builder_package
 
     mount_builder_package(ROOT)
+from capsem_builder import crypto as hashlib  # noqa: E402
 from capsem_builder.release.tools import check_remote_release_readiness  # noqa: E402
 
 CLOUDFLARE_CONTROL_FILES = frozenset({"_headers", "_redirects", "_routes.json"})

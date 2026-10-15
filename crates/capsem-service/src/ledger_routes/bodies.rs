@@ -248,22 +248,8 @@ pub(crate) async fn handle_event_bodies(
     }))
 }
 
-/// Chunks in flight between the blocking export and the HTTP response.
-///
-/// Small on purpose: the channel is backpressure, not a buffer. A slow client
-/// stalls the export thread instead of letting a whole session's bodies pile
-/// up in the service's memory.
+/// Chunks in flight between the ledger worker and the HTTP response.
 const EXPORT_CHANNEL_CHUNKS: usize = 4;
-
-/// The export's writer: each `write` hands a chunk to the response stream and
-/// waits with a deadline while the client is behind. `export_warc` moves this
-/// writer onto a blocking task, so entering the runtime here cannot block one
-/// of its worker threads.
-struct ExportChannelWriter {
-    chunks: tokio::sync::mpsc::Sender<Result<Bytes, std::io::Error>>,
-    runtime: tokio::runtime::Handle,
-    deadline: std::time::Instant,
-}
 
 /// What a dropped receiver is reported as.
 ///
@@ -272,37 +258,7 @@ struct ExportChannelWriter {
 /// all that is left to tell a cancelled download from a broken one. It is a
 /// constant rather than two literals precisely because a match on a message
 /// written twice is a match that drifts.
-const EXPORT_CLIENT_GONE: &str = "the export client went away";
 const EXPORT_BLOCKED_WRITE: std::time::Duration = std::time::Duration::from_secs(30);
-const EXPORT_TOTAL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-
-impl std::io::Write for ExportChannelWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let remaining = self
-            .deadline
-            .checked_duration_since(std::time::Instant::now())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::TimedOut, "WARC export exceeded 15 minutes"))?;
-        let wait = remaining.min(EXPORT_BLOCKED_WRITE);
-        match self.runtime.block_on(tokio::time::timeout(
-            wait,
-            self.chunks.send(Ok(Bytes::copy_from_slice(buf))),
-        )) {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, EXPORT_CLIENT_GONE)),
-            Err(_) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "WARC export response was blocked for 30 seconds",
-                ))
-            }
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 
 /// `GET /vms/{id}/bodies/export.warc.gz` -- the whole session's archived
 /// bodies as a WARC 1.1 file any web-archive tool can read.
@@ -341,16 +297,30 @@ pub(crate) async fn handle_bodies_warc_export(
 
     let (chunks, receiver) = tokio::sync::mpsc::channel(EXPORT_CHANNEL_CHUNKS);
     let vm_id = id.clone();
-    let runtime = tokio::runtime::Handle::current();
     tokio::spawn(async move {
-        match db
-            .export_warc(ExportChannelWriter {
-                chunks,
-                runtime,
-                deadline: std::time::Instant::now() + EXPORT_TOTAL_DEADLINE,
-            })
-            .await
-        {
+        let mut export = match db.export_warc().await {
+            Ok(export) => export,
+            Err(error) => {
+                error!(vm_id = vm_id.as_str(), error = %error, "session body WARC export failed before streaming");
+                let _ = chunks.send(Err(std::io::Error::other(error))).await;
+                return;
+            }
+        };
+        while let Some(chunk) = export.next_chunk().await {
+            let chunk = chunk.map(Bytes::from).map_err(std::io::Error::other);
+            match tokio::time::timeout(EXPORT_BLOCKED_WRITE, chunks.send(chunk)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => return,
+                Err(_) => {
+                    error!(
+                        vm_id = vm_id.as_str(),
+                        "WARC export response was blocked for 30 seconds"
+                    );
+                    return;
+                }
+            }
+        }
+        match export.finish().await {
             Ok(summary) => info!(
                 route = "/vms/{id}/bodies/export.warc.gz",
                 vm_id = vm_id.as_str(),
@@ -358,16 +328,6 @@ pub(crate) async fn handle_bodies_warc_export(
                 bytes_written = summary.bytes_written,
                 skipped = summary.skipped_count,
                 "bodies_warc_export"
-            ),
-            // A client that closes the connection mid-download is the normal
-            // way this ends -- a reviewer who saw enough, a page navigated
-            // away from -- and logging it at error level would fill the log
-            // with the one outcome nobody needs to investigate, beside the one
-            // they do.
-            Err(error) if error.contains(EXPORT_CLIENT_GONE) => info!(
-                route = "/vms/{id}/bodies/export.warc.gz",
-                vm_id = vm_id.as_str(),
-                "session body WARC export was cancelled by the client"
             ),
             Err(error) => error!(
                 route = "/vms/{id}/bodies/export.warc.gz",

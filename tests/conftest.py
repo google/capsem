@@ -168,8 +168,9 @@ def _thread_exception_hook(args: threading.ExceptHookArgs) -> None:
     possible in real-time test output, not only at session end.
     """
     _CAUGHT_THREAD_EXCEPTIONS.append(args)
+    thread_name = args.thread.name if args.thread is not None else "<unknown>"
     print(
-        f"\n@@@ UNHANDLED THREAD EXCEPTION in {args.thread.name} @@@",
+        f"\n@@@ UNHANDLED THREAD EXCEPTION in {thread_name} @@@",
         file=sys.stderr,
     )
     traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback, file=sys.stderr)
@@ -516,13 +517,16 @@ def check_leaks(request):
         if not _is_pytest_descendant(pid):
             continue
         _FIRST_SEEN[pid] = (nodeid, info)
+        cmdline = info["cmdline"]
+        if len(cmdline) > 3000:
+            cmdline = cmdline[:3000] + "...<truncated>"
         new_records.append(
             {
                 "pid": pid,
                 "nodeid": nodeid,
                 "worker": worker,
                 "name": info["name"],
-                "cmdline": info["cmdline"],
+                "cmdline": cmdline,
             }
         )
     if new_records:
@@ -532,8 +536,6 @@ def check_leaks(request):
         LEAK_ATTRIBUTION_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(LEAK_ATTRIBUTION_LOG, "a") as f:
             for rec in new_records:
-                if len(rec["cmdline"]) > 3000:
-                    rec["cmdline"] = rec["cmdline"][:3000] + "...<truncated>"
                 f.write(json.dumps(rec) + "\n")
 
 
@@ -575,8 +577,9 @@ def pytest_sessionfinish(session, exitstatus):
             file=sys.stderr,
         )
         for args in _CAUGHT_THREAD_EXCEPTIONS:
+            thread_name = args.thread.name if args.thread is not None else "<unknown>"
             print(
-                f"  {args.exc_type.__name__}: {args.exc_value} (thread={args.thread.name})",
+                f"  {args.exc_type.__name__}: {args.exc_value} (thread={thread_name})",
                 file=sys.stderr,
             )
         session.exitstatus = 1
@@ -584,8 +587,14 @@ def pytest_sessionfinish(session, exitstatus):
     if os.environ.get("PYTEST_XDIST_WORKER") is not None:
         return  # worker: attribution was flushed in check_leaks
 
+    # Select our processes before spending their shutdown grace. An unrelated
+    # suite's active VMs must not add 15s to every focused local check.
+    attribution = _load_attribution()
+    for pid, (nodeid, info) in _FIRST_SEEN.items():
+        attribution.setdefault(pid, {"nodeid": nodeid, "worker": "master", **info})
     suspects = {
         pid: info for pid, info in get_capsem_processes().items() if pid not in _BASELINE_PIDS
+        and (pid in attribution or _is_pytest_descendant(pid))
     }
     if not suspects:
         return
@@ -599,12 +608,6 @@ def pytest_sessionfinish(session, exitstatus):
     leaks = _settle_suspects(suspects, total_budget_s=15.0, initial_delay_s=0.05, max_delay_s=0.5)
     if not leaks:
         return
-
-    # Attribution sources: _FIRST_SEEN for same-process runs, jsonl for the
-    # xdist controller.
-    attribution = _load_attribution()
-    for pid, (nodeid, info) in _FIRST_SEEN.items():
-        attribution.setdefault(pid, {"nodeid": nodeid, "worker": "master", **info})
 
     lines = []
     for pid, info in sorted(leaks.items()):

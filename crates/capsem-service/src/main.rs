@@ -7,13 +7,15 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
+use capsem_cache::{BoundedCache, GenerationCache, IdentityCache, KeyedIdentityCache};
 use capsem_core::{
     mcp::ToolCacheEntry,
     net::policy_config::{DetectionLevel, SecurityPluginConfig, SecurityPluginMode, SecurityRuleAction, SettingsFile},
 };
 use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
-use capsem_foundation::poll::{poll_until, PollOpts};
+use capsem_foundation::unix::process::ensure_open_file_limit;
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
+use capsem_proto::NETWORK_PROCESS_OPEN_FILE_LIMIT;
 use capsem_service::errors::AppError;
 use clap::Parser;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -32,28 +34,40 @@ mod asset_background;
 mod asset_routes;
 mod blocking;
 mod container_setup;
+mod gateway_grant;
 mod host_ledger;
 mod instance;
 mod instance_reaper;
+mod managed_routes;
 pub mod managed_sessions;
 use instance::InstanceInfo;
 mod network_routes;
+mod owner_connection;
+mod owner_handoff;
 mod policy_mutation;
 use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
+mod connection_routes;
 mod credential_routes;
+mod ledger_commitment;
+mod ledger_worker;
 mod mcp_routes;
 mod plugin_routes;
 mod private_routes;
 mod process_control;
+mod proxy_credentials;
+mod proxy_private_names;
+mod proxy_worker;
 mod sandbox_info;
 mod session_cleanup;
 mod session_db_handles;
+mod standalone_proxy;
 mod switches;
 use session_db_handles::session_db_path_for_session_dir;
 mod session_housekeeping;
 use session_cleanup::{finalize_one_shot_session, handle_preserve_failure, preserve_failed_run_shutdown_result};
 mod ledger_routes;
 mod router_runtime;
+mod service_peer;
 mod service_runtime;
 mod settings_routes;
 mod shutdown_policy;
@@ -61,11 +75,13 @@ mod startup;
 mod suspend_confirmation;
 mod update_command;
 mod update_status;
+mod upstream_broker;
 mod vm_files;
 mod vm_lifecycle;
 use asset_routes::*;
 use ledger_routes::*;
 use router_runtime::*;
+use service_peer::ServicePeer;
 use service_runtime::*;
 use settings_routes::*;
 use shutdown_policy::*;
@@ -80,7 +96,7 @@ use vm_lifecycle::*;
 /// choice, not ours; every reader takes a bounded tail.
 const SESSION_LOG_TAIL_MAX_BYTES: usize = 5 * 1024 * 1024;
 
-const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
+const RESUME_CHECKPOINT_NAME: &str = "owner/checkpoint.vzsave";
 const SUSPEND_CONFIRM_TIMEOUT_SECS: u64 = 45;
 const AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60;
 const AUTOMATIC_UPDATE_POLL_SECS: u64 = 60 * 60;
@@ -155,6 +171,10 @@ struct Args {
     #[arg(long)]
     process_binary: Option<PathBuf>,
     #[arg(long)]
+    proxy_binary: Option<PathBuf>,
+    #[arg(long)]
+    ledger_binary: Option<PathBuf>,
+    #[arg(long)]
     gateway_binary: Option<PathBuf>,
     #[arg(long)]
     gateway_port: Option<u16>,
@@ -195,16 +215,21 @@ const ACTIVE_POLICY_DIR: &str = "vm";
 const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 
 pub struct ServiceState {
+    managed: managed_routes::Runtime,
+    connections: connection_routes::Runtime,
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
+    proxy_workers: Mutex<HashMap<String, (uuid::Uuid, proxy_worker::ProxyWorker)>>,
+    standalone_proxies: tokio::sync::Mutex<HashMap<String, standalone_proxy::StandaloneProxy>>,
+    ledger_workers: Arc<ledger_worker::LedgerWorkers>,
     retirements: instance_reaper::Retirements,
-    /// Logger-owned DB handles keyed by session/VM id. Logged-data routes
-    /// resolve a handle here and call `ready/query`; they do not open SQLite
-    /// readers or create per-route projection caches.
-    session_db_handles: Mutex<HashMap<String, Arc<capsem_logger::DbHandle>>>,
+    /// Authenticated ledger channels keyed by session/VM id. Logged-data
+    /// routes use named operations; only the supervised worker opens SQLite.
+    session_db_handles: Mutex<HashMap<String, Arc<session_db_handles::SessionLedger>>>,
     persistent_registry: SharedRegistry,
     /// Named networks as groups of VMs, durable in each network's database.
     networks: tokio::sync::Mutex<capsem_core::net::network_registry::NetworkRegistry>,
     process_binary: PathBuf,
+    proxy_binary: PathBuf,
     assets_dir: PathBuf,
     run_dir: PathBuf,
     service_socket: PathBuf,      // this service's own, where an owner asks on a guest's behalf
@@ -223,6 +248,10 @@ pub struct ServiceState {
     /// by explicit MCP discovery routes. Hot MCP list routes must not read the
     /// tool cache JSON from disk.
     mcp_tool_cache: Mutex<Vec<ToolCacheEntry>>,
+    /// Effective plugin settings loaded on the first plugin route read and
+    /// invalidated by every service-owned policy edit or explicit reload.
+    /// Hot plugin list polls must not parse settings and corp TOML per request.
+    plugin_policy_cache: GenerationCache<plugin_routes::EffectivePluginPolicy>,
     /// Logger-owned DB handle for the host ledger (`sessions/host.db`): host
     /// events and policy mutations. Routes call `write`; they must never open
     /// SQLite directly or hold a side `DbWriter`.
@@ -233,27 +262,23 @@ pub struct ServiceState {
     /// defunct persistent VMs. Hot list/status/info polls must not rescan the
     /// filesystem on every request.
     last_defunct_reconcile_ms: AtomicU64,
-    /// Session-ledger route bytes (security/detection latest, security status,
-    /// history processes/counts) keyed by VM id, route and paging, pinned to
-    /// the logger read-cache epoch, released when the VM's handle unregisters.
-    stats_detail_response_cache: Mutex<HashMap<String, CachedLedgerResponse>>,
     /// Container workloads being set up or running, by VM id.
     containers: container_setup::ContainerSetups,
     /// Session storage diagnostics cached by session directory. These values
     /// describe the rootfs image path/size and host filesystem for status/info
     /// routes; repeated polling must not stat the filesystem on every sample.
-    storage_diagnostics_cache: Mutex<HashMap<PathBuf, api::StorageDiagnostics>>,
+    storage_diagnostics_cache: BoundedCache<PathBuf, api::StorageDiagnostics>,
     /// Derived persistent VM resume state keyed by stable VM id. The
     /// fingerprint covers registry fields that affect status so route polling
     /// does not revalidate asset pins every sample.
-    persistent_resume_state_cache: Mutex<HashMap<String, CachedPersistentResumeState>>,
+    persistent_resume_state_cache: KeyedIdentityCache<String, String, (VmLifecycleState, bool, Option<String>)>,
     /// The installed manifest's status, rebuilt only when manifest.json or
     /// its metadata changes; `/status` polls it.
-    asset_manifest_cache: Mutex<Option<asset_routes::CachedManifestStatus>>,
+    asset_manifest_cache: IdentityCache<[asset_routes::ManifestFileIdentity; 2], api::AssetManifestStatus>,
     /// `/vms/list` lifecycle rows keyed by the in-memory lifecycle snapshot
     /// (uptime seconds included). Activity totals are read per poll from
     /// each ledger's cached counter snapshot, never cached here.
-    list_response_cache: Mutex<Option<CachedListResponse>>,
+    list_response_cache: IdentityCache<String, (ListResponse, Vec<PathBuf>)>,
     /// Coordinates launch admission and Apple VZ lifecycle edges. Cold starts
     /// and teardown take a VZ read guard; save/restore take a write guard.
     /// Blocking launch workers also retain admission through registration,
@@ -265,7 +290,7 @@ pub struct ServiceState {
     /// each other of the resources each capsem-process needs to (a) let VZ
     /// tear down the guest, (b) run the DbWriter's WAL checkpoint on Drop,
     /// and (c) clean up the session UDS files. Under that contention a
-    /// single teardown can exceed `wait_for_process_exit`'s 1s fast-path
+    /// single teardown can exceed the configured original-child exit
     /// budget -- at which point the service SIGKILLs capsem-process mid-
     /// checkpoint, leaving a non-empty WAL and (in the worst case) orphaned
     /// sockets. Same serialization pattern as `lifecycle.vz`: one
@@ -289,25 +314,6 @@ pub struct ServiceState {
     /// leave this empty.
     #[cfg(test)]
     _test_tempdir: Option<tempfile::TempDir>,
-}
-
-/// Serialized ledger route bytes and the logger generation they were read at.
-#[derive(Clone)]
-struct CachedLedgerResponse {
-    db_epoch: u64,
-    bytes: Vec<u8>,
-}
-
-#[derive(Clone)]
-struct CachedPersistentResumeState {
-    fingerprint: String,
-    state: (VmLifecycleState, bool, Option<String>),
-}
-
-#[derive(Clone)]
-struct CachedListResponse {
-    fingerprint: String,
-    listed: (ListResponse, Vec<PathBuf>),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -515,16 +521,10 @@ impl ServiceState {
     }
 
     fn storage_diagnostics_cached(&self, session_dir: &StdPath) -> Option<api::StorageDiagnostics> {
-        if let Some(cached) = self.storage_diagnostics_cache.lock().unwrap().get(session_dir).cloned() {
-            return Some(cached);
-        }
-
-        let diagnostics = storage_diagnostics(session_dir)?;
         self.storage_diagnostics_cache
-            .lock()
-            .unwrap()
-            .insert(session_dir.to_path_buf(), diagnostics.clone());
-        Some(diagnostics)
+            .get_or_try_insert_with(session_dir, || storage_diagnostics(session_dir).ok_or(()))
+            .ok()
+            .map(|diagnostics| (*diagnostics).clone())
     }
 
     fn next_job_id(&self) -> u64 {
@@ -546,6 +546,7 @@ impl ServiceState {
             .extract_if(|_, info| probe.is_gone(info.pid))
             .map(|(id, info)| {
                 tracing::warn!(id, "drain_dead_instances removing instance");
+                info.authority.revoke();
                 (id, info)
             })
             .collect();
@@ -562,6 +563,11 @@ impl ServiceState {
     /// and `rename` can block on large dirs and stall other handlers
     /// racing for the lock.
     fn scrub_evicted_instance(&self, id: &str, info: &InstanceInfo) {
+        self.connections.fence_runtime(
+            id,
+            info.generation,
+            connection_routes::lifecycle::stop_policy(info.persistent, true),
+        );
         self.unregister_session_db_handle(id);
         if info.persistent {
             info!(id, "persistent VM process died, preserving session dir");
@@ -729,26 +735,20 @@ impl ServiceState {
     ) -> (VmLifecycleState, bool, Option<String>) {
         let vm_id = persistent_entry_vm_id(entry);
         let fingerprint = persistent_resume_state_fingerprint(self, entry);
-        if let Some(cached) = self.persistent_resume_state_cache.lock().unwrap().get(&vm_id).cloned() {
-            if cached.fingerprint == fingerprint {
-                return cached.state;
-            }
+        if let Some(cached) = self.persistent_resume_state_cache.get(&vm_id, &fingerprint) {
+            return (*cached).clone();
         }
 
-        let state = self.persistent_entry_resume_state(entry);
-        self.persistent_resume_state_cache.lock().unwrap().insert(
-            vm_id,
-            CachedPersistentResumeState {
-                fingerprint,
-                state: state.clone(),
-            },
-        );
-        state
+        let resume_state = self.persistent_entry_resume_state(entry);
+        self.persistent_resume_state_cache
+            .publish(vm_id, fingerprint, resume_state.clone());
+        resume_state
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    ensure_open_file_limit(NETWORK_PROCESS_OPEN_FILE_LIMIT)?;
     run_service().await
 }
 

@@ -22,6 +22,7 @@ from pathlib import Path
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import exec_output_text
 from tests.fixtures.oci.pinned_image import PinnedImage, reference_image
+from tests.fixtures.oci.published_root import ready as prepared_root
 from tests.fixtures.oci.registry import grant_exact, layout_registry
 
 #: Where the image's workload starts, and where the session's workspace -- the
@@ -67,6 +68,7 @@ def image_session(
         layout = image.ready()
     else:
         image.verify(layout, image.pinned(), image.platform_name())
+    prepared_root(layout)
     with session_of(
         service,
         workdir,
@@ -102,7 +104,12 @@ def session_of(
     workdir.mkdir(parents=True, exist_ok=True)
     client = client or service.client()
     with layout_registry(workdir, layout, image_name) as (reference, certificate, _):
-        grant_exact(service.home_dir, reference)
+        catalog = (
+            f"{reference.split('/', 1)[0]}/library/catalog:stable"
+            if (layout / "rootfs-v2").is_dir() or (layout / "rootfs").is_dir()
+            else None
+        )
+        grant_exact(service.home_dir, reference, catalog=catalog, certificate=certificate)
         created = client.post(
             "/vms/create",
             {
@@ -154,9 +161,7 @@ def workload_exec(
     (omitted, as a user's exec sends it); both must land in the workload.
     """
     if target not in ("workload", DEFAULT_TARGET):
-        raise ValueError(
-            "workload_exec runs in the workload; use target='vm' explicitly elsewhere"
-        )
+        raise ValueError("workload_exec runs in the workload; use target='vm' explicitly elsewhere")
     body: dict = {
         "command": f"printf '{_PROBE} %s\\n' \"$(head -1 /proc/self/uid_map)\"; {command}",
         "timeout_secs": timeout,
@@ -168,9 +173,7 @@ def workload_exec(
     stdout = exec_output_text(result)
     first, _, rest = stdout.partition("\n")
     if not first.startswith(_PROBE):
-        raise NotInWorkload(
-            f"the exec never reached a shell that reported its uid map: {result}"
-        )
+        raise NotInWorkload(f"the exec never reached a shell that reported its uid map: {result}")
     if tuple(first.removeprefix(_PROBE).split()) == _VM_UID_MAP:
         raise NotInWorkload(f"{command!r} ran in the VM, not the workload: {first}")
     return {**result, "stdout_text": rest}

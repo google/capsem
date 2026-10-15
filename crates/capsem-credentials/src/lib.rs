@@ -1,5 +1,6 @@
 //! Broker-owned credential storage without telemetry or policy dependencies.
 
+pub mod broker;
 mod durable;
 mod grants;
 mod oauth;
@@ -12,10 +13,11 @@ pub use grants::{
 };
 pub use oauth::{
     AuthorizationParameters, CallbackExchange, GoogleAccessLease, GoogleAuthorization, GoogleConnection,
-    GoogleConnectionError, GoogleConnectionState, GoogleConnectionStatus, GoogleIdentity, GoogleOAuthClient,
-    GoogleRegistration, GoogleRevocationOutcome, GoogleRevocationState, LoopbackRedirect, OAuthAttempt,
-    OAuthAuthorizationUrl, OAuthConnectionStorage, OAuthError, OAuthHttpPolicy, OAuthIdentityError, OAuthListener,
-    OAuthListenerError, OAuthListenerPolicy, OAuthPolicy, OAuthProviderError, OAuthState, OAuthTokenError, OAuthTokens,
+    GoogleConnectionError, GoogleConnectionMetadata, GoogleConnectionState, GoogleConnectionStatus, GoogleIdentity,
+    GoogleOAuthClient, GoogleRegistration, GoogleRevocationOutcome, GoogleRevocationState, LoopbackRedirect,
+    OAuthAttempt, OAuthAuthorizationUrl, OAuthConnectionStorage, OAuthError, OAuthHttpPolicy, OAuthIdentityError,
+    OAuthListener, OAuthListenerError, OAuthListenerPolicy, OAuthPolicy, OAuthProviderError, OAuthState,
+    OAuthTokenError, OAuthTokens,
 };
 pub use provider::CredentialProvider;
 pub use store::{

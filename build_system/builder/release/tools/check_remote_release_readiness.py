@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
-import hashlib
 import json
 import os
 import re
@@ -26,10 +25,11 @@ from capsem_builder.release.tools.remote_ci_gate import (
     workflow_job_block,
 )
 
+from ... import crypto as hashlib
+
 try:
-    import blake3
+    hashlib.blake3()
 except ModuleNotFoundError as error:
-    blake3 = None
     BLAKE3_IMPORT_ERROR = error
 else:
     BLAKE3_IMPORT_ERROR = None
@@ -296,11 +296,11 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
     if manifest_record.get("status") not in {"current", "supported", "deprecated"}:
         failures.append("channel selected manifest status is not selectable")
     digest = require_object(manifest_record, "digest", "channel manifest digest", failures)
-    if blake3 is not None and isinstance(digest.get("blake3"), str):
-        actual_manifest_hash = blake3.blake3(manifest_payload.data).hexdigest()
+    if BLAKE3_IMPORT_ERROR is None and isinstance(digest.get("blake3"), str):
+        actual_manifest_hash = hashlib.blake3(manifest_payload.data).hexdigest()
         if digest.get("blake3") != actual_manifest_hash:
             failures.append("channel manifest BLAKE3 mismatch")
-    elif blake3 is None:
+    elif BLAKE3_IMPORT_ERROR is not None:
         failures.append("channel manifest cannot verify blake3 without Python dependency blake3")
     else:
         failures.append("channel manifest BLAKE3 missing")
@@ -408,13 +408,13 @@ def check_release_graph_manifest_contract(
         failures.append("channel manifest SHA-256 missing")
     elif hashlib.sha256(manifest_payload).hexdigest() != expected_sha256:
         failures.append("channel manifest SHA-256 mismatch")
-    if blake3 is None:
+    if BLAKE3_IMPORT_ERROR is not None:
         failures.append("channel manifest cannot verify blake3 without Python dependency blake3")
     else:
         expected_blake3 = digest.get("blake3")
         if not isinstance(expected_blake3, str):
             failures.append("channel manifest BLAKE3 missing")
-        elif blake3.blake3(manifest_payload).hexdigest() != expected_blake3:
+        elif hashlib.blake3(manifest_payload).hexdigest() != expected_blake3:
             failures.append("channel manifest BLAKE3 mismatch")
 
     if manifest_data.get("version") != manifest_record.get("version"):
@@ -878,11 +878,11 @@ def check_release_graph_artifact(
     ):
         failures.append(f"{label} {url} sha256 mismatch")
     expected_blake3 = digest.get("blake3")
-    if blake3 is None:
+    if BLAKE3_IMPORT_ERROR is not None:
         failures.append(f"{label} {url} cannot verify blake3 without Python dependency blake3")
     elif (
         isinstance(expected_blake3, str)
-        and blake3.blake3(artifact.data).hexdigest() != expected_blake3
+        and hashlib.blake3(artifact.data).hexdigest() != expected_blake3
     ):
         failures.append(f"{label} {url} blake3 mismatch")
     if expected_document is not None:
@@ -1413,9 +1413,9 @@ def fetch_and_verify_evidence_artifact(
     if algorithm == "sha256":
         actual_hash = hashlib.sha256(artifact.data).hexdigest()
     elif algorithm == "blake3":
-        if blake3 is None:
+        if BLAKE3_IMPORT_ERROR is not None:
             return [f"{label} {url} cannot verify blake3 without Python dependency blake3"]
-        actual_hash = blake3.blake3(artifact.data).hexdigest()
+        actual_hash = hashlib.blake3(artifact.data).hexdigest()
     else:
         return [f"{label} {url} unsupported hash algorithm {algorithm}"]
     if actual_hash != expected_hash:

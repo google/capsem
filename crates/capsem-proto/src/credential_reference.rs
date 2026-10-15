@@ -6,7 +6,7 @@ const CREDENTIAL_REF_DOMAIN: &[u8] = b"capsem.credential.v1";
 
 /// Build the canonical, domain-separated reference for a provider credential.
 pub fn credential_reference(provider: &str, raw_credential: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = capsem_crypto::blake3::Hasher::new();
     hasher.update(CREDENTIAL_REF_DOMAIN);
     hasher.update(&[0]);
     hasher.update(provider.as_bytes());
