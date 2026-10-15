@@ -188,7 +188,7 @@ pub(super) async fn handle_upgrade(
     if let Some(trace_id) = capsem_foundation::telemetry::ambient_capsem_trace_id() {
         upgrade_event = upgrade_event.with_trace_id(trace_id);
     }
-    let upgrade_evaluation = config.engine.evaluate(policy_snapshot, upgrade_event);
+    let upgrade_evaluation = config.engine.evaluate(policy_snapshot, upgrade_event).await;
     let upgrade_decision = match upgrade_evaluation {
         Ok(evaluation) => evaluation,
         Err(error) => return Ok(make_ws_error(&error)),

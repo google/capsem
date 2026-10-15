@@ -114,32 +114,40 @@ impl ProxyEngine {
         self.ledger.write(op).await
     }
 
-    pub fn evaluate(
+    pub async fn evaluate(
         &self,
         snapshot: &ProxyPolicySnapshot,
         event: SecurityEvent,
     ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
-        crate::security_engine::evaluate_security_boundary_with_credentials(
-            snapshot.security_rules(),
-            Arc::clone(snapshot.plugins()),
-            Arc::clone(&self.credentials),
-            event,
-        )
+        let rules = Arc::clone(snapshot.security_rules());
+        let plugins = Arc::clone(snapshot.plugins());
+        let credentials = Arc::clone(&self.credentials);
+        off_runtime(move || {
+            crate::security_engine::evaluate_security_boundary_with_credentials(&rules, plugins, credentials, event)
+        })
+        .await?
     }
 
-    pub fn capture_credential(&self, observation: &CredentialObservation) -> Result<BrokeredCredential, String> {
-        self.credentials.capture(observation)
+    pub async fn capture_credential(&self, observation: CredentialObservation) -> Result<BrokeredCredential, String> {
+        let credentials = Arc::clone(&self.credentials);
+        off_runtime(move || credentials.capture(&observation))
+            .await
+            .map_err(|error| error.to_string())?
     }
 
     pub fn credentials(&self) -> Arc<dyn ProxyCredentials> {
         Arc::clone(&self.credentials)
     }
 
-    pub fn materialize_http_request(
+    pub async fn materialize_http_request(
         &self,
-        event: &SecurityEvent,
+        event: SecurityEvent,
     ) -> Result<MaterializedHttpRequest, SecurityActionError> {
-        crate::security_engine::materialize_http_request_for_upstream_with_credentials(event, self.credentials.as_ref())
+        let credentials = Arc::clone(&self.credentials);
+        off_runtime(move || {
+            crate::security_engine::materialize_http_request_for_upstream_with_credentials(&event, credentials.as_ref())
+        })
+        .await?
     }
 
     pub fn redact_text(&self, text: &str, observations: &[CredentialObservation]) -> String {
@@ -149,6 +157,17 @@ impl ProxyEngine {
     pub fn redact_bytes(&self, bytes: &[u8], observations: &[CredentialObservation]) -> Vec<u8> {
         self.credentials.redact_bytes(bytes, observations)
     }
+}
+
+/// Credential capabilities can wait for coordinator IPC. They must never pin
+/// the confined proxy's single I/O thread; evaluation still precedes forwarding.
+async fn off_runtime<T: Send + 'static>(
+    operation: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, SecurityActionError> {
+    let span = tracing::Span::current();
+    tokio::task::spawn_blocking(move || span.in_scope(operation))
+        .await
+        .map_err(|error| SecurityActionError::new(format!("proxy security worker failed: {error}")))
 }
 
 /// One path-free active-policy revision compiled for a confined proxy worker.

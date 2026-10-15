@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Proxy credential operations yield the I/O runtime while awaiting the
+  coordinator, keeping concurrent HTTP and WebSocket traffic responsive.
+
 - Failed image creation stops its host owner promptly and retains its ledger
   and logs, without waiting for the guest to finish booting.
 

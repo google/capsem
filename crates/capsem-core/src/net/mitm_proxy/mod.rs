@@ -57,7 +57,7 @@ trait TokioReadWrite: AsyncRead + AsyncWrite {}
 impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 
 use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKind};
-use crate::security_engine::{HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent};
+use crate::security_engine::{HttpSecurityEvent, SecurityEvent};
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{AsyncFdStream, ReplayReader};
 use mcp_observe::{observed_mcp_http_request_for_body, should_sniff_mcp_http_body, ObservedMcpHttpRequest};
@@ -67,7 +67,8 @@ use upstream::{CachedUpstream, UpstreamCache, UpstreamPolicy};
 use util::{
     current_unix_ms, format_headers, format_headers_for_domain, http_upstream_port_allowed, is_anthropic_model_name,
     is_google_model_name, is_llm_api_path, is_openai_model_name, materialize_collected_response_headers,
-    parse_http_host_target, provider_label, request_can_replay_empty_body, split_path_query,
+    model_security_event, parse_http_host_target, provider_label, request_can_replay_empty_body,
+    security_event_with_transport, split_path_query,
 };
 
 pub use config::MitmProxyConfig;
@@ -353,22 +354,6 @@ impl SecurityBoundaryDecisionFields {
     fn matched_rule(&self, fallback: String) -> String {
         self.policy_rule.clone().unwrap_or(fallback)
     }
-}
-
-fn model_security_event(
-    event_type: RuntimeSecurityEventType,
-    provider: ProviderKind,
-    model: Option<String>,
-    request_body: Option<&[u8]>,
-    response_body: Option<&[u8]>,
-) -> SecurityEvent {
-    SecurityEvent::new(event_type).with_model(ModelSecurityEvent {
-        provider: Some(provider.as_str().to_string()),
-        name: model,
-        request_body: request_body.map(|body| String::from_utf8_lossy(body).to_string()),
-        response_body: response_body.map(|body| String::from_utf8_lossy(body).to_string()),
-        tool_calls: None,
-    })
 }
 
 fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Bytes> {
@@ -901,25 +886,6 @@ fn http_request_security_event(input: HttpRequestSecurityEventInput<'_>) -> Secu
     security_event_with_transport(event, input.upstream_ip, input.upstream_port)
 }
 
-/// Transport facts for the rules: the upstream port, and the address the dial
-/// reaches (`UpstreamTarget::judged_ip`), never one read off the guest's name.
-fn security_event_with_transport(mut event: SecurityEvent, ip: Option<IpAddr>, upstream_port: u16) -> SecurityEvent {
-    event = event.with_tcp(TcpSecurityEvent {
-        port: Some(upstream_port.to_string()),
-    });
-    if let Some(ip) = ip {
-        event = event.with_ip(IpSecurityEvent {
-            value: Some(ip.to_string()),
-            version: Some(match ip {
-                IpAddr::V4(_) => "4".to_string(),
-                IpAddr::V6(_) => "6".to_string(),
-            }),
-        });
-    }
-
-    event
-}
-
 /// Handle a single HTTP request within a MITM-proxied connection
 /// (TLS or plain HTTP).
 ///
@@ -1290,7 +1256,11 @@ async fn handle_request(
         status = tracing::field::Empty,
         error_kind = tracing::field::Empty,
     );
-    let http_evaluation = match actions_span.in_scope(|| config.engine.evaluate(&policy_snapshot, http_security_event))
+    let http_evaluation = match config
+        .engine
+        .evaluate(&policy_snapshot, http_security_event)
+        .instrument(actions_span.clone())
+        .await
     {
         Ok(evaluation) => evaluation,
         Err(error) => {
@@ -1409,24 +1379,28 @@ async fn handle_request(
     }
     actions_span.record("decision", "allow");
     actions_span.record("status", "ok");
-    let upstream_materialized =
-        match actions_span.in_scope(|| config.engine.materialize_http_request(&http_evaluation.event)) {
-            Ok(materialized) => materialized,
-            Err(error) => {
-                actions_span.record("decision", "error");
-                actions_span.record("status", "error");
-                actions_span.record("error_kind", "materialize_http_request");
-                return Ok(make_502(
-                    &anyhow::anyhow!(error),
-                    &method,
-                    &path,
-                    &query,
-                    &req_hdrs,
-                    start_time,
-                    &request_security_decision,
-                ));
-            }
-        };
+    let upstream_materialized = match config
+        .engine
+        .materialize_http_request(http_evaluation.event)
+        .instrument(actions_span.clone())
+        .await
+    {
+        Ok(materialized) => materialized,
+        Err(error) => {
+            actions_span.record("decision", "error");
+            actions_span.record("status", "error");
+            actions_span.record("error_kind", "materialize_http_request");
+            return Ok(make_502(
+                &anyhow::anyhow!(error),
+                &method,
+                &path,
+                &query,
+                &req_hdrs,
+                start_time,
+                &request_security_decision,
+            ));
+        }
+    };
     original_headers = upstream_materialized.headers;
     let credential_ref = credential_ref
         .clone()
@@ -1456,7 +1430,12 @@ async fn handle_request(
             upstream_ip,
             upstream_port,
         );
-        let mcp_evaluation = match mcp_span.in_scope(|| config.engine.evaluate(&policy_snapshot, mcp_event)) {
+        let mcp_evaluation = match config
+            .engine
+            .evaluate(&policy_snapshot, mcp_event)
+            .instrument(mcp_span.clone())
+            .await
+        {
             Ok(evaluation) => evaluation,
             Err(error) => {
                 mcp_span.record("decision", "error");
@@ -1670,7 +1649,7 @@ async fn handle_request(
                 body: Some(String::from_utf8_lossy(&body_bytes).to_string()),
             });
             let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
-            let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event) {
+            let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event).await {
                 Ok(evaluation) => evaluation,
                 Err(error) => {
                     model_request_span.record("decision", "error");
@@ -2319,7 +2298,7 @@ async fn handle_request(
                 body: Some(String::from_utf8_lossy(&response_body).to_string()),
             });
             let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
-            let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event) {
+            let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event).await {
                 Ok(evaluation) => evaluation,
                 Err(error) => {
                     model_response_span.record("decision", "error");

@@ -228,7 +228,7 @@ async fn engine_exposes_only_typed_ledger_and_credential_capabilities() {
         trace_id: None,
         context_json: None,
     };
-    let brokered = engine.capture_credential(&observation).unwrap();
+    let brokered = engine.capture_credential(observation.clone()).await.unwrap();
     assert_eq!(brokered.credential_ref, observation.credential_ref());
 
     let mut event =
@@ -239,7 +239,7 @@ async fn engine_exposes_only_typed_ledger_and_credential_capabilities() {
             Some("x=1".to_string()),
         ));
     event.action_trace.push(PolicyActionId::CredentialBrokerSubstitute);
-    let materialized = engine.materialize_http_request(&event).unwrap();
+    let materialized = engine.materialize_http_request(event).await.unwrap();
     assert_eq!(
         materialized.headers.get(http::header::AUTHORIZATION).unwrap(),
         "Bearer scoped-secret"
@@ -269,8 +269,8 @@ fn engine_redaction_never_returns_observed_secret() {
     assert!(redacted.contains(&observation.credential_ref()));
 }
 
-#[test]
-fn engine_evaluation_uses_its_scoped_credential_capability() {
+#[tokio::test]
+async fn engine_evaluation_uses_its_scoped_credential_capability() {
     let credentials = Arc::new(RecordingCredentials::default());
     let engine = ProxyEngine::new(
         ProxyPolicyHandle::new(credential_revision()),
@@ -286,7 +286,7 @@ fn engine_evaluation_uses_its_scoped_credential_capability() {
     let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http_request(HttpRequestSecurityEvent::new("api.openai.com", None, headers, None));
 
-    let evaluated = engine.evaluate(&snapshot, event).unwrap();
+    let evaluated = engine.evaluate(&snapshot, event).await.unwrap();
 
     assert_eq!(*credentials.calls.lock().unwrap(), vec!["capture"]);
     assert_eq!(evaluated.event.credential_observations.len(), 1);
@@ -294,4 +294,88 @@ fn engine_evaluation_uses_its_scoped_credential_capability() {
         .event
         .action_trace
         .contains(&PolicyActionId::CredentialBrokerCapture));
+}
+
+struct GatedCredentials {
+    started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    released: Mutex<std::sync::mpsc::Receiver<()>>,
+    recording: RecordingCredentials,
+}
+
+impl GatedCredentials {
+    fn wait(&self) -> Result<(), String> {
+        self.started.lock().unwrap().take().unwrap().send(()).unwrap();
+        self.released
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|_| "credential IPC blocked independent runtime progress".to_string())
+    }
+}
+
+impl ProxyCredentials for GatedCredentials {
+    fn capture(&self, observation: &CredentialObservation) -> Result<BrokeredCredential, String> {
+        self.wait()?;
+        self.recording.capture(observation)
+    }
+
+    fn substitute_upstream(
+        &self,
+        domain: &str,
+        provider: Option<crate::net::ai_traffic::provider::ProviderKind>,
+        headers: &mut http::HeaderMap,
+        query: Option<&str>,
+    ) -> Result<BrokeredUpstreamCredentials, String> {
+        self.wait()?;
+        self.recording.substitute_upstream(domain, provider, headers, query)
+    }
+}
+
+fn gated_engine() -> (ProxyEngine, tokio::task::JoinHandle<()>) {
+    let (started, observed) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let progress = tokio::spawn(async move {
+        observed.await.unwrap();
+        let _ = release.send(());
+    });
+    let engine = ProxyEngine::new(
+        ProxyPolicyHandle::new(credential_revision()),
+        Arc::new(RecordingLedger::default()),
+        Arc::new(GatedCredentials {
+            started: Mutex::new(Some(started)),
+            released: Mutex::new(released),
+            recording: RecordingCredentials::default(),
+        }),
+    );
+    (engine, progress)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn credential_evaluation_allows_independent_runtime_progress() {
+    let (engine, progress) = gated_engine();
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_static("Bearer sk-scoped-engine-credential"),
+    );
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http_request(HttpRequestSecurityEvent::new("api.openai.com", None, headers, None));
+    let evaluated = engine.evaluate(&engine.policy().snapshot(), event).await.unwrap();
+    assert_eq!(evaluated.event.credential_observations.len(), 1);
+    progress.await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn credential_materialization_allows_independent_runtime_progress() {
+    let (engine, progress) = gated_engine();
+    let mut event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(
+        HttpRequestSecurityEvent::new("api.openai.com", None, http::HeaderMap::new(), None),
+    );
+    event.action_trace.push(PolicyActionId::CredentialBrokerSubstitute);
+    let materialized = engine.materialize_http_request(event).await.unwrap();
+    assert_eq!(
+        materialized.headers[http::header::AUTHORIZATION],
+        "Bearer scoped-secret"
+    );
+    progress.await.unwrap();
 }

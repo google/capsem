@@ -58,7 +58,7 @@ impl Turns {
             wire.generate != Some(false) && wire.kind == "response.create",
             ctx,
         );
-        let result = turn.evaluate(None, ctx)?;
+        let result = turn.evaluate(None, ctx).await?;
         if !result.enforcement.is_allowed() {
             let error = refusal(&turn.lane, &result.enforcement);
             turn.deny(&result.enforcement);
@@ -146,7 +146,7 @@ impl Turns {
         }
         let turn = self.active.get(&wire.stream_id).unwrap();
         let response = turn.response.join("\n") + "\n";
-        let evaluation = turn.evaluate(Some(&response), ctx)?;
+        let evaluation = turn.evaluate(Some(&response), ctx).await?;
         let output = if evaluation.enforcement.is_allowed() {
             let runtime = evaluation
                 .event
@@ -257,7 +257,7 @@ impl Turn {
         }
     }
 
-    fn evaluate(
+    async fn evaluate(
         &self,
         response: Option<&str>,
         ctx: &Context,
@@ -288,7 +288,7 @@ impl Turn {
             ..Default::default()
         });
         let event = security_event_with_transport(event, ctx.ip, ctx.conn.port);
-        Ok(ctx.engine.evaluate(&self.policy_snapshot, event)?)
+        Ok(ctx.engine.evaluate(&self.policy_snapshot, event).await?)
     }
 
     fn decision(&mut self, decision: &crate::security_engine::SecurityEnforcementDecision) {
