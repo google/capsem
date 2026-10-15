@@ -2,6 +2,18 @@ use super::*;
 
 #[test]
 fn builtin_http_admission_receipts_are_explicit_and_strict() {
+    let sparse = McpHttpAdmission::Allowed {
+        rule_id: None,
+        reason: None,
+    };
+    assert_eq!(
+        serde_json::to_value(&sparse).unwrap(),
+        serde_json::json!({"status": "allowed"})
+    );
+    assert_eq!(
+        serde_json::from_value::<McpHttpAdmission>(serde_json::json!({"status": "allowed"})).unwrap(),
+        sparse
+    );
     for admission in [
         McpHttpAdmission::Allowed {
             rule_id: Some("exact-rule".into()),

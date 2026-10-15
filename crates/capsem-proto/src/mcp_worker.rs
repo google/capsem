@@ -13,7 +13,9 @@ pub const MCP_ADMISSION_HEADER: &str = "x-capsem-mcp-admission";
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum McpHttpAdmission {
     Allowed {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         rule_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
     Denied {
