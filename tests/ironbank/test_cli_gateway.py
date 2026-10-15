@@ -102,6 +102,12 @@ def test_cli_gateway_vm_lifecycle_exit_codes_and_binary_files(tmp_path: Path) ->
         success(command(service, "cp", guest, str(restored)))
         assert restored.read_bytes() == original.read_bytes()
         success(command(service, "fork", session_id, "cli-gateway-fork"))
+        (fork,) = [
+            row for row in client.get("/vms/list")["sandboxes"]
+            if row["name"] == "cli-gateway-fork"
+        ]
+        assert fork["id"] != session_id and fork["status"] == "Stopped", fork
+        success(command(service, "delete", fork["id"]))
         success(command(service, "delete", session_id))
         assert client.get("/vms/list")["sandboxes"] == []
     finally:
