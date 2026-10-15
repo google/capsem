@@ -39,7 +39,8 @@ def braavos(plan: Plan, phase: Phase, config: GateConfig, *, after: tuple[Step, 
     ), after=after)
     synced = python_environment(plan, config)
     python = phase.shared(python_package(config), after=(synced,))
-    typescript = phase.shared(typescript_package(config), after=after)
+    compiled = phase.shared(typescript_bundle(config), after=after)
+    typescript = phase.shared(typescript_package(config), after=(compiled,))
     warmed = phase.shared(typescript_prewarm(config), after=(typescript,))
     return python, example, typescript, warmed
 
@@ -103,7 +104,7 @@ def typescript_package(config: GateConfig) -> Step:
     settings = config.sdk_typescript
     return step(
         "fast.sdk.typescript.build",
-        Run(["pnpm", "pack", "--pack-destination", str(config.path(settings.build_output))],
+        Run(["pnpm", "pack", "--config.ignore-scripts=true", "--pack-destination", str(config.path(settings.build_output))],
             cwd=config.path(settings.project)),
         kind=Kind.PACKAGE, speed=Speed.FAST,
     )
@@ -151,7 +152,8 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         label, Run(["pnpm", "run", command], cwd=root),
         kind=Kind.LINT, speed=Speed.FAST,
     ), after=after) for label, command in (("lint", "lint"), ("types", "check")))
-    built = phase.shared(typescript_package(config), after=after)
+    compiled = phase.shared(typescript_bundle(config), after=after)
+    built = phase.shared(typescript_package(config), after=(compiled,))
     warmed = phase.shared(typescript_prewarm(config), after=(built,))
     for shared in (built, warmed):
         plan.record_stage(shared.label, "fast.sdk.typescript")

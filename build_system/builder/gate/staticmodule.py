@@ -93,7 +93,7 @@ def static(
     generated = generated or phase.add(audits.generated_settings(config), after=(node,))
     # Shared for the same reason and on the same terms as the settings above.
     if bundled is None:
-        sdk = phase.add(sdkchecks.typescript_bundle(config), after=(node,))
+        sdk = phase.shared(sdkchecks.typescript_bundle(config), after=(node,))
         bundled = phase.add(webaudits.frontend_bundle(config), after=(generated, sdk))
     frontend = bundled
 

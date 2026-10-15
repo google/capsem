@@ -75,7 +75,7 @@ def artifacts(
     )
     prerequisites = (*after, installed) if node is not None else (installed,)
     if bundled is None:
-        sdk = phase.add(sdkchecks.typescript_bundle(config), after=prerequisites)
+        sdk = phase.shared(sdkchecks.typescript_bundle(config), after=prerequisites)
         bundled = phase.add(webaudits.frontend_bundle(config), after=(sdk,))
     frontend = bundled
     return phase.add(

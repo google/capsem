@@ -46,6 +46,31 @@ def _assert_order(plan, node: str, build: str, consumers: tuple[str, ...]) -> No
     ), RATIONALE
 
 
+@pytest.mark.parametrize("command", [
+    "candidate", "test-fast", "test-functional", "test-static", "test-artifacts", "test-glowup",
+])
+def test_sdk_dist_has_one_writer_before_every_consumer(command: str) -> None:
+    plan = gate_plan(command)
+    compilations = [node.label for node in plan.steps for action in node.actions
+                    if isinstance(action, Run)
+                    and action._command.cwd == CONFIG.path(CONFIG.sdk_typescript.project)
+                    and action._command.argv == ("pnpm", "run", "build")]
+    assert len(compilations) == 1, RATIONALE
+    compiled = compilations[0]
+    for node in plan.steps:
+        for action in node.actions:
+            if not isinstance(action, Run):
+                continue
+            argv = action._command.argv
+            packing = action._command.cwd == CONFIG.path(CONFIG.sdk_typescript.project) and argv[:2] == ("pnpm", "pack")
+            consumer = node.label.endswith(("web.frontend-build", "web.frontend-verify", "web.frontend-bundle",
+                                            "mcp.typescript.build", "mcp.typescript.tests"))
+            if packing:
+                assert "--config.ignore-scripts=true" in argv, RATIONALE
+            if packing or consumer:
+                assert compiled in _ancestors(plan, node.label), RATIONALE
+
+
 @pytest.mark.parametrize(("command", "prefix", "consumers"), [
     ("test-fast", "fast", ("fast.web.frontend-build", "fast.web.frontend-verify")),
     ("test-static", "static", ("static.web.frontend-bundle",)),
@@ -53,7 +78,7 @@ def _assert_order(plan, node: str, build: str, consumers: tuple[str, ...]) -> No
 ])
 def test_sdk_build_precedes_all_frontend_consumers(command: str, prefix: str, consumers: tuple[str, ...]) -> None:
     plan = gate_plan(command)
-    build = f"{prefix}.sdk.typescript.{'build' if prefix == 'fast' else 'bundle'}"
+    build = "fast.sdk.typescript.build" if prefix == "fast" else "sdk.typescript.bundle"
     _assert_order(plan, f"{prefix}.toolchain.node", build, consumers)
 
 
