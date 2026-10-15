@@ -83,12 +83,15 @@ def _assert_applied(row: dict[str, Any], *, category: str, target_kind: str, tar
     assert row["new_size"] > 0
 
 
-def test_policy_mutation_routes_edit_settings_and_record_the_ledger() -> None:
+def test_policy_mutation_routes_edit_settings_and_record_the_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
     service = ServiceInstance()
     # The corp config owns this plugin; a settings edit of it is refused.
-    (service.home_dir / "corp.toml").write_text(
+    corp_path = service.home_dir / "corp.toml"
+    corp_path.write_text(
         '[plugins.log_sanitizer]\nmode = "rewrite"\ndetection_level = "informational"\n'
     )
+    # An inherited override exclusively selects another corp file.
+    monkeypatch.setenv("CAPSEM_CORP_CONFIG", str(corp_path))
     try:
         service.start()
         client = service.client()
