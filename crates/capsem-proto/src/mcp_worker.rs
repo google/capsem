@@ -1,6 +1,25 @@
 //! Bootstrap and bounded spawn records for one native MCP worker generation.
 
 use anyhow::{bail, Result};
+use serde::{Deserialize, Serialize};
+
+pub const MCP_SERVER_HEADER: &str = "x-capsem-mcp-server";
+pub const MCP_ADMISSION_HEADER: &str = "x-capsem-mcp-admission";
+
+/// Produced only by the generation-bound HTTP broker, after evaluating its
+/// current policy and the pinned upstream addresses. A worker never trusts an
+/// upstream header with this name: the broker replaces it unconditionally.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum McpHttpAdmission {
+    Allowed {
+        rule_id: Option<String>,
+        reason: Option<String>,
+    },
+    Denied {
+        reason: String,
+    },
+}
 
 pub const MCP_WORKER_FRAME_SIZE: usize = 24;
 pub const MCP_WORKER_MAX_FDS: usize = 2;

@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn builtin_http_admission_receipts_are_explicit_and_strict() {
+    for admission in [
+        McpHttpAdmission::Allowed {
+            rule_id: Some("exact-rule".into()),
+            reason: None,
+        },
+        McpHttpAdmission::Denied {
+            reason: "blocked".into(),
+        },
+    ] {
+        assert_eq!(
+            serde_json::from_slice::<McpHttpAdmission>(&serde_json::to_vec(&admission).unwrap()).unwrap(),
+            admission
+        );
+    }
+    for hostile in [
+        r#"{"status":"unknown"}"#,
+        r#"{"status":"denied"}"#,
+        r#"{"status":"allowed","credential":"forged"}"#,
+        r#"{"status":"allowed","reason":false}"#,
+        r#"{"allowed":true}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<McpHttpAdmission>(hostile).is_err(),
+            "accepted {hostile}"
+        );
+    }
+}
+
+#[test]
 fn worker_roles_and_ready_direction_have_exact_descriptor_shapes() {
     for role in [McpHttpRole::Aggregator, McpHttpRole::Builtin] {
         let bootstrap = McpWorkerBootstrap {
