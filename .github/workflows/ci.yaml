@@ -284,6 +284,12 @@ jobs:
       # Unit tests: all crates with coverage + JUnit XML for test analytics.
       # capsem-app (Tauri bin) is macOS-only. Native MCP workers share
       # connected capabilities through capsem-mcp-transport.
+      - name: Build native MCP workers for service tests
+        run: |
+          cargo build --locked -p capsem-mcp-aggregator -p capsem-mcp-builtin
+          codesign --sign - --force cache/target/cargo/debug/capsem-mcp-aggregator
+          codesign --sign - --force cache/target/cargo/debug/capsem-mcp-builtin
+
       - name: Unit tests with coverage
         run: |
           set -o pipefail
@@ -515,20 +521,33 @@ jobs:
   # Install e2e: Docker-based install layout + systemd tests (Linux)
   # ---------------------------------------------------------------------------
   test-install:
-    needs: scope
+    needs: [scope, fast-gate]
     if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test-install') }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+      - uses: ./.github/actions/rust-cache
 
-      # The package source build compiles the musl guest cohort and therefore
-      # needs the same C toolchain as the release asset builder.
-      - name: Install musl C toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools acl
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+
+      - name: Install Linux workspace prerequisites
+        run: sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt
+
+      - name: Prove Linux sandbox boundary
+        run: python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner
 
       - name: Enable required KVM and vsock devices
         run: |
@@ -536,72 +555,35 @@ jobs:
           test -c /dev/kvm
           test -c /dev/vhost-vsock
 
-      - name: Classify the stable install graph
-        id: install-channel
+      - name: Select the declared tool set
+        id: gate_tools
         run: |
-          python3 build_system/scripts/bootstrap/select-runtime-preflight-manifest.py \
-            --channel stable \
-            --classify-only \
-            --github-output "$GITHUB_OUTPUT"
+          list=$(python3 build_system/scripts/ci/gate-tool-list.py --sets complete)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+      - name: Install prebuilt Rust gate tools
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
+        with:
+          tool: ${{ steps.gate_tools.outputs.list }}
 
-      - name: Select exact stable install inputs
-        id: install-manifest
+      - name: Materialize locked qualification dependencies
+        run: |
+          uv sync --project build_system --frozen
+          python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project
+          cargo fetch --locked
+          for workspace in web/app sdk/typescript mcp/typescript build_system/release_site; do
+            pnpm --dir "$workspace" install --frozen-lockfile
+          done
+
+      # A source candidate must be installable before its first runtime is
+      # published. The canonical local owner constructs and proves that cohort;
+      # publication lanes still consume manifest-selected immutable inputs.
+      - name: Run source runtime and exact-package glow-up
+        id: install_e2e
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PUBLIC_MANIFEST_URL: ${{ steps.install-channel.outputs.manifest-url }}
-          PUBLIC_STATE: ${{ steps.install-channel.outputs.state }}
-        run: |
-          set -euo pipefail
-          case "$PUBLIC_STATE" in
-            published)
-              echo "manifest-url=$PUBLIC_MANIFEST_URL" >> "$GITHUB_OUTPUT"
-              ;;
-            retired)
-              # The package derives public/corporate lock policy from this
-              # canonical URL shape. Keep a retired first-party fixture public
-              # so the install gate may hand it its generated local manifest.
-              output="$PWD/cache/target/ci-install-selection/assets/stable/manifest.json"
-              python3 build_system/scripts/release/fetch-channel-source-manifest.py \
-                --channel stable \
-                --repository "$GITHUB_REPOSITORY" \
-                --require-runtime \
-                --output "$output"
-              echo "manifest-url=file://$output" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "stable install graph is $PUBLIC_STATE; no exact install input exists" >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Pull exact stable runtime assets
-        uses: ./.github/actions/fetch-release-inputs
-        with:
-          manifest-url: ${{ steps.install-manifest.outputs.manifest-url }}
-          kind: runtime
-          architecture: x86_64
-          output: cache/target/ci-install-content/inputs
-
-      - name: Stage the exact install assets
-        run: |
-          uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir cache/target/ci-install-content/inputs \
-            --assets-dir cache/target/ci-install-content/assets
-
-      - name: Build exact native release package
-        env:
-          CAPSEM_INSTALL_MANIFEST_URL: ${{ steps.install-manifest.outputs.manifest-url }}
-          CAPSEM_INSTALL_CHANNEL: stable
-        run: |
-          uv run --project build_system --frozen capsem-gate cross-compile x86_64 \
-            --content-root cache/target/ci-install-content \
-            --defer-proof
-
-      - name: Run install e2e tests
-        id: install_e2e
-        run: |
-          uv run --project build_system --frozen capsem-gate install \
-            --selected-content-root cache/target/ci-install-content
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: uv run --project build_system --frozen capsem-gate test-glowup --slow
 
       - name: Upload install and glow-up evidence on failure
         if: failure()
@@ -612,9 +594,6 @@ jobs:
             cache/target/gate-runs/
             cache/target/tests/evidence/installed/
           retention-days: 7
-          # Input resolution can fail before a gate exists. Preserve that
-          # primary failure without adding a misleading upload failure, while
-          # keeping missing evidence fatal when the install gate itself ran.
           if-no-files-found: ${{ steps.install_e2e.outcome == 'failure' && 'error' || 'warn' }}
 
   # ---------------------------------------------------------------------------

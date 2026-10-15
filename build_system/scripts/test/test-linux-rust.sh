@@ -60,6 +60,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 # The OS confinement boundary is exercised by an actual executable child.
 cargo nextest run --locked -p capsem-router --test subprocess --profile ci
 
+# Service unit tests discover and execute the real native MCP cohort. A
+# coverage test executable is not the production worker it supervises.
+cargo build --locked -p capsem-mcp-aggregator -p capsem-mcp-builtin
+
 cargo llvm-cov nextest \
     --no-cfg-coverage \
     --lib \
