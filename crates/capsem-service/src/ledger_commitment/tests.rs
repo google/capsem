@@ -146,17 +146,11 @@ async fn fork_keeps_trusted_history_and_does_not_reuse_uncheckpointed_reservatio
         .unwrap();
     let before = std::fs::read(&source.path).unwrap();
 
-    let snapshot = source.snapshot().await;
+    source.snapshot().await.copy_to("fork").await.unwrap();
     assert!(
-        source.state.try_lock().is_err(),
-        "snapshot must fence reservations and checkpoints"
-    );
-    snapshot.copy_to("fork").await.unwrap();
-    assert!(
-        snapshot.copy_to("fork").await.is_err(),
+        source.snapshot().await.copy_to("fork").await.is_err(),
         "an existing fork history must not be overwritten"
     );
-    drop(snapshot);
     assert_eq!(std::fs::read(&source.path).unwrap(), before);
 
     let fork = CommitmentAuthority::open(root.path(), "fork").await.unwrap();
@@ -210,6 +204,45 @@ async fn fork_reservation_boundaries_cannot_rewind_or_contain_producer_records()
             .to_string()
             .contains("reservation boundary is invalid"));
     }
+}
+
+#[test]
+fn canceling_a_fork_copy_keeps_the_authority_fenced_until_blocking_work_finishes() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let root = tempfile::tempdir().unwrap();
+        let authority = CommitmentAuthority::open(root.path(), "source").await.unwrap();
+        let snapshot = authority.snapshot().await;
+        let (release, blocked) = std::sync::mpsc::channel();
+        let blocker = tokio::task::spawn_blocking(move || {
+            blocked.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        });
+        let mut copying = Box::pin(async move { snapshot.copy_to("fork").await });
+        assert!(matches!(
+            copying.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        drop(copying);
+        let fenced = authority.state.try_lock().is_err();
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        // With one blocking thread this joins behind the detached copy.
+        tokio::task::spawn_blocking(|| {}).await.unwrap();
+        assert!(
+            fenced,
+            "canceling the caller must not release the background copy's fence"
+        );
+        assert!(authority.state.try_lock().is_ok());
+        let fork = CommitmentAuthority::open(root.path(), "fork").await.unwrap();
+        assert_eq!(fork.state.lock().await.next_checkpoint_sequence, 1);
+    });
 }
 
 #[tokio::test]

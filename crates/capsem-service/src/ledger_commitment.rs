@@ -83,7 +83,7 @@ pub(crate) struct CheckpointSnapshot {
 }
 
 impl CheckpointSnapshot {
-    pub(crate) async fn copy_to(&self, session_id: &str) -> Result<()> {
+    pub(crate) async fn copy_to(self, session_id: &str) -> Result<()> {
         let source = self.path.clone();
         let root = source
             .parent()
@@ -108,6 +108,8 @@ impl CheckpointSnapshot {
         tokio::task::spawn_blocking(move || {
             use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
             use std::ffi::OsStr;
+            // Blocking work outlives a canceled caller. Keep the fence with it.
+            let _fence = self.state;
             let root = ContainedDir::open_root(
                 source
                     .parent()
