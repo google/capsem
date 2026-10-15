@@ -75,7 +75,7 @@ def test_bootstrap_always_checks_project_skills_and_site_shape() -> None:
         "skills/frontend-design/SKILL.md",
         "web/marketing/package.json",
         "web/marketing/astro.config.mjs",
-        "web/marketing/src/components/FAQ.svelte",
+        "web/marketing/src/components/HeroDemo.svelte",
         "web/marketing/src/lib/data.ts",
     ]:
         assert required_file in bootstrap

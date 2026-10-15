@@ -3,22 +3,20 @@ import Base from "../layouts/Base.astro";
 import "../styles/global.css";
 import Nav from "../components/Nav.svelte";
 import Hero from "../components/Hero.svelte";
-import Features from "../components/Features.svelte";
-import ProductOverview from "../components/ProductOverview.svelte";
-import HowItWorks from "../components/HowItWorks.svelte";
-import FAQ from "../components/FAQ.svelte";
-import CTA from "../components/CTA.svelte";
+import Agents from "../components/Agents.astro";
+import Performance from "../components/Performance.astro";
+import Security from "../components/Security.astro";
+import Control from "../components/Control.astro";
 import Footer from "../components/Footer.svelte";
 ---
 <Base>
   <Nav client:load />
   <main id="main">
-    <Hero />
-    <Features />
-    <ProductOverview />
-    <HowItWorks />
-    <FAQ client:visible />
-    <CTA client:visible />
+    <Hero client:load />
+    <Agents />
+    <Performance />
+    <Security />
+    <Control />
   </main>
   <Footer />
 </Base>

@@ -1,0 +1,91 @@
+---
+title: Investigate a VM
+description: How do I investigate a VM's commands, model calls, tools, and security decisions?
+---
+
+import Diagram from '@capsem/diagrams/Diagram.astro';
+import { investigation } from '../../../../lib/overview-diagrams';
+
+Start with the VM's identity and time window, then follow related command,
+model, tool, and network records. You need access to that Capsem installation;
+retain the VM until you have collected the evidence you need.
+
+## Identify the VM and time window
+
+On your computer:
+
+```sh
+capsem list
+capsem info my-work --json
+capsem logs my-work --tail 100
+capsem history my-work --search curl --json
+```
+
+Replace `my-work` with the VM name or ID. Record its immutable ID and the
+incident time. Serial/process logs diagnose runtime failures; command history
+and security records answer different questions.
+
+In the Capsem UI, open the VM and inspect its activity and logs.
+Keep the VM's identity with your notes so another VM with a similar name
+cannot be mistaken for it.
+
+## Follow related activity
+
+For SDK investigation, use an already connected client:
+
+```python
+from capsem import models
+
+vm = capsem.vm(name="my-work")
+timeline = await vm.timeline(
+    since="1h",
+    limit=200,
+    layers=[models.TimelineLayer.EXEC, models.TimelineLayer.MODEL, models.TimelineLayer.TOOL],
+)
+```
+
+Use a returned trace ID to narrow related events. Check model, tool, network,
+and file records as needed rather than treating the timeline preview as a
+complete transcript.
+
+<Diagram diagram={investigation} />
+
+Missing trace attribution does not prove two records are related. Check
+timestamps, process identity, server/tool names, and destinations together.
+
+## Explain a decision or detection
+
+Find the operation's effective decision, matched rule, source, reason,
+and plugin evidence. Distinguish an enforcement refusal from an informational
+detection. A guest audit event may describe an action that already happened.
+
+Compare the effective policy with the
+[enforcement contract](/reference/enforcement-rules/) and
+[detection contract](/reference/sigma/). Test a correction on a separate VM;
+do not change the investigated VM's policy before recording the original evidence.
+
+## Collect retained evidence
+
+Use SDK triage for a bounded report:
+
+```python
+report = await capsem.debug.triage(vm_id=vm.id, since="1h", limit=100)
+```
+
+For full retained request/response bodies, use the body retrieval or WARC
+export operations in the [API references](/sdk/python/).
+The [telemetry reference](/reference/telemetry/) lists exact endpoints,
+encoding, and completeness fields. A triage report is not the complete ledger.
+
+For a runtime bug, `capsem debug` creates a redacted support archive.
+Review the archive before sharing it; keep secret redaction enabled.
+
+## Recognize gaps
+
+Check storage truncation separately from transport truncation.
+An absent body, a bounded result page, or a worker failure can explain missing
+content. Query the relevant time window and follow pagination/cursors.
+
+Checkpoint verification detects alteration of anchored records. It cannot
+prove the truth of an observation made by a compromised producer or restore
+an unanchored crash tail. Keep these limits with any exported evidence.

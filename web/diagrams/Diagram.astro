@@ -1,0 +1,81 @@
+---
+import type { Diagram } from './types';
+interface Props { diagram: Diagram }
+const { diagram } = Astro.props;
+const labels = new Map(diagram.nodes.map((node) => [node.id, node.label.replaceAll('\n', ' — ')]));
+---
+<joint-diagram data-diagram={JSON.stringify(diagram)}>
+  <div class="diagram-toolbar" hidden>
+    <span>{diagram.title}</span>
+    <div role="group" aria-label={`${diagram.title} view controls`}>
+      <button type="button" data-action="out" aria-label="Zoom out">−</button>
+      <output aria-live="polite">100%</output>
+      <button type="button" data-action="in" aria-label="Zoom in">+</button>
+      <button type="button" data-action="fit">Fit</button>
+    </div>
+  </div>
+  <div class="diagram-canvas" style={`aspect-ratio: ${diagram.width} / ${diagram.height}`} hidden tabindex="0" role="group" aria-label={`${diagram.title}. Drag to pan. Use plus and minus to zoom, arrow keys to pan, and 0 to fit.`}>
+    <div class="diagram-paper"></div>
+  </div>
+  <details class="diagram-transcript" open>
+    <summary>Connections in text</summary>
+    <table>
+      <thead><tr><th>From</th><th>Connection</th><th>To</th></tr></thead>
+      <tbody>{diagram.links.map((link) => <tr><td>{labels.get(link.from)}</td><td>{link.label || 'uses'}{link.both ? ' · bidirectional' : ''}{link.control ? ' · control' : ''}</td><td>{labels.get(link.to)}</td></tr>)}</tbody>
+    </table>
+  </details>
+  <small class="diagram-attribution">Rendered with <a href="https://github.com/clientIO/joint/tree/v4.3.3">JointJS Community</a> · <a href="https://github.com/clientIO/joint/blob/v4.3.3/LICENSE">MPL-2.0</a></small>
+</joint-diagram>
+
+<script>
+  import { mountDiagram } from './viewer';
+  class JointDiagram extends HTMLElement {
+    private dispose?: () => void;
+    connectedCallback() { this.dispose = mountDiagram(this); }
+    disconnectedCallback() { this.dispose?.(); }
+  }
+  if (!customElements.get('joint-diagram')) customElements.define('joint-diagram', JointDiagram);
+</script>
+
+<style is:global>
+  joint-diagram {
+    --diagram-minimum: #dcfce7; --diagram-minimum-line: #15803d;
+    --diagram-limited: #fef9c3; --diagram-limited-line: #a16207;
+    --diagram-elevated: #ffedd5; --diagram-elevated-line: #c2410c;
+    --diagram-maximum: #fee2e2; --diagram-maximum-line: #dc2626;
+    --diagram-external: #ffffff; --diagram-external-line: #94a3b8;
+    --diagram-group: #f8fafc; --diagram-group-line: #94a3b8;
+    --diagram-vm: #eff6ff; --diagram-vm-line: #2563eb;
+    --diagram-engine: #fffbeb; --diagram-engine-line: #a16207;
+    --diagram-accent: #eff6ff; --diagram-accent-line: #2563eb;
+    --diagram-secondary: #f5f3ff; --diagram-secondary-line: #7c3aed;
+    --diagram-border: var(--sl-color-hairline-light, #e5e7eb);
+    --diagram-surface: var(--sl-color-bg, #ffffff);
+    --diagram-toolbar: var(--sl-color-bg-nav, #f8fafc);
+    --diagram-text: var(--sl-color-text, #172033);
+    --diagram-muted: var(--sl-color-gray-3, #64748b);
+    --diagram-focus: var(--sl-color-text-accent, #2563eb);
+    --diagram-ink: #172033; --diagram-wire: #64748b;
+    display: block; margin-block: 1.5rem; border: 1px solid var(--diagram-border);
+    border-radius: 12px; overflow: hidden; background: var(--diagram-surface); color: var(--diagram-text);
+  }
+  joint-diagram .diagram-toolbar { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .7rem 1rem; border-bottom: 1px solid var(--diagram-border); font-size: .85rem; }
+  joint-diagram .diagram-toolbar[hidden] { display: none; }
+  joint-diagram .diagram-toolbar div { display: flex; align-items: center; gap: .4rem; }
+  joint-diagram button { min-width: 2.25rem; min-height: 2.25rem; border: 1px solid var(--diagram-border); border-radius: 6px; background: var(--diagram-toolbar); color: var(--diagram-text); font: inherit; cursor: pointer; }
+  joint-diagram output { min-width: 3.2rem; text-align: center; font-variant-numeric: tabular-nums; }
+  joint-diagram .diagram-canvas { position: relative; overflow: hidden; background: var(--diagram-external); cursor: grab; }
+  joint-diagram .diagram-canvas:active { cursor: grabbing; }
+  joint-diagram .diagram-paper { position: absolute; inset: 0; width: 100% !important; height: 100% !important; margin: 0; touch-action: pan-y; }
+  joint-diagram .diagram-paper svg { display: block; width: 100%; height: 100%; overflow: hidden; }
+  joint-diagram .diagram-paper * { margin: 0; }
+  joint-diagram .diagram-transcript { margin: 0; padding: .7rem 1rem; border-top: 1px solid var(--diagram-border); font-size: .85rem; overflow-x: auto; }
+  joint-diagram table { width: 100%; border-collapse: collapse; text-align: left; }
+  joint-diagram th, joint-diagram td { padding: .5rem; border-bottom: 1px solid var(--diagram-border); }
+  joint-diagram summary { cursor: pointer; }
+  joint-diagram .diagram-attribution { display: block; padding: 0 1rem .6rem; font-size: .7rem; color: var(--diagram-muted); }
+  joint-diagram .diagram-attribution a { color: inherit; text-decoration: underline; }
+  joint-diagram :focus-visible { outline: 2px solid var(--diagram-focus); outline-offset: -2px; }
+  @media (max-width: 40rem) { joint-diagram .diagram-toolbar > span { display: none; } joint-diagram .diagram-toolbar { justify-content: flex-end; } }
+  @media print { joint-diagram .diagram-toolbar { display: none; } joint-diagram .diagram-canvas { height: 60rem; } }
+</style>

@@ -13,7 +13,7 @@ import sys
 from collections.abc import Iterable
 
 CONTENT_FILES = frozenset({"README.md"})
-CONTENT_PREFIXES = ("web/docs/", "web/marketing/")
+CONTENT_PREFIXES = ("web/docs/", "web/marketing/", "web/diagrams/")
 PUBLIC_INSTALLERS = frozenset(
     {
         "web/docs/public/install.sh",
@@ -188,6 +188,8 @@ def _path_scopes(path: str) -> frozenset[str]:
         return frozenset({"docs", "marketing_graphics"})
     if root == "web":
         subtree = remainder.partition("/")[0]
+        if subtree == "diagrams":
+            return frozenset({"docs", "marketing_graphics"})
         scope = WEB_SCOPES.get(subtree)
         if scope is None:
             raise ValueError(f"unowned web subtree: {path}")

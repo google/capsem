@@ -9,14 +9,18 @@
     "preview": "astro preview"
   },
   "dependencies": {
+    "@capsem/diagrams": "file:../diagrams",
     "@astrojs/svelte": "^9.0.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "astro": "^7.2.8",
     "svelte": "^5.56.8",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
+    "@tailwindcss/typography": "^0.5.20",
     "svelte-check": "^4.4.6",
     "typescript": "^5.9.3"
   },

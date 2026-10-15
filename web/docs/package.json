@@ -3,17 +3,17 @@
   "type": "module",
   "version": "0.1.0",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build && uv run --project ../../build_system --frozen python ../../build_system/scripts/web/check-docs-holding-build.py dist src/content/docs",
+    "dev": "astro dev --config astro.preview.config.mjs",
+    "build": "node --test tools/test-diagrams.mjs && astro build && uv run --project ../../build_system --frozen python tools/check-preview.py dist",
     "preview": "astro preview"
   },
   "dependencies": {
+    "@astrojs/markdown-remark": "7.3.1",
     "@astrojs/starlight": "^0.41.4",
     "@astrojs/starlight-tailwind": "^5.0.0",
+    "@capsem/diagrams": "file:../diagrams",
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.2.8",
-    "astro-mermaid": "^2.1.0",
-    "mermaid": "^11.16.1",
     "sharp": "^0.35.5",
     "tailwindcss": "^4.3.3"
   },

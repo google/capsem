@@ -11,6 +11,8 @@ on:
       - build_system/scripts/web/check-web-surface.sh
       - build_system/scripts/build/lib/exec_lock.sh
       - web/docs/**
+      - web/diagrams/**
+      - build_system/patches/**
 
 jobs:
   build:
@@ -52,5 +54,4 @@ jobs:
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
           SITE_URL: https://docs.capsem.org
-          OLD_ROUTE_URL: https://docs.capsem.org/getting-started/
         run: bash build_system/scripts/web/smoke-docs-site.sh

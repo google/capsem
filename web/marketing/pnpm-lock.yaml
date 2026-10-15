@@ -24,9 +24,18 @@ importers:
       '@astrojs/svelte':
         specifier: ^9.0.1
         version: 9.0.1(astro@7.3.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(jiti@2.7.0)(yaml@2.9.0))(esbuild@0.28.1)(jiti@2.7.0)(svelte@5.56.8)(typescript@5.9.3)(yaml@2.9.0)
+      '@capsem/diagrams':
+        specifier: file:../diagrams
+        version: file:../diagrams
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(vite@8.1.5(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))
+      '@xterm/addon-fit':
+        specifier: ^0.11.0
+        version: 0.11.0
+      '@xterm/xterm':
+        specifier: ^6.0.0
+        version: 6.0.0
       astro:
         specifier: ^7.2.8
         version: 7.3.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(jiti@2.7.0)(yaml@2.9.0)
@@ -40,6 +49,9 @@ importers:
       '@astrojs/check':
         specifier: ^0.9.9
         version: 0.9.10(prettier@3.9.6)(typescript@5.9.3)
+      '@tailwindcss/typography':
+        specifier: ^0.5.20
+        version: 0.5.20(tailwindcss@4.3.3)
       svelte-check:
         specifier: ^4.4.6
         version: 4.7.6(picomatch@4.0.5)(svelte@5.56.8)(typescript@5.9.3)
@@ -225,6 +237,9 @@ packages:
     resolution: {integrity: sha512-C3IfPvfvMXmlzBxaMPKFS1XiuV9pu2mC7YqkPk7PSvTgPZ8gbdASIpHpztDLvTTQjqZ0z1Ol8tK5X+V6XXC0wQ==}
     cpu: [x64]
     os: [win32]
+
+  '@capsem/diagrams@file:../diagrams':
+    resolution: {directory: ../diagrams, type: directory}
 
   '@capsizecss/unpack@4.0.1':
     resolution: {integrity: sha512-CuNiSqg7+e1cO/GjffyMOm5Tt2jUF9CWHHnvQ/UkqvtkGfHdgwEC0wpmq7fkN3gxwpRnrAN0WzO3vREKmNolMQ==}
@@ -589,6 +604,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@joint/core@4.3.3':
+    resolution: {integrity: sha512-cAOpWbeUZ1le9dIkWCIWNLkzJtCHbhkszJYklytMM1BnuLTVQW9ADuHRRVxT9HZHqye/NRgYtlYDmwgeSiNNFw==}
+
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
 
@@ -858,6 +876,11 @@ packages:
     resolution: {integrity: sha512-krXjAikiaFSPaK/FkAQT5UTx3VormQaiZ5hBFlJZ9UFQGB/rwg1MZIhHAG9smMQRTdyJxP6Qt5MwMtdyU5FWrA==}
     engines: {node: '>= 20'}
 
+  '@tailwindcss/typography@0.5.20':
+    resolution: {integrity: sha512-hwbzQuNUfcPvbegQFatVPl/MY/tcM9KLl963hQ5laJKPh81TEZ1+dNG9PirGvcaDBkp+BCshExAyKVPW91dozw==}
+    peerDependencies:
+      tailwindcss: '>=3.0.0 || >=4.0.0 || insiders'
+
   '@tailwindcss/vite@4.3.3':
     resolution: {integrity: sha512-yYU8cogLeSh/ms2jh8Fj7jaba/EWa7Ja6GoUqYZaraEuCI5YS6ms6ObZgjjedm+jm6XZjdNRWBpPP6Z86oOxcw==}
     peerDependencies:
@@ -915,6 +938,12 @@ packages:
 
   '@vscode/l10n@0.0.18':
     resolution: {integrity: sha512-KYSIHVmslkaCDyw013pphY+d7x1qV8IZupYfeIfzNA+nsaWHbn5uPuQRvdRFsa9zFzGeudPuoGoZ1Op4jrJXIQ==}
+
+  '@xterm/addon-fit@0.11.0':
+    resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
+
+  '@xterm/xterm@6.0.0':
+    resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
 
   acorn@8.17.0:
     resolution: {integrity: sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg==}
@@ -1048,6 +1077,11 @@ packages:
   css-what@7.0.0:
     resolution: {integrity: sha512-wD5oz5xibMOPHzy13CyGmogB3phdvcDaB5t0W/Nr5Z2O/agcB8YwOz6e2Lsp10pNDzBoDO9nVa3RGs/2BttpHQ==}
     engines: {node: '>= 6'}
+
+  cssesc@3.0.0:
+    resolution: {integrity: sha512-/Tb/JcjK111nNScGob5MNtsntNM1aCNUDipB/TkwZFhyDrrE47SOx/18wF2bbjgc3ZzCSKW1T5nt5EbFoAz/Vg==}
+    engines: {node: '>=4'}
+    hasBin: true
 
   csso@5.0.5:
     resolution: {integrity: sha512-0LrrStPOdJj+SPCCrGhzryycLjwcgUSHBtxNA8aIDxf0GLsRh1cKYhB00Gd1lDOS4yGH69+SNn13+TWbVHETFQ==}
@@ -1532,6 +1566,10 @@ packages:
     resolution: {integrity: sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==}
     engines: {node: '>=12'}
 
+  postcss-selector-parser@6.0.10:
+    resolution: {integrity: sha512-IQ7TZdoaqbT+LCpShg46jnZVlhWD2w6iQYAcYXfHARZ7X1t/UGhhceQDs5X0cGqKvYlHNOuv7Oa1xmb0oQuA3w==}
+    engines: {node: '>=4'}
+
   postcss@8.5.23:
     resolution: {integrity: sha512-g50586zr4bZmwFiTlflMu8E0bDTb5I5gertgwAKmsdUlTQIhZtunzUlD1WSzwcVWPoAVpsrA6vlfCD7oXvRwgg==}
     engines: {node: ^10 || ^12 || >=14}
@@ -1814,6 +1852,9 @@ packages:
         optional: true
       uploadthing:
         optional: true
+
+  util-deprecate@1.0.2:
+    resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
   vfile-message@4.0.3:
     resolution: {integrity: sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==}
@@ -2214,6 +2255,10 @@ snapshots:
   '@bruits/satteri-win32-x64-msvc@0.10.5':
     optional: true
 
+  '@capsem/diagrams@file:../diagrams':
+    dependencies:
+      '@joint/core': 4.3.3
+
   '@capsizecss/unpack@4.0.1':
     dependencies:
       fontkitten: 1.0.3
@@ -2459,6 +2504,8 @@ snapshots:
   '@img/sharp-win32-x64@0.35.5':
     optional: true
 
+  '@joint/core@4.3.3': {}
+
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
@@ -2670,6 +2717,11 @@ snapshots:
       '@tailwindcss/oxide-win32-arm64-msvc': 4.3.3
       '@tailwindcss/oxide-win32-x64-msvc': 4.3.3
 
+  '@tailwindcss/typography@0.5.20(tailwindcss@4.3.3)':
+    dependencies:
+      postcss-selector-parser: 6.0.10
+      tailwindcss: 4.3.3
+
   '@tailwindcss/vite@4.3.3(vite@8.1.5(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))':
     dependencies:
       '@tailwindcss/node': 4.3.3
@@ -2755,6 +2807,10 @@ snapshots:
       vscode-uri: 3.2.0
 
   '@vscode/l10n@0.0.18': {}
+
+  '@xterm/addon-fit@0.11.0': {}
+
+  '@xterm/xterm@6.0.0': {}
 
   acorn@8.17.0: {}
 
@@ -2946,6 +3002,8 @@ snapshots:
       source-map-js: 1.2.2
 
   css-what@7.0.0: {}
+
+  cssesc@3.0.0: {}
 
   csso@5.0.5:
     dependencies:
@@ -3367,6 +3425,11 @@ snapshots:
 
   picomatch@4.0.5: {}
 
+  postcss-selector-parser@6.0.10:
+    dependencies:
+      cssesc: 3.0.0
+      util-deprecate: 1.0.2
+
   postcss@8.5.23:
     dependencies:
       nanoid: 3.3.18
@@ -3669,6 +3732,8 @@ snapshots:
       node-fetch-native: 1.6.7
       ofetch: 1.5.1
       ufo: 1.6.4
+
+  util-deprecate@1.0.2: {}
 
   vfile-message@4.0.3:
     dependencies:

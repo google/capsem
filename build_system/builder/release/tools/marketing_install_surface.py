@@ -16,8 +16,7 @@ def validate_marketing_install_surface(
 ) -> None:
     required = (
         f"curl -fsSL {install_script_url} | sh",
-        "<Hero />",
-        "<CTA",
+        "<Hero",
     )
     if any(token not in surface for token in required) or "Available Summer 2026" in surface:
         raise SystemExit("marketing site does not expose the supported install command")
@@ -41,7 +40,7 @@ def validate_rendered_marketing_install_surface(
     required = (
         f"curl -fsSL {install_script_url} | sh",
         STABLE_PACKAGE_URL,
-        "Download Package",
+        "Download",
     )
     if any(token not in surface for token in required) or "Available Summer 2026" in surface:
         raise SystemExit("marketing site does not expose the supported install command")

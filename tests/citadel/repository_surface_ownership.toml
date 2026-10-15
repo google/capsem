@@ -233,6 +233,18 @@ debt = "tests/citadel/repository_path_debt.toml"
 reason = "The desktop dashboard moves intact and remains embedded by the Tauri app."
 
 [[surface]]
+id = "web-diagrams"
+state = "retained"
+current = ["web/diagrams/"]
+targets = ["web/diagrams/"]
+lint = ["fast.audit.source-syntax", "fast.web.frontend-verify"]
+tests = ["docs and marketing builds", "web/docs/tools/test-diagrams.mjs", "browser diagram controls and layout"]
+ci = ["fast-gate", "docs-build", "site-build", "pr-gate"]
+coverage = "not-applicable: shared SVG viewer is build- and browser-verified"
+debt = "tests/citadel/repository_path_debt.toml"
+reason = "Both public sites import the same JointJS viewer and must rebuild when it changes."
+
+[[surface]]
 id = "web-docs"
 state = "migrating"
 current = ["web/docs/"]

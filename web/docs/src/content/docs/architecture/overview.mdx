@@ -1,0 +1,65 @@
+---
+title: System architecture
+description: How do Capsem's components work together?
+---
+
+import Diagram from '@capsem/diagrams/Diagram.astro';
+import { systemOverview } from '../../../lib/overview-diagrams';
+
+Capsem runs agents and tools in OCI containers inside Linux VMs on your computer.
+A shared service manages the VMs; separate host workers run each VM, inspect
+its traffic, and store its records.
+
+## Control and data
+
+<Diagram diagram={systemOverview} />
+
+## Create and operate a VM
+
+The CLI, TUI, Capsem UI, and SDKs send VM requests through the gateway.
+The gateway authenticates the caller; the service selects the VM and sends
+typed commands to its owner. Clients cannot connect to VM-owner control sockets.
+
+For creation, the service admits the image and settings, prepares the VM's
+storage, and starts its workers. The VM owner boots Linux and connects guest
+helpers over vsock, a host–VM transport. Terminal input, commands, and file
+operations follow these channels. Image creation returns after the workload
+reports readiness.
+
+## Process traffic
+
+Guest networking sends supported HTTP, HTTPS, and DNS traffic to the VM's
+[security engine](/architecture/security-engine/). It parses traffic, evaluates
+rules, requests authorized credentials, and forwards allowed operations over
+service-granted connections. Required audit records go to the log writer
+before the operation proceeds.
+
+Private networks connect guest interfaces through a separate switch process.
+Published ports use a separate relay. Neither path passes through HTTP
+inspection. See the [network boundaries](/architecture/security/#network-connections).
+
+The standalone model proxy uses the security engine without creating a VM.
+It exposes a service-selected model provider through a revocable proxy lease.
+
+## State and ownership
+
+| Scope | Owners and state |
+| --- | --- |
+| Shared | Service, gateway, credential store, installed runtime assets, image cache, and settings. |
+| Per VM | VM owner, security engine, log writer, native MCP workers, guest filesystem, and ledger. |
+| Per private network | Switch process, member cables, and network audit records. |
+| Per published connection | Granted host and guest connections passed to the VM's expose relay. |
+
+Named VMs retain their files when stopped. Suspending also saves running VM
+state; forking copies a VM's files into another persistent VM.
+A fork starts programs afresh. The log writer owns ledger access for both live
+and retained VMs.
+
+## Stop and retire
+
+The service revokes the original worker generation and waits for its processes
+to exit before retiring its resources. Managed SDK jobs renew a finite lease;
+lost renewal lets the service clean up after a client crash.
+
+The [security architecture](/architecture/security/) describes process
+permissions, grant authentication, revocation, and the trusted components.

@@ -1,0 +1,11 @@
+---
+import { SECURITY as S, SECURITY_DIAGRAM, DOCS } from "../lib/data";
+import Diagram from '@capsem/diagrams/Diagram.astro';
+---
+<section class="security-section section-space bg-surface" aria-labelledby="security-title">
+  <div class="content-shell">
+  <div class="prose-brand"><h2 id="security-title">{S.title}<br /><span class="soft-heading">{S.subtitle}</span></h2><p class="section-description">{S.description}</p></div>
+  <Diagram diagram={SECURITY_DIAGRAM} />
+  <a class="text-link" href={DOCS.security}>{S.link}<span aria-hidden="true">↗</span></a>
+  </div>
+</section>

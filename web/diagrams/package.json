@@ -1,0 +1,13 @@
+{
+  "name": "@capsem/diagrams",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./Diagram.astro": "./Diagram.astro",
+    "./types": "./types.ts"
+  },
+  "dependencies": {
+    "@joint/core": "4.3.3"
+  }
+}

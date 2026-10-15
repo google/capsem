@@ -1,30 +1,19 @@
 <script lang="ts">
+  import { SITE } from "$lib/data";
+  import Download from "./Download.svelte";
   import InstallCommand from "./InstallCommand.svelte";
+  import HeroDemo from "./HeroDemo.svelte";
 </script>
-
-<section class="relative pt-32 pb-20 md:pt-44 md:pb-32 overflow-hidden">
-  <div class="absolute inset-0 bg-[linear-gradient(to_right,#e5e7eb_1px,transparent_1px),linear-gradient(to_bottom,#e5e7eb_1px,transparent_1px)] bg-[size:4rem_4rem] opacity-40"></div>
-  <div class="absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_50%_-20%,var(--color-accent-glow),transparent)]"></div>
-
-  <div class="relative mx-auto max-w-6xl px-6">
-    <div class="max-w-3xl">
-      <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight text-heading leading-[1.08]">
-        <span class="gradient-text">CAPSEM</span><br />
-        The fastest way to<br />
-        ship with AI securely.
-      </h1>
-
-      <p class="mt-6 text-lg md:text-xl text-body max-w-xl leading-relaxed">
-        A Rust-powered hypervisor that sandboxes every AI coding agent
-        in its own air-gapped Linux VM. See everything, control everything.
-      </p>
-
-      <div class="mt-10 flex flex-col gap-4 max-w-lg">
+<section class="hero section-space" aria-labelledby="hero-title">
+  <div class="content-shell grid items-stretch gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:gap-12">
+    <div class="flex flex-col gap-8 lg:gap-0">
+      <p class="brand-gradient w-fit text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">{SITE.name.toUpperCase()}</p>
+      <div class="flex flex-1 items-center py-4 lg:py-10"><h1 id="hero-title" class="text-3xl leading-[1.1] font-bold tracking-tight sm:text-4xl lg:text-5xl">{SITE.tagline}</h1></div>
+      <div class="space-y-4">
+        <Download />
         <InstallCommand />
-        <div class="flex flex-wrap gap-4">
-          <a href="#features" class="btn-outline">Learn More</a>
-        </div>
       </div>
     </div>
+    <HeroDemo />
   </div>
 </section>

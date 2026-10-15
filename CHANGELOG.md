@@ -33,6 +33,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP settings refresh preserves the builtin admitted before VM-owner
   confinement, without reopening its host executable path.
 
+### Documentation
+
+- Use a shared JointJS viewer across all published documentation diagrams and the marketing security diagram; remove the production Mermaid renderer.
+
+- Replace security architecture diagrams with JointJS Community, zoom and pan controls, and accessible connection tables.
+
+- Give security architecture diagrams a wider layout by removing the page sidebar.
+
+- Explain how to manage multiple VMs and navigate their terminals in the TUI.
+
+- Explain Capsem’s main components and request flow in the introduction with a vertical system diagram.
+
+- Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
+### Changed
+
+- Fixed download dialog dismissal and close control; gave each performance card one consistent accent.
+
+- Added platform-aware direct installer downloads, an alternate-platform dialog,
+  navigation matching the documentation sections, aligned hero content and brand-gradient headings.
+
+- Integrated the approved interactive terminal hero with chapter playback and refined marketing typography.
+
+- Colorized the marketing detection rule and linked its authoring guide; simplified
+  environment performance copy, removed redundant hero text, and highlighted parallel agent use.
+
+- Unified marketing layout with Tailwind Typography and semantic theme tokens; added
+  designed speed cards and interaction, policy, and password-file detection examples.
+
+- Applied brand colors to marketing headings and performance figures, and restored the colored logo.
+
+- Grouped included marketing tools into Code, Tools, and MCP tools with brand colors.
+
+- Added a Codex terminal illustration in the Capsem shell and a list of bundled
+  tools and MCP tools to the marketing homepage.
+
+- Restored the marketing brand palette and grid hero; added activity, CEL rules,
+  and Sigma detection panels to the control section.
+
+- Rebuilt the marketing homepage with a light single-page design, a scripted
+  workspace demo, sourced performance figures, and concise security and
+  observability sections. Removed the duplicate landing page and FAQ.
+
 ### Security
 
 - Invalidly encoded explicit gateway URLs fail closed instead of selecting a

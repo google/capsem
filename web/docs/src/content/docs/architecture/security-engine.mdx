@@ -1,0 +1,170 @@
+---
+title: Security engine
+description: How does the security engine evaluate operations, handle credentials, and record decisions?
+---
+
+import Diagram from '@capsem/diagrams/Diagram.astro';
+import { securityEngine } from '../../../lib/overview-diagrams';
+
+The security engine runs in `capsem-proxy`, a host subprocess assigned to one VM. It is responsible for:
+
+- **Network analysis:** decrypt HTTPS and identify the destination, HTTP request,
+  model call, or MCP tool call being made.
+- **Security decisions:** check those facts against rules and detections before
+  forwarding traffic. Refuse blocked requests and requests awaiting approval.
+- **Credentials:** replace credential references with the real credentials
+  assigned to the VM and destination, after the request is allowed.
+- **Audit records:** remove observed secrets from the recorded data and send the
+  request, decision, and detections to the log writer.
+
+It sits inside the [per-VM process group](/architecture/security/), outside the VM's hardware boundary.
+
+## Event flow
+
+<Diagram diagram={securityEngine} />
+
+## Responsibilities
+
+| Component | Role | Boundary |
+| --- | --- | --- |
+| Network analysis engine | Terminate TLS, parse requests and responses, and identify HTTP, DNS, MCP, and model facts. | Produces `SecurityEvent` data for evaluation; does not choose policy or inject credentials. |
+| Preprocess plugins | Prepare facts before rule evaluation. The credential broker identifies credentials, records their references, and marks requests needing credential substitution. | Rules inspect the prepared event. |
+| Rules | Evaluate CEL conditions against typed event facts; record matches and select enforcement. | Defaults, user settings, and corp rules compile into one `SecurityRuleSet`. Corp constraints take precedence. |
+| Postprocess plugins | Inspect or change the event after rule evaluation; they may require approval or block an otherwise allowed operation. | Decisions only tighten: `allow` → `ask` → `block`. A plugin cannot undo a block. |
+| Runtime request preparation | Restore real credentials into an allowed upstream request. | Uses credentials assigned to the VM and destination; refused operations are not forwarded. |
+| Logging plugins | Prepare a separate event for storage, replacing observed secrets with references or redacted values. | Real credentials restored for an upstream request do not belong in its stored event. |
+| Log writer | Store events, matched rules, decisions, plugin execution evidence, and body records. | A separate confined process owns SQLite and archive access. The engine sends typed records; it does not open `session.db`. |
+
+`ask` does not mean allow: the operation cannot proceed until approval is
+resolved. If a required audit record is refused, the operation is refused too.
+Network connection and probe events require an explicit allow rule.
+
+## Protocol parsing and HTTPS inspection
+
+Guest helpers send traffic over vsock to the network analysis engine. It parses
+DNS questions, HTTP requests and responses, model API messages, and MCP messages
+into fields that rules and plugins can inspect.
+
+HTTPS inspection uses a **man-in-the-middle (MITM) certificate**:
+
+1. The VM trusts the Capsem certificate authority (CA). Its certificate bundle
+   is also mounted read-only into the OCI container, with certificate environment
+   variables pointing tools to that bundle.
+2. The engine reads the hostname from the TLS handshake and generates a
+   certificate for that hostname, signed by the Capsem CA. The client establishes
+   TLS with the engine, which can then read the HTTP request.
+3. After policy allows the request, the engine obtains a service-admitted connection to the real
+   upstream and establishes a separate TLS session. It checks the upstream certificate against the hostname and its
+   public CA trust store.
+
+The engine can therefore inspect the method, URL, headers, and body before
+forwarding a request, and inspect the response before returning it. The Capsem
+CA certificate is used on the VM side; it does not replace upstream certificate
+validation. A client that rejects the Capsem CA or pins the upstream certificate
+cannot use this intercepted TLS connection.
+
+## Model and MCP parsing and logging
+
+HTTP parsing identifies the request. Model and MCP parsers identify what that
+request does, so rules can inspect a model call or tool call rather than only
+its URL.
+
+| Traffic | Parsed facts | Recorded data |
+| --- | --- | --- |
+| Model API | Provider, model, request and response content, and tool calls. Parsers handle supported JSON, streaming SSE, and model WebSocket messages. | Model calls, tool calls and results, available token usage, timing, and completion status. |
+| MCP | JSON-RPC method, server, tool name, arguments, result, or error. | Tool calls and results, tool-list operations, timing, and outcome. |
+
+Trace IDs relate traffic, model or MCP records, and security decisions for an
+operation. The engine sends sanitized records to the
+log writer, which stores them in `session.db` and its body archive. Matched rules,
+detections, and plugin execution evidence are recorded alongside the operation.
+Restoring a real credential for an allowed upstream request is separate from
+preparing its stored record.
+
+## What a security event contains
+
+A `SecurityEvent` combines an operation type with the facts needed to evaluate
+it. HTTP events carry HTTP fields; model and MCP events add their own fields.
+Plugins can enrich those facts and record detections before the operation is
+forwarded.
+
+This illustrative excerpt shows an evaluated HTTP request. Unused fields are
+omitted; it is not a complete event or an export-format contract.
+
+```json
+{
+  "event_type": "http.request",
+  "trace_id": "example-request-1",
+  "http": {
+    "host": "example.com",
+    "method": "GET",
+    "path": "/health"
+  },
+  "decision": { "effective": "allow" },
+  "detections": [],
+  "plugin_executions": [],
+  "credential_ref": null
+}
+```
+
+Rules can match fields such as `http.host` and `http.method`. The effective
+decision is `allow`, `ask`, or `block`; detections identify matches and their
+severity. Plugin execution records identify the plugin, stage, whether it
+applied, and how long it took. `credential_ref` identifies a brokered credential
+without containing its secret.
+
+## Rule and detection inputs
+
+| Input | Contents | Loaded through |
+| --- | --- | --- |
+| Rule file (TOML) | CEL conditions, actions such as `allow`, `ask`, or `block`, priorities, and optional detection levels. | `rule_files.enforcement` in user settings or corp configuration. |
+| Detection file (Sigma YAML) | Selections, a condition, and a detection level over Capsem security events. Optional `capsem.action` can also request enforcement. | `rule_files.sigma` in user settings or corp configuration. |
+
+Both files compile into the same `SecurityRuleSet`, alongside built-in defaults
+and inline rules. Corp constraints take precedence. Relative file paths are
+resolved from the configuration file's directory. A detection records a match
+and its level; it does not automatically block the operation.
+
+Write rules with [Enforce security policy](/guides/enterprise/enforce-security-policy/) and
+[Write detection rules](/guides/enterprise/write-detection-rules/). Use the
+[CEL syntax reference](/reference/cel/) and [Sigma syntax reference](/reference/sigma/)
+for supported expressions, fields, and file formats.
+
+## Enforcement and observation
+
+| Event source | What the engine can do |
+| --- | --- |
+| Proxied requests, responses, and model messages | Decide before forwarding to the upstream or caller. |
+| Host-requested command execution and file operations | Decide at the operation's boundary before dispatch. |
+| Guest process audit records | Record and detect an operation that already happened. An audit record cannot stop it retroactively. |
+| Standalone model API | Apply the same model policy, credential handling, and logging without launching a VM. It sees only requests sent to this endpoint. |
+
+Private VM networks and exposed ports use separate relays; they do not pass
+through HTTP inspection. See [network connections](/architecture/security/#network-connections).
+
+## Worker permissions
+
+The worker enters its sandbox with no filesystem path grants. It receives
+policy as authenticated bytes and uses granted channels for credentials, MCP,
+upstream connections, and ledger records. It cannot open the credential store,
+ledger files, another VM's controls, or an arbitrary upstream socket.
+
+The service selects upstream destinations and owns credential storage.
+Each capability belongs to the worker's current generation; replacement and
+revocation cannot transfer it to a new worker. See the
+[process sandboxing table](/architecture/security/#roles-and-sandboxing-rules)
+for the macOS and Linux mechanisms.
+
+## Credentials and policy changes
+
+A stored connection is separate from permission for a VM to use it. Explicit
+credential grants name the VM's current owner generation and allowed
+capabilities. The broker checks both the runtime's acknowledged policy and
+current policy before issuing credentials. Stopping or retiring the runtime
+fences its grants; a resumed VM must bind valid authority to its new runtime.
+
+Policy reloads install one immutable revision across request routing, plugins,
+provider identity, response parsing, and DNS. A request cannot mix permission
+from one revision with credentials from another. See the
+[credentials contract](/reference/credentials/) and
+[enforcement rules](/reference/enforcement-rules/).
