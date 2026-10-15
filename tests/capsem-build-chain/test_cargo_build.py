@@ -1,10 +1,10 @@
 """Verify cargo build produces all expected daemon binaries."""
 
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 from helpers.bounded import bounded
 
 pytestmark = pytest.mark.build_chain

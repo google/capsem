@@ -38,6 +38,11 @@ before calling it qualified, and retain the exact-source merge/release gates.
 The bounded wrapper provides timeout and cleanup without a default machine
 lease; reserve `--machine-lease` for explicitly isolated qualification work.
 
+Focused Ruff commands must select `--config build_system/pyproject.toml`, as
+the gate does. Auto-discovery from a root-level test used a different Python
+version and reversed `tomllib` import grouping, passing locally then failing
+the canonical source phase.
+
 | Command | What | VM? |
 |---------|------|-----|
 | `just fast-test` | Incomplete source feedback only | No |

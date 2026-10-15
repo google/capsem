@@ -55,7 +55,7 @@ def test_the_before_state_is_fetched_over_the_release_egress() -> None:
 
 
 def test_public_packages_may_precede_the_first_runtime(tmp_path: Path) -> None:
-    """The deployed pre-0.7 graph has packages/profiles and no runtime yet."""
+    """The deployed pre-0.7 graph has packages and profiles but no runtime yet."""
     manifest = tmp_path / "manifest.json"
     payload = json.dumps({
         "channel": "stable",
