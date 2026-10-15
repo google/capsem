@@ -158,7 +158,7 @@ async fn run(
         ensure!(request_id > previous_request, "MCP spawn request identity replayed");
         previous_request = request_id;
         let Some(slot) = peers.get_mut(peer_index as usize) else {
-            respond(&sender, McpSpawnRecord::Denied { request_id }, None).await?;
+            respond(&sender, &receiver, McpSpawnRecord::Denied { request_id }, None).await?;
             continue;
         };
         if let Some(peer) = slot.take() {
@@ -174,7 +174,7 @@ async fn run(
             Ok(launched) => launched,
             Err(error) => {
                 tracing::debug!(%error, "MCP builtin launch refused");
-                respond(&sender, McpSpawnRecord::Denied { request_id }, None).await?;
+                respond(&sender, &receiver, McpSpawnRecord::Denied { request_id }, None).await?;
                 continue;
             }
         };
@@ -197,19 +197,43 @@ async fn run(
                 failures.push(format!("{error:#}"));
                 return Err(error);
             }
-            respond(&sender, McpSpawnRecord::Denied { request_id }, None).await?;
+            respond(&sender, &receiver, McpSpawnRecord::Denied { request_id }, None).await?;
             continue;
         }
-        respond(&sender, McpSpawnRecord::Granted { request_id }, Some(&control)).await?;
+        tokio::select! {
+            biased;
+            () = authority.revoked() => return Ok(()),
+            () = &mut closed => return Ok(()),
+            result = respond(&sender, &receiver, McpSpawnRecord::Granted { request_id }, Some(&control)) => result?,
+        }
     }
 }
 
-async fn respond(sender: &Sender, response: McpSpawnRecord, socket: Option<&UnixStream>) -> Result<()> {
+async fn respond(
+    sender: &Sender,
+    receiver: &Receiver,
+    response: McpSpawnRecord,
+    socket: Option<&UnixStream>,
+) -> Result<()> {
     let descriptors: Vec<_> = socket.into_iter().map(AsRawFd::as_raw_fd).collect();
-    tokio::time::timeout(
-        STARTUP_TIMEOUT,
-        sender.send(&encode_spawn_record(response)?, &descriptors),
-    )
+    ensure!(
+        descriptors.len() == response.expected_descriptor_count(),
+        "MCP spawn response descriptor mismatch"
+    );
+    tokio::time::timeout(STARTUP_TIMEOUT, async {
+        sender.send(&encode_spawn_record(response)?, &descriptors).await?;
+        if let McpSpawnRecord::Granted { request_id } = response {
+            // Sending SCM_RIGHTS does not establish receiver ownership on
+            // Darwin. Retain control until this exact request is adopted.
+            let receipt = receiver.recv().await?;
+            ensure!(receipt.fds.is_empty(), "MCP adoption receipt carried descriptors");
+            ensure!(
+                decode_spawn_record(&receipt.bytes)? == McpSpawnRecord::Adopted { request_id },
+                "MCP adoption receipt identity or direction mismatch"
+            );
+        }
+        Ok::<_, anyhow::Error>(())
+    })
     .await
     .context("MCP spawn response deadline")??;
     Ok(())

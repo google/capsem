@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Native MCP handoffs retain connected sockets until the receiving worker
+  confirms adoption, preventing intermittent initialization failures on macOS.
+
 - Rust API crate packaging declares its crypto dependency version for registry
   publication.
 
