@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Added platform-aware direct installer downloads, an alternate-platform dialog,
+  navigation matching the documentation sections, aligned hero content and brand-gradient headings.
+
 - Integrated the approved interactive terminal hero with chapter playback and refined marketing typography.
 
 - Colorized the marketing detection rule and linked its authoring guide; simplified

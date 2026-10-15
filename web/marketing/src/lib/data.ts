@@ -20,11 +20,22 @@ export const DOCS = {
   sdk: `${SITE.docs}/sdk/`,
 } as const;
 export const NAV_LINKS = [
-  { label: "Get started", href: DOCS.start },
-  { label: "Security", href: DOCS.security },
-  { label: "Enterprise", href: DOCS.enterprise },
+  { label: "Getting started", href: `${SITE.docs}/getting-started/intro/` },
+  { label: "Guides", href: `${SITE.docs}/guides/` },
+  { label: "Architecture", href: `${SITE.docs}/architecture/overview/` },
   { label: "SDK", href: DOCS.sdk },
+  { label: "Reference", href: `${SITE.docs}/reference/` },
 ] as const;
+export const DOWNLOAD = {
+  title: "Download Capsem", other: "Other downloads", close: "Close downloads",
+  choose: "Choose your platform",
+  manifest: "https://release.capsem.org/assets/stable/manifest.json",
+  packages: [
+    { platform: "macos", architecture: "arm64", label: "macOS", detail: "Apple Silicon · .pkg", url: "https://github.com/google/capsem/releases/download/v0.6.6/Capsem-0.6.6.pkg" },
+    { platform: "linux", architecture: "amd64", label: "Linux", detail: "x86_64 · .deb", url: "https://github.com/google/capsem/releases/download/v0.6.6/Capsem_0.6.6_amd64.deb" },
+    { platform: "linux", architecture: "arm64", label: "Linux", detail: "ARM64 · .deb", url: "https://github.com/google/capsem/releases/download/v0.6.6/Capsem_0.6.6_arm64.deb" },
+  ],
+} as const;
 export const UI = {
   download: "Download", source: "GitHub", copy: "Copy command", copied: "Copied", copyFailed: "Select and copy the command",
   openMenu: "Open menu", closeMenu: "Close menu", skip: "Skip to content",
