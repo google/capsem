@@ -102,6 +102,7 @@ pub fn confine(policy: &Policy) -> io::Result<()> {
 /// Prove that a descriptor-only worker lost ambient authority before it
 /// advertises readiness. A missing endpoint or executable is not denial proof.
 pub fn attest_descriptor_only() -> io::Result<()> {
+    use std::os::unix::process::CommandExt as _;
     fn denied(result: io::Result<()>, operation: &str) -> io::Result<()> {
         match result {
             Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(()),
@@ -117,7 +118,9 @@ pub fn attest_descriptor_only() -> io::Result<()> {
         "outbound connect",
     )?;
     denied(
-        std::process::Command::new("/usr/bin/true").status().map(|_| ()),
+        // Test exec itself, without a spawn path requiring unrelated runtime
+        // facilities. If exec succeeds, this worker cannot publish Ready.
+        Err(std::process::Command::new("/usr/bin/true").exec()),
         "process execution",
     )?;
     let parent = super::process::parent_process_id().ok_or_else(|| io::Error::other("worker parent unavailable"))?;

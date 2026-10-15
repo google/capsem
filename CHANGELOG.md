@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Native MCP startup probes execution confinement directly before readiness,
+  without spawning another process to establish the denial.
+
 - VM-owner help and version commands work without a running service or an
   inherited worker grant.
 

@@ -1,5 +1,31 @@
 use super::*;
 
+// SAFETY: this test-only entry handles explicit isolated probes before libtest
+// creates its runner thread. Older Landlock ABIs require native single-threaded
+// startup, exactly as production workers do. Ordinary test runs return here.
+#[used]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+static MCP_PROBE_ENTRY: extern "C" fn() = run_native_probe;
+
+extern "C" fn run_native_probe() {
+    if std::env::var_os("MCP_SANDBOX_PROBE_ROLE").is_some() {
+        mcp_denial_child();
+        std::process::exit(0);
+    }
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("MCP_FORK_PROBE_ROLE").is_some() {
+        mcp_fork_denial_child();
+        std::process::exit(0);
+    }
+}
+
+#[test]
+fn descriptor_attestation_refuses_an_unconfined_process() {
+    let error = attest_descriptor_only().unwrap_err();
+    assert!(error.to_string().contains("retained ambient directory read"));
+}
+
 #[test]
 fn mcp_roles_deny_ambient_seatbelt_authority() {
     for role in [Role::McpAggregator, Role::McpBuiltin, Role::McpExternal] {
@@ -97,6 +123,8 @@ fn mcp_denial_child() {
     let port: u16 = std::env::var("MCP_SANDBOX_PROBE_PORT").unwrap().parse().unwrap();
     let mut granted = UnixStream::from(super::super::super::fd::duplicate(std::io::stdin().as_fd()).unwrap());
     let parent = super::super::super::process::parent_process_id().unwrap();
+    #[cfg(target_os = "linux")]
+    assert_eq!(std::fs::read_dir("/proc/self/task").unwrap().count(), 1);
     confine(&Policy::new(role)).unwrap();
     attest_descriptor_only().unwrap();
     assert!(std::fs::read(&secret).is_err(), "{role:?} read another session");
@@ -146,6 +174,7 @@ fn mcp_fork_denial_child() {
         "builtin" => Role::McpBuiltin,
         _ => panic!("unknown fork probe role"),
     };
+    assert_eq!(std::fs::read_dir("/proc/self/task").unwrap().count(), 1);
     confine(&Policy::new(role)).unwrap();
     assert_eq!(
         std::thread::spawn(|| 37).join().unwrap(),
