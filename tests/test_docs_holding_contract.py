@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import importlib
 import json
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 from capsem_builder.gate.tools.web import check_docs_holding_build as DOCS_HOLDING_BUILD
 from helpers.workflow_contract import workflow_reachable_text
 
@@ -187,7 +187,14 @@ def test_docs_source_builds_the_holding_graph_without_deleting_the_manual() -> N
         "astro build && uv run --project ../../build_system --frozen python "
         "../../build_system/scripts/web/check-docs-holding-build.py dist src/content/docs"
     )
-    assert len(detailed_sources) == 49
+    # Preserve the original manual, while allowing approved rebuild pages.
+    # A total count rejects additions and can miss deletion plus replacement.
+    baseline = json.loads(
+        (PROJECT_ROOT / "tests/fixtures/docs/manual-holding-sources.json").read_text()
+    )
+    assert len(baseline) == 49
+    original_sources = {DOCS_ROOT / "src/content/docs" / path for path in baseline}
+    assert original_sources <= set(detailed_sources)
     assert DOCS_ROOT / "src" / "content" / "docs" / "index.mdx" in detailed_sources
     assert (
         DOCS_ROOT / "src" / "content" / "docs" / "architecture" / "service-api.md"
