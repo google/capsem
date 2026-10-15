@@ -312,10 +312,17 @@ error handling and cleanup belong in reference or a task-specific guide.
 Local onboarding should not ask users to find gateway URLs or copy tokens.
 Track missing SDK ergonomics as bugs; flag dependent examples as drafts rather
 than claiming they work before those bugs are fixed.
+Documentation work does not authorize implementing those SDK fixes. Keep basic
+examples free of connection setup; use an existing bug or file one for a missing
+default. Keep explicit remote connection details in reference and integration
+guides, where the reader needs them.
 
-Link SDK workflows to `guides/sdk/`. The approved TODO topics are running a
-benchmark and setting up agents with API keys and inspecting their logs. Keep
-export behavior TODO until its format and contract are agreed.
+Link application integration to `guides/developers/integrate-the-sdk/`, VM
+configuration to `guides/enterprise/configure-a-vm/`, and investigation to
+`guides/enterprise/investigate-a-vm/`. Keep language API references under
+`sdk/`. Inspect AI and the future UI security workflow remain explicit TODOs
+until their implementations are available. Document only actual export
+contracts; a body archive export is not a complete telemetry export.
 Generate API reference separately from public SDK interfaces, types, and
 docstrings/comments, including hand-written facades as well as generated
 operations. Do not generate or overwrite the getting-started README, and do

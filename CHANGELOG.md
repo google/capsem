@@ -597,6 +597,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- SDK onboarding shares handwritten Python, TypeScript, and Rust package READMEs
+  through language tabs, with separately generated public interface references.
+
+
 - Ledger staging returns SQLite pages after each flush, caps each process's
   file-backed map at 32 MiB, and publishes sync-completed body indexes in
   bounded transactions without replaying block metadata. Busy sessions no

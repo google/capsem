@@ -1,147 +1,47 @@
-# Capsem Rust SDK
+## About
 
-Typed async clients for the HTTP gateway. Supply its URL and bearer token
-explicitly; the SDK does not discover local services or run host commands.
+Use the Capsem SDK to create a VM, run commands, and inspect its activity from
+your application.
 
-`hv.with_managed(options, callback).await` creates one unnamed ephemeral VM,
-renews its finite service lease, and awaits original-generation cleanup before
-returning the callback result or error. The callback receives a VM and a
-`CancellationToken`. Renewal failure and expiry stop the callback and cancel
-that token. Names are refused before any request; existing and forked handles
-keep their ordinary lifetime.
+## Installation
 
-```rust,no_run
-use capsem_sdk::{CreateOptions, Hypervisor, Result};
-async fn owned_job(hv: &Hypervisor) -> Result<()> {
-    hv.with_managed(CreateOptions::default(), |vm, cancel| async move {
-        tokio::select! {
-            result = vm.exec("echo hello", Some(60)) => { result?; Ok(()) },
-            () = cancel.cancelled() => Err(capsem_sdk::Error::Cancelled),
-        }
-    }).await
-}
+Add the SDK to your Rust project:
+
+```sh
+cargo add capsem-sdk
 ```
 
-Dropping the caller future signals cancellation while an owned task continues
-cleanup on the running Tokio runtime. A runtime or process crash ends renewal;
-the service owns expiry. Uncertain create replies are closed without replay.
-`Error::ManagedCleanup { session, .. }` retains a redacted recovery handle:
-call `session.close(outcome).await` to retry explicitly. A failed close never
-claims closure and never automatically retries the mutation.
+[Install Capsem](https://docs.capsem.org/getting-started/installation/) and
+start it on your computer before using the SDK.
 
-`hv.images().list(false).await?` lists registry catalog entries with compatible
-pins and service-owned disk observations (`unknown`, `missing`, `partial`,
-`ready`). Pass `true` to refresh the registry catalog. Disk readiness remains
-separate from image admission. `hv.images().pull("code", None).await?`
-prefetches without creating a VM; an optional redacted `Registry` applies only
-to that call. The borrowed resource uses the hypervisor's HTTP deadline and
-connection pool. Dropping a request future cancels it; mutations are not retried.
+## Usage
 
-`hv.connections()` provides typed list, Google authorization, authorization
-poll/cancel, connection status and disconnect calls. `vm.credential_grants()`
-provides explicit create/list/revoke calls for that VM's canonical session.
-Keep the caller-supplied request UUID when explicitly retrying the same consent
-or grant mutation. Grant creation requires the current ownership generation;
-connecting or reconnecting never grants access implicitly. The SDK does not
-launch a browser or poll automatically, and `revoking` means cleanup remains
-pending. Errors retain the HTTP status; `error.credential_code()` reads a known
-broker refusal code when supplied by the service.
+Once Capsem is running, create a VM and run a command inside it. Use an unused
+VM name in place of `sdk-demo`.
 
-These client methods implement the approved 0.7 wire contract. Live service
-route activation and native AGY handoff are still being integrated; the
-client tests alone do not qualify either behavior.
+Use these statements inside your application's async context returning a `Result`.
 
-```rust,no_run
-use capsem_sdk::{CreateOptions, Hypervisor, LogOptions, PortOptions, Result, TriageOptions, VmSelector};
-use capsem_sdk::models::HostLogSource;
-use std::collections::HashMap;
-use std::time::Duration;
+```rust,ignore
+use capsem_sdk::{CreateOptions, Hypervisor};
 
-async fn example(url: &str, token: &str) -> Result<()> {
-    let hv = Hypervisor::new(url, token)?.with_timeout(Duration::from_secs(120))?;
-    println!("{:?}", hv.info().await?); // health, version, assets, updates
-    let network = hv.networks().create("private").await?;
-    let vm = hv.create(CreateOptions {
-        name: Some("work".into()), cpus: Some(4), memory: Some(8),
-        networks: vec![network.clone()],
-        env: Some(HashMap::from([("MODE".into(), "preview".into())])),
-        image: Some("docker.io/library/nginx:alpine".into()),
-        command: vec!["nginx".into(), "-g".into(), "daemon off;".into()],
-        ..Default::default()
-    }).await?;
-    let port = vm.ports().open_with(80, PortOptions { host: 0, authenticate: true }).await?;
-    println!("submit the bootstrap token by POST to {}", port.url.as_deref().unwrap_or(""));
-    hv.networks().logs(&network, Default::default()).await?;
-    let result = vm.exec("echo hello", Some(60)).await?;
-    println!("{} (exit {})", result.stdout.data, result.exit_code);
-    vm.files().write("/workspace/hello.txt", b"hello\n".to_vec()).await?;
-    let contents = vm.files().read("/workspace/hello.txt").await?;
-    assert_eq!(contents, b"hello\n");
-    vm.files().list("", None).await?;
-    vm.stats().details().await?;
-    vm.persist("saved-workspace").await?;
-    hv.debug().triage(TriageOptions { vm_id: vm.id().map(str::to_owned), since: Some("1h".into()), ..Default::default() }).await?;
-    let server = hv.mcp().get("filesystem").await?;
-    server.tools().list().await?;
-    hv.log(HostLogSource::Service, LogOptions { tail: Some(100), ..Default::default() }).await?;
-    vm.ports().close(&port).await?;
-    vm.stop().await?;
-
-    let existing = hv.vm(VmSelector::Name("work".into()))?;
-    println!("{:?}", existing.info().await?); // AI/model/MCP, network and files
-    Ok(())
-}
+let capsem = Hypervisor::local()?;
+let vm = capsem.create(CreateOptions {
+    name: Some("sdk-demo".into()),
+    image: Some("claude-code".into()),
+    ..Default::default()
+}).await?;
+let result = vm.exec("echo hello", Some(60)).await?;
+println!("{result}");
+vm.stop().await?;
 ```
 
-`VM::new(url, token, VmSelector::Id(id))` creates an independent handle.
-Name selection resolves once through the gateway; concurrent cloned handles
-share that lookup. Missing or ambiguous names return `Error::VmLookup`.
-Clones, created VMs and forks share the HTTP connection pool. Dropping a handle
-does not invalidate other handles. Dropping a request future cancels its HTTP
-request; the gateway may already have accepted a mutation.
+`name` keeps the VM for later use: stopping it preserves your work so you can
+start it again or duplicate it. `image` selects a Capsem prebuilt container
+image or your own OCI image when permitted by your administrator.
+[Learn about image selection](https://docs.capsem.org/getting-started/how-to-use-capsem/#choose-an-image-for-your-vm).
 
-Omitted CPU and memory values take the hypervisor's defaults (4 CPUs, 12 GiB);
-a create is a single `POST /vms/create`. Names create persistent VMs; omitted
-or empty names create ephemeral VMs. Memory is measured in GiB.
+The example runs `echo hello`, displays its output, and leaves `sdk-demo`
+stopped with its work preserved.
 
-VM controls are `start`, `stop`, `pause`, `resume`, `delete`, and
-`fork(name, description)`. Queries include `log(LogOptions)`,
-`history(HistoryOptions)`, `timeline(TimelineOptions)`,
-and `files().list/read/write`. Stats support `summary()` and `details()`. File reads and writes preserve bytes and require a running VM's
-security ledger. `hv.update()` applies the configured update.
-
-Responses and enums reuse `capsem_sdk::models` (the gateway's `capsem-api`
-DTOs). `operations` exposes the generated request functions and parameter
-structs. `Error::Http` retains status and response bytes; malformed JSON
-returns `Error::Json`. HTTP requests default to 30 seconds and never follow
-redirects or retry automatically. `with_timeout` sets this handle's HTTP
-deadline; `exec`'s optional `timeout_secs` sets the guest command deadline.
-Choose an HTTP deadline long enough for the command.
-Creation, `start`, and `resume` use at least 230 seconds to cover workload readiness
-window and gateway budget, matching Python and TypeScript. A larger configured
-deadline is retained. Dropping its future cancels the HTTP request without
-replaying a mutation or undoing one already accepted by the gateway.
-The guest exec channel preserves separate `stdout` and `stderr` lanes. Each is
-a typed `ExecOutput`; `decode()` returns the exact bytes.
-
-`hv.restart().await?` returns a typed HTTP 202 acknowledgement. It requires an
-idle service managed by launchd or systemd; active/starting VMs return 409 and
-an unmanaged service returns 503. The gateway rotates its token on restart.
-Obtain fresh credentials and construct a new client explicitly; never replay
-the restart call. Acceptance does not claim reconnection has completed.
-
-`hv.networks()` provides typed create/list/inspect/delete and cursor-based audit
-logs; pass returned network objects directly to creation. VM membership uses
-`vm.networks().list/attach/detach` with typed network objects.
-`image` selects a container workload, with command, environment, and a typed
-`Registry` alongside it. Creation returns after HTTP reports the workload
-ready; `vm.container().status()` remains a read-only diagnostic. `vm.ports()`
-opens a plain loopback port by default and uses browser authentication when
-requested. The SDK infers the VM or container target. Typed ports can be listed
-and closed without exposing wire request enums.
-
-`hv.run(command, options)` executes once in a temporary VM. `hv.debug().panics()`,
-`hv.debug().triage()` and `hv.purge()` expose diagnostics and cleanup. `hv.mcp()`
-provides typed discovery, refresh, permissions and tool calls for the MCP
-servers every VM runs; tool arguments and results retain their native JSON
-shape.
+For more, use the [SDK guides](https://docs.capsem.org/guides/developers/integrate-the-sdk/) or the
+[Rust SDK reference](https://docs.capsem.org/sdk/rust/).
