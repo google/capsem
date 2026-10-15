@@ -38,6 +38,19 @@ def gateway(service: ServiceInstance) -> TcpHttpClient:
     raise AssertionError(f"service-owned gateway did not start: {service.tmp_dir}")
 
 
+def session_children(service: ServiceInstance) -> list[psutil.Process]:
+    """This fixture owns one VM; its MCP workers are siblings of the owner."""
+    assert service.proc is not None
+    children = psutil.Process(service.proc.pid).children()
+    names = {"capsem-process", "capsem-mcp-aggregator", "capsem-mcp-builtin"}
+    native = [process for process in children if process.name() in names]
+    observed = {process.name() for process in native}
+    assert observed == names, f"missing native session role: {names - observed}"
+    owners = [process for process in native if process.name() == "capsem-process"]
+    assert len(owners) == 1, "managed create must spawn exactly one native VM owner"
+    return native + owners[0].children(recursive=True)
+
+
 def assert_retired(processes: list[psutil.Process]) -> None:
     # A zombie has exited in the kernel; a different parent owns its wait.
     alive = []
@@ -86,11 +99,7 @@ def test_native_managed_close_retires_original_generation(crash: bool) -> None:
             assert status == 200 and executed["exit_code"] == 0, executed
             assert exec_output_text(executed) == "MANAGED_NATIVE_READY"
             session_dir = vm_session_dir(service.tmp_dir, client, session_id)
-            assert service.proc is not None
-            children = psutil.Process(service.proc.pid).children()
-            native = [process for process in children if process.name() == "capsem-process"]
-            assert len(native) == 1, "managed create must spawn exactly one native VM process"
-            native += native[0].children(recursive=True)
+            native = session_children(service)
             status, denied = client.call_json("POST", path + "/claim", {
                 "ownership_token": secrets.token_hex(32),
             })
@@ -171,11 +180,13 @@ def test_native_managed_lease_expiry_retires_without_client_close() -> None:
         assert status == 200 and created["ownership"]["lease_seconds"] == 6, created
         session_id = created["id"]
         session_dir = vm_session_dir(service.tmp_dir, client, session_id)
-        assert service.proc is not None
-        native = [process for process in psutil.Process(service.proc.pid).children()
-                  if process.name() == "capsem-process"]
-        assert len(native) == 1
-        native += native[0].children(recursive=True)
+        # Wait for actual builtin catalog initialization before inventorying
+        # the sibling workers whose exit the lease barrier must cover.
+        refreshed = client.post("/mcp/servers/local/refresh", timeout=15)
+        assert refreshed["success"] is True, refreshed
+        ready = client.get("/mcp/servers/local/tools/list", timeout=15)
+        assert any(tool["namespaced_name"] == "local__echo" for tool in ready), ready
+        native = session_children(service)
         # No renew or close: public claim observes terminal state without reviving it.
         deadline = time.monotonic() + 15
         while session_dir.exists() and time.monotonic() < deadline:
