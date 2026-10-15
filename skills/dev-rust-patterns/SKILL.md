@@ -131,6 +131,16 @@ across the CLI, service, process, guard, credentials, and core.
   Cover errno preservation, ownership after the source is dropped, symlink and
   path-replacement races, special files, exact modes, and concurrent callers.
 
+When transferring connected sockets with `unix::router_channel`, retain the
+original socket until a request-bound receipt confirms that the receiver owns
+and validated its descriptor. A completed `sendmsg` only queues SCM_RIGHTS;
+Darwin may collect sockets with no owner outside that queue. Bound the receipt
+wait, reject wrong identities, directions and extra descriptors, and preserve
+scope cancellation and positive child reaping. The native MCP regression is
+`upstream_broker/mcp_spawn/tests.rs`: it delays adoption, checks that the original
+stays alive, and proves it is released after the receipt. Keeping an extra
+socket for the child's entire lifetime masks disconnects and leaks descriptors.
+
 Direct Unix calls remain valid only in modules that implement a kernel or
 platform ABI rather than reusable host policy, such as KVM/FUSE and guest audit
 plumbing. `tests/citadel/test_unix_boundary.py` and its exact domain-ABI
