@@ -30,13 +30,16 @@ jobs:
       - name: Select fresh manifest-authorized runtime graph
         id: manifest
         shell: bash
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          BOOTSTRAP_MISSING_FIRST_PARTY: ${{ inputs.bootstrap_missing_first_party }}
         run: |
           set -euo pipefail
           args=(
-            --channel "${{ inputs.channel }}"
+            --channel "$RELEASE_CHANNEL"
             --github-output "$GITHUB_OUTPUT"
           )
-          if [[ "${{ inputs.bootstrap_missing_first_party }}" == "true" ]]; then
+          if [[ "$BOOTSTRAP_MISSING_FIRST_PARTY" == "true" ]]; then
             args+=(--bootstrap-missing-first-party)
           fi
           python3 build_system/scripts/bootstrap/select-runtime-preflight-manifest.py "${args[@]}"

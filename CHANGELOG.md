@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Release workflows pass channel and version inputs as data rather than
+  expanding them into executable shell commands.
+
 - Update the marketing build's selector parser to avoid quadratic parsing of
   long flat selectors.
 
