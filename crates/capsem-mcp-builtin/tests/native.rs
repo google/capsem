@@ -1,6 +1,6 @@
 //! Real builtin tool calls after the binary installs its kernel sandbox.
 
-use capsem_core::mcp::native_worker::grant_worker;
+use capsem_mcp_transport::native_worker::grant_worker;
 use capsem_proto::mcp_contracts::builtin_ledger::{self, BuiltinLedgerRecord, HttpDecision, BUILTIN_LEDGER_META_KEY};
 use capsem_proto::mcp_worker::{McpHttpAdmission, McpHttpRole, McpWorkerBootstrap, MCP_ADMISSION_HEADER};
 use http_body_util::Full;
