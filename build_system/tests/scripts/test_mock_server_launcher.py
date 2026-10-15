@@ -87,6 +87,26 @@ def test_mock_server_launcher_waits_for_busy_address_then_starts() -> None:
         stop_process(proc)
 
 
+def test_ephemeral_mock_listeners_can_remain_alive_together(monkeypatch) -> None:
+    monkeypatch.setenv("CAPSEM_MOCK_SERVER_LOCK_TIMEOUT_S", "2")
+    processes = []
+    ready_servers = []
+    try:
+        for _ in range(2):
+            process, ready = start_mock_server(addr="127.0.0.1:0", timeout_s=2)
+            processes.append(process)
+            ready_servers.append(ready)
+        for key in ("http_addr", "https_addr", "dns_udp_addr", "dns_tcp_addr"):
+            assert ready_servers[0][key] != ready_servers[1][key]
+        for process, ready in zip(processes, ready_servers, strict=True):
+            assert process.poll() is None
+            with urlopen(f"{ready['base_url']}/tiny", timeout=2) as response:
+                assert response.read() == b"capsem-mock-server:tiny\n"
+    finally:
+        for process in processes:
+            stop_process(process)
+
+
 def test_mock_server_serves_https_fixture() -> None:
     proc = None
     try:

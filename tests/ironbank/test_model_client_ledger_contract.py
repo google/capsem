@@ -205,6 +205,7 @@ def model_client_env():
         # The clients run in a capsem-debug workload, whose loopback is its
         # own: every fixture name must answer an address it can route.
         mock_proc, ready = start_mock_server(
+            addr="127.0.0.1:0",
             request_log=service.tmp_dir / "upstream-transcript.jsonl",
             dns_answers="routable",
         )

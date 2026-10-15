@@ -61,6 +61,13 @@ def _lock_timeout(timeout_s: float) -> float:
     return max(timeout_s, DEFAULT_LOCK_TIMEOUT_S)
 
 
+def _acquire_listener_lock(addr: str, timeout_s: float) -> TextIO | None:
+    # Port zero asks the kernel for an independent listener, not a shared port.
+    if addr.endswith(":0"):
+        return None
+    return _acquire_lock(addr, timeout_s=timeout_s)
+
+
 def _address_in_use_error(exc: BaseException) -> bool:
     text = str(exc)
     return (
@@ -153,7 +160,7 @@ def start_mock_server(
     container workload, which cannot reach the VM's loopback."""
     _ensure_mock_server_binary()
     lock_timeout_s = _lock_timeout(timeout_s)
-    lock_file = _acquire_lock(addr, timeout_s=lock_timeout_s)
+    lock_file = _acquire_listener_lock(addr, lock_timeout_s)
     deadline = time.monotonic() + timeout_s
     last_error: BaseException | None = None
     while time.monotonic() < deadline:
@@ -191,8 +198,9 @@ def start_mock_server(
             if not _address_in_use_error(exc):
                 raise
             time.sleep(retry_interval_s)
-            lock_file = _acquire_lock(addr, timeout_s=lock_timeout_s)
-    lock_file.close()
+            lock_file = _acquire_listener_lock(addr, lock_timeout_s)
+    if lock_file is not None:
+        lock_file.close()
     raise TimeoutError(f"timed out starting capsem-mock-server on {addr}") from last_error
 
 
