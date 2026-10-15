@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import psutil
 import pytest
@@ -29,6 +30,7 @@ from conftest import (
     _thread_exception_hook,
     get_capsem_processes,
 )
+from conftest import pytest_sessionfinish as _finish
 
 
 class _FakeProc:
@@ -130,6 +132,49 @@ def test_ancestry_of_init_excludes_self():
     assert not _is_pytest_descendant(1)
 
 
+@pytest.mark.parametrize("ownership", ["unrelated", "attributed", "ancestry"])
+def test_session_finish_only_waits_for_owned_processes(monkeypatch, tmp_path, ownership):
+    process = None
+    pid = 1
+    owned = ownership != "unrelated"
+    info = {"name": "capsem-process", "cmdline": "fixture process"}
+    records = {pid: {"nodeid": "recorded-orphan", "worker": "gw0"}} if ownership == "attributed" else {}
+    waited = []
+
+    def settle(suspects, **_):
+        assert owned, "an unrelated process must not spend the 15-second grace"
+        waited.append(suspects)
+        return suspects
+
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    for name, value in {
+        "_CAUGHT_THREAD_EXCEPTIONS": [],
+        "_BASELINE_PIDS": set(),
+        "_FIRST_SEEN": {},
+        "get_capsem_processes": lambda: {pid: info},
+        "_load_attribution": lambda: records,
+        "_settle_suspects": settle,
+        "LEAK_REPORT_LOG": tmp_path / "leaks.log",
+    }.items():
+        monkeypatch.setitem(_finish.__globals__, name, value)
+    session = SimpleNamespace(exitstatus=0)
+    try:
+        if ownership == "ancestry":
+            process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+            pid = process.pid
+        assert _is_pytest_descendant(pid) is (ownership == "ancestry")
+        _finish(session, 0)
+        assert bool(waited) is owned
+        assert session.exitstatus == int(owned)
+        if owned:
+            expected = "recorded-orphan" if records else "<unknown>"
+            assert expected in (tmp_path / "leaks.log").read_text()
+    finally:
+        if process:
+            process.terminate()
+            process.wait(timeout=5)
+
+
 def test_ancestry_of_own_subprocess_includes_self():
     # A process we spawn with subprocess.Popen is our direct child; walking
     # its parent chain must find our PID.
@@ -209,6 +254,19 @@ def test_thread_exception_hook_is_installed():
     # Installed unconditionally at conftest import so even fixture setup
     # and collection-phase thread leaks are caught.
     assert threading.excepthook is _thread_exception_hook
+
+
+def test_thread_failure_with_no_thread_keeps_the_original_error(monkeypatch, capsys):
+    monkeypatch.setitem(_finish.__globals__, "_CAUGHT_THREAD_EXCEPTIONS", [])
+    monkeypatch.setitem(_finish.__globals__, "get_capsem_processes", dict)
+    args = threading.ExceptHookArgs((ValueError, ValueError("original-thread-error"), None, None))
+    _thread_exception_hook(args)
+    session = SimpleNamespace(exitstatus=0)
+    _finish(session, 0)
+    assert session.exitstatus == 1
+    stderr = capsys.readouterr().err
+    assert "original-thread-error" in stderr
+    assert "<unknown>" in stderr
 
 
 def test_thread_exception_hook_captures_daemon_thread_exception():
