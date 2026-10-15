@@ -6,6 +6,8 @@ mod create_command;
 mod doctor_bundle;
 mod doctor_output;
 use doctor_output::push_doctor_output_tail;
+mod gateway_runtime;
+use gateway_runtime::{gateway_url_from_runtime, wait_for_gateway_url};
 mod grouped_help;
 mod image_commands;
 use grouped_help::GROUPED_HELP;
@@ -655,53 +657,6 @@ fn capsem_shell_tui_args(session: Option<&str>, gateway_url: &str) -> Vec<String
         args.extend(["--session".to_string(), session.to_string()]);
     }
     args
-}
-
-async fn gateway_url_from_runtime(run_dir: &Path) -> Option<Result<String>> {
-    let port_path = run_dir.join("gateway.port");
-    let raw = match tokio::fs::read_to_string(&port_path).await {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(error) => return Some(Err(error).with_context(|| format!("read {}", port_path.display()))),
-    };
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    let port = match raw.parse::<u16>() {
-        Ok(0) => return Some(Err(anyhow!("{} contains port 0", port_path.display()))),
-        Ok(port) => port,
-        Err(error) => {
-            return Some(Err(error).with_context(|| format!("parse gateway port from {}", port_path.display())))
-        }
-    };
-    Some(Ok(format!("http://127.0.0.1:{port}")))
-}
-
-async fn wait_for_gateway_url(run_dir: &Path) -> Result<String> {
-    if let Ok(url) = std::env::var("CAPSEM_GATEWAY_URL") {
-        let url = url.trim_end_matches('/');
-        anyhow::ensure!(!url.is_empty(), "CAPSEM_GATEWAY_URL must not be empty");
-        return Ok(url.to_string());
-    }
-
-    let run_dir = run_dir.to_path_buf();
-    match capsem_foundation::poll::poll_until(
-        capsem_foundation::poll::PollOpts::new("gateway-runtime-ready", Duration::from_secs(5)),
-        || {
-            let run_dir = run_dir.clone();
-            async move { gateway_url_from_runtime(&run_dir).await }
-        },
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(timeout) => Err(anyhow!(
-            "Capsem gateway did not publish {} within {:?}",
-            run_dir.join("gateway.port").display(),
-            timeout.timeout
-        )),
-    }
 }
 
 fn resolve_capsem_tui_binary() -> PathBuf {

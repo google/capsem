@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Invalidly encoded explicit gateway URLs fail closed instead of selecting a
+  local gateway.
+
 - Forks preserve the service-owned ledger commitment history and reserved
   sequence boundary, keeping security logging available after fork and resume;
   the trusted copy remains fenced if its caller is canceled.
