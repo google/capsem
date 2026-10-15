@@ -1,5 +1,6 @@
 import ast
 import json
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ from ironbank.model_client_scripts import (
     claude_ollama_launch_script,
     codex_cli_script,
     codex_ollama_launch_script,
+    common_result_script_prelude,
     gemini_api_script,
     openai_responses_api_script,
     openai_two_tool_calls_script,
@@ -109,3 +111,30 @@ def test_agy_noninteractive_script_selects_model_explicitly() -> None:
     assert '"CommandLine": "printf' in script
     assert '"/api/chat"' not in script
     assert '"write_to_file"' not in script
+
+
+def _client(tmp_path, monkeypatch):
+    namespace = {}
+    with monkeypatch.context() as patched:
+        patched.setattr(socket, "gethostbyname", lambda _: "127.0.0.1")
+        exec(common_result_script_prelude("http://127.0.0.1", "diagnostic"), namespace)
+    namespace["WORKSPACE"] = str(tmp_path)
+    return namespace["run_tool"]
+
+
+def test_tool_failure_preserves_exit_code_stdout_and_stderr(tmp_path, monkeypatch):
+    run_tool = _client(tmp_path, monkeypatch)
+    (tmp_path / "child.stdout").write_text("tool-stdout\n")
+    (tmp_path / "child.stderr").write_text("tool-stderr\n")
+    with pytest.raises(RuntimeError) as failure:
+        run_tool({"cmd": "cat child.stdout; cat child.stderr >&2; exit 2"})
+    message = str(failure.value)
+    assert "(exit 2)" in message
+    assert "stdout: tool-stdout\n" in message
+    assert "stderr: tool-stderr\n" in message
+
+
+def test_successful_tool_still_writes_the_file_and_reports_success(tmp_path, monkeypatch):
+    run_tool = _client(tmp_path, monkeypatch)
+    assert run_tool({"cmd": "printf 'written' > result.txt"}) == "Process exited with code 0"
+    assert (tmp_path / "result.txt").read_text() == "written"

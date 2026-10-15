@@ -61,6 +61,11 @@ def run_tool(arguments):
             text=True,
             timeout=30,
         )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"tool command failed (exit {{completed.returncode}}): {{command!r}}\\n"
+                f"stdout: {{completed.stdout}}\\nstderr: {{completed.stderr}}"
+            )
         return "Process exited with code " + str(completed.returncode)
     path = arguments.get("file_path") or arguments.get("path")
     content = arguments.get("content")
