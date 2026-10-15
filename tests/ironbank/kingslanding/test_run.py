@@ -10,6 +10,7 @@ import signal
 import subprocess
 import time
 
+import psutil
 import pytest
 from helpers.constants import BIN_DIR
 from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
@@ -140,7 +141,16 @@ def test_cli_run_image_streams_and_an_interrupt_destroys_the_vm(service, tmp_pat
         )
         assert rejected.returncode != 0
         assert b"Pulling " in rejected.stderr and not requests
+        assert b"UnknownIssuer" in rejected.stderr, rejected.stderr
         assert client.get("/vms/list")["sandboxes"] == []
+        kept = list((service.tmp_dir / "sessions").glob("*-failed-*"))
+        assert len(kept) == 1 and (kept[0] / "session.db").is_file(), kept
+        assert (kept[0] / "process.log").is_file(), kept
+        assert service.proc is not None
+        remaining = {
+            child.name() for child in psutil.Process(service.proc.pid).children(recursive=True)
+        } & {"capsem-process", "capsem-ledger", "capsem-proxy", "capsem-mcp-aggregator", "capsem-mcp-builtin"}
+        assert not remaining, f"failed create left native session roles alive: {remaining}"
         with (
             (tmp_path / "stdout").open("wb") as stdout,
             (tmp_path / "stderr").open("wb") as stderr,

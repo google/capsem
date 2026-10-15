@@ -20,11 +20,13 @@ pub(super) enum ShutdownMode {
     Discard,
     /// Service-wide stop preserves the existing two-second guest grace.
     ServiceStop,
+    /// Preserve failed-launch evidence without waiting for a guest to boot.
+    FailedCreate,
 }
 
 impl ShutdownMode {
     pub(super) fn retains_state(self) -> bool {
-        matches!(self, Self::Retain | Self::ServiceStop)
+        matches!(self, Self::Retain | Self::ServiceStop | Self::FailedCreate)
     }
 
     /// How long the guest is given to exit on its own before SIGKILL.
@@ -42,7 +44,7 @@ impl ShutdownMode {
         match self {
             Self::Retain => std::time::Duration::from_secs(60),
             Self::Discard => std::time::Duration::from_secs(1),
-            Self::ServiceStop => std::time::Duration::from_secs(2),
+            Self::ServiceStop | Self::FailedCreate => std::time::Duration::from_secs(2),
         }
     }
 }

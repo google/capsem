@@ -346,7 +346,11 @@ pub(super) async fn shutdown_vm_process(
         )
         .await;
 
-    if mode.retains_state() {
+    if mode == ShutdownMode::FailedCreate {
+        // No workload was acknowledged. The guest agent may not exist yet;
+        // the host signal handler stops the VM and drains its producer instead.
+        signal_vm_process(state, id, generation, process_control::Signal::Terminate).await?;
+    } else if mode.retains_state() {
         // Send shutdown command via IPC (or SIGTERM as fallback).
         let channel = match owner {
             Ok(owner) => owner.open(state, "capsem-service", true).await,

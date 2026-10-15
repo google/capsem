@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failed image creation stops its host owner promptly and retains its ledger
+  and logs, without waiting for the guest to finish booting.
+
 - Service crash recovery confirms exiting orphan identities and retires the
   previous gateway before starting its replacement.
 

@@ -217,13 +217,13 @@ pub(crate) async fn complete_create(
 
 /// The VM goes and its name is freed, but its ledger and logs are kept as a
 /// failed session: they hold the record of why the create failed -- a
-/// policy-refused pull's audit row lives in this VM's own ledger. Retain, not
-/// Discard: the owner exits cleanly so that ledger is flushed before it moves.
+/// policy-refused pull's audit row lives in this VM's own ledger. The host
+/// owner drains it directly, without waiting for the guest to finish booting.
 async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
     // Resolved first: a teardown that fails -- a ledger too damaged to read --
     // must not also lose the ledger it could not read.
     let session_dir = resolve_session_dir(state, id).ok();
-    if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::Retain, None).await {
+    if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::FailedCreate, None).await {
         error!(vm_id = id, error = %error.1, "failed create did not shut down cleanly");
     }
     if let Some(session_dir) = session_dir {

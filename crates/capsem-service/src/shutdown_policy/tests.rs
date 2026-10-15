@@ -40,3 +40,13 @@ fn service_stop_keeps_its_original_bounded_guest_grace() {
         std::time::Duration::from_secs(2)
     );
 }
+
+#[test]
+fn failed_create_keeps_evidence_without_a_persistent_guest_flush_wait() {
+    assert!(ShutdownMode::FailedCreate.retains_state());
+    assert_eq!(
+        ShutdownMode::FailedCreate.exit_timeout(),
+        ShutdownMode::ServiceStop.exit_timeout()
+    );
+    assert!(ShutdownMode::FailedCreate.exit_timeout() < ShutdownMode::Retain.exit_timeout());
+}

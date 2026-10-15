@@ -155,7 +155,13 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
         attach: false,
     };
 
-    let error = finish_create(&state, "box", &[], Some(spec)).await.unwrap_err();
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        finish_create(&state, "box", &[], Some(spec)),
+    )
+    .await
+    .expect("a refused create must not spend the persistent-session flush grace")
+    .unwrap_err();
     reaper.await.unwrap();
     assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR, "{}", error.1);
     assert!(error.1.contains("registry refused the image"), "{}", error.1);
