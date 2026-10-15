@@ -23,7 +23,7 @@
 use std::sync::{Arc, RwLock};
 
 use anyhow::{ensure, Context, Result};
-use capsem_core::mcp::native_worker::PreparedMcpWorker;
+use capsem_mcp_transport::native_worker::PreparedMcpWorker;
 use capsem_proto::mcp_worker::McpHttpRole;
 use clap::Parser;
 use tokio::sync::mpsc;
@@ -82,8 +82,7 @@ pub async fn run(vm_id: String, trace_id: String) -> Result<()> {
 
     info!("capsem-mcp-aggregator starting");
 
-    let (mut stdin, _ready_writer) = worker.control.into_split();
-    let mut stdout = tokio::io::stdout();
+    let (mut stdin, mut stdout) = worker.control.into_split();
 
     // Step 1: Read server definitions from first frame on stdin.
     let defs: Vec<McpServerDef> = read_frame(&mut stdin)

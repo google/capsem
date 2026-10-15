@@ -1,6 +1,6 @@
 //! Actual binary readiness and tool dispatch through inherited capabilities.
 
-use capsem_core::mcp::native_worker::grant_worker;
+use capsem_mcp_transport::native_worker::grant_worker;
 use capsem_proto::mcp_aggregator::{
     read_frame, write_frame, AggregatorMethod, AggregatorRequest, AggregatorResponse, AggregatorResult,
 };
@@ -104,7 +104,7 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
         .arg(directory.path().join("worker.lock"))
         .env("CAPSEM_TEST_INHERITED_SECRET", "remove-this-inherited-secret")
         .stdin(Stdio::from(OwnedFd::from(child_control)))
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .kill_on_drop(true);
     let mut child = command.spawn().unwrap();
@@ -129,14 +129,14 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
         "worker retained original inherited secret bytes"
     );
     control.set_nonblocking(true).unwrap();
-    let mut control = tokio::net::UnixStream::from_std(control).unwrap();
-    let mut output = child.stdout.take().unwrap();
+    let (mut output, mut control) = tokio::net::UnixStream::from_std(control).unwrap().into_split();
     write_frame(&mut control, &vec![definition()]).await.unwrap();
     let unexpected_file = directory.path().join("unapproved-command-ran");
     let mut unapproved = definition();
     unapproved.name = "unapproved".into();
     unapproved.command = Some("/usr/bin/touch".into());
     unapproved.args = vec![unexpected_file.to_string_lossy().into_owned()];
+    let large_echo = "r".repeat(512 * 1024);
     for (id, method) in [
         (1, AggregatorMethod::ListTools),
         (
@@ -149,7 +149,7 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
             3,
             AggregatorMethod::CallTool {
                 name: "assigned__echo".into(),
-                arguments: serde_json::json!({"text": "confined echo"}),
+                arguments: serde_json::json!({"text": large_echo}),
                 timeout_ms: Some(1000),
             },
         ),
@@ -175,7 +175,7 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
             (1, AggregatorResult::Tools { tools }) => assert_eq!(tools[0].namespaced_name, "assigned__echo"),
             (2 | 4 | 6, AggregatorResult::Ok { ok }) => assert!(ok),
             (3, AggregatorResult::CallResult { result }) => {
-                assert_eq!(result["content"][0]["text"], "confined echo");
+                assert_eq!(result["content"][0]["text"], large_echo);
             }
             (5, AggregatorResult::Servers { servers }) => assert!(!servers[0].connected),
             (_, body) => panic!("unexpected response {id}: {body:?}"),

@@ -10,7 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-capsem-core = { path = "../capsem-core" }
+capsem-mcp-transport = { path = "../capsem-mcp-transport" }
 capsem-credentials = { path = "../capsem-credentials" }
 capsem-proto = { path = "../capsem-proto" }
 capsem-foundation = { path = "../capsem-foundation" }

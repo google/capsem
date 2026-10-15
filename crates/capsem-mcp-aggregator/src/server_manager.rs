@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use capsem_core::mcp::http_transport::BrokerHttpClient;
-use capsem_core::mcp::native_worker::McpSpawnClient;
+use capsem_mcp_transport::http_transport::BrokerHttpClient;
+use capsem_mcp_transport::native_worker::McpSpawnClient;
 use capsem_proto::mcp_worker::MCP_SERVER_HEADER;
 use futures::{stream::BoxStream, StreamExt};
 use http::header::{ACCEPT, WWW_AUTHENTICATE};
@@ -633,7 +633,7 @@ impl McpServerManager {
     /// guard's "another instance holds the lock; exiting 0" path.
     async fn connect_stdio(&self, def: &McpServerDef, peer_index: u32) -> Result<RunningService<RoleClient, ()>> {
         if let Some((_, spawn)) = &self.capabilities {
-            if def.name != capsem_core::mcp::BUILTIN_SERVER_NAME {
+            if def.name != capsem_proto::mcp_contracts::BUILTIN_SERVER_NAME {
                 bail!("stdio MCP server has no approved native spawn capability");
             }
             let socket = spawn.builtin(peer_index).await?;
