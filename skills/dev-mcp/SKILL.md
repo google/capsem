@@ -103,17 +103,46 @@ The guest MCP path is not a single process. The per-session `capsem-proxy`
 owns the guest-facing framed endpoint, MCP policy, and ledger admission.
 `capsem-process` owns a scoped adapter to the aggregator and VM exposure tools;
 it cannot reopen the session ledger and the proxy cannot reach the aggregator
-except through that granted connected channel. The VM owner spawns two
-privilege-isolated subprocesses behind the adapter:
+except through that granted connected channel. The service supervises two
+confined native workers behind the adapter:
 
 | Crate | Role | Privileges |
 |-------|------|-----------|
-| `capsem-mcp-aggregator` | Manages connections to **external** MCP servers (GitHub, Slack, custom HTTP/stdio servers). Receives msgpack frames from `capsem-process` on stdin, routes tool calls. | Network only; no access to the VM, session DB, filesystem, or service socket. |
-| `capsem-mcp-builtin` | Stdio MCP server that implements **built-in** tools: HTTP (`fetch_http`, `grep_http`, `http_headers`) plus the `echo` transport probe. Managed by the aggregator as just another MCP server. | Scoped by environment variables: `CAPSEM_SESSION_DIR`, `CAPSEM_ACTIVE_POLICY`. Holds no ledger writer: what it did goes back to `capsem-process` as records under the reserved `_meta` key `dev.capsem/ledger` (see `capsem_proto::mcp_contracts::builtin_ledger`). |
+| `capsem-mcp-aggregator` | Parses MCP transports and routes tools over a connected MessagePack RPC channel. | Inherited HTTP/2 capability for configured endpoints and a narrow builtin-peer spawn channel; no ambient files, direct network, credentials, execution, signals, VM or ledger authority. |
+| `capsem-mcp-builtin` | Implements HTTP tools (`fetch_http`, `grep_http`, `http_headers`) and `echo` over a connected MCP channel. | Inherited HTTP capability only. The service performs current URL/address policy and credential handling; HTTP ledger facts return in `_meta` `dev.capsem/ledger`. No policy-file or database access. |
 
 Rationale: isolating external-server connections in a low-privilege subprocess means a compromised third-party MCP server cannot reach the host filesystem or the session DB. The built-in tool server runs in its own process for the same reason.
 
-Wire protocol between `capsem-process` and the aggregator: **length-prefixed msgpack frames** on stdio (`[4-byte big-endian length][msgpack payload]`). Between the aggregator and the built-in server: **stdio MCP** (standard JSON-RPC per line). `/run/capsem-mcp-server` relays guest stdio JSON-RPC as bounded framed records over **vsock port 5002**; the VM owner grants each accepted stream to `capsem-proxy`. The proxy parses and evaluates it, then invokes the VM-owner adapter over its scoped MCP capability. Tool activity reaches the canonical `tool_calls` ledger through the proxy's typed ledger client. Visible protocol facts are typed security events and `security_rule_events`.
+The shared `capsem-mcp-transport` crate owns connected HTTP capabilities and
+role bootstrap; it stays independent of VM core, policy, credentials and RMCP.
+The service supplies role/incarnation bootstrap records and connected descriptors.
+Each native entrypoint clears inherited environment/descriptors, prepares a
+current-thread runtime, installs Seatbelt on macOS or Landlock plus seccomp on
+Linux, and attests denial before acknowledging readiness. Parent watching starts
+after confinement. Linux aggregator/builtin profiles allow threads but deny forked
+processes; approved external executable profiles must retain their own sandbox.
+
+The owner receives one full-duplex RPC descriptor, never native child handles.
+MessagePack framing is `[4-byte big-endian length][payload]`; builtin MCP uses
+JSON-RPC lines over its own connected descriptor. Use async stream halves in both
+directions: stdin adoption sets nonblocking flags, so a blocking stdout adapter
+over a duplicate descriptor fails under backpressure.
+
+The service owns destinations, current policy, credentials and process reaping.
+Refresh preserves inherited capabilities. HTTP streams cancel on policy changes
+or retirement; generation completion awaits broker cleanup and positively reaped
+native children. Separate PIDs, parent watchers or `kill_on_drop` alone are not
+that completion proof.
+
+Settings configure external HTTP servers; there is no public arbitrary host
+stdio command/file-grant setting. The native spawn broker accepts only predefined
+builtin peer indices. New external stdio support needs explicit executable/file
+grants under `McpExternal`, never the trusted companion `with no-sandbox` rule.
+
+`/run/capsem-mcp-server` relays guest JSON-RPC as bounded frames over vsock 5002.
+The proxy evaluates policy before invoking the scoped owner adapter. Tool facts
+reach `tool_calls` through the proxy's typed ledger capability; the native MCP
+workers never open the ledger.
 
 Binaries land in `~/.capsem/bin/` at install time: `capsem-mcp-aggregator`, `capsem-mcp-builtin`.
 
@@ -125,7 +154,7 @@ frames that carry JSON-RPC payloads and per-frame process attribution.
 
 Framed guest MCP over `vsock:5002` must be tested as the default transport, not as an opt-in benchmark mode. The minimum hardening matrix for that path is:
 - parser/interpreter: bounded frames, invalid JSON, malformed flags, stream-id reuse, notification/request-id mismatch
-- dispatch: `initialize`, `tools/list`, builtin `tools/call`, configured external stdio `tools/call`, `resources/list`, `prompts/list`, and method error mapping
+- dispatch: `initialize`, `tools/list`, builtin `tools/call`, configured external HTTP `tools/call`, `resources/list`, `prompts/list`, and method error mapping
 - policy: live policy mutation, per-tool block, resource URI rule, argument-name rule, argument-value rule, return-value rule, deny-over-allow precedence, and proof that blocked requests/responses do not leak original data
 - telemetry: `session.db` rows for success, denial, timeout, process attribution, request/response previews, policy fields, and terminal errors
 - boundary: aggregator and VM owner remain DB-free; `capsem-proxy` writes MCP
@@ -233,7 +262,7 @@ overhead. Guests see them under the `local__` namespace (e.g.,
 | `crates/capsem-core/src/net/mitm_proxy/mcp_frame.rs` | Framed transport parser, stream lifecycle, disconnect metrics |
 | `crates/capsem-core/src/net/mitm_proxy/mcp_endpoint.rs` | JSON-RPC handler, policy, dispatch, telemetry logging |
 | `crates/capsem-core/src/mcp/types.rs` | JsonRpcRequest/Response, McpToolDef, annotations |
-| `crates/capsem-core/src/mcp/server_manager.rs` | rmcp client pool, tool routing, catalog |
+| `crates/capsem-mcp-aggregator/src/server_manager.rs` | rmcp client pool, tool routing, catalog |
 | `crates/capsem-core/src/mcp/policy.rs` | Tool/server allow/warn/block decisions |
 | `crates/capsem-core/src/mcp/mod.rs` | Tool cache, server detection, collision detection |
 | `crates/capsem-agent/src/mcp_server.rs` | capsem-mcp-server binary (stdin/stdout relay) |

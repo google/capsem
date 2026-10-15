@@ -12,25 +12,28 @@ session proxy after policy evaluation.
 
 ## Why a separate process
 
-External MCP servers require network access, broker-resolved auth material,
-and custom HTTP headers. The per-VM owner controls virtualization and exact
+External MCP connections require network access, broker-resolved auth material,
+and configured HTTP headers. The service retains that authority; the per-VM owner controls virtualization and exact
 session runtime paths, while `capsem-ledger` owns storage and `capsem-proxy`
 owns MCP policy. Running external server transports inside any of those
 processes would combine unrelated authority with remote protocol parsing.
 
 The aggregator subprocess enforces a hard privilege boundary:
 
-| | capsem-process | capsem-mcp-aggregator |
-|---|---|---|
-| VM control (vsock) | Yes | No |
-| Session database path | No | No |
-| VirtioFS workspace | Yes | No |
-| Scoped service/owner control | Yes | No |
-| Network (external MCP servers) | No | Yes |
-| Broker-resolved auth material | No | Yes |
+| Authority | capsem-process | capsem-mcp-aggregator | capsem-mcp-builtin |
+|---|---|---|---|
+| VM control (vsock) | Assigned VM | No | No |
+| Session database path | No | No | No |
+| VirtioFS workspace | Assigned session | No | No |
+| Scoped service/owner control | Assigned generation | No | No |
+| Direct network connections | No | No | No |
+| Raw credentials or policy files | No | No | No |
+| HTTP capability | No MCP HTTP authority | Configured endpoints only | Current URL/address policy |
+| Native process spawning | No MCP spawning | Predefined builtin peer request | No |
 
 If the aggregator is compromised, its remaining authority is the configured
-external MCP transport and broker-resolved material needed there. It cannot
+external MCP transports and its predefined builtin peer capability. Credentials
+remain in the service. It cannot
 control the VM, open a session ledger, or modify the workspace. See
 [Host Process Isolation](/architecture/host-isolation/) for the complete
 process matrix.
@@ -45,11 +48,11 @@ graph LR
         AGENT["AI agent"]
     end
 
+    subgraph "Confined proxy"
+        EP["MCP Endpoint<br/>(framed vsock:5002)"]
+    end
     subgraph "capsem-process"
-        EP["MITM MCP Endpoint<br/>(framed vsock:5002)"]
         CLIENT["AggregatorClient<br/>(mpsc channel)"]
-        WRITER["Writer task<br/>(stdin)"]
-        READER["Reader task<br/>(stdout)"]
     end
 
     subgraph "capsem-mcp-aggregator"
@@ -57,20 +60,19 @@ graph LR
         MGR["McpServerManager"]
     end
 
-    subgraph "External"
-        EXT1["GitHub MCP"]
-        EXT2["Slack MCP"]
-    end
+    SERVICE["capsem-service<br/>HTTP and native child supervision"]
+    BUILTIN["Confined builtin"]
+    EXT["Configured external HTTP MCP"]
 
     AGENT -->|"framed MCP<br/>vsock:5002"| EP
-    EP --> CLIENT
-    CLIENT --> WRITER
-    WRITER -->|"stdin<br/>MessagePack frames"| MAIN
+    EP -->|"scoped owner capability"| CLIENT
+    CLIENT <-->|"connected MessagePack RPC"| MAIN
     MAIN --> MGR
-    MGR -->|"HTTP/SSE"| EXT1
-    MGR -->|"HTTP/SSE"| EXT2
-    MAIN -->|"stdout<br/>MessagePack frames"| READER
-    READER --> CLIENT
+    MGR -->|"private HTTP capability"| SERVICE
+    MGR -->|"predefined builtin peer request"| SERVICE
+    MGR <-->|"connected MCP channel"| BUILTIN
+    BUILTIN -->|"current-policy HTTP capability"| SERVICE
+    SERVICE -->|"configured HTTP/SSE"| EXT
 ```
 
 The policy boundary is the MITM MCP endpoint, not the aggregator. External
@@ -82,42 +84,59 @@ from the host is outside the guest MITM path and does not create guest
 Four layers handle the flow:
 
 1. **AggregatorClient** (in capsem-process) -- typed async API wrapping an mpsc channel. Multiple endpoint sessions share one client via `Arc`.
-2. **Driver tasks** (in capsem-process) -- writer task serializes requests to subprocess stdin; reader task deserializes responses from stdout and routes them to pending callers via oneshot channels.
-3. **Frame loop** (in capsem-mcp-aggregator) -- reads requests from stdin, dispatches to `McpServerManager`, writes responses to stdout.
-4. **McpServerManager** (in capsem-core) -- manages `rmcp` HTTP connections to external servers, builds unified tool/resource/prompt catalogs with namespacing.
+2. **Driver tasks** (in capsem-process) serialize requests and read correlated responses over one full-duplex connected descriptor granted by the service.
+3. **Frame loop** (in capsem-mcp-aggregator) dispatches through a bounded handler set and async read/write halves.
+4. **McpServerManager** (in capsem-mcp-aggregator) manages MCP transports through inherited HTTP and builtin-peer capabilities, and builds namespaced catalogs.
 
 ## Subprocess lifecycle
 
 ### Spawn
 
-capsem-process spawns the aggregator during VM startup, after loading MCP server definitions from user and corp config files.
+The VM owner requests one aggregator RPC channel for its registered generation.
+The service launches the aggregator and builtin peers, retaining their child
+handles. Each child clears inherited environment/descriptors, starts a current-thread
+runtime, installs its OS sandbox and attests denial before readiness. Linux uses
+Landlock and seccomp; macOS uses Seatbelt. Aggregator and builtin profiles forbid
+ambient files, direct sockets, arbitrary execution and signals. Linux also denies
+forked processes while preserving threads.
 
 ```mermaid
 sequenceDiagram
     participant Proc as capsem-process
+    participant Svc as capsem-service
     participant Agg as capsem-mcp-aggregator
     participant Ext as External MCP servers
 
-    Proc->>Agg: spawn (stdin/stdout piped, stderr inherited)
-    Proc->>Agg: [{"name":"github","url":"...","auth":{"kind":"oauth","credential_ref":"credential:blake3:..."}}]\n (first line)
-    Agg->>Ext: HTTP MCP initialize (per enabled server)
-    Ext-->>Agg: tools/list, resources/list, prompts/list
+    Proc->>Svc: OpenMcpAggregator (generation-bound channel)
+    Svc->>Agg: role/incarnation and private HTTP/spawn descriptors
+    Agg-->>Svc: Ready after confinement and attestation
+    Svc-->>Proc: connected RPC descriptor
+    Proc->>Agg: redacted server definitions (first MessagePack frame)
+    Agg->>Svc: HTTP MCP initialize through private capability
+    Svc->>Ext: configured destination, headers and credentials
+    Ext-->>Svc: HTTP/SSE
+    Svc-->>Agg: streaming response
     Note over Agg: Build unified catalogs
     Note over Agg: Enter frame request loop
 ```
 
-The binary is located next to `capsem-process` in `~/.capsem/bin/`. If not found (dev builds without a full install), capsem-process falls back to an in-process mock that returns empty results for catalog queries and errors for tool calls.
+Native binaries are siblings of the service in `~/.capsem/bin/`. Missing binaries,
+failed confinement or an invalid readiness record fail startup; there is no mock
+or ambient transport fallback.
 
 ### Steady state
 
-The subprocess runs for the lifetime of the VM. Requests arrive on stdin, responses go to stdout, logs go to stderr (inherited by the parent).
+Requests and replies use the connected RPC channel. The service supplies a
+separate session log descriptor. Native HTTP uses multiplexed HTTP/2 over private
+connected Unix channels; streaming responses do not serialize other calls.
 
 ### Shutdown
 
-Two paths:
+Three paths:
 
 1. **Normal**: capsem-process sends a `shutdown` request. The aggregator disconnects all servers and exits.
-2. **Parent exit**: capsem-process closes stdin (process exit, crash, or signal). The aggregator detects EOF, calls `shutdown_all()`, and exits.
+2. **RPC close**: the owner closes its channel; the aggregator cancels handlers, drains connections and exits.
+3. **Generation retirement**: the service revokes capabilities and positively reaps every owned native child before publishing generation completion. Parent watching alone is not cleanup proof.
 
 ### Crash recovery
 
@@ -125,11 +144,11 @@ If the aggregator crashes, the reader and writer driver tasks in capsem-process 
 
 ## Frame protocol
 
-Communication uses length-prefixed MessagePack frames over stdin/stdout: a 4-byte big-endian payload length, then a MessagePack map with named fields (`capsem_proto::mcp_aggregator::{read_frame, write_frame}`). The maximum frame is 16 MiB. The examples below show each message's fields as JSON for readability; on the wire they are MessagePack.
+Communication uses length-prefixed MessagePack over the connected RPC descriptor: a 4-byte big-endian length and named fields (`capsem_proto::mcp_aggregator::{read_frame, write_frame}`). The maximum frame is 16 MiB. The examples show JSON for readability; the wire uses MessagePack.
 
 ### Initialization
 
-The first frame on stdin is the list of server definitions:
+After bootstrap readiness, the first RPC frame is the redacted server list:
 
 ```json
 [
@@ -137,23 +156,27 @@ The first frame on stdin is the list of server definitions:
     "name": "github",
     "url": "https://api.githubcopilot.com/mcp/",
     "headers": {},
-    "auth": {
-      "kind": "oauth",
-      "credential_ref": "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    },
+    "auth": null,
     "enabled": true,
-    "source": "claude",
-    "unsupported_stdio": false
+    "source": "config",
+    "command": null,
+    "args": [],
+    "env": {},
+    "pool_size": null,
+    "pool_safe_tools": []
   }
 ]
 ```
 
 Raw API keys, OAuth access tokens, refresh tokens, and `Authorization` headers
 are never serialized into MCP config. Remote MCP auth is broker-owned: the
-server definition carries only an opaque `credential:blake3:*` reference and
-the connector resolves it at the HTTP transport boundary.
+service settings carry only an opaque `credential:blake3:*` reference, which the
+service resolves at its HTTP boundary. Native worker definitions omit auth and
+configured headers entirely.
 
-Servers marked `unsupported_stdio: true` are stdio-only servers that cannot be connected over HTTP -- the aggregator skips them. Disabled servers are also skipped.
+Settings configure external HTTP servers; arbitrary host stdio commands and file
+grants are not public settings fields. Native stdio spawning is restricted to
+predefined builtin peers. Disabled servers are skipped.
 
 ### Request format (process to aggregator)
 
@@ -277,9 +300,10 @@ The aggregator is designed for graceful degradation:
 | File | Purpose |
 |------|---------|
 | `capsem-mcp-aggregator/src/main.rs` | Subprocess binary: init, frame loop, request dispatch |
-| `capsem-core/src/mcp/aggregator.rs` | Protocol types (`AggregatorRequest/Response`) and `AggregatorClient` |
-| `capsem-core/src/mcp/server_manager.rs` | `McpServerManager`: rmcp connections, tool catalog, namespacing |
+| `capsem-proto/src/mcp_aggregator.rs` | Protocol types (`AggregatorRequest/Response`) and `AggregatorClient` |
+| `capsem-mcp-aggregator/src/server_manager.rs` | `McpServerManager`: rmcp connections, tool catalog, namespacing |
 | `capsem-core/src/mcp/mod.rs` | `build_server_list()`: the local builtin server plus the merged `[mcp]` servers |
-| `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks for the session's MCP servers |
+| `capsem-process/src/aggregator.rs` | Connected RPC adapter without process spawning |
+| `capsem-service/src/upstream_broker/mcp_native.rs` | Native role bootstrap, supervision and positive child reaping |
 | `capsem-core/src/net/mitm_proxy/mcp_endpoint.rs` | MITM MCP endpoint: policy, telemetry, and dispatch through the aggregator |
 | `capsem-proto/src/ipc.rs` | Service-process IPC messages for MCP operations |

@@ -21,9 +21,13 @@ graph TB
     GUEST_AGENT["Guest AI agent"] -->|stdio| RELAY["capsem-mcp-server"]
     RELAY -->|"framed vsock surrendered by VM owner"| ENDPOINT["confined capsem-proxy MCP endpoint"]
     ENDPOINT -->|"scoped owner capability"| OWNER["VM owner MCP adapter"]
-    OWNER --> AGG["capsem-mcp-aggregator"]
-    AGG --> BUILTIN["capsem-mcp-builtin"]
-    AGG --> EXTERNAL["External MCP servers"]
+    OWNER -->|"connected RPC"| AGG["confined capsem-mcp-aggregator"]
+    SERVICE -->|"supervises"| AGG
+    SERVICE -->|"supervises"| BUILTIN["confined capsem-mcp-builtin"]
+    AGG -->|"connected MCP"| BUILTIN
+    AGG -->|"scoped HTTP capability"| SERVICE
+    BUILTIN -->|"current-policy HTTP capability"| SERVICE
+    SERVICE --> EXTERNAL["Configured external HTTP MCP servers"]
 ```
 
 The npm host is an SDK client. It receives an explicit gateway URL and bearer
@@ -197,8 +201,8 @@ enabled = true
 
 The service validates the merged configuration and materializes an exact
 active-policy revision for the session. The VM owner builds the scoped MCP
-transport and passes server definitions to the
-[MCP Aggregator](/architecture/mcp-aggregator/) at spawn time; the proxy gets
+transport using a service-owned connected aggregator grant and passes redacted
+server definitions to the [MCP Aggregator](/architecture/mcp-aggregator/); the proxy gets
 policy bytes and a connected MCP capability, not the policy path or
 aggregator process. Credentials are broker-owned references, not raw tokens in
 MCP config.
@@ -218,8 +222,9 @@ MCP config.
 | `capsem-mcp-aggregator/src/server_manager.rs` | External MCP server lifecycle and tool catalog |
 | `capsem-core/src/net/policy_config/security_rule_profile.rs` | Security-event rule schema, validation, Sigma import, and compiled rule set |
 | `capsem-core/src/security_engine/` | SecurityEvent construction, rule evaluation, plugin actions, and rule-ledger emission |
-| `capsem-mcp-aggregator/src/main.rs` | Isolated subprocess: MessagePack frame loop, server connections |
-| `capsem-process/src/main.rs` | `spawn_mcp_aggregator()`: launch and driver tasks |
+| `capsem-mcp-aggregator/src/runtime.rs` | Confined MessagePack frame loop and server connections |
+| `capsem-process/src/aggregator.rs` | Connected aggregator RPC adapter; no process spawning |
+| `capsem-service/src/upstream_broker/mcp_native.rs` | Native MCP startup and positively reaped generation cleanup |
 | `capsem-config/src/mcp.rs` | `[mcp]` schema and the settings/corp merge |
 
 See [MCP Aggregator](/architecture/mcp-aggregator/) for the full subprocess architecture.

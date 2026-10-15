@@ -51,7 +51,9 @@ Sharing alone is not a reason to put code in `capsem-core`.
   typed SDK client over authenticated gateway HTTP with no native runtime privilege.
 - **`capsem-router`**: Seatbelt/seccomp-confined companion with two jobs from one binary. Per VM owner, a TCP relay for published host ports only (connected descriptor pairs over a private, bounded grant channel). Per named network, `--network`: that network's layer-2 switch. The service plugs each attached VM's cable (a duplicate of that cable's VSOCK 5009 stream) into it; it forwards ethernet frames on MAC only, floods broadcast under a cap, and carries every protocol. No service control socket, ambient file access, listener acceptance, or virtualization entitlement in either job.
 - **`capsem-network`**: the cable's frame codec (`u16` length + ethernet frame) and the switch's MAC forwarding table as pure code. The kernel inside each guest does ARP, IP and everything above; no host process parses past a frame's MAC addresses.
-- **`capsem-mcp-aggregator`**: low-privilege external-MCP subprocess manager.
+- **`capsem-mcp-transport`**: connected HTTP capabilities and role-bound native
+  bootstrap; no policy, credential, VM, database or RMCP ownership.
+- **`capsem-mcp-aggregator`**: confined external-MCP transport parser; service-owned HTTP and builtin-spawn capabilities, no ambient networking or credentials.
 - **`capsem-mcp-builtin`**: built-in HTTP MCP tools.
 - **`capsem-gateway`**: authenticated TCP-to-UDS HTTP/WebSocket gateway.
 - **`capsem-app`**: thin Tauri webview shell pointing at the gateway.
@@ -62,7 +64,7 @@ Sharing alone is not a reason to put code in `capsem-core`.
 
 ## Process privilege model
 
-The service launches each VM owner, proxy, and ledger worker with a cleared
+The service launches each VM owner, proxy, ledger and native MCP worker with a cleared
 environment, private control descriptors, a generation-bound protocol grant,
 and an OS sandbox. Linux uses Landlock plus seccomp; macOS uses a parameterized
 Seatbelt profile. Each worker runs a startup attestation that proves ambient
@@ -75,6 +77,16 @@ upstream sockets. `capsem-proxy` receives connected DNS/TCP descriptors plus
 credential, MCP, and ledger channels. `capsem-ledger` receives the ledger files
 and typed producer channels; durable service-owned commitment checkpoints
 anchor the sequence outside that worker.
+
+The native MCP aggregator receives only a connected RPC channel, configured-server
+HTTP capability and narrow builtin-peer spawn channel. Builtins receive a separate
+HTTP capability whose service broker performs current URL/address policy checks.
+Neither worker opens policy files, credentials, ledger storage or VM control.
+Their Linux profiles deny process creation while retaining threads; macOS uses
+separate deny-default Seatbelt profiles. The service keeps every native child
+handle outside those profiles and awaits broker cleanup before generation
+retirement completes. Public external-server settings currently support HTTP,
+not arbitrary host stdio commands or inferred filesystem grants.
 
 1. **Minimal environment**: service uses `env_clear()` before spawn, then passes only `HOME`, `PATH`, `USER`, `TMPDIR`, `RUST_LOG`. API keys and tokens from the user's shell never reach the process.
 2. **Socket permissions 0600**: Per-VM owner sockets (`{id}.sock` IPC, `{id}-handoff.sock`) are chmod 0600 after bind; no client dials them -- terminals and attach go through the service `/vms/{id}/stream` route. Only the owning user can connect.

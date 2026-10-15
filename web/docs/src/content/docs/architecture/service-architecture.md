@@ -24,8 +24,8 @@ The native host binaries are installed to
 | **capsem-proxy** | Per-session HTTP, DNS, model, and MCP policy worker | Generation-bound connected descriptor grants |
 | **capsem-ledger** | Sole owner of one session ledger | Role- and generation-bound connected ledger channels |
 | **capsem-router** | Per-VM published-port relay or per-network L2 switch | Connected descriptor grants; never chooses or opens destinations |
-| **capsem-mcp-aggregator** | External MCP server connections | Length-prefixed MessagePack frames over stdin/stdout, spawned by capsem-process |
-| **capsem-mcp-builtin** | Built-in HTTP tools | stdio MCP, spawned by the aggregator |
+| **capsem-mcp-aggregator** | Confined external MCP transports | Connected MessagePack RPC and scoped HTTP/spawn capabilities; supervised by service |
+| **capsem-mcp-builtin** | Confined builtin HTTP tools | Connected MCP channel and current-policy HTTP capability; supervised by service |
 | **capsem-gateway** | HTTP/WebSocket gateway | TCP port 19222, proxies to service UDS |
 | **capsem-tray** | System tray | Polls gateway for VM status |
 
@@ -76,8 +76,13 @@ graph TD
     SVC -->|"generation-bound descriptors"| PROXY["capsem-proxy (per session)"]
     SVC -->|"role-bound channels"| LEDGER["capsem-ledger (per session)"]
 
-    PROC -->|"MessagePack frames/stdio"| AGG["capsem-mcp-aggregator"]
-    AGG -->|"HTTP/SSE"| EXT["External MCP servers"]
+    SVC -->|"supervision and scoped descriptors"| AGG["capsem-mcp-aggregator"]
+    SVC -->|"supervision and scoped HTTP"| BUILTIN["capsem-mcp-builtin"]
+    PROC -->|"connected MessagePack RPC"| AGG
+    AGG -->|"connected MCP channel"| BUILTIN
+    AGG -->|"private HTTP capability"| SVC
+    BUILTIN -->|"private HTTP capability"| SVC
+    SVC -->|"configured HTTP/SSE"| EXT["External MCP servers"]
     PROC -->|"HTTP/DNS/MCP descriptors"| PROXY
     PROC -->|"typed writer channel"| LEDGER
     PROXY -->|"typed writer channel"| LEDGER

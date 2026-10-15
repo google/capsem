@@ -31,6 +31,7 @@ flowchart TB
         Ledger["capsem-ledger<br/>sole session.db owner"]
         Relay["capsem-router --expose<br/>published-port byte relay"]
         Aggregator["capsem-mcp-aggregator<br/>external MCP transport"]
+        Builtin["capsem-mcp-builtin<br/>HTTP tool presentation"]
         MCPBridge["VM-owner MCP adapter<br/>scoped tools and transport"]
         VM["guest VM"]
     end
@@ -47,13 +48,18 @@ flowchart TB
     Service -->|"typed lifecycle control"| Owner
     Service -->|"generation-bound capabilities"| Proxy
     Service -->|"role-bound ledger channels"| Ledger
+    Service -->|"supervised native generation"| Aggregator
+    Service -->|"supervised native generation"| Builtin
     Service -->|"orders and syncs"| Checkpoints
     Owner -->|"virtio and VSOCK"| VM
     Owner -->|"connected stream pairs"| Relay
     Proxy -->|"MCP requests after policy"| MCPBridge
     Proxy -->|"bounded trace hints"| Owner
     Owner -->|"owns"| MCPBridge
-    MCPBridge --> Aggregator
+    MCPBridge -->|"connected RPC grant"| Aggregator
+    Aggregator -->|"connected MCP peer"| Builtin
+    Aggregator -->|"configured HTTP capability"| Service
+    Builtin -->|"current-policy HTTP capability"| Service
     Owner -->|"one cable per membership"| Switch
     Proxy -->|"committed admit and flush"| Ledger
     Owner -->|"committed admit and flush"| Ledger
@@ -101,12 +107,21 @@ grants fail closed.
 | `capsem-ledger` | Read and write one session directory; serve authenticated operations over granted connected channels | Other paths, ambient network and control-socket access, process execution, signals to the coordinator |
 | `capsem-router --expose` | Copy bytes between connected host TCP and guest VSOCK descriptors | Listener ownership, destination selection, filesystem, arbitrary network, VM control |
 | `capsem-router --network` | Switch frames among the descriptor-backed cables of one named network | Uplink, listener, outbound socket, another network's members, policy decisions |
-| `capsem-mcp-aggregator` | Connect to configured external MCP servers and return protocol results | VM control, session files, ledger storage, service API; requests arrive only after the session policy boundary |
+| `capsem-mcp-aggregator` | Parse configured MCP transports through a private HTTP capability; request only predefined builtin peers; return protocol results over one connected RPC grant | Ambient filesystem, direct sockets, credentials, arbitrary execution or forked processes, signals, VM/ledger/service-control authority |
+| `capsem-mcp-builtin` | Process builtin tools using current coordinator HTTP admission; return typed HTTP facts with tool results | Policy files, credential store, ambient filesystem/network, execution or forked processes, signals, VM/ledger/control authority |
 
-The gateway, VM owner, proxy, and ledger install a platform sandbox and perform
+The gateway, VM owner, proxy, ledger and native MCP workers install a platform sandbox and perform
 negative self-checks before publishing readiness. A startup that can still read
 an ambient host file, dial a path-owned control socket, execute an ungranted
 program, or signal its coordinator is rejected.
+
+Native MCP workers use deny-default Seatbelt on macOS and Landlock plus seccomp
+on Linux. Aggregator/builtin Linux profiles permit threads but deny forked
+processes. The service retains their child handles outside those profiles;
+retirement revokes channels and waits for positive native child reaping before
+publishing completion. Broker failure cannot be treated as completed cleanup.
+External settings currently declare HTTP servers; arbitrary host stdio commands
+and filesystem exceptions are not inferred from those entries.
 
 ## Platform enforcement
 
