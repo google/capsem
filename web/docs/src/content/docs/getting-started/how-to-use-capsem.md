@@ -58,8 +58,8 @@ and you can reopen it with the same command.
 
 ### From the Capsem UI
 
-Open **Capsem** (in Applications on macOS), or choose **Dashboard** from
-the Capsem system tray menu. Click `my-work` in the list of VMs to open it,
+Open the [Capsem UI](http://127.0.0.1:19222) in your browser, open **Capsem**
+(in Applications on macOS), or choose **Dashboard** from the Capsem system tray menu. Click `my-work` in the list of VMs to open it,
 then use its **Terminal** view to work inside the VM. The same VM tab also
 lets you inspect files, logs, and activity.
 

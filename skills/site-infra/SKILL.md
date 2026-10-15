@@ -154,6 +154,20 @@ as pausing work, `capsem resume` as returning to it, and `capsem fork` as duplic
 another use. Keep explanations proportional to the chosen type, with detailed
 mechanics and rationale in their reference and explanation destinations.
 
+### Every paragraph must help the reader
+
+Every paragraph must answer a reader's question and propose something useful:
+a concrete action, choice, or explanation they need to use Capsem. Before
+keeping a paragraph, identify the question and what the reader gains from its
+answer. Remove paragraphs that merely announce another page, repeat a heading,
+or list destinations without explaining why the reader needs them.
+
+Links must carry a reason: say what the reader can learn or accomplish at the
+destination and place the link where that need arises. Generic endings such as
+“For component relationships, read System architecture” or “For exact
+interfaces, use Reference” do not meet this rule. Review every paragraph and
+link on the affected page when applying a correction.
+
 ### One thing, one name
 
 Use the names exposed by the public command line for its concepts, commands,
@@ -293,6 +307,19 @@ Generate API reference separately from public SDK interfaces, types, and
 docstrings/comments, including hand-written facades as well as generated
 operations. Do not generate or overwrite the getting-started README, and do
 not claim a reference exists before it is generated and accessible.
+
+## System introductions
+
+Explain the major components, where they run, and how control, requests, and
+records move between them. Name each component and state its concrete job.
+Keep detailed permission and sandbox inventories in the security architecture.
+Put shared prerequisites such as installation before workflow choices. Explain
+each interface when first introduced, including how the web UI and desktop app
+relate. Do not present a prerequisite as a parallel alternative to tasks that
+depend on it.
+Use top-to-bottom overview diagrams that fit the reading column; do not require
+horizontal scrolling to understand the introduction. Verify the rendered layout,
+since a vertical Mermaid direction alone does not guarantee a narrow diagram.
 
 ## Mermaid diagrams
 

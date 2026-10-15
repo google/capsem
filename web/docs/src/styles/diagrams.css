@@ -12,3 +12,10 @@ pre.mermaid svg {
   max-width: none !important;
   height: auto;
 }
+
+/* Intro diagrams follow the reading column instead of the wide process map. */
+.system-overview pre.mermaid svg {
+  min-width: 0;
+  width: 100% !important;
+  max-width: 100% !important;
+}
