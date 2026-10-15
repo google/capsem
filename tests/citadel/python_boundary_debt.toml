@@ -22,4 +22,4 @@ old_import_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 # [lint].python_roots entry.
 # integrations/inspect-ai carries pure Inspect text transforms; the same frozen
 # project owns their source-contract tests, strict type checks and coverage.
-python_source_roots = [".claude", "benchmarks", "build_system", "guest", "images", "integrations", "sdk", "tests"]
+python_source_roots = [".claude", "benchmarks", "build_system", "guest", "images", "integrations", "sdk", "tests", "web"]

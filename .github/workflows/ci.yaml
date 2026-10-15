@@ -577,7 +577,7 @@ jobs:
       # A source candidate must be installable before its first runtime is
       # published. The canonical local owner constructs and proves that cohort;
       # publication lanes still consume manifest-selected immutable inputs.
-      - name: Run source runtime and exact-package glow-up
+      - name: Run install e2e tests
         id: install_e2e
         env:
           GITHUB_TOKEN: ${{ github.token }}

@@ -1,6 +1,6 @@
 ---
 name: site-infra
-description: "The documentation site, docs.capsem.org. Use when rebuilding, writing, or reviewing its minimal, user-directed documentation under Diátaxis: tutorials, how-to guides, reference, and explanation; also for Astro Starlight work."
+description: "The documentation site, docs.capsem.org. Use for user-directed Diátaxis documentation and Astro Starlight changes."
 ---
 
 # Documentation Site

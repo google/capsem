@@ -38,7 +38,7 @@ WEB_PROJECT_ROOTS = (
 )
 REFERENCE_PATTERNS = {
     "app": re.compile(r"(?<![\w-])frontend/|['\"]frontend['\"]"),
-    "docs": re.compile(r"(?<![\w-])docs/|['\"]docs['\"]"),
+    "docs": re.compile(r"(?<![\w-])(?<!web/)docs/|['\"]docs['\"]"),
     "marketing": re.compile(r"(?<![\w-])site/|['\"]site['\"]"),
     "graphics": re.compile(r"(?<![\w/-])graphics/|['\"]graphics['\"]"),
     "collectors": re.compile(r"(?<![\w-])bench/collectors/|['\"]bench['\"]"),
