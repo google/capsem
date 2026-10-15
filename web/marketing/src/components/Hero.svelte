@@ -1,6 +1,6 @@
 <script lang="ts">
   import HeroDemo from "./HeroDemo.svelte";
-  import { HERO_DEMO, SITE } from "$lib/data";
+  import { SITE } from "$lib/data";
   import InstallCommand from "./InstallCommand.svelte";
 </script>
 
@@ -10,14 +10,13 @@
 
   <div class="relative mx-auto max-w-[1440px] px-6 hero-grid">
     <div class="hero-copy">
-      <p class="hero-eyebrow">{HERO_DEMO.label}</p>
       <h1 class="text-5xl lg:text-6xl font-extrabold tracking-tight text-heading leading-[1.08]">
-        <span class="gradient-text">{SITE.name}</span><br />
-        {HERO_DEMO.title}
+        <span class="gradient-text">{SITE.name.toUpperCase()}</span><br />
+        {SITE.tagline}
       </h1>
 
       <p class="mt-6 text-lg md:text-xl text-body max-w-xl leading-relaxed">
-        {HERO_DEMO.description}
+        {SITE.description}
       </p>
 
       <div class="mt-10 flex flex-col gap-4 max-w-lg">

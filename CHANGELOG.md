@@ -10,7 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Interactive terminal marketing demo showing installation, an AGY image building
-  a website with a browser preview, then a fresh Codex VM summarizing email.
+  a website with a browser preview, then a fresh Codex VM summarizing email,
+  with chapter playback and “Build fast” / “Work fast” interludes.
+
+### Fixed
+
+- Restored the marketing hero tagline: “The fastest way to ship with AI securely.”
 
 ### Security
 

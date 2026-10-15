@@ -164,7 +164,6 @@
 }
 .hero-grid { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.3fr); align-items: center; gap: 3.5rem; }
 .hero-copy { min-width: 0; }
-.hero-eyebrow { font-size: .66rem; letter-spacing: .16em; font-weight: 700; color: var(--color-accent-hover); margin-bottom: 1.5rem; }
 .hero-copy h1 { max-width: 9em; }
 .hero-copy .font-mono { overflow-wrap: anywhere; font-size: .72rem; }
 .hero-demo { position: relative; min-width: 0; color: var(--color-demo-text); }
@@ -175,10 +174,28 @@
 .demo-traffic-lights i:nth-child(2) { background: var(--color-demo-minimize); }
 .demo-traffic-lights i:nth-child(3) { background: var(--color-demo-maximize); }
 .demo-window-title { position: absolute; left: 50%; transform: translateX(-50%); color: var(--color-demo-text); font: 11px system-ui, sans-serif; }
-.demo-playback { display: flex; gap: 2px; }
-.demo-playback button { color: var(--color-demo-muted); cursor: pointer; width: 28px; height: 32px; font-size: 14px; }
-.demo-playback button:hover { color: var(--color-demo-text); }
+.demo-player { display: flex; gap: 18px; align-items: flex-start; margin-top: 22px; color: var(--color-body); }
+.demo-chapters { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); align-items: start; gap: 12px; flex: 1; min-width: 0; }
+.demo-chapters button { min-width: 0; text-align: left; font-size: 11px; line-height: 1.4; cursor: pointer; }
+.demo-chapters button.active { color: var(--color-accent-hover); font-weight: 600; }
+.demo-progress { display: block; height: 3px; border-radius: 3px; background: var(--color-border); margin-bottom: 10px; overflow: hidden; }
+.demo-progress > span { display: block; height: 100%; background: var(--color-accent); }
+.demo-playback { display: flex; gap: 5px; margin-top: -9px; }
+.demo-playback button { color: var(--color-body); cursor: pointer; width: 28px; height: 32px; font-size: 17px; }
+.demo-playback button:hover, .demo-chapters button:hover { color: var(--color-accent-hover); }
+.demo-chapters button:disabled, .demo-playback button:disabled { cursor: default; }
 .demo-terminal { height: 440px; padding: 12px 16px; }
+.demo-terminal.is-codex { padding-bottom: 74px; }
+.demo-codex-composer { position: absolute; bottom: 10px; left: 16px; right: 16px; font: 11px/1.5 "SFMono-Regular", Menlo, Consolas, monospace; color: var(--color-demo-muted); }
+.demo-codex-composer > div { display: flex; gap: 12px; padding: 7px 9px; background: var(--color-demo-bar); }
+.demo-codex-composer > div > span:first-child { color: var(--color-demo-text); }
+.demo-codex-composer footer { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; font-size: 9px; }
+.demo-insert { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2rem; color: var(--color-heading); background: radial-gradient(ellipse at 20% 10%, color-mix(in srgb, var(--color-accent) 15%, transparent), transparent 70%), var(--color-surface); animation: demo-browser-in 240ms ease-out; }
+.demo-insert-work { background: radial-gradient(ellipse at 80% 90%, color-mix(in srgb, var(--color-accent-secondary) 15%, transparent), transparent 70%), var(--color-surface); }
+.demo-insert > span { font-size: 10px; font-weight: 600; letter-spacing: .16em; color: var(--color-accent-hover); }
+.demo-insert h3 { font-size: clamp(2.8rem, 5vw, 4.5rem); font-weight: 650; letter-spacing: -.07em; line-height: 1.05; margin: 1rem 0; }
+.demo-insert p { max-width: 27ch; font-size: 17px; line-height: 1.6; color: var(--color-body); }
+.demo-insert a { margin-top: 1.8rem; color: var(--color-accent-hover); font-size: 12px; }
 .demo-terminal .xterm-viewport { scrollbar-width: none; }
 .demo-terminal .xterm-viewport::-webkit-scrollbar { display: none; }
 .demo-fallback { position: absolute; left: 16px; top: 65px; white-space: pre-wrap; font: 13px/1.6 Menlo, monospace; }
@@ -209,6 +226,14 @@
 }
 @media (max-width: 450px) {
   .demo-terminal { height: 420px; padding: 10px; }
+  .demo-terminal.is-codex { height: 460px; padding-bottom: 74px; }
+  .demo-player { gap: 8px; margin-top: 18px; }
+  .demo-chapters { gap: 7px; }
+  .demo-chapters button { font-size: 9px; }
+  .demo-playback { gap: 0; }
+  .demo-playback button { width: 23px; }
+  .demo-codex-composer { left: 10px; right: 10px; font-size: 10px; }
+  .demo-codex-composer footer > span:last-child { display: none; }
   .demo-window-title { font-size: 10px; }
   .demo-browser { left: 2%; width: 98%; top: 55px; }
   .demo-site-content { gap: .6rem; margin: 1.6rem 0; }
@@ -217,4 +242,4 @@
   .demo-website { padding: 1rem; }
   .demo-website header > span { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .demo-browser { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .demo-browser, .demo-insert { animation: none; } }
