@@ -99,6 +99,34 @@ pub fn confine(policy: &Policy) -> io::Result<()> {
     platform::confine(policy)
 }
 
+/// Prove that a descriptor-only worker lost ambient authority before it
+/// advertises readiness. A missing endpoint or executable is not denial proof.
+pub fn attest_descriptor_only() -> io::Result<()> {
+    fn denied(result: io::Result<()>, operation: &str) -> io::Result<()> {
+        match result {
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(()),
+            Err(error) => Err(io::Error::other(format!(
+                "{operation} did not prove permission denial: {error}"
+            ))),
+            Ok(()) => Err(io::Error::other(format!("worker retained {operation} authority"))),
+        }
+    }
+    denied(std::fs::read_dir("/").map(|_| ()), "ambient directory read")?;
+    denied(
+        std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, 9)).map(|_| ()),
+        "outbound connect",
+    )?;
+    denied(
+        std::process::Command::new("/usr/bin/true").status().map(|_| ()),
+        "process execution",
+    )?;
+    let parent = super::process::parent_process_id().ok_or_else(|| io::Error::other("worker parent unavailable"))?;
+    if super::process::probe_signal_authority(parent)? != super::process::SignalProbe::Denied {
+        return Err(io::Error::other("worker retained parent signal authority"));
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 #[path = "worker_sandbox/linux.rs"]
 mod platform;

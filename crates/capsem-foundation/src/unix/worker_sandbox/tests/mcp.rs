@@ -98,6 +98,7 @@ fn mcp_denial_child() {
     let mut granted = UnixStream::from(super::super::super::fd::duplicate(std::io::stdin().as_fd()).unwrap());
     let parent = super::super::super::process::parent_process_id().unwrap();
     confine(&Policy::new(role)).unwrap();
+    attest_descriptor_only().unwrap();
     assert!(std::fs::read(&secret).is_err(), "{role:?} read another session");
     assert!(std::fs::write(&secret, b"overwrite").is_err());
     assert!(
