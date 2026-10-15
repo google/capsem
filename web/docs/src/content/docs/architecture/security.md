@@ -1,6 +1,7 @@
 ---
 title: Security architecture
 description: How are Capsem's processes, sandboxes, and network connections organized?
+template: splash
 ---
 
 Capsem runs OCI containers inside separate VMs. Host processes handle VM
