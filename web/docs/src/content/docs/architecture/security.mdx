@@ -4,6 +4,9 @@ description: How are Capsem's processes, sandboxes, and network connections orga
 template: splash
 ---
 
+import Diagram from '../../../components/Diagram.astro';
+import { securityProcesses, securityNetwork } from '../../../lib/diagrams';
+
 Capsem runs OCI containers inside separate VMs. Host processes handle VM
 control, proxy traffic, MCP tools, network connections, and log storage.
 
@@ -25,115 +28,13 @@ user application without a Capsem-installed sandbox.
 
 ## Processes and control
 
-```mermaid
-%%{init: {"theme": "neutral"}}%%
-flowchart TB
-  app["capsem-app<br/>Capsem UI"]
-  hostMcp["@capsem/mcp"]
-  sdk["SDKs<br/>Python / TypeScript / Rust"]
-  cli["capsem CLI"]
-  gateway["capsem-gateway"]
-  service["capsem-service"]
-
-  hostMcp --> sdk
-  app -->|API| gateway
-  sdk -->|API| gateway
-  cli -->|API| gateway
-  gateway -->|HTTP over UDS| service
-
-  subgraph perVM["Per-VM processes — VM A"]
-    owner["capsem-process"]
-    subgraph vm["VM — hardware boundary"]
-      container["OCI container"]
-      guest["Guest helpers"]
-      container <-->|traffic / MCP| guest
-    end
-    engine["Security engine"]
-    mcp["capsem-mcp-aggregator"]
-    writer["Log writer<br/>capsem-ledger"]
-    builtin["capsem-mcp-builtin"]
-    router["capsem-router<br/>Expose"]
-
-    owner -. control .-> vm
-    guest -->|vsock| engine
-    engine <-->|tool calls| mcp
-    engine -->|audit events| writer
-    owner -->|VM events| writer
-  end
-
-  service -. control IPC .-> owner
-  mcp -->|brokered HTTP| tools["MCP servers"]
-  mcp -->|tool RPC| builtin
-  service -. role-bound grants .-> engine
-  service -. role-bound grants .-> writer
-  service -. role-bound grants .-> mcp
-  owner -. connected ports .-> router
-
-  classDef maximum fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#172033
-  classDef elevated fill:#ffedd5,stroke:#d97706,stroke-width:3px,color:#172033
-  classDef limited fill:#fef9c3,stroke:#b59b00,stroke-width:3px,color:#172033
-  classDef minimum fill:#dcfce7,stroke:#15803d,stroke-width:3px,color:#172033
-  class service,app,hostMcp,sdk,cli maximum
-  class mcp,builtin,router minimum
-  class owner elevated
-  class gateway,engine,writer limited
-  class container,guest minimum
-  style perVM fill:#eeeeee,stroke:#777777,stroke-width:2px
-  style vm fill:#eff6ff,stroke:#2563eb,stroke-width:2px
-```
+<Diagram diagram={securityProcesses} />
 
 Dashed arrows: control. Solid arrows: data.
 
 ## Network connections
 
-```mermaid
-%%{init: {"theme": "neutral"}}%%
-flowchart TB
-  host["Host client"]
-
-  subgraph perA["Per-VM processes — VM A"]
-    exposeA["capsem-router<br/>Expose"]
-    subgraph vmA["VM A — hardware boundary"]
-      direction TB
-      containerA["OCI container A"]
-      guestA["Guest networking"]
-      containerA <-->|VM network| guestA
-    end
-    engineA["Security engine A"]
-    exposeA -->|one exposed VM port| guestA
-    guestA -->|HTTP / TLS / DNS| engineA
-  end
-
-  network["capsem-router --network<br/>One process per private network"]
-
-  subgraph perB["Per-VM processes — VM B"]
-    subgraph vmB["VM B — hardware boundary"]
-      direction TB
-      guestB["Guest networking"]
-      containerB["OCI container B"]
-      guestB <-->|VM network| containerB
-    end
-    engineB["Security engine B"]
-    guestB -->|HTTP / TLS / DNS| engineB
-  end
-
-  host -->|exposed host port| exposeA
-  guestA <-->|vsock cable| network
-  network <-->|vsock cable| guestB
-  engineA -->|allowed requests| upstream["Allowed upstream services"]
-  engineB -->|allowed requests| upstream
-
-  classDef maximum fill:#fee2e2,stroke:#dc2626,stroke-width:3px,color:#172033
-  classDef limited fill:#fef9c3,stroke:#b59b00,stroke-width:3px,color:#172033
-  classDef minimum fill:#dcfce7,stroke:#15803d,stroke-width:3px,color:#172033
-  class host maximum
-  class engineA,engineB limited
-  class exposeA,network,containerA,containerB,guestA,guestB minimum
-  style perA fill:#eeeeee,stroke:#777777,stroke-width:2px
-  style perB fill:#eeeeee,stroke:#777777,stroke-width:2px
-  style vmA fill:#eff6ff,stroke:#2563eb,stroke-width:2px
-  style vmB fill:#eff6ff,stroke:#2563eb,stroke-width:2px
-```
+<Diagram diagram={securityNetwork} />
 
 The private-network switch is shared by the VMs attached to that network.
 

@@ -15,7 +15,7 @@ export const approvedDocs = [
   "guides/enterprise/enforce-security-policy.md",
   "guides/developers/integrate-the-sdk.mdx",
   "architecture/overview.md",
-  "architecture/security.md",
+  "architecture/security.mdx",
   "architecture/security-engine.md",
   "sdk/index.mdx",
   "sdk/python.md",

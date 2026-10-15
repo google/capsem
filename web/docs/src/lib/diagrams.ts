@@ -1,0 +1,90 @@
+export type Permission = 'minimum' | 'limited' | 'elevated' | 'maximum' | 'external';
+export interface DiagramNode {
+  id: string; label: string; x: number; y: number;
+  permission?: Permission; width?: number; height?: number; boundary?: 'vm' | 'group';
+}
+export interface DiagramLink {
+  from: string; to: string; label: string; control?: boolean; both?: boolean;
+  source?: 'top' | 'bottom' | 'left' | 'right'; target?: 'top' | 'bottom' | 'left' | 'right';
+  via?: { x: number; y: number }[];
+  labelAt?: number;
+  labelOffset?: number;
+}
+export interface Diagram {
+  title: string; width: number; height: number; nodes: DiagramNode[]; links: DiagramLink[];
+}
+
+export const securityProcesses: Diagram = {
+  title: 'Processes and control', width: 1080, height: 1210,
+  nodes: [
+    { id: 'perVM', label: 'PER-VM PROCESSES · VM A', x: 20, y: 455, width: 1040, height: 730, boundary: 'group' },
+    { id: 'vm', label: 'VM · HARDWARE BOUNDARY', x: 40, y: 680, width: 280, height: 300, boundary: 'vm' },
+    { id: 'app', label: 'capsem-app\nCapsem UI', x: 40, y: 30, permission: 'maximum' },
+    { id: 'hostMcp', label: '@capsem/mcp', x: 300, y: 30, permission: 'maximum' },
+    { id: 'sdk', label: 'SDKs\nPython · TypeScript · Rust', x: 560, y: 30, permission: 'maximum' },
+    { id: 'cli', label: 'capsem CLI', x: 820, y: 30, permission: 'maximum' },
+    { id: 'gateway', label: 'capsem-gateway', x: 430, y: 180, permission: 'limited' },
+    { id: 'service', label: 'capsem-service', x: 430, y: 320, permission: 'maximum' },
+    { id: 'owner', label: 'capsem-process', x: 430, y: 525, permission: 'elevated' },
+    { id: 'router', label: 'capsem-router\nExpose', x: 70, y: 525, permission: 'minimum' },
+    { id: 'container', label: 'OCI container', x: 70, y: 745, permission: 'minimum' },
+    { id: 'guest', label: 'Guest helpers', x: 70, y: 885, permission: 'minimum' },
+    { id: 'engine', label: 'Security engine', x: 430, y: 745, permission: 'limited' },
+    { id: 'mcp', label: 'capsem-mcp-aggregator', x: 790, y: 745, permission: 'minimum' },
+    { id: 'writer', label: 'Log writer\ncapsem-ledger', x: 430, y: 1055, permission: 'limited' },
+    { id: 'builtin', label: 'capsem-mcp-builtin', x: 790, y: 900, permission: 'minimum' },
+    { id: 'tools', label: 'MCP servers', x: 790, y: 1055 },
+  ],
+  links: [
+    { from: 'hostMcp', to: 'sdk', label: '' , source: 'right', target: 'left' },
+    { from: 'app', to: 'gateway', label: 'API', via: [{ x: 180, y: 145 }, { x: 480, y: 145 }] },
+    { from: 'sdk', to: 'gateway', label: 'API', via: [{ x: 670, y: 145 }, { x: 590, y: 145 }] },
+    { from: 'cli', to: 'gateway', label: 'API', via: [{ x: 930, y: 155 }, { x: 650, y: 155 }], target: 'right' },
+    { from: 'gateway', to: 'service', label: 'HTTP over UDS' },
+    { from: 'service', to: 'owner', label: 'control IPC', control: true },
+    { from: 'service', to: 'engine', label: 'role-bound grants', control: true, source: 'left', target: 'top', via: [{ x: 370, y: 356 }, { x: 370, y: 640 }, { x: 540, y: 640 }] },
+    { from: 'service', to: 'mcp', label: 'role-bound grants', control: true, source: 'right', via: [{ x: 900, y: 356 }] },
+    { from: 'service', to: 'writer', label: 'role-bound grants', labelAt: .15, control: true, source: 'right', target: 'right', via: [{ x: 1040, y: 356 }, { x: 1040, y: 1160 }, { x: 710, y: 1160 }, { x: 710, y: 1091 }] },
+    { from: 'owner', to: 'vm', label: 'control', control: true, source: 'left', target: 'top', via: [{ x: 350, y: 561 }, { x: 350, y: 640 }, { x: 180, y: 640 }] },
+    { from: 'owner', to: 'router', label: 'connected ports', source: 'left', target: 'right' },
+    { from: 'container', to: 'guest', label: 'traffic / MCP', both: true },
+    { from: 'guest', to: 'engine', label: 'vsock', source: 'right', target: 'left', via: [{ x: 350, y: 921 }, { x: 350, y: 781 }] },
+    { from: 'engine', to: 'mcp', label: 'tool calls', both: true, source: 'right', target: 'left' },
+    { from: 'engine', to: 'writer', label: 'audit events' },
+    { from: 'owner', to: 'writer', label: 'VM events', source: 'right', target: 'right', via: [{ x: 710, y: 561 }, { x: 710, y: 1091 }] },
+    { from: 'mcp', to: 'builtin', label: 'tool RPC' },
+    { from: 'mcp', to: 'tools', label: 'brokered HTTP', labelAt: .75, labelOffset: 55, source: 'right', target: 'right', via: [{ x: 1030, y: 781 }, { x: 1030, y: 1091 }] },
+  ],
+};
+
+export const securityNetwork: Diagram = {
+  title: 'Network connections', width: 1080, height: 1050,
+  nodes: [
+    { id: 'perA', label: 'PER-VM PROCESSES · VM A', x: 25, y: 155, width: 390, height: 740, boundary: 'group' },
+    { id: 'perB', label: 'PER-VM PROCESSES · VM B', x: 665, y: 155, width: 390, height: 740, boundary: 'group' },
+    { id: 'vmA', label: 'VM A · HARDWARE BOUNDARY', x: 45, y: 340, width: 350, height: 320, boundary: 'vm' },
+    { id: 'vmB', label: 'VM B · HARDWARE BOUNDARY', x: 685, y: 340, width: 350, height: 320, boundary: 'vm' },
+    { id: 'host', label: 'Host client', x: 110, y: 25, permission: 'maximum' },
+    { id: 'expose', label: 'capsem-router\nExpose', x: 110, y: 220, permission: 'minimum' },
+    { id: 'containerA', label: 'OCI container A', x: 110, y: 400, permission: 'minimum' },
+    { id: 'guestA', label: 'Guest networking', x: 110, y: 555, permission: 'minimum' },
+    { id: 'containerB', label: 'OCI container B', x: 750, y: 400, permission: 'minimum' },
+    { id: 'guestB', label: 'Guest networking', x: 750, y: 555, permission: 'minimum' },
+    { id: 'engineA', label: 'Security engine A', x: 110, y: 785, permission: 'limited' },
+    { id: 'engineB', label: 'Security engine B', x: 750, y: 785, permission: 'limited' },
+    { id: 'network', label: 'capsem-router\n--network', x: 445, y: 685, width: 190, permission: 'minimum' },
+    { id: 'upstream', label: 'Allowed upstream services', x: 400, y: 955, width: 280 },
+  ],
+  links: [
+    { from: 'host', to: 'expose', label: 'exposed host port' },
+    { from: 'expose', to: 'guestA', label: 'one exposed VM port', labelAt: .24, source: 'left', target: 'left', via: [{ x: 70, y: 256 }, { x: 70, y: 591 }] },
+    { from: 'containerA', to: 'guestA', label: 'VM network', both: true },
+    { from: 'containerB', to: 'guestB', label: 'VM network', both: true },
+    { from: 'guestA', to: 'engineA', label: 'HTTP / TLS / DNS' },
+    { from: 'guestB', to: 'engineB', label: 'HTTP / TLS / DNS' },
+    { from: 'guestA', to: 'network', label: 'vsock cable', both: true, source: 'right', target: 'left', via: [{ x: 435, y: 591 }, { x: 435, y: 721 }] },
+    { from: 'network', to: 'guestB', label: 'vsock cable', both: true, source: 'right', target: 'left', via: [{ x: 645, y: 721 }, { x: 645, y: 591 }] },
+    { from: 'engineA', to: 'upstream', label: 'allowed requests', via: [{ x: 220, y: 925 }, { x: 470, y: 925 }] },
+    { from: 'engineB', to: 'upstream', label: 'allowed requests', via: [{ x: 860, y: 925 }, { x: 610, y: 925 }] },
+  ],
+};

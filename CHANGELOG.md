@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Replace security architecture diagrams with JointJS Community, zoom and pan controls, and accessible connection tables.
+
 - Give security architecture diagrams a wider layout by removing the page sidebar.
 
 - Explain how to manage multiple VMs and navigate their terminals in the TUI.

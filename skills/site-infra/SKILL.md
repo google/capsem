@@ -335,16 +335,21 @@ Use top-to-bottom overview diagrams that fit the reading column; do not require
 horizontal scrolling to understand the introduction. Verify the rendered layout,
 since a vertical Mermaid direction alone does not guarantee a narrow diagram.
 
-## Mermaid diagrams
+## Diagrams
 
-The site uses `astro-mermaid` for rendering. Use fenced code blocks:
+Use JointJS Community for new and migrated diagrams, starting with the security
+architecture. `web/docs/src/components/Diagram.astro` owns the viewer and visual
+tokens; typed nodes, boundaries, and connections live in `src/lib/diagrams.ts`.
+Import the component from an MDX page and pass a diagram definition. Keep the
+approved route unchanged when converting a Markdown source to MDX, and update
+`approved-docs.mjs` to its new source extension.
 
-````markdown
-```mermaid
-graph LR
-  A --> B --> C
-```
-````
+Preserve all connections, directionality, permission levels, and boundaries
+when migrating. Give diagrams deliberate layouts, zoom/pan/fit controls, and
+server-rendered connection tables so the information remains available without
+JavaScript. Verify label readability and controls on desktop and mobile.
+Existing Mermaid diagrams remain supported during migration; do not add another
+renderer or a JointJS+ dependency for a new diagram.
 
 ## Astro reference
 
