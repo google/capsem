@@ -46,7 +46,7 @@ def command(
         environment["CAPSEM_GATEWAY_TOKEN"] = token
     return subprocess.run(
         bounded([str(BIN_DIR / "capsem"), "--uds-path", str(service.uds_path), *arguments], 120),
-        env=environment, capture_output=True, timeout=130, check=False,
+        env=environment, capture_output=True, check=False,
     )
 
 

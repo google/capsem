@@ -113,6 +113,7 @@ def test_native_managed_close_retires_original_generation(crash: bool) -> None:
             status, duplicate = client.call_json("POST", "/vms/create", request)
             assert status == 409 and duplicate["code"] == "duplicate_request", duplicate
             if crash:
+                assert service.proc is not None
                 service.proc.kill()
                 service.proc.wait(timeout=10)
                 service.stop(cleanup=False)
