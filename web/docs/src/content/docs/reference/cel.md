@@ -5,7 +5,7 @@ description: Which CEL expressions and event fields can I use in Capsem rules?
 
 Capsem uses a subset of [Common Expression Language (CEL)](https://cel.dev/)
 in a TOML rule's `match` field. This reference covers the complete supported
-expression syntax. For a procedure, see [Writing access rules](/guides/writing-access-rules/).
+expression syntax. For a procedure, see [Enforce security policy](/guides/enterprise/enforce-security-policy/).
 
 ## Operators
 
@@ -90,3 +90,10 @@ Capsem does not accept general CEL arithmetic, numeric ordering (`<`, `>`,
 comprehensions, `size()`, or arbitrary functions. Bare Boolean/number literals
 and field-to-field comparisons are also unsupported. An empty expression,
 unknown field, unsupported term, or invalid regex fails validation.
+
+## Expression limits
+
+Compilation expands Boolean expressions into clauses. A condition may produce
+at most 1,024 clauses and 16,384 atoms in total. Expressions exceeding either
+limit are refused during validation; shorten or split the rule instead of
+assuming a syntactically valid expression will compile.

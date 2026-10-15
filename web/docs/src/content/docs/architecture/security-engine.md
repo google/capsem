@@ -3,11 +3,7 @@ title: Security engine
 description: How does the security engine evaluate operations, handle credentials, and record decisions?
 ---
 
-<!-- Explanation for the completed 0.7/#206 target. Process extraction,
-standalone API adapter and sandbox grants require implementation verification
-before publication. The pipeline below follows capsem-core/security_engine. -->
-
-The security engine is a host subprocess assigned to one VM. It is responsible for:
+The security engine runs in `capsem-proxy`, a host subprocess assigned to one VM. It is responsible for:
 
 - **Network analysis:** decrypt HTTPS and identify the destination, HTTP request,
   model call, or MCP tool call being made.
@@ -47,8 +43,8 @@ flowchart TB
 
   vm -->|vsock| parse
   api -->|HTTP| parse
-  enforcement -.-> policy
-  detection -.-> policy
+  enforcement -. compiled by service .-> policy
+  detection -. compiled by service .-> policy
   policy -.-> rules
   runtime -->|audit admitted| upstream["Allowed upstream<br/>or MCP server"]
   sanitize -->|audit records| writer["Log writer<br/>session.db / archive"]
@@ -88,8 +84,8 @@ HTTPS inspection uses a **man-in-the-middle (MITM) certificate**:
 2. The engine reads the hostname from the TLS handshake and generates a
    certificate for that hostname, signed by the Capsem CA. The client establishes
    TLS with the engine, which can then read the HTTP request.
-3. After policy allows the request, the engine connects separately to the real
-   upstream. It checks the upstream certificate against the hostname and its
+3. After policy allows the request, the engine obtains a service-admitted connection to the real
+   upstream and establishes a separate TLS session. It checks the upstream certificate against the hostname and its
    public CA trust store.
 
 The engine can therefore inspect the method, URL, headers, and body before
@@ -160,8 +156,8 @@ and inline rules. Corp constraints take precedence. Relative file paths are
 resolved from the configuration file's directory. A detection records a match
 and its level; it does not automatically block the operation.
 
-Write rules with [Writing access rules](/guides/writing-access-rules/) and
-[Writing detection rules](/guides/writing-detection-rules/). Use the
+Write rules with [Enforce security policy](/guides/enterprise/enforce-security-policy/) and
+[Write detection rules](/guides/enterprise/write-detection-rules/). Use the
 [CEL syntax reference](/reference/cel/) and [Sigma syntax reference](/reference/sigma/)
 for supported expressions, fields, and file formats.
 
@@ -179,11 +175,27 @@ through HTTP inspection. See [network connections](/architecture/security/#netwo
 
 ## Worker permissions
 
-Before accepting VM traffic, the worker receives its VM's policy, certificates,
-credentials, allowed upstream authority, and log-writer connection, then enters
-its OS sandbox. It has no VM-control authority, another VM's credentials, or
-direct ledger access.
+The worker enters its sandbox with no filesystem path grants. It receives
+policy as authenticated bytes and uses granted channels for credentials, MCP,
+upstream connections, and ledger records. It cannot open the credential store,
+ledger files, another VM's controls, or an arbitrary upstream socket.
 
-On macOS, a deny-by-default Seatbelt profile permits only the worker's assigned
-resources. On Linux, Landlock restricts filesystem access and a seccomp allowlist
-restricts system calls. The worker accepts traffic only after confinement succeeds.
+The service selects upstream destinations and owns credential storage.
+Each capability belongs to the worker's current generation; replacement and
+revocation cannot transfer it to a new worker. See the
+[process sandboxing table](/architecture/security/#roles-and-sandboxing-rules)
+for the macOS and Linux mechanisms.
+
+## Credentials and policy changes
+
+A stored connection is separate from permission for a VM to use it. Explicit
+credential grants name the VM's current owner generation and allowed
+capabilities. The broker checks both the runtime's acknowledged policy and
+current policy before issuing credentials. Stopping or retiring the runtime
+fences its grants; a resumed VM must bind valid authority to its new runtime.
+
+Policy reloads install one immutable revision across request routing, plugins,
+provider identity, response parsing, and DNS. A request cannot mix permission
+from one revision with credentials from another. See the
+[credentials contract](/reference/credentials/) and
+[enforcement rules](/reference/enforcement-rules/).

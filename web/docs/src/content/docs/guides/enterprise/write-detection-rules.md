@@ -1,5 +1,5 @@
 ---
-title: Writing detection rules
+title: Write detection rules
 description: How do I write Sigma rules to detect activity in Capsem?
 ---
 
@@ -79,6 +79,6 @@ appropriate rule. This can stop an operation at an enforcing boundary;
 detecting a guest process audit record cannot undo a command that already ran.
 
 Use the [Sigma syntax reference](/reference/sigma/) for the complete supported
-format, conditions, fields, and actions. See [Writing access rules](/guides/writing-access-rules/)
+format, conditions, fields, and actions. See [Enforce security policy](/guides/enterprise/enforce-security-policy/)
 for CEL examples and the [security engine architecture](/architecture/security-engine/)
 for how detections are evaluated and logged.

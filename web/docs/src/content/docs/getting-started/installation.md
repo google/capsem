@@ -17,7 +17,9 @@ next:
 | Debian 13 or later | x86_64 or arm64 with KVM |
 
 You need an internet connection, `curl`, and permission to run `sudo`.
-Linux installation uses `apt` and requires a systemd user session.
+Linux installation uses `apt` and requires a systemd user session, KVM access,
+and Landlock ABI 6 or later with seccomp enabled. A distribution name alone
+does not establish that its installed kernel supports worker confinement.
 Intel Macs are not supported.
 
 ## Install

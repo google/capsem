@@ -32,9 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Sigma translation preserves field-list and selection grouping, so alternatives
-  and negated selections cannot bypass another condition in an access rule.
-
 - Invalidly encoded explicit gateway URLs fail closed instead of selecting a
   local gateway.
 
@@ -596,6 +593,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserving explicit deadlines and cancellation without replaying creation.
 
 ### Changed
+
+- Documentation preview now follows the approved 33-page structure with task
+  guides, enterprise references, and release-aligned architecture diagrams.
+
 
 - SDK onboarding shares handwritten Python, TypeScript, and Rust package READMEs
   through language tabs, with separately generated public interface references.

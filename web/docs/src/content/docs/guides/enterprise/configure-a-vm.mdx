@@ -1,0 +1,157 @@
+---
+title: Configure a VM programmatically
+description: How do I create a VM with environment variables, files, credentials, and network access?
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Create the VM with its non-secret environment, transfer its input files, and
+supply credentials through broker references. You need an already connected
+SDK client named `capsem`; start with [SDK onboarding](/sdk/).
+
+The examples use a new persistent VM named `agent-work`, 2 CPU cores, and
+8 GiB of memory. Use an unused name and an image your administrator permits.
+
+## Create the VM and provide files
+
+<Tabs syncKey="sdk-language">
+<TabItem label="Python">
+
+```python
+vm = await capsem.create(
+    name="agent-work", image="claude-code",
+    cpus=2, memory=8, env={"MODE": "evaluation"},
+)
+await vm.files.write("task.txt", b"Review this repository.\n")
+contents = await vm.files.read("task.txt")
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const vm = await capsem.create({
+  name: 'agent-work', image: 'claude-code',
+  cpus: 2, memory: 8, env: {MODE: 'evaluation'},
+});
+await vm.files.write('task.txt', new TextEncoder().encode('Review this repository.\n'));
+const contents = await vm.files.read('task.txt');
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use capsem_sdk::CreateOptions;
+use std::collections::HashMap;
+
+let vm = capsem.create(CreateOptions {
+    name: Some("agent-work".into()),
+    image: Some("claude-code".into()),
+    cpus: Some(2),
+    memory: Some(8),
+    env: Some(HashMap::from([("MODE".into(), "evaluation".into())])),
+    ..Default::default()
+}).await?;
+vm.files().write("task.txt", b"Review this repository.\n".to_vec()).await?;
+let contents = vm.files().read("task.txt").await?;
+```
+
+</TabItem>
+</Tabs>
+
+The file paths are relative to the VM's workspace. Read/write operations
+preserve bytes and require the running VM's security ledger. An image receives
+the supplied environment in its container; without an image, the environment
+belongs to the VM.
+
+Read the file back and compare it with your input before starting the agent.
+Do not assume a file on your computer is mounted into the VM.
+
+## Supply an API key without copying it into the VM
+
+For the next VM, register the key on the host, then use its returned reference
+as the agent's environment value. These examples read an existing
+`ANTHROPIC_API_KEY` from the host environment:
+
+<Tabs syncKey="sdk-language">
+<TabItem label="Python">
+
+```python
+import os
+
+credential = await capsem.credentials.inject("anthropic", os.environ["ANTHROPIC_API_KEY"])
+vm = await capsem.create(
+    name="agent-with-key", image="claude-code",
+    env={"ANTHROPIC_API_KEY": credential.credential_ref},
+)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const credential = await capsem.credentials.inject('anthropic', process.env.ANTHROPIC_API_KEY ?? '');
+const vmWithKey = await capsem.create({
+  name: 'agent-with-key', image: 'claude-code',
+  env: {ANTHROPIC_API_KEY: credential.credential_ref},
+});
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use capsem_sdk::{CreateOptions, models::{CredentialInjectProvider, CredentialStorage}};
+use std::collections::HashMap;
+
+let key = std::env::var("ANTHROPIC_API_KEY")?;
+let credential = capsem.credentials().inject(
+    CredentialInjectProvider::Anthropic, &key, CredentialStorage::File,
+).await?;
+let vm_with_key = capsem.create(CreateOptions {
+    name: Some("agent-with-key".into()),
+    image: Some("claude-code".into()),
+    env: Some(HashMap::from([("ANTHROPIC_API_KEY".into(), credential.credential_ref)])),
+    ..Default::default()
+}).await?;
+```
+
+</TabItem>
+</Tabs>
+
+The broker substitutes real material only for an admitted destination.
+The reference does not override policy. For connected accounts, authorization
+and a VM capability grant are separate steps; see
+[Credentials reference](/reference/credentials/) for ownership, expiry, and revocation.
+
+## Connect VMs or publish a service
+
+For VMs that must communicate, create a named private network and pass the
+returned network object in each VM's `networks` option. The SDK also exposes
+attach/detach operations for existing VMs.
+
+For example, with Python and an already running `vm`:
+
+```python
+network = await capsem.networks.create("evaluation")
+await vm.networks.attach(network)
+port = await vm.ports.open(8080)
+```
+
+Start your service on port 8080 inside the workload first. The returned
+`port.host` identifies the selected loopback port on your computer.
+Close the publication with `await vm.ports.close(port)` when finished.
+
+Private-network traffic and published ports use separate relays and bypass
+HTTP inspection. Choose network membership and publication deliberately;
+see [Network connections](/architecture/security/#network-connections).
+
+## Verify and retain the configuration
+
+Check the VM's info, run a small command, and inspect its records. Test the
+intended destination and a refused destination before running a larger job.
+
+Stop a named VM to preserve its files for later; fork it to duplicate a
+prepared environment. For jobs that should always be removed, use a
+[managed SDK scope](/guides/developers/integrate-the-sdk/#bound-temporary-work).

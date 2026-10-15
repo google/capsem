@@ -1,5 +1,5 @@
 ---
-title: Writing access rules
+title: Enforce security policy
 description: How do I write rules that allow or block access in Capsem?
 ---
 
@@ -68,6 +68,26 @@ reason = "This VM must not delete files through this MCP tool."
 This targets one tool on one server. It does not block other tools named
 `delete_file` on different servers.
 
+## Enforce a corporate constraint
+
+After checking the rule on a pilot VM, put administrator constraints in your
+corporate enforcement file rather than relying on user-editable rules:
+
+```toml
+[corp.rules.block_api_writes]
+name = "block_api_writes"
+action = "block"
+priority = -100
+match = 'http.host == "api.example.com" && http.method != "GET" && http.method != "HEAD"'
+reason = "Corporate policy permits only GET and HEAD."
+```
+
+Select it through `[corp_rule_files].enforcement` in your corporate file,
+validate with `capsem-admin enforcement validate PATH --source corp --json`,
+and distribute both files through your administrator-owned configuration.
+Corporate rules precede user rules. See
+[Deploy Capsem in your enterprise](/guides/enterprise/deploy-capsem/).
+
 ## Check the result
 
 Create a new VM after saving the files, then access it through the
@@ -78,5 +98,5 @@ confirm which rule matched. Corp constraints can still refuse the GET.
 
 For all operators, string functions, event fields, and quoting rules, use the
 [CEL syntax reference](/reference/cel/). To record detections, see
-[Writing detection rules](/guides/writing-detection-rules/). The
+[Write detection rules](/guides/enterprise/write-detection-rules/). The
 [security engine architecture](/architecture/security-engine/) explains evaluation.

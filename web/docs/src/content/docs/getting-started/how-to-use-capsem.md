@@ -1,12 +1,14 @@
 ---
 title: How to use Capsem
-description: How do I launch, keep, and customize a Capsem VM?
+description: How do I launch, access, suspend, and duplicate my first Capsem VM?
 sidebar:
   order: 2
 prev:
   label: Installation
   link: /getting-started/installation/
-next: false
+next:
+  label: Configure and reuse your environment
+  link: /guides/users/reuse-your-environment/
 ---
 
 Start a VM to work with an AI agent, pause it when you are done for the day,
@@ -103,98 +105,10 @@ already running in the original, use [`capsem suspend` and `capsem resume`](#pau
 
 ## Choose an image for your VM
 
-When creating your next VM, choose a different image if you want another
-agent or a VM without an agent. Before creating it, see which images
-are available to you:
-
-```sh
-capsem images
-```
-
-The official catalog includes:
-
-| Image | Contains |
-| --- | --- |
-| `claude-code` | Claude Code |
-| `codex-cli` | OpenAI Codex CLI |
-| `agy` | Antigravity CLI |
-| `dev` | A development toolchain without an AI agent |
-| `claude-desktop` | Claude Desktop with a streamed graphical interface (arm64 only) |
-
-Once you have chosen an image, pass its name to `--image`. For example,
-create a new VM with Codex, then open it:
-
-```sh
-capsem create -n coding --image codex-cli
-capsem shell coding
-```
-
-If your team already has a container image with the tools you need, you can use
-it instead. After your administrator authorizes the image and its registry,
-create a VM with its full image reference:
-
-```sh
-capsem create -n custom --image ghcr.io/your-org/your-image:tag
-```
-
-Replace `ghcr.io/your-org/your-image:tag` with your team's authorized image.
-For an image on Docker Hub, use `docker://`, for example `docker://alpine:3`.
-Custom images are blocked by default, and your administrator may also limit
-the images available in the catalog.
-
-## Advanced usage
-
-The following options let you tailor new VMs to other tasks. Choose them
-before creating each VM.
-
-### Temporary VMs
-
-For a quick experiment you do not need to keep, omit `-n`:
-
-```sh
-capsem create --image claude-code
-capsem list
-```
-
-After creation, `capsem list` shows your VMs and their IDs. Replace `<VM-ID>` with
-the ID printed by `capsem create`, then open the VM:
-
-```sh
-capsem shell <VM-ID>
-```
-
-When finished, copy out anything you want to keep, close the TUI, and delete
-the VM from your computer's terminal:
-
-```sh
-capsem delete <VM-ID>
-```
-
-An unnamed VM cannot be suspended. Closing its terminal leaves it running;
-deleting it removes its files.
-
-For a quick check that should clean up after itself, `capsem run` creates a VM,
-executes a command, and deletes the VM when that command finishes. This
-example prints the Linux system information in a VM using the `dev` image:
-
-```sh
-capsem run --image dev sh -c 'uname -a'
-```
-
-### CPU and memory
-
-Use fewer CPU cores and less memory to leave more of your computer available
-for other work, or allocate more for demanding tasks. Choose these resources
-when creating the VM:
-
-```sh
-capsem create -n custom-vm --cpu 2 --ram 8 --image claude-code
-```
-
-`--cpu 2` gives the VM two CPU cores; `--ram 8` gives it 8 GB of memory.
-Choose values your computer can spare and that your administrator permits.
-Put these options before `--image`; a command after the image replaces that
-image's startup command.
+`--image` accepts a Capsem prebuilt image or an authorized custom OCI image.
+Use `capsem images` to see the available catalog. For other agents, custom
+images, temporary VMs, and CPU/memory choices, see
+[Configure and reuse your environment](/guides/users/reuse-your-environment/).
 
 ## Next steps
 
