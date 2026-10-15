@@ -2,7 +2,24 @@ use super::*;
 use capsem_api::stream::{decode_client_frame, encode_data, encode_status, ClientFrame, StreamKind};
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+use tokio_tungstenite::tungstenite::handshake::server::{Callback, ErrorResponse, Request, Response};
+
+// The upstream trait owns the handshake error type. Implementing its contract
+// avoids introducing a closure with a suppressible large-error result.
+struct AuthenticatedHandshake;
+
+impl Callback for AuthenticatedHandshake {
+    fn on_request(self, request: &Request, mut response: Response) -> std::result::Result<Response, ErrorResponse> {
+        assert_eq!(request.uri().path(), "/prefix/vms/vm%20%C3%A9/stream");
+        assert_eq!(request.headers()["authorization"], "Bearer private-token");
+        assert_eq!(request.headers()["sec-websocket-protocol"], stream::STREAM_SUBPROTOCOL);
+        response.headers_mut().insert(
+            "sec-websocket-protocol",
+            HeaderValue::from_static(stream::STREAM_SUBPROTOCOL),
+        );
+        Ok(response)
+    }
+}
 
 async fn gateway<F, Fut>(script: F) -> (Transport, tokio::task::JoinHandle<()>)
 where
@@ -13,18 +30,12 @@ where
     let url = format!("http://{}/prefix", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.unwrap();
-        #[allow(clippy::result_large_err)] // tungstenite owns this callback signature
-        let check = |request: &Request, mut response: Response| {
-            assert_eq!(request.uri().path(), "/prefix/vms/vm%20%C3%A9/stream");
-            assert_eq!(request.headers()["authorization"], "Bearer private-token");
-            assert_eq!(request.headers()["sec-websocket-protocol"], stream::STREAM_SUBPROTOCOL);
-            response.headers_mut().insert(
-                "sec-websocket-protocol",
-                HeaderValue::from_static(stream::STREAM_SUBPROTOCOL),
-            );
-            Ok(response)
-        };
-        script(tokio_tungstenite::accept_hdr_async(socket, check).await.unwrap()).await;
+        script(
+            tokio_tungstenite::accept_hdr_async(socket, AuthenticatedHandshake)
+                .await
+                .unwrap(),
+        )
+        .await;
     });
     (
         Transport::new(&url, "private-token", Duration::from_secs(2)).unwrap(),
