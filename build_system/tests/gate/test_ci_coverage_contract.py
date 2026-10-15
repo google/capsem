@@ -10,6 +10,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -339,6 +340,37 @@ def test_codecov_publication_remains_explicitly_best_effort() -> None:
     )
 
 
+def test_coverage_inventory_keeps_real_tests_and_excludes_preparation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(globals(), "PROJECT_ROOT", tmp_path)
+    source = tmp_path / "ci.sh"
+    source.write_text("\n".join((
+        "cargo llvm-cov clean --workspace",
+        "cargo llvm-cov run -p worker -- --version",
+        "cargo llvm-cov report --lcov",
+        "cargo llvm-cov nextest --workspace --bins",
+        "cargo llvm-cov nextest --workspace --lib",
+        "cargo llvm-cov --workspace --bins",
+        "cargo llvm-cov nextest --workspace --tests",
+        "cargo llvm-cov nextest --test=smoke",
+        "cargo llvm-cov nextest --test smoke",
+    )))
+    commands = rust_coverage_execution_commands([source])
+    assert set(commands) == {f"ci.sh:{i}" for i in range(4, 10)}
+    assert set(missing_binary_coverage_commands(commands)) == {"ci.sh:5", "ci.sh:7"}, (
+        "--tests includes unit targets and cannot hide missing --bins; only an exact integration selector is exempt"
+    )
+
+
+def missing_binary_coverage_commands(commands: dict[str, str]) -> dict[str, str]:
+    missing = {}
+    for source, command in commands.items():
+        argv = shlex.split(command)
+        integration_only = any(arg == "--test" or arg.startswith("--test=") for arg in argv)
+        if "--bins" not in argv and not integration_only:
+            missing[source] = command
+    return missing
+
+
 def test_rust_coverage_includes_bins() -> None:
     commands = rust_coverage_execution_commands(
         [
@@ -347,15 +379,7 @@ def test_rust_coverage_includes_bins() -> None:
             PROJECT_ROOT / "justfile",
         ]
     )
-    unit_or_workspace_commands = {
-        source: command for source, command in commands.items() if "--test" not in command
-    }
-
-    missing_bins = {
-        source: command
-        for source, command in unit_or_workspace_commands.items()
-        if "--bins" not in command
-    }
+    missing_bins = missing_binary_coverage_commands(commands)
     assert not missing_bins, (
         "Rust unit/workspace coverage commands must include binary targets "
         f"with --bins; missing {missing_bins}"
@@ -497,11 +521,7 @@ def test_binary_targets_in_coverage_workflow() -> None:
             PROJECT_ROOT / "justfile",
         ]
     )
-    missing_bins_flag = {
-        source: command
-        for source, command in commands.items()
-        if "--test" not in command and "--bins" not in command
-    }
+    missing_bins_flag = missing_binary_coverage_commands(commands)
     assert not missing_bins_flag, (
         "unit/workspace Rust coverage commands must measure executable "
         f"targets, not just libraries; missing --bins in {missing_bins_flag}"
@@ -679,11 +699,11 @@ def rust_coverage_commands(paths: list[Path]) -> dict[str, str]:
 
 
 def rust_coverage_execution_commands(paths: list[Path]) -> dict[str, str]:
-    """Return commands that execute tests, excluding report-only subcommands."""
+    """Return test commands, excluding cleanup, executable preparation and reports."""
     return {
         source: command
         for source, command in rust_coverage_commands(paths).items()
-        if shlex.split(command)[:3] != ["cargo", "llvm-cov", "report"]
+        if shlex.split(command)[2] not in {"clean", "run", "report"}
     }
 
 
