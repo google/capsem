@@ -206,7 +206,6 @@
 .demo-insert > span { font-size: 10px; font-weight: 600; letter-spacing: .16em; color: var(--color-accent-hover); }
 .demo-insert h3 { font-size: clamp(2.8rem, 5vw, 4.5rem); font-weight: 650; letter-spacing: -.07em; line-height: 1.05; margin: 1rem 0; }
 .demo-insert p { max-width: 27ch; font-size: 17px; line-height: 1.6; color: var(--color-body); }
-.demo-insert a { margin-top: 1.8rem; color: var(--color-accent-hover); font-size: 12px; }
 .demo-terminal .xterm-viewport { scrollbar-width: none; }
 .demo-terminal .xterm-viewport::-webkit-scrollbar { display: none; }
 .demo-fallback { position: absolute; left: 16px; top: 65px; white-space: pre-wrap; font: 13px/1.6 Menlo, monospace; }
@@ -214,7 +213,6 @@
 @keyframes demo-browser-in { from { opacity: 0; transform: translateY(18px) scale(.97); } to { opacity: 1; transform: none; } }
 .demo-address { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; color: var(--color-body); background: var(--color-surface-alt); font-size: 12px; }
 .demo-address code { border-radius: 4px; background: var(--color-surface); padding: 4px 20px; font-size: 11px; }
-.demo-address button { cursor: pointer; padding: 3px 6px; }
 .demo-website { color: var(--color-demo-ink); background: var(--color-demo-paper); padding: 1.4rem; }
 .demo-website header { display: flex; justify-content: space-between; font-size: .6rem; align-items: center; }
 .demo-website header strong { font-size: .8rem; letter-spacing: -.04em; }

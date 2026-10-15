@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with chapter playback and “Build fast” / “Work fast” interludes.
   The website preview holds for 2.5 seconds; the Codex scene follows the official
   CLI's model/directory box, typing prompt, and context footer.
+  Interludes use passive copy, with links and clickable preview chrome removed
+  from the animation; playback controls remain below it.
 
 ### Fixed
 

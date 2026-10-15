@@ -142,13 +142,12 @@
         <span>{message.eyebrow}</span>
         <h3>{message.title}</h3>
         <p>{message.detail}</p>
-        <a href={message.href}>{message.link}</a>
       </div>
     {/if}
   </div>
   {#if preview}
     <div class="demo-browser" role="group" aria-label={demo.previewLabel}>
-      <div class="demo-address"><span aria-hidden="true">‹ ›</span><code>{demo.previewURL}</code><button aria-label={demo.closePreview} onclick={() => { preview = false; }}>×</button></div>
+      <div class="demo-address"><span aria-hidden="true">‹ ›</span><code>{demo.previewURL}</code><span aria-hidden="true">×</span></div>
           <div class="demo-website">
             <header><strong>{demo.preview.brand}</strong><span>{demo.preview.nav}</span></header>
             <div class="demo-site-content">

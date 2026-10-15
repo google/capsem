@@ -159,8 +159,8 @@ export const HERO_DEMO = {
   chaptersLabel: "Demo chapters",
   chapters: ["Easy to install", "Build fast", "Ship quickly", "Switch agent seamlessly", "Get things done"],
   inserts: {
-    build: { eyebrow: "FROM IDEA TO FIRST DRAFT", title: "Build fast.", detail: "Your agent. Your dev tools. Already in the VM.", link: "See what’s built in ↗", href: "#features" },
-    work: { eyebrow: "A FRESH VM. A NEW TASK.", title: "Work fast.", detail: "Boot your next image. Your tools and connections come with it.", link: "Explore how it works ↗", href: "#how-it-works" },
+    build: { eyebrow: "FROM IDEA TO FIRST DRAFT", title: "Build fast.", detail: "Your favorite agent and tools are all ready to go." },
+    work: { eyebrow: "A FRESH VM. A NEW TASK.", title: "Work fast.", detail: "Boot your next image. Your tools and connections come with it." },
   },
   codex: {
     name: "OpenAI Codex", modelLabel: "model:", model: "gpt-6.1-sol medium",
@@ -170,7 +170,7 @@ export const HERO_DEMO = {
     welcome: "To get started, describe a task.\r\n\r\n/model        Choose a model\r\n/permissions  Set permissions",
   },
   shellTitle: "elie — zsh", agyTitle: "website — agy", codexTitle: "inbox — codex",
-  previewLabel: "Website preview", previewURL: "localhost:3000", closePreview: "Close website preview",
+  previewLabel: "Website preview", previewURL: "localhost:3000",
   preview: { brand: "FORM & FIELD", nav: "Independent design studio", eyebrow: "THOUGHTFUL BY DESIGN", title: "A little space.\nA bigger idea.", description: "We create places, objects, and experiences that make everyday life a little more extraordinary.", action: "Explore our work ↗", footer: "Architecture / Objects / Digital", monogram: "F/f" },
   summary: "Your inbox, summarized:\r\n\r\n• Maya: the website is ready for review.\r\n  Action: send feedback today.\r\n\r\n• Design team: new concepts are ready.\r\n  Action: pick a direction by Friday.\r\n\r\n• Alex: coffee on Thursday?\r\n  Action: confirm a time.\r\n",
 } as const;
