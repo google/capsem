@@ -1,0 +1,27 @@
+[package]
+name = "capsem-mcp-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Descriptor-only MCP bootstrap and HTTP capabilities"
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+capsem-foundation = { path = "../capsem-foundation" }
+capsem-proto = { path = "../capsem-proto" }
+anyhow.workspace = true
+bytes.workspace = true
+futures.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["http2"] }
+hyper-util = { workspace = true, features = ["http2"] }
+reqwest.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

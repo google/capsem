@@ -890,6 +890,7 @@ dependencies = [
  "capsem-crypto",
  "capsem-foundation",
  "capsem-logger",
+ "capsem-mcp-transport",
  "capsem-proto",
  "capsem-router",
  "capsem-telemetry",
@@ -1100,10 +1101,10 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
- "capsem-core",
  "capsem-credentials",
  "capsem-foundation",
  "capsem-guard",
+ "capsem-mcp-transport",
  "capsem-proto",
  "clap",
  "futures",
@@ -1130,6 +1131,7 @@ dependencies = [
  "capsem-core",
  "capsem-foundation",
  "capsem-guard",
+ "capsem-mcp-transport",
  "capsem-proto",
  "http",
  "http-body-util",
@@ -1139,6 +1141,24 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "capsem-mcp-transport"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "capsem-foundation",
+ "capsem-proto",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest 0.12.28",
  "tokio",
  "tracing",
 ]
@@ -1299,6 +1319,7 @@ dependencies = [
  "capsem-foundation",
  "capsem-guard",
  "capsem-logger",
+ "capsem-mcp-transport",
  "capsem-proto",
  "capsem-router",
  "capsem-telemetry",
