@@ -162,6 +162,7 @@ def test_prefetch_does_not_fall_back_after_authentication_or_server_failure(
     tmp_path, monkeypatch, status
 ):
     import urllib.error
+    from email.message import Message
 
     from tests.fixtures.oci import pinned_image, published_root
 
@@ -174,7 +175,7 @@ def test_prefetch_does_not_fall_back_after_authentication_or_server_failure(
 
         def open(self, url, token):
             calls.append(url)
-            raise urllib.error.HTTPError(url, status, "refused", {}, None)
+            raise urllib.error.HTTPError(url, status, "refused", Message(), None)
 
     monkeypatch.setattr(pinned_image, "_Registry", Client)
     monkeypatch.setattr(pinned_image, "_token", lambda *args: None)
