@@ -908,6 +908,7 @@
    "capsem-crypto",
    "capsem-foundation",
    "capsem-logger",
+   "capsem-mcp-transport",
    "capsem-proto",
    "capsem-router",
    "capsem-telemetry",
@@ -1110,10 +1111,10 @@
   "dependencies": [
    "anyhow",
    "axum",
-   "capsem-core",
    "capsem-credentials",
    "capsem-foundation",
    "capsem-guard",
+   "capsem-mcp-transport",
    "capsem-proto",
    "clap",
    "futures",
@@ -1139,6 +1140,7 @@
    "capsem-core",
    "capsem-foundation",
    "capsem-guard",
+   "capsem-mcp-transport",
    "capsem-proto",
    "http",
    "http-body-util",
@@ -1148,6 +1150,23 @@
    "serde",
    "serde_json",
    "tempfile",
+   "tokio",
+   "tracing"
+  ]
+ },
+ "capsem-mcp-transport": {
+  "build_script": false,
+  "dependencies": [
+   "anyhow",
+   "bytes",
+   "capsem-foundation",
+   "capsem-proto",
+   "futures",
+   "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
+   "reqwest",
    "tokio",
    "tracing"
   ]
@@ -1300,6 +1319,7 @@
    "capsem-foundation",
    "capsem-guard",
    "capsem-logger",
+   "capsem-mcp-transport",
    "capsem-proto",
    "capsem-router",
    "capsem-telemetry",
