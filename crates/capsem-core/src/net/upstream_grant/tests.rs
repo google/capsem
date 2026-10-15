@@ -22,6 +22,7 @@ async fn mcp_aggregator_grant_is_connected_and_a_denial_does_not_replay_the_requ
     let (broker, worker) = UnixStream::pair().unwrap();
     let client = UpstreamGrantClient::start(worker).unwrap();
     let (requests, responses) = channels(broker);
+    let (read_complete, keep_peer) = tokio::sync::oneshot::channel();
     let broker_task = tokio::spawn(async move {
         assert_eq!(
             receive_request(&requests).await,
@@ -48,6 +49,9 @@ async fn mcp_aggregator_grant_is_connected_and_a_denial_does_not_replay_the_requ
         )
         .await;
         peer.write_all(b"connected RPC").unwrap();
+        // Darwin stops reporting a connected peer once its endpoint closes.
+        // Keep this granted capability live until the client has consumed it.
+        let _ = keep_peer.await;
     });
     assert!(client.open_mcp_aggregator().await.is_err());
     let stream = client.open_mcp_aggregator().await.unwrap();
@@ -59,6 +63,7 @@ async fn mcp_aggregator_grant_is_connected_and_a_denial_does_not_replay_the_requ
         .unwrap()
         .unwrap();
     assert_eq!(&bytes, b"connected RPC");
+    read_complete.send(()).unwrap();
     broker_task.await.unwrap();
 }
 

@@ -616,12 +616,18 @@ async fn corrupt_store_cannot_extend_a_live_managed_vm_past_its_finite_lease() {
         .create(
             request,
             Capability::from_bytes([94; 32]),
-            LeasePolicy::new(Duration::from_millis(100)).unwrap(),
+            LeasePolicy::new(Duration::from_secs(30)).unwrap(),
             effects(&fixture),
         )
         .await
         .unwrap();
     assert_eq!(snapshot.state(), State::Active);
+    // Start the short expiry window only after activation: slow filesystem
+    // admission must not consume the lease this corruption probe exercises.
+    owner
+        .set_lease_limit(LeasePolicy::new(Duration::from_millis(100)).unwrap())
+        .await
+        .unwrap();
     std::fs::write(path.join(format!("{request}.json")), b"corrupt ownership record").unwrap();
     fixture.cleanup_release.add_permits(1);
     tokio::time::timeout(Duration::from_secs(1), fixture.cleanup_entered.acquire())
