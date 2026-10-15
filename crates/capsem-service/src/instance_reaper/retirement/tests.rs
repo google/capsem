@@ -2,6 +2,62 @@ use super::*;
 use capsem_foundation::unix::process::{Signal, SignalOutcome};
 use std::time::Duration;
 
+#[tokio::test]
+async fn generation_retirement_waits_for_positive_broker_cleanup_after_native_exit() {
+    use futures::FutureExt as _;
+    let owner = std::sync::Arc::new(Retirements::default());
+    let generation = capsem_crypto::uuid_v4();
+    let (release, released) = oneshot::channel();
+    let broker = tokio::spawn(async move {
+        released.await.unwrap();
+        crate::upstream_broker::BrokerCompletion {
+            cleanup_confirmed: true,
+            protocol_result: Ok(()),
+        }
+    });
+    let mut registration = owner.register("vm", generation).unwrap().with_brokers([broker]);
+    let mut child = tokio::process::Command::new("/usr/bin/true")
+        .env_clear()
+        .spawn()
+        .unwrap();
+    let reaper = tokio::spawn(async move {
+        registration.wait_child(&mut child).await.unwrap();
+        registration.complete();
+    });
+    assert!(owner.wait_exit("vm", generation).await.unwrap());
+    assert!(
+        owner.wait("vm", generation).now_or_never().is_none(),
+        "native exit alone acknowledged broker cleanup"
+    );
+    release.send(()).unwrap();
+    assert!(owner.wait("vm", generation).await.unwrap());
+    reaper.await.unwrap();
+}
+
+#[tokio::test]
+async fn unconfirmed_broker_cleanup_cannot_complete_generation_retirement() {
+    let owner = Retirements::default();
+    let generation = capsem_crypto::uuid_v4();
+    let broker = tokio::spawn(async {
+        crate::upstream_broker::BrokerCompletion {
+            cleanup_confirmed: false,
+            protocol_result: Ok(()),
+        }
+    });
+    let mut registration = owner.register("vm", generation).unwrap().with_brokers([broker]);
+    let mut child = tokio::process::Command::new("/usr/bin/true")
+        .env_clear()
+        .spawn()
+        .unwrap();
+    assert!(registration.wait_child(&mut child).await.is_err());
+    drop(registration);
+    assert!(owner.wait_exit("vm", generation).await.unwrap());
+    assert!(
+        owner.wait("vm", generation).await.is_err(),
+        "unconfirmed MCP cleanup acknowledged as complete"
+    );
+}
+
 fn sleeper() -> tokio::process::Child {
     tokio::process::Command::new("sleep")
         .arg("30")

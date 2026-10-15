@@ -46,6 +46,7 @@ pub(crate) struct Registration {
     exited: watch::Sender<Outcome>,
     signals: mpsc::Receiver<SignalRequest>,
     completed: bool,
+    brokers: Vec<tokio::task::JoinHandle<crate::upstream_broker::BrokerCompletion>>,
 }
 
 impl Retirements {
@@ -91,6 +92,7 @@ impl Retirements {
             exited,
             signals: signal_receiver,
             completed: false,
+            brokers: Vec::new(),
         })
     }
 
@@ -160,6 +162,13 @@ async fn wait(mut result: watch::Receiver<Outcome>) -> Result<bool> {
 }
 
 impl Registration {
+    pub(crate) fn with_brokers(
+        mut self,
+        brokers: impl IntoIterator<Item = tokio::task::JoinHandle<crate::upstream_broker::BrokerCompletion>>,
+    ) -> Self {
+        self.brokers.extend(brokers);
+        self
+    }
     pub(crate) fn generation(&self) -> Uuid {
         self.generation
     }
@@ -213,6 +222,12 @@ impl Registration {
                 Err(std::io::Error::other("original child wait failed"))
             };
             let _ = request.reply.send(outcome);
+        }
+        for broker in self.brokers.drain(..) {
+            let completion = broker.await.map_err(std::io::Error::other)?;
+            if !completion.cleanup_confirmed {
+                return Err(std::io::Error::other("generation broker cleanup is unconfirmed"));
+            }
         }
         status.map(|status| (status, revoked))
     }

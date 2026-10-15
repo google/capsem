@@ -1,7 +1,7 @@
 use super::*;
 use crate::instance::WorkerAuthority;
-use capsem_core::mcp::http_transport::BrokerHttpClient;
 use capsem_core::net::policy_config::{ActivePolicyFile, SettingsFile};
+use capsem_mcp_transport::http_transport::BrokerHttpClient;
 use capsem_proto::mcp::{McpAuthConfig, McpAuthKind};
 use std::collections::HashMap;
 use std::sync::Mutex;

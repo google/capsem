@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The service owns native MCP child creation and waits for their confirmed
+  exit before completing session retirement; VM owners receive only scoped RPC.
+
 - Native MCP aggregator and builtin Linux profiles deny forked processes while
   retaining runtime threads; alternate x32 syscall aliases cannot bypass filters.
 

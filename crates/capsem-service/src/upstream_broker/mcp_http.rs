@@ -39,6 +39,8 @@ async fn run(
     fd::validate_connected_stream(socket.as_fd())?;
     fd::set_nonblocking(socket.as_fd(), true)?;
     let socket = tokio::net::UnixStream::from_std(socket)?;
+    let mut lifetime = policy.clone();
+    let closed = async move { while lifetime.changed().await.is_ok() {} };
     let client = client_builder().build()?;
     let service_authority = authority.clone();
     let service = hyper::service::service_fn(move |request| {
@@ -54,6 +56,7 @@ async fn run(
     tokio::select! {
         biased;
         () = authority.revoked() => Ok(()),
+        () = closed => Ok(()),
         result = connection => result.context("MCP HTTP channel"),
     }
 }
@@ -239,7 +242,7 @@ async fn builtin_client(
             .runtime
             .mcp
             .server_enabled
-            .get(capsem_core::mcp::BUILTIN_SERVER_NAME)
+            .get(capsem_proto::mcp_contracts::BUILTIN_SERVER_NAME)
             .copied()
             .unwrap_or(true),
         "builtin MCP server disabled"

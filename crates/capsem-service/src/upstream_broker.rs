@@ -9,7 +9,6 @@
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::{AsFd as _, AsRawFd as _, OwnedFd};
-use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,14 +18,13 @@ use capsem_core::net::mitm_proxy::protocol::Protocol;
 use capsem_core::net::mitm_proxy::UpstreamTarget;
 use capsem_core::net::policy_config::CompiledActivePolicy;
 use capsem_core::net::upstream_address::UpstreamResolver;
-use capsem_foundation::unix::contained::FileTimeSpec;
 use capsem_foundation::unix::fd::{self, SocketShutdown};
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::ledger::LedgerChannelGrant;
 use capsem_proto::upstream_grant::{
-    decode_upstream_grant_request, encode_upstream_grant_response, GuestFileTime, ProxyTrafficService,
-    UpstreamDescriptorKind, UpstreamGrantDenial, UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol,
-    UPSTREAM_GRANT_CAPACITY, UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
+    decode_upstream_grant_request, encode_upstream_grant_response, ProxyTrafficService, UpstreamDescriptorKind,
+    UpstreamGrantDenial, UpstreamGrantRequest, UpstreamGrantResponse, UpstreamProtocol, UPSTREAM_GRANT_CAPACITY,
+    UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
@@ -34,7 +32,17 @@ use tracing::{debug, warn};
 use crate::instance::WorkerGrant;
 use crate::ledger_worker::{LedgerClient, LedgerWorkers};
 
+mod guest_metadata;
 mod mcp_http;
+mod mcp_native;
+mod mcp_spawn;
+use guest_metadata::{set_guest_mode, set_guest_times};
+
+#[derive(Debug)]
+pub(crate) struct BrokerCompletion {
+    pub(crate) cleanup_confirmed: bool,
+    pub(crate) protocol_result: Result<(), String>,
+}
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -224,9 +232,9 @@ impl PendingBroker {
         self.worker.try_clone()
     }
 
-    pub(crate) fn start(self, authority: WorkerGrant) -> tokio::task::JoinHandle<()> {
+    pub(crate) fn start(self, authority: WorkerGrant) -> tokio::task::JoinHandle<BrokerCompletion> {
         tokio::spawn(async move {
-            if let Err(error) = run(
+            match run(
                 self.coordinator,
                 self.initial_policy,
                 self.updates,
@@ -237,7 +245,20 @@ impl PendingBroker {
             )
             .await
             {
-                debug!(%error, "upstream broker stopped");
+                Ok(completion) => {
+                    if let Err(error) = &completion.protocol_result {
+                        debug!(%error, "upstream broker stopped");
+                    }
+                    completion
+                }
+                Err(error) => {
+                    // Setup failed before any child or resource was granted.
+                    debug!(%error, "upstream broker setup stopped");
+                    BrokerCompletion {
+                        cleanup_confirmed: true,
+                        protocol_result: Err(error),
+                    }
+                }
             }
         })
     }
@@ -251,12 +272,15 @@ async fn run(
     session_dir: Option<PathBuf>,
     mut ledger: Option<LedgerSource>,
     proxy: Option<crate::proxy_worker::ProxyWorker>,
-) -> Result<(), String> {
+) -> Result<BrokerCompletion, String> {
     let requests =
         WireReceiver::new(socket.try_clone().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     let responses = WireSender::new(socket).map_err(|error| error.to_string())?;
     let (mcp_policy_updates, mcp_policy) = tokio::sync::watch::channel(Arc::clone(&policy));
     let mut mcp_workers = tokio::task::JoinSet::new();
+    let mcp_capacity = Arc::new(tokio::sync::Semaphore::new(capsem_proto::MCP_BUILTIN_PEERS_PER_SESSION));
+    let mut mcp_cleanup_confirmed = true;
+    let mut mcp_aggregator_started = false;
     let (request_tx, mut request_rx) = mpsc::channel(1);
     let request_pump = tokio::spawn(async move {
         loop {
@@ -274,12 +298,10 @@ async fn run(
     let mut awaiting_adoption = None;
     let ledger_configured = ledger.is_some();
     let mut pending_ledger: Option<(LedgerChannelGrant, Vec<OwnedFd>)> = None;
-    let result = async {
+    let result: Result<(), String> = async {
         'requests: loop {
             while let Some(result) = mcp_workers.try_join_next() {
-                if let Err(error) = result {
-                    debug!(%error, "native MCP HTTP broker task ended");
-                }
+                mcp_cleanup_confirmed &= matches!(result, Ok(Ok(())));
             }
             let frame = tokio::select! {
                 biased;
@@ -321,6 +343,41 @@ async fn run(
                 }
             }
             match request {
+                UpstreamGrantRequest::OpenMcpAggregator { request_id } => {
+                    let Some(session) = session_dir.clone() else {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
+                        continue;
+                    };
+                    if mcp_aggregator_started {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::InvalidResource).await?;
+                        continue;
+                    }
+                    let capacity = mcp_capacity.clone();
+                    let prepared =
+                        tokio::task::spawn_blocking(move || mcp_native::Prepared::prepare(&session, capacity))
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .map_err(|error| format!("{error:#}"))?;
+                    mcp_aggregator_started = true;
+                    let (channel, supervisor) = prepared.open(mcp_policy.clone(), authority.clone()).await;
+                    if let Some(supervisor) = supervisor {
+                        mcp_workers.spawn(supervisor.run(channel.is_err()));
+                    }
+                    match channel {
+                        Ok(channel) => {
+                            send_response(
+                                &responses,
+                                &UpstreamGrantResponse::McpAggregatorGranted { request_id },
+                                Some(&channel.into()),
+                            )
+                            .await?
+                        }
+                        Err(error) => {
+                            warn!(%error, "native MCP aggregator startup failed");
+                            send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
+                        }
+                    }
+                }
                 UpstreamGrantRequest::AttachMcpHttp { request_id, role } => {
                     if session_dir.is_none() {
                         send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
@@ -333,12 +390,12 @@ async fn run(
                     let descriptor = frame.fds.into_iter().next().expect("validated MCP HTTP descriptor");
                     fd::validate_connected_stream(descriptor.as_fd())
                         .map_err(|error| format!("MCP HTTP channel: {error}"))?;
-                    mcp_workers.spawn(mcp_http::serve(
-                        UnixStream::from(descriptor),
-                        role,
-                        mcp_policy.clone(),
-                        authority.clone(),
-                    ));
+                    let policy = mcp_policy.clone();
+                    let authority = authority.clone();
+                    mcp_workers.spawn(async move {
+                        mcp_http::serve(UnixStream::from(descriptor), role, policy, authority).await;
+                        Ok(())
+                    });
                     send_response(&responses, &UpstreamGrantResponse::McpHttpAdopted { request_id }, None).await?;
                 }
                 UpstreamGrantRequest::ResolveTcp {
@@ -793,43 +850,25 @@ async fn run(
     }
     .await;
     drop(mcp_policy_updates);
-    mcp_workers.abort_all();
-    while mcp_workers.join_next().await.is_some() {}
+    while let Some(result) = mcp_workers.join_next().await {
+        mcp_cleanup_confirmed &= matches!(result, Ok(Ok(())));
+    }
     request_pump.abort();
     let _ = request_pump.await;
     let cleanup = revoke_active(active);
-    match (result, cleanup) {
+    if let Err(error) = &cleanup {
+        warn!(%error, "upstream resource cleanup unconfirmed");
+    }
+    let cleanup_confirmed = mcp_cleanup_confirmed && cleanup.is_ok();
+    let protocol_result = match (result, cleanup) {
         (Ok(()), cleanup) => cleanup,
         (Err(error), Ok(())) => Err(error),
         (Err(error), Err(cleanup)) => Err(format!("{error}; {cleanup}")),
-    }
-}
-
-fn set_guest_mode(session_dir: &Path, relative_path: &[u8], mode: u16) -> io::Result<()> {
-    let root = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?
-        .descend(std::ffi::OsStr::new(capsem_core::GUEST_SHARE_DIR))?;
-    let path = Path::new(std::ffi::OsStr::from_bytes(relative_path));
-    root.set_relative_mode(path, u32::from(mode))
-}
-
-fn set_guest_times(
-    session_dir: &Path,
-    relative_path: &[u8],
-    atime: GuestFileTime,
-    mtime: GuestFileTime,
-) -> io::Result<()> {
-    let root = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?
-        .descend(std::ffi::OsStr::new(capsem_core::GUEST_SHARE_DIR))?;
-    let path = Path::new(std::ffi::OsStr::from_bytes(relative_path));
-    root.set_relative_times(path, file_time_spec(atime), file_time_spec(mtime))
-}
-
-const fn file_time_spec(time: GuestFileTime) -> FileTimeSpec {
-    match time {
-        GuestFileTime::Omit => FileTimeSpec::Omit,
-        GuestFileTime::Now => FileTimeSpec::Now,
-        GuestFileTime::Exact { seconds, nanoseconds } => FileTimeSpec::Exact { seconds, nanoseconds },
-    }
+    };
+    Ok(BrokerCompletion {
+        cleanup_confirmed,
+        protocol_result,
+    })
 }
 
 async fn send_active_grant(

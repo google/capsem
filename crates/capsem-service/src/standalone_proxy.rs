@@ -28,7 +28,7 @@ pub(crate) struct StandaloneProxy {
     worker: proxy_worker::ProxyWorker,
     authority: WorkerAuthority,
     accept_task: JoinHandle<()>,
-    broker_task: JoinHandle<()>,
+    broker_task: JoinHandle<crate::upstream_broker::BrokerCompletion>,
     session_dir: PathBuf,
     provider_id: String,
     upstream_policy: upstream_broker::PolicyPublisher,
@@ -449,13 +449,21 @@ async fn cleanup(state: &ServiceState, session_id: &str, entry: StandaloneProxy)
     let worker_result = entry.worker.shutdown().await;
     let ledger_result = state.ledger_workers.shutdown(session_id).await;
     let mut broker_task = entry.broker_task;
-    if tokio::time::timeout(CLEANUP_TIMEOUT, &mut broker_task).await.is_err() {
-        broker_task.abort();
-        let _ = broker_task.await;
-    }
+    let broker_result = match tokio::time::timeout(CLEANUP_TIMEOUT, &mut broker_task).await {
+        Ok(result) => result.map_err(anyhow::Error::from).and_then(|completion| {
+            anyhow::ensure!(completion.cleanup_confirmed, "proxy broker cleanup unconfirmed");
+            Ok(())
+        }),
+        Err(error) => {
+            broker_task.abort();
+            let _ = broker_task.await;
+            Err(error.into())
+        }
+    };
     let remove_result = tokio::fs::remove_dir_all(&entry.session_dir).await;
     worker_result.context("shutdown proxy worker")?;
     ledger_result.context("shutdown proxy ledger")?;
+    broker_result.context("shutdown proxy broker")?;
     remove_result.with_context(|| format!("remove {}", entry.session_dir.display()))?;
     Ok(())
 }

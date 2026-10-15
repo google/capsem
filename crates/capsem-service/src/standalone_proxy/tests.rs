@@ -12,7 +12,12 @@ async fn running_proxy(state: &ServiceState, session_id: &str, lease_token: &str
         worker: crate::proxy_worker::tests::fake("normal").await.unwrap(),
         authority: WorkerAuthority::default(),
         accept_task: tokio::spawn(async {}),
-        broker_task: tokio::spawn(async {}),
+        broker_task: tokio::spawn(async {
+            crate::upstream_broker::BrokerCompletion {
+                cleanup_confirmed: true,
+                protocol_result: Ok(()),
+            }
+        }),
         session_dir,
         provider_id: "openai".to_string(),
         upstream_policy: crate::upstream_broker::test_policy_publisher(),

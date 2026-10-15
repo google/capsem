@@ -412,8 +412,10 @@ impl ServiceState {
             let _reaper = instance_reaper::kill_and_reap(child, retirement);
             return Err(error);
         }
-        let _upstream_broker = upstream_broker.start(upstream_grant);
-        let _proxy_upstream_broker = proxy_upstream_broker.start(proxy_upstream_grant);
+        let retirement = retirement.with_brokers([
+            upstream_broker.start(upstream_grant),
+            proxy_upstream_broker.start(proxy_upstream_grant),
+        ]);
         let _reaper = instance_reaper::spawn_exit_reaper(
             child,
             id.to_string(),

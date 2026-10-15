@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::net::SocketAddr;
 use std::os::fd::{AsRawFd as _, OwnedFd};
-use std::os::unix::fs::{symlink, PermissionsExt as _};
 use std::path::PathBuf;
 
 use capsem_core::net::policy::{UpstreamOverride, UpstreamOverrideProtocol};
@@ -14,6 +13,7 @@ use capsem_proto::upstream_grant::{
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use super::*;
+mod guest_metadata;
 use crate::instance::WorkerAuthority;
 use crate::ledger_worker::LedgerClient;
 
@@ -165,7 +165,13 @@ async fn typed_guest_traffic_is_adopted_by_the_registered_proxy_generation() {
     );
 
     authority.revoke();
-    assert!(task.await.unwrap().unwrap_err().contains("revoked"));
+    assert!(task
+        .await
+        .unwrap()
+        .unwrap()
+        .protocol_result
+        .unwrap_err()
+        .contains("revoked"));
 }
 
 fn test_policy(digest: &str, tcp_override: Option<SocketAddr>, dns_upstreams: Vec<SocketAddr>) -> Arc<BrokerPolicy> {
@@ -217,7 +223,7 @@ fn start_broker(
     TestClient,
     PolicyPublisher,
     WorkerAuthority,
-    tokio::task::JoinHandle<Result<(), String>>,
+    tokio::task::JoinHandle<Result<BrokerCompletion, String>>,
 ) {
     let (pending, publisher) = PendingBroker::pair(policy).unwrap();
     let client = TestClient::new(pending.worker);
@@ -241,7 +247,7 @@ fn start_broker_with_ledger(
     TestClient,
     PolicyPublisher,
     WorkerAuthority,
-    tokio::task::JoinHandle<Result<(), String>>,
+    tokio::task::JoinHandle<Result<BrokerCompletion, String>>,
 ) {
     let (pending, publisher) = PendingBroker::pair(policy).unwrap();
     let pending = pending.with_ledger(ledger);
@@ -266,7 +272,7 @@ fn start_broker_for_session(
     TestClient,
     PolicyPublisher,
     WorkerAuthority,
-    tokio::task::JoinHandle<Result<(), String>>,
+    tokio::task::JoinHandle<Result<BrokerCompletion, String>>,
 ) {
     let (pending, publisher) = PendingBroker::pair_for_session(policy, session_dir).unwrap();
     let client = TestClient::new(pending.worker);
@@ -381,110 +387,6 @@ async fn policy_updates_do_not_revoke_a_pending_ledger_grant() {
     stop_broker(authority, task).await;
 }
 
-#[tokio::test]
-async fn guest_mode_requests_are_confined_to_the_session_share() {
-    let session = tempfile::tempdir().unwrap();
-    let guest = session.path().join(capsem_core::GUEST_SHARE_DIR);
-    std::fs::create_dir_all(guest.join("workspace/nested")).unwrap();
-    std::fs::write(guest.join("workspace/nested/tool"), b"tool").unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = outside.path().join("secret");
-    std::fs::write(&secret, b"secret").unwrap();
-    std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
-    symlink(&secret, guest.join("workspace/link")).unwrap();
-
-    let (client, _publisher, authority, task) =
-        start_broker_for_session(test_policy("policy-a", None, Vec::new()), session.path().to_path_buf());
-    let (response, fds) = client
-        .request(&UpstreamGrantRequest::SetGuestMode {
-            request_id: 1,
-            relative_path: b"workspace/nested/tool".to_vec(),
-            mode: 0o751,
-        })
-        .await;
-    assert_eq!(response, UpstreamGrantResponse::GuestModeSet { request_id: 1 });
-    assert!(fds.is_empty());
-    assert_eq!(
-        std::fs::metadata(guest.join("workspace/nested/tool"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o7777,
-        0o751
-    );
-
-    let (response, fds) = client
-        .request(&UpstreamGrantRequest::SetGuestMode {
-            request_id: 2,
-            relative_path: b"workspace/link".to_vec(),
-            mode: 0o777,
-        })
-        .await;
-    assert_eq!(
-        response,
-        UpstreamGrantResponse::Denied {
-            request_id: 2,
-            reason: UpstreamGrantDenial::NotAllowed,
-        }
-    );
-    assert!(fds.is_empty());
-    assert_eq!(std::fs::metadata(secret).unwrap().permissions().mode() & 0o7777, 0o600);
-    stop_broker(authority, task).await;
-}
-
-#[tokio::test]
-async fn guest_timestamp_requests_are_confined_to_the_session_share() {
-    let session = tempfile::tempdir().unwrap();
-    let guest = session.path().join(capsem_core::GUEST_SHARE_DIR);
-    std::fs::create_dir_all(guest.join("workspace/nested")).unwrap();
-    let tool = guest.join("workspace/nested/tool");
-    std::fs::write(&tool, b"tool").unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = outside.path().join("secret");
-    std::fs::write(&secret, b"secret").unwrap();
-    symlink(&secret, guest.join("workspace/link")).unwrap();
-
-    let (client, _publisher, authority, task) =
-        start_broker_for_session(test_policy("policy-a", None, Vec::new()), session.path().to_path_buf());
-    let timestamp = 1_700_000_123_i64;
-    let (response, fds) = client
-        .request(&UpstreamGrantRequest::SetGuestTimes {
-            request_id: 1,
-            relative_path: b"workspace/nested/tool".to_vec(),
-            atime: GuestFileTime::Omit,
-            mtime: GuestFileTime::Exact {
-                seconds: timestamp,
-                nanoseconds: 456_000_000,
-            },
-        })
-        .await;
-    assert_eq!(response, UpstreamGrantResponse::GuestTimesSet { request_id: 1 });
-    assert!(fds.is_empty());
-    assert_eq!(
-        std::fs::metadata(&tool)
-            .unwrap()
-            .modified()
-            .unwrap()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap(),
-        Duration::new(timestamp.cast_unsigned(), 456_000_000)
-    );
-
-    let secret_modified = std::fs::metadata(&secret).unwrap().modified().unwrap();
-    let (response, fds) = client
-        .request(&UpstreamGrantRequest::SetGuestTimes {
-            request_id: 2,
-            relative_path: b"workspace/link".to_vec(),
-            atime: GuestFileTime::Now,
-            mtime: GuestFileTime::Now,
-        })
-        .await;
-    assert_eq!(response, UpstreamGrantResponse::GuestTimesSet { request_id: 2 });
-    assert!(fds.is_empty());
-    assert_eq!(std::fs::metadata(secret).unwrap().modified().unwrap(), secret_modified);
-    stop_broker(authority, task).await;
-}
-
 async fn resolve_override(client: &TestClient, request_id: u64) -> u64 {
     let (response, fds) = client
         .request(&UpstreamGrantRequest::ResolveTcp {
@@ -534,12 +436,14 @@ async fn connect_selection(client: &TestClient, request_id: u64, selection_id: u
     (grant_id, fds.pop().unwrap())
 }
 
-async fn stop_broker(authority: WorkerAuthority, task: tokio::task::JoinHandle<Result<(), String>>) {
+async fn stop_broker(authority: WorkerAuthority, task: tokio::task::JoinHandle<Result<BrokerCompletion, String>>) {
     authority.revoke();
     let error = tokio::time::timeout(Duration::from_secs(1), task)
         .await
         .expect("broker stops when authority is revoked")
         .unwrap()
+        .unwrap()
+        .protocol_result
         .unwrap_err();
     assert_eq!(error, "worker authority revoked");
 }
@@ -787,6 +691,8 @@ async fn generation_revocation_resets_every_live_grant() {
         .await
         .expect("revoked generation stops its broker")
         .unwrap()
+        .unwrap()
+        .protocol_result
         .unwrap_err();
     assert_eq!(error, "worker authority revoked");
     let mut byte = [0_u8; 1];
@@ -815,6 +721,8 @@ async fn next_request_before_adoption_terminates_and_revokes_the_channel() {
         .await
         .unwrap()
         .unwrap()
+        .unwrap()
+        .protocol_result
         .unwrap_err();
     assert!(error.contains("was not adopted"), "{error}");
     let mut byte = [0_u8; 1];
@@ -842,6 +750,8 @@ async fn worker_supplied_descriptor_terminates_before_resolution() {
         .await
         .unwrap()
         .unwrap()
+        .unwrap()
+        .protocol_result
         .unwrap_err();
     assert_eq!(error, "worker upstream request carried 1 descriptors, expected 0");
     assert!(client.responses.recv().await.is_err());
@@ -985,6 +895,8 @@ async fn malformed_frame_closes_the_generation_before_any_response() {
         .await
         .unwrap()
         .unwrap()
+        .unwrap()
+        .protocol_result
         .unwrap_err();
     assert!(error.contains("invalid upstream grant magic"), "{error}");
     assert!(client.responses.recv().await.is_err());
