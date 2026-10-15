@@ -736,11 +736,11 @@ fn url_host(parsed: &reqwest::Url) -> Option<(String, Option<IpAddr>)> {
 }
 
 #[derive(Debug, Clone)]
-struct BuiltinHttpDecision {
-    domain: String,
+pub struct BuiltinHttpDecision {
+    pub domain: String,
     /// The addresses the boundary judged; the connection is pinned to them.
-    addresses: Vec<SocketAddr>,
-    decision: SecurityEnforcementDecision,
+    pub addresses: Vec<SocketAddr>,
+    pub decision: SecurityEnforcementDecision,
 }
 
 fn blocked_decision(reason: String) -> SecurityEnforcementDecision {
@@ -784,7 +784,7 @@ fn evaluate_builtin_http_request(
 /// through an explicit allow rule: host rules are written against names, and
 /// the name is the guest's to choose. Anything the rules block by address
 /// blocks the request whatever the name said.
-async fn authorize_upstream(
+pub async fn authorize_upstream(
     url: &str,
     method: &str,
     security_rules: &SecurityRuleSet,

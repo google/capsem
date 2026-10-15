@@ -2,6 +2,7 @@ pub mod aggregator_driver;
 pub mod builtin_ledger;
 pub mod builtin_tools;
 pub mod http_transport;
+pub mod native_worker;
 pub mod policy;
 
 use std::collections::{BTreeSet, HashMap};
