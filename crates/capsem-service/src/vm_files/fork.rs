@@ -58,11 +58,18 @@ pub(crate) async fn handle_fork(
     // separate from the human display name.
     let vm_id = new_persistent_vm_id();
     let new_session_dir = state.run_dir.join("persistent").join(&vm_id);
-    let size_bytes = clone_session_state(&state, &id, uds_path.as_deref(), session_dir, new_session_dir.clone())
-        .await
-        .map_err(|e| {
-            capsem_service::app_error_logged!(error, StatusCode::INTERNAL_SERVER_ERROR, "fork: clone failed: {e}")
-        })?;
+    let size_bytes = clone_session_state(
+        &state,
+        &id,
+        &vm_id,
+        uds_path.as_deref(),
+        session_dir,
+        new_session_dir.clone(),
+    )
+    .await
+    .map_err(|e| {
+        capsem_service::app_error_logged!(error, StatusCode::INTERNAL_SERVER_ERROR, "fork: clone failed: {e}")
+    })?;
 
     // Register as persistent VM; the registry saves to disk, so off the worker.
     let entry = PersistentVmEntry {
@@ -112,6 +119,7 @@ pub(crate) async fn handle_fork(
 pub(crate) async fn clone_session_state(
     state: &ServiceState,
     source_id: &str,
+    destination_id: &str,
     running: Option<&std::path::Path>,
     source: PathBuf,
     destination: PathBuf,
@@ -119,7 +127,16 @@ pub(crate) async fn clone_session_state(
     tokio::fs::create_dir_all(&destination)
         .await
         .map_err(|error| format!("create {}: {error}", destination.display()))?;
-    let size = match clone_guest_state(state, source_id, running, source.clone(), destination.clone()).await {
+    let size = match clone_guest_state(
+        state,
+        source_id,
+        destination_id,
+        running,
+        source.clone(),
+        destination.clone(),
+    )
+    .await
+    {
         Ok(size) => size,
         Err(error) => {
             let _ = tokio::fs::remove_dir_all(&destination).await;
@@ -138,12 +155,13 @@ pub(crate) async fn clone_session_state(
 async fn clone_guest_state(
     state: &ServiceState,
     source_id: &str,
+    destination_id: &str,
     running: Option<&std::path::Path>,
     source: PathBuf,
     destination: PathBuf,
 ) -> Result<u64, String> {
     let Some(uds_path) = running else {
-        return clone_coordinator_state(state, source_id, source, destination).await;
+        return clone_coordinator_state(state, source_id, destination_id, source, destination).await;
     };
     let id = state.next_job_id();
     let owner = owner_connection::OwnerConnection::acquire(state, uds_path)?;
@@ -160,7 +178,7 @@ async fn clone_guest_state(
     }
     owner.validate(state, false)?;
 
-    let copied = clone_coordinator_state(state, source_id, source, destination.clone()).await;
+    let copied = clone_coordinator_state(state, source_id, destination_id, source, destination.clone()).await;
     let completion = match &copied {
         Ok(size_bytes) => ServiceToProcess::CloneStateComplete {
             id,
@@ -238,6 +256,7 @@ async fn receive_clone_message(
 async fn clone_coordinator_state(
     state: &ServiceState,
     source_id: &str,
+    destination_id: &str,
     source: PathBuf,
     destination: PathBuf,
 ) -> Result<u64, String> {
@@ -253,7 +272,7 @@ async fn clone_coordinator_state(
     match tokio::fs::symlink_metadata(source.join("session.db")).await {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("inspect source ledger: {error}")),
-        Ok(_) => clone_ledger(state, source_id, &source, &destination).await?,
+        Ok(_) => clone_ledger(state, source_id, destination_id, &source, &destination).await?,
     }
     Ok(capsem_core::session::disk_usage_bytes(&destination))
 }
@@ -261,6 +280,7 @@ async fn clone_coordinator_state(
 async fn clone_ledger(
     state: &ServiceState,
     source_id: &str,
+    destination_id: &str,
     source: &std::path::Path,
     destination: &std::path::Path,
 ) -> Result<(), String> {
@@ -278,6 +298,11 @@ async fn clone_ledger(
     let (stream, commitment, grant) = channel.into_parts();
     debug_assert!(commitment.is_none());
     let client = capsem_logger::ledger_client::LedgerClient::connect(stream, grant, database).await?;
+    let commitments = state
+        .ledger_workers
+        .checkpoint_snapshot(source_id)
+        .await
+        .map_err(|error| format!("snapshot trusted ledger history: {error:#}"))?;
     let snapshot = client.snapshot(*capsem_crypto::uuid_v4().as_bytes()).await?;
     let snapshot_copy = snapshot.clone();
     let destination = destination.to_path_buf();
@@ -296,7 +321,11 @@ async fn clone_ledger(
         .await
         .map_err(|error| format!("remove staged ledger snapshot {}: {error}", snapshot.display()));
     copied?;
-    removed
+    removed?;
+    commitments
+        .copy_to(destination_id)
+        .await
+        .map_err(|error| format!("copy trusted ledger history: {error:#}"))
 }
 
 /// The owner answers within its own 900 s clone bound; wait a little longer

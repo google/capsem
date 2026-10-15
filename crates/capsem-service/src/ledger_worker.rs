@@ -149,6 +149,21 @@ impl LedgerWorkers {
         Ok(client)
     }
 
+    /// Fence the trusted producer history across a coordinator-owned ledger copy.
+    pub(crate) async fn checkpoint_snapshot(
+        &self,
+        session_id: &str,
+    ) -> Result<crate::ledger_commitment::CheckpointSnapshot> {
+        let authority = self
+            .slots
+            .lock()
+            .await
+            .get(session_id)
+            .map(|slot| Arc::clone(&slot.commitments))
+            .context("source ledger worker has no commitment authority")?;
+        Ok(authority.snapshot().await)
+    }
+
     /// Stop and reap the current generation before vacating its slot.
     pub(crate) async fn shutdown(&self, session_id: &str) -> Result<()> {
         let Some(worker) = self.slots.lock().await.get(session_id).map(|slot| slot.worker.clone()) else {

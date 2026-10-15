@@ -67,25 +67,111 @@ struct State {
 struct CheckpointRecord {
     checkpoint_sequence: u64,
     commitments: Vec<LedgerCommitment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reserved_through: Option<u64>,
 }
 
 pub(crate) struct CommitmentAuthority {
     path: PathBuf,
-    state: tokio::sync::Mutex<State>,
+    state: Arc<tokio::sync::Mutex<State>>,
+}
+
+/// Fence producer reservations and checkpoints while the ledger snapshot is copied.
+pub(crate) struct CheckpointSnapshot {
+    path: PathBuf,
+    state: tokio::sync::OwnedMutexGuard<State>,
+}
+
+impl CheckpointSnapshot {
+    pub(crate) async fn copy_to(&self, session_id: &str) -> Result<()> {
+        let source = self.path.clone();
+        let root = source
+            .parent()
+            .and_then(Path::parent)
+            .context("checkpoint root missing")?;
+        let destination = checkpoint_path(root, session_id);
+        if destination == source {
+            bail!("cannot fork commitment history onto itself");
+        }
+        let record = CheckpointRecord {
+            checkpoint_sequence: self
+                .state
+                .next_checkpoint_sequence
+                .checked_add(1)
+                .context("checkpoint sequence exhausted")?,
+            commitments: Vec::new(),
+            // A ledger snapshot flushes accepted rows whose producers may not
+            // yet have checkpointed. Never reuse any trusted reservation, and
+            // never derive this counter from the worker-controlled database.
+            reserved_through: Some(self.state.next_global_sequence),
+        };
+        tokio::task::spawn_blocking(move || {
+            use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
+            use std::ffi::OsStr;
+            let root = ContainedDir::open_root(
+                source
+                    .parent()
+                    .and_then(Path::parent)
+                    .context("checkpoint root missing")?,
+            )?;
+            let parent = root.descend(
+                source
+                    .parent()
+                    .and_then(Path::file_name)
+                    .context("checkpoint parent missing")?,
+            )?;
+            let file = parent.open_file(OsStr::new("checkpoints.log"), ContainedOpenOptions::read_only())?;
+            let target = root.descend_or_create(
+                destination
+                    .parent()
+                    .and_then(Path::file_name)
+                    .context("fork checkpoint parent missing")?,
+                0o700,
+            )?;
+            let (copied, _) =
+                capsem_foundation::unix::fs::clone_file_into(&file, &target, OsStr::new("checkpoints.log"), 0o600)?;
+            drop(copied);
+            let result = (|| {
+                let mut file = target.open_existing_private_append(OsStr::new("checkpoints.log"))?;
+                append_record(&mut file, &record)?;
+                file.sync_all()?;
+                target.sync()?;
+                root.sync()?;
+                Ok(())
+            })();
+            if result.is_err() {
+                let _ = target.remove_private_file(OsStr::new("checkpoints.log"));
+            }
+            result
+        })
+        .await
+        .context("join trusted fork checkpoint copy")?
+    }
+}
+
+fn checkpoint_path(root: &Path, session_id: &str) -> PathBuf {
+    root.join(capsem_crypto::blake3::hash(session_id.as_bytes()).to_hex().to_string())
+        .join("checkpoints.log")
 }
 
 impl CommitmentAuthority {
     pub(crate) async fn open(root: &Path, session_id: &str) -> Result<Arc<Self>> {
-        let session_key = capsem_crypto::blake3::hash(session_id.as_bytes()).to_hex().to_string();
-        let path = root.join(session_key).join("checkpoints.log");
+        let path = checkpoint_path(root, session_id);
         let loaded_path = path.clone();
         let state = tokio::task::spawn_blocking(move || load(&loaded_path))
             .await
             .context("join ledger commitment checkpoint load")??;
         Ok(Arc::new(Self {
             path,
-            state: tokio::sync::Mutex::new(state),
+            state: Arc::new(tokio::sync::Mutex::new(state)),
         }))
+    }
+
+    pub(crate) async fn snapshot(&self) -> CheckpointSnapshot {
+        CheckpointSnapshot {
+            path: self.path.clone(),
+            state: Arc::clone(&self.state).lock_owned().await,
+        }
     }
 
     async fn reserve(
@@ -203,6 +289,7 @@ impl CommitmentAuthority {
         let record = CheckpointRecord {
             checkpoint_sequence,
             commitments: commitments.clone(),
+            reserved_through: None,
         };
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || append(&path, &record))
@@ -426,6 +513,14 @@ fn load(path: &Path) -> Result<State> {
         if record.checkpoint_sequence != state.next_checkpoint_sequence + 1 {
             bail!("ledger commitment checkpoint sequence is not contiguous");
         }
+        if let Some(through) = record.reserved_through {
+            if !record.commitments.is_empty() || through < state.next_global_sequence {
+                bail!("fork commitment reservation boundary is invalid");
+            }
+            state.next_global_sequence = through;
+            state.next_checkpoint_sequence = record.checkpoint_sequence;
+            continue;
+        }
         if record.commitments.is_empty() || record.commitments.len() > MAX_COMMITMENTS_PER_CHECKPOINT {
             bail!("ledger commitment checkpoint has an invalid batch size");
         }
@@ -469,11 +564,15 @@ fn initialize(path: &Path) -> Result<()> {
 }
 
 fn append(path: &Path, record: &CheckpointRecord) -> Result<()> {
+    let mut file = OpenOptions::new().append(true).open(path)?;
+    append_record(&mut file, record)
+}
+
+fn append_record(file: &mut File, record: &CheckpointRecord) -> Result<()> {
     let payload = rmp_serde::to_vec_named(record).context("encode commitment checkpoint")?;
     if payload.len() > MAX_CHECKPOINT_FRAME_BYTES {
         bail!("encoded commitment checkpoint exceeds its bound");
     }
-    let mut file = OpenOptions::new().append(true).open(path)?;
     file.write_all(&CHECKPOINT_MAGIC)?;
     file.write_all(&(payload.len() as u32).to_be_bytes())?;
     file.write_all(&payload)?;

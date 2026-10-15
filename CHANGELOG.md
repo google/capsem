@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Forks preserve the service-owned ledger commitment history and reserved
+  sequence boundary, keeping security logging available after fork and resume.
+
 - The service owns native MCP child creation and waits for their confirmed
   exit before completing session retirement; VM owners receive only scoped RPC.
 

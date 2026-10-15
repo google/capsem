@@ -130,6 +130,89 @@ async fn durable_checkpoints_survive_restart_and_continue_global_order() {
 }
 
 #[tokio::test]
+async fn fork_keeps_trusted_history_and_does_not_reuse_uncheckpointed_reservations() {
+    let root = tempfile::tempdir().unwrap();
+    let source = CommitmentAuthority::open(root.path(), "source").await.unwrap();
+    let producer = grant(1, 7);
+    let first = source
+        .reserve(producer, 1, "net_event".into(), [1; 32], ZERO_COMMITMENT_HASH)
+        .await
+        .unwrap();
+    let anchored = LedgerCommitment::new(producer, 1, first, "net_event", [1; 32], ZERO_COMMITMENT_HASH).unwrap();
+    source.anchor(producer, vec![anchored.clone()]).await.unwrap();
+    let pending = source
+        .reserve(producer, 2, "net_event".into(), [2; 32], anchored.commitment_hash())
+        .await
+        .unwrap();
+    let before = std::fs::read(&source.path).unwrap();
+
+    let snapshot = source.snapshot().await;
+    assert!(
+        source.state.try_lock().is_err(),
+        "snapshot must fence reservations and checkpoints"
+    );
+    snapshot.copy_to("fork").await.unwrap();
+    assert!(
+        snapshot.copy_to("fork").await.is_err(),
+        "an existing fork history must not be overwritten"
+    );
+    drop(snapshot);
+    assert_eq!(std::fs::read(&source.path).unwrap(), before);
+
+    let fork = CommitmentAuthority::open(root.path(), "fork").await.unwrap();
+    assert_eq!(fork.anchored().await, vec![anchored.clone()]);
+    let fork_producer = grant(2, 1);
+    let next = fork
+        .reserve(fork_producer, 1, "net_event".into(), [3; 32], ZERO_COMMITMENT_HASH)
+        .await
+        .unwrap();
+    assert_eq!(next, pending + 1);
+    let fork_record =
+        LedgerCommitment::new(fork_producer, 1, next, "net_event", [3; 32], ZERO_COMMITMENT_HASH).unwrap();
+    fork.anchor(fork_producer, vec![fork_record.clone()]).await.unwrap();
+    drop(fork);
+    let reopened = CommitmentAuthority::open(root.path(), "fork").await.unwrap();
+    assert_eq!(reopened.anchored().await, vec![anchored.clone(), fork_record]);
+    assert_eq!(source.anchored().await, vec![anchored]);
+}
+
+#[tokio::test]
+async fn fork_reservation_boundaries_cannot_rewind_or_contain_producer_records() {
+    let root = tempfile::tempdir().unwrap();
+    let authority = CommitmentAuthority::open(root.path(), "invalid-fork").await.unwrap();
+    let producer = grant(3, 1);
+    for record in [
+        CheckpointRecord {
+            checkpoint_sequence: 2,
+            commitments: Vec::new(),
+            reserved_through: Some(0),
+        },
+        CheckpointRecord {
+            checkpoint_sequence: 2,
+            commitments: vec![commitment(producer, 2, 2)],
+            reserved_through: Some(2),
+        },
+    ] {
+        std::fs::write(&authority.path, []).unwrap();
+        append(
+            &authority.path,
+            &CheckpointRecord {
+                checkpoint_sequence: 1,
+                commitments: vec![commitment(producer, 1, 1)],
+                reserved_through: None,
+            },
+        )
+        .unwrap();
+        append(&authority.path, &record).unwrap();
+        assert!(load(&authority.path)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("reservation boundary is invalid"));
+    }
+}
+
+#[tokio::test]
 async fn multiple_producers_share_global_order_and_unanchored_tail_is_not_a_checkpoint() {
     let root = tempfile::tempdir().unwrap();
     let authority = CommitmentAuthority::open(root.path(), "session-tail").await.unwrap();
@@ -500,6 +583,7 @@ fn checkpoint_loader_rejects_invalid_frames_and_state_transitions() {
             CheckpointRecord {
                 checkpoint_sequence: 2,
                 commitments: vec![commitment(producer, 1, 1)],
+                reserved_through: None,
             },
             "sequence is not contiguous",
         ),
@@ -507,6 +591,7 @@ fn checkpoint_loader_rejects_invalid_frames_and_state_transitions() {
             CheckpointRecord {
                 checkpoint_sequence: 1,
                 commitments: Vec::new(),
+                reserved_through: None,
             },
             "invalid batch size",
         ),
@@ -514,6 +599,7 @@ fn checkpoint_loader_rejects_invalid_frames_and_state_transitions() {
             CheckpointRecord {
                 checkpoint_sequence: 1,
                 commitments: vec![commitment(producer, 2, 1)],
+                reserved_through: None,
             },
             "breaks a producer chain",
         ),
@@ -530,6 +616,7 @@ fn checkpoint_loader_rejects_invalid_frames_and_state_transitions() {
         &CheckpointRecord {
             checkpoint_sequence: 1,
             commitments: vec![commitment(producer, 1, 1), commitment(other, 1, 1)],
+            reserved_through: None,
         },
     )
     .unwrap();

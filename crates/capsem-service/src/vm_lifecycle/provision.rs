@@ -142,6 +142,7 @@ impl ServiceState {
                 .block_on(crate::vm_files::clone_session_state(
                     self,
                     &super::persistent_entry_vm_id(entry),
+                    id,
                     running.as_deref(),
                     entry.session_dir.clone(),
                     session_dir.clone(),
