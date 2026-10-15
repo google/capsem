@@ -675,13 +675,22 @@ fn maybe_build_model_call_with_hints(
         usage_details = resp_details;
     }
 
-    let estimated_cost_usd = pricing.estimate_cost(
+    let mut estimated_cost_usd = pricing.estimate_cost(
         provider.as_str(),
         effective_model.as_deref(),
         input_tokens,
         output_tokens,
         &usage_details,
     );
+    if estimated_cost_usd == 0.0 && protocol.as_str() != provider.as_str() {
+        estimated_cost_usd = pricing.estimate_cost(
+            protocol.as_str(),
+            effective_model.as_deref(),
+            input_tokens,
+            output_tokens,
+            &usage_details,
+        );
+    }
 
     // Trace correlation: tool_response IDs index into the live
     // trace map; tool_call IDs register new pending entries; a

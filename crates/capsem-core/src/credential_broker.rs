@@ -671,7 +671,12 @@ fn provider_for_env_name(name: &str) -> Option<CredentialProvider> {
     match name {
         "ANTHROPIC_API_KEY" => Some(CredentialProvider::Anthropic),
         "OPENAI_API_KEY" => Some(CredentialProvider::OpenAi),
-        "GEMINI_API_KEY" | "GOOGLE_API_KEY" => Some(CredentialProvider::Google),
+        "GEMINI_API_KEY"
+        | "GOOGLE_API_KEY"
+        | "VERTEX_API_KEY"
+        | "GOOGLE_VERTEX_API_KEY"
+        | "GOOGLE_OAUTH_ACCESS_TOKEN"
+        | "CLOUDSDK_AUTH_ACCESS_TOKEN" => Some(CredentialProvider::Google),
         "GITHUB_TOKEN" | "GH_TOKEN" => Some(CredentialProvider::Github),
         _ => None,
     }
@@ -685,7 +690,7 @@ fn provider_for_token(domain: &str, header_name: &str, token: &str) -> Option<Cr
     if token.starts_with("sk-") {
         return Some(CredentialProvider::OpenAi);
     }
-    if token.starts_with("AIza") {
+    if token.starts_with("AIza") || token.starts_with("ya29.") {
         return Some(CredentialProvider::Google);
     }
     if token.starts_with("ghp_")

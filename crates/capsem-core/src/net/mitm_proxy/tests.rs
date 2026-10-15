@@ -174,6 +174,18 @@ fn builtin_endpoint_registry_identifies_vertex_ai_global_and_regional_targets() 
             "{domain} {path}"
         );
     }
+    assert_eq!(
+        ai_identity_for_target_or_path(
+            &registry,
+            "us-east5-aiplatform.googleapis.com",
+            443,
+            "/v1/projects/my-gcp-project/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-5@20250929:rawPredict",
+        ),
+        ModelTrafficIdentity {
+            provider: Some(ProviderKind::Google),
+            protocol: Some(ModelProtocol::Anthropic),
+        },
+    );
 }
 
 #[test]

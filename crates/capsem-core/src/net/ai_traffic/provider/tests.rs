@@ -67,6 +67,26 @@ fn route_google_vertex_ai_v1_and_v1beta1() {
     )
     .is_none());
     assert!(route_provider("/v1/projects/my-gcp-project/locations/global/endpoints/e:predict").is_none());
+    assert!(route_provider(
+        "/v1/projects/my-gcp-project/locations/global/publishers/custom/models/m:rawPredict"
+    )
+    .is_none());
+    for path in [
+        "/v1/projects/my-gcp-project/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-5@20250929:rawPredict",
+        "/v1/projects/my-gcp-project/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-5@20250929:streamRawPredict",
+        "/v1beta1/projects/my-gcp-project/locations/global/publishers/anthropic/models/claude-opus-4-5@20251101:rawPredict?alt=sse",
+    ] {
+        let (kind, _) = route_provider(path).unwrap_or_else(|| panic!("expected Anthropic route for {path}"));
+        assert_eq!(kind, ModelProtocol::Anthropic, "{path}");
+    }
+    for path in [
+        "/v1/projects/my-gcp-project/locations/global/endpoints/openapi/chat/completions",
+        "/v1beta1/projects/my-gcp-project/locations/global/endpoints/openapi/chat/completions",
+        "/v1beta1/projects/my-gcp-project/locations/us-central1/endpoints/openapi/chat/completions?alt=sse",
+    ] {
+        let (kind, _) = route_provider(path).unwrap_or_else(|| panic!("expected OpenAI route for {path}"));
+        assert_eq!(kind, ModelProtocol::OpenAi, "{path}");
+    }
 }
 
 #[test]
@@ -140,6 +160,12 @@ fn extract_model_vertex_ai_paths() {
             "/v1beta1/projects/my-gcp-project/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent"
         ),
         Some("gemini-2.5-pro".to_string())
+    );
+    assert_eq!(
+        extract_model_from_path(
+            "/v1/projects/my-gcp-project/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-5@20250929:rawPredict"
+        ),
+        Some("claude-sonnet-4-5@20250929".to_string())
     );
 }
 

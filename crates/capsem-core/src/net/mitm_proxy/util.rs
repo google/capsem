@@ -77,8 +77,13 @@ pub(super) fn materialize_collected_response_headers(headers: &mut http::HeaderM
 /// Returns true only for paths that are actual LLM API endpoints
 /// (generation, embeddings, images, audio -- anything billed per token/request).
 pub(super) fn is_llm_api_path(protocol: ModelProtocol, path: &str) -> bool {
+    let path_only = path.split('?').next().unwrap_or(path);
     match protocol {
-        ModelProtocol::Anthropic => path.starts_with("/v1/messages") || path.starts_with("/v1/complete"),
+        ModelProtocol::Anthropic => {
+            path_only.starts_with("/v1/messages")
+                || path_only.starts_with("/v1/complete")
+                || crate::net::ai_traffic::provider::is_vertex_anthropic_path(path_only)
+        }
         ModelProtocol::OpenAi => {
             path.starts_with("/v1/chat/completions")
                 || path.starts_with("/v1/responses")
@@ -86,12 +91,14 @@ pub(super) fn is_llm_api_path(protocol: ModelProtocol, path: &str) -> bool {
                 || path.starts_with("/v1/embeddings")
                 || path.starts_with("/v1/images")
                 || path.starts_with("/v1/audio")
+                || crate::net::ai_traffic::provider::is_vertex_openai_path(path_only)
         }
         ModelProtocol::Google => {
             path.contains(":generateContent")
                 || path.contains(":streamGenerateContent")
                 || path.contains(":embedContent")
                 || path.contains(":batchEmbedContents")
+                || crate::net::ai_traffic::provider::is_vertex_openai_path(path_only)
         }
         ModelProtocol::Ollama => {
             path.starts_with("/api/chat")

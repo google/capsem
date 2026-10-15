@@ -401,6 +401,35 @@ fn vertex_ai_global_and_regional_gemini_paths_produce_model_calls_with_cost() {
         assert_eq!(mc.stream, expected_stream, "{domain} {path}");
         assert!(mc.estimated_cost_usd > 0.0, "{domain} {path}");
     }
+
+    let claude_resp = br#"{
+        "id": "msg_vertex_1",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "hello from vertex claude"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 100, "output_tokens": 50}
+    }"#;
+    let claude_stats = TelemetryResponseStats {
+        bytes: claude_resp.len() as u64,
+        preview: claude_resp.to_vec(),
+        max_body_capture: claude_resp.len(),
+    };
+    let mut claude_ctx = anthropic_req_ctx();
+    claude_ctx.domain = "us-east5-aiplatform.googleapis.com".into();
+    claude_ctx.ai_provider = Some(ProviderKind::Google);
+    claude_ctx.ai_protocol = Some(ModelProtocol::Anthropic);
+    claude_ctx.path = "/v1/projects/my-gcp-project/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-5@20250929:rawPredict".into();
+    claude_ctx.request_body_stats = req_stats(
+        br#"{"anthropic_version":"vertex-2023-10-16","max_tokens":256,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let claude_mc = maybe_build_model_call(&claude_ctx, &claude_stats, &[], &pricing, &trace)
+        .expect("Vertex AI Claude rawPredict call should produce model telemetry");
+    assert_eq!(claude_mc.provider, "google");
+    assert_eq!(claude_mc.protocol.as_deref(), Some("anthropic"));
+    assert_eq!(claude_mc.model.as_deref(), Some("claude-sonnet-4-5@20250929"));
+    assert!(!claude_mc.stream);
+    assert!(claude_mc.estimated_cost_usd > 0.0);
 }
 
 #[test]
