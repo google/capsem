@@ -47,9 +47,9 @@ impl McpHttpRole {
     }
 }
 
-/// The trusted parent supplies the actual registered VM spawn generation.
-/// The connected descriptor establishes authority; this identity fences
-/// readiness and accidental cross-generation handoff, never replaces the FD.
+/// The service supplies a fresh native-worker incarnation. Its connected
+/// capabilities are already scoped to the VM generation; this identity fences
+/// readiness and accidental cross-worker handoff, never replaces the FD.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct McpWorkerBootstrap {
     pub role: McpHttpRole,
