@@ -50,3 +50,20 @@ def test_source_install_ci_qualifies_its_runtime_without_a_prior_release() -> No
         "the first runtime cannot depend on already being publicly released"
     )
     assert not any(step.get("uses") == "./.github/actions/fetch-release-inputs" for step in job["steps"])
+
+
+def test_coverage_cleans_before_preparing_workers_and_preserves_them_for_reporting() -> None:
+    mac_steps = workflow_jobs(ROOT / ".github/workflows/ci.yaml")["test"]["steps"]
+    for source in (
+        "\n".join(step.get("run", "") for step in mac_steps),
+        (ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text(),
+    ):
+        commands = [command.argv for command in parsed_commands(source, origin="coverage cohort lifecycle")]
+        clean = [i for i, argv in enumerate(commands) if argv[:3] == ("cargo", "llvm-cov", "clean")]
+        workers = [i for i, argv in enumerate(commands) if argv[:3] == ("cargo", "llvm-cov", "run")]
+        report = next(i for i, argv in enumerate(commands) if argv[:3] == ("cargo", "llvm-cov", "nextest"))
+        assert len(clean) == 1 and clean[0] < min(workers) <= max(workers) < report, (
+            "start one clean coverage cohort before native worker preparation"
+        )
+        assert "--workspace" in commands[clean[0]]
+        assert "--no-clean" in commands[report], "reporting must not delete its prepared native workers"
