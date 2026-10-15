@@ -3032,73 +3032,37 @@ def test_release_workflow_sets_up_uv_before_uv_run_steps() -> None:
 
 
 def test_ci_install_job_sets_up_uv_before_the_shared_install_gate() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    install_job = _workflow_job_blocks(workflow)["test-install"]
+    from helpers.workflow_contract import parsed_commands, workflow_jobs
 
-    setup_pos = install_job.find("astral-sh/setup-uv@")
-    install_pos = install_job.find(
-        "uv run --project build_system --frozen capsem-gate install"
+    steps = workflow_jobs(PROJECT_ROOT / ".github/workflows/ci.yaml")["test-install"]["steps"]
+    setup = next(i for i, step in enumerate(steps) if step.get("uses", "").startswith("astral-sh/setup-uv@"))
+    install = next(
+        i for i, step in enumerate(steps)
+        if any("capsem-gate" in command.argv and "test-glowup" in command.argv
+               for command in parsed_commands(step.get("run", ""), origin="source install CI"))
     )
-    assert setup_pos != -1, (
-        "test-install invokes uv-backed Just helpers without setup-uv"
-    )
-    assert setup_pos < install_pos, (
-        "test-install sets up uv after the shared install gate"
-    )
+    assert setup < install, "test-install must provision uv before canonical source qualification"
 
 
-def test_ci_install_job_selects_exact_runtime_before_building_packages() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    install_job = _workflow_job_blocks(workflow)["test-install"]
-    fetch_action = (
-        PROJECT_ROOT / ".github" / "actions" / "fetch-release-inputs" / "action.yaml"
-    ).read_text()
+def test_ci_install_job_builds_and_qualifies_its_source_runtime() -> None:
+    from helpers.gate import gate_plan
+    from helpers.workflow_contract import parsed_commands, workflow_jobs
 
-    fetch_pos = install_job.index("./.github/actions/fetch-release-inputs")
-    resolve_pos = install_job.index(
-        "build_system/scripts/bootstrap/select-runtime-preflight-manifest.py"
-    )
-    source_pos = install_job.index(
-        "build_system/scripts/release/fetch-channel-source-manifest.py"
-    )
-    stage_pos = install_job.index(
-        "build_system/scripts/release/stage-release-test-inputs.py"
-    )
-    package_pos = install_job.index(
-        "uv run --project build_system --frozen capsem-gate cross-compile x86_64"
-    )
-    gate_pos = install_job.index(
-        "uv run --project build_system --frozen capsem-gate install"
-    )
-    assert (
-        resolve_pos
-        < source_pos
-        < fetch_pos
-        < stage_pos
-        < package_pos
-        < gate_pos
-    )
-    assert "kind: runtime" in install_job
-    assert "architecture: x86_64" in install_job
-    assert "output: cache/target/ci-install-content/inputs" in install_job
-    assert "--input-dir cache/target/ci-install-content/inputs" in install_job
-    assert "Build exact native release package" in install_job
-    assert install_job.count("steps.install-manifest.outputs.manifest-url") == 2
-    assert "--classify-only" in install_job
-    assert "published)" in install_job
-    assert "retired)" in install_job
-    assert "--require-runtime" in install_job
-    assert (
-        'output="$PWD/cache/target/ci-install-selection/assets/stable/manifest.json"'
-        in install_job
-    ), "the retired first-party fixture must retain public stable channel identity"
-    assert "file://$output" in install_job
-    assert (
-        "CAPSEM_INSTALL_MANIFEST_URL: ${{ steps.install-manifest.outputs.manifest-url }}"
-        in (install_job)
-    )
-    assert "CAPSEM_INSTALL_CHANNEL: stable" in install_job
-    assert "just _build-host-image" not in install_job
+    steps = workflow_jobs(PROJECT_ROOT / ".github/workflows/ci.yaml")["test-install"]["steps"]
+    commands = [command.argv for step in steps
+                for command in parsed_commands(step.get("run", ""), origin="source install CI")]
+    assert any(argv == ("uv", "run", "--project", "build_system", "--frozen", "capsem-gate", "test-glowup", "--slow")
+               for argv in commands), "a first source runtime cannot depend on already being publicly released"
+    assert not any(step.get("uses") == "./.github/actions/fetch-release-inputs" for step in steps)
+    labels = gate_plan("test-glowup").labels
+    assert {"assets.build.arm64", "assets.build.x86_64", "package.x86_64.build", "glowup.install"} <= set(labels)
+    assert labels.index("assets.build.x86_64") < labels.index("package.x86_64.build") < labels.index("glowup.install")
+
+
+def test_publication_input_cache_remains_manifest_selected() -> None:
+    from helpers.workflow_contract import workflow_jobs
+
+    fetch_action = (PROJECT_ROOT / ".github/actions/fetch-release-inputs/action.yaml").read_text()
     assert "actions/cache/restore@" in fetch_action
     assert "actions/cache/save@" in fetch_action
     assert "--cache-dir cache/target/release/staging/input-cache" in fetch_action
@@ -3106,12 +3070,12 @@ def test_ci_install_job_selects_exact_runtime_before_building_packages() -> None
     assert "steps.fetch.outputs.cache-misses != '0'" in fetch_action
     assert "inputs.manifest-url" not in fetch_action.split("key:", 1)[1].splitlines()[0]
     assert "inputs.channel" not in fetch_action
-    assert install_job.count("--content-root cache/target/ci-install-content") == 1
-    assert (
-        install_job.count("--selected-content-root cache/target/ci-install-content")
-        == 1
-    )
-    assert "build_system/scripts/test/prepare-install-test-assets.sh" not in install_job
+    for name in ("release.yaml", "release-assets.yaml"):
+        pulls = [step["with"] for job in workflow_jobs(PROJECT_ROOT / ".github/workflows" / name).values()
+                 for step in job.get("steps", [])
+                 if step.get("uses") == "./.github/actions/fetch-release-inputs"]
+        assert {pull["kind"] for pull in pulls} >= {"runtime", "packages"}
+        assert all(pull.get("manifest-url") and pull.get("output") for pull in pulls)
 
 
 def test_installed_doctor_failure_is_printed_and_preserved() -> None:

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.release.tools.marketing_install_surface import (
+    validate_checked_in_marketing_install_surface,
     validate_rendered_marketing_install_surface,
 )
 
@@ -16,29 +17,33 @@ def test_marketing_download_cta_uses_release_channel_not_github_latest() -> None
     data = (PROJECT_ROOT / "web" / "marketing" / "src" / "lib" / "data.ts").read_text(
         encoding="utf-8"
     )
-    cta = (
-        PROJECT_ROOT / "web" / "marketing" / "src" / "components" / "CTA.svelte"
+    download = (
+        PROJECT_ROOT / "web" / "marketing" / "src" / "components" / "Download.svelte"
     ).read_text(
         encoding="utf-8"
     )
 
     assert "https://release.capsem.org/channels/stable/" in data
+    assert "https://release.capsem.org/assets/stable/manifest.json" in data
     assert "releases/latest" not in data
-    assert "Download Package" in cta
-    assert "Download DMG" not in cta
-    assert "download the DMG directly" not in cta
+    assert "fetch(D.manifest" in download
+    assert 'candidate.status === "current"' in download
+    assert "candidate.platform === item.platform" in download
+    assert "candidate.architecture === item.architecture" in download
+    assert "href={packages[selected].url}" in download
+    assert "href={item.url}" in download
+    assert "Download DMG" not in download
 
 
 def test_marketing_homepage_exposes_the_supported_install_surface() -> None:
-    index = (
-        PROJECT_ROOT / "web" / "marketing" / "src" / "pages" / "index.astro"
+    validate_checked_in_marketing_install_surface(PROJECT_ROOT)
+    hero = (
+        PROJECT_ROOT / "web" / "marketing" / "src" / "components" / "Hero.svelte"
     ).read_text(encoding="utf-8")
-
-    assert 'import Hero from "../components/Hero.svelte"' in index
-    assert 'import CTA from "../components/CTA.svelte"' in index
-    assert "<Hero />" in index
-    assert "<CTA" in index
-    assert "Available Summer 2026" not in index
+    assert 'import Download from "./Download.svelte"' in hero
+    assert 'import InstallCommand from "./InstallCommand.svelte"' in hero
+    assert "<Download />" in hero
+    assert "<InstallCommand />" in hero
 
 
 def test_publish_site_smoke_uses_the_rendered_install_surface_contract() -> None:

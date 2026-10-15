@@ -719,7 +719,7 @@ def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
         ("test", "Verify all integration test imports"),
         ("test", "Schema drift check"),
         ("test-install", "Run install e2e tests"),
-        ("test-install", "Stage the exact install assets"),
+        ("test-install", "Materialize locked qualification dependencies"),
         ("docs-build", "Build docs"),
         ("site-build", "Build site"),
     ):
@@ -3118,9 +3118,9 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assert "just build-assets" in assets
     assert "build-assets arch" in just
 
-    assert "uv run --project build_system --frozen capsem-gate install" in ci
+    assert "uv run --project build_system --frozen capsem-gate test-glowup --slow" in ci
     assert "_gate-install:" in just
-    install_job = ci.split("  test-install:", 1)[1].split("\n  #", 1)[0]
+    install_job = _workflow_job_block("test-install")
     assert "runs-on: ubuntu-24.04" in install_job
     device_helper = "build_system/packaging/shared/install-vm-device-access"
     assert device_helper in install_job
@@ -6554,9 +6554,9 @@ def test_independent_ci_owners_keep_the_fast_gate_and_fail_closed() -> None:
         "site-build",
         "release-site-build",
     ):
-        job = _workflow_job_block(job_name)
-        assert "needs: scope" in job
-        assert f"contains(fromJSON(needs.scope.outputs.owners), '{job_name}')" in job
+        job = _workflow_job(job_name)
+        assert job["needs"] == (["scope", "fast-gate"] if job_name == "test-install" else "scope")
+        assert f"contains(fromJSON(needs.scope.outputs.owners), '{job_name}')" in job["if"]
 
     assert "CI_OWNERS: ${{ needs.scope.outputs.owners }}" in gate
     assert "SCOPE_RESULT: ${{ needs.scope.result }}" in gate
