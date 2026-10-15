@@ -1,5 +1,19 @@
 use super::*;
 
+// SAFETY: only the explicit isolated child enters here. Confinement must run
+// on its initial thread before libtest creates a sibling on pre-TSYNC kernels.
+#[used]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+static NATIVE_PROBE_ENTRY: extern "C" fn() = run_native_probe;
+
+extern "C" fn run_native_probe() {
+    if std::env::var_os("CAPSEM_NATIVE_MCP_PROBE").is_some() {
+        native_worker_child();
+        std::process::exit(0);
+    }
+}
+
 fn scope(role: McpHttpRole) -> McpWorkerBootstrap {
     McpWorkerBootstrap {
         role,
