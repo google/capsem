@@ -9,7 +9,11 @@ pub(super) struct Compiled {
 }
 
 pub(super) fn compile(policy: &Policy) -> io::Result<Compiled> {
-    let mut source = if matches!(policy.role(), Role::Ledger | Role::Proxy) {
+    policy.validate()?;
+    let mut source = if matches!(
+        policy.role(),
+        Role::Ledger | Role::Proxy | Role::McpAggregator | Role::McpBuiltin | Role::McpExternal
+    ) {
         String::from("(version 1)\n(deny default)\n")
     } else {
         String::from(
@@ -42,10 +46,18 @@ pub(super) fn compile(policy: &Policy) -> io::Result<Compiled> {
                 source.push_str(&format!("(allow file-read* file-write* {filter})\n"));
             }
             Access::Executable => {
-                source.push_str(&format!(
-                    "(allow file-read* (literal (param \"{name}\")))\n\
-                     (allow process-exec (with no-sandbox) (literal (param \"{name}\")))\n"
-                ));
+                source.push_str(&format!("(allow file-read* (literal (param \"{name}\")))\n"));
+                if policy.role() == Role::McpExternal {
+                    // External tools retain this sandbox through exec. Only
+                    // trusted, self-confining companions may leave an owner profile.
+                    source.push_str(&format!(
+                        "(allow process-fork)\n(allow process-exec (literal (param \"{name}\")))\n"
+                    ));
+                } else {
+                    source.push_str(&format!(
+                        "(allow process-exec (with no-sandbox) (literal (param \"{name}\")))\n"
+                    ));
+                }
             }
         }
         parameters.push((

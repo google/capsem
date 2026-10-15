@@ -10,6 +10,12 @@ pub enum Role {
     Ledger,
     Proxy,
     VmOwner,
+    /// MCP routing over inherited channels, without host resources.
+    McpAggregator,
+    /// First-party tool processing with explicitly brokered HTTP access.
+    McpBuiltin,
+    /// An approved external executable, retaining all filesystem/network limits.
+    McpExternal,
 }
 
 /// Filesystem access granted after confinement.
@@ -73,10 +79,23 @@ impl Policy {
     pub fn paths(&self) -> &[PathRule] {
         &self.paths
     }
+
+    fn validate(&self) -> io::Result<()> {
+        if matches!(self.role, Role::McpAggregator | Role::McpBuiltin)
+            && self.paths.iter().any(|rule| rule.access == Access::Executable)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "MCP routing and builtin workers cannot receive executable grants",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Restrict all existing and future threads before the worker publishes readiness.
 pub fn confine(policy: &Policy) -> io::Result<()> {
+    policy.validate()?;
     platform::confine(policy)
 }
 

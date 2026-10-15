@@ -276,10 +276,13 @@ fn install_seccomp(role: Role) -> io::Result<()> {
         libc::SYS_utimes,
         libc::SYS_futimesat,
     ]);
-    if matches!(role, Role::Gateway | Role::Ledger | Role::Proxy) {
+    if !matches!(role, Role::VmOwner | Role::McpExternal) {
         denied.extend([libc::SYS_execve, libc::SYS_execveat]);
     }
-    if matches!(role, Role::Ledger | Role::Proxy) {
+    if matches!(
+        role,
+        Role::Ledger | Role::Proxy | Role::McpAggregator | Role::McpBuiltin | Role::McpExternal
+    ) {
         denied.extend([
             libc::SYS_socket,
             libc::SYS_socketpair,

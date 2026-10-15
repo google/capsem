@@ -10,6 +10,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+mod mcp;
+
 #[test]
 fn seatbelt_profile_keeps_grant_values_out_of_policy_source() {
     let policy = Policy::new(Role::VmOwner)
