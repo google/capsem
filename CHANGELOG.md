@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
+### Changed
+
+- Rebuilt the marketing homepage with a light single-page design, a scripted
+  workspace demo, sourced performance figures, and concise security and
+  observability sections. Removed the duplicate landing page and FAQ.
 
 ### Security
 

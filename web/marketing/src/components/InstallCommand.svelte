@@ -1,33 +1,20 @@
 <script lang="ts">
-  import Icon from "./Icon.svelte";
-  import { SITE } from "$lib/data";
-
-  interface Props {
-    dark?: boolean;
-  }
-
-  let { dark = false }: Props = $props();
-  let copied = $state(false);
-
+  import { onDestroy } from "svelte";
+  import { SITE, UI } from "$lib/data";
+  let message = $state<string>(UI.copy);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => clearTimeout(timer));
   async function copy() {
-    await navigator.clipboard.writeText(SITE.installCmd);
-    copied = true;
-    setTimeout(() => { copied = false; }, 2000);
+    try { await navigator.clipboard.writeText(SITE.installCmd); message = UI.copied; }
+    catch { message = UI.copyFailed; }
+    clearTimeout(timer);
+    timer = setTimeout(() => { message = UI.copy; }, 2500);
   }
 </script>
-
-<div class="flex items-center gap-3 rounded-xl border {dark ? 'border-border-dark bg-surface-dark-alt/60' : 'border-border bg-surface-alt/60'} px-5 py-3.5">
-  <span class="{dark ? 'text-muted-dark' : 'text-muted'} select-none" aria-hidden="true">$</span>
-  <code class="font-mono text-sm {dark ? 'text-heading-dark' : 'text-heading'}">{SITE.installCmd}</code>
-  <button
-    onclick={copy}
-    class="ml-auto shrink-0 rounded-md p-1.5 {dark ? 'text-muted-dark hover:text-heading-dark hover:bg-surface-dark' : 'text-muted hover:text-heading hover:bg-surface'} transition-colors"
-    aria-label={copied ? "Copied" : "Copy install command"}
-  >
-    {#if copied}
-      <Icon name="check" class="h-4 w-4 text-green-500" />
-    {:else}
-      <Icon name="copy" />
-    {/if}
+<div class="install-command">
+  <span aria-hidden="true">$</span><code>{SITE.installCmd}</code>
+  <button onclick={copy} aria-label={UI.copy} title={message}>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M15 8V4H4v11h4"/></svg>
   </button>
+  <span class="sr-only" role="status">{message === UI.copy ? "" : message}</span>
 </div>

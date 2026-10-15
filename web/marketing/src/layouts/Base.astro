@@ -1,13 +1,7 @@
 ---
-interface Props {
-  title?: string;
-  description?: string;
-}
-
-const {
-  title = "Capsem -- The fastest way to ship with AI securely.",
-  description = "The fastest way to ship with AI securely.",
-} = Astro.props;
+import { SITE, UI } from "../lib/data";
+interface Props { title?: string; description?: string }
+const { title = `${SITE.name} — ${SITE.tagline}`, description = SITE.description } = Astro.props;
 ---
 <!doctype html>
 <html lang="en">
@@ -15,18 +9,20 @@ const {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
+    <meta name="theme-color" content="#fafaf8" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
     <title>{title}</title>
+    <link rel="canonical" href="https://capsem.org/" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap" rel="stylesheet" />
   </head>
-  <body class="antialiased">
-    <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[100] focus:rounded-lg focus:bg-accent focus:text-white focus:px-4 focus:py-2 focus:text-sm focus:font-medium">
-      Skip to content
-    </a>
+  <body>
+    <a href="#main" class="skip-link">{UI.skip}</a>
     <slot />
   </body>
 </html>

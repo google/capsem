@@ -1,0 +1,10 @@
+---
+import { SPEED } from "../lib/data";
+---
+<section class="performance-section" aria-labelledby="speed-title">
+  <div class="container">
+    <div class="section-heading"><h2 id="speed-title">{SPEED.title}</h2><p class="section-description">{SPEED.description}</p></div>
+    <div class="performance-stats">{SPEED.stats.map((stat) => <div class="performance-stat"><p class="stat-value">{stat.value}<span>{stat.unit}</span></p><h3>{stat.label}</h3></div>)}</div>
+    <div class="benchmark-note"><span>{SPEED.note}</span><details><summary>{SPEED.methodology}</summary><p>{SPEED.details}</p><div>{SPEED.sources.map(source => <a href={source.href}>{source.label} ↗</a>)}</div></details></div>
+  </div>
+</section>

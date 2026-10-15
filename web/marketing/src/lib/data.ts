@@ -1,152 +1,96 @@
-// All marketing site content lives here. Edit this file to change copy.
-
+// Marketing copy and reviewed documentation destinations live here.
 export const SITE = {
   name: "Capsem",
   tagline: "The fastest way to ship with AI securely.",
-  description:
-    "A Rust-powered hypervisor that sandboxes every AI coding agent in its own air-gapped Linux VM. See everything, control everything.",
+  description: "A secure environment for your AI agents. Your tools, connections, and workspace, together.",
   installCmd: "curl -fsSL https://capsem.org/install.sh | sh",
   github: "https://github.com/google/capsem",
   docs: "https://docs.capsem.org",
   releases: "https://release.capsem.org/channels/stable/",
-  issues: "https://github.com/google/capsem/issues",
-  copyright: "Elie Bursztein",
-  license: "MIT",
-  platform: "macOS 14+ on Apple Silicon or Debian/Ubuntu Linux with KVM",
+  platform: "macOS · Apple Silicon / Linux · x86_64 & ARM64",
+  license: "Open source · MIT licensed",
 } as const;
-
+export const DOCS = {
+  start: `${SITE.docs}/getting-started/installation/`,
+  use: `${SITE.docs}/getting-started/how-to-use-capsem/`,
+  images: `${SITE.docs}/guides/enterprise/build-an-image/`,
+  security: `${SITE.docs}/architecture/security/`,
+  enterprise: `${SITE.docs}/guides/enterprise/deploy-capsem/`,
+  activity: `${SITE.docs}/guides/enterprise/investigate-a-vm/`,
+  sdk: `${SITE.docs}/sdk/`,
+} as const;
 export const NAV_LINKS = [
-  { label: "Features", href: "#features" },
-  { label: "How It Works", href: "#how-it-works" },
-  { label: "FAQ", href: "#faq" },
-  { label: "Docs", href: SITE.docs },
+  { label: "Get started", href: DOCS.start },
+  { label: "Security", href: DOCS.security },
+  { label: "Enterprise", href: DOCS.enterprise },
+  { label: "SDK", href: DOCS.sdk },
 ] as const;
-
-export const AGENTS = [
-  { name: "Claude Code", provider: "Anthropic" },
-  { name: "Gemini CLI", provider: "Google" },
-  { name: "Codex", provider: "OpenAI" },
-] as const;
-
-export const MCP_TOOLS = [
-  { name: "fetch_http", desc: "Fetch and extract web content" },
-  { name: "grep_http", desc: "Search web pages with regex" },
-  { name: "http_headers", desc: "Inspect HTTP headers and status" },
-] as const;
-
-export const PACKAGES = [
-  "Python 3", "Node.js 24", "git", "uv",
-  "numpy", "pandas", "scipy", "scikit-learn",
-  "requests", "httpx", "beautifulsoup4",
-  "pytest", "rich", "matplotlib", "fastmcp",
-] as const;
-
-export const ROADMAP = [
-  "VM checkpointing and restore",
-  "Linux host support",
-  "VS Code extension",
-  "Custom MCP server marketplace",
-] as const;
-
-export const SECURITY_BLOCKS = [
-  {
-    badge: "ISOLATION",
-    title: "Hardware-level sandboxing with Apple Virtualization.framework",
-    description:
-      "Each agent session boots a lightweight Linux VM with a read-only rootfs, no swap, no kernel modules, no debugfs. Air-gapped networking with a dummy NIC and fake DNS ensures nothing reaches the real network without going through the MITM proxy.",
-    bullets: [
-      "Ephemeral VMs -- fresh state every session",
-      "Read-only rootfs with tmpfs workspace",
-      "No systemd, no sshd, no cron -- minimal attack surface",
-    ],
-  },
-  {
-    badge: "INSPECTION",
-    title: "See everything your AI agent does on the network",
-    description:
-      "A transparent MITM proxy terminates TLS from the guest using per-domain minted certificates, inspects every HTTP request and response, and applies policy before forwarding to the real upstream. Full request/response bodies are logged to a per-session SQLite database.",
-    bullets: [
-      "Per-domain TLS certificate minting",
-      "Method + path policy rules per domain",
-      "Full body capture for post-hoc analysis",
-    ],
-  },
-  {
-    badge: "CONTROL",
-    title: "Enterprise-grade policy with profile and corp config layers",
-    description:
-      "Each profile owns its enforcement, detection, MCP, plugin, and asset configuration. Corp-level config at /etc/capsem/corp.toml (MDM-distributed) locks down policy and reporting with enterprise overrides that users cannot bypass.",
-    bullets: [
-      "Profile-owned CEL enforcement rules",
-      "Detection rules with Sigma import/export",
-      "Corp config locks and reports profile behavior",
-    ],
-  },
-] as const;
-
-export const HOST_COMPONENTS = [
-  { label: "Desktop App", detail: "GUI + CLI interface", icon: "monitor" },
-  { label: "MITM Proxy", detail: "TLS termination + HTTP inspection", icon: "shield" },
-  { label: "Policy Engine", detail: "Domain + HTTP + MCP rules", icon: "file-text" },
-  { label: "Session Telemetry", detail: "SQLite DB per session", icon: "bar-chart" },
-] as const;
-
-export const GUEST_COMPONENTS = [
-  { label: "AI Agent", detail: "Claude / Gemini / Codex", icon: "terminal" },
-  { label: "PTY Agent", detail: "Terminal I/O over vsock", icon: "grid" },
-  { label: "Net Proxy", detail: "TCP-to-vsock relay (iptables)", icon: "layers" },
-  { label: "MCP Server", detail: "Tool relay over vsock", icon: "settings" },
-] as const;
-
-export const VSOCK_CHANNELS = [
-  { port: ":5001", label: "terminal" },
-  { port: ":5002", label: "HTTPS + MCP" },
-] as const;
-
-export const FAQS = [
-  {
-    question: "Does Capsem work with Claude Code, Gemini CLI, and Codex?",
-    answer:
-      "Yes. Capsem supports any AI coding agent that runs in a terminal. Claude Code, Gemini CLI, and Codex are pre-installed in the VM and configured to work through the MITM proxy automatically.",
-  },
-  {
-    question: "How does the MITM proxy work?",
-    answer:
-      "All guest HTTPS traffic is redirected through an iptables rule to a local TCP relay, which bridges to the host via vsock. The host terminates TLS using per-domain minted certificates (signed by a static Capsem CA baked into the guest's trust store), inspects the HTTP request, applies policy, and forwards to the real upstream.",
-  },
-  {
-    question: "What platforms are supported?",
-    answer:
-      "Capsem requires macOS on Apple Silicon (M1 or later). It uses Apple's Virtualization.framework which is only available on macOS. The guest VM runs aarch64 Linux.",
-  },
-  {
-    question: "Can I customize which domains are allowed?",
-    answer:
-      "Yes. Edit the profile's enforcement rules to control HTTP, DNS, MCP, model, file, process, IP, and transport behavior. For enterprise deployments, /etc/capsem/corp.toml provides lockdown that individual users cannot override.",
-  },
-  {
-    question: "Is the VM truly air-gapped?",
-    answer:
-      "Yes. The guest has no real network interface. It uses a dummy NIC with fake DNS (dnsmasq) and iptables rules that redirect all port 443 traffic through the MITM proxy. Direct IP access and non-443 ports are blocked entirely.",
-  },
-] as const;
-
-export const FOOTER_COLUMNS = [
-  {
-    title: "Product",
-    links: [
-      { label: "Features", href: "#features" },
-      { label: "How It Works", href: "#how-it-works" },
-      { label: "FAQ", href: "#faq" },
-    ],
-  },
-  {
-    title: "Resources",
-    links: [
-      { label: "Documentation", href: SITE.docs },
-      { label: "GitHub", href: SITE.github },
-      { label: "Issues", href: SITE.issues },
-      { label: "Release Channel", href: SITE.releases },
-    ],
-  },
-] as const;
+export const UI = {
+  download: "Download", source: "GitHub", copy: "Copy command", copied: "Copied", copyFailed: "Select and copy the command",
+  openMenu: "Open menu", closeMenu: "Close menu", skip: "Skip to content",
+} as const;
+export const HERO = {
+  lines: ["The fastest way", "to ship with AI", "securely."],
+  title: "Get more done with AI.",
+  description: "Your agents, tools, and connections. Set up for you. Isolated by design.",
+} as const;
+export const DEMO = {
+  title: "Your workspace", session: "inbox", badge: "Isolated VM", label: "Illustrated workflow", play: "Play demo", pause: "Pause demo", replay: "Replay demo",
+  steps: ["Launch", "Connect", "Get it done"],
+  lines: [
+    { text: "$ capsem create -n inbox", kind: "command" },
+    { text: "✓ Workspace created · security active", kind: "status" },
+    { text: "$ capsem shell", kind: "command" },
+    { text: "Your agent is ready.", kind: "status" },
+    { text: "› Find the emails that need my attention.", kind: "prompt" },
+    { text: "Reading your connected inbox…", kind: "muted" },
+    { text: "3 things to focus on today", kind: "result" },
+    { text: "01  Review the project proposal", kind: "item" },
+    { text: "02  Confirm tomorrow’s meeting", kind: "item" },
+    { text: "03  Approve the updated timeline", kind: "item" },
+  ],
+  connection: "Email connected", boundary: "Protected by Capsem",
+} as const;
+export const AGENTS = {
+  title: "Your AI. Your environment.",
+  description: "Use your favorites. Switch freely. Build your own.",
+  names: ["Claude Code", "Codex", "Gemini CLI", "Antigravity", "Ollama"],
+  custom: "Make it yours", detail: "Your tools. Your MCP servers. Your own images.", link: "Build your environment",
+} as const;
+export const SPEED = {
+  title: "Built to help you move fast.",
+  description: "Lightweight VMs. Native virtualization. More time for your work.",
+  stats: [
+    { value: "1.13", unit: "s", label: "Provision a VM" },
+    { value: "28.5", unit: "ms", label: "Execute a command" },
+    { value: "55.9", unit: "ms", label: "Fork an environment" },
+  ],
+  note: "Recorded macOS ARM64 benchmarks · June 2026", methodology: "Measurement details",
+  details: "Means of 3 runs from the checked-in macOS ARM64 baseline. Provisioning, command execution, and forking are separate operations; these are not end-to-end agent response times. Results vary by hardware and workload.",
+  sources: [
+    { label: "Lifecycle data", href: `${SITE.github}/blob/main/benchmarks/baselines/lifecycle/data_1.3.1782571508.json` },
+    { label: "Fork data", href: `${SITE.github}/blob/main/benchmarks/baselines/fork/data_1.3.1782571508.json` },
+  ],
+} as const;
+export const SECURITY = {
+  title: "Secure by default.", subtitle: "So you can focus on your goal.",
+  description: "Isolation, protected credentials, and checks on what goes in and out.", link: "Explore the security architecture",
+  diagram: "An isolated agent workspace connects to models and tools through Capsem’s security engine. Credentials stay outside the VM. Rules, privacy scanning, logging and reporting apply at the security boundary.",
+  workspace: "Your workspace", agent: "AI agent", tools: "Tools & files", isolation: "Isolated Linux VM", airgap: "No direct network access",
+  engine: "Security engine", controls: ["Access rules", "Privacy scanning", "Credential interposition"],
+  credentials: "Credentials", outside: "Kept outside the VM", destinations: ["AI models", "MCP tools", "Web & APIs"],
+  logging: "Logging & reporting", trail: "Activity. Decisions. Evidence.",
+} as const;
+export const CONTROL = {
+  title: "Stay in control.",
+  description: "See what your agents do. Set the rules for your team.",
+  links: [{ label: "Explore observability", href: DOCS.activity }, { label: "Deploy for your team", href: DOCS.enterprise }],
+  titlebar: "Session activity", caption: "Illustrative session", session: "inbox", status: "Running",
+  columns: ["Time", "Activity", "Decision"],
+  rows: [
+    { time: "09:41:02", title: "Model request", detail: "Credential applied by broker", status: "Allowed", denied: false },
+    { time: "09:41:03", title: "Read inbox", detail: "MCP · email connector", status: "Allowed", denied: false },
+    { time: "09:41:04", title: "Outbound request", detail: "Destination outside policy", status: "Blocked", denied: true },
+  ],
+  policy: "Your policy. Applied consistently.", policyDetail: "Enforcement · Detections · Reporting",
+} as const;

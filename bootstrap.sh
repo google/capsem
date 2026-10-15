@@ -35,7 +35,7 @@ check_bootstrap_shape() {
         skills/frontend-design/SKILL.md \
         web/marketing/package.json \
         web/marketing/astro.config.mjs \
-        web/marketing/src/components/FAQ.svelte \
+        web/marketing/src/components/HeroDemo.svelte \
         web/marketing/src/lib/data.ts; do
         [ -f "$file" ] || { printf "  [FAIL] missing %s\n" "$file" >&2; exit 1; }
     done

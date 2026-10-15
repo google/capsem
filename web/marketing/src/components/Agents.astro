@@ -1,0 +1,8 @@
+---
+import { AGENTS, DOCS } from "../lib/data";
+---
+<section class="agents-section container" aria-labelledby="agents-title">
+  <div class="agents-heading"><h2 id="agents-title">{AGENTS.title}</h2><p>{AGENTS.description}</p></div>
+  <ul class="agent-strip">{AGENTS.names.map((name, i) => <li><img src={`/agents/${["claude", "openai", "gemini", "antigravity", "ollama"][i]}.svg`} alt="" width="28" height="28" loading="lazy" /><span>{name}</span></li>)}</ul>
+  <div class="custom-environment"><p><strong>{AGENTS.custom}.</strong> {AGENTS.detail}</p><a class="text-link" href={DOCS.images}>{AGENTS.link}<span aria-hidden="true">↗</span></a></div>
+</section>
