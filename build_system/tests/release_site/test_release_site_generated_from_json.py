@@ -489,7 +489,7 @@ def minimal_release_graph(
                     "v1.4.0/Capsem-1.4.0.pkg"
                 ),
                 "bytes": 12,
-                "digest": digest(checker, b"package bytes"),
+                "digest": digest(b"package bytes"),
                 "binaries": [
                     {
                         "name": "capsem-app",
@@ -499,7 +499,7 @@ def minimal_release_graph(
                         "architecture": "arm64",
                         "platform": "macos",
                         "bytes": 12,
-                        "digest": digest(checker, b"binary bytes"),
+                        "digest": digest(b"binary bytes"),
                         "sbom_component_ref": "SPDXRef-File-capsem-app",
                     }
                 ],
@@ -521,7 +521,7 @@ def minimal_release_graph(
                             "source": "npm",
                             "architecture": "arm64",
                             "evidence": f"{runtime_base}/software-inventory.json",
-                            "digest": digest(checker, b"codex software row"),
+                            "digest": digest(b"codex software row"),
                         }
                     ],
                     "images": [
@@ -531,7 +531,7 @@ def minimal_release_graph(
                             "url": f"{runtime_base}/{name}",
                             "status": "current",
                             "bytes": len(artifact_bytes[f"{runtime_base}/{name}"]),
-                            "digest": digest(checker, artifact_bytes[f"{runtime_base}/{name}"]),
+                            "digest": digest(artifact_bytes[f"{runtime_base}/{name}"]),
                         }
                         for kind, name in images
                     ],
@@ -554,7 +554,7 @@ def minimal_release_graph(
                         "revision": manifest["version"],
                         "status": "current",
                         "url": "/assets/stable/manifest.json",
-                        "digest": digest(checker, manifest_payload),
+                        "digest": digest(manifest_payload),
                     }
                 ],
             }
@@ -656,11 +656,10 @@ def patch_release_fetches(
     monkeypatch.setattr(checker, "fetch_headers", fake_fetch_headers)
 
 
-def digest(checker: Any, payload: bytes) -> dict[str, str]:
-    assert checker.blake3 is not None
+def digest(payload: bytes) -> dict[str, str]:
     return {
         "sha256": hashlib.sha256(payload).hexdigest(),
-        "blake3": checker.blake3.blake3(payload).hexdigest(),
+        "blake3": blake3(payload).hexdigest(),
     }
 
 

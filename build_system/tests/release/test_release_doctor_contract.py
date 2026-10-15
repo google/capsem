@@ -17,6 +17,7 @@ from typing import ClassVar
 
 import pytest
 import yaml
+from capsem_builder import crypto
 from capsem_builder.gate.shellnodes import arm_named
 from capsem_builder.gate.shellparse import parse as parse_shell
 from capsem_builder.gate.tools.audit import release_selections
@@ -2227,7 +2228,7 @@ def _install_release_graph_contract_fixture(
     def digest(data: bytes) -> dict[str, str]:
         return {
             "sha256": hashlib.sha256(data).hexdigest(),
-            "blake3": checker.blake3.blake3(data).hexdigest(),
+            "blake3": crypto.blake3(data).hexdigest(),
         }
 
     artifacts = {
@@ -3684,7 +3685,7 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ]
@@ -3695,7 +3696,7 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ],
@@ -3752,7 +3753,8 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
     assert '"sha256", "host SBOM evidence", "spdx"' in script
     assert '"blake3", "VM OBOM evidence", "rootfs_cyclonedx"' in script
     assert "hashlib.sha256" in script
-    assert "blake3.blake3" in script
+    assert "from ... import crypto as hashlib" in script
+    assert "hashlib.blake3(artifact.data).hexdigest()" in script
     assert "attestation subject {subject} missing from published file lists" in script
     assert "attestation_predicate_evidence_urls" in script
     assert "attestation predicate_url {predicate_url} missing from {predicate_label}" in script
@@ -3819,7 +3821,7 @@ def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> No
         "arch": "arm64",
         "logical_name": "rootfs.erofs",
         "url": rootfs_url,
-        "hash": module.blake3.blake3(rootfs_bytes).hexdigest(),
+        "hash": crypto.blake3(rootfs_bytes).hexdigest(),
         "size": len(rootfs_bytes),
     }
 
@@ -3869,7 +3871,7 @@ def test_remote_release_readiness_rejects_evidence_content_drift() -> None:
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(bad_obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(bad_obom_bytes).hexdigest(),
                     "size": len(bad_obom_bytes),
                 }
             ]
@@ -3880,7 +3882,7 @@ def test_remote_release_readiness_rejects_evidence_content_drift() -> None:
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(bad_obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(bad_obom_bytes).hexdigest(),
                     "size": len(bad_obom_bytes),
                 }
             ],
@@ -3994,7 +3996,7 @@ def test_remote_readiness_allows_first_channel_bootstrap_without_host_evidence()
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ]
@@ -4005,7 +4007,7 @@ def test_remote_readiness_allows_first_channel_bootstrap_without_host_evidence()
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ],
@@ -4072,7 +4074,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ]
@@ -4083,7 +4085,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ],
@@ -4171,7 +4173,7 @@ def test_remote_readiness_rejects_attestation_rail_drift() -> None:
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ]
@@ -4182,7 +4184,7 @@ def test_remote_readiness_rejects_attestation_rail_drift() -> None:
                     "arch": "arm64",
                     "logical_name": "obom.cdx.json",
                     "url": obom_path,
-                    "hash": module.blake3.blake3(obom_bytes).hexdigest(),
+                    "hash": crypto.blake3(obom_bytes).hexdigest(),
                     "size": len(obom_bytes),
                 }
             ],
@@ -4982,6 +4984,7 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
     forbidden = [
         "UdsClient",
         "client::UdsClient",
+        "GatewayClient",
         "service_json",
         "/corp/info",
         "/vms/list",
@@ -4994,7 +4997,7 @@ def test_stop_command_stays_before_status_and_credential_hydration() -> None:
         assert needle not in body, f"`capsem stop` must not touch {needle}"
 
     client_creation = re.search(
-        r"^\s*let client = (?:client::)?UdsClient::[a-z_][a-z0-9_]*\(",
+        r"^\s*let client = (?:client::)?GatewayClient::[a-z_][a-z0-9_]*\(",
         source,
         re.MULTILINE,
     )

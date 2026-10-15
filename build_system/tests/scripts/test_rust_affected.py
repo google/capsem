@@ -130,6 +130,7 @@ def test_real_workspace_inventory_matches_cargo_members() -> None:
 
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
+        "capsem-mcp-transport",
         "capsem-mock-server",
         "capsem-network",
         "capsem-process",
