@@ -136,6 +136,39 @@ def test_zstd_segments_share_one_bounded_decoder_stream(tmp_path: Path) -> None:
     assert archived_bodies(db) == expected
 
 
+def test_a_full_archive_scan_uses_bounded_closed_connections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A release secret scan must not open SQLite once per archived body."""
+    db = _ledger(tmp_path)
+    expected = archived_bodies(db)
+    assert len(expected) > 3
+    real_connect = sqlite3.connect
+    opened: list[sqlite3.Connection] = []
+
+    def connect(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    assert archived_bodies(db) == expected
+    assert len(opened) <= 3, f"archive scan opened {len(opened)} SQLite connections"
+    for connection in opened:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connection.execute("SELECT 1")
+
+
+def test_a_full_archive_scan_rejects_a_missing_index(tmp_path: Path) -> None:
+    """Missing schema must not turn a raw-secret scan into an empty success."""
+    db = _ledger(tmp_path)
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("DROP TABLE event_body_blobs")
+        conn.commit()
+    with pytest.raises(sqlite3.OperationalError, match="no such table: event_body_blobs"):
+        archived_bodies(db)
+
+
 def test_a_live_security_payload_retries_until_the_archive_index_is_visible() -> None:
     body = base64.b64encode(b"\x81\xaaevent_type\xa3dns").decode()
     client = _BodyClient(

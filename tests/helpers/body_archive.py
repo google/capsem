@@ -192,20 +192,25 @@ class SessionArchive:
         with contextlib.closing(
             sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         ) as conn:
-            # The committed end comes from the same snapshot as the row: on a
-            # live ledger the writer keeps appending after this reader opened,
-            # and a row naming bytes past the end read then is still committed.
-            row = conn.execute(
-                """
-                SELECT b.block_offset, b.body_offset, b.body_len, b.body_hash,
-                       k.disk_len, k.raw_len, s.committed_end, s.generation_id
-                FROM event_body_blobs b
-                JOIN body_blocks k ON k.block_offset = b.block_offset
-                JOIN archive_state s ON s.singleton = 1
-                WHERE b.event_id = ? AND b.source_table = ? AND b.direction = ?
-                """,
-                (event_id, source_table, direction),
-            ).fetchone()
+            return self._read(conn, event_id, source_table, direction)
+
+    def _read(
+        self, conn: sqlite3.Connection, event_id: str, source_table: str, direction: str
+    ) -> bytes | None:
+        # The committed end comes from the same snapshot as the row: on a
+        # live ledger the writer keeps appending after this reader opened,
+        # and a row naming bytes past the end read then is still committed.
+        row = conn.execute(
+            """
+            SELECT b.block_offset, b.body_offset, b.body_len, b.body_hash,
+                   k.disk_len, k.raw_len, s.committed_end, s.generation_id
+            FROM event_body_blobs b
+            JOIN body_blocks k ON k.block_offset = b.block_offset
+            JOIN archive_state s ON s.singleton = 1
+            WHERE b.event_id = ? AND b.source_table = ? AND b.direction = ?
+            """,
+            (event_id, source_table, direction),
+        ).fetchone()
         if row is None:
             return None
         if row[7] != self._expected_generation_id:
@@ -423,29 +428,26 @@ def archived_bodies(db_path: Path | str) -> list[tuple[str, str, str, bytes]]:
     with contextlib.closing(
         sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True)
     ) as conn:
-        has_index = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_body_blobs'"
-        ).fetchone()
-        if not has_index:
-            return []
         keys = conn.execute(
             """
             SELECT source_table, event_id, direction FROM event_body_blobs
             ORDER BY block_offset, body_offset
             """
         ).fetchall()
-    if not keys:
-        return []
-    with SessionArchive(db_path) as archive:
-        bodies = []
-        for source_table, event_id, direction in keys:
-            body = archive.read(event_id, source_table, direction)
-            if body is None:
-                raise AssertionError(
-                    f"{source_table}/{direction} of {event_id} vanished mid-scan"
-                )
-            bodies.append((source_table, event_id, direction, body))
-        return bodies
+        if not keys:
+            return []
+        # A full secret scan can cover hundreds of thousands of bodies. Reuse
+        # this scoped connection rather than opening SQLite once per body.
+        with SessionArchive(db_path) as archive:
+            bodies = []
+            for source_table, event_id, direction in keys:
+                body = archive._read(conn, event_id, source_table, direction)
+                if body is None:
+                    raise AssertionError(
+                        f"{source_table}/{direction} of {event_id} vanished mid-scan"
+                    )
+                bodies.append((source_table, event_id, direction, body))
+            return bodies
 
 
 def read_archived_body(
