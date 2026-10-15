@@ -9,12 +9,16 @@ script and inputs, in the disposable install container.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
 from capsem_builder.gate import transition
 from capsem_builder.gate.actions import Script
 from capsem_builder.gate.config import for_root
 from capsem_builder.gate.execution import Needs
+from capsem_builder.release.tools.fetch_release_artifacts import fetch_release_inputs
+from capsem_builder.release.tools.verify_release_inputs import verify_release_inputs
 from helpers.gate import RecordingRunner, built_command
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -48,6 +52,44 @@ def test_the_before_state_is_fetched_over_the_release_egress() -> None:
         assert rendered.endswith("[outside kernel sandbox]")
         assert CONFIG.package.default_manifest_url in rendered
         assert CONFIG.modules.transition.input_cache in rendered
+
+
+def test_public_packages_may_precede_the_first_runtime(tmp_path: Path) -> None:
+    """The deployed pre-0.7 graph has packages/profiles and no runtime yet."""
+    manifest = tmp_path / "manifest.json"
+    payload = json.dumps({
+        "channel": "stable",
+        "packages": [{"version": "0.6.6", "status": "current"}],
+        "profiles": {"code": {"status": "current"}},
+    }).encode()
+    manifest.write_bytes(payload)
+    (action,) = transition.fetch_before(CONFIG)[1].actions
+    assert isinstance(action, Script)
+    output = tmp_path / "before-runtime"
+    report = fetch_release_inputs(
+        manifest.as_uri(), "runtime", output,
+        allow_empty_runtime="--allow-empty-runtime" in action.render().split(),
+        architecture=CONFIG.host_arch().name,
+    )
+    assert report["artifacts"] == []
+    assert report["allow_empty_runtime"] is True
+    assert (output / "manifest.json").read_bytes() == payload
+    verify_release_inputs(output)
+    # Candidate/runtime consumers retain their strict default.
+    with pytest.raises(ValueError, match="contains no runtime"):
+        fetch_release_inputs(manifest.as_uri(), "runtime", tmp_path / "strict")
+
+
+def test_empty_before_runtime_permission_keeps_malformed_runtime_fail_closed(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"channel": "stable", "packages": [], "runtime": {}}))
+    (action,) = transition.fetch_before(CONFIG)[1].actions
+    assert isinstance(action, Script)
+    with pytest.raises(ValueError, match="runtime has no architectures"):
+        fetch_release_inputs(
+            manifest.as_uri(), "runtime", tmp_path / "before-runtime",
+            allow_empty_runtime="--allow-empty-runtime" in action.render().split(),
+        )
 
 
 def _gate(monkeypatch) -> tuple[transition.TransitionGate, list[tuple[str, dict]]]:

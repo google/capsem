@@ -77,7 +77,9 @@ def fetch_before(config: GateConfig) -> list[Step]:
         )
         for kind, action in (
             (PACKAGES, fetch(PACKAGES)),
-            (RUNTIME, fetch(RUNTIME, "--architecture", config.host_arch().name)),
+            # A public channel may have packages before its first runtime.
+            # The existing pairing classifier proves that first activation.
+            (RUNTIME, fetch(RUNTIME, "--allow-empty-runtime", "--architecture", config.host_arch().name)),
         )
     ]
     fetched.append(
