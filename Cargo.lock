@@ -1131,13 +1131,15 @@ dependencies = [
  "capsem-foundation",
  "capsem-guard",
  "capsem-proto",
- "regex",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "rmcp",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
- "toml 0.8.2",
  "tracing",
 ]
 

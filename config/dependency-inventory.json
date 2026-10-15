@@ -1140,13 +1140,15 @@
    "capsem-foundation",
    "capsem-guard",
    "capsem-proto",
-   "regex",
+   "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
    "rmcp",
    "serde",
    "serde_json",
    "tempfile",
    "tokio",
-   "toml",
    "tracing"
   ]
  },

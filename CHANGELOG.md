@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Native MCP aggregators install and attest filesystem, network, execution
   and signal confinement before readiness, and use inherited session capabilities.
+- Native builtin MCP workers apply the same confinement and use current service
+  HTTP admission, without reading policy files or inheriting host credentials.
 
 - Builtin HTTP-header tools evaluate policy and record the method actually
   sent, preventing unsupported method arguments from bypassing a HEAD block.
