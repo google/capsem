@@ -224,6 +224,24 @@ fn install_seccomp(role: Role) -> io::Result<()> {
         instruction(0x06, 0, 0, 0x8000_0000),  // RET KILL_PROCESS
         instruction(0x20, 0, 0, 0),            // LD W ABS seccomp_data.nr
     ];
+    #[cfg(target_arch = "x86_64")]
+    filter.extend([
+        instruction(0x45, 0, 1, 0x4000_0000), // JSET x32 syscall bit
+        instruction(0x06, 0, 0, deny),
+    ]);
+    if matches!(role, Role::McpAggregator | Role::McpBuiltin) {
+        // clone3's pointed-to flags cannot be inspected by classic BPF.
+        // ENOSYS makes libc fall back to clone, whose flags we can check.
+        filter.extend([
+            instruction(0x15, 0, 1, libc::SYS_clone3 as u32),
+            instruction(0x06, 0, 0, 0x0005_0000 | libc::ENOSYS as u32),
+            instruction(0x15, 0, 4, libc::SYS_clone as u32),
+            instruction(0x20, 0, 0, 16), // LD W ABS seccomp_data.args[0]
+            instruction(0x45, 1, 0, libc::CLONE_THREAD as u32),
+            instruction(0x06, 0, 0, deny),
+            instruction(0x06, 0, 0, allow),
+        ]);
+    }
     let mut denied = vec![
         libc::SYS_connect,
         libc::SYS_bind,
@@ -276,6 +294,10 @@ fn install_seccomp(role: Role) -> io::Result<()> {
         libc::SYS_utimes,
         libc::SYS_futimesat,
     ]);
+    #[cfg(target_arch = "x86_64")]
+    if matches!(role, Role::McpAggregator | Role::McpBuiltin) {
+        denied.extend([libc::SYS_fork, libc::SYS_vfork]);
+    }
     if !matches!(role, Role::VmOwner | Role::McpExternal) {
         denied.extend([libc::SYS_execve, libc::SYS_execveat]);
     }

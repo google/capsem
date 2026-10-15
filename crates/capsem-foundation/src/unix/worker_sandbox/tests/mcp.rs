@@ -117,3 +117,50 @@ fn mcp_denial_child() {
     granted.write_all(b"pong").unwrap();
     std::process::exit(0);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_mcp_profiles_allow_threads_but_refuse_forked_processes() {
+    for role in ["aggregator", "builtin"] {
+        let status = crate::isolated_test_command(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "unix::worker_sandbox::tests::mcp::mcp_fork_denial_child",
+                "--nocapture",
+            ])
+            .env("MCP_FORK_PROBE_ROLE", role)
+            .status()
+            .unwrap();
+        assert!(status.success(), "{role} retained fork authority");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn mcp_fork_denial_child() {
+    let Ok(role) = std::env::var("MCP_FORK_PROBE_ROLE") else {
+        return;
+    };
+    let role = match role.as_str() {
+        "aggregator" => Role::McpAggregator,
+        "builtin" => Role::McpBuiltin,
+        _ => panic!("unknown fork probe role"),
+    };
+    confine(&Policy::new(role)).unwrap();
+    assert_eq!(
+        std::thread::spawn(|| 37).join().unwrap(),
+        37,
+        "runtime threads must remain usable"
+    );
+    // SAFETY: isolated test subprocess, after the joined thread has exited;
+    // a mistakenly admitted child exits without touching the test runtime.
+    match unsafe { nix::unistd::fork() } {
+        Err(nix::errno::Errno::EPERM) => {}
+        Err(error) => panic!("fork denial returned the wrong errno: {error}"),
+        Ok(nix::unistd::ForkResult::Child) => std::process::exit(0),
+        Ok(nix::unistd::ForkResult::Parent { child }) => {
+            nix::sys::wait::waitpid(child, None).unwrap();
+            panic!("native MCP role forked a process");
+        }
+    }
+}

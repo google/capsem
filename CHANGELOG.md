@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Native MCP aggregator and builtin Linux profiles deny forked processes while
+  retaining runtime threads; alternate x32 syscall aliases cannot bypass filters.
+
 - Native MCP aggregators install and attest filesystem, network, execution
   and signal confinement before readiness, and use inherited session capabilities.
 - Native builtin MCP workers apply the same confinement and use current service
