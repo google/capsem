@@ -9,6 +9,7 @@ on:
       - build_system/scripts/build/lib/exec_lock.sh
       - web/graphics/**
       - web/marketing/**
+      - web/diagrams/**
 
 jobs:
   build:

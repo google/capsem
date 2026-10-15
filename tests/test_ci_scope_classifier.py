@@ -9,6 +9,20 @@ from pathlib import Path
 import pytest
 from capsem_builder.gate.tools.ci import classify_ci_scope as CLASSIFIER
 
+
+def test_shared_diagrams_require_both_web_builds() -> None:
+    for path in ("web/diagrams/Diagram.astro", "web/diagrams/viewer.ts", "web/diagrams/package.json"):
+        assert CLASSIFIER.ci_scopes((path,)) == {"docs", "marketing_graphics"}
+        assert CLASSIFIER.ci_owners((path,)) == {"fast-gate", "docs-build", "site-build", "pr-gate"}
+        assert CLASSIFIER.web_only((path,))
+
+
+def test_docs_dependency_patches_have_build_and_docs_owners() -> None:
+    path = "build_system/patches/http-cache-semantics@4.3.0.patch"
+    assert CLASSIFIER.ci_scopes((path,)) == {"build_system", "docs"}
+    assert "docs-build" in CLASSIFIER.ci_owners((path,))
+
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "build_system" / "scripts" / "ci" / "classify-ci-scope.py"
 

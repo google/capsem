@@ -254,6 +254,7 @@ def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
     script_root = "build_system/scripts"
     shared = {
         "README.md",
+        "web/diagrams/**",
         f"{script_root}/web/check-web-surface.sh",
         f"{script_root}/build/lib/exec_lock.sh",
     }
@@ -261,6 +262,7 @@ def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
         ".github/workflows/docs.yaml",
         "config/gate.toml",
         "web/docs/**",
+        "build_system/patches/**",
         f"{script_root}/web/check-docs-holding-build.py",
         "build_system/builder/gate/tools/web/check_docs_holding_build.py",
     }

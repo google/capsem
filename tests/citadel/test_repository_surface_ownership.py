@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import subprocess
-import tomllib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("repository_surface_ownership.toml")
@@ -48,6 +48,7 @@ EXPECTED_TARGETS = frozenset(
         "tests/",
         "web/app/",
         "web/docs/",
+        "web/diagrams/",
         "web/marketing/",
         "web/graphics/",
         "cache/target/",
