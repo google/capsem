@@ -1,6 +1,6 @@
 """Verify rootfs artifacts are consistent across build context, Dockerfile, and doctor checks."""
 
-import tempfile
+import shutil
 from pathlib import Path
 
 import pytest
@@ -49,35 +49,30 @@ class TestArtifactsExist:
 
 class TestBuildContext:
 
-    def test_prepare_build_context_copies_all(self):
+    def test_prepare_build_context_copies_all(self, tmp_path):
         """prepare_build_context copies all required artifacts to context dir."""
-        try:
-            from capsem_builder.image.config import load_guest_config
-            from capsem_builder.image.docker import prepare_build_context
-        except ImportError:
-            pytest.skip("capsem-builder not installed")
+        from capsem_builder.image.config import load_guest_config
+        from capsem_builder.image.docker import prepare_build_context
 
-        guest_dir = PROJECT_ROOT / "guest"
-        if not (guest_dir / "config").exists():
-            pytest.skip("No guest config directory found")
-
+        # The admin materializes runtime config and guest artifacts together.
+        guest_dir = tmp_path / "guest"
+        shutil.copytree(PROJECT_ROOT / "config" / "docker" / "image", guest_dir / "config")
+        shutil.copytree(ARTIFACTS_DIR, guest_dir / "artifacts")
         config = load_guest_config(guest_dir)
         arch_name = next(iter(config.build.architectures.keys()))
-
-        with tempfile.TemporaryDirectory() as tmp:
-            context_dir = Path(tmp)
-            prepare_build_context(
-                config, arch_name, "Dockerfile.rootfs.j2",
-                context_dir, PROJECT_ROOT,
-            )
-            # Verify all required files were copied
-            assert (context_dir / "capsem-ca.crt").exists(), "CA cert not in context"
-            for name in REQUIRED_FILES:
-                if name == "capsem-init":
-                    continue  # capsem-init goes into kernel context, not rootfs
-                assert (context_dir / name).exists(), f"{name} not in context"
-            for name in REQUIRED_DIRS:
-                assert (context_dir / name).exists(), f"{name}/ not in context"
+        context_dir = tmp_path / "context"
+        context_dir.mkdir()
+        prepare_build_context(
+            config, arch_name, "Dockerfile.rootfs.j2", context_dir, PROJECT_ROOT,
+        )
+        assert (context_dir / "capsem-ca.crt").read_bytes() == (CA_RESOURCES_DIR / "capsem-ca.crt").read_bytes()
+        for name in REQUIRED_FILES:
+            if name != "capsem-init":  # Init belongs to the kernel context.
+                assert (context_dir / name).read_bytes() == (ARTIFACTS_DIR / name).read_bytes()
+        for name in REQUIRED_DIRS:
+            for source in (ARTIFACTS_DIR / name).rglob("*"):
+                if source.is_file():
+                    assert (context_dir / source.relative_to(ARTIFACTS_DIR)).read_bytes() == source.read_bytes()
 
 
 class TestDoctorConsistency:
