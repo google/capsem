@@ -3,39 +3,16 @@ title: System architecture
 description: How do Capsem's components work together?
 ---
 
+import Diagram from '@capsem/diagrams/Diagram.astro';
+import { systemOverview } from '../../../lib/overview-diagrams';
+
 Capsem runs agents and tools in OCI containers inside Linux VMs on your computer.
 A shared service manages the VMs; separate host workers run each VM, inspect
 its traffic, and store its records.
 
 ## Control and data
 
-```mermaid
-flowchart TB
-  clients["CLI · TUI · Capsem UI · SDKs"]
-  mcp["@capsem/mcp"] -->|SDK| clients
-  clients -->|authenticated API| gateway["Gateway"]
-  gateway -->|HTTP over Unix socket| service["Service"]
-  subgraph assigned["Assigned to one VM"]
-    owner["VM owner"]
-    subgraph vm["VM hardware boundary"]
-      container["OCI container"]
-      helpers["Guest helpers"]
-      container <-->|terminal / traffic / tools| helpers
-    end
-    engine["Security engine"]
-    ledger["Log writer"]
-    owner <-->|vsock control| helpers
-    helpers -->|vsock traffic| engine
-    engine -->|audit records| ledger
-    owner -->|VM records| ledger
-  end
-  service -. lifecycle / grants .-> owner
-  service -. policy / capabilities .-> engine
-  service -. producer / reader grants .-> ledger
-  engine -->|allowed traffic on granted connections| upstream["Upstream services"]
-  style assigned fill:#eee,stroke:#777
-  style vm fill:#eff6ff,stroke:#2563eb,stroke-width:2px
-```
+<Diagram diagram={systemOverview} />
 
 ## Create and operate a VM
 

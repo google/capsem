@@ -3,6 +3,9 @@ title: Investigate a VM
 description: How do I investigate a VM's commands, model calls, tools, and security decisions?
 ---
 
+import Diagram from '@capsem/diagrams/Diagram.astro';
+import { investigation } from '../../../../lib/overview-diagrams';
+
 Start with the VM's identity and time window, then follow related command,
 model, tool, and network records. You need access to that Capsem installation;
 retain the VM until you have collected the evidence you need.
@@ -45,14 +48,7 @@ Use a returned trace ID to narrow related events. Check model, tool, network,
 and file records as needed rather than treating the timeline preview as a
 complete transcript.
 
-```mermaid
-flowchart LR
-  command["Command / process"] --> model["Model request"]
-  model --> tool["Tool call"]
-  tool --> traffic["Network or file action"]
-  command -. shared trace / process identity .-> traffic
-  model -. event / response event IDs .-> bodies["Retained bodies"]
-```
+<Diagram diagram={investigation} />
 
 Missing trace attribution does not prove two records are related. Check
 timestamps, process identity, server/tool names, and destinations together.

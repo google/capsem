@@ -8,38 +8,16 @@ next:
   link: /getting-started/installation/
 ---
 
+import Diagram from '@capsem/diagrams/Diagram.astro';
+import { introduction } from '../../../lib/overview-diagrams';
+
 Capsem runs AI agents and tools in Linux VMs on your computer.
 A shared service manages the VMs, a security engine checks their outbound
 requests, and a log writer records their activity.
 
 ## How the components connect
 
-<div class="system-overview">
-
-```mermaid
-flowchart TB
-  clients["CLI · TUI · Capsem UI<br/>Python / TypeScript / Rust SDKs · MCP server"]
-  clients -->|API requests| gateway["Gateway<br/>Authenticates clients"]
-  gateway -->|VM operations| service["Service<br/>Creates and manages VMs"]
-  subgraph perVM["For each VM — on your computer"]
-    direction TB
-    owner["VM process<br/>Boots Linux and connects to guest helpers"]
-    subgraph vm["Linux VM"]
-      workload["OCI container<br/>Your agent and tools"]
-    end
-    engine["Security engine<br/>Inspects requests and applies rules"]
-    writer["Log writer<br/>Stores activity and decisions"]
-    owner <-->|terminal, commands, files| workload
-    workload -->|HTTP / HTTPS / DNS / model / MCP requests| engine
-    engine -->|sanitized records| writer
-  end
-  service -->|start / stop / resume| owner
-  engine -->|allowed requests| upstream["External services<br/>Model providers · APIs · MCP servers"]
-  style perVM fill:#f3f4f6,stroke:#6b7280
-  style vm fill:#eff6ff,stroke:#2563eb,stroke-width:2px
-```
-
-</div>
+<Diagram diagram={introduction} />
 
 The gateway and service are shared by all VMs. Each VM has its own VM process,
 security engine, and log writer; these run on your computer, outside the VM.

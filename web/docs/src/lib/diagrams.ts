@@ -1,21 +1,7 @@
-export type Permission = 'minimum' | 'limited' | 'elevated' | 'maximum' | 'external';
-export interface DiagramNode {
-  id: string; label: string; x: number; y: number;
-  permission?: Permission; width?: number; height?: number; boundary?: 'vm' | 'group';
-}
-export interface DiagramLink {
-  from: string; to: string; label: string; control?: boolean; both?: boolean;
-  source?: 'top' | 'bottom' | 'left' | 'right'; target?: 'top' | 'bottom' | 'left' | 'right';
-  via?: { x: number; y: number }[];
-  labelAt?: number;
-  labelOffset?: number;
-}
-export interface Diagram {
-  title: string; width: number; height: number; nodes: DiagramNode[]; links: DiagramLink[];
-}
+import type { Diagram } from '@capsem/diagrams/types';
 
 export const securityProcesses: Diagram = {
-  title: 'Processes and control', width: 1080, height: 1210,
+  title: 'Processes and control', width: 1080, height: 1340,
   nodes: [
     { id: 'perVM', label: 'PER-VM PROCESSES · VM A', x: 20, y: 455, width: 1040, height: 730, boundary: 'group' },
     { id: 'vm', label: 'VM · HARDWARE BOUNDARY', x: 40, y: 680, width: 280, height: 300, boundary: 'vm' },
@@ -33,7 +19,7 @@ export const securityProcesses: Diagram = {
     { id: 'mcp', label: 'capsem-mcp-aggregator', x: 790, y: 745, permission: 'minimum' },
     { id: 'writer', label: 'Log writer\ncapsem-ledger', x: 430, y: 1055, permission: 'limited' },
     { id: 'builtin', label: 'capsem-mcp-builtin', x: 790, y: 900, permission: 'minimum' },
-    { id: 'tools', label: 'MCP servers', x: 790, y: 1055 },
+    { id: 'tools', label: 'MCP servers', x: 790, y: 1240 },
   ],
   links: [
     { from: 'hostMcp', to: 'sdk', label: '' , source: 'right', target: 'left' },
@@ -53,7 +39,7 @@ export const securityProcesses: Diagram = {
     { from: 'engine', to: 'writer', label: 'audit events' },
     { from: 'owner', to: 'writer', label: 'VM events', source: 'right', target: 'right', via: [{ x: 710, y: 561 }, { x: 710, y: 1091 }] },
     { from: 'mcp', to: 'builtin', label: 'tool RPC' },
-    { from: 'mcp', to: 'tools', label: 'brokered HTTP', labelAt: .75, labelOffset: 55, source: 'right', target: 'right', via: [{ x: 1030, y: 781 }, { x: 1030, y: 1091 }] },
+    { from: 'mcp', to: 'tools', label: 'brokered HTTP', labelAt: .75, labelOffset: 55, source: 'right', target: 'right', via: [{ x: 1030, y: 781 }, { x: 1030, y: 1276 }] },
   ],
 };
 

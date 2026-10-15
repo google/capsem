@@ -3,6 +3,9 @@ title: Security engine
 description: How does the security engine evaluate operations, handle credentials, and record decisions?
 ---
 
+import Diagram from '@capsem/diagrams/Diagram.astro';
+import { securityEngine } from '../../../lib/overview-diagrams';
+
 The security engine runs in `capsem-proxy`, a host subprocess assigned to one VM. It is responsible for:
 
 - **Network analysis:** decrypt HTTPS and identify the destination, HTTP request,
@@ -18,41 +21,7 @@ It sits inside the [per-VM process group](/architecture/security/), outside the 
 
 ## Event flow
 
-```mermaid
-flowchart TB
-  vm["VM traffic<br/>HTTP / TLS<br/>DNS / MCP"]
-  api["Standalone API<br/>Model requests"]
-  enforcement[/"Rule files<br/>TOML"/]
-  detection[/"Detection files<br/>Sigma YAML"/]
-
-  subgraph engine["Security engine — processing stages"]
-    policy["Rule compilation<br/>SecurityRuleSet"]
-    parse["Network analysis<br/>engine<br/>SecurityEvent"]
-    pre["Preprocess<br/>plugins"]
-    rules["Rule evaluation<br/>CEL conditions"]
-    post["Postprocess<br/>plugins"]
-    decision{"Effective decision"}
-    runtime["Prepare request<br/>Restore credentials"]
-    sanitize["Logging plugins<br/>Sanitize event"]
-    refuse["Refuse operation<br/>or await approval"]
-    parse --> pre --> rules --> post --> decision
-    decision -->|allow| runtime
-    decision -->|ask / block| refuse
-    post -->|event / decision| sanitize
-  end
-
-  vm -->|vsock| parse
-  api -->|HTTP| parse
-  enforcement -. compiled by service .-> policy
-  detection -. compiled by service .-> policy
-  policy -.-> rules
-  runtime -->|audit admitted| upstream["Allowed upstream<br/>or MCP server"]
-  sanitize -->|audit records| writer["Log writer<br/>session.db / archive"]
-
-  classDef limited fill:#fef9c3,stroke:#b59b00,stroke-width:3px,color:#172033
-  class writer limited
-  style engine fill:#fef9c3,stroke:#b59b00,stroke-width:3px,color:#172033
-```
+<Diagram diagram={securityEngine} />
 
 ## Responsibilities
 

@@ -5,90 +5,70 @@ description: The marketing website, capsem.org. Use when editing copy, adding se
 
 # Marketing Website
 
-The marketing site (capsem.org) is a single-page landing built with Astro 7 + Svelte 5 + Tailwind v4. Source lives in `web/marketing/`.
+The single-page marketing site in `web/marketing/` uses Astro 7, Svelte 5,
+and Tailwind v4. It explains benefits and use cases; precise procedures and
+contracts belong on the documentation site (see `/site-infra`).
 
-## Dev workflow
+## Development and publication
+
+Run these commands through the repository's bounded-command wrapper:
 
 ```bash
-cd web/marketing && pnpm run dev     # localhost:4321
-cd web/marketing && pnpm run build   # Production build
-cd web/marketing && pnpm run preview # Preview production build
+pnpm --dir web/marketing run dev
+pnpm --dir web/marketing run check
+pnpm --dir web/marketing run build
+pnpm --dir web/marketing run preview
 ```
 
-## CI and deploy rail
+`ci.yaml` owns the merge-blocking `site-build` job. Pushes to `main` trigger
+`site.yaml`, which builds, deploys to Cloudflare Pages, and smokes `capsem.org`.
+Changes to `web/diagrams/` trigger both public-site builds and deployments.
+This rail is independent from binary and profile releases.
 
-`ci.yaml` runs the merge-blocking `site-build` job under `pr-gate`. `site.yaml`
-deploys only on every push to `main` and smokes `https://capsem.org/`. This
-deploy rail is independent from binary releases, manual VM asset releases, and
-the `release.capsem.org` asset-channel workflow.
+## Architecture and content
 
-## Architecture
+`src/pages/index.astro` composes these sections:
 
-Single page (`web/marketing/src/pages/index.astro`) composed of Svelte components. All marketing copy is centralized in `web/marketing/src/lib/data.ts` -- edit that file to change text, not the components.
+| Component | Purpose |
+| --- | --- |
+| `Nav.svelte` | Responsive navigation; hydrated on load. |
+| `Hero.svelte` | Downloads, copyable install command, and animated demo; hydrated on load. |
+| `Agents.astro` | Supported agents and bundled tools. |
+| `Performance.astro` | Performance claims, methodology, caveats, and sources. |
+| `Security.astro` | Shared JointJS security diagram and architecture link. |
+| `Control.astro` | Activity, CEL rule, and detection examples. |
+| `Footer.svelte` | Brand, license, and source link; rendered statically. |
 
-```
-web/marketing/
-  astro.config.mjs           Astro config (site: capsem.org, Svelte + Tailwind)
-  package.json               capsem-marketing package
-  src/
-    pages/index.astro        Single landing page, composes all sections
-    layouts/Base.astro       HTML shell (meta, fonts, skip-to-content)
-    lib/data.ts              All copy: site metadata, nav, features, FAQ, footer
-    lib/icons.ts             Icon SVG paths
-    styles/global.css        Tailwind theme tokens, base styles, button utilities
-    components/
-      Nav.svelte             Top navigation (client:load)
-      Hero.svelte            Hero section with install command
-      Features.svelte        Feature cards grid
-      ProductOverview.svelte Architecture diagram (host/guest/vsock)
-      HowItWorks.svelte      Step-by-step explanation
-      FAQ.svelte             Accordion FAQ (client:visible)
-      CTA.svelte             Call-to-action (client:visible)
-      Footer.svelte          Footer with link columns
-      Section.svelte         Reusable section wrapper
-      SectionHeader.svelte   Reusable heading + subtitle
-      Card.svelte            Reusable card component
-      Badge.svelte           Reusable badge component
-      Icon.svelte            SVG icon component
-      InstallCommand.svelte  Copy-to-clipboard install snippet
-```
+Keep all copy, UI labels, reviewed documentation destinations, benchmark
+disclosures, and fictional hero output in `src/lib/data.ts`. Its exports are
+`SITE`, `DOCS`, `NAV_LINKS`, `DOWNLOAD`, `UI`, `AGENTS`, `SPEED`, `SECURITY`,
+`SECURITY_DIAGRAM`, `CONTROL`, `HERO_DEMO`, and `HERO_TERMINAL_SCRIPT`.
 
-## Content editing
+`Download.svelte` uses `lib/download.ts` for platform detection and the shared
+`Modal.svelte` dialog. Keep focus, Escape, backdrop, and close-button behavior
+in that dialog. `HeroDemo.svelte` uses `lib/hero-terminal.ts` for playback;
+verify animated, paused, replay, and reduced-motion states when changing it.
 
-All text lives in `web/marketing/src/lib/data.ts` as typed const exports:
+## Diagrams
 
-| Export | Content |
-|--------|---------|
-| `SITE` | Name, tagline, description, URLs (GitHub, docs, releases) |
-| `NAV_LINKS` | Top nav items |
-| `AGENTS` | Supported AI agents list |
-| `SECURITY_BLOCKS` | Three security pillars (isolation, inspection, control) |
-| `HOST_COMPONENTS` | Host-side architecture diagram items |
-| `GUEST_COMPONENTS` | Guest-side architecture diagram items |
-| `VSOCK_CHANNELS` | Vsock port labels for architecture diagram |
-| `FAQS` | FAQ question/answer pairs |
-| `FOOTER_COLUMNS` | Footer link groups |
-| `MCP_TOOLS` | MCP tool examples |
-| `PACKAGES` | Pre-installed packages list |
-| `ROADMAP` | Roadmap items |
+Use `@capsem/diagrams/Diagram.astro` from the shared `web/diagrams/` package.
+Keep marketing definitions and labels in `data.ts`; do not fork the viewer,
+add another renderer, or introduce JointJS+ without an explicit decision.
+Use the shared blue/violet accent tones for marketing; the security manual's
+permission-level palette serves a separate explanation.
 
-## Theme
+Preserve hardware and process boundaries and connection direction when editing.
+Verify readable labels, zoom/pan/fit controls, the text connection table, and
+phone layouts in a real browser. Both sites must build after a viewer change.
 
-Defined in `web/marketing/src/styles/global.css` using Tailwind v4 `@theme` tokens:
+## Theme and assets
 
-- **Accent**: `--color-accent` (blue), `--color-accent-secondary` (purple), gradient between them
-- **Surfaces**: light (`--color-surface`) and dark (`--color-surface-dark`) variants
-- **Text**: separate light-bg and dark-bg tokens, all WCAG AA compliant
-- **Buttons**: 4 pill variants as `@utility` classes: `btn-primary` (gradient), `btn-dark`, `btn-outline`, `btn-outline-dark`
-- **Font**: Inter (loaded from Google Fonts in Base.astro)
+`src/styles/global.css` owns Tailwind `@theme` tokens and shared layout utilities:
+`content-shell`, `section-space`, `panel`, `button`, `text-link`, and
+`brand-gradient`. `.section-dark` remaps semantic surfaces and text. The hero's
+scene styling lives in `styles/hero-demo.css`. Inter is loaded by `Base.astro`.
 
-## Component patterns
-
-- Sections alternate light/dark backgrounds using `section-dark` utility class
-- `Section.svelte` and `SectionHeader.svelte` provide consistent spacing and headings
-- Interactive components use Svelte hydration directives: `client:load` (Nav) or `client:visible` (FAQ, CTA)
-- `gradient-text` utility for accent-colored headings
-
-## Graphics and icons
-
-Icons use inline SVG paths from `web/marketing/src/lib/icons.ts`, rendered via `Icon.svelte`. Favicons in `web/marketing/public/` are generated from `web/graphics/icon/1024w/capsem-logo-color.png`.
+The visible logo is `public/logo-color.png`. Agent logos in `public/agents/`
+retain attribution in `SOURCES.md` and licensing in `LICENSE`. Canonical brand
+graphics live in `web/graphics/`; favicons derive from
+`web/graphics/icon/1024w/capsem-logo-color.png`.

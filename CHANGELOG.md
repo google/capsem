@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Use a shared JointJS viewer across all published documentation diagrams and the marketing security diagram; remove the production Mermaid renderer.
+
 - Replace security architecture diagrams with JointJS Community, zoom and pan controls, and accessible connection tables.
 
 - Give security architecture diagrams a wider layout by removing the page sidebar.

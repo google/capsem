@@ -1,3 +1,5 @@
+import type { Diagram } from '@capsem/diagrams/types';
+
 // Marketing copy and reviewed documentation destinations live here.
 export const SITE = {
   name: "Capsem",
@@ -77,6 +79,24 @@ export const SECURITY = {
   credentials: "Credentials", outside: "Kept outside the VM", destinations: ["AI models", "MCP tools", "Web & APIs"],
   logging: "Logging & reporting", trail: "Activity. Decisions. Evidence.",
 } as const;
+export const SECURITY_DIAGRAM: Diagram = {
+  title: SECURITY.title, description: SECURITY.diagram, width: 1080, height: 590,
+  nodes: [
+    { id: 'process', label: SECURITY.process, x: 20, y: 85, width: 310, height: 445, boundary: 'group' },
+    { id: 'vm', label: SECURITY.isolation, x: 40, y: 145, width: 270, height: 335, boundary: 'vm' },
+    { id: 'workspace', label: `${SECURITY.workspace}\n${SECURITY.agent}\n${SECURITY.tools}\n\n${SECURITY.airgap}`, x: 60, y: 215, width: 230, height: 180 },
+    { id: 'engine', label: `${SECURITY.engine}\n\n${SECURITY.controls.join('\n')}`, x: 415, y: 215, width: 290, height: 180, permission: 'accent' },
+    { id: 'credentials', label: `${SECURITY.credentials}\n${SECURITY.outside}`, x: 435, y: 30, width: 250, permission: 'secondary' },
+    ...SECURITY.destinations.map((label, i) => ({ id: `destination-${i}`, label, x: 830, y: 170 + i * 110, width: 220 })),
+    { id: 'logging', label: `${SECURITY.logging}\n${SECURITY.trail}`, x: 415, y: 490, width: 290 },
+  ],
+  links: [
+    { from: 'vm', to: 'engine', label: '', source: 'right', target: 'left' },
+    { from: 'credentials', to: 'engine', label: '', control: true },
+    ...SECURITY.destinations.map((_, i) => ({ from: 'engine', to: `destination-${i}`, label: '', source: 'right' as const, target: 'left' as const, via: [{ x: 770, y: 305 }, { x: 770, y: 206 + i * 110 }] })),
+    { from: 'engine', to: 'logging', label: '', control: true },
+  ],
+};
 export const CONTROL = {
   title: "Stay in control.",
   caption: "Illustrative examples",

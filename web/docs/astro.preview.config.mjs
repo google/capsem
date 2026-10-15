@@ -1,5 +1,4 @@
 import { defineConfig } from 'astro/config';
-import mermaid from 'astro-mermaid';
 import starlight from '@astrojs/starlight';
 import { unified } from '@astrojs/markdown-remark';
 
@@ -30,10 +29,8 @@ export default defineConfig({
   },
   markdown: { processor: unified({ remarkPlugins: [localDocsLinks] }) },
   integrations: [
-    mermaid({ mermaidConfig: { flowchart: { useMaxWidth: false } } }),
     starlight({
       title: 'Capsem',
-      customCss: ['./src/styles/diagrams.css'],
       sidebar: [
         { label: 'Getting started', items: links('getting-started/intro', 'getting-started/installation', 'getting-started/how-to-use-capsem') },
         { label: 'Guides', items: [

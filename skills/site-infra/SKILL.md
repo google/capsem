@@ -144,7 +144,7 @@ abstract framing and paragraphs that repeat a diagram or table. Architecture
 pages use concrete component relationships and a process/role/sandboxing table.
 Keep one canonical explanation or contract and link to it instead of repeating
 it. No filler, marketing pitches, or speculative features. Use tables for
-comparable facts and Mermaid diagrams when they clarify relationships.
+comparable facts and JointJS diagrams when they clarify relationships.
 
 In tutorials and how-tos, explain necessary options when first used, identify
 sample names and replaceable values, and say whether commands run on the
@@ -333,13 +333,13 @@ relate. Do not present a prerequisite as a parallel alternative to tasks that
 depend on it.
 Use top-to-bottom overview diagrams that fit the reading column; do not require
 horizontal scrolling to understand the introduction. Verify the rendered layout,
-since a vertical Mermaid direction alone does not guarantee a narrow diagram.
+since a vertical arrangement alone does not guarantee a narrow diagram.
 
 ## Diagrams
 
 Use JointJS Community for new and migrated diagrams, starting with the security
-architecture. `web/docs/src/components/Diagram.astro` owns the viewer and visual
-tokens; typed nodes, boundaries, and connections live in `src/lib/diagrams.ts`.
+architecture. The shared `web/diagrams/` package owns the viewer and visual
+tokens for both sites; documentation definitions live in `web/docs/src/lib/`.
 Import the component from an MDX page and pass a diagram definition. Keep the
 approved route unchanged when converting a Markdown source to MDX, and update
 `approved-docs.mjs` to its new source extension.
@@ -348,8 +348,11 @@ Preserve all connections, directionality, permission levels, and boundaries
 when migrating. Give diagrams deliberate layouts, zoom/pan/fit controls, and
 server-rendered connection tables so the information remains available without
 JavaScript. Verify label readability and controls on desktop and mobile.
-Existing Mermaid diagrams remain supported during migration; do not add another
-renderer or a JointJS+ dependency for a new diagram.
+All published diagrams use this component; archived manual sources retain their
+old Mermaid text but are excluded from the build. Do not add another renderer
+or a JointJS+ dependency for a new diagram. Keep external services outside
+per-VM and processing boundaries, and run `tools/test-diagrams.mjs` when changing
+diagram definitions; the docs build includes these boundary checks.
 
 ## Astro reference
 

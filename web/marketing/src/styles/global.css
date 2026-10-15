@@ -109,7 +109,6 @@
   .benchmark-note summary { @apply underline underline-offset-4; }
   .benchmark-note p { @apply mt-4 leading-6; }
   .benchmark-note a { @apply mr-4 mt-3 inline-block text-accent; }
-  .security-visual { @apply my-10 rounded-2xl border border-line bg-paper p-4 sm:p-6; }
   .control-card { @apply flex flex-col; }
   .control-example { @apply mt-6 min-h-64 flex-1 overflow-hidden rounded-lg border border-line bg-surface; }
 
@@ -149,22 +148,6 @@
 .codex-prompt .terminal-cursor { margin: 0; }
 .codex-hints { display: flex; justify-content: space-between; gap: 8px; font-size: 9px; color: var(--color-muted); margin-top: 8px; }
 
-.security-diagram { display: block; width: 100%; height: auto; color: var(--color-muted); }
-.security-diagram text { font-family: var(--font-sans); }
-.boundary { fill: var(--color-tint); stroke: var(--color-muted); stroke-dasharray: 5 5; }
-.diagram-box { fill: var(--color-paper); stroke: var(--color-line); }
-.engine-box { fill: var(--color-accent-soft); stroke: var(--color-accent); stroke-width: 1.2; }
-.diagram-title { fill: var(--color-ink); font-size: 17px; font-weight: 600; }
-.diagram-body { fill: var(--color-ink); font-size: 13px; }
-.diagram-muted { fill: var(--color-body); font-size: 11px; }
-.diagram-note, .diagram-kicker { fill: var(--color-body); font-size: 11px; }
-.diagram-kicker { letter-spacing: .5px; }
-.flow, .credential-flow, .log-flow { fill: none; stroke: var(--color-muted); stroke-width: 1.2; }
-.credential-flow, .log-flow { stroke-dasharray: 4 4; }
-.engine-divider { stroke: var(--color-accent); opacity: .2; }
-.control-dot { fill: var(--color-accent); }
-.log-box { fill: var(--color-tint); stroke: var(--color-line); }
-.security-mobile { display: none; }
 
 .example-label { display: flex; justify-content: space-between; padding: 13px; border-bottom: 1px solid var(--color-line); color: var(--color-muted); font-size: 11px; }
 .example-label span { color: var(--color-accent); }
@@ -179,14 +162,7 @@
 .detection-example pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px 12px; margin: 0; font: 10px/1.9 ui-monospace, monospace; }
 .detection-alert { border-top: 1px solid var(--color-line); padding: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 10px; }
 
-.process-boundary { fill: none; stroke: var(--color-accent); stroke-width: 1.2; }
 @media (max-width: 639px) {
-  .security-diagram { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  .security-mobile { @apply flex flex-col text-center; }
-  .security-mobile > div { @apply flex flex-col gap-2 rounded-lg border border-dashed border-muted bg-tint p-4 text-xs; }
-  .security-mobile small, .security-mobile span { @apply text-xs text-body; }
-  .security-mobile .mobile-engine { @apply border-solid border-accent bg-accent-soft; }
-  .security-mobile .down-arrow { @apply my-2 text-xl text-accent; }
   .codex-terminal { font-size: 9px; padding-inline: 12px; }
   .demo-steps { display: none; }
 }

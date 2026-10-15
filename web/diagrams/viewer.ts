@@ -1,5 +1,5 @@
 import { dia, shapes } from '@joint/core';
-import type { Diagram } from './diagrams';
+import type { Diagram } from './types';
 
 export function mountDiagram(root: HTMLElement): () => void {
   const diagram: Diagram = JSON.parse(root.dataset.diagram!);
@@ -54,7 +54,7 @@ export function mountDiagram(root: HTMLElement): () => void {
   }
   const svg = host.querySelector('svg')!;
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `${diagram.title}. Full connection list follows the diagram.`);
+  svg.setAttribute('aria-label', `${diagram.description ?? diagram.title}. Full connection list follows the diagram.`);
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   let zoom = 1, x = 0, y = 0;
   const controls = root.querySelector<HTMLElement>('.diagram-toolbar')!;
