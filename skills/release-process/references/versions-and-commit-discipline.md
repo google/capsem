@@ -17,6 +17,11 @@ is bookkeeping, not qualification authority: user-visible changes remain under
 Do not add a versioned release heading merely to let the gate start. The remote
 immutable version tag is the sole release transition, and the GitHub release
 title records the exact source commit.
+Application crate dependencies remain path-only. Cargo publication requires
+path and registry-version pairs for the Rust SDK's library dependency graph;
+every such version must equal `workspace.package.version`. The version guard
+checks the complete SDK graph and rejects missing constraints, version drift,
+and version pins in private application dependencies, including renamed edges.
 `just release-binaries` never stamps, commits, resets, or pushes `main`.
 Runtime releases are independent and do not require binary changelog text.
 

@@ -13,6 +13,9 @@ import json
 import re
 import tomllib
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_GRAPH = (
@@ -29,9 +32,57 @@ SEMVER = re.compile(
 )
 
 
+def _workspace() -> dict[str, Any]:
+    return tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]
+
+
 def _workspace_version() -> str:
-    workspace = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
-    return workspace["workspace"]["package"]["version"]
+    return _workspace()["package"]["version"]
+
+
+def _sdk_publication_manifests() -> set[Path]:
+    """Cargo needs registry versions for the SDK's local library dependencies."""
+    pending = [(PROJECT_ROOT / "sdk/rust/Cargo.toml").resolve()]
+    published = set()
+    while pending:
+        cargo_toml = pending.pop()
+        if cargo_toml in published:
+            continue
+        assert cargo_toml.is_relative_to(PROJECT_ROOT), cargo_toml
+        published.add(cargo_toml)
+        manifest = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
+        for section in ("dependencies", "build-dependencies"):
+            for name, spec in (manifest.get(section) or {}).items():
+                if (
+                    isinstance(spec, dict)
+                    and str(spec.get("package", name)).startswith("capsem")
+                    and "path" in spec
+                ):
+                    pending.append((cargo_toml.parent / str(spec["path"]) / "Cargo.toml").resolve())
+    return published
+
+
+def _dependency_version_errors(
+    manifest: dict[str, Any], *, published: bool, version: str
+) -> list[str]:
+    errors = []
+    for section in ("dependencies", "dev-dependencies", "build-dependencies"):
+        for alias, spec in (manifest.get(section) or {}).items():
+            name = str(spec.get("package", alias)) if isinstance(spec, dict) else alias
+            if not name.startswith("capsem"):
+                continue
+            if published and section != "dev-dependencies":
+                if (
+                    not isinstance(spec, dict)
+                    or not spec.get("path")
+                    or spec.get("version") != version
+                ):
+                    errors.append(
+                        f"{section}: {alias} must use a path and workspace version {version}"
+                    )
+            elif isinstance(spec, str) or (isinstance(spec, dict) and "version" in spec):
+                errors.append(f"{section}: private dependency {alias} must not pin a version")
+    return errors
 
 
 def test_released_runtime_revision_is_semver_with_a_commit_identity() -> None:
@@ -83,28 +134,53 @@ def test_capsem_version_patch_is_not_a_timestamp() -> None:
 
 
 def test_internal_crate_deps_do_not_pin_a_version() -> None:
-    """Sibling crates are referenced by path, never by a pinned version.
+    """Application deps stay path-only; published SDK deps match the cohort.
 
     A pinned internal version is a second place the workspace version lives,
     and it drifts silently: `capsem-guard = { version = "1.0.1776688771" }`
     sat unnoticed for months because caret matching accepted every 1.x, then
     broke the entire workspace build the moment the line moved to 0.6.
     """
+    published = _sdk_publication_manifests()
     offenders = []
-    for cargo_toml in sorted((PROJECT_ROOT / "crates").glob("*/Cargo.toml")):
+    for member in _workspace()["members"]:
+        cargo_toml = (PROJECT_ROOT / member / "Cargo.toml").resolve()
         manifest = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
-        for section in ("dependencies", "dev-dependencies", "build-dependencies"):
-            for name, spec in (manifest.get(section) or {}).items():
-                if not name.startswith("capsem"):
-                    continue
-                if isinstance(spec, dict) and "version" in spec:
-                    offenders.append(
-                        f"{cargo_toml.parent.name}/{section}: {name} pins {spec['version']!r}"
-                    )
+        offenders.extend(
+            f"{member}/{error}"
+            for error in _dependency_version_errors(
+                manifest, published=cargo_toml in published, version=_workspace_version()
+            )
+        )
 
     assert not offenders, (
-        "internal crate dependencies must be path-only so the workspace version "
-        "lives in exactly one place:\n  " + "\n  ".join(offenders)
+        "Application dependencies must be path-only; the published SDK library graph "
+        "must declare registry constraints matching the authoritative workspace version:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.parametrize("defect", ["missing", "drift", "private", "alias"])
+def test_dependency_version_guard_rejects_publication_and_drift_defects(defect):
+    crate = "capsem-core" if defect == "private" else "capsem-api"
+    cargo_toml = (PROJECT_ROOT / "crates" / crate / "Cargo.toml").resolve()
+    manifest = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
+    dependencies = manifest["dependencies"]
+    name = next(name for name in dependencies if name.startswith("capsem"))
+    spec = dependencies[name]
+    if defect == "missing":
+        spec.pop("version")
+    elif defect == "private":
+        spec["version"] = _workspace_version()
+    else:
+        spec["version"] = "0.0.0"
+        if defect == "alias":
+            spec["package"] = name
+            dependencies["renamed_internal"] = dependencies.pop(name)
+    assert _dependency_version_errors(
+        manifest,
+        published=cargo_toml in _sdk_publication_manifests(),
+        version=_workspace_version(),
     )
 
 
