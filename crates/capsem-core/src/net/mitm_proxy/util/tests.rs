@@ -106,3 +106,206 @@ fn parse_http_host_target_leaves_non_addresses_alone() {
         );
     }
 }
+
+fn snapshot_for_rules_and_plugins(
+    rules_toml: &str,
+    plugins: std::collections::BTreeMap<String, crate::net::policy_config::SecurityPluginConfig>,
+) -> crate::net::proxy_engine::ProxyPolicySnapshot {
+    let profile = crate::net::policy_config::SecurityRuleProfile::parse_toml(rules_toml).expect("valid rules toml");
+    let rules = crate::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        crate::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("compile rules");
+    crate::net::proxy_engine::ProxyPolicySnapshot::new(
+        "blake3:test".into(),
+        crate::net::policy::NetworkMechanics::new(),
+        rules,
+        plugins,
+        crate::net::policy_config::ModelEndpointRegistry::default(),
+    )
+}
+
+#[test]
+fn policy_requires_buffered_model_response_inspects_compiled_fields_and_actions() {
+    use crate::net::policy_config::{DetectionLevel, SecurityPluginConfig, SecurityPluginMode};
+    use std::collections::BTreeMap;
+
+    // Plain allow rules without detection_level (like default.model) stream without buffering.
+    let plain_allow_response_rule = r#"
+[default.model]
+name = "default_model"
+action = "allow"
+priority = "default"
+match = 'has(model.provider) || has(model.name) || has(model.request.body) || has(model.response.body) || http.status == "200"'
+"#;
+    assert!(!policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        plain_allow_response_rule,
+        BTreeMap::new()
+    )));
+
+    // Allow rules with detection_level on request-stage fields stream without buffering.
+    let allow_request_detection_rule = r#"
+[profiles.rules.detect_request_prompt]
+name = "detect_request_prompt"
+action = "allow"
+detection_level = "high"
+match = 'model.request.body.contains("usaco") && model.name == "gemini-2.5-flash"'
+"#;
+    assert!(!policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        allow_request_detection_rule,
+        BTreeMap::new()
+    )));
+
+    // Allow rules that set a detection_level on a response-stage field buffer the
+    // response so inline response evaluation and detections are never dropped.
+    let allow_response_detection_rule = r#"
+[profiles.rules.detect_response_secret]
+name = "detect_response_secret"
+action = "allow"
+detection_level = "high"
+match = 'model.response.body.contains("PRIVATE KEY") || http.status == "200"'
+"#;
+    assert!(policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        allow_response_detection_rule,
+        BTreeMap::new()
+    )));
+
+    // A blocking request-stage rule whose string literal mentions "model.response.body"
+    // must not trigger response buffering.
+    let request_rule_with_response_literal = r#"
+[profiles.rules.block_prompt_mentioning_field]
+name = "block_prompt_mentioning_field"
+action = "block"
+match = 'model.request.body.contains("model.response.body") && http.host == "generativelanguage.googleapis.com"'
+"#;
+    assert!(!policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        request_rule_with_response_literal,
+        BTreeMap::new()
+    )));
+
+    // Disabled blocking rule on model.response.body does not require buffering.
+    let disabled_block_rule = r#"
+[profiles.rules.disabled_response_block]
+name = "disabled_response_block"
+action = "block"
+enabled = false
+match = 'model.response.body.contains("secret")'
+"#;
+    assert!(!policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        disabled_block_rule,
+        BTreeMap::new()
+    )));
+
+    // Enabled enforcing/rewriting rules on any response-stage field require buffering.
+    for (action, condition) in [
+        ("block", r#"model.response.body.contains("secret")"#),
+        ("ask", r#"has(model.response.valid)"#),
+        ("rewrite", r#"http.body.contains("token")"#),
+        ("postprocess", r#"http.status == "200""#),
+    ] {
+        let toml = format!(
+            "[profiles.rules.enforcing_resp]\nname = \"enforcing_resp\"\naction = \"{action}\"\nmatch = '{condition}'\n"
+        );
+        assert!(
+            policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(&toml, BTreeMap::new())),
+            "action={action} condition={condition} must buffer"
+        );
+    }
+
+    // Active dummy_pre_eicar plugin requires buffering; disabled does not.
+    let mut plugins = BTreeMap::new();
+    plugins.insert(
+        "dummy_pre_eicar".into(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Disable,
+            detection_level: DetectionLevel::Informational,
+            ..Default::default()
+        },
+    );
+    assert!(!policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        "",
+        plugins.clone()
+    )));
+    plugins.insert(
+        "dummy_pre_eicar".into(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Block,
+            detection_level: DetectionLevel::High,
+            ..Default::default()
+        },
+    );
+    assert!(policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        "",
+        plugins
+    )));
+}
+
+#[test]
+fn model_response_stage_cel_fields_match_security_event_subject_catalog() {
+    use crate::net::policy_config::{PolicySubject, PolicySubjectValue};
+    use crate::security_engine::{
+        HttpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent,
+    };
+
+    let request_only_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall)
+        .with_http(HttpSecurityEvent {
+            host: Some("generativelanguage.googleapis.com".into()),
+            method: Some("POST".into()),
+            path: Some("/v1beta/models/gemini-2.5-flash:streamGenerateContent".into()),
+            query: Some("alt=sse".into()),
+            status: None,
+            body: None,
+        })
+        .with_model(ModelSecurityEvent {
+            provider: Some("google".into()),
+            name: Some("gemini-2.5-flash".into()),
+            request_body: Some(r#"{"contents":[]}"#.into()),
+            response_body: None,
+            tool_calls: Some("[]".into()),
+        });
+
+    let response_populated_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall)
+        .with_http(HttpSecurityEvent {
+            host: Some("generativelanguage.googleapis.com".into()),
+            method: Some("POST".into()),
+            path: Some("/v1beta/models/gemini-2.5-flash:streamGenerateContent".into()),
+            query: Some("alt=sse".into()),
+            status: Some("200".into()),
+            body: Some("data: {}\n\n".into()),
+        })
+        .with_model(ModelSecurityEvent {
+            provider: Some("google".into()),
+            name: Some("gemini-2.5-flash".into()),
+            request_body: Some(r#"{"contents":[]}"#.into()),
+            response_body: Some("data: {}\n\n".into()),
+            tool_calls: Some("[]".into()),
+        });
+
+    for &field in capsem_config::SECURITY_EVENT_CEL_FIELDS {
+        if !field.starts_with("http.") && !field.starts_with("model.") {
+            assert!(
+                !capsem_config::is_model_response_stage_cel_field(field),
+                "non-http/model field {field} must not be classified as model response stage"
+            );
+            continue;
+        }
+        let populated_after_response = matches!(
+            response_populated_event.get_policy_field(field),
+            Some(v) if v != PolicySubjectValue::Bool(false)
+        );
+        assert!(
+            populated_after_response,
+            "catalog field {field} was not populated on response_populated_event"
+        );
+        let available_at_request_stage = matches!(
+            request_only_event.get_policy_field(field),
+            Some(v) if v != PolicySubjectValue::Bool(false)
+        );
+        assert_eq!(
+            capsem_config::is_model_response_stage_cel_field(field),
+            !available_at_request_stage,
+            "is_model_response_stage_cel_field({field:?}) drifted from SecurityEvent request- vs response-stage availability"
+        );
+    }
+}

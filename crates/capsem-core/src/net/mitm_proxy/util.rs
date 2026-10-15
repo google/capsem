@@ -211,8 +211,24 @@ pub(super) fn format_headers_for_domain(
     }
 }
 
-#[cfg(test)]
-mod tests;
+/// Returns true only when `policy_snapshot` contains an active rule or plugin
+/// that inspects the HTTP/model response body or status (either to enforce/rewrite
+/// or to record a `detection_level`).
+/// When false, model responses stream directly through `ChunkDispatchBody`
+/// without buffering the entire SSE stream before sending `200 OK` headers.
+pub(super) fn policy_requires_buffered_model_response(
+    policy_snapshot: &crate::net::proxy_engine::ProxyPolicySnapshot,
+) -> bool {
+    let has_response_stage_rule = policy_snapshot.security_rules().rules().iter().any(|rule| {
+        rule.enabled
+            && (!matches!(rule.action, crate::net::policy_config::SecurityRuleAction::Allow)
+                || rule.detection_level.is_some())
+            && rule.references_model_response_stage_field()
+    });
+    let has_response_stage_plugin = crate::security_engine::SecurityActionRegistry::with_builtin_actions()
+        .any_plugin_requires_buffered_model_response(policy_snapshot.plugins());
+    has_response_stage_rule || has_response_stage_plugin
+}
 
 pub(super) fn model_security_event(
     event_type: RuntimeSecurityEventType,
@@ -252,3 +268,6 @@ pub(super) fn security_event_with_transport(
 
     event
 }
+
+#[cfg(test)]
+mod tests;

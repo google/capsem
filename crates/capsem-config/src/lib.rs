@@ -182,3 +182,12 @@ pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
     "udp.port",
     "udp.valid",
 ];
+
+/// Returns true when `field` is populated only after the upstream HTTP/model
+/// response is received (`http.status`, `http.body`, `model.response.*`).
+pub fn is_model_response_stage_cel_field(field: &str) -> bool {
+    matches!(
+        field,
+        "http.body" | "http.status" | "model.response.body" | "model.response.valid"
+    )
+}

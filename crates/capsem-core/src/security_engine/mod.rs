@@ -1623,12 +1623,12 @@ impl SecurityPluginResult {
 pub trait SecurityPlugin: Send + Sync {
     fn id(&self) -> &'static str;
     fn stage(&self) -> SecurityPluginStage;
+    fn requires_buffered_model_response(&self, _config: SecurityPluginConfig) -> bool {
+        false
+    }
 
-    fn apply(
-        &self,
-        event: SecurityEvent,
-        config: SecurityPluginConfig,
-    ) -> Result<SecurityPluginResult, SecurityActionError>;
+    fn apply(&self, event: SecurityEvent, config: SecurityPluginConfig)
+        -> Result<SecurityPluginResult, SecurityActionError>;
 }
 
 #[derive(Default, Clone)]

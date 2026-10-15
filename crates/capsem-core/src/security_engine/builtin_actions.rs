@@ -7,7 +7,10 @@
 //! and shared through an `Arc` for each evaluation; the
 //! per-evaluation plugin policy is still applied on the clone.
 
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
+
+use crate::net::policy_config::SecurityPluginConfig;
 
 use super::{
     CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin, SecurityActionRegistry,
@@ -28,6 +31,20 @@ pub(super) fn registry() -> &'static SecurityActionRegistry {
             .and_then(|registry| registry.register_plugin(super::plugins::Utf8GuardPlugin))
             .expect("built-in security plugin ids are unique")
     })
+}
+
+impl SecurityActionRegistry {
+    pub fn any_plugin_requires_buffered_model_response(
+        &self,
+        plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    ) -> bool {
+        self.plugins.iter().any(|(plugin_id, plugin)| {
+            plugin_policy
+                .get(plugin_id)
+                .copied()
+                .is_some_and(|config| plugin.requires_buffered_model_response(config))
+        })
+    }
 }
 
 #[cfg(test)]

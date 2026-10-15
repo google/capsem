@@ -94,6 +94,10 @@ impl SecurityPlugin for DummyPreEicarPlugin {
         SecurityPluginStage::Preprocess
     }
 
+    fn requires_buffered_model_response(&self, config: SecurityPluginConfig) -> bool {
+        config.mode != SecurityPluginMode::Disable
+    }
+
     fn apply(
         &self,
         mut event: SecurityEvent,

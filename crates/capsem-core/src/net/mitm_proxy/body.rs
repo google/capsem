@@ -288,24 +288,285 @@ impl<B> Drop for ChunkDispatchBody<B> {
         // accumulator state (SSE parser's trailing event without a
         // terminating blank line, etc.).
         if !self.end_dispatched && self.pipeline.has_chunk_hooks() {
+            self.state.set(super::telemetry_hook::ResponseAborted(true));
             self.dispatch_response_end();
         }
         if !self.pending_end.is_empty() {
-            if let Some(tasks) = &self.completion_tasks {
-                for future in self.pending_end.drain(..) {
-                    tasks.spawn_end(future);
-                }
+            poll_or_spawn_chunk_end_futures(self.pending_end.drain(..), self.completion_tasks.as_deref());
+        }
+    }
+}
+
+pub(super) fn poll_or_spawn_chunk_end_futures(
+    futures: impl IntoIterator<Item = super::hooks::ChunkEndFuture>,
+    completion_tasks: Option<&super::mcp_response::Tasks>,
+) {
+    let waker = futures::task::noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    for mut future in futures {
+        if Pin::new(&mut future).poll(&mut cx).is_pending() {
+            if let Some(tasks) = completion_tasks {
+                tasks.spawn_end(future);
             } else if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                for future in self.pending_end.drain(..) {
-                    handle.spawn(future);
-                }
+                handle.spawn(future);
             } else {
                 tracing::warn!(
-                    count = self.pending_end.len(),
                     "response body dropped outside a Tokio runtime; pending chunk-end work could not run"
                 );
             }
         }
+    }
+}
+
+/// RAII guard armed inside `handle_request` before upstream dial/send/body
+/// collection. If `handle_request` is cancelled/dropped before sealing a
+/// response with `ChunkDispatchBody` (e.g. client 60s timeout or VM exit),
+/// `Drop` dispatches `TelemetryHook::on_response_end` so `NetEvent` and
+/// `ModelCall` are still recorded in `session.db`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_502_context(
+    policy_snapshot: &Arc<crate::net::proxy_engine::ProxyPolicySnapshot>,
+    domain: &str,
+    process_name: &Option<String>,
+    ai_provider: Option<crate::net::ai_traffic::provider::ProviderKind>,
+    ai_protocol: Option<crate::net::ai_traffic::provider::ModelProtocol>,
+    protected: bool,
+    method: &str,
+    path: &str,
+    query: &Option<String>,
+    error: &dyn std::fmt::Display,
+    req_hdrs: &str,
+    start: std::time::Instant,
+    req_stats: &Arc<Mutex<BodyStats>>,
+    port: u16,
+    conn_type: &'static str,
+    policy_fields: &super::decision_fields::SecurityBoundaryDecisionFields,
+    credential_ref: &Option<String>,
+    credential_observations: &[crate::credential_broker::CredentialObservation],
+) -> super::telemetry_hook::TelemetryRequestContext {
+    super::telemetry_hook::TelemetryRequestContext {
+        content_evidence: None,
+        policy_snapshot: Arc::clone(policy_snapshot),
+        domain: domain.to_string(),
+        process_name: process_name.clone(),
+        ai_provider,
+        ai_protocol,
+        model_traffic: !protected && ai_protocol.is_some_and(|proto| super::util::is_llm_api_path(proto, path)),
+        method: method.to_string(),
+        path: path.to_string(),
+        query: query.clone(),
+        status_code: Some(502),
+        decision: capsem_logger::Decision::Error,
+        matched_rule: Some(error.to_string()),
+        request_headers: Some(req_hdrs.to_string()),
+        response_headers: None,
+        start_time: start,
+        request_body_stats: if protected {
+            Arc::new(Mutex::new(BodyStats::new(0)))
+        } else {
+            Arc::clone(req_stats)
+        },
+        max_response_body_capture: 0,
+        port,
+        conn_type,
+        approval_event_id: policy_fields.approval_event_id.clone(),
+        policy_mode: policy_fields.policy_mode.clone(),
+        policy_action: policy_fields.policy_action.clone(),
+        policy_rule: policy_fields.policy_rule.clone(),
+        policy_reason: policy_fields.policy_reason.clone(),
+        credential_ref: credential_ref.clone(),
+        credential_observations: credential_observations.to_vec(),
+        credential_injections: Vec::new(),
+    }
+}
+
+pub(super) struct InFlightRequestGuard {
+    pipeline: Arc<Pipeline>,
+    conn: ConnMeta,
+    trace_id: Option<String>,
+    disarmed: Arc<std::sync::atomic::AtomicBool>,
+    req_ctx: Option<super::telemetry_hook::TelemetryRequestContext>,
+    completion_tasks: Option<Arc<super::mcp_response::Tasks>>,
+}
+
+impl InFlightRequestGuard {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn from_request(
+        pipeline: Arc<Pipeline>,
+        policy_snapshot: Arc<crate::net::proxy_engine::ProxyPolicySnapshot>,
+        domain: &str,
+        process_name: Option<String>,
+        port: u16,
+        protocol: super::protocol::Protocol,
+        conn_type: &'static str,
+        ai_provider: Option<crate::net::ai_traffic::provider::ProviderKind>,
+        ai_protocol: Option<crate::net::ai_traffic::provider::ModelProtocol>,
+        method: &str,
+        path: &str,
+        query: Option<String>,
+        req_hdrs: &str,
+        start_time: std::time::Instant,
+        request_body_stats: Arc<Mutex<BodyStats>>,
+        credential_ref: Option<String>,
+        credential_observations: Vec<crate::credential_broker::CredentialObservation>,
+        disarmed: Arc<std::sync::atomic::AtomicBool>,
+        completion_tasks: Arc<super::mcp_response::Tasks>,
+    ) -> Self {
+        let model_traffic = ai_protocol.is_some_and(|proto| super::util::is_llm_api_path(proto, path));
+        let trace_id = capsem_foundation::telemetry::ambient_capsem_trace_id();
+        Self {
+            pipeline,
+            conn: ConnMeta {
+                domain: domain.to_string(),
+                process_name: process_name.clone(),
+                port,
+                protocol,
+                ai_provider,
+                ai_protocol,
+            },
+            trace_id,
+            disarmed,
+            req_ctx: Some(super::telemetry_hook::TelemetryRequestContext {
+                content_evidence: None,
+                approval_event_id: None,
+                policy_snapshot,
+                domain: domain.to_string(),
+                process_name,
+                ai_provider,
+                ai_protocol,
+                model_traffic,
+                method: method.to_string(),
+                path: path.to_string(),
+                query,
+                status_code: None,
+                decision: capsem_logger::Decision::Error,
+                matched_rule: Some("client_aborted".to_string()),
+                request_headers: Some(req_hdrs.to_string()),
+                response_headers: None,
+                start_time,
+                request_body_stats,
+                max_response_body_capture: 0,
+                port,
+                conn_type,
+                policy_mode: None,
+                policy_action: None,
+                policy_rule: None,
+                policy_reason: None,
+                credential_ref,
+                credential_observations,
+                credential_injections: Vec::new(),
+            }),
+            completion_tasks: Some(completion_tasks),
+        }
+    }
+
+    pub(super) fn set_ai_identity(
+        &mut self,
+        ai_provider: Option<crate::net::ai_traffic::provider::ProviderKind>,
+        ai_protocol: Option<crate::net::ai_traffic::provider::ModelProtocol>,
+        model_traffic: bool,
+    ) {
+        self.conn.ai_provider = ai_provider;
+        self.conn.ai_protocol = ai_protocol;
+        if let Some(ctx) = self.req_ctx.as_mut() {
+            ctx.ai_provider = ai_provider;
+            ctx.ai_protocol = ai_protocol;
+            ctx.model_traffic = model_traffic;
+        }
+    }
+
+    pub(super) fn update_security(
+        &mut self,
+        policy: &super::decision_fields::SecurityBoundaryDecisionFields,
+        credential_ref: Option<String>,
+        credential_observations: Vec<crate::credential_broker::CredentialObservation>,
+        credential_injections: Vec<crate::credential_broker::CredentialInjection>,
+    ) {
+        if let Some(ctx) = self.req_ctx.as_mut() {
+            ctx.approval_event_id = policy.approval_event_id.clone();
+            ctx.policy_mode = policy.policy_mode.clone();
+            ctx.policy_action = policy.policy_action.clone();
+            ctx.policy_rule = policy.policy_rule.clone();
+            ctx.policy_reason = policy.policy_reason.clone();
+            ctx.credential_ref = credential_ref;
+            ctx.credential_observations = credential_observations;
+            ctx.credential_injections = credential_injections;
+        }
+    }
+
+    pub(super) fn set_credential_ref(&mut self, credential_ref: Option<String>) {
+        if let Some(ctx) = self.req_ctx.as_mut() {
+            ctx.credential_ref = credential_ref;
+        }
+    }
+
+    pub(super) fn update_policy(&mut self, policy: &super::decision_fields::SecurityBoundaryDecisionFields) {
+        if let Some(ctx) = self.req_ctx.as_mut() {
+            ctx.approval_event_id = policy.approval_event_id.clone();
+            ctx.policy_mode = policy.policy_mode.clone();
+            ctx.policy_action = policy.policy_action.clone();
+            ctx.policy_rule = policy.policy_rule.clone();
+            ctx.policy_reason = policy.policy_reason.clone();
+        }
+    }
+
+    pub(super) fn update_response_head(&mut self, status_code: u16, resp_hdrs: String, max_capture: usize) {
+        if let Some(ctx) = self.req_ctx.as_mut() {
+            ctx.status_code = Some(status_code);
+            ctx.response_headers = Some(resp_hdrs);
+            ctx.max_response_body_capture = max_capture;
+        }
+    }
+
+    pub(super) fn disarm(&mut self) {
+        self.disarmed.store(true, std::sync::atomic::Ordering::Release);
+        self.req_ctx = None;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn into_denied_context(
+        mut self,
+        content_evidence: Option<Box<crate::security_engine::SecurityEvent>>,
+        ai_provider: Option<crate::net::ai_traffic::provider::ProviderKind>,
+        ai_protocol: Option<crate::net::ai_traffic::provider::ModelProtocol>,
+        model_traffic: bool,
+        path: String,
+        status_code: Option<u16>,
+        matched_rule: Option<String>,
+        request_body_stats: Arc<Mutex<BodyStats>>,
+        max_response_body_capture: usize,
+    ) -> super::telemetry_hook::TelemetryRequestContext {
+        self.disarmed.store(true, std::sync::atomic::Ordering::Release);
+        let mut ctx = self.req_ctx.take().expect("in-flight request context present");
+        ctx.content_evidence = content_evidence;
+        ctx.ai_provider = ai_provider;
+        ctx.ai_protocol = ai_protocol;
+        ctx.model_traffic = model_traffic;
+        ctx.path = path;
+        ctx.status_code = status_code;
+        ctx.decision = capsem_logger::Decision::Denied;
+        ctx.matched_rule = matched_rule;
+        ctx.request_body_stats = request_body_stats;
+        ctx.max_response_body_capture = max_response_body_capture;
+        ctx
+    }
+}
+
+impl Drop for InFlightRequestGuard {
+    fn drop(&mut self) {
+        if self.disarmed.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let Some(req_ctx) = self.req_ctx.take() else {
+            return;
+        };
+        let mut state = HookState::default();
+        state.set(super::telemetry_hook::ResponseAborted(true));
+        state.set::<Option<super::telemetry_hook::TelemetryRequestContext>>(Some(req_ctx));
+        let end = self
+            .pipeline
+            .dispatch_response_end(&mut state, &self.conn, self.trace_id.as_deref());
+        poll_or_spawn_chunk_end_futures(end.pending, self.completion_tasks.as_deref());
     }
 }
 

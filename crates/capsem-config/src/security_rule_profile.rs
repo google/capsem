@@ -771,6 +771,15 @@ impl CompiledSecurityRule {
     {
         self.compiled_condition.evaluate(subject)
     }
+
+    pub fn references_any_field(&self, fields: &[&str]) -> bool {
+        self.compiled_condition.references_any_field(fields)
+    }
+
+    pub fn references_model_response_stage_field(&self) -> bool {
+        self.compiled_condition
+            .references_field_matching(crate::is_model_response_stage_cel_field)
+    }
 }
 
 fn validate_priority_for_source(

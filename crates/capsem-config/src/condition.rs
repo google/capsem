@@ -80,6 +80,19 @@ impl CompiledCondition {
         }
         Ok(false)
     }
+
+    pub fn references_field_matching<P>(&self, mut predicate: P) -> bool
+    where
+        P: FnMut(&str) -> bool,
+    {
+        self.clauses
+            .iter()
+            .any(|clause| clause.atoms.iter().any(|atom| predicate(atom.field())))
+    }
+
+    pub fn references_any_field(&self, fields: &[&str]) -> bool {
+        self.references_field_matching(|field| fields.contains(&field))
+    }
 }
 
 fn parse_clauses<F>(condition: &str, validate: &F) -> Result<Vec<ConditionClause>, String>
@@ -153,6 +166,15 @@ where
 }
 
 impl ConditionAtom {
+    fn field(&self) -> &str {
+        match self {
+            Self::Has { field }
+            | Self::StringMethod { field, .. }
+            | Self::ContainsPii { field }
+            | Self::Comparison { field, .. } => field,
+        }
+    }
+
     fn parse_with<F>(atom: &str, validate: &F) -> Result<Self, String>
     where
         F: Fn(&str) -> Result<(), String>,
