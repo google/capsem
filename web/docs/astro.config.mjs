@@ -1,6 +1,2 @@
-import { defineConfig } from 'astro/config';
-
-export default defineConfig({
-  site: 'https://docs.capsem.org',
-  publicDir: './public-holding',
-});
+// Production and local development publish the same approved manual.
+export { default } from './astro.preview.config.mjs';

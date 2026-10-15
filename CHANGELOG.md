@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
+
 ### Security
 
 - The npm MCP server resolves `@modelcontextprotocol/sdk` 1.31.0 instead of

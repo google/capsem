@@ -52,5 +52,4 @@ jobs:
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
           SITE_URL: https://docs.capsem.org
-          OLD_ROUTE_URL: https://docs.capsem.org/getting-started/
         run: bash build_system/scripts/web/smoke-docs-site.sh

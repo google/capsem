@@ -6,7 +6,9 @@ sidebar:
 ---
 
 The settings schema is the structural contract for UI/application preferences
-only. Runtime behavior belongs to profile/corp ledgers, not settings. Pydantic
+only. Runtime policy -- rules, plugins, MCP, AI providers -- is also stored in
+`settings.toml` and the corp config, but in its own typed tables, not as
+settings leaves (see [Policy](/security/policy/)). Pydantic
 models in Python are the single source of truth for settings shape, JSON Schema
 is generated from them, and Python/Rust/TypeScript must parse settings
 identically.
@@ -54,8 +56,8 @@ graph TD
 | `children` | SettingsNode[] | yes | Nested groups and settings |
 
 **SettingNode** (`kind="setting"`): ordinary UI/application preferences and
-frontend actions. MCP runtime truth is profile-owned and is exposed by profile
-routes, not generated as settings leaves.
+frontend actions. MCP configuration lives in the `[mcp]` table and is exposed
+by the `/mcp/...` routes, not generated as settings leaves.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -95,7 +97,7 @@ fields. Consumers check `setting_type`, not `kind`.
 | `int_list` | value | Array of integers |
 | `float_list` | value | Array of floats |
 | `action` | structural | UI button/widget, no stored value |
-| `mcp_tool` | retired | Do not use for runtime MCP. MCP is profile-owned and route-backed. |
+| `mcp_tool` | retired | Do not use for runtime MCP. MCP is `[mcp]`-owned and route-backed. |
 
 ## Metadata Fields
 
@@ -131,8 +133,9 @@ All metadata lives in a single `SettingMetadata` object. Most fields are optiona
 
 ### Retired MCP Metadata
 
-MCP server and tool configuration is profile-owned. It is not authored through
-settings metadata and must be read through profile MCP routes.
+MCP server and tool configuration lives in the `[mcp]` table of `settings.toml`
+(with corp laid over it). It is not authored through settings metadata and must
+be read through the `/mcp/...` routes.
 
 ## Security Rule Schema
 
@@ -141,9 +144,12 @@ convenience blocks under `ai.<provider>.rules`, and referenced rule files:
 
 ```toml
 [rule_files]
-enforcement = "profiles/base/enforcement.toml"
-sigma = "profiles/base/detection.yaml"
+enforcement = "rules/enforcement.toml"
+sigma = "rules/detection.yaml"
 ```
+
+`profiles.rules` is the user rule table's name; it does not select a VM
+profile.
 
 They are not ordinary settings leaves. The Rust loader validates the rule id,
 mandatory `name`, enum-backed `action`, optional `detection_level`, priority
@@ -246,14 +252,15 @@ flowchart TD
 
 The data path: host settings source is processed by `generate_defaults_json()`
 into `config/settings/ui-metadata.generated.json`. Rust embeds this file at compile time via
-`include_str!()` in `registry.rs`. Settings are UI/app preferences. Profiles
-own assets, rules, MCP, plugins, image payloads, and VM runtime posture.
+`include_str!()` in `registry.rs`. Settings leaves are UI/app preferences.
+Rules, MCP, and plugins live in their own `settings.toml`/corp tables; the VM
+image comes from the installed release manifest.
 
 The schema path: Pydantic models generate JSON Schema for documentation and validation. The conformance tests ensure all three languages agree on parsing.
 
 ## Design Decision: Settings Nodes Only
 
-The retired schema mixed settings and profile MCP runtime state:
+The retired schema mixed settings and MCP runtime state:
 
 | Old type | Discriminant |
 |---|---|
@@ -270,8 +277,7 @@ The current settings schema keeps only settings-owned nodes:
 | Leaf | `kind="leaf"` | Regular UI/application settings |
 | Action | `kind="action"` | Settings-owned action controls |
 
-MCP server state is profile-owned and comes from
-`/profiles/{profile_id}/mcp/...`, not from the settings tree. Consumers must not
+MCP server state comes from `/mcp/...`, not from the settings tree. Consumers must not
 invent a settings `mcp_server` node. Behavior is driven by `setting_type` and
 `widget` on settings leaves:
 
@@ -279,4 +285,4 @@ invent a settings `mcp_server` node. Behavior is driven by `setting_type` and
 - Actions: `setting_type="action"` -- `metadata.action` specifies the action kind
 Consumers match on `kind` (two arms: group vs. setting), then check
 `setting_type` when they need type-specific behavior. MCP servers and tools do
-not appear here; profile routes own MCP configuration and state.
+not appear here; the `/mcp/...` routes own MCP configuration and state.

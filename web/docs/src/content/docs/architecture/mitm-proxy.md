@@ -5,10 +5,17 @@ sidebar:
   order: 15
 ---
 
-The MITM proxy is Capsem's HTTPS inspection layer. It terminates TLS from the
-guest, normalizes protocol details into `SecurityEvent`, evaluates the shared
-security rule rail, forwards allowed requests to the real upstream, and logs
-telemetry plus matched rule rows to the session database.
+The proxy engine is Capsem's HTTP, DNS, model, and MCP inspection layer. In VM
+mode it terminates TLS from the guest. In standalone mode it accepts plaintext
+OpenAI-compatible HTTP on an explicit listener. Both adapters normalize
+protocol details into `SecurityEvent`, evaluate the same rule rail, forward
+allowed requests through a brokered upstream capability, and emit telemetry
+through the session ledger capability.
+
+The engine runs in a per-session `capsem-proxy` process with no filesystem or
+arbitrary socket authority. The service and VM owner pass it connected
+descriptors for traffic, upstream, credentials, policy, telemetry, private
+names, MCP, and the ledger. See [Host Process Isolation](/architecture/host-isolation/#shared-proxy-engine).
 
 ## Connection pipeline
 
@@ -34,13 +41,41 @@ graph TD
 
 The proxy uses hyper for HTTP parsing and tokio-rustls for TLS. Each vsock connection can carry multiple HTTP requests via keep-alive -- upstream connections are cached per-connection to avoid re-establishing TLS for each request.
 
+## Capacity, reuse, and overload
+
+One session accepts up to 512 concurrent network clients in this release. The
+guest relay, VM owner, upstream grant broker, proxy, DNS sessions, descriptor
+floors, and ledger queues all derive their capacities from one embedded runtime
+limits contract. This prevents one stage from accepting a burst that the next
+stage cannot represent.
+
+An intercepted client connection reuses its upstream HTTP/TLS connection for
+keep-alive requests. That sender stays inside the client connection because it
+is pinned to the judged target and shares that connection's cancellation and
+audit scope; unrelated clients do not borrow it. Independent connections and
+VM sessions run concurrently across host cores.
+
+Queues and descriptor grants are bounded. If capacity or required audit
+admission is unavailable, the affected operation waits within its deadline or
+fails explicitly; it is never reported as a successful benchmark request.
+The current limits are product defaults embedded in the binaries and are not
+yet user-configurable.
+
+Use the official `mitm-load` curve to test one VM through the full supported
+client range. Use `mitm-scale` to keep the per-VM work fixed while increasing
+the number of independent VMs. The scale collector reports aggregate RPS,
+per-VM latency, proportional memory, Capsem CPU, fixture CPU, physical cores,
+logical CPUs, request errors, and hidden proxy refusals. A plateau after the
+process tree consumes the host CPU budget is host saturation; a plateau before
+that point requires investigation for shared serialization.
+
 ## Configuration
 
 ```mermaid
 graph LR
     CA["CertAuthority<br/>(static CA keypair)"]
     POL["Network mechanics<br/>(hot-swappable via RwLock)"]
-    DB["DbWriter<br/>(async telemetry)"]
+    DB["ProxyLedger<br/>(typed ledger capability)"]
     TLS["Upstream TLS config<br/>(webpki roots)"]
     PRICE["PricingTable<br/>(embedded JSON)"]
     TRACE["TraceState<br/>(multi-turn linking)"]
@@ -57,7 +92,7 @@ graph LR
 |-------|------|---------|
 | `ca` | `Arc<CertAuthority>` | Static Capsem CA for leaf cert minting |
 | `policy` | `Arc<RwLock<Arc<NetworkPolicy>>>` | Hot-swappable network mechanics such as body capture and upstream port handling |
-| `db` | `Arc<DbWriter>` | Async telemetry writer to session.db |
+| ledger | `Arc<dyn ProxyLedger>` | Typed admit/flush capability to the session's ledger worker |
 | `upstream_tls` | `Arc<rustls::ClientConfig>` | Shared TLS config with webpki root CAs |
 | `pricing` | `PricingTable` | Embedded model pricing for cost estimation |
 | `trace_state` | `Mutex<TraceState>` | Links multi-turn tool-use conversations by trace_id |
@@ -117,7 +152,7 @@ reference. Key properties:
 |----------|----------|
 | Network mechanics | Port routing, body capture, decompression, provider metadata, and cache behavior |
 | Security authority | `SecurityRuleSet` over normalized `SecurityEvent` fields |
-| Default behavior | Profile defaults compile into normal late-priority rules |
+| Default behavior | Built-in defaults compile into normal late-priority rules |
 | Conflict resolution | Earlier/lower priority enforcement wins; `block` is absolute once effective |
 
 Network mechanics are hot-swappable via `RwLock`. Each HTTP request snapshots
@@ -150,7 +185,7 @@ reason = "Block OpenAI organization GitHub writes"
 match = 'http.host == "github.com" && http.method == "POST" && http.path.matches("^/openai(/|$)")'
 ```
 
-Plugin behavior is configured through profile/corp plugin descriptors, not by
+Plugin behavior is configured through settings/corp plugin descriptors, not by
 calling plugins from CEL rules. Rules decide enforcement and detection over the
 typed `SecurityEvent`; plugins run at their declared stages, own their private
 filtering/scope, and may mutate the event or ledger payload according to their
@@ -272,7 +307,7 @@ The `TelemetryBody` wrapper around the hyper response body triggers `tokio::spaw
 | `capsem-core/src/net/mitm_proxy/` | Connection handling, HTTP forwarding, telemetry hooks, and proxy pipeline |
 | `capsem-core/src/net/cert_authority.rs` | CA loading, leaf cert minting, cache |
 | `capsem-core/src/net/policy.rs` | Network mechanics: ports, capture, decompression, routing, cache settings |
-| `capsem-core/src/net/policy_config/` | Profile/corp config parsing into network mechanics and `SecurityRuleSet` |
+| `capsem-core/src/net/policy_config/` | Settings/corp config parsing into network mechanics and `SecurityRuleSet` |
 | `capsem-core/src/security_engine/` | `SecurityEvent`, `SecurityRuleSet`/CEL evaluation, plugins, endpoint DTOs |
 | `capsem-core/src/net/ai_traffic/` | SSE parsing, provider parsers, events, pricing |
 | `capsem-core/src/net/ai_traffic/mod.rs` | TraceState for multi-turn linking |

@@ -100,7 +100,7 @@ ordinary layer-2 switch, and joining it plugs a cable into that switch.
   current members are plugged into a fresh switch, and nobody who left comes
   back. Deleting a network with members is refused; retiring an empty one
   stops and reaps its switch.
-- **Audit.** A VM's profile decides once per plug whether the VM may be on a
+- **Audit.** The VM's policy decides once per plug whether the VM may be on a
   network at all (`network.protocol == "link"`). Every plug, refusal and close
   is a row in the network's history; a close row carries the switch's counters
   for that cable (frames and bytes each way, and drops by reason: `short`,
@@ -119,6 +119,22 @@ ordinary layer-2 switch, and joining it plugs a cable into that switch.
   carries each direction's end as a length-prefixed end-of-stream frame,
   because the transport can deliver a socket shutdown ahead of bytes still in
   flight.
+
+## Standalone model API
+
+`capsem proxy` creates a VM-free OpenAI-compatible endpoint. The service binds
+the requested listener, selects one configured provider, and grants accepted
+client sockets to the same confined `capsem-proxy` engine used for VM traffic.
+The standalone adapter pins every request to that provider's configured
+scheme, host, port, and base path. It rejects `CONNECT` and absolute-form
+forward-proxy requests before upstream dispatch.
+
+This mode applies Capsem model parsing, policy, credential brokering,
+redaction, telemetry, and a per-proxy session ledger to a cooperating host SDK.
+It does not intercept the host process's other traffic or isolate its files and
+syscalls. The listener is unauthenticated and binds to loopback by default.
+See [Host Process Isolation](/architecture/host-isolation/#standalone-openai-compatible-endpoint)
+for examples and the authority boundary.
 
 ## MITM proxy overview
 
@@ -170,10 +186,12 @@ graph TD
     E -->|Allow| H["Materialize request<br/>log telemetry"]
 ```
 
-### Profile And Corp Rules
+### User And Corp Rules
 
-Users customize policy with profile rules; organizations add constraints with
-corp rules or referenced enforcement/Sigma files.
+Users customize policy with rules under `profiles.rules` in
+`~/.capsem/settings.toml` (the table name is the rule namespace; it does not
+select a VM profile); organizations add constraints with corp rules or
+referenced enforcement/Sigma files. Corp wins over the user.
 
 ```toml
 [profiles.rules.allow_internal_http]
@@ -213,7 +231,8 @@ See [Policy](/security/policy/) for the full rule reference.
 
 ## Telemetry
 
-Every proxied request is logged to the per-VM `session.db`:
+Every proxied request is logged to the session ledger (`session.db` for a VM
+or standalone proxy session):
 
 | Column | Content |
 |--------|---------|
@@ -244,7 +263,7 @@ DNS queries are logged separately in `dns_events` with `qname`, `qtype`,
 | Scenario | Outcome | Why |
 |----------|---------|-----|
 | HTTPS to blocked domain (`api.openai.com`) | 403 Forbidden | Matching `block` rule |
-| HTTP port 80 (`http://google.com`) | Redirected to the plain-HTTP listener | Profile/corp CEL rules still decide the request |
+| HTTP port 80 (`http://google.com`) | Redirected to the plain-HTTP listener | User/corp CEL rules still decide the request |
 | Dev proxy ports (3128, 3713, 8080, 11434) | Redirected to the plain-HTTP listener | Local model/proxy traffic stays on the same security rail |
 | Other non-standard ports (`https://google.com:8443`) | Connection refused | Only declared intercept ports are redirected |
 | Direct IP (`https://1.1.1.1`) | Connection refused | No real NIC; dummy0 has no real route |
@@ -260,7 +279,7 @@ Network isolation is validated by `test_network.py` across 7 layers. Tests are o
 | **L2: Net proxy** | `test_net_proxy_listening`, `test_tcp_443_reaches_proxy`, `test_vsock_bridge_delivers_bytes` | capsem-net-proxy accepts TCP on :10443, iptables redirect works, bytes flow through vsock bridge |
 | **L3: TLS handshake** | `test_tls_handshake_completes`, `test_tls_cert_from_capsem_ca` | Full TLS to allowed domain succeeds, MITM proxy presents Capsem CA cert |
 | **L4: HTTP over MITM** | `test_curl_https_with_skip_verify`, `test_curl_verbose_diagnostics` | curl -k gets HTTP response, full handshake trace captured |
-| **L5: CA trust** | `test_mitm_ca_cert_file_exists`, `test_mitm_ca_in_system_bundle`, `test_certifi_includes_capsem_ca`, `test_curl_allowed_domain_ca_trusted`, `test_python_urllib_https_trusted`, `test_ca_env_var_set` | CA cert file exists, in system bundle, in Python certifi, curl works without -k, Python TLS works, `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE`/`NODE_EXTRA_CA_CERTS` set |
+| **L5: CA trust** | `test_mitm_ca_cert_file_exists`, `test_mitm_ca_in_system_bundle`, `test_curl_allowed_domain_ca_trusted`, `test_python_urllib_https_trusted`, `test_ca_env_var_set` | CA cert file exists, in system bundle, curl works without -k, Python TLS works, `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE`/`NODE_EXTRA_CA_CERTS` set |
 | **L6: Policy enforcement** | `test_denied_domain_rejected`, `test_post_to_random_domain_denied`, `test_ai_provider_domain_blocked`, `test_http_port_80_not_proxied`, `test_non_standard_port_fails`, `test_direct_ip_no_route` | Denied domains get 403, port 80 fails, non-443 ports fail, direct IP fails |
 | **L7: Throughput** | `test_proxy_download_throughput` | 100 MB download through MITM meets minimum speed threshold |
 

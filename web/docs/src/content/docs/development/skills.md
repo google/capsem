@@ -72,7 +72,7 @@ Prefix-based grouping:
 - `dev-skills` -- how skills work (for building Capsem's own skills system)
 
 ### Build
-- `build-images` -- profile-derived image builds, rootfs, OBOM
+- `build-images` -- VM runtime builds (kernel, initrd, rootfs), runtime package set, OBOM
 - `build-initrd` -- guest binary repack, fast iteration
 
 ### Release

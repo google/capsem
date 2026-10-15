@@ -1,0 +1,119 @@
+---
+title: Integrate Capsem through the SDK
+description: How do I integrate Capsem into an application with bounded VM lifetime and reliable error handling?
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Use one SDK client for the application connection, then choose persistent VMs
+for retained work or managed scopes for temporary jobs. Start with
+[SDK onboarding](/sdk/); the examples below assume a connected client named
+`capsem`.
+
+## Select existing work or create it once
+
+A name selects exactly one VM. Once resolved, the handle keeps its immutable
+ID; create and fork return already bound handles.
+Use the ID in stored job metadata so later name reuse cannot select another VM.
+
+Do not create a replacement simply because an HTTP response was lost.
+Inspect the inventory and original VM state first.
+See [Errors and recovery](/sdk/errors/) for uncertain mutations.
+
+## Bound temporary work
+
+Use a managed scope when the VM should be removed after the job.
+Do not give it a persistent name.
+
+<Tabs syncKey="sdk-language">
+<TabItem label="Python">
+
+```python
+async with capsem.managed(image="claude-code") as vm:
+    result = await vm.exec("echo hello", timeout_secs=60)
+    print(result)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```ts
+const result = await capsem.withManaged(
+  {image: 'claude-code'},
+  (vm, signal) => vm.exec('echo hello', {timeout_secs: 60, signal}),
+);
+```
+
+</TabItem>
+<TabItem label="Rust">
+
+```rust
+use capsem_sdk::CreateOptions;
+
+let result = capsem.with_managed(
+    CreateOptions { image: Some("claude-code".into()), ..Default::default() },
+    |vm, cancel| async move {
+        tokio::select! {
+            result = vm.exec("echo hello", Some(60)) => result,
+            () = cancel.cancelled() => Err(capsem_sdk::Error::Cancelled),
+        }
+    },
+).await?;
+```
+
+</TabItem>
+</Tabs>
+
+The service owns a finite lease. The SDK renews it while the scope runs and
+awaits cleanup on success, failure, or cancellation. Keep the client open until
+cleanup finishes. Lease loss cancels managed work; pass the supplied signal
+or cancellation token into work that can wait.
+
+Named and attached VM handles do not acquire managed cleanup merely because
+you close them.
+
+## Configure the workload
+
+Pass image, CPU/memory, environment, and networks at creation. Transfer input
+files through the VM's file resource. Supply API keys through credential
+references and explicit connection grants rather than embedding secrets in
+images or files.
+
+[Configure a VM programmatically](/guides/enterprise/configure-a-vm/) shows
+the same workflow in Python, TypeScript, and Rust.
+
+## Handle failures without replaying changes
+
+Check the command's `exit_code` separately from HTTP success.
+Keep stdout and stderr separate; decode their UTF-8/base64 representation only
+when you need text. Preserve truncation information with results.
+
+Set both the command deadline and a suitable HTTP deadline.
+Cancellation stops the local request; an accepted mutation can still complete.
+A failed cleanup must remain visible to the caller so it can explicitly retry
+the original close. See [Errors and recovery](/sdk/errors/).
+
+## Connect to a remote installation
+
+Remote clients need that installation's endpoint and authorization.
+Use the explicit constructor documented in the language reference; keep
+the credential in the host application's secret configuration.
+Do not pass a local gateway token to a different endpoint.
+
+Python and TypeScript owners close their client when application work and
+managed cleanup finish. Rust handles share the pool until the last is dropped.
+
+## Inspect agents and collect results
+
+Query timeline/history and retrieve retained bodies through the API.
+Keep VM identity, event IDs, and completeness flags with job results.
+Use [Investigate a VM](/guides/enterprise/investigate-a-vm/) for the procedure
+and [Telemetry reference](/reference/telemetry/) for exact query/export contracts.
+
+For an agent running outside a VM, the standalone model proxy can apply
+model policy and logging to requests sent to its endpoint. It does not observe
+the agent's other host activity. See `capsem proxy --help` and the
+[security engine architecture](/architecture/security-engine/).
+
+Evaluation integration is tracked separately in
+[Run evaluations with Inspect AI](/guides/users/run-evaluations/).

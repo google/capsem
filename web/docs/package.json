@@ -3,11 +3,12 @@
   "type": "module",
   "version": "0.1.0",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build && uv run --project ../../build_system --frozen python ../../build_system/scripts/web/check-docs-holding-build.py dist src/content/docs",
+    "dev": "astro dev --config astro.preview.config.mjs",
+    "build": "astro build && uv run --project ../../build_system --frozen python tools/check-preview.py dist",
     "preview": "astro preview"
   },
   "dependencies": {
+    "@astrojs/markdown-remark": "7.3.1",
     "@astrojs/starlight": "^0.41.4",
     "@astrojs/starlight-tailwind": "^5.0.0",
     "@tailwindcss/vite": "^4.3.3",
@@ -26,6 +27,9 @@
       "smol-toml": "1.9.0",
       "postcss-selector-parser": "^7.1.6",
       "katex": "^0.18.2"
+    },
+    "patchedDependencies": {
+      "http-cache-semantics@4.3.0": "../../build_system/patches/http-cache-semantics@4.3.0.patch"
     }
   }
 }

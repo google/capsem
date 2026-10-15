@@ -34,6 +34,10 @@ graph TD
         STOP["stop"]
     end
 
+    subgraph "Model Proxy"
+        PROXY["proxy"]
+    end
+
     subgraph "Misc Commands"
         UPDATE["update"]
         DOCTOR["doctor"]
@@ -47,7 +51,7 @@ graph TD
 
 ### create
 
-Create and boot a new session from a profile. Use `-n <name>` for a retained,
+Create and boot a new session from the installed runtime image. Use `-n <name>` for a retained,
 named VM that can be stopped, resumed, forked, and inspected later.
 
 ```sh
@@ -58,6 +62,7 @@ capsem create --from template          # clone from existing session
 capsem create -e API_KEY=sk-...        # with environment variables
 capsem create -n cache -p 0:6379 --image docker://redis:7-alpine
                                        # an OCI image's workload, detached
+capsem create -n work --image codex-cli # a catalog image, by name
 ```
 
 With `--image`, the VM's workload is the image's command, or everything given
@@ -70,15 +75,22 @@ setup deletes the VM.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-n, --name <NAME>` | -- | Name for the session |
-| `--ram <GB>` | profile's | RAM in GB |
-| `--cpu <CORES>` | profile's | CPU cores |
+| `--ram <GB>` | 12 | RAM in GB |
+| `--cpu <CORES>` | 4 | CPU cores |
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
 | `--from <NAME>` | -- | Clone state from an existing retained session/template |
 | `--network <NAME>` | -- | Join a named network (repeatable) |
-| `--image <IMAGE>` | -- | OCI image to run: `docker://IMAGE` or `registry/repository:tag` |
+| `--image <IMAGE>` | -- | OCI image to run: a catalog name (see `images`), `docker://IMAGE` or `registry/repository:tag` |
 | `-p, --publish <HOST:GUEST>` | -- | With `--image`: publish a loopback TCP port (host `0` picks one) |
 | `--registry-ca <PEM>` | -- | With `--image`: extra CA trusted for this pull |
 | `--registry-user <USER>` | -- | With `--image`: registry user; token from `CAPSEM_REGISTRY_PASSWORD` |
+
+A catalog name such as `codex-cli` resolves, in the service, to the newest
+version of that image this host can run, pinned by digest; the session
+records the `repository@digest` and never follows a moved tag. A catalog name
+is looked up before anything is parsed as a reference, so `--image redis` is
+the catalog's `redis` or an error, never Docker Hub's: Docker Hub is always
+`docker://IMAGE`, and the default image policy refuses it.
 
 ### shell
 
@@ -137,18 +149,23 @@ capsem restart mybox
 
 ### exec
 
-Execute a command in a running session.
+Execute a command in a running session. In a session created with
+`--image`, the command runs in the workload as the image's user, with its
+working directory, environment and confinement; `--target vm` runs it in the
+VM instead.
 
 ```sh
 capsem exec mybox "ls -la /root"
 capsem exec mybox "pip install numpy" --timeout 120
+capsem exec redis1 "test -f /var/tmp/capsem-container/workload.pid" --target vm
 ```
 
 | Arg/Flag | Default | Description |
 |----------|---------|-------------|
 | `<SESSION>` | -- | Name or ID of the session |
 | `<command>` | -- | Command to execute |
-| `--timeout <SECS>` | 30 | Timeout in seconds |
+| `--timeout <SECS>` | 3600 | Timeout in seconds |
+| `--target <workload\|vm>` | `workload` for an image session, else `vm` | Where the command runs |
 
 ### run
 
@@ -169,7 +186,7 @@ capsem run --image docker://alpine:3 sh -c 'uname -a'
 | `<command>` | -- | Command to execute; with `--image`, replaces the image's command |
 | `--timeout <SECS>` | -- | Timeout in seconds |
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
-| `--ram <GB>` / `--cpu <CORES>` | profile's | VM resources |
+| `--ram <GB>` / `--cpu <CORES>` | 12 / 4 | VM resources |
 | `--image <IMAGE>` | -- | OCI image to run (see `create`) |
 | `-p`, `--network`, `--registry-ca`, `--registry-user` | -- | With `--image`, as for `create` |
 
@@ -264,6 +281,44 @@ capsem purge --all        # everything (requires confirmation)
 |------|---------|-------------|
 | `--all` | false | Also destroy retained sessions |
 
+## Image commands
+
+### images
+
+List the image catalog entries the image policy permits: each name, the
+architectures it is built for, the digest of the newest version this host can
+run (`-` when none is), and its description. The service reads the catalog at
+most every 30 minutes; `--refresh` asks it to read it now, and `--json` prints
+everything, full digests included.
+
+```sh
+capsem images
+capsem images --refresh --json
+```
+
+The catalog is `ghcr.io/google/capsem/catalog:stable` unless `[images]` in
+`settings.toml` or `corp.toml` (corp's wins) says otherwise:
+
+```toml
+[images]
+catalog = "mirror.company.com/capsem/catalog:stable"  # or false for none
+catalog_ca = "/etc/capsem/mirror-ca.pem"              # trusted for the catalog only
+```
+
+With the catalog off or unreadable, no name resolves and only the explicit
+`sources` and `admit` grants admit anything.
+
+### images pull
+
+Pull an image into the host's image cache ahead of a create, so the create
+need not wait on the network. It resolves, checks and admits exactly as
+`create --image` does, and prints the `repository@digest` it resolved to.
+
+```sh
+capsem images pull codex-cli
+capsem images pull --registry-ca ca.pem registry.company.com/team/dev:latest
+```
+
 ## Network commands
 
 Every VM starts unplugged: it can reach no other VM. A named network is a
@@ -343,6 +398,35 @@ cable. `-f` keeps printing new events until Ctrl-C. The
 history is kept by network id, so it survives disconnecting every member and
 deleting the network; a new network under the same name starts empty.
 
+## Model proxy
+
+### proxy
+
+Run a VM-free OpenAI-compatible endpoint through Capsem's policy, credential,
+model parsing, telemetry, and session-ledger pipeline.
+
+```sh
+capsem proxy                         # configured OpenAI provider, random loopback port
+capsem proxy --provider openai       # explicit provider key
+capsem proxy --bind 127.0.0.1 --port 8080
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--provider <KEY>` | `openai` | Provider key from effective built-in, user, and corp policy |
+| `--bind <IP>` | `127.0.0.1` | Address for the unauthenticated model API listener |
+| `--port <PORT>` | `0` | Listener port; zero asks the OS for an available port |
+
+The command prints a `Base URL` ending in the configured provider's base path,
+keeps a short service lease alive while it runs, and stops the endpoint on
+Ctrl-C or SIGTERM. Point the official SDK's `base_url`/`baseURL` at that value.
+The endpoint accepts origin-form model API requests; it is not a `CONNECT` or
+absolute-form forward proxy. A non-loopback bind exposes an unauthenticated
+listener, so its network access control belongs to the deployment.
+
+See [Host Process Isolation](/architecture/host-isolation/#standalone-openai-compatible-endpoint)
+for Python and TypeScript examples, lifecycle behavior, and limits.
+
 ## Service commands
 
 The background service (`capsem-service`) runs as a daemon. It auto-starts on login via LaunchAgent (macOS) or systemd (Linux).
@@ -364,6 +448,9 @@ Check for updates and install the latest version.
 capsem update
 capsem update -y          # skip confirmation
 ```
+
+An update also deletes the `~/.capsem/profiles` directory an older install
+left behind; nothing reads it any more.
 
 ### doctor
 
@@ -417,7 +504,8 @@ stateDiagram-v2
 
 | Concept | Description |
 |---------|-------------|
-| **Profile** | The VM contract: assets, rules, detection, MCP, plugins, VM defaults, name, description, and icon |
+| **Runtime image** | The kernel, initrd, and rootfs of the installed release every new VM boots; a named VM keeps the image it was created with |
+| **Policy** | Built-in defaults, `~/.capsem/settings.toml`, and the corp config, merged per session; corp wins |
 | **Named retained VM** | A VM with a stable name and retained state |
 | **One-shot run** | A disposable VM used by `capsem run` for one command |
 | **Suspended** | RAM + CPU state saved to disk. Resume with `resume` |

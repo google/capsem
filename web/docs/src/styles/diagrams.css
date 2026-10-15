@@ -1,0 +1,14 @@
+/* Preserve readable labels instead of shrinking process diagrams to phone width. */
+pre.mermaid {
+  display: block !important;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+pre.mermaid svg {
+  flex: none;
+  min-width: 64rem;
+  width: max(100%, 64rem) !important;
+  max-width: none !important;
+  height: auto;
+}

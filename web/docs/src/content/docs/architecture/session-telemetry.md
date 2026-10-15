@@ -1,11 +1,25 @@
 ---
 title: Session Telemetry
-description: Per-VM SQLite database schema, data flow, and query patterns.
+description: Per-session storage, producer commitments, data flow, and query patterns.
 sidebar:
   order: 20
 ---
 
-Every Capsem VM gets its own session ledger: a SQLite database (`session.db`) that records network requests, DNS queries, AI model calls, MCP tool invocations, exec activity, kernel audit events, file changes, security rule matches, and credential substitutions, and beside it a body archive (`session.bodies`) that holds the full request, response, tool, exec and security payloads those rows describe. The two files live in the session directory and follow the VM lifecycle; retained and forked VMs keep both for forensic review, and one without the other is not a ledger.
+Every Capsem VM and standalone proxy session gets its own session ledger: a
+SQLite database (`session.db`) that records network requests, DNS queries, AI
+model calls, MCP tool invocations, exec activity, kernel audit events, file
+changes, security rule matches, and credential substitutions, and beside it a
+body archive directory (`session.bodies/`) that holds the full request, response, tool,
+exec and security payloads those rows describe. The database and archive directory live in the
+session directory and follow its lifecycle; retained and forked VMs keep both
+for forensic review, and one without the other is not a ledger.
+
+A supervised `capsem-ledger` process is the sole filesystem owner of those
+files. VM owners, proxy workers, and service readers use authenticated,
+generation-bound channels with role-specific operations. See
+[Host Process Isolation](/architecture/host-isolation/#ledger-ownership).
+The trusted service separately keeps durable producer checkpoints under
+`~/.capsem/ledger-commitments/`; the ledger worker cannot open or change them.
 
 The session ledger has no migrations. A ledger written by an older build fails to open, by name, instead of being upgraded in place.
 
@@ -101,6 +115,17 @@ erDiagram
         int raw_len
         int disk_len
         text sealed_at
+    }
+    ledger_commitments {
+        int global_sequence PK
+        blob generation
+        int client_id
+        text producer_role
+        int producer_sequence
+        text event_kind
+        blob event_hash
+        blob previous_hash
+        blob commitment_hash
     }
     security_rule_events {
         int id PK
@@ -346,8 +371,8 @@ AI provider API calls with parsed response metadata.
 
 ### event_body_blobs
 
-The index into `session.bodies`, the compressed block archive that holds full
-captured bodies: HTTP and model requests and responses, tool results, exec
+The index into the selected generation under `session.bodies/`, the compressed
+block archive that holds full captured bodies: HTTP and model requests and responses, tool results, exec
 stdout and stderr, and security rule payloads. The bytes are not in SQLite:
 each row names the block they sit in and their span inside it. The primary
 protocol tables keep compact display fields (2 KB previews) for table scans;
@@ -370,7 +395,7 @@ ledger requires both.
 | `stored_bytes` | INTEGER | Bytes actually archived, after the 10 MiB per-direction cap |
 | `truncated` | INTEGER | `1` when the persisted body hit the capture limit |
 | `body_hash` | TEXT | `blake3:*` hash of the **archived** bytes, so a read can verify what it got against the row that named it |
-| `block_offset` | INTEGER | Offset of the `session.bodies` block holding this body, keyed to `body_blocks` |
+| `block_offset` | INTEGER | Offset of the block in the selected archive generation, keyed to `body_blocks` |
 | `body_offset` | INTEGER | Offset of this body inside that block's inflated bytes |
 | `body_len` | INTEGER | Length of this body inside that block, always equal to `stored_bytes` |
 | `trace_id` | TEXT | Cross-table correlation ID |
@@ -394,13 +419,13 @@ preview and an archived body disagree, the archive is the ledger.
 
 ### body_blocks
 
-One row per block of `session.bodies`, so a reader seeks straight to a block
-instead of scanning the file. A block stays open across disk flushes and grows
+One row per block of the selected archive generation, so a reader seeks straight
+to a block instead of scanning the file. A block stays open across disk flushes and grows
 by one segment each, so its row is updated as it grows.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `block_offset` | INTEGER PK | Byte offset of the block's header in `session.bodies` |
+| `block_offset` | INTEGER PK | Byte offset of the block's header in the selected generation file |
 | `raw_len` | INTEGER | Inflated size of the block's committed segments |
 | `disk_len` | INTEGER | Committed extent of the block in the file, headers included |
 | `sealed_at` | TEXT | When the block's last segment was written; retention cuts by this |
@@ -611,7 +636,7 @@ VirtioFS share.
 
 **There is no exclusion list.** `.git/hooks`, `.git/config`, `node_modules`,
 `.venv` and `target` are where a compromise persists, so every path is
-recorded and evaluated by the profile's file rules like any other. Symlinks are
+recorded and evaluated by the active policy's file rules like any other. Symlinks are
 recorded as symlinks and never followed. A change is detected by size, mtime,
 inode change time and inode number, so rewriting a file and restoring its
 timestamp does not hide the write.
@@ -635,41 +660,102 @@ graph LR
         FS["VirtioFS<br/>(file watcher)"]
     end
 
-    subgraph "Writer Pipeline"
-        CH["tokio mpsc channel"]
-        WT["Dedicated writer thread<br/>(capsem-db-writer)"]
+    subgraph "capsem-ledger (one confined process per session)"
+        IPC["authenticated ledger channel<br/>generation + client role"]
+        CH["bounded write queue"]
+        WT["dedicated SQLite owner thread"]
         DB["session.db<br/>(SQLite WAL)"]
-        BODIES["session.bodies<br/>(block archive)"]
+        BODIES["session.bodies/<br/>(archive generations)"]
     end
 
-    MITM -->|"WriteOp::NetEvent<br/>WriteOp::ModelCall"| CH
-    MCP -->|"WriteOp::McpCall"| CH
-    DNS -->|"WriteOp::DnsEvent"| CH
-    EXEC -->|"WriteOp::ExecEvent<br/>WriteOp::ExecEventComplete"| CH
-    AUDIT -->|"WriteOp::AuditEvent"| CH
-    FS -->|"WriteOp::FileEvent"| CH
+    subgraph "capsem-service (trusted coordinator)"
+        ORDER["global commitment order"]
+        CHECKPOINTS["durable checkpoints<br/>outside the ledger directory"]
+    end
+
+    MITM -->|"WriteOp::NetEvent<br/>WriteOp::ModelCall"| IPC
+    MCP -->|"WriteOp::McpCall"| IPC
+    DNS -->|"WriteOp::DnsEvent"| IPC
+    EXEC -->|"WriteOp::ExecEvent<br/>WriteOp::ExecEventComplete"| IPC
+    AUDIT -->|"WriteOp::AuditEvent"| IPC
+    FS -->|"WriteOp::FileEvent"| IPC
+    IPC --> CH
+    IPC -.->|"separate matched producer channel"| ORDER
     CH --> WT
     WT --> DB
     WT -->|"bodies, one segment per flush"| BODIES
+    ORDER -->|"sync after ledger flush"| CHECKPOINTS
 ```
 
-The writer thread owns both files. A body is fed to the open block's
+The ledger worker owns the database and archive directory; its writer thread owns the SQLite
+connection and archive writer. A body is fed to the open block's
 compressor as its event is written; each disk flush appends what the block
-produced since the last one to `session.bodies` as a segment, syncs it, and
+produced since the last one to the selected generation file as a segment, syncs it, and
 only then commits the body's index row and the block's grown extent in
 `body_blocks`.
 
+## Producer commitments
+
+Every producer record carries a BLAKE3 commitment created before the record
+enters `capsem-ledger`. It binds the ledger generation, coordinator-minted
+client id and producer role, producer-local sequence, trusted global sequence,
+event kind, canonical event-content hash, and previous producer hash. The
+service assigns global order across concurrent producers. The ledger validates
+the grant and content hash, then stores the event and its commitment in the
+same SQLite transaction.
+
+Each producer receives two connected capabilities: its role-scoped ledger
+channel and a separate service commitment channel. A flush becomes durable in
+this order:
+
+1. `capsem-ledger` flushes the accepted event rows and commitment rows.
+2. The producer sends that exact durable prefix to the service.
+3. The service appends and syncs the checkpoint outside the session ledger
+   directory.
+4. Only then does the producer's flush return success.
+
+On a fresh ledger generation, the service reads the external checkpoint and
+queries commitment rows through the normal typed reader channel. Startup is
+refused when an anchored row is missing, altered, substituted, stale, or out
+of global order. Replaying a previous generation also fails because generation
+and client identity are part of every commitment.
+
+This proves the exact externally checkpointed prefix; it does not make the
+ledger an independent witness for everything a producer observed. A producer
+or service crash can leave a row in SQLite before its external checkpoint is
+synced. That unanchored tail is allowed to disappear or be replayed after
+restart and is outside the durable proof. A compromised producer can commit a
+false observation. The service, host kernel, and commitment checkpoint storage
+remain trusted.
+
+Body retention removes old archive payloads and their body-index entries. It
+keeps event metadata and `ledger_commitments`, so existing checkpoints remain
+verifiable. Capsem does not currently delete whole event rows. A future
+whole-row retention design must durably checkpoint a typed tombstone before it
+removes any externally anchored identity.
+
 ## Body archive
 
-`session.bodies` is append-only: a 16-byte file header, then blocks. A block
-is one raw-deflate stream: an 8-byte header (magic and codec), then segments.
+`session.bodies/` contains generation files named `g-<generation_id>.cbl`,
+where the generation ID is 32 hexadecimal digits. The database's singleton
+`archive_state` row selects the archive and generation identities,
+committed byte extent, and revision. Readers never select a file by its age.
+The ledger format is version 4; the generation byte format is version 3.
+
+Each generation is append-only: an 80-byte header followed by blocks.
+The header contains `CAPSEMBL`, version and flags, its length, 16-byte archive
+and generation identities, and a 32-byte BLAKE3 hash of the first 48 bytes.
+A block uses one streaming codec instance: an 8-byte header identifies its codec,
+followed by segments. Confined workers encode zstd; legacy deflate remains readable.
 Each disk flush sync-flushes the stream -- byte-aligned, dictionary kept -- and
 appends what it produced as a segment behind a 52-byte header (`raw_start`,
 `raw_len`, `comp_len` and the blake3 of the segment's raw bytes). The block
 stays open, so every body compresses against the ones before it, and closes
 with a FINAL segment at about 1 MiB, after an hour, at retention, and at
-shutdown. The codec is recorded per block, so a second one is a new codec id
-rather than a new file version. The format is defined once, in
+shutdown. New ledger workers write zstd level 3; readers retain raw-deflate
+support for earlier blocks. The codec is recorded per block, so changing it
+uses a new codec id rather than a new file version. Codec code runs only inside
+the confined ledger process. The format is defined once, in
 `crates/capsem-archive/src/format.rs`.
 
 Reading a body is one index lookup, one seek, and an inflate of the block's
@@ -681,11 +767,11 @@ segment is refused rather than served as someone else's bytes. A reader never
 reads past the segment it needs, which is why another process can read a block
 the writer is still appending to.
 
-The writer checks at open that every block the index names is inside the file.
-If the index names bytes past the end of `session.bodies` -- a crash between
-retention's compaction and its index rewrite, or a `session.db` copied without
-its archive -- the session stores no further bodies and says so in its log;
-the stale rows fail their hash check instead of answering with the wrong bytes.
+Archive access verifies the selected generation's identity, committed extent,
+and block bounds. A missing or truncated generation, mismatched identity, or
+damaged bytes means a broken ledger and is refused. Copy a consistent database
+and its archive directory together; copying `session.db` alone loses the
+bodies its index names.
 
 | Access | What it returns |
 |--------|-----------------|
@@ -730,9 +816,9 @@ seek within it without Capsem code. It is streamed, not buffered.
 
 - At service start, failed-session directories older than the period are
   deleted.
-- When a persistent VM stops, its `capsem-process` drops the blocks sealed
-  before the cutoff, compacts `session.bodies`, and rewrites the index rows.
-  Only the process that owns the ledger's writes does this.
+- When a persistent VM stops, its `capsem-ledger` worker drops the blocks sealed
+  before the cutoff, compacts the selected archive generation, and rewrites the index rows atomically with its generation state.
+  Commitment rows and event metadata remain intact.
 - Ephemeral sessions are deleted whole and are not trimmed.
 
 ### Write operations
@@ -848,17 +934,35 @@ transport outcome at that boundary.
 
 ## Writer Architecture
 
-The `DbWriter` spawns a dedicated thread that owns the SQLite connection:
+Inside `capsem-ledger`, the ledger server gives `DbWriter` a dedicated thread
+that owns the SQLite connection. Callers see a typed remote handle and never a
+database file descriptor:
 
-1. Async callers send `WriteOp` via `tx.send()` (non-blocking)
-2. Writer thread blocks on `rx.blocking_recv()` for the first op
-3. After receiving one op, drains the rest of the queue
-4. Executes all drained ops in a single SQLite transaction
-5. Repeats
+1. A producer submits an event to a bounded, DB-owned admission queue.
+2. Consecutive remote admissions coalesce for at most 100 microseconds and
+   cross IPC in batches of up to 256 events.
+3. The writer thread blocks for the first message, drains up to the same
+   256-event batch bound, and applies the batch to its in-memory SQLite tables
+   in one transaction.
+4. Dirty tables publish to the disk-backed WAL on the one-second durability
+   interval or the configured pending-event threshold. Body archive segments
+   reach durable storage before their SQLite index rows become visible.
+5. Readers cache complete typed query batches only until the logger-owned read
+   epoch or SQLite `data_version` changes.
 
-This **block-then-drain** pattern batches writes for efficiency while keeping the async callers non-blocking. The channel has configurable backpressure capacity.
+The producer queue holds 4,096 events: eight event slots for each of the 512
+supported network clients. `write(event).await` means the event was accepted
+into this bounded queue. It may yield under backpressure, and it does not mean
+the event is durable yet. Tests and lifecycle code that require durability use
+the explicit flush barrier. The SQLite mapped window is 32 MiB per ledger
+process, and archive index publication is capped at 8,192 rows per transaction
+so a slow storage flush cannot turn into unbounded admission memory.
 
-SQLite pragmas: WAL journal mode, NORMAL synchronous. Text fields are defensively capped at 256 KB, headers at 16 KB and display previews at 2 KB; full bodies go to the archive, capped at 10 MiB per direction.
+All of these relationships come from `config/data/runtime-limits.toml` and are
+generated through `capsem-proto`; no producer or route owns a second queue,
+batch, cache, or flush limit.
+
+SQLite writer pragmas: WAL journal mode, FULL synchronous. Text fields are defensively capped at 256 KB, headers at 16 KB and display previews at 2 KB; full bodies go to the archive, capped at 10 MiB per direction.
 
 **Drop order is critical:** `Drop::drop()` takes `tx` before joining the thread. Without this, the join would deadlock (thread waits for all senders to drop, but `tx` drops after the join).
 
@@ -891,13 +995,11 @@ For AI provider traffic, the response body is parsed inline to extract:
 Session totals are not computed by scanning the ledger. The writer keeps a
 counter snapshot (`capsem_logger::counters::LedgerCounters`) and commits it in
 the same transaction as the rows it counts, so a count can never include a row
-that was rolled back or refused. Readers take it whole with
-`DbHandle::ledger_counters()`, from the handle's memory: the handle's reader
-thread reads the snapshot when SQLite's `data_version` says the writer
-committed -- on `ready()`, and on its own every 250 ms -- so a polled route
-(`/vms/list`, `/info`, `stats/summary`, the security status routes) never
-touches the file or the reader thread. `ready()` is the read-after-write
-barrier.
+that was rolled back or refused. Readers take it whole through the typed
+ledger API. The ledger-owned reader state observes SQLite's `data_version`
+after commits, so a polled route (`/vms/list`, `/info`, `stats/summary`, the
+security status routes) does not open or fingerprint the file. A flush request
+is the read-after-write barrier.
 
 | Counter group | Holds |
 |---------------|-------|
@@ -908,28 +1010,33 @@ barrier.
 | `exec`, `audit` | Exec starts and completions; audit events by executable |
 | `security`, `plugins`, `credentials` | Rule matches by action, event type, level and rule; plugin executions; brokered credential use |
 
-The session rollup into `main.db` copies this snapshot when a session stops.
+When a session stops, the host ledger (`~/.capsem/sessions/host.db`) records this snapshot in its `session_stopped` event, and `/stats` folds those snapshots in memory with every running session's live counters.
 
 ## Access patterns
 
 | Access point | Protocol | Query type |
 |-------------|----------|------------|
-| `capsem info <id> --stats` | CLI -> service HTTP `/vms/{id}/info` | The ledger counter snapshot |
+| `capsem info <id> --stats` | CLI -> authenticated gateway -> service `/vms/{id}/info` | The ledger counter snapshot |
 | Frontend Stats tab | Gateway -> typed VM-scoped ledger routes | Per-table summaries and event inspection |
 | MCP `capsem_timeline` | MCP -> service HTTP `/vms/{id}/timeline` | Typed time-ordered event stream |
 | MCP logs/triage tools | MCP -> typed service routes | Logs, panic triage, and operational diagnostics |
 
 Capsem does not expose arbitrary SQL over HTTP, gateway, frontend, or MCP.
-`session.db` and `session.bodies` are the durable ledger and can be inspected
+`session.db` and `session.bodies` are the durable event ledger and can be inspected
 directly by a developer when doing local forensics, but product routes use
-typed logger/database APIs.
+typed, role-authorized ledger operations. Stopped retained sessions use the
+same worker boundary: the service starts or reconnects the session's ledger
+worker rather than opening SQLite in a route handler.
+The service-owned checkpoint file is the independent durability witness for
+the producer prefixes described above; copying only the session directory does
+not copy that witness.
 Any hot `mem`/disk split belongs inside the logger DB object, never in service
 route state.
 
 ## Frontend Stats And Inspection
 
 The VM **Stats** tab is ledger/database backed. It does not infer security
-state from profile config or live rules. It reads typed service ledger routes
+state from policy config or live rules. It reads typed service ledger routes
 that are backed by the logger DB API and VM-scoped rule routes:
 
 | Stats tab | Primary source |
@@ -952,19 +1059,21 @@ projection.
 
 | Property | Value |
 |----------|-------|
-| Location | `~/.capsem/run/sessions/{id}/` (ephemeral) or `~/.capsem/run/persistent/{name}/` (named): `session.db` and `session.bodies` |
+| Location | `~/.capsem/run/sessions/{id}/` (ephemeral) or `~/.capsem/run/persistent/{id}/` (named): `session.db` and `session.bodies/`; names are display labels |
 | Lifetime | Created at VM boot and retained or deleted with the VM's lifecycle state; a persistent VM's bodies are trimmed to the retention period at stop |
-| Access | Only the owning capsem-process writes, retention included; the service reads the files directly through SQLite's WAL |
+| Access | Only `capsem-ledger` opens the database and body archive; producers and service readers use authenticated typed channels |
 | VirtioFS boundary | The ledger is outside the VirtioFS share; the guest cannot access it |
 | Concurrent access | WAL mode allows concurrent readers and one writer |
-| Fork behavior | `capsem fork` checkpoints and copies both files |
+| Fork behavior | `capsem fork` checkpoints and copies the database with its selected archive generation |
 
 ## Key source files
 
 | File | Purpose |
 |------|---------|
 | `capsem-logger/src/schema.rs` | Table DDL and pragmas |
-| `capsem-archive/src/format.rs` | The `session.bodies` byte format |
+| `capsem-archive/src/format.rs` | The archive generation byte format |
+| `capsem-ledger/src/codec.rs` | Confined zstd codec implementation and legacy deflate registration |
+| `capsem-service/src/ledger_commitment.rs` | Trusted global ordering, external checkpoints, and startup verification |
 | `capsem-archive/src/warc.rs` | WARC record writer |
 | `capsem-logger/src/db/bodies.rs` | `read_body`, `read_bodies`, retention entry point |
 | `capsem-logger/src/db/warc_export.rs` | Session-to-WARC mapping |

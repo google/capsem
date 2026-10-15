@@ -5,20 +5,27 @@ sidebar:
   order: 0
 ---
 
-Capsem uses a service-oriented architecture with multiple cooperating binaries. Every VM operation flows through a single path: client -> service -> per-VM process -> guest.
+Capsem uses a service-oriented architecture with multiple cooperating binaries.
+Every VM operation flows through a single path: client -> service -> per-VM
+owner -> guest. Security-sensitive parsing and storage run in separately
+confined proxy and ledger workers. See [Host Process Isolation](/architecture/host-isolation/)
+for the authority of each process and its failure behavior.
 
 ## Host binaries
 
-Seven binaries run on the host machine. They are installed to
+The native host binaries are installed to
 `~/.capsem/bin/` by the platform package or source install flow.
 
 | Binary | Role | Communication |
 |--------|------|---------------|
-| **capsem** | CLI client | HTTP over UDS to service |
-| **capsem-service** | Background daemon | Axum HTTP over UDS (`~/.capsem/run/service.sock`) |
+| **capsem** | CLI client | Rust SDK over authenticated gateway HTTP/WebSocket; local administration/startup uses UDS |
+| **capsem-service** | Background daemon and trusted producer-checkpoint authority | Axum HTTP over UDS (`~/.capsem/run/service.sock`) plus connected worker capabilities |
 | **capsem-process** | Per-VM process | Spawned by service, bounded MessagePack over UDS (after a MessagePack Hello) |
-| **capsem-mcp-aggregator** | External MCP server connections | Length-prefixed MessagePack frames over stdin/stdout, spawned by capsem-process |
-| **capsem-mcp-builtin** | Built-in HTTP tools | stdio MCP, spawned by the aggregator |
+| **capsem-proxy** | Per-session HTTP, DNS, model, and MCP policy worker | Generation-bound connected descriptor grants |
+| **capsem-ledger** | Sole owner of one session ledger | Role- and generation-bound connected ledger channels |
+| **capsem-router** | Per-VM published-port relay or per-network L2 switch | Connected descriptor grants; never chooses or opens destinations |
+| **capsem-mcp-aggregator** | Confined external MCP transports | Connected MessagePack RPC and scoped HTTP/spawn capabilities; supervised by service |
+| **capsem-mcp-builtin** | Confined builtin HTTP tools | Connected MCP channel and current-policy HTTP capability; supervised by service |
 | **capsem-gateway** | HTTP/WebSocket gateway | TCP port 19222, proxies to service UDS |
 | **capsem-tray** | System tray | Polls gateway for VM status |
 
@@ -58,16 +65,29 @@ graph TD
     APP -->|HTTP| GW
     TRAY -->|HTTP| GW
 
-    CLI -->|HTTP/UDS| SVC
+    CLI -->|"authenticated HTTP/WebSocket"| GW
+    CLI -.->|"local status/assets and startup"| SVC
     MCP -->|"authenticated HTTP"| GW
     GW -->|HTTP/UDS| SVC
 
     SVC["capsem-service (daemon)"]
 
-    SVC -->|"bounded MessagePack/UDS"| PROC["capsem-process (per-VM)"]
+    SVC -->|"bounded MessagePack/UDS"| PROC["capsem-process (per-VM owner)"]
+    SVC -->|"generation-bound descriptors"| PROXY["capsem-proxy (per session)"]
+    SVC -->|"role-bound channels"| LEDGER["capsem-ledger (per session)"]
 
-    PROC -->|"MessagePack frames/stdio"| AGG["capsem-mcp-aggregator"]
-    AGG -->|"HTTP/SSE"| EXT["External MCP servers"]
+    SVC -->|"supervision and scoped descriptors"| AGG["capsem-mcp-aggregator"]
+    SVC -->|"supervision and scoped HTTP"| BUILTIN["capsem-mcp-builtin"]
+    PROC -->|"connected MessagePack RPC"| AGG
+    AGG -->|"connected MCP channel"| BUILTIN
+    AGG -->|"private HTTP capability"| SVC
+    BUILTIN -->|"private HTTP capability"| SVC
+    SVC -->|"configured HTTP/SSE"| EXT["External MCP servers"]
+    PROC -->|"HTTP/DNS/MCP descriptors"| PROXY
+    PROC -->|"typed writer channel"| LEDGER
+    PROXY -->|"typed writer channel"| LEDGER
+    PROC -->|"commitment channel"| SVC
+    PROXY -->|"commitment channel"| SVC
 
     subgraph "Linux VM (guest)"
         AGENT["capsem-pty-agent"]
@@ -78,9 +98,9 @@ graph TD
     end
 
     PROC -->|"vsock:5000,5001,5005,5006"| AGENT
-    PROC -->|"vsock:5002"| NETPROXY
-    PROC -->|"vsock:5007"| DNSPROXY
-    PROC -->|"vsock:5002"| MCPGW
+    NETPROXY -->|"vsock:5002 via owner"| PROXY
+    DNSPROXY -->|"vsock:5007 via owner"| PROXY
+    MCPGW -->|"vsock:5002 via owner"| PROXY
     PROC -->|"vsock:5004"| SYSUTIL
 ```
 
@@ -92,7 +112,8 @@ Each layer uses a different protocol optimized for its role:
 |-------|----------|--------|
 | Frontend/Tray -> gateway | HTTP/1.1 over TCP | `127.0.0.1:19222` (Bearer token auth) |
 | Gateway -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
-| CLI -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
+| CLI -> gateway | Rust SDK HTTP/WebSocket over TCP | discovered or explicit gateway URL (Bearer token auth) |
+| CLI local administration -> service | HTTP/1.1 over UDS | status/asset reads and startup only |
 | SDK/npm MCP -> gateway | HTTP/1.1 over TCP | configured gateway URL (Bearer token auth) |
 | Service -> process | 16 MiB bounded, big-endian length-prefixed MessagePack over UDS (after a MessagePack Hello) | `~/.capsem/run/instances/{id}.sock` |
 | Process -> guest | Binary frames over vsock | Ports 5000, 5001, 5002, 5004, 5005, 5006, 5007 |
@@ -131,23 +152,48 @@ Both are configured for auto-restart (`KeepAlive`/`Restart=always`) and run-at-l
 
 ### CLI auto-launch
 
-The CLI (`capsem`) auto-launches the service if it's not running. On every service-dependent command:
+For local VM commands, the CLI (`capsem`) ensures the service is running:
 
 1. Check socket connectivity
 2. Try service manager (LaunchAgent/systemd)
 3. Fall back to direct spawn
 4. Poll socket for up to 5 seconds
 
-## Per-VM process isolation
+It then reads `gateway.port` and `gateway.token` beside the administration
+socket and sends VM operations through the authenticated gateway using the
+Rust SDK and shared API types. `--uds-path` selects local administration and
+the gateway discovery directory; it does not enable direct VM requests.
+`CAPSEM_GATEWAY_URL` selects an explicit gateway without starting a local
+service, and `CAPSEM_GATEWAY_TOKEN` supplies its Bearer token. Remote gateways
+require an explicit token. Missing or rejected credentials fail without UDS
+fallback or mutation replay. Local status/asset reads and service startup
+retain their administration path.
 
-Each running VM gets its own `capsem-process` child. This provides security isolation:
+## Per-session process isolation
 
-- **Minimal environment**: service uses `env_clear()` before spawn -- API keys and tokens from the user's shell never reach the process
-- **Socket permissions 0600**: only the owning user can connect to per-VM sockets
-- **Session directory 0700**: contains workspace, system, serial.log, session.db
-- **No guest-triggered exit**: control channel errors cause loop exit, not `process::exit()`
-- **VirtioFS boundary**: only `session_dir/guest/` is shared -- host-only files (session.db, serial.log, checkpoints) are outside the share
-- **MCP aggregator isolation**: external MCP server connections run in a separate subprocess (`capsem-mcp-aggregator`) with only network access -- no VM, database, or filesystem access. See [MCP Aggregator](/architecture/mcp-aggregator/) for details.
+Each running VM gets its own VM owner, proxy worker, and ledger worker. The
+service creates resources and hands each worker connected descriptors instead
+of paths or destination names. The short summary is:
+
+- **VM owner**: exact session runtime paths, boot assets, hypervisor, and granted
+  control channels; no direct session-ledger path access.
+- **Proxy**: descriptor-only policy engine with no filesystem or arbitrary
+  socket authority.
+- **Ledger**: the only process that opens one session's `session.db` and body
+  archive; no network or execution authority.
+- **Commitment authority**: the service globally orders producer commitments,
+  syncs their durable prefixes outside the ledger directory, and verifies them
+  through typed reads before a fresh ledger generation accepts producers.
+- **Minimal inheritance**: child environments are cleared where secrets could
+  leak and unrelated descriptors are closed before readiness.
+- **OS confinement**: Seatbelt on macOS and Landlock plus seccomp on Linux.
+  Workers prove important denials before announcing readiness.
+- **MCP transport**: external connections stay in `capsem-mcp-aggregator`;
+  guest requests cross proxy policy before receiving that scoped transport.
+
+Socket permissions `0600`, session directories `0700`, a read-only guest
+rootfs, and the VirtioFS share boundary still apply. They complement the
+process sandbox rather than defining it.
 
 ## Service HTTP API
 
@@ -156,9 +202,10 @@ through an explicit allowlist. Unknown paths return 404 at the gateway and are
 not forwarded to the service.
 
 `status` means hot runtime counters suitable for polling. `info` means
-configuration and identity. Profile-owned behavior lives under
-`/profiles/{profile_id}/...`; only service-wide runtime aggregation lives at
-the root.
+configuration and identity. Policy, plugins, MCP, and assets are global:
+every VM enforces the same merged policy (built-in defaults, `settings.toml`,
+corp) and boots the same runtime image set. Request bodies refuse unknown
+fields with a 400.
 
 Every client -- CLI, TUI, web terminal, SDKs, MCP -- reaches a VM through these
 routes. Only the service talks to a VM owner, over typed IPC; no client dials a
@@ -172,13 +219,15 @@ connection.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/vms/create` | Create a VM from a profile, optionally with a name, resource overrides, and a `container` workload |
-| GET | `/vms/{id}/container` | Container workload setup and runtime state (pulling, staging, staged, starting, running, failed) |
+| POST | `/vms/create` | Create a VM (default 4 CPUs, 12 GiB RAM, 64 GiB scratch disk), optionally with a name, resource overrides, and a `container` workload |
+| GET | `/vms/{id}/container` | Container workload setup and runtime state (pulling, staging, staged, starting, running, failed), and the `repository@digest` it resolved to |
+| GET | `/images` | Image catalog entries the policy permits: name, description, architectures, the pin this host runs (`?refresh=true` rereads the catalog) |
+| POST | `/images/pull` | Resolve a catalog name or reference, check its source, pull it into the host image cache, admit it; 403 when the policy refuses |
 | GET/POST | `/vms/{id}/exposures` | List or open loopback port exposures held by the VM owner |
 | DELETE | `/vms/{id}/exposures/{exposure_id}` | Close an exposure for good |
 | GET | `/vms/{id}/stream` | `capsem.stream.v1` WebSocket: terminal, streaming exec, or attached container |
-| GET | `/vms/list` | List VMs and their profile/status metadata |
-| GET | `/vms/{id}/info` | VM identity, profile, config, plugin descriptors, and non-hot metadata |
+| GET | `/vms/list` | List VMs and their lifecycle/status metadata |
+| GET | `/vms/{id}/info` | VM identity, resources, resume eligibility, and non-hot metadata |
 | GET | `/vms/{id}/status` | Runtime state for one VM |
 | POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot: provision + exec + destroy |
@@ -201,6 +250,17 @@ connection.
 | GET | `/vms/{id}/history/counts` | History counters |
 | GET | `/vms/{id}/history/transcript` | Terminal transcript history |
 
+### Standalone Proxy Runtime
+
+The CLI owns a short lease and presents only the printed data-plane URL to the
+model SDK. The lease token stays on the local service control path.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/proxies` | Start a VM-free provider-pinned proxy and return its base URL plus lease |
+| POST | `/proxies/{id}/heartbeat` | Renew the current lease token |
+| POST | `/proxies/{id}/stop` | Revoke the listener and worker capabilities, then remove the ephemeral session |
+
 ### Ledger Runtime
 
 | Method | Path | Purpose |
@@ -218,57 +278,45 @@ connection.
 | GET | `/enforcement/latest` | Service-wide latest enforcement rows |
 | GET | `/enforcement/status` | Service-wide enforcement counters |
 
-### Profiles, Rules, Plugins, Assets, MCP
+### Assets, Plugins, MCP
+
+Every VM boots the one runtime image set of the installed release manifest; a
+persistent VM keeps the asset pins it was created with. Policy edits below
+write `~/.capsem/settings.toml`, are recorded in the host ledger table
+`policy_mutation_events`, and are acknowledged by every running VM (by exact
+policy digest) before the route returns.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/profiles/list` | List configured profiles |
-| GET | `/profiles/status` | Profile readiness, asset status, and validation state |
-| POST | `/profiles/reload` | Reload the profile catalog |
-| GET | `/profiles/{profile_id}/info` | Profile identity/config truth |
-| POST | `/profiles/{profile_id}/validate` | Validate a profile |
-| POST | `/profiles/{profile_id}/reload` | Reload one profile |
-| GET | `/profiles/{profile_id}/obom` | Base-image CycloneDX OBOM metadata and local document when installed |
-| POST | `/profiles/{profile_id}/enforcement/evaluate` | Evaluate a supplied security event against enforcement rules |
-| GET | `/profiles/{profile_id}/enforcement/info` | Enforcement file/config info |
-| GET | `/profiles/{profile_id}/enforcement/rules/list` | Compiled enforcement rules |
-| PUT | `/profiles/{profile_id}/enforcement/rules/{rule_id}/edit` | Add or replace one enforcement rule |
-| DELETE | `/profiles/{profile_id}/enforcement/rules/{rule_id}/delete` | Delete one enforcement rule |
-| POST | `/profiles/{profile_id}/enforcement/reload` | Reload enforcement rules |
-| POST | `/profiles/{profile_id}/detection/evaluate` | Evaluate a supplied security event against detection rules |
-| GET | `/profiles/{profile_id}/detection/info` | Detection file/config info |
-| GET | `/profiles/{profile_id}/detection/rules/list` | Compiled detection rules |
-| PUT | `/profiles/{profile_id}/detection/rules/{rule_id}/edit` | Add or replace one detection rule |
-| DELETE | `/profiles/{profile_id}/detection/rules/{rule_id}/delete` | Delete one detection rule |
-| POST | `/profiles/{profile_id}/detection/reload` | Reload detection rules |
-| GET | `/profiles/{profile_id}/plugins/list` | Profile plugin config plus registry descriptors |
-| GET | `/profiles/{profile_id}/plugins/info` | Plugin subsystem info for the profile |
-| GET | `/profiles/{profile_id}/plugins/{plugin_id}/info` | One plugin config and descriptor |
-| PATCH | `/profiles/{profile_id}/plugins/{plugin_id}/edit` | Edit one plugin config |
-| GET | `/profiles/{profile_id}/assets/status` | Profile asset readiness |
-| GET | `/profiles/{profile_id}/assets/info` | Profile asset descriptors |
-| POST | `/profiles/{profile_id}/assets/ensure` | Download/verify profile assets |
-| GET | `/profiles/{profile_id}/mcp/info` | Profile MCP config info |
-| GET | `/profiles/{profile_id}/mcp/servers/list` | Profile MCP servers |
-| PUT | `/profiles/{profile_id}/mcp/servers/{server_id}/edit` | Add or replace one MCP server |
-| DELETE | `/profiles/{profile_id}/mcp/servers/{server_id}/delete` | Delete one MCP server |
-| GET | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/list` | Tools for one MCP server |
-| POST | `/profiles/{profile_id}/mcp/servers/{server_id}/refresh` | Refresh one MCP server |
-| PATCH | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit` | Enable/disable or edit one MCP tool |
-| POST | `/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call` | Call one MCP tool |
+| GET | `/assets/status` | Runtime image set readiness, manifest provenance, and download progress |
+| POST | `/assets/ensure` | Start downloading missing runtime assets |
+| GET | `/plugins/list` | Every plugin with its effective mode and its source (built in, settings, corp) |
+| GET | `/plugins/{plugin_id}/info` | One plugin's config, descriptor, and runtime activity |
+| PATCH | `/plugins/{plugin_id}/edit` | Set one plugin's mode or detection level |
+| GET | `/plugins/credential_broker/credentials/info` | Credential broker store and brokered activity, no raw secrets |
+| POST | `/plugins/credential_broker/credentials/reload` | Retry the durable credential store |
+| GET | `/mcp/info` | MCP server count and built-in `local` server state |
+| GET | `/mcp/servers/list` | Configured MCP servers |
+| GET | `/mcp/default/info` | Default MCP tool permission |
+| PATCH | `/mcp/default/edit` | Set the default MCP tool permission |
+| GET | `/mcp/servers/{server_id}/tools/list` | Tools for one MCP server, with effective permissions |
+| POST | `/mcp/servers/{server_id}/refresh` | Rediscover one server's tools in every running VM |
+| PATCH | `/mcp/servers/{server_id}/tools/{tool_id}/edit` | Allow, ask, or block one MCP tool |
+| POST | `/mcp/servers/{server_id}/tools/{tool_id}/call` | Call one MCP tool through a running VM |
 
 ### Service, Settings, Corp
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/status` | Service status, including runtime asset readiness (`assets`) |
 | GET | `/version` | Service version |
 | GET | `/stats` | Full telemetry dump (all sessions) |
 | GET | `/service-logs` | Service log tail |
 | GET | `/triage` | Debug triage bundle |
 | GET | `/panics` | Panic log summary |
 | GET | `/host-logs/{name}` | Named host log |
-| GET | `/settings/info` | UI/application settings |
-| PATCH | `/settings/edit` | Edit settings-owned preferences |
+| GET | `/settings/info` | The resolved `settings.toml` tree and validation issues |
+| PATCH | `/settings/edit` | Batch-edit registry settings in `settings.toml`; corp-set ids are locked |
 | GET | `/corp/info` | Corporate constraint/reporting config |
 | PUT | `/corp/edit` | Replace corporate config |
 | POST | `/corp/validate` | Validate corporate config |
@@ -286,12 +334,11 @@ authority path.
 
 ```
 ~/.capsem/
-  bin/                 capsem, capsem-service, capsem-process, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
+  bin/                 capsem, service, gateway, process, proxy, ledger, router, MCP workers, tray
   assets/              manifest.json, manifest-metadata.json, vmlinuz-{hash16}, initrd-{hash16}.img, rootfs-{hash16}.erofs
   run/                 service.sock, service.pid, gateway.token, gateway.port, instances/
-  settings.toml        UI/application preferences
-  corp.toml            Enterprise constraints/reporting config (optional)
-  profiles/            Profile-owned assets, rules, MCP, plugins, VM defaults
+  settings.toml        User policy (rules, plugins, MCP, AI providers) and app preferences
+  corp.toml            Enterprise constraints/reporting config (optional; wins over settings.toml)
 ```
 
 ### Self-update
@@ -319,8 +366,11 @@ from VM asset releases.
 |-------|------|------|
 | `capsem-core` | lib | All shared business logic (VM, network, policy, telemetry, config) |
 | `capsem-service` | bin | Daemon. Axum HTTP over UDS, spawns/manages capsem-process children |
-| `capsem-process` | bin | Per-VM. Boots VM via capsem-core, bridges vsock, job store |
-| `capsem` | bin | CLI. HTTP over UDS to service, direct UDS to process for shell |
+| `capsem-process` | bin | Per-VM owner. Boots VM, bridges VSOCK, owns session runtime paths |
+| `capsem-proxy` | bin | Confined per-session HTTP, DNS, model, and MCP policy worker |
+| `capsem-ledger` | bin | Confined sole owner of one session ledger and body archive |
+| `capsem-router` | bin | Confined publication relay and named-network switch modes |
+| `capsem` | bin | CLI. Rust SDK over authenticated gateway HTTP/WebSocket; streams remain service-mediated |
 | `capsem-mcp-aggregator` | bin | Isolated subprocess. Manages external MCP server connections over length-prefixed MessagePack frames |
 | `capsem-mcp-builtin` | bin | Isolated built-in HTTP MCP tools |
 | `capsem-gateway` | bin | HTTP gateway. Axum on TCP:19222, Bearer auth, `/vms/{id}/stream` WebSocket tunnel to the service |
