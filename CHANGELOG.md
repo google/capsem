@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Interactive marketing hero demo showing installation, an OCI agent VM building
-  and previewing a website, and a separate Codex OCI VM with an illustrative inbox.
+- Interactive terminal marketing demo showing installation, an AGY image building
+  a website with a browser preview, then a fresh Codex VM summarizing email.
 
 ### Security
 

@@ -152,31 +152,51 @@ export const FOOTER_COLUMNS = [
 ] as const;
 
 
-// Image references are illustrative until the public agent images are selected.
-// The renderer can replace either HTML result panel with a captured UI later.
 export const HERO_DEMO = {
   label: "FROM FIRST COMMAND TO REAL WORK",
   title: "Your agent. Its own VM.",
   description: "Install once. Launch an OCI image. Let your agent get to work inside a fresh, isolated Linux VM.",
-  terminalLabel: "Capsem interactive product demo",
-  demoLabel: "Illustrative demo · accelerated · example OCI images",
-  pause: "Pause", play: "Play", replay: "Replay",
-  host: "Your shell", websiteVM: "VM 01 / website", inboxVM: "VM 02 / inbox",
-  imageLabel: "OCI image", isolated: "Isolated Linux VM",
-  agy: { name: "Antigravity CLI", model: "Gemini", workspace: "~/website", status: "Generating…", prompt: ">" },
-  previewLabel: "Website preview", previewURL: "localhost / studio",
+  terminalLabel: "Capsem terminal demonstration",
+  descriptionForScreenReaders: "Animated demonstration: install Capsem, launch the agy image, build and preview a website, then launch a separate Codex VM and summarize fictional emails.",
+  pause: "Pause animation", play: "Play animation", replay: "Replay animation",
+  shellTitle: "elie — zsh", agyTitle: "website — agy", codexTitle: "inbox — codex",
+  previewLabel: "Website preview", previewURL: "localhost:3000", closePreview: "Close website preview",
   preview: { brand: "FORM & FIELD", nav: "Independent design studio", eyebrow: "THOUGHTFUL BY DESIGN", title: "A little space.\nA bigger idea.", description: "We create places, objects, and experiences that make everyday life a little more extraordinary.", action: "Explore our work ↗", footer: "Architecture / Objects / Digital", monogram: "F/f" },
-  inboxLabel: "Recent emails · fictional demo data",
-  emails: [
-    { sender: "Maya Chen", subject: "Website launch — ready for review", time: "09:41" },
-    { sender: "Design team", subject: "A few ideas for the next chapter", time: "09:28" },
-    { sender: "Alex Morgan", subject: "Coffee on Thursday?", time: "08:56" },
-  ],
-  chapters: [
-    { label: "Install", duration: 7000, kicker: "ONE COMMAND", title: "Start here. Everything follows.", detail: "Download and install Capsem from your terminal.", href: SITE.docs + "/getting-started/", link: "Installation guide ↗", context: "host", command: SITE.installCmd, lines: ["Downloading Capsem…", "Installing the CLI and service…", "✓ Capsem is ready."] },
-    { label: "Boot a VM", duration: 6500, kicker: "OCI IMAGE → LINUX VM", title: "Your tools. Already in the image.", detail: "Launch an agent image inside a fresh hardware-isolated VM.", href: SITE.docs + "/usage/cli/", link: "Explore OCI workloads ↗", context: "website", command: "capsem run -p 0:3000 --image docker://example/agy:latest", lines: ["Pulling OCI image · example/agy:latest", "Starting an isolated Linux VM…", "✓ agy ready · website workspace mounted"] },
-    { label: "Build", duration: 8000, kicker: "LET THE AGENT WORK", title: "An idea becomes a website.", detail: "The image brings the agent and its development tools. Capsem provides the boundary.", href: "#features", link: "See what is built in ↗", context: "website", command: "Build a beautiful website for a design studio. Preview it on port 3000.", lines: ["agy › Creating the studio website…", "Writing page, styles, and interactions", "Starting the preview server on :3000", "✓ Website ready to preview"] },
-    { label: "Preview", duration: 7000, kicker: "SEE WHAT YOU SHIPPED", title: "From terminal to something tangible.", detail: "Preview the result through a published loopback port.", href: SITE.docs + "/usage/cli/", link: "Explore port publishing ↗", context: "preview", command: "", lines: [] },
-    { label: "Another VM", duration: 11000, kicker: "NEW IMAGE. FRESH VM.", title: "Different work. A separate environment.", detail: "The first VM closes. A Codex image launches in a new VM, with its connected mail tool.", href: "#how-it-works", link: "How Capsem works ↗", context: "inbox", command: "capsem run --image docker://example/codex-mail:latest", lines: ["✓ Previous workload exited · VM 01 destroyed", "Starting VM 02 · example/codex-mail:latest", "codex › List my recent emails.", "Calling connected mail tool · list messages", "✓ Found 3 recent messages"] },
-  ],
+  summary: "Your inbox, summarized:\r\n\r\n• Maya: the website is ready for review.\r\n  Action: send feedback today.\r\n\r\n• Design team: new concepts are ready.\r\n  Action: pick a direction by Friday.\r\n\r\n• Alex: coffee on Thursday?\r\n  Action: confirm a time.\r\n",
 } as const;
+
+// Fictional transcript, rendered as terminal output; no remote commands run.
+const dim = (text: string) => `\x1b[38;5;245m${text}\x1b[0m`;
+const blue = (text: string) => `\x1b[38;5;111m${text}\x1b[0m`;
+const bold = (text: string) => `\x1b[1m${text}\x1b[0m`;
+const prompt = `\r\n${blue("❯")} `;
+const agyLogo = [
+  "     ▄▄", "    ▄██▄", "   ▄█▀▀█▄", "  ▄█▀  ▀█▄", " ▄█▀    ▀█▄",
+].map((line, index) => `\x1b[38;5;${[209, 221, 177, 141, 111][index]}m${line}\x1b[0m`).join("\r\n");
+export const HERO_TERMINAL_SCRIPT: import("./hero-terminal").TerminalStep[] = [
+  { write: prompt, type: SITE.installCmd, wait: 450 },
+  { write: `\r\n${dim("Downloading Capsem")}\r\n`, wait: 350 },
+  { write: `${blue("  ███████░░░░░░░░░░░░░  32%")}`, wait: 350 },
+  { write: `\r\x1b[2K${blue("  █████████████░░░░░░░  64%")}`, wait: 350 },
+  { write: `\r\x1b[2K${blue("  ████████████████████ 100%")}\r\n`, wait: 300 },
+  { write: `${dim("Installing CLI…")}\r\n${blue("✓ Capsem installed")}\r\n`, wait: 650 },
+  { write: prompt, type: "capsem run --image agy", wait: 450 },
+  { write: `\r\n${dim("Pulling agy…")}\r\n${dim("Booting VM…")}\r\n`, wait: 850 },
+  { title: HERO_DEMO.agyTitle, clear: true, write: `\r\n${agyLogo}\r\n\r\n${bold("Antigravity CLI")}\r\n${dim("Gemini · ~/website")}\r\n\r\n${dim("──────────────────────────────────")}\r\n> `, type: "Build a website for a design studio.", wait: 650 },
+  { write: `\r\n${dim("──────────────────────────────────")}\r\n\r\n${blue("⠋")} Building your website…`, wait: 650 },
+  { write: `\r\x1b[2K${blue("⠹")} Building your website…`, wait: 650 },
+  { write: `\r\x1b[2K${blue("●")} Created index.html ${dim("(+84)")}\r\n`, wait: 450 },
+  { write: `${blue("●")} Created styles.css ${dim("(+126)")}\r\n`, wait: 450 },
+  { write: `${blue("●")} Started preview server\r\n\r\nReady at ${blue("http://localhost:3000")}\r\n`, wait: 1000 },
+  { preview: true, wait: 6000 },
+  { preview: false, write: "\r\n> ", type: "/exit", wait: 400 },
+  { title: HERO_DEMO.shellTitle, clear: true, write: `\r\n${dim("Workload exited. VM stopped.")}\r\n${prompt}`, type: "capsem run --image codex", wait: 500 },
+  { write: `\r\n${dim("Pulling codex…")}\r\n${dim("Booting VM…")}\r\n`, wait: 850 },
+  { title: HERO_DEMO.codexTitle, clear: true, write: `\r\n  >_ ${bold("OpenAI Codex")}\r\n     ${dim("~/inbox")}\r\n\r\n› `, type: "Summarize my emails.", wait: 650 },
+  { write: `\r\n\r\n${dim("• Reading your inbox…")}`, wait: 950 },
+  { write: `\r\x1b[2K${dim("• Called mail.list_messages")}\r\n${dim("  └ 3 messages returned")}\r\n\r\n`, wait: 650 },
+  { write: `${bold("Your inbox, summarized:")}\r\n\r\n`, wait: 350 },
+  { write: `• ${bold("Maya")} — website ready for review.\r\n  ${dim("Send feedback today.")}\r\n\r\n`, wait: 700 },
+  { write: `• ${bold("Design team")} — new concepts ready.\r\n  ${dim("Pick a direction by Friday.")}\r\n\r\n`, wait: 700 },
+  { write: `• ${bold("Alex")} — coffee on Thursday?\r\n  ${dim("Confirm a time.")}\r\n\r\n› `, wait: 700 },
+];
