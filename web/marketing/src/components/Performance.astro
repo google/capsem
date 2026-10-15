@@ -1,10 +1,19 @@
 ---
 import { SPEED } from "../lib/data";
 ---
-<section class="performance-section" aria-labelledby="speed-title">
-  <div class="container">
-    <div class="section-heading"><h2 id="speed-title">{SPEED.title}</h2><p class="section-description">{SPEED.description}</p></div>
-    <div class="performance-stats">{SPEED.stats.map((stat) => <div class="performance-stat"><p class="stat-value">{stat.value}<span>{stat.unit}</span></p><h3>{stat.label}</h3></div>)}</div>
+<section class="performance-section section-dark section-space bg-surface text-ink" aria-labelledby="speed-title">
+  <div class="content-shell">
+    <div class="prose-brand"><h2 id="speed-title">{SPEED.title}</h2><p>{SPEED.description}</p></div>
+    <div class="mt-10 grid gap-6 md:grid-cols-3">{SPEED.stats.map((stat, i) => <article class="panel speed-card relative overflow-hidden">
+      <div class="mb-8 flex h-20 items-center justify-between text-accent" aria-hidden="true">
+        <svg class="h-20 w-32" viewBox="0 0 128 80" fill="none" stroke="currentColor" stroke-width="1.5">
+          {i === 0 ? <><path class="speed-glow" d="M24 21 51 6l27 15v32L51 69 24 53Z"/><path d="m24 21 27 16 27-16M51 37v32M38 13l27 16"/><path class="speed-line" d="M87 24h28M87 36h19M87 48h10"/></>
+          : i === 1 ? <><rect class="speed-glow" x="10" y="12" width="98" height="58" rx="8"/><path d="M10 26h98M23 39l10 9-10 9M44 57h22"/><circle cx="20" cy="19" r="1"/><circle cx="26" cy="19" r="1"/></>
+          : <><path d="M23 40h32M55 40c18 0 12-24 30-24h17M55 40c18 0 12 24 30 24h17"/><rect class="speed-glow" x="6" y="29" width="22" height="22" rx="6"/><rect class="speed-glow" x="100" y="5" width="22" height="22" rx="6"/><rect class="speed-glow" x="100" y="53" width="22" height="22" rx="6"/></>}
+        </svg><span class="font-mono text-xs text-muted">0{i+1}</span>
+      </div>
+      <p class="stat-value">{stat.value}<span>{stat.unit}</span></p><h3 class="mt-4 text-base font-medium">{stat.label}</h3>
+    </article>)}</div>
     <div class="benchmark-note"><span>{SPEED.note}</span><details><summary>{SPEED.methodology}</summary><p>{SPEED.details}</p><div>{SPEED.sources.map(source => <a href={source.href}>{source.label} ↗</a>)}</div></details></div>
   </div>
 </section>

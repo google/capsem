@@ -1,2 +1,2 @@
 <script lang="ts">import { SITE, UI } from "$lib/data";</script>
-<footer class="container footer"><a class="brand" href="/">{SITE.name}<span class="brand-dot">.</span></a><div><span>{SITE.license}</span><a href={SITE.github}>{UI.source} ↗</a></div></footer>
+<footer class="border-t border-line"><div class="content-shell flex flex-col gap-6 py-8 sm:flex-row sm:items-center sm:justify-between"><a class="brand" href="/"><img src="/logo-color.png" alt="" width="32" height="32" />{SITE.name}</a><div class="flex items-center gap-6 text-xs text-muted"><span>{SITE.license}</span><a href={SITE.github}>{UI.source} ↗</a></div></div></footer>

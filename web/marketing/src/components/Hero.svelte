@@ -3,15 +3,14 @@
   import InstallCommand from "./InstallCommand.svelte";
   import HeroDemo from "./HeroDemo.svelte";
 </script>
-<section class="hero container" aria-labelledby="hero-title">
-  <div class="hero-heading">
-    <h1 id="hero-title"><span>{SITE.name.toUpperCase()}</span><br />{HERO.lines[0]} to<br />ship with AI securely.</h1>
-    <div class="hero-intro">
-      <h2>{HERO.title}</h2>
-      <p>{HERO.description}</p>
-      <div class="hero-actions"><a class="button" href={SITE.releases}>{UI.download}<span aria-hidden="true">↓</span></a><span class="platform-note">{SITE.platform}</span></div>
+<section class="hero section-space" aria-labelledby="hero-title">
+  <div class="content-shell grid items-start gap-10 lg:grid-cols-2 lg:gap-12">
+    <div>
+      <h1 id="hero-title" class="text-4xl leading-tight font-extrabold tracking-tight sm:text-5xl lg:text-6xl"><span class="brand-gradient">{SITE.name.toUpperCase()}</span><br />{SITE.tagline}</h1>
+      <div class="prose-brand hero-copy mt-8"><h2>{HERO.title}</h2><p>{HERO.description}</p></div>
+      <div class="mt-8 mb-4 flex items-center gap-4"><a class="button" href={SITE.releases}>{UI.download}<span aria-hidden="true">↓</span></a><span class="max-w-40 text-xs leading-5 text-body">{SITE.platform}</span></div>
       <InstallCommand />
     </div>
+    <HeroDemo />
   </div>
-  <HeroDemo />
 </section>

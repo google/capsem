@@ -89,18 +89,17 @@ export const CONTROL = {
   title: "Stay in control.",
   caption: "Illustrative examples",
   panels: [
-    { title: "See everything.", description: "Trace every action, request, and decision.", label: "Activity log", kind: "activity" },
-    { title: "Full control.", description: "Set your boundaries with CEL rules.", label: "CEL rules", kind: "rules" },
-    { title: "Detect threats.", description: "Turn suspicious activity into Sigma detections.", label: "Sigma detections", kind: "detection" },
+    { title: "See everything.", description: "Every action, request, and decision is recorded.", label: "Interactions", kind: "activity" },
+    { title: "Full control.", description: "Seamlessly set boundaries at the semantic level.", label: "CEL rules", kind: "rules" },
+    { title: "Detect threats.", description: "Flag access to password files and secrets.", label: "Sigma detections", kind: "detection" },
   ],
-  events: [
-    { time: "09:41:02", name: "Model request", status: "Allowed", denied: false },
-    { time: "09:41:03", name: "Read inbox", status: "Allowed", denied: false },
-    { time: "09:41:04", name: "Outbound request", status: "Blocked", denied: true },
+  viewer: { type: "Tool call", time: "09:41:03", trace: "trace a8f2 · turn 1", tool: "fetch_http", server: "capsem", decision: "allow", arguments: "Arguments", request: '{"url":"https://example.com"}', response: "Observed response", result: "200 OK · text/html · 2.4 KB", next: "Model response", recorded: "Request · Response · Decision" },
+  rules: [
+    { name: "Restrict MCP tools", expression: 'mcp.tool_call.name == "delete_file"', action: "deny", icon: "◇" },
+    { name: "Choose agent models", expression: 'model.provider == "openai"', action: "allow", icon: "✦" },
+    { name: "Restrict websites", expression: 'http.host == "untrusted.example"', action: "deny", icon: "↗" },
   ],
-  rule: 'http.host == "untrusted.example"',
-  action: "deny", ruleName: "Block a destination", match: "match", actionLabel: "action",
-  detection: 'title: Suspicious destination\nlevel: high\ndetection:\n  selection:\n    http.host: untrusted.example\n  condition: selection',
-  alert: "Suspicious destination", severity: "High",
+  detection: 'title: Password file accessed\nlevel: high\ndetection:\n  selection:\n    file.read.name: passwords.txt\n  condition: selection',
+  alert: "Password file accessed", severity: "High", evidence: "file.read.name = passwords.txt",
   links: [{ label: "Explore observability", href: DOCS.activity }, { label: "Deploy for your team", href: DOCS.enterprise }],
 } as const;

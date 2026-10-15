@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Unified marketing layout with Tailwind Typography and semantic theme tokens; added
+  designed speed cards and interaction, policy, and password-file detection examples.
+
+- Applied brand colors to marketing headings and performance figures, and restored the colored logo.
+
 - Grouped included marketing tools into Code, Tools, and MCP tools with brand colors.
 
 - Added a Codex terminal illustration in the Capsem shell and a list of bundled

@@ -4,8 +4,8 @@
 </script>
 <svelte:window onkeydown={(e) => { if (e.key === "Escape") open = false; }} />
 <header class="site-header">
-  <nav class="container nav" aria-label="Main navigation">
-    <a class="brand" href="/" aria-label={SITE.name}><img src="/logo.svg" alt="" width="32" height="32" />{SITE.name}<span class="brand-dot">.</span></a>
+  <nav class="content-shell nav" aria-label="Main navigation">
+    <a class="brand" href="/" aria-label={SITE.name}><img src="/logo-color.png" alt="" width="32" height="32" />{SITE.name}<span class="brand-dot">.</span></a>
     <div class="nav-links">
       {#each NAV_LINKS as link}<a href={link.href}>{link.label}</a>{/each}
     </div>
