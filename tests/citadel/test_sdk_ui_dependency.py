@@ -47,7 +47,7 @@ def _assert_order(plan, node: str, build: str, consumers: tuple[str, ...]) -> No
 
 
 @pytest.mark.parametrize("command", [
-    "candidate", "test-fast", "test-functional", "test-static", "test-artifacts", "test-glowup",
+    "candidate", "test-candidate", "test-fast", "test-functional", "test-static", "test-artifacts", "test-glowup",
 ])
 def test_sdk_dist_has_one_writer_before_every_consumer(command: str) -> None:
     plan = gate_plan(command)

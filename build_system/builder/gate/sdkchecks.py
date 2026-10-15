@@ -39,7 +39,7 @@ def braavos(plan: Plan, phase: Phase, config: GateConfig, *, after: tuple[Step, 
     ), after=after)
     synced = python_environment(plan, config)
     python = phase.shared(python_package(config), after=(synced,))
-    compiled = phase.shared(typescript_bundle(config), after=after)
+    compiled = typescript_compiled(plan, config, after=after)
     typescript = phase.shared(typescript_package(config), after=(compiled,))
     warmed = phase.shared(typescript_prewarm(config), after=(typescript,))
     return python, example, typescript, warmed
@@ -152,7 +152,7 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         label, Run(["pnpm", "run", command], cwd=root),
         kind=Kind.LINT, speed=Speed.FAST,
     ), after=after) for label, command in (("lint", "lint"), ("types", "check")))
-    compiled = phase.shared(typescript_bundle(config), after=after)
+    compiled = typescript_compiled(plan, config, after=after)
     built = phase.shared(typescript_package(config), after=(compiled,))
     warmed = phase.shared(typescript_prewarm(config), after=(built,))
     for shared in (built, warmed):
@@ -217,3 +217,14 @@ def typescript_bundle(config: GateConfig) -> Step:
         Run(["pnpm", "run", "build"], cwd=config.path(config.sdk_typescript.project)),
         kind=Kind.COMPILE, speed=Speed.FAST,
     )
+
+
+def typescript_compiled(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:
+    """Reuse earlier output without moving its producer behind later consumers."""
+    bundle = typescript_bundle(config)
+    # A standalone functional/artifact lane may install Node after runtime
+    # preparation. When a prior phase already compiled the SDK, adding that
+    # later setup as its prerequisite closes a cycle. Keep those dependencies
+    # on the consumer; shared still verifies the producer's actions match.
+    existing = any(node.label == bundle.label for node in plan.steps)
+    return plan.shared(bundle, after=() if existing else after)

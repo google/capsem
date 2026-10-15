@@ -63,7 +63,7 @@ class DevCommand(GateCommand, name="dev", help="run one development surface"):
         prerequisites = ()
         if surface != "tui":
             installed = plan.add(toolchain.node(config, (config.frontend.workspace,)))
-            sdk = plan.shared(sdkchecks.typescript_bundle(config), after=(installed,))
+            sdk = sdkchecks.typescript_compiled(plan, config, after=(installed,))
             prerequisites = (sdk,)
         if surface == "frontend":
             plan.add(
