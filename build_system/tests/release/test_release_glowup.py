@@ -65,7 +65,7 @@ def test_local_glowup_requires_the_public_install_command_to_be_discoverable() -
     module = _load_marketing_surface()
 
     module.validate_marketing_install_surface(
-        "<main><Hero /><CTA /><code>curl -fsSL https://capsem.org/install.sh | sh</code></main>",
+        "<main><Hero client:load /><code>curl -fsSL https://capsem.org/install.sh | sh</code></main>",
         install_script_url="https://capsem.org/install.sh",
     )
 
@@ -74,6 +74,16 @@ def test_local_glowup_requires_the_public_install_command_to_be_discoverable() -
             "<main>Available Summer 2026</main>",
             install_script_url="https://capsem.org/install.sh",
         )
+
+
+def test_marketing_download_is_discoverable_without_a_second_cta() -> None:
+    module = _load_marketing_surface()
+    surface = ('<code>curl -fsSL https://capsem.org/install.sh | sh</code>'
+               '<a href="https://release.capsem.org/channels/stable/">Download</a>')
+    module.validate_rendered_marketing_install_surface(surface)
+    for required in ("curl -fsSL", "https://release.capsem.org/channels/stable/", "Download"):
+        with pytest.raises(SystemExit):
+            module.validate_rendered_marketing_install_surface(surface.replace(required, ""))
 
 
 def _artifact(tmp_path: Path, module):
