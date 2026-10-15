@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Native MCP aggregators install and attest filesystem, network, execution
+  and signal confinement before readiness, and use inherited session capabilities.
+
 - Builtin HTTP-header tools evaluate policy and record the method actually
   sent, preventing unsupported method arguments from bypassing a HEAD block.
 

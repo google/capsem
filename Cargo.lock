@@ -1100,6 +1100,7 @@ version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
+ "capsem-core",
  "capsem-credentials",
  "capsem-foundation",
  "capsem-guard",
@@ -1107,6 +1108,9 @@ dependencies = [
  "clap",
  "futures",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "reqwest 0.12.28",
  "rmcp",
  "serde",

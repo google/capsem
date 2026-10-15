@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+capsem-core = { path = "../capsem-core" }
 capsem-credentials = { path = "../capsem-credentials" }
 capsem-proto = { path = "../capsem-proto" }
 capsem-foundation = { path = "../capsem-foundation" }
@@ -31,6 +32,9 @@ workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["http2"] }
+hyper-util = { workspace = true, features = ["http2"] }
 rmcp = { workspace = true, features = ["transport-streamable-http-server", "transport-streamable-http-server-session"] }
 tempfile = "3"
 tokio-util.workspace = true

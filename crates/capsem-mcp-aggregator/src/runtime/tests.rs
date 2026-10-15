@@ -314,7 +314,7 @@ fn guard_flags_parse_as_a_pair() {
 }
 
 #[test]
-fn guard_flags_are_optional_for_standalone_runs() {
+fn guard_flags_parse_without_granting_readiness_authority() {
     let args = Args::parse_from(["capsem-mcp-aggregator"]);
     assert_eq!(args.parent_pid, None);
     assert_eq!(args.lock_path, None);

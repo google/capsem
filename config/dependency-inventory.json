@@ -1110,6 +1110,7 @@
   "dependencies": [
    "anyhow",
    "axum",
+   "capsem-core",
    "capsem-credentials",
    "capsem-foundation",
    "capsem-guard",
@@ -1117,6 +1118,9 @@
    "clap",
    "futures",
    "http",
+   "http-body-util",
+   "hyper",
+   "hyper-util",
    "reqwest",
    "rmcp",
    "serde",

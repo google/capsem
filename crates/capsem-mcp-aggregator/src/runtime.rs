@@ -17,12 +17,14 @@
 //! capsem-process driver routes by request id.
 //!
 //! This subprocess intentionally has NO access to the VM, session DB,
-//! filesystem, or service IPC. It only has network access to reach
-//! external MCP servers.
+//! filesystem, or service IPC. Upstream HTTP and builtin peers are supplied
+//! through inherited, session-bound coordinator capabilities.
 
 use std::sync::{Arc, RwLock};
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
+use capsem_core::mcp::native_worker::PreparedMcpWorker;
+use capsem_proto::mcp_worker::McpHttpRole;
 use clap::Parser;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -44,7 +46,7 @@ struct Args {
     lock_path: Option<std::path::PathBuf>,
 }
 
-pub async fn run() -> Result<()> {
+pub async fn run(vm_id: String, trace_id: String) -> Result<()> {
     // JSON output to stderr (capsem-process redirects it to
     // mcp-aggregator.stderr.log in the VM's session dir). Matches the
     // format capsem-process + capsem-service already emit, so every
@@ -60,33 +62,27 @@ pub async fn run() -> Result<()> {
     // correlated with parent/service telemetry. `unknown` fallbacks let
     // the binary still run if invoked standalone (dev/debug), without
     // panicking.
-    let vm_id = std::env::var("CAPSEM_VM_ID").unwrap_or_else(|_| "unknown".into());
-    let trace_id = std::env::var("CAPSEM_TRACE_ID").unwrap_or_else(|_| "unknown".into());
     let root_span = tracing::info_span!("aggregator", vm_id = %vm_id, trace_id = %trace_id);
     let _root_span_guard = root_span.enter();
 
     let args = Args::parse();
 
-    if let (Some(pid), Some(lock)) = (args.parent_pid, args.lock_path) {
-        match capsem_guard::install(Some(pid), &lock) {
-            Ok(Some(guards)) => {
-                // Keep the guards alive for the process's lifetime.
-                Box::leak(Box::new(guards));
-            }
-            Ok(None) => {
-                info!(lock = %lock.display(), "another instance holds the lock; exiting 0");
-                return Ok(());
-            }
-            Err(e) => {
-                warn!(error = %e, "refusing to run without live parent; exiting 0");
-                return Ok(());
-            }
-        }
-    }
+    let parent = args.parent_pid.context("MCP aggregator requires a parent")?;
+    ensure!(
+        capsem_guard::parent_is_expected(parent),
+        "MCP aggregator parent mismatch"
+    );
+    let lock = args.lock_path.context("MCP aggregator requires its singleton lock")?;
+    let _singleton = capsem_guard::Singleton::try_acquire(&lock)?.context("MCP aggregator already running")?;
+    let worker = PreparedMcpWorker::from_stdin(McpHttpRole::Aggregator)
+        .await?
+        .confine_and_ready()
+        .await?;
+    capsem_guard::watch_parent_or_exit(Some(parent))?;
 
     info!("capsem-mcp-aggregator starting");
 
-    let mut stdin = tokio::io::stdin();
+    let (mut stdin, _ready_writer) = worker.control.into_split();
     let mut stdout = tokio::io::stdout();
 
     // Step 1: Read server definitions from first frame on stdin.
@@ -100,7 +96,7 @@ pub async fn run() -> Result<()> {
     // Step 2: Initialize connections to all enabled HTTP servers BEFORE
     // installing the manager into the shared lock. `initialize_all` is async
     // and would otherwise need to run while holding the sync RwLock guard.
-    let mut mgr = McpServerManager::new(defs, reqwest::Client::new());
+    let mut mgr = McpServerManager::confined(defs, worker.http, worker.spawn.context("MCP spawn grant missing")?);
     if let Err(e) = mgr.initialize_all().await {
         warn!(error = %e, "some MCP servers failed to initialize");
     }
@@ -114,7 +110,9 @@ pub async fn run() -> Result<()> {
     // is fine. Channel depth 256 is large enough that handlers don't normally
     // block on send, small enough that a stuck writer creates backpressure on
     // the reader instead of growing memory unbounded.
-    let (resp_tx, mut resp_rx) = mpsc::channel::<AggregatorResponse>(256);
+    let (resp_tx, mut resp_rx) = mpsc::channel::<AggregatorResponse>(capsem_proto::MCP_WORKER_QUEUE_CAPACITY);
+    let mut handlers = tokio::task::JoinSet::new();
+    let mut shutdown_id = None;
 
     let writer_task = tokio::spawn(async move {
         while let Some(resp) = resp_rx.recv().await {
@@ -127,26 +125,39 @@ pub async fn run() -> Result<()> {
 
     let reader_result: Result<()> = async {
         loop {
-            let Some(req) = read_next_request(&mut stdin).await else {
+            let request = tokio::select! {
+                biased;
+                () = resp_tx.closed() => return Ok(()),
+                _ = handlers.join_next(), if !handlers.is_empty() => continue,
+                request = read_next_request(&mut stdin) => request,
+            };
+            let Some(req) = request else {
                 return Ok(());
             };
 
             // Ack Shutdown synchronously on the reader path so we can break
             // out cleanly without depending on a spawned handler completing.
             if matches!(req.method, AggregatorMethod::Shutdown) {
-                let _ = resp_tx
+                shutdown_id = Some(req.id);
+                return Ok(());
+            }
+
+            if handlers.len() >= capsem_proto::MCP_WORKER_QUEUE_CAPACITY {
+                resp_tx
                     .send(AggregatorResponse {
                         id: req.id,
-                        body: AggregatorResult::Ok { ok: true },
+                        body: AggregatorResult::Error {
+                            error: "MCP worker request capacity reached".into(),
+                        },
                     })
-                    .await;
-                info!("shutdown acknowledged, exiting");
-                return Ok(());
+                    .await
+                    .context("MCP response channel closed")?;
+                continue;
             }
 
             let mgr_h = Arc::clone(&manager);
             let tx_h = resp_tx.clone();
-            tokio::spawn(async move {
+            handlers.spawn(async move {
                 let resp = handle_request(&mgr_h, req).await;
                 if tx_h.send(resp).await.is_err() {
                     debug!("aggregator writer channel closed; dropping response");
@@ -156,9 +167,8 @@ pub async fn run() -> Result<()> {
     }
     .await;
 
-    // Drop our sender so the writer drains in-flight handlers and exits.
-    drop(resp_tx);
-    let _ = writer_task.await;
+    handlers.abort_all();
+    while handlers.join_next().await.is_some() {}
 
     // Drain server connections outside any lock. Take ownership of the running
     // map under a brief write guard, then await cancellation after the guard
@@ -168,6 +178,18 @@ pub async fn run() -> Result<()> {
         mgr.drain_running()
     };
     drain_fut.await;
+
+    // Closing is acknowledged after requests and server connections are drained.
+    if let Some(id) = shutdown_id {
+        let _ = resp_tx
+            .send(AggregatorResponse {
+                id,
+                body: AggregatorResult::Ok { ok: true },
+            })
+            .await;
+    }
+    drop(resp_tx);
+    let _ = writer_task.await;
 
     reader_result
 }
@@ -354,7 +376,7 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
 
             // Build and initialize the replacement manager off the lock,
             // then swap it in under a brief write guard.
-            let mut new_mgr = McpServerManager::new(servers, reqwest::Client::new());
+            let mut new_mgr = manager.read().expect("manager rwlock poisoned").replacement(servers);
             if let Err(e) = new_mgr.initialize_all().await {
                 warn!(error = %e, "some servers failed during refresh");
             }
