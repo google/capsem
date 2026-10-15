@@ -28,6 +28,24 @@ fn google_key_prefix_is_redacted() {
 }
 
 #[test]
+fn google_ya29_oauth_token_is_redacted() {
+    for token in [
+        "ya29.a0AfH6SMB_example_vertex_oauth_access_token_123456",
+        "ya29.c.c0ASRK0Ga_service_account_metadata_token_example_12345",
+        "ya29.12345678901234567890",
+    ] {
+        let line = format!("gcloud auth print-access-token -> {token}");
+        let r = redact_line(&line);
+        assert!(r.contains("<redacted-key>"), "{token} was not redacted: {r}");
+        assert!(!r.contains(token), "{token} leaked: {r}");
+    }
+
+    let short_19_tail = "ya29.1234567890123456789";
+    let line = format!("short token {short_19_tail} stays untouched");
+    assert_eq!(redact_line(&line), line);
+}
+
+#[test]
 fn slack_xoxb_token_is_redacted() {
     let token = format!("{}{}", "xox", "b-1234567890-aBcDeFgHiJkLmNoPqRsTuVwX");
     let line = format!("Slack token={token}");

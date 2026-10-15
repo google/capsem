@@ -738,7 +738,7 @@ fn maybe_build_model_call_with_hints(
     }
 
     let timestamp = SystemTime::now();
-    let estimated_cost_usd = pricing.estimate_cost_at(
+    let mut estimated_cost_usd = pricing.estimate_cost_at(
         provider.as_str(),
         effective_model.as_deref(),
         input_tokens,
@@ -746,6 +746,16 @@ fn maybe_build_model_call_with_hints(
         &usage_details,
         timestamp,
     );
+    if estimated_cost_usd.is_none() && protocol.as_str() != provider.as_str() {
+        estimated_cost_usd = pricing.estimate_cost_at(
+            protocol.as_str(),
+            effective_model.as_deref(),
+            input_tokens,
+            output_tokens,
+            &usage_details,
+            timestamp,
+        );
+    }
 
     // Trace correlation: tool_response IDs index into the live
     // trace map; tool_call IDs register new pending entries; a

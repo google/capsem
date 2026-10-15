@@ -186,7 +186,9 @@ fn host_pattern_matches(pattern: &str, host: &str) -> bool {
     if let Some(suffix) = pattern.strip_prefix('*') {
         return (suffix.starts_with('.') || suffix.starts_with('-'))
             && suffix.len() > 1
-            && host.strip_suffix(suffix).is_some_and(|prefix| !prefix.is_empty());
+            && host.strip_suffix(suffix).is_some_and(|prefix| {
+                !prefix.is_empty() && (!suffix.starts_with('-') || !prefix.contains('.'))
+            });
     }
     false
 }

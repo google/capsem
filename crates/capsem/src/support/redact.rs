@@ -85,15 +85,17 @@ fn bearer_re() -> ByteRegex {
 }
 
 fn api_key_re() -> ByteRegex {
-    // sk- (Anthropic / OpenAI), AIza (Google), xox[baprs]- (Slack),
-    // gh[pousr]_ (GitHub personal/OAuth/user/server/refresh tokens -- the
-    // module already treats `github_token` as a secret key name, so a bare
-    // one in a log line has to go too).
+    // sk- (Anthropic / OpenAI), AIza / ya29. (Google API keys and OAuth
+    // access tokens), xox[baprs]- (Slack), gh[pousr]_ (GitHub personal/
+    // OAuth/user/server/refresh tokens -- the module already treats
+    // `github_token` as a secret key name, so a bare one in a log line
+    // has to go too).
     // 20+ char tail is the conservative threshold to avoid eating
     // shorter unrelated strings.
     ByteRegex::new(concat!(
         "(sk-[A-Za-z0-9_\\-]{20,}",
         "|AIza[A-Za-z0-9_\\-]{20,}",
+        "|ya29\\.[A-Za-z0-9_.\\-]{20,}",
         "|xox[baprs]-[A-Za-z0-9_\\-]+",
         "|gh[pousr]_[A-Za-z0-9]{20,})"
     ))

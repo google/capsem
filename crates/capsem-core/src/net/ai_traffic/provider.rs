@@ -69,7 +69,7 @@ impl Provider for OllamaProvider {
 /// Determine the provider from the inbound request path.
 /// Returns None for paths that don't match any known provider API.
 pub fn route_provider(path: &str) -> Option<(ModelProtocol, Box<dyn Provider>)> {
-    if path.starts_with("/v1/messages") {
+    if path.starts_with("/v1/messages") || is_vertex_anthropic_path(path) {
         Some((
             ModelProtocol::Anthropic,
             Box::new(crate::net::interpreters::anthropic_interpreter::AnthropicProvider),
@@ -79,7 +79,10 @@ pub fn route_provider(path: &str) -> Option<(ModelProtocol, Box<dyn Provider>)> 
             ModelProtocol::Google,
             Box::new(crate::net::interpreters::google_interpreter::GoogleProvider),
         ))
-    } else if path.starts_with("/v1/responses") || path.starts_with("/v1/chat/completions") {
+    } else if path.starts_with("/v1/responses")
+        || path.starts_with("/v1/chat/completions")
+        || is_vertex_openai_path(path)
+    {
         Some((
             ModelProtocol::OpenAi,
             Box::new(crate::net::interpreters::openai_interpreter::OpenAiProvider),
@@ -89,6 +92,20 @@ pub fn route_provider(path: &str) -> Option<(ModelProtocol, Box<dyn Provider>)> 
     } else {
         None
     }
+}
+
+pub fn is_vertex_anthropic_path(path: &str) -> bool {
+    let path_only = path.split_once('?').map_or(path, |(p, _)| p);
+    (path_only.starts_with("/v1/") || path_only.starts_with("/v1beta1/"))
+        && path_only.contains("/publishers/anthropic/models/")
+        && (path_only.ends_with(":rawPredict") || path_only.ends_with(":streamRawPredict"))
+}
+
+pub fn is_vertex_openai_path(path: &str) -> bool {
+    let path_only = path.split_once('?').map_or(path, |(p, _)| p);
+    (path_only.starts_with("/v1/") || path_only.starts_with("/v1beta1/"))
+        && path_only.contains("/projects/")
+        && path_only.ends_with("/endpoints/openapi/chat/completions")
 }
 
 fn is_vertex_gemini_path(path: &str) -> bool {

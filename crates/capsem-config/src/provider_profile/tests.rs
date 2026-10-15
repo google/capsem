@@ -138,6 +138,7 @@ fn provider_defaults_build_settings_defined_endpoint_registry() {
     let google = registry.get("google").expect("google endpoint");
     assert!(google.matches_host("aiplatform.googleapis.com"));
     assert!(google.matches_host("us-central1-aiplatform.googleapis.com"));
+    assert!(!google.matches_host("a.b-aiplatform.googleapis.com"));
     assert!(!google.matches_host("-aiplatform.googleapis.com"));
     assert!(!google.matches_host("storage.googleapis.com"));
 }
@@ -158,6 +159,8 @@ fn wildcard_endpoint_targets_match_subdomain_and_hyphen_prefixes() {
     };
     assert!(endpoint.matches_host("sub.aiplatform.googleapis.com"));
     assert!(endpoint.matches_host("europe-west4-aiplatform.googleapis.com"));
+    assert!(!endpoint.matches_host("a.b-aiplatform.googleapis.com"));
+    assert!(!endpoint.matches_host(".b-aiplatform.googleapis.com"));
     assert!(endpoint.matches_target("sub.aiplatform.googleapis.com", 443));
     assert!(endpoint.matches_target("europe-west4-aiplatform.googleapis.com", 443));
     assert!(!endpoint.matches_target("europe-west4-aiplatform.googleapis.com", 80));
