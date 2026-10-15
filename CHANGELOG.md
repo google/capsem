@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Documentation preview keeps its content cache separate from the production
+  holding build, preserving SDK page rendering after a server restart.
+
 - VM-owner help and version commands work without a running service or an
   inherited worker grant.
 

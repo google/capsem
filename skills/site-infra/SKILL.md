@@ -135,8 +135,10 @@ route while every source file remains checked in.
 ## Dev workflow
 
 Verify `/` and the header-logo link as well as changed document routes in the
-rendered preview. The preview root redirects to Installation while Intro is
-TODO; do not create an unapproved landing page to repair root navigation.
+rendered preview, including after a dev-server restart. The completed preview
+root redirects to Introduction; do not create another landing page to repair
+root navigation. Keep preview and holding-build content caches separate so
+switching configurations cannot erase MDX registration while retaining entries.
 
 ```bash
 uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds 120 -- pnpm --dir web/docs run dev

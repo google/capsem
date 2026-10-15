@@ -20,6 +20,7 @@ function localDocsLinks() {
 export default defineConfig({
   site: 'https://docs.capsem.org',
   srcDir: './preview',
+  cacheDir: './.astro/preview-cache',
   redirects: {
     '/': '/getting-started/intro/',
     '/guides/writing-access-rules/': '/guides/enterprise/enforce-security-policy/',
