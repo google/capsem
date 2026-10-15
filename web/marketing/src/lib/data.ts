@@ -53,14 +53,17 @@ export const AGENTS = {
   title: "Your favorite AIs.",
   description: "Switch anytime.",
   names: ["Claude Code", "Codex", "Gemini CLI", "Antigravity", "Ollama"],
-  toolsTitle: "Tools included",
-  tools: ["Python", "Node.js", "Git", "GitHub CLI", "uv", "tmux", "curl", "NumPy", "pandas", "SciPy", "scikit-learn", "Matplotlib", "pytest", "FastMCP"],
-  mcpTitle: "Built-in MCP", mcp: ["fetch_http", "grep_http", "http_headers"],
+  toolsTitle: "Everything you need, out of the box.",
+  groups: [
+    { name: "Code", items: ["Python", "Node.js", "NumPy", "pandas", "SciPy", "scikit-learn", "Matplotlib", "pytest"] },
+    { name: "Tools", items: ["Git", "GitHub CLI", "uv", "tmux", "curl", "FastMCP"] },
+    { name: "MCP tools", items: ["fetch_http", "grep_http", "http_headers"] },
+  ],
   custom: "Make it yours", detail: "Your tools. Your MCP servers. Your own images.", link: "Build your environment",
 } as const;
 export const SPEED = {
   title: "Built to help you move fast.",
-  description: "Lightweight VMs. Native virtualization. More time for your work.",
+  description: "Nothing slows you down.",
   stats: [
     { value: "1.13", unit: "s", label: "Provision a VM" },
     { value: "28.5", unit: "ms", label: "Execute a command" },
@@ -76,8 +79,8 @@ export const SPEED = {
 export const SECURITY = {
   title: "Secure by default", subtitle: "so you can focus on your goal.",
   description: "Isolation, protected credentials, and checks on what goes in and out.", link: "Explore the security architecture",
-  diagram: "An isolated agent workspace connects to models and tools through Capsem’s security engine. Credentials stay outside the VM. Rules, privacy scanning, logging and reporting apply at the security boundary.",
-  workspace: "Your workspace", agent: "AI agent", tools: "Tools & files", isolation: "Isolated Linux VM", airgap: "No direct network access",
+  diagram: "An isolated agent workspace, hosted in a low-privilege process, connects to models and tools through Capsem’s security engine. Credentials stay outside the VM. Rules, privacy scanning, logging and reporting apply at the security boundary.",
+  process: "Low-privilege process", workspace: "Your workspace", agent: "AI agent", tools: "Tools & files", isolation: "Isolated Linux VM", airgap: "No direct network access",
   engine: "Security engine", controls: ["Access rules", "Privacy scanning", "Credential interposition"],
   credentials: "Credentials", outside: "Kept outside the VM", destinations: ["AI models", "MCP tools", "Web & APIs"],
   logging: "Logging & reporting", trail: "Activity. Decisions. Evidence.",

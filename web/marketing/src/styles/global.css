@@ -10,6 +10,13 @@
   --color-line: #e5e7eb;
   --color-tint: #f9fafb;
   --color-accent: #3b82f6;
+  --color-accent-text: #2563eb;
+  --color-accent-border: #bfdbfe;
+  --color-secondary-soft: #f5f3ff;
+  --color-secondary-border: #ddd6fe;
+  --color-integration: #4338ca;
+  --color-integration-soft: #eef2ff;
+  --color-integration-border: #c7d2fe;
   --color-accent-soft: #eaf0fc;
   --color-negative: #7c3aed;
   --color-negative-soft: #f3edf8;
@@ -306,3 +313,20 @@ h1 > span { background: linear-gradient(135deg, var(--color-accent), var(--color
 @media (max-width: 520px) { .included-tools { grid-template-columns: 1fr; gap: 12px; } .codex-terminal { font-size: 9px; padding-inline: 12px; } .codex-conversation { min-height: 205px; } }
 
 @media (max-width: 520px) { h1 { font-size: 38px; letter-spacing: -1.7px; } }
+.included-tools h3:first-child { grid-column: 1 / -1; font-size: 18px; }
+.included-tools h3:first-child + ul { grid-column: 1 / -1; }
+
+.included-tools { display: block; }
+.included-tools > h3 { margin-bottom: 22px; }
+.tool-groups { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 20px; }
+.tool-group { --group-accent: var(--color-accent-text); --group-surface: var(--color-accent-soft); --group-border: var(--color-accent-border); padding: 20px; border: 1px solid var(--group-border); border-radius: 12px; background: var(--group-surface); }
+.tool-group-1 { --group-accent: var(--color-negative); --group-surface: var(--color-secondary-soft); --group-border: var(--color-secondary-border); }
+.tool-group-2 { --group-accent: var(--color-integration); --group-surface: var(--color-integration-soft); --group-border: var(--color-integration-border); }
+.tool-group h4 { margin: 0 0 17px; display: flex; align-items: center; gap: 10px; color: var(--group-accent); font-size: 14px; font-weight: 600; }
+.tool-group h4 span { font: 16px ui-monospace, monospace; }
+.tool-group li { background: var(--color-paper); border-color: var(--group-border); color: var(--group-accent); }
+@media (max-width: 760px) { .tool-groups { grid-template-columns: 1fr; gap: 12px; } }
+
+.security-section .section-heading h2 { color: var(--color-accent); }
+
+.process-boundary { fill: none; stroke: var(--color-accent); stroke-width: 1.2; }

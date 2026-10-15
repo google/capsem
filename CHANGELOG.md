@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Grouped included marketing tools into Code, Tools, and MCP tools with brand colors.
+
 - Added a Codex terminal illustration in the Capsem shell and a list of bundled
   tools and MCP tools to the marketing homepage.
 

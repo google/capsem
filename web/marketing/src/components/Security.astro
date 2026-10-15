@@ -7,6 +7,8 @@ import { SECURITY as S, DOCS } from "../lib/data";
     <svg class="security-diagram" viewBox="0 0 1040 390" role="img" aria-labelledby="security-diagram-title">
       <title id="security-diagram-title">{S.diagram}</title>
       <defs><marker id="flow-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="currentColor" stroke-width="1.3"/></marker></defs>
+      <rect class="process-boundary" x="10" y="43" width="296" height="292" rx="20" />
+      <text class="diagram-note" x="158" y="321" text-anchor="middle">{S.process}</text>
       <rect class="boundary" x="28" y="61" width="260" height="238" rx="18" />
       <text class="diagram-kicker" x="52" y="91">{S.isolation}</text>
       <rect class="diagram-box" x="47" y="111" width="222" height="128" rx="12" />
@@ -28,7 +30,7 @@ import { SECURITY as S, DOCS } from "../lib/data";
       <rect class="log-box" x="390" y="319" width="270" height="58" rx="10" />
       <text class="diagram-body" x="525" y="342" text-anchor="middle">{S.logging}</text><text class="diagram-muted" x="525" y="363" text-anchor="middle">{S.trail}</text>
     </svg>
-    <div class="security-mobile" aria-hidden="true"><div><small>{S.isolation}</small><strong>{S.workspace}</strong><span>{S.airgap}</span></div><span class="down-arrow">↓</span><div class="mobile-engine"><strong>{S.engine}</strong>{S.controls.map(label => <span>{label}</span>)}<small>{S.credentials} · {S.outside}</small></div><span class="down-arrow">↓</span><div><strong>{S.destinations.join(" · ")}</strong><span>{S.logging}</span></div></div>
+    <div class="security-mobile" aria-hidden="true"><div><small>{S.process}</small><small>{S.isolation}</small><strong>{S.workspace}</strong><span>{S.airgap}</span></div><span class="down-arrow">↓</span><div class="mobile-engine"><strong>{S.engine}</strong>{S.controls.map(label => <span>{label}</span>)}<small>{S.credentials} · {S.outside}</small></div><span class="down-arrow">↓</span><div><strong>{S.destinations.join(" · ")}</strong><span>{S.logging}</span></div></div>
   </div>
   <a class="text-link" href={DOCS.security}>{S.link}<span aria-hidden="true">↗</span></a>
 </section>
