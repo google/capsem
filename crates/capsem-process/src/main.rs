@@ -277,6 +277,9 @@ fn main() -> Result<()> {
     // SAFETY: process entry precedes argument parsing, telemetry, descriptor
     // owners and runtime threads. Broker grants will be named here explicitly.
     unsafe { capsem_foundation::unix::fd::close_inherited_descriptors()? };
+    // Clap handles help/version without service-issued runtime capabilities.
+    // Normal startup still requires its upstream grant before creating owners.
+    let args = Args::parse();
     ensure_open_file_limit(NETWORK_PROCESS_OPEN_FILE_LIMIT)?;
     let upstream_socket =
         adopt_inherited(std::io::stdin().as_fd()).context("adopt inherited upstream grant channel")?;
@@ -285,7 +288,6 @@ fn main() -> Result<()> {
         sink: capsem_foundation::telemetry::LogSink::Stderr,
         default_filter: "info",
     })?;
-    let args = Args::parse();
     let controller = capsem_foundation::unix::peer::PeerIdentity {
         pid: capsem_foundation::unix::process::parent_process_id().context("missing coordinator parent")?,
         uid: capsem_foundation::unix::process::current_uid(),

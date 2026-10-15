@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- VM-owner help and version commands work without a running service or an
+  inherited worker grant.
+
 - Proxy credential operations yield the I/O runtime while awaiting the
   coordinator, keeping concurrent HTTP and WebSocket traffic responsive.
 
