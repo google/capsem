@@ -22,6 +22,8 @@ use capsem_proto::upstream_grant::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+mod mcp;
+
 const COMMAND_CAPACITY: usize = 64;
 // The coordinator permits a TCP dial to take ten seconds. Leave room for its
 // response framing while still bounding a wedged generation channel.
@@ -35,6 +37,9 @@ enum Command {
         role: McpHttpRole,
         descriptor: OwnedFd,
         reply: oneshot::Sender<Result<(), String>>,
+    },
+    OpenMcpAggregator {
+        reply: oneshot::Sender<Result<UnixStream, String>>,
     },
     OpenLoopbackListener {
         port: u16,
@@ -105,22 +110,6 @@ pub struct UpstreamGrantClient {
 }
 
 impl UpstreamGrantClient {
-    pub async fn attach_mcp_http(&self, role: McpHttpRole, descriptor: OwnedFd) -> Result<()> {
-        let (reply, result) = oneshot::channel();
-        self.commands
-            .send(Command::AttachMcpHttp {
-                role,
-                descriptor,
-                reply,
-            })
-            .await
-            .map_err(|_| anyhow!("upstream grant channel is closed"))?;
-        result
-            .await
-            .map_err(|_| anyhow!("upstream grant channel stopped"))?
-            .map_err(anyhow::Error::msg)
-    }
-
     pub fn start(socket: UnixStream) -> io::Result<Self> {
         let sender = WireSender::new(socket.try_clone()?)?;
         let receiver = WireReceiver::new(socket.try_clone()?)?;
@@ -356,13 +345,14 @@ async fn dispatch(
     command: Command,
 ) -> Result<(), String> {
     match command {
+        Command::OpenMcpAggregator { reply } => finish(reply, mcp::open_aggregator(sender, receiver, request_id).await),
         Command::AttachMcpHttp {
             role,
             descriptor,
             reply,
         } => finish(
             reply,
-            attach_mcp_http(sender, receiver, request_id, role, descriptor).await,
+            mcp::attach_http(sender, receiver, request_id, role, descriptor).await,
         ),
         Command::OpenLoopbackListener { port, reply } => finish(
             reply,
@@ -526,35 +516,6 @@ async fn attach_proxy_mcp(
         } if response_id == request_id => Ok(Err(format!("proxy MCP handoff denied: {reason:?}"))),
         response => Err(format!(
             "unexpected proxy MCP response for request {request_id}: {response:?}"
-        )),
-    }
-}
-
-async fn attach_mcp_http(
-    sender: &WireSender,
-    receiver: &WireReceiver,
-    request_id: u64,
-    role: McpHttpRole,
-    descriptor: OwnedFd,
-) -> Result<Result<(), String>, String> {
-    let bytes = encode_upstream_grant_request(&UpstreamGrantRequest::AttachMcpHttp { request_id, role })
-        .map_err(|error| format!("encode MCP HTTP handoff: {error:#}"))?;
-    tokio::time::timeout(WIRE_TIMEOUT, sender.send(&bytes, &[descriptor.as_raw_fd()]))
-        .await
-        .map_err(|_| "send MCP HTTP handoff timed out".to_string())?
-        .map_err(|error| format!("send MCP HTTP handoff: {error}"))?;
-    drop(descriptor);
-    let (response, _) = receive_response(receiver).await?;
-    match response {
-        UpstreamGrantResponse::McpHttpAdopted {
-            request_id: response_id,
-        } if response_id == request_id => Ok(Ok(())),
-        UpstreamGrantResponse::Denied {
-            request_id: response_id,
-            reason,
-        } if response_id == request_id => Ok(Err(format!("MCP HTTP handoff denied: {reason:?}"))),
-        response => Err(format!(
-            "unexpected MCP HTTP response for request {request_id}: {response:?}"
         )),
     }
 }

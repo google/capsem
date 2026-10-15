@@ -18,6 +18,101 @@ const POLICY_A: &str = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const POLICY_B: &str = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 #[tokio::test]
+async fn mcp_aggregator_grant_is_connected_and_a_denial_does_not_replay_the_request() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let broker_task = tokio::spawn(async move {
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenMcpAggregator { request_id: 1 }
+        );
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::Denied {
+                request_id: 1,
+                reason: UpstreamGrantDenial::NotConfigured,
+            },
+            None,
+        )
+        .await;
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenMcpAggregator { request_id: 2 }
+        );
+        let (descriptor, mut peer) = UnixStream::pair().unwrap();
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::McpAggregatorGranted { request_id: 2 },
+            Some(descriptor.as_raw_fd()),
+        )
+        .await;
+        peer.write_all(b"connected RPC").unwrap();
+    });
+    assert!(client.open_mcp_aggregator().await.is_err());
+    let stream = client.open_mcp_aggregator().await.unwrap();
+    stream.set_nonblocking(true).unwrap();
+    let mut stream = tokio::net::UnixStream::from_std(stream).unwrap();
+    let mut bytes = [0; 13];
+    tokio::time::timeout(Duration::from_secs(1), stream.read_exact(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&bytes, b"connected RPC");
+    broker_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_aggregator_wrong_response_identity_closes_the_generation_channel() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let broker_task = tokio::spawn(async move {
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenMcpAggregator { request_id: 1 }
+        );
+        let (descriptor, _peer) = UnixStream::pair().unwrap();
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::McpAggregatorGranted { request_id: 2 },
+            Some(descriptor.as_raw_fd()),
+        )
+        .await;
+    });
+    assert!(client.open_mcp_aggregator().await.is_err());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), client.open_mcp_aggregator())
+            .await
+            .unwrap()
+            .is_err()
+    );
+    broker_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_aggregator_refuses_a_non_channel_descriptor() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let broker_task = tokio::spawn(async move {
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenMcpAggregator { request_id: 1 }
+        );
+        let file = tempfile::tempfile().unwrap();
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::McpAggregatorGranted { request_id: 1 },
+            Some(file.as_raw_fd()),
+        )
+        .await;
+    });
+    assert!(client.open_mcp_aggregator().await.is_err());
+    broker_task.await.unwrap();
+}
+
+#[tokio::test]
 async fn loopback_listener_is_adopted_only_when_its_descriptor_matches_the_grant() {
     let (broker, worker) = UnixStream::pair().unwrap();
     let client = UpstreamGrantClient::start(worker).unwrap();
