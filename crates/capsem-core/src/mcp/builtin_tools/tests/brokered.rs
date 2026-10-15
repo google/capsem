@@ -1,5 +1,5 @@
 use super::*;
-use crate::mcp::http_transport::BrokerHttpClient;
+use capsem_mcp_transport::http_transport::BrokerHttpClient;
 use capsem_proto::mcp_worker::MCP_ADMISSION_HEADER;
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};

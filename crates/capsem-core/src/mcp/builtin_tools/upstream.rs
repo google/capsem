@@ -12,7 +12,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use super::{authorize_upstream, parse_tool_url, SecurityEnforcementDecision, SecurityPluginConfig, SecurityRuleSet};
-use crate::mcp::http_transport::BrokerHttpClient;
+use capsem_mcp_transport::http_transport::BrokerHttpClient;
 use capsem_proto::mcp_worker::{McpHttpAdmission, MCP_ADMISSION_HEADER};
 use reqwest::Client;
 use std::collections::BTreeMap;
