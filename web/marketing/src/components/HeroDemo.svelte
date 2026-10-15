@@ -18,6 +18,7 @@
   let reducedMotion = $state(false);
   let insert = $state<"build" | "work" | null>(null);
   let codex = $state(false);
+  let input = $state<string | null>(null);
   let position = $state(0);
   let activeChapter = $state(0);
   let finished = $state(false);
@@ -64,9 +65,9 @@
         if (step.insert !== undefined) insert = step.insert;
         if (step.codex !== undefined) codex = step.codex;
         if (step.chapter !== undefined) activeChapter = step.chapter;
-      }, () => { paused = true; finished = true; }, (milliseconds) => { position = milliseconds; });
+      }, () => { paused = true; finished = true; }, (milliseconds) => { position = milliseconds; }, (text) => { input = text; });
       const resetView = () => {
-        title = demo.shellTitle; preview = false; insert = null; codex = false;
+        title = demo.shellTitle; preview = false; insert = null; codex = false; input = null;
         activeChapter = 0; finished = false;
       };
       restart = () => {
@@ -123,9 +124,16 @@
     <div class="demo-terminal" class:is-codex={codex} bind:this={terminalElement}></div>
     {#if !mounted}<pre class="demo-fallback">$ {HERO_TERMINAL_SCRIPT[0].type}</pre>{/if}
     {#if codex}
+      <div class="demo-codex-header" aria-hidden="true">
+        <strong><span>&gt;_</span> {demo.codex.name}</strong>
+        <dl>
+          <dt>{demo.codex.modelLabel}</dt><dd>{demo.codex.model} <span>{demo.codex.changeModel}</span></dd>
+          <dt>{demo.codex.directoryLabel}</dt><dd>{demo.codex.directory}</dd>
+        </dl>
+      </div>
       <div class="demo-codex-composer" aria-hidden="true">
-        <div><span>›</span><span>{demo.codex.placeholder}</span></div>
-        <footer><span>{demo.codex.status}</span><span>{demo.codex.shortcuts}</span></footer>
+        <div><span>›</span><span class:demo-input-active={input !== null}>{input ?? demo.codex.placeholder}{#if input !== null}<i class:paused aria-hidden="true"></i>{/if}</span></div>
+        <footer>{demo.codex.context}</footer>
       </div>
     {/if}
     {#if insert}

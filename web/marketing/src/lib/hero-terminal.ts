@@ -10,6 +10,7 @@ export interface TerminalStep {
   chapter?: number;
   insert?: "build" | "work" | null;
   codex?: boolean;
+  input?: boolean;
 }
 
 export const stepDuration = (step: TerminalStep) =>
@@ -22,6 +23,7 @@ export function terminalPlayback(
   onStep: (step: TerminalStep) => void,
   onEnd: () => void,
   onProgress: (milliseconds: number) => void = () => {},
+  onInput: (text: string | null) => void = () => {},
 ) {
   const starts: number[] = [];
   let duration = 0;
@@ -37,6 +39,7 @@ export function terminalPlayback(
       entered = false;
       terminal.reset();
       onProgress(0);
+      onInput(null);
     },
     seek(target: number) {
       player.reset();
@@ -44,7 +47,7 @@ export function terminalPlayback(
       for (const step of steps.slice(0, index)) {
         if (step.clear) terminal.write("\x1b[2J\x1b[H");
         if (step.write) terminal.write(step.write);
-        if (step.type) terminal.write(step.type);
+        if (step.type && !step.input) terminal.write(step.type);
         onStep(step);
       }
       // Enter the selected chapter immediately, even while paused.
@@ -57,6 +60,7 @@ export function terminalPlayback(
         if (step.clear) terminal.write("\x1b[2J\x1b[H");
         if (step.write) terminal.write(step.write);
         onStep(step);
+        onInput(step.input ? "" : null);
         entered = true;
       }
       elapsed += delta;
@@ -65,7 +69,8 @@ export function terminalPlayback(
       // Type through the terminal buffer so wrapping and the cursor stay native.
       const count = Math.min(characters.length, Math.floor(elapsed / 42));
       if (count > written) {
-        terminal.write(characters.slice(written, count).join(""));
+        if (step.input) onInput(characters.slice(0, count).join(""));
+        else terminal.write(characters.slice(written, count).join(""));
         written = count;
       }
       if (elapsed >= stepDuration(step)) {
