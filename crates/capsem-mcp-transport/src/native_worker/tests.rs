@@ -86,6 +86,15 @@ async fn builtin_spawn_capability_returns_only_a_connected_peer() {
             )
             .await
             .unwrap();
+        let receipt = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("client must acknowledge socket adoption")
+            .unwrap();
+        assert!(receipt.fds.is_empty());
+        assert_eq!(
+            decode_spawn_record(&receipt.bytes).unwrap(),
+            McpSpawnRecord::Adopted { request_id: 1 }
+        );
     });
     let client = McpSpawnClient::new(worker).unwrap();
     let peer = client.builtin(0).await.unwrap();

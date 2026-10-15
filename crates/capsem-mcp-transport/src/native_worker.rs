@@ -198,6 +198,11 @@ async fn request_builtin(wire: &mut SpawnWire, peer_index: u32) -> Result<UnixSt
     );
     let descriptor: OwnedFd = frame.fds.into_iter().next().context("MCP spawn missing channel")?;
     fd::validate_connected_stream(descriptor.as_fd())?;
+    // Keep our owned socket alive before releasing the sender's copy. Darwin
+    // may collect sockets referenced only by queued SCM_RIGHTS messages.
+    wire.sender
+        .send(&encode_spawn_record(McpSpawnRecord::Adopted { request_id })?, &[])
+        .await?;
     Ok(UnixStream::from(descriptor))
 }
 
