@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import tempfile
+import urllib.error
 from pathlib import Path
 
 from capsem_builder import crypto as hashlib
@@ -147,7 +148,19 @@ def prepare(layout: Path, repository: str, *, context=None) -> None:
     client = _Registry(context)
     token = _token(client, registry, name)
     base = f"https://{registry}/v2/{name}"
-    with client.open(f"{base}/referrers/{subject(layout)['digest']}", token) as response:
+    digest = subject(layout)["digest"]
+    try:
+        response = client.open(f"{base}/referrers/{digest}", token)
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+        # OCI's fallback index is required by registries without the referrers API.
+        response = client.open(
+            f"{base}/manifests/{digest.replace(':', '-', 1)}",
+            token,
+            "application/vnd.oci.image.index.v1+json",
+        )
+    with response:
         data = response.read(4 * 1024 * 1024 + 1)
         if len(data) > 4 * 1024 * 1024:
             raise ValueError("published prepared-root referrers exceed the metadata bound")

@@ -113,7 +113,10 @@ def test_the_registry_serves_the_catalog_and_subject_bound_root(tmp_path):
 
 
 @pytest.mark.parametrize("corrupt", [False, True])
-def test_prefetch_retains_a_verified_published_root_before_offline_tests(tmp_path, corrupt):
+@pytest.mark.parametrize("referrers_api", [True, False])
+def test_prefetch_retains_a_verified_published_root_before_offline_tests(
+    tmp_path, corrupt, referrers_api
+):
     import ssl
 
     from tests.fixtures.oci.published_root import prepare, ready, stage
@@ -129,7 +132,11 @@ def test_prefetch_retains_a_verified_published_root_before_offline_tests(tmp_pat
         json.dumps({"metadata": {"component": {"name": "fixture", "version": subject}}})
     )
     stage(source, output)
-    with layout_registry(tmp_path, source, "fixture") as (image, certificate, _):
+    with layout_registry(tmp_path, source, "fixture", referrers_api=referrers_api) as (
+        image,
+        certificate,
+        requests,
+    ):
         if corrupt:
             ready(source)[1].write_bytes(b"corrupt filesystem!")
             with pytest.raises(ValueError, match="bytes"):
@@ -146,3 +153,33 @@ def test_prefetch_retains_a_verified_published_root_before_offline_tests(tmp_pat
                 context=ssl.create_default_context(cafile=str(certificate)),
             )
             assert ready(target)[1].read_bytes() == b"prepared filesystem"
+        fallback = f"/v2/library/fixture/manifests/{subject.replace(':', '-', 1)}"
+        assert (fallback in requests) is not referrers_api
+
+
+@pytest.mark.parametrize("status", [401, 403, 500])
+def test_prefetch_does_not_fall_back_after_authentication_or_server_failure(
+    tmp_path, monkeypatch, status
+):
+    import urllib.error
+
+    from tests.fixtures.oci import pinned_image, published_root
+
+    layout, subject, _ = _layout(tmp_path)
+    calls = []
+
+    class Client:
+        def __init__(self, context):
+            pass
+
+        def open(self, url, token):
+            calls.append(url)
+            raise urllib.error.HTTPError(url, status, "refused", {}, None)
+
+    monkeypatch.setattr(pinned_image, "_Registry", Client)
+    monkeypatch.setattr(pinned_image, "_token", lambda *args: None)
+    with pytest.raises(urllib.error.HTTPError) as error:
+        published_root.prepare(layout, "registry.example/fixture")
+    assert error.value.code == status
+    assert calls == [f"https://registry.example/v2/fixture/referrers/{subject}"]
+    assert not (layout / "rootfs-v2").exists()

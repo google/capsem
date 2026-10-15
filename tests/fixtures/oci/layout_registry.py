@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 @contextlib.contextmanager
-def layout_registry(directory, layout, image):
+def layout_registry(directory, layout, image, *, referrers_api=True):
     """Serve the single-platform image in an OCI layout (`docker buildx build
     --output type=oci,tar=false`) under `library/<image>`."""
     from tests.fixtures.oci.registry import publish_catalog, serve
@@ -31,7 +31,12 @@ def layout_registry(directory, layout, image):
             path = layout / "rootfs-v2/blobs/sha256" / blob["digest"].removeprefix("sha256:")
             route = "manifests" if blob == artifact else "blobs"
             artifacts[f"/v2/library/{image}/{route}/{blob['digest']}"] = (path, blob["mediaType"])
-        artifacts[f"/v2/library/{image}/referrers/{entry['digest']}"] = (
+        referrers_path = (
+            f"referrers/{entry['digest']}"
+            if referrers_api
+            else f"manifests/{entry['digest'].replace(':', '-', 1)}"
+        )
+        artifacts[f"/v2/library/{image}/{referrers_path}"] = (
             json.dumps(
                 {
                     "schemaVersion": 2,

@@ -22,9 +22,7 @@ MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 def test_direct_launcher_can_import_repository_fixtures(tmp_path):
     script = Path(__file__).with_name("pinned_image.py")
     probe = (
-        "import runpy; "
-        f"runpy.run_path({str(script)!r}); "
-        "import tests.fixtures.oci.published_root"
+        f"import runpy; runpy.run_path({str(script)!r}); import tests.fixtures.oci.published_root"
     )
 
     launched = subprocess.run(
@@ -38,11 +36,20 @@ def test_direct_launcher_can_import_repository_fixtures(tmp_path):
     assert launched.returncode == 0, launched.stderr
 
 
-def test_private_ghcr_pin_uses_the_existing_github_login(monkeypatch):
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize(
+    "registry,realm,allowed",
+    [
+        ("ghcr.io", "https://ghcr.io/token", True),
+        ("registry.example", "https://ghcr.io/token", False),
+        ("ghcr.io", "https://other.example/token", False),
+    ],
+)
+def test_only_private_ghcr_uses_the_existing_github_login(
+    monkeypatch, status, registry, realm, allowed
+):
     challenge = Message()
-    challenge["WWW-Authenticate"] = (
-        'Bearer realm="https://ghcr.io/token",service="ghcr.io"'
-    )
+    challenge["WWW-Authenticate"] = f'Bearer realm="{realm}",service="{registry}"'
 
     class Client(pinned_image._Registry):
         def __init__(self):
@@ -50,15 +57,20 @@ def test_private_ghcr_pin_uses_the_existing_github_login(monkeypatch):
 
         def open(self, url, token=None, accept=None, basic=None):
             self.calls.append((url, basic))
-            if url == "https://ghcr.io/v2/":
+            if url == f"https://{registry}/v2/":
                 raise urllib.error.HTTPError(url, 401, "unauthorized", challenge, None)
             if basic is None:
-                raise urllib.error.HTTPError(url, 403, "private", Message(), None)
+                raise urllib.error.HTTPError(url, status, "private", Message(), None)
             return io.BytesIO(b'{"token":"registry-token"}')
 
     client = Client()
     monkeypatch.setattr(pinned_image, "github_token", lambda: "github-token")
 
+    if not allowed:
+        with pytest.raises(urllib.error.HTTPError):
+            pinned_image._token(client, registry, "google/capsem/dev")
+        assert all(basic is None for _, basic in client.calls)
+        return
     assert pinned_image._token(client, "ghcr.io", "google/capsem/dev") == "registry-token"
     assert client.calls[-1] == (
         "https://ghcr.io/token?service=ghcr.io&scope=repository%3Agoogle%2Fcapsem%2Fdev%3Apull",
@@ -75,9 +87,7 @@ def _layout(root, *, architecture="arm64", media=MANIFEST):
         blobs[digest] = data
         return {"mediaType": kind, "digest": digest, "size": len(data)}
 
-    config = blob(
-        json.dumps({"os": "linux", "architecture": architecture}).encode(), "config"
-    )
+    config = blob(json.dumps({"os": "linux", "architecture": architecture}).encode(), "config")
     layer = blob(b"layer bytes", "application/vnd.oci.image.layer.v1.tar+gzip")
     manifest = json.dumps(
         {"schemaVersion": 2, "mediaType": media, "config": config, "layers": [layer]}
@@ -88,9 +98,7 @@ def _layout(root, *, architecture="arm64", media=MANIFEST):
     for name, data in blobs.items():
         (layout / "blobs" / "sha256" / name.removeprefix("sha256:")).write_bytes(data)
     entry = {"mediaType": media, "digest": digest, "size": len(manifest)}
-    (layout / "index.json").write_text(
-        json.dumps({"schemaVersion": 2, "manifests": [entry]})
-    )
+    (layout / "index.json").write_text(json.dumps({"schemaVersion": 2, "manifests": [entry]}))
     return layout, digest, blobs
 
 
@@ -121,9 +129,7 @@ def test_anything_but_the_pinned_bytes_is_refused(tmp_path, defect):
 
 def test_an_index_is_not_a_pin(tmp_path):
     """A pin names one platform's manifest; an index could resolve to another."""
-    layout, digest, _ = _layout(
-        tmp_path, media="application/vnd.oci.image.index.v1+json"
-    )
+    layout, digest, _ = _layout(tmp_path, media="application/vnd.oci.image.index.v1+json")
     with pytest.raises(ValueError, match="not one platform"):
         debug_image.verify(layout, digest, "linux/arm64")
 
@@ -133,9 +139,7 @@ def test_an_unpinned_platform_names_what_is_pinned():
         debug_image.pinned("linux/s390x")
 
 
-@pytest.mark.parametrize(
-    "image", [debug_image, reference_image], ids=lambda image: image.section
-)
+@pytest.mark.parametrize("image", [debug_image, reference_image], ids=lambda image: image.section)
 def test_every_pin_is_a_manifest_digest_and_lands_in_its_own_entry(image):
     for platform, digest in image.settings().digests.items():
         assert image.pinned(platform) == digest
@@ -187,9 +191,7 @@ def test_a_pull_by_digest_keeps_the_exact_bytes(tmp_path):
 def test_a_registry_serving_other_bytes_is_refused_and_leaves_nothing(tmp_path):
     def lying(blobs):
         return lambda digest: (
-            b"not the layer"
-            if blobs.get(digest) == b"layer bytes"
-            else blobs.get(digest)
+            b"not the layer" if blobs.get(digest) == b"layer bytes" else blobs.get(digest)
         )
 
     with pytest.raises(ValueError, match="did not serve"):

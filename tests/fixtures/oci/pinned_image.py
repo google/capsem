@@ -150,8 +150,10 @@ def _token(client: _Registry, registry: str, name: str) -> str | None:
         response = client.open(token_url)
     except urllib.error.HTTPError as error:
         realm = urllib.parse.urlsplit(fields.get("realm", ""))
-        if error.code != 403 or registry != "ghcr.io" or realm != urllib.parse.urlsplit(
-            "https://ghcr.io/token"
+        if (
+            error.code not in (401, 403)
+            or registry != "ghcr.io"
+            or realm != urllib.parse.urlsplit("https://ghcr.io/token")
         ):
             raise
         credential = github_token()

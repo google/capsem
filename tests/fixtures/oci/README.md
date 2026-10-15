@@ -105,16 +105,16 @@ default admission policy admits it, and `.github/workflows/images.yaml` does
 not build it (`tests/images/test_image_ci.py` holds both).
 
 `config/gate.toml [functional.debug_image]` pins one image manifest digest
-per platform. `debug_image.py` keeps each pinned image as an OCI layout in the
+per platform. `pinned_image.py` keeps each pinned image as an OCI layout in the
 shared `test-images` cache stage (`config/cache.toml`), one directory per
 digest, so every checkout and gate prefix uses one copy:
 
-- the Kingslanding prefetch (`debug_image.py prepare`) verifies the pinned
+- the Kingslanding prefetch (`pinned_image.py debug_image prepare`) verifies the pinned
   layout, and only when it is absent pulls it from `repository` by digest,
   verbatim, before the suites run with no network;
 - the suites call `debug_image.ready()`, which verifies and never fetches,
   and serve the layout through `registry.layout_registry`. Normal pinned
-  sessions require the subject-bound prepared EROFS in the layout's `rootfs/`
+  sessions require the subject-bound prepared EROFS in the layout's `rootfs-v2/`
   OCI artifact. The local registry advertises its binding in a catalog and
   streams its bytes; the guest verifies and mounts it without extracting layers.
   Raw OCI extraction remains covered by the small dedicated OCI fixtures.
@@ -124,6 +124,10 @@ artifact alongside the image. Prefetch downloads the image's EROFS referrer
 before offline tests and refuses missing, conflicting, foreign or corrupt
 artifacts. A cached layout needs both the image and prepared filesystem;
 having only compressed image layers is insufficient for normal boot proof.
+Prefetch supports both the referrers API and OCI's fallback index tag, as used
+by GHCR, while retaining the same subject and integrity checks. Private GHCR
+pins use the operator's existing GitHub login; public release inputs must also
+pass an anonymous pull.
 
 A workload has its own loopback; it never reaches the VM's. Clients in one
 reach the hermetic mock upstream by name: `start_mock_server(dns_answers="routable")`
