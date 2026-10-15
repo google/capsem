@@ -35,6 +35,7 @@ this table, enforced by `tests/citadel/test_rust_workspace_documentation.py`.
 | `capsem-admin` | Runtime image, asset, and release administration | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-router` | Confined TCP publication relay | Yes | Subprocess + Redis E2E | Clippy | Yes |
 | `capsem-network` | Framed ethernet codec and pure MAC-switch forwarding | Yes | Native codec/switch tests and private-link acceptance | Clippy | Yes |
+| `capsem-mcp-transport` | Connected MCP HTTP/bootstrap | Yes | Native subprocess | Clippy | Yes |
 | `capsem-mcp-aggregator` | External MCP subprocess manager | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-mcp-builtin` | Built-in MCP tools | Yes | Compile/no-run | Clippy | Yes |
 | `capsem-gateway` | Authenticated HTTP gateway | Yes | Compile/no-run | Clippy | Yes |

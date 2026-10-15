@@ -63,6 +63,7 @@ crates/capsem-gateway/         TCP-to-UDS HTTP gateway (frontend + tray + remote
 mcp/typescript/                SDK-backed npm host MCP server for AI agents (stdio, authenticated gateway HTTP)
 crates/capsem-router/     Confined TCP publication companion (data descriptors only)
 crates/capsem-network/    Host end of a guest tun0: smoltcp over a framed VSOCK packet stream
+crates/capsem-mcp-transport/   Connected HTTP capabilities and native MCP role bootstrap
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
 crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP)
 crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil + tun pump (musl)
