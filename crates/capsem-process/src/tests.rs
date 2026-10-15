@@ -588,33 +588,3 @@ fn generate_trace_id_is_unique_across_calls() {
     let ids: HashSet<String> = (0..64).map(|_| generate_trace_id()).collect();
     assert_eq!(ids.len(), 64, "trace_id collisions: {ids:?}");
 }
-
-#[test]
-fn aggregator_log_path_lives_in_session_dir() {
-    let session = PathBuf::from("/tmp/some-session");
-    let log = aggregator_log_path(&session);
-    assert_eq!(log, session.join("mcp-aggregator.stderr.log"));
-}
-
-#[test]
-fn missing_mcp_aggregator_fails_loud_instead_of_empty_stub() {
-    let dir = tempfile::tempdir().unwrap();
-    let fake_exe = dir.path().join("capsem-process");
-    let error = resolve_mcp_aggregator_binary(&fake_exe).expect_err("missing aggregator binary must not resolve");
-    assert!(
-        error.to_string().contains("capsem-mcp-aggregator"),
-        "error should name the missing component: {error:#}"
-    );
-}
-
-#[test]
-fn mcp_aggregator_resolver_supports_cargo_test_deps_layout() {
-    let dir = tempfile::tempdir().unwrap();
-    let deps = dir.path().join("deps");
-    std::fs::create_dir_all(&deps).unwrap();
-    let aggregator = dir.path().join("capsem-mcp-aggregator");
-    std::fs::write(&aggregator, "").unwrap();
-
-    let resolved = resolve_mcp_aggregator_binary(&deps.join("capsem-process-test")).unwrap();
-    assert_eq!(resolved, aggregator);
-}

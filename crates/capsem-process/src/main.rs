@@ -30,7 +30,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tracing::{error, info, warn};
 
-use aggregator::{aggregator_log_path, resolve_mcp_aggregator_binary, spawn_mcp_aggregator};
+use aggregator::connect_mcp_aggregator;
 use job_store::JobStore;
 use mcp_runtime::{GuestExposureTools, McpRuntime};
 use owner_sandbox::{attest_owner, confine_owner, prepare_owner_sandbox_attestation};
@@ -369,30 +369,14 @@ fn main() -> Result<()> {
         }
     };
     let executable = std::env::current_exe().context("locate VM-owner executable")?;
-    let aggregator_bin = resolve_mcp_aggregator_binary(&executable)?;
-    let aggregator_stderr =
-        capsem_foundation::unix::fs::open_private_append_no_follow(&aggregator_log_path(&session_dir))?;
     let builtin_bin = executable
         .parent()
-        .map(|directory| directory.join("capsem-mcp-builtin"));
-    let mut builtin_env = std::collections::HashMap::new();
-    builtin_env.insert("CAPSEM_SESSION_DIR".into(), session_dir.to_string_lossy().to_string());
-    builtin_env.insert(
-        "CAPSEM_ACTIVE_POLICY".into(),
-        runtime_config.active_policy_path.to_string_lossy().to_string(),
-    );
+        .map(|directory| directory.join("capsem-mcp-builtin"))
+        .filter(|binary| binary.is_file());
+    let builtin_env = std::collections::HashMap::new();
     let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
-    // The aggregator is a separately supervised process. Spawn it while the
-    // VM owner still has the one executable capability needed to create it;
-    // parent-side driver tasks remain queued on the current-thread runtime.
-    let aggregator = rt.block_on(spawn_mcp_aggregator(
-        &mcp_servers,
-        &session_dir,
-        &args.id,
-        &trace_id,
-        aggregator_bin,
-        aggregator_stderr,
-    ))?;
+    // Native MCP children and their privileged capabilities stay service-owned.
+    let aggregator = rt.block_on(connect_mcp_aggregator(&mcp_servers, &upstream_grants))?;
     let prepared_vm = prepare_vm(BootOptions {
         assets: &args.assets_dir,
         kernel_override: args.kernel.as_deref(),

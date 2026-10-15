@@ -2,6 +2,72 @@ use super::*;
 use capsem_core::net::policy_config::SecurityPluginMode;
 
 #[test]
+fn native_mcp_definitions_exclude_credentials_host_environment_and_executable_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("active_policy.toml");
+    std::fs::write(
+        &path,
+        format!(
+            r#"
+        [corp_rules]
+        [user_rules]
+        [network]
+        [[mcp.servers]]
+        name = "configured"
+        url = "https://configured.example/mcp"
+        enabled = true
+        headers = {{ "x-private-header" = "host-header-sentinel" }}
+        auth = {{ kind = "bearer", credential_ref = "credential:blake3:{}" }}
+    "#,
+            "a".repeat(64)
+        ),
+    )
+    .unwrap();
+    let runtime = RuntimePolicySource::new(&path).load().unwrap();
+    let builtin = directory.path().join("capsem-mcp-builtin");
+    std::fs::write(&builtin, b"unused definition fixture").unwrap();
+    let definitions = runtime.mcp_servers(
+        Some(&builtin),
+        HashMap::from([
+            ("CAPSEM_SESSION_DIR".into(), "/host/session".into()),
+            ("UNRELATED_SECRET".into(), "host-env-sentinel".into()),
+        ]),
+    );
+    assert_eq!(definitions.len(), 2);
+    for definition in &definitions {
+        assert!(definition.headers.is_empty());
+        assert!(definition.auth.is_none());
+        assert!(definition.env.is_empty());
+        assert!(definition.args.is_empty());
+    }
+    let builtin = definitions
+        .iter()
+        .find(|definition| definition.name == capsem_proto::mcp_contracts::BUILTIN_SERVER_NAME)
+        .unwrap();
+    assert_eq!(builtin.command.as_deref(), Some("capsem-mcp-builtin"));
+    assert_eq!(builtin.pool_size, Some(1));
+    let remote = definitions
+        .iter()
+        .find(|definition| definition.name == "configured")
+        .unwrap();
+    assert_eq!(remote.url, "https://configured.example/mcp");
+    assert!(remote.command.is_none());
+    // A refresh uses the identity admitted before confinement. It cannot
+    // stat the host executable again (Seatbelt denies that metadata access).
+    std::fs::remove_file(directory.path().join("capsem-mcp-builtin")).unwrap();
+    let mut refreshed = runtime;
+    refreshed.mcp.server_enabled.insert("local".into(), false);
+    let definitions = refreshed.mcp_servers(Some(&directory.path().join("capsem-mcp-builtin")), HashMap::new());
+    let builtin = definitions
+        .iter()
+        .find(|definition| definition.name == "local")
+        .unwrap();
+    assert!(!builtin.enabled);
+    assert!(builtin.env.is_empty());
+    assert_eq!(builtin.command.as_deref(), Some("capsem-mcp-builtin"));
+}
+
+#[test]
 fn runtime_policy_source_loads_rules_plugins_mcp() {
     let dir = tempfile::tempdir().unwrap();
     let active_path = dir.path().join("vm/active_policy.toml");

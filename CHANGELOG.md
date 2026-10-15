@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP settings refresh preserves the builtin admitted before VM-owner
+  confinement, without reopening its host executable path.
+
 ### Security
 
 - The service owns native MCP child creation and waits for their confirmed

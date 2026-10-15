@@ -132,7 +132,26 @@ impl RuntimePolicyConfig {
         builtin_binary: Option<&Path>,
         builtin_env: HashMap<String, String>,
     ) -> Vec<McpServerDef> {
-        capsem_core::mcp::build_server_list(&self.mcp, builtin_binary, builtin_env)
+        let mut definitions =
+            capsem_core::mcp::build_server_list_from_admitted_binary(&self.mcp, builtin_binary, builtin_env);
+        for definition in &mut definitions {
+            // Current settings, secret headers and credential resolution stay
+            // in the service HTTP broker, including on settings refresh.
+            definition.headers.clear();
+            definition.auth = None;
+            definition.env.clear();
+            definition.args.clear();
+            if definition.command.is_some() {
+                definition.command = Some("capsem-mcp-builtin".into());
+                definition.pool_size = Some(
+                    definition
+                        .pool_size
+                        .unwrap_or(1)
+                        .min(capsem_proto::MCP_BUILTIN_PEERS_PER_SESSION as u32),
+                );
+            }
+        }
+        definitions
     }
 }
 

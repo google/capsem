@@ -21,7 +21,6 @@ fn session_layout(root: &Path) {
     touch(capsem_core::session::system_overlay_image_path(root));
     touch(root.join("serial.log"));
     touch(root.join("pty.log"));
-    touch(aggregator_log_path(root));
 }
 
 #[test]

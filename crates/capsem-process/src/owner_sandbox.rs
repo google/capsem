@@ -3,7 +3,7 @@ use capsem_core::net::upstream_grant::UpstreamGrantClient;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use super::{aggregator_log_path, Args};
+use super::Args;
 
 fn grant_owner_path(
     policy: capsem_foundation::unix::worker_sandbox::Policy,
@@ -35,7 +35,6 @@ fn grant_owner_session_paths(
         ),
         (session_dir.join("serial.log"), Access::ReadWrite),
         (session_dir.join("pty.log"), Access::ReadWrite),
-        (aggregator_log_path(session_dir), Access::ReadWrite),
     ] {
         policy = grant_owner_path(policy, &path, access)?;
     }
