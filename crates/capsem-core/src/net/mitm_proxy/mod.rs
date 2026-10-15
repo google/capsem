@@ -67,8 +67,9 @@ use upstream::{CachedUpstream, UpstreamCache, UpstreamPolicy};
 use util::{
     current_unix_ms, format_headers, format_headers_for_domain, http_upstream_port_allowed, is_anthropic_model_name,
     is_google_model_name, is_llm_api_path, is_openai_model_name, materialize_collected_response_headers,
-    model_security_event, parse_http_host_target, provider_label, request_can_replay_empty_body,
-    security_event_with_transport, split_path_query,
+    model_security_event, parse_http_host_target, policy_requires_buffered_model_response, provider_label,
+    request_can_replay_empty_body, response_body_capture_limit, security_event_with_transport, split_path_query,
+    SecurityBoundaryDecisionFields,
 };
 
 pub use config::MitmProxyConfig;
@@ -315,45 +316,6 @@ fn body_capture_limit(
         return CREDENTIAL_BODY_CAPTURE_LIMIT;
     }
     0
-}
-
-fn response_body_capture_limit(
-    ai_provider: Option<ProviderKind>,
-    domain: &str,
-    path: &str,
-    log_bodies: bool,
-    max_body: usize,
-    credential_ref: Option<&str>,
-) -> usize {
-    let cap = body_capture_limit(ai_provider, domain, path, log_bodies, max_body);
-    if credential_ref.is_some() {
-        cap.max(CREDENTIAL_BODY_CAPTURE_LIMIT)
-    } else {
-        cap
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-struct SecurityBoundaryDecisionFields {
-    policy_mode: Option<String>,
-    policy_action: Option<String>,
-    policy_rule: Option<String>,
-    policy_reason: Option<String>,
-}
-
-impl SecurityBoundaryDecisionFields {
-    fn from_enforcement(decision: &crate::security_engine::SecurityEnforcementDecision) -> Self {
-        Self {
-            policy_mode: Some("enforce".to_string()),
-            policy_action: Some(decision.action.as_str().to_string()),
-            policy_rule: decision.rule_id.clone(),
-            policy_reason: decision.reason.clone(),
-        }
-    }
-
-    fn matched_rule(&self, fallback: String) -> String {
-        self.policy_rule.clone().unwrap_or(fallback)
-    }
 }
 
 fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Bytes> {
@@ -1011,11 +973,13 @@ async fn handle_request(
     // fires `NetEvent` (+ `ModelCall`) on body completion. Used by
     // every response path that doesn't reach upstream (deny,
     // websocket-deny, 502).
+    let in_flight_disarmed = Arc::new(AtomicBool::new(false));
     let seal_with_telemetry = |inner: ProxyBoxBody,
                                req_ctx: TelemetryRequestContext,
                                conn_ai_provider: Option<ProviderKind>,
                                conn_ai_protocol: Option<ModelProtocol>|
      -> ProxyBoxBody {
+        in_flight_disarmed.store(true, Ordering::Release);
         let dispatched = body::ChunkDispatchBody::new(
             inner,
             Arc::clone(&config.pipeline),
@@ -1068,6 +1032,29 @@ async fn handle_request(
     // Save original request headers.
     let mut original_headers = parts.headers.clone();
     let original_method = parts.method.clone();
+    let req_stats = Arc::new(Mutex::new(BodyStats::new(body_capture_limit(
+        ai_provider, domain, &path, log_bodies, max_body,
+    ))));
+    let mut in_flight_guard = body::InFlightRequestGuard::from_request(
+        Arc::clone(&config.pipeline),
+        Arc::clone(&policy_snapshot),
+        domain,
+        process_name.clone(),
+        upstream_port,
+        protocol,
+        conn_type,
+        ai_provider,
+        ai_protocol,
+        &method,
+        &path,
+        query.clone(),
+        &req_hdrs,
+        start_time,
+        Arc::clone(&req_stats),
+        credential_ref.clone(),
+        credential_observations.clone(),
+        Arc::clone(&in_flight_disarmed),
+    );
 
     // Helper: build a 502 Bad Gateway response with telemetry so upstream
     // errors don't kill keep-alive connections (returns Ok, not Err).
@@ -1087,7 +1074,7 @@ async fn handle_request(
             process_name: process_name.clone(),
             ai_provider,
             ai_protocol,
-            model_traffic: false,
+            model_traffic: ai_protocol.is_some_and(|proto| is_llm_api_path(proto, path)),
             method: method.to_string(),
             path: path.to_string(),
             query: query.clone(),
@@ -1097,7 +1084,7 @@ async fn handle_request(
             request_headers: Some(req_hdrs.to_string()),
             response_headers: None,
             start_time: start,
-            request_body_stats: Arc::new(Mutex::new(BodyStats::new(0))),
+            request_body_stats: Arc::clone(&req_stats),
             max_response_body_capture: 0,
             port: upstream_port,
             conn_type,
@@ -1228,6 +1215,11 @@ async fn handle_request(
             request_body_source = RequestBodySource::Collected(body_bytes);
         }
     }
+    in_flight_guard.set_ai_identity(
+        effective_ai_provider,
+        effective_ai_protocol,
+        sniffed_model_request || effective_ai_protocol.is_some_and(|proto| is_llm_api_path(proto, &path)),
+    );
 
     let mut http_security_event = http_request_security_event(HttpRequestSecurityEventInput {
         domain,
@@ -1406,6 +1398,12 @@ async fn handle_request(
         .clone()
         .or_else(|| upstream_materialized.credential_ref.clone());
     let upstream_query = upstream_materialized.query.as_ref().or(query.as_ref());
+    in_flight_guard.update_security(
+        &request_security_decision,
+        credential_ref.clone(),
+        credential_observations.clone(),
+        credential_injections.clone(),
+    );
 
     if let Some(observed) = observed_mcp_request.as_ref() {
         let mcp_span = tracing::debug_span!(
@@ -1561,12 +1559,8 @@ async fn handle_request(
     // Track request body (boxed for consistent sender type across requests).
     // Always capture AI provider request bodies for telemetry parsing
     // (model name, tool results, etc.) regardless of log_bodies setting.
-    let req_max_body_capture = body_capture_limit(effective_ai_provider, domain, &path, log_bodies, max_body);
-    let req_stats = Arc::new(Mutex::new(BodyStats {
-        bytes: 0,
-        preview: Vec::new(),
-        max_body_capture: req_max_body_capture,
-    }));
+    req_stats.lock().expect("req body stats lock").max_body_capture =
+        body_capture_limit(effective_ai_provider, domain, &path, log_bodies, max_body);
 
     let should_evaluate_model_request =
         sniffed_model_request || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
@@ -1667,6 +1661,7 @@ async fn handle_request(
                 }
             };
             request_security_decision = SecurityBoundaryDecisionFields::from_enforcement(&model_evaluation.enforcement);
+            in_flight_guard.update_policy(&request_security_decision);
             if !model_evaluation.enforcement.is_allowed() {
                 model_request_span.record("decision", model_evaluation.enforcement.action.as_str());
                 model_request_span.record("status", "ok");
@@ -2222,10 +2217,13 @@ async fn handle_request(
     if observed_mcp_request.is_some() {
         resp_max_body_capture = resp_max_body_capture.max(MCP_BODY_CAPTURE_LIMIT);
     }
+    in_flight_guard.update_response_head(resp_status, resp_hdrs.clone(), resp_max_body_capture);
 
     let should_evaluate_model_response =
         sniffed_model_request || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
-    let should_collect_semantic_response = should_evaluate_model_response || observed_mcp_request.is_some();
+    let should_collect_semantic_response = (should_evaluate_model_response
+        && policy_requires_buffered_model_response(&policy_snapshot))
+        || observed_mcp_request.is_some();
 
     let resp_body: ProxyBoxBody = if should_collect_semantic_response {
         let model_response_span = tracing::debug_span!(
@@ -2478,6 +2476,7 @@ async fn handle_request(
     //   InterpreterHook* → TelemetryHook. The TelemetryHook reads the
     //   seeded TelemetryRequestContext at on_response_end, builds the
     //   NetEvent (+ ModelCall for AI), then hands off async DB writes.
+    let stream_is_gzip = is_gzip && !should_collect_semantic_response;
     let chunk_dispatched = body::ChunkDispatchBody::new(
         resp_body,
         Arc::clone(&config.pipeline),
@@ -2491,14 +2490,15 @@ async fn handle_request(
         },
         capsem_foundation::telemetry::ambient_capsem_trace_id(),
     )
-    .seed::<decompression_hook::DecompressionConfig>(decompression_hook::DecompressionConfig { gzip: is_gzip })
+    .seed::<decompression_hook::DecompressionConfig>(decompression_hook::DecompressionConfig { gzip: stream_is_gzip })
     .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));
-    let chunk_dispatched = if is_gzip {
+    let chunk_dispatched = if stream_is_gzip {
         chunk_dispatched.without_size_hint()
     } else {
         chunk_dispatched
     };
 
+    in_flight_guard.disarm();
     let response = hyper::Response::from_parts(resp_parts, chunk_dispatched.boxed());
     Ok(response)
 }

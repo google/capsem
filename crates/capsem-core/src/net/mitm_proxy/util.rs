@@ -211,8 +211,69 @@ pub(super) fn format_headers_for_domain(
     }
 }
 
-#[cfg(test)]
-mod tests;
+#[derive(Clone, Debug, Default)]
+pub(super) struct SecurityBoundaryDecisionFields {
+    pub(super) policy_mode: Option<String>,
+    pub(super) policy_action: Option<String>,
+    pub(super) policy_rule: Option<String>,
+    pub(super) policy_reason: Option<String>,
+}
+
+impl SecurityBoundaryDecisionFields {
+    pub(super) fn from_enforcement(decision: &crate::security_engine::SecurityEnforcementDecision) -> Self {
+        Self {
+            policy_mode: Some("enforce".to_string()),
+            policy_action: Some(decision.action.as_str().to_string()),
+            policy_rule: decision.rule_id.clone(),
+            policy_reason: decision.reason.clone(),
+        }
+    }
+
+    pub(super) fn matched_rule(&self, fallback: String) -> String {
+        self.policy_rule.clone().unwrap_or(fallback)
+    }
+}
+
+/// Returns true only when `policy_snapshot` contains an active rule or plugin
+/// that can enforce or rewrite based on the HTTP/model response body or status.
+/// When false, model responses stream directly through `ChunkDispatchBody`
+/// without buffering the entire SSE stream before sending `200 OK` headers.
+pub(super) fn policy_requires_buffered_model_response(
+    policy_snapshot: &crate::net::proxy_engine::ProxyPolicySnapshot,
+) -> bool {
+    const RESPONSE_STAGE_FIELDS: &[&str] = &[
+        "model.response.body",
+        "model.response.valid",
+        "http.status",
+        "http.body",
+    ];
+    let has_response_enforcing_rule = policy_snapshot.security_rules().rules().iter().any(|rule| {
+        rule.enabled
+            && !matches!(rule.action, crate::net::policy_config::SecurityRuleAction::Allow)
+            && rule.references_any_field(RESPONSE_STAGE_FIELDS)
+    });
+    let has_content_plugin = policy_snapshot
+        .plugins()
+        .get("dummy_pre_eicar")
+        .is_some_and(|cfg| !matches!(cfg.mode, crate::net::policy_config::SecurityPluginMode::Disable));
+    has_response_enforcing_rule || has_content_plugin
+}
+
+pub(super) fn response_body_capture_limit(
+    ai_provider: Option<ProviderKind>,
+    domain: &str,
+    path: &str,
+    log_bodies: bool,
+    max_body: usize,
+    credential_ref: Option<&str>,
+) -> usize {
+    let cap = super::body_capture_limit(ai_provider, domain, path, log_bodies, max_body);
+    if credential_ref.is_some() {
+        cap.max(super::CREDENTIAL_BODY_CAPTURE_LIMIT)
+    } else {
+        cap
+    }
+}
 
 pub(super) fn model_security_event(
     event_type: RuntimeSecurityEventType,
@@ -252,3 +313,6 @@ pub(super) fn security_event_with_transport(
 
     event
 }
+
+#[cfg(test)]
+mod tests;

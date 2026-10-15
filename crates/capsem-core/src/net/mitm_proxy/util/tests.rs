@@ -106,3 +106,108 @@ fn parse_http_host_target_leaves_non_addresses_alone() {
         );
     }
 }
+
+fn snapshot_for_rules_and_plugins(
+    rules_toml: &str,
+    plugins: std::collections::BTreeMap<String, crate::net::policy_config::SecurityPluginConfig>,
+) -> crate::net::proxy_engine::ProxyPolicySnapshot {
+    let profile = crate::net::policy_config::SecurityRuleProfile::parse_toml(rules_toml).expect("valid rules toml");
+    let rules = crate::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        crate::net::policy_config::SecurityRuleSource::User,
+    )
+    .expect("compile rules");
+    crate::net::proxy_engine::ProxyPolicySnapshot::new(
+        "blake3:test".into(),
+        crate::net::policy::NetworkMechanics::new(),
+        rules,
+        plugins,
+        crate::net::policy_config::ModelEndpointRegistry::default(),
+    )
+}
+
+#[test]
+fn policy_requires_buffered_model_response_inspects_compiled_fields_and_actions() {
+    use crate::net::policy_config::{DetectionLevel, SecurityPluginConfig, SecurityPluginMode};
+    use std::collections::BTreeMap;
+
+    // Detection-only allow rules on response fields stream without buffering.
+    let allow_response_rule = r#"
+[profiles.rules.detect_response_secret]
+name = "detect_response_secret"
+action = "allow"
+detection_level = "high"
+match = 'model.response.body.contains("PRIVATE KEY") || http.status == "200"'
+"#;
+    assert!(!policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        allow_response_rule,
+        BTreeMap::new()
+    )));
+
+    // A blocking request-stage rule whose string literal mentions "model.response.body"
+    // must not trigger response buffering.
+    let request_rule_with_response_literal = r#"
+[profiles.rules.block_prompt_mentioning_field]
+name = "block_prompt_mentioning_field"
+action = "block"
+match = 'model.request.body.contains("model.response.body") && http.host == "generativelanguage.googleapis.com"'
+"#;
+    assert!(!policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        request_rule_with_response_literal,
+        BTreeMap::new()
+    )));
+
+    // Disabled blocking rule on model.response.body does not require buffering.
+    let disabled_block_rule = r#"
+[profiles.rules.disabled_response_block]
+name = "disabled_response_block"
+action = "block"
+enabled = false
+match = 'model.response.body.contains("secret")'
+"#;
+    assert!(!policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        disabled_block_rule,
+        BTreeMap::new()
+    )));
+
+    // Enabled enforcing/rewriting rules on any response-stage field require buffering.
+    for (action, condition) in [
+        ("block", r#"model.response.body.contains("secret")"#),
+        ("ask", r#"has(model.response.valid)"#),
+        ("rewrite", r#"http.body.contains("token")"#),
+        ("postprocess", r#"http.status == "200""#),
+    ] {
+        let toml = format!(
+            "[profiles.rules.enforcing_resp]\nname = \"enforcing_resp\"\naction = \"{action}\"\nmatch = '{condition}'\n"
+        );
+        assert!(
+            policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(&toml, BTreeMap::new())),
+            "action={action} condition={condition} must buffer"
+        );
+    }
+
+    // Active dummy_pre_eicar plugin requires buffering; disabled does not.
+    let mut plugins = BTreeMap::new();
+    plugins.insert(
+        "dummy_pre_eicar".into(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Disable,
+            detection_level: DetectionLevel::Informational,
+        },
+    );
+    assert!(!policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        "",
+        plugins.clone()
+    )));
+    plugins.insert(
+        "dummy_pre_eicar".into(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Block,
+            detection_level: DetectionLevel::High,
+        },
+    );
+    assert!(policy_requires_buffered_model_response(&snapshot_for_rules_and_plugins(
+        "",
+        plugins
+    )));
+}

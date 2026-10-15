@@ -104,6 +104,11 @@ pub struct TelemetryResponseStats {
     pub max_body_capture: usize,
 }
 
+/// Seeded into `HookState` when an in-flight request or streaming response
+/// is dropped before normal response-end completion.
+#[derive(Default, Clone, Copy)]
+pub struct ResponseAborted(pub bool);
+
 /// Shared dependencies handed to `TelemetryHook` at construction --
 /// the bits that need to outlive a single request and aren't
 /// derivable from the per-request context.
@@ -157,6 +162,25 @@ impl PendingTelemetryCompletion {
         }
 
         let model_was_denied = net_event.decision == Decision::Denied;
+        let mut net_event = net_event;
+        let model_security_event = model_call
+            .as_ref()
+            .map(|call| security_event_from_model_call(call, &net_event));
+        if let Some(model_security_event) = &model_security_event {
+            if net_event.decision == Decision::Allowed {
+                if let Ok(evaluation) = rules.evaluate(model_security_event) {
+                    if let Some(rule) = evaluation
+                        .enforcement_rules()
+                        .into_iter()
+                        .find(|rule| matches!(rule.action, crate::net::policy_config::SecurityRuleAction::Allow))
+                    {
+                        net_event.matched_rule = Some(rule.rule_id.clone());
+                        net_event.policy_rule = Some(rule.rule_id.clone());
+                        net_event.policy_reason = rule.reason.clone();
+                    }
+                }
+            }
+        }
         if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
             emit_evaluated_security_rules(
                 Arc::clone(&db),
@@ -170,8 +194,7 @@ impl PendingTelemetryCompletion {
             )
             .await;
         }
-        if let Some(model_call) = model_call {
-            let mut model_security_event = security_event_from_model_call(&model_call);
+        if let (Some(model_call), Some(mut model_security_event)) = (model_call, model_security_event) {
             if model_was_denied {
                 model_security_event.request_decision(crate::security_engine::SecurityDecisionKind::Block);
             }
@@ -310,6 +333,8 @@ impl ChunkHook for TelemetryHook {
         record_telemetry_stage(stage_started, "credential_detect_and_redact");
 
         let stage_started = Instant::now();
+        let response_aborted =
+            ctx.state::<ResponseAborted>(ResponseAborted::default).0 && req_ctx.decision != Decision::Denied;
         let model_call = maybe_build_model_call_with_hints(
             &req_ctx,
             &resp_stats,
@@ -317,7 +342,7 @@ impl ChunkHook for TelemetryHook {
             &self.deps.pricing,
             &self.deps.trace_state,
         );
-        let (model_call, trace_hints) = match model_call {
+        let (mut model_call, trace_hints) = match model_call {
             Some((model_call, paths)) => {
                 let trace_hints = self
                     .trace_hint_sink
@@ -329,6 +354,13 @@ impl ChunkHook for TelemetryHook {
             }
             None => (None, None),
         };
+        if response_aborted {
+            if let Some(call) = model_call.as_mut() {
+                if call.stop_reason.is_none() {
+                    call.stop_reason = Some("aborted".to_string());
+                }
+            }
+        }
         record_telemetry_stage(stage_started, "model_call_build");
 
         let stage_started = Instant::now();
@@ -499,23 +531,49 @@ fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
     apply_security_event_trace(security_event, event.trace_id.clone())
 }
 
-fn security_event_from_model_call(call: &ModelCall) -> SecurityEvent {
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall)
+fn security_event_from_model_call(call: &ModelCall, net_event: &NetEvent) -> SecurityEvent {
+    let response_body = match (call.text_content.as_deref(), lossy_text(call.response_body.as_deref())) {
+        (Some(text), Some(raw)) if !raw.contains(text) => Some(format!("{text}\n{raw}")),
+        (Some(_), Some(raw)) => Some(raw),
+        (Some(text), None) => Some(text.to_string()),
+        (None, raw) => raw,
+    };
+    let mut security_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall)
         .with_model(ModelSecurityEvent {
             provider: Some(call.provider.clone()),
             name: call.model.clone(),
             request_body: lossy_text(call.request_body.as_deref()),
-            response_body: call.text_content.clone(),
+            response_body,
             tool_calls: if call.tool_calls.is_empty() {
                 None
             } else {
                 Some(serde_json::to_string(&call.tool_calls).unwrap_or_else(|_| "[]".to_string()))
             },
         })
+        .with_http(HttpSecurityEvent {
+            host: Some(net_event.domain.clone()),
+            method: net_event.method.clone(),
+            path: net_event.path.clone(),
+            query: net_event.query.clone(),
+            status: net_event.status_code.map(|status| status.to_string()),
+            body: lossy_text(call.response_body.as_deref().or(net_event.response_body.as_deref())),
+        })
+        .with_tcp(TcpSecurityEvent {
+            port: Some(net_event.port.to_string()),
+        })
         .with_process(crate::security_engine::ProcessSecurityEvent {
             name: call.process_name.clone(),
             ..Default::default()
         });
+    if let Ok(ip) = net_event.domain.parse::<std::net::IpAddr>() {
+        security_event = security_event.with_ip(IpSecurityEvent {
+            value: Some(net_event.domain.clone()),
+            version: Some(match ip {
+                std::net::IpAddr::V4(_) => "4".to_string(),
+                std::net::IpAddr::V6(_) => "6".to_string(),
+            }),
+        });
+    }
     apply_security_event_trace(security_event, call.trace_id.clone())
 }
 

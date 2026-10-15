@@ -759,6 +759,10 @@ impl CompiledSecurityRule {
     {
         self.compiled_condition.evaluate(subject)
     }
+
+    pub fn references_any_field(&self, fields: &[&str]) -> bool {
+        self.compiled_condition.references_any_field(fields)
+    }
 }
 
 fn validate_priority_for_source(
