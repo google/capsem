@@ -11,8 +11,14 @@ import os
 import subprocess
 
 import pytest
-from helpers.service import PROCESS_BINARY, SERVICE_BINARY, make_service_home_run_dirs
+from helpers.service import (
+    PROCESS_BINARY,
+    SERVICE_BINARY,
+    ServiceInstance,
+    make_service_home_run_dirs,
+)
 from helpers.sign import sign_binary
+from log_streams import read_log_stream
 
 pytestmark = pytest.mark.integration
 
@@ -58,3 +64,21 @@ def test_a_startup_error_is_written_to_the_service_log() -> None:
     assert "file is not a database" in text, (
         "the cause of a failed start must reach the service log, not only stderr"
     )
+
+
+def test_fixture_preserves_actual_startup_stderr_before_cleanup(tmp_path, monkeypatch, capsys):
+    artifacts = tmp_path / "evidence"
+    monkeypatch.setenv("CAPSEM_TEST_ARTIFACTS_ROOT", str(artifacts))
+    service = ServiceInstance()
+    service.gateway_port = -1  # The actual service CLI rejects this before listening.
+    try:
+        with pytest.raises(RuntimeError, match="failed to accept connections"):
+            service.start()
+    finally:
+        service.stop()
+    snapshots = list(artifacts.glob(f"*/{service.home_dir.name}*"))
+    assert snapshots, "startup cleanup deleted the only copy of the actual process error"
+    error = "unexpected argument '-1' found"
+    assert any(error in read_log_stream(path / "run/service.log") for path in snapshots)
+    assert error in capsys.readouterr().err
+    assert not service.home_dir.exists()
