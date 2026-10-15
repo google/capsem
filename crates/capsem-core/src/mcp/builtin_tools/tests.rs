@@ -1,6 +1,7 @@
 use super::*;
 
 mod bounds;
+mod brokered;
 mod fixtures;
 mod ip_literals;
 mod markdown;
