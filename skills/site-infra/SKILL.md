@@ -154,19 +154,33 @@ as pausing work, `capsem resume` as returning to it, and `capsem fork` as duplic
 another use. Keep explanations proportional to the chosen type, with detailed
 mechanics and rationale in their reference and explanation destinations.
 
-### Every paragraph must help the reader
+When introducing an interface, explain what it lets the user manage, describe
+the visible layout, and provide the controls needed to navigate it. For a TUI,
+include switching between VMs, checking status, opening help, and exiting without
+stopping the VMs. Do not reduce a multi-VM manager to “an interactive terminal.”
 
-Every paragraph must answer a reader's question and propose something useful:
-a concrete action, choice, or explanation they need to use Capsem. Before
-keeping a paragraph, identify the question and what the reader gains from its
-answer. Remove paragraphs that merely announce another page, repeat a heading,
-or list destinations without explaining why the reader needs them.
+### Every single paragraph serves a user action
 
-Links must carry a reason: say what the reader can learn or accomplish at the
-destination and place the link where that need arises. Generic endings such as
-“For component relationships, read System architecture” or “For exact
-interfaces, use Reference” do not meet this rule. Review every paragraph and
-link on the affected page when applying a correction.
+**Every single paragraph must answer a user's question and help the user do
+something concrete.** This applies to every page and document type, including
+introductions, architecture explanations, reference, transitions, and endings.
+There is no exemption for background, general explanation, or “useful context.”
+
+For each paragraph, identify both:
+
+1. What question is the user asking here?
+2. What can the user do with this answer?
+
+If either answer is missing, delete or rewrite the paragraph. Do not write
+prose merely to describe Capsem, announce a topic, repeat a diagram or heading,
+or fill space. Explanations must support a concrete user action or decision;
+reference must help the user configure, call, inspect, or diagnose something.
+The questions are an editing check, not mandatory question-shaped headings.
+
+Links must state what the user can accomplish at the destination and appear
+where that task arises. Generic endings such as “For component relationships,
+read System architecture” or “For exact interfaces, use Reference” fail this
+rule. Review every single paragraph on the affected page after a correction.
 
 ### One thing, one name
 

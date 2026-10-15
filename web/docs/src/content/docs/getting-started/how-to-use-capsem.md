@@ -52,7 +52,9 @@ capsem shell my-work
 ```
 
 Once the TUI opens, type in its terminal to run commands inside the VM.
-With several VMs open, use **Alt + Left/Right** to move between them.
+The TUI manages multiple VMs in one terminal window. Use **Alt + Left/Right**
+to switch VM tabs, **Alt + L** to see VMs and their status, and **Alt + ?**
+for help. See [all the navigation controls](/guides/users/use-the-terminal/#work-with-multiple-vms).
 When you want to close the TUI, press **Alt + Q**; your VM keeps running,
 and you can reopen it with the same command.
 
