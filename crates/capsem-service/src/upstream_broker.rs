@@ -34,6 +34,8 @@ use tracing::{debug, warn};
 use crate::instance::WorkerGrant;
 use crate::ledger_worker::{LedgerClient, LedgerWorkers};
 
+mod mcp_http;
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -253,6 +255,8 @@ async fn run(
     let requests =
         WireReceiver::new(socket.try_clone().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     let responses = WireSender::new(socket).map_err(|error| error.to_string())?;
+    let (mcp_policy_updates, mcp_policy) = tokio::sync::watch::channel(Arc::clone(&policy));
+    let mut mcp_workers = tokio::task::JoinSet::new();
     let (request_tx, mut request_rx) = mpsc::channel(1);
     let request_pump = tokio::spawn(async move {
         loop {
@@ -272,6 +276,11 @@ async fn run(
     let mut pending_ledger: Option<(LedgerChannelGrant, Vec<OwnedFd>)> = None;
     let result = async {
         'requests: loop {
+            while let Some(result) = mcp_workers.try_join_next() {
+                if let Err(error) = result {
+                    debug!(%error, "native MCP HTTP broker task ended");
+                }
+            }
             let frame = tokio::select! {
                 biased;
                 () = authority.revoked() => break Err("worker authority revoked".to_string()),
@@ -282,6 +291,7 @@ async fn run(
                         &mut selections,
                         &mut active,
                         &mut awaiting_adoption,
+                                &mcp_policy_updates,
                     )?;
                     continue;
                 }
@@ -311,6 +321,26 @@ async fn run(
                 }
             }
             match request {
+                UpstreamGrantRequest::AttachMcpHttp { request_id, role } => {
+                    if session_dir.is_none() {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
+                        continue;
+                    }
+                    if mcp_workers.len() >= capsem_proto::MCP_WORKER_QUEUE_CAPACITY {
+                        send_denied(&responses, request_id, UpstreamGrantDenial::Capacity).await?;
+                        continue;
+                    }
+                    let descriptor = frame.fds.into_iter().next().expect("validated MCP HTTP descriptor");
+                    fd::validate_connected_stream(descriptor.as_fd())
+                        .map_err(|error| format!("MCP HTTP channel: {error}"))?;
+                    mcp_workers.spawn(mcp_http::serve(
+                        UnixStream::from(descriptor),
+                        role,
+                        mcp_policy.clone(),
+                        authority.clone(),
+                    ));
+                    send_response(&responses, &UpstreamGrantResponse::McpHttpAdopted { request_id }, None).await?;
+                }
                 UpstreamGrantRequest::ResolveTcp {
                     request_id,
                     protocol,
@@ -342,6 +372,7 @@ async fn run(
                                 &mut selections,
                                 &mut active,
                                 &mut awaiting_adoption,
+                                &mcp_policy_updates,
                             )?;
                             continue 'requests;
                         }
@@ -406,6 +437,7 @@ async fn run(
                                 &mut selections,
                                 &mut active,
                                 &mut awaiting_adoption,
+                                &mcp_policy_updates,
                             )?;
                             continue 'requests;
                         }
@@ -472,6 +504,7 @@ async fn run(
                                 &mut selections,
                                 &mut active,
                                 &mut awaiting_adoption,
+                                &mcp_policy_updates,
                             )?;
                             continue 'requests;
                         }
@@ -488,6 +521,7 @@ async fn run(
                                 &mut selections,
                                 &mut active,
                                 &mut awaiting_adoption,
+                                &mcp_policy_updates,
                             )?;
                             continue 'requests;
                         }
@@ -758,6 +792,9 @@ async fn run(
         }
     }
     .await;
+    drop(mcp_policy_updates);
+    mcp_workers.abort_all();
+    while mcp_workers.join_next().await.is_some() {}
     request_pump.abort();
     let _ = request_pump.await;
     let cleanup = revoke_active(active);
@@ -860,8 +897,10 @@ fn apply_policy_update(
     selections: &mut HashMap<u64, Selection>,
     active: &mut HashMap<u64, ActiveGrant>,
     awaiting_adoption: &mut Option<AwaitingAdoption>,
+    mcp_policy_updates: &tokio::sync::watch::Sender<Arc<BrokerPolicy>>,
 ) -> Result<(), String> {
     *current = update.policy;
+    mcp_policy_updates.send_replace(Arc::clone(current));
     selections.clear();
     let result = revoke_active(std::mem::take(active));
     if matches!(awaiting_adoption, Some(AwaitingAdoption::Upstream(_))) {

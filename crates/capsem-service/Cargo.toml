@@ -39,6 +39,9 @@ axum = { version = "0.8", features = ["macros", "ws"] }
 tower-http = { version = "0.6", features = ["trace"] }
 base64.workspace = true
 reqwest.workspace = true
+hyper = { workspace = true, features = ["http2"] }
+hyper-util = { workspace = true, features = ["http2"] }
+http-body-util.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
 [lints]
