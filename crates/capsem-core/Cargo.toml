@@ -32,8 +32,8 @@ time = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
+hyper = { workspace = true, features = ["http2"] }
+hyper-util = { workspace = true, features = ["http2"] }
 http-body-util = { workspace = true }
 http = { workspace = true }
 pin-project-lite = "0.2"

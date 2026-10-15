@@ -2898,6 +2898,31 @@
    "syn"
   ]
  },
+ "h2": {
+  "build_script": false,
+  "dependencies": [
+   "atomic-waker",
+   "bytes",
+   "env_logger",
+   "fnv",
+   "futures-core",
+   "futures-sink",
+   "hex",
+   "http",
+   "indexmap",
+   "quickcheck",
+   "rand",
+   "serde",
+   "serde_json",
+   "slab",
+   "tokio",
+   "tokio-rustls",
+   "tokio-util",
+   "tracing",
+   "walkdir",
+   "webpki-roots"
+  ]
+ },
  "half": {
   "build_script": false,
   "dependencies": [
