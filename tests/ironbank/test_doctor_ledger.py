@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 from helpers.body_archive import (
-    SessionArchive,
     archived_bodies,
     ledger_path,
     security_payload,
@@ -34,7 +33,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
 from helpers.uds_client import UdsHttpClient
 from log_streams import log_stream_files
 
@@ -293,11 +292,6 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             for row in security_latest
         )
         assert all(json.loads(row["rule_json"]) for row in security_latest)
-        # The forensic payload left the row for the archive; every match the
-        # route lists must still have one, and it must still parse.
-        with SessionArchive(vm_session_db_path(service.tmp_dir, client, vm_id)) as archive:
-            assert all(archive.security_payload(row["event_id"]) for row in security_latest)
-
         mcp_default = client.get("/mcp/default/info", timeout=30)
         assert set(mcp_default) == {"action", "source", "rule_id"}
         assert mcp_default["action"] in {"allow", "ask", "block", "disable"}
@@ -335,7 +329,14 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             assert tool["permission_action"] in {"allow", "ask", "block", "disable"}
             assert tool["permission_source"] in {"corp", "settings", "default"}
 
+        # Live routes above read accepted events; offline archive proof needs
+        # every producer and its body indexes drained first.
+        stop_session_for_ledger_read(
+            client, vm_id, vm_session_db_path(service.tmp_dir, client, vm_id)
+        )
         conn = ledgers.enter_context(contextlib.closing(_connect_session_db(service, client, vm_id)))
+        with session_archive(conn) as archive:
+            assert all(archive.security_payload(row["event_id"]) for row in security_latest)
         assert "mcp_calls" not in {
             row["name"]
             for row in conn.execute(
