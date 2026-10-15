@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rust API crate packaging declares its crypto dependency version for registry
+  publication.
+
 - Native MCP startup probes execution confinement directly before readiness,
   without spawning another process to establish the denial.
 
