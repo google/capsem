@@ -86,6 +86,30 @@ fn bootstrap_rejects_unknown_role_zero_generation_and_reserved_bytes() {
 }
 
 #[test]
+fn spawn_adoption_receipt_is_a_descriptor_free_request_bound_record() {
+    let mut receipt = encode_spawn_record(McpSpawnRecord::Denied { request_id: 42 }).unwrap();
+    receipt[3] = 4;
+    let decoded = decode_spawn_record(&receipt).expect("spawn receiver must acknowledge adopted sockets");
+    assert_eq!(decoded, McpSpawnRecord::Adopted { request_id: 42 });
+    assert_eq!(decoded.expected_descriptor_count(), 0);
+    assert_eq!(encode_spawn_record(decoded).unwrap(), receipt);
+    for index in [4, 12, 13, 14, 15] {
+        let mut hostile = receipt;
+        if index == 4 {
+            hostile[4..12].fill(0);
+        } else {
+            hostile[index] = 1;
+        }
+        assert!(decode_spawn_record(&hostile).is_err());
+    }
+    receipt[2] = 1;
+    assert!(
+        decode_spawn_record(&receipt).is_err(),
+        "legacy peers do not acknowledge adoption"
+    );
+}
+
+#[test]
 fn builtin_spawn_has_no_arbitrary_command_or_path_and_fences_reply_ids() {
     for record in [
         McpSpawnRecord::Builtin {
@@ -94,6 +118,7 @@ fn builtin_spawn_has_no_arbitrary_command_or_path_and_fences_reply_ids() {
         },
         McpSpawnRecord::Granted { request_id: 7 },
         McpSpawnRecord::Denied { request_id: 7 },
+        McpSpawnRecord::Adopted { request_id: 7 },
     ] {
         let encoded = encode_spawn_record(record).unwrap();
         assert_eq!(decode_spawn_record(&encoded).unwrap(), record);

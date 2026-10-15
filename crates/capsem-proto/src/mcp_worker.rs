@@ -117,9 +117,21 @@ pub fn decode_worker_record(frame: &[u8; MCP_WORKER_FRAME_SIZE]) -> Result<McpWo
 /// No worker-supplied command, environment, path or arbitrary argv crosses this API.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpSpawnRecord {
-    Builtin { request_id: u64, peer_index: u32 },
-    Granted { request_id: u64 },
-    Denied { request_id: u64 },
+    Builtin {
+        request_id: u64,
+        peer_index: u32,
+    },
+    Granted {
+        request_id: u64,
+    },
+    Denied {
+        request_id: u64,
+    },
+    /// The receiver owns and validated the connected socket. Only this receipt
+    /// releases the sender's original socket after an SCM_RIGHTS grant.
+    Adopted {
+        request_id: u64,
+    },
 }
 
 impl McpSpawnRecord {
@@ -133,13 +145,15 @@ pub fn encode_spawn_record(record: McpSpawnRecord) -> Result<[u8; MCP_SPAWN_FRAM
         McpSpawnRecord::Builtin { request_id, peer_index } => (1, request_id, peer_index),
         McpSpawnRecord::Granted { request_id } => (2, request_id, 0),
         McpSpawnRecord::Denied { request_id } => (3, request_id, 0),
+        McpSpawnRecord::Adopted { request_id } => (4, request_id, 0),
     };
     if request_id == 0 {
         bail!("MCP spawn request id is zero");
     }
     let mut frame = [0; MCP_SPAWN_FRAME_SIZE];
     frame[..2].copy_from_slice(b"MS");
-    frame[2] = 1;
+    // Version 2 requires adoption before releasing the original socket.
+    frame[2] = 2;
     frame[3] = kind;
     frame[4..12].copy_from_slice(&request_id.to_be_bytes());
     frame[12..].copy_from_slice(&peer_index.to_be_bytes());
@@ -147,7 +161,7 @@ pub fn encode_spawn_record(record: McpSpawnRecord) -> Result<[u8; MCP_SPAWN_FRAM
 }
 
 pub fn decode_spawn_record(frame: &[u8; MCP_SPAWN_FRAME_SIZE]) -> Result<McpSpawnRecord> {
-    if &frame[..2] != b"MS" || frame[2] != 1 {
+    if &frame[..2] != b"MS" || frame[2] != 2 {
         bail!("invalid MCP spawn envelope");
     }
     let request_id = u64::from_be_bytes(frame[4..12].try_into().expect("fixed request size"));
@@ -159,6 +173,7 @@ pub fn decode_spawn_record(frame: &[u8; MCP_SPAWN_FRAME_SIZE]) -> Result<McpSpaw
         1 => Ok(McpSpawnRecord::Builtin { request_id, peer_index }),
         2 if peer_index == 0 => Ok(McpSpawnRecord::Granted { request_id }),
         3 if peer_index == 0 => Ok(McpSpawnRecord::Denied { request_id }),
+        4 if peer_index == 0 => Ok(McpSpawnRecord::Adopted { request_id }),
         _ => bail!("invalid MCP spawn kind or reserved fields"),
     }
 }
