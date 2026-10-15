@@ -5,7 +5,7 @@
 </script>
 <section class="hero container" aria-labelledby="hero-title">
   <div class="hero-heading">
-    <h1 id="hero-title">{HERO.lines[0]}<br />{HERO.lines[1]}<br /><span>{HERO.lines[2]}</span></h1>
+    <h1 id="hero-title"><span>{SITE.name.toUpperCase()}</span><br />{HERO.lines[0]} to<br />ship with AI securely.</h1>
     <div class="hero-intro">
       <h2>{HERO.title}</h2>
       <p>{HERO.description}</p>

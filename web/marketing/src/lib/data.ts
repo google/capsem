@@ -35,26 +35,27 @@ export const HERO = {
   description: "Your agents, tools, and connections. Set up for you. Isolated by design.",
 } as const;
 export const DEMO = {
-  title: "Your workspace", session: "inbox", badge: "Isolated VM", label: "Illustrated workflow", play: "Play demo", pause: "Pause demo", replay: "Replay demo",
+  title: "Capsem", session: "inbox", badge: "Isolated VM", label: "Illustrated workflow", play: "Play demo", pause: "Pause demo", replay: "Replay demo",
   steps: ["Launch", "Connect", "Get it done"],
+  agent: "OpenAI Codex", directory: "directory", directoryValue: "/workspace",
+  tabs: ["Terminal", "Stats", "Files"], prompt: "› Ask Codex to do anything", hint: "? for shortcuts", context: "100% context left",
   lines: [
-    { text: "$ capsem create -n inbox", kind: "command" },
-    { text: "✓ Workspace created · security active", kind: "status" },
-    { text: "$ capsem shell", kind: "command" },
-    { text: "Your agent is ready.", kind: "status" },
     { text: "› Find the emails that need my attention.", kind: "prompt" },
-    { text: "Reading your connected inbox…", kind: "muted" },
-    { text: "3 things to focus on today", kind: "result" },
-    { text: "01  Review the project proposal", kind: "item" },
-    { text: "02  Confirm tomorrow’s meeting", kind: "item" },
-    { text: "03  Approve the updated timeline", kind: "item" },
+    { text: "• Reading your connected inbox", kind: "muted" },
+    { text: "• Here are the three emails to focus on:", kind: "result" },
+    { text: "1. Project proposal — review requested", kind: "item" },
+    { text: "2. Tomorrow’s meeting — confirm attendance", kind: "item" },
+    { text: "3. Updated timeline — approval needed", kind: "item" },
   ],
   connection: "Email connected", boundary: "Protected by Capsem",
 } as const;
 export const AGENTS = {
-  title: "Your AI. Your environment.",
-  description: "Use your favorites. Switch freely. Build your own.",
+  title: "Your favorite AIs.",
+  description: "Switch anytime.",
   names: ["Claude Code", "Codex", "Gemini CLI", "Antigravity", "Ollama"],
+  toolsTitle: "Tools included",
+  tools: ["Python", "Node.js", "Git", "GitHub CLI", "uv", "tmux", "curl", "NumPy", "pandas", "SciPy", "scikit-learn", "Matplotlib", "pytest", "FastMCP"],
+  mcpTitle: "Built-in MCP", mcp: ["fetch_http", "grep_http", "http_headers"],
   custom: "Make it yours", detail: "Your tools. Your MCP servers. Your own images.", link: "Build your environment",
 } as const;
 export const SPEED = {
@@ -73,7 +74,7 @@ export const SPEED = {
   ],
 } as const;
 export const SECURITY = {
-  title: "Secure by default.", subtitle: "So you can focus on your goal.",
+  title: "Secure by default", subtitle: "so you can focus on your goal.",
   description: "Isolation, protected credentials, and checks on what goes in and out.", link: "Explore the security architecture",
   diagram: "An isolated agent workspace connects to models and tools through Capsem’s security engine. Credentials stay outside the VM. Rules, privacy scanning, logging and reporting apply at the security boundary.",
   workspace: "Your workspace", agent: "AI agent", tools: "Tools & files", isolation: "Isolated Linux VM", airgap: "No direct network access",
@@ -83,14 +84,20 @@ export const SECURITY = {
 } as const;
 export const CONTROL = {
   title: "Stay in control.",
-  description: "See what your agents do. Set the rules for your team.",
-  links: [{ label: "Explore observability", href: DOCS.activity }, { label: "Deploy for your team", href: DOCS.enterprise }],
-  titlebar: "Session activity", caption: "Illustrative session", session: "inbox", status: "Running",
-  columns: ["Time", "Activity", "Decision"],
-  rows: [
-    { time: "09:41:02", title: "Model request", detail: "Credential applied by broker", status: "Allowed", denied: false },
-    { time: "09:41:03", title: "Read inbox", detail: "MCP · email connector", status: "Allowed", denied: false },
-    { time: "09:41:04", title: "Outbound request", detail: "Destination outside policy", status: "Blocked", denied: true },
+  caption: "Illustrative examples",
+  panels: [
+    { title: "See everything.", description: "Trace every action, request, and decision.", label: "Activity log", kind: "activity" },
+    { title: "Full control.", description: "Set your boundaries with CEL rules.", label: "CEL rules", kind: "rules" },
+    { title: "Detect threats.", description: "Turn suspicious activity into Sigma detections.", label: "Sigma detections", kind: "detection" },
   ],
-  policy: "Your policy. Applied consistently.", policyDetail: "Enforcement · Detections · Reporting",
+  events: [
+    { time: "09:41:02", name: "Model request", status: "Allowed", denied: false },
+    { time: "09:41:03", name: "Read inbox", status: "Allowed", denied: false },
+    { time: "09:41:04", name: "Outbound request", status: "Blocked", denied: true },
+  ],
+  rule: 'http.host == "untrusted.example"',
+  action: "deny", ruleName: "Block a destination", match: "match", actionLabel: "action",
+  detection: 'title: Suspicious destination\nlevel: high\ndetection:\n  selection:\n    http.host: untrusted.example\n  condition: selection',
+  alert: "Suspicious destination", severity: "High",
+  links: [{ label: "Explore observability", href: DOCS.activity }, { label: "Deploy for your team", href: DOCS.enterprise }],
 } as const;

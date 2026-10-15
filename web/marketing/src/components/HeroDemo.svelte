@@ -29,13 +29,16 @@
   }
 </script>
 <div class="demo-scene">
-  <div class="orbit orbit-one" aria-hidden="true"></div><div class="orbit orbit-two" aria-hidden="true"></div>
-  <div class="workspace-window">
+
+  <div class="workspace-window codex-window">
     <div class="window-toolbar"><div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div><span>{DEMO.title}</span><span class="window-icon" aria-hidden="true">⌘</span></div>
     <div class="workspace-header"><span class="session-icon" aria-hidden="true">▧</span><strong>{DEMO.session}</strong><span class="status-badge"><i></i>{DEMO.badge}</span></div>
-    <div class="terminal" role="img" aria-label={DEMO.lines.map(line => line.text).join(". ")}>
-      {#each DEMO.lines as line, i}<div class="terminal-line {line.kind}" class:visible={i < count} aria-hidden="true">{line.text}</div>{/each}
-      <span class="terminal-cursor" class:visible={running} aria-hidden="true"></span>
+    <div class="codex-tabs" aria-hidden="true">{#each DEMO.tabs as name, i}<span class:selected={i === 0}>{name}</span>{/each}<span class="codex-tools">⑂ ···</span></div>
+    <div class="codex-terminal" role="img" aria-label={`${DEMO.agent}. ${DEMO.lines.map(line => line.text).join(". ")}`}>
+      <div class="codex-welcome" aria-hidden="true"><strong>›_ {DEMO.agent}</strong><div><span>{DEMO.directory}:</span> {DEMO.directoryValue}</div></div>
+      <div class="codex-conversation" aria-hidden="true">{#each DEMO.lines as line, i}<div class="terminal-line {line.kind}" class:visible={i < count}>{line.text}</div>{/each}</div>
+      <div class="codex-prompt" aria-hidden="true">{DEMO.prompt}<span class="terminal-cursor" class:visible={running}></span></div>
+      <div class="codex-hints" aria-hidden="true"><span>{DEMO.hint}</span><span>{DEMO.context}</span></div>
     </div>
     <div class="workspace-footer"><span><i></i>{DEMO.connection}</span><span>{DEMO.boundary}</span></div>
   </div>

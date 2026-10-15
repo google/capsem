@@ -1,10 +1,20 @@
 ---
 import { CONTROL as C } from "../lib/data";
 ---
-<section class="control-section" aria-labelledby="control-title"><div class="container control-layout">
-  <div class="control-copy"><h2 id="control-title">{C.title}</h2><p class="section-description">{C.description}</p><div class="control-links">{C.links.map(link => <a class="text-link" href={link.href}>{link.label}<span aria-hidden="true">↗</span></a>)}</div></div>
-  <figure class="activity-figure"><div class="activity-panel"><div class="activity-heading"><strong>{C.titlebar}</strong><span class="status-badge"><i></i>{C.status}</span></div><div class="activity-session"><span class="session-icon" aria-hidden="true">▧</span>{C.session}<span class="session-line"></span></div>
-    <table><thead><tr>{C.columns.map(column => <th scope="col">{column}</th>)}</tr></thead><tbody>{C.rows.map(row => <tr><td>{row.time}</td><td><strong>{row.title}</strong><small>{row.detail}</small></td><td><span class:list={["decision", {denied:row.denied}]}>{row.status}</span></td></tr>)}</tbody></table>
-    <div class="policy-footer"><span class="policy-icon" aria-hidden="true">⌑</span><div><strong>{C.policy}</strong><small>{C.policyDetail}</small></div></div>
-  </div><figcaption>{C.caption}</figcaption></figure>
-</div></section>
+<section class="control-section" aria-labelledby="control-title">
+  <div class="container">
+    <div class="section-heading control-heading"><h2 id="control-title">{C.title}</h2></div>
+    <div class="control-grid">
+      {C.panels.map(panel => <article class="control-card">
+        <h3>{panel.title}</h3><p>{panel.description}</p>
+        <div class="control-example">
+          <div class="example-label">{panel.label}<span aria-hidden="true">↗</span></div>
+          {panel.kind === "activity" ? <ol class="activity-log">{C.events.map(event => <li><time>{event.time}</time><strong>{event.name}</strong><span class:list={["decision", {denied: event.denied}]}>{event.status}</span></li>)}</ol>
+          : panel.kind === "rules" ? <div class="rule-example"><strong>{C.ruleName}</strong><dl><dt>{C.match}</dt><dd><code>{C.rule}</code></dd><dt>{C.actionLabel}</dt><dd><span class="decision denied">{C.action}</span></dd></dl></div>
+          : <div class="detection-example"><pre><code>{C.detection}</code></pre><div class="detection-alert"><span>{C.alert}</span><span class="decision denied">{C.severity}</span></div></div>}
+        </div>
+      </article>)}
+    </div>
+    <div class="control-bottom"><div class="control-links">{C.links.map(link => <a class="text-link" href={link.href}>{link.label}<span aria-hidden="true">↗</span></a>)}</div><small>{C.caption}</small></div>
+  </div>
+</section>

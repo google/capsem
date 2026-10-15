@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Added a Codex terminal illustration in the Capsem shell and a list of bundled
+  tools and MCP tools to the marketing homepage.
+
+- Restored the marketing brand palette and grid hero; added activity, CEL rules,
+  and Sigma detection panels to the control section.
+
 - Rebuilt the marketing homepage with a light single-page design, a scripted
   workspace demo, sourced performance figures, and concise security and
   observability sections. Removed the duplicate landing page and FAQ.
