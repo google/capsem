@@ -103,8 +103,8 @@ impl SigmaRule {
                 let field = field.as_str();
                 validate_security_event_field(field)?;
                 let clause = sigma_field_clause(field, expected)?;
-                positive.push(format!("({})", clause.positive));
-                negative.push(format!("({})", clause.negative));
+                positive.push(clause.positive);
+                negative.push(clause.negative);
             }
             if positive.is_empty() {
                 return Err(format!("Sigma selection '{name}' must not be empty"));
@@ -152,10 +152,10 @@ fn sigma_condition_to_security_event_match(
                     .get(name)
                     .ok_or_else(|| format!("Sigma condition references unknown selection '{name}'"))?;
                 if negate_next {
-                    output.push(format!("({})", clause.negative));
+                    output.push(clause.negative.clone());
                     negate_next = false;
                 } else {
-                    output.push(format!("({})", clause.positive));
+                    output.push(clause.positive.clone());
                 }
             }
         }
