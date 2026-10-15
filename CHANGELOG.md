@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Integrated the approved interactive terminal hero with chapter playback and refined marketing typography.
+
+- Colorized the marketing detection rule and linked its authoring guide; simplified
+  environment performance copy, removed redundant hero text, and highlighted parallel agent use.
+
 - Unified marketing layout with Tailwind Typography and semantic theme tokens; added
   designed speed cards and interaction, policy, and password-file detection examples.
 

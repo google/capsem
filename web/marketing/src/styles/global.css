@@ -1,38 +1,39 @@
 @import "tailwindcss";
+@import "./hero-demo.css";
 @plugin "@tailwindcss/typography";
 
 @theme {
   --font-sans: "Inter", system-ui, sans-serif;
   --font-display: "Inter", system-ui, sans-serif;
-  --color-surface: #ffffff;
-  --color-paper: #ffffff;
-  --color-ink: #0a0a0a;
-  --color-body: #4b5563;
-  --color-muted: #6b7280;
-  --color-line: #e5e7eb;
-  --color-tint: #f9fafb;
-  --color-accent: #3b82f6;
-  --color-accent-text: #2563eb;
-  --color-accent-soft: #eaf0fc;
-  --color-accent-border: #bfdbfe;
-  --color-secondary: #7c3aed;
-  --color-secondary-soft: #f5f3ff;
-  --color-secondary-border: #ddd6fe;
-  --color-negative: #7c3aed;
-  --color-negative-soft: #f3edf8;
-  --color-integration: #4338ca;
-  --color-integration-soft: #eef2ff;
-  --color-integration-border: #c7d2fe;
-  --color-dark-surface: #0a0a0a;
-  --color-dark-paper: #141414;
-  --color-dark-ink: #ffffff;
-  --color-dark-body: #d4d4d8;
-  --color-dark-muted: #a1a1aa;
-  --color-dark-line: #262626;
-  --color-dark-accent: #93c5fd;
-  --color-dark-accent-soft: #17243b;
-  --color-dark-secondary: #c4b5fd;
-  --color-dark-negative-soft: #2d1e42;
+  --color-surface: var(--color-white);
+  --color-paper: var(--color-white);
+  --color-ink: var(--color-neutral-950);
+  --color-body: var(--color-gray-600);
+  --color-muted: var(--color-gray-500);
+  --color-line: var(--color-gray-200);
+  --color-tint: var(--color-gray-50);
+  --color-accent: var(--color-blue-500);
+  --color-accent-text: var(--color-blue-600);
+  --color-accent-soft: var(--color-blue-50);
+  --color-accent-border: var(--color-blue-200);
+  --color-secondary: var(--color-violet-600);
+  --color-secondary-soft: var(--color-violet-50);
+  --color-secondary-border: var(--color-violet-200);
+  --color-negative: var(--color-violet-600);
+  --color-negative-soft: var(--color-violet-50);
+  --color-integration: var(--color-indigo-700);
+  --color-integration-soft: var(--color-indigo-50);
+  --color-integration-border: var(--color-indigo-200);
+  --color-dark-surface: var(--color-neutral-950);
+  --color-dark-paper: var(--color-neutral-900);
+  --color-dark-ink: var(--color-white);
+  --color-dark-body: var(--color-zinc-300);
+  --color-dark-muted: var(--color-zinc-400);
+  --color-dark-line: var(--color-neutral-800);
+  --color-dark-accent: var(--color-blue-400);
+  --color-dark-accent-soft: var(--color-blue-950);
+  --color-dark-secondary: var(--color-violet-300);
+  --color-dark-negative-soft: var(--color-violet-950);
   --color-terminal: #282828;
   --color-terminal-layer: #333333;
   --color-terminal-line: #454545;
@@ -52,9 +53,9 @@
   --tw-prose-headings: var(--color-accent-text);
   --tw-prose-links: var(--color-accent-text);
   --tw-prose-bold: var(--color-ink);
-  & h2 { @apply mt-0 mb-4 text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl; }
-  & h3 { @apply mt-0 mb-3 text-xl font-semibold tracking-tight; }
-  & p { @apply my-0 text-base leading-7; }
+  & h2 { @apply mt-0 mb-5 text-3xl leading-tight font-bold tracking-tight text-accent-text text-balance sm:text-4xl lg:text-5xl; }
+  & h3 { @apply mt-0 mb-3 text-xl leading-snug font-semibold tracking-tight text-ink sm:text-2xl; }
+  & p { @apply my-0 text-base leading-relaxed text-body sm:text-lg; }
 }
 @utility brand-gradient { @apply bg-linear-to-br from-accent to-secondary bg-clip-text text-transparent; }
 @utility brand { @apply inline-flex items-center gap-2 text-2xl font-bold tracking-tight text-ink; }
@@ -117,7 +118,7 @@
 .window-dots { display: flex; gap: 5px; }
 .window-dots i { height: 6px; width: 6px; border: 1px solid var(--color-muted); border-radius: 50%; opacity: .6; }
 .window-icon { font-size: 14px; }
-.session-icon { width: 25px; height: 25px; border-radius: 5px; display: inline-grid; place-items: center; border: 1px solid var(--color-line); color: var(--color-body); }
+.environment-icon { width: 25px; height: 25px; border-radius: 5px; display: inline-grid; place-items: center; border: 1px solid var(--color-line); color: var(--color-body); }
 .status-badge { display: inline-flex; gap: 6px; align-items: center; font-size: 9px; color: var(--color-accent); background: var(--color-accent-soft); padding: 5px 8px; border-radius: 4px; margin-left: auto; white-space: nowrap; }
 .status-badge i, .workspace-footer i { display: inline-block; width: 4px; height: 4px; background: var(--color-accent); border-radius: 50%; }
 .terminal-line { visibility: hidden; opacity: 0; transition: opacity .25s ease; min-height: 20px; }
@@ -193,5 +194,3 @@
 .speed-card { background-image: radial-gradient(ellipse at 100% 0, color-mix(in srgb, var(--color-secondary) 9%, transparent), transparent 70%); }
 .speed-glow { fill: color-mix(in srgb, var(--color-accent) 8%, transparent); }
 .speed-line { opacity: .45; }
-
-.hero-copy h2 { @apply text-xl; }
