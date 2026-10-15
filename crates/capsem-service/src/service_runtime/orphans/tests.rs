@@ -29,6 +29,15 @@ impl Drop for Orphan {
 }
 
 fn orphan(root: &Path, ignores_term: bool) -> Orphan {
+    orphan_role(
+        "capsem-process",
+        "--session-dir",
+        &root.join("sessions/original"),
+        ignores_term,
+    )
+}
+
+fn orphan_role(binary: &str, scope: &str, directory: &Path, ignores_term: bool) -> Orphan {
     let inner = if ignores_term {
         "trap '' TERM; printf '%s\\n' \"$$\"; read -r"
     } else {
@@ -37,11 +46,13 @@ fn orphan(root: &Path, ignores_term: bool) -> Orphan {
     let mut parent = Command::new("bash")
         .args([
             "-c",
-            "bash -c 'exec -a capsem-process bash -c \"$1\" -- --session-dir \"$2\"' -- \"$1\" \"$2\" <&0 &",
+            "bash -c 'exec -a \"$3\" bash -c \"$1\" -- \"$4\" \"$2\"' -- \"$1\" \"$2\" \"$3\" \"$4\" <&0 &",
             "--",
             inner,
         ])
-        .arg(root.join("sessions/original"))
+        .arg(directory)
+        .arg(binary)
+        .arg(scope)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .stdin(std::process::Stdio::piped())
@@ -61,6 +72,103 @@ fn orphan(root: &Path, ignores_term: bool) -> Orphan {
         pid,
         _input: input,
     }
+}
+
+#[test]
+fn startup_retires_the_previous_gateway_before_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let gateway = orphan_role("capsem-gateway", "--run-dir", directory.path(), false);
+    retire(directory.path()).unwrap();
+    assert!(
+        gateway.handle.has_exited().unwrap(),
+        "old gateway must release its singleton before replacement"
+    );
+}
+
+#[test]
+fn startup_confirms_pinned_exit_when_fresh_argv_disappears() {
+    let directory = tempfile::tempdir().unwrap();
+    let child = orphan(directory.path(), false);
+    let observed = proctable::processes()
+        .unwrap()
+        .into_iter()
+        .find(|process| process.pid == child.pid)
+        .unwrap();
+    let target = Target {
+        handle: ProcessHandle::open(ProcessId::try_from(child.pid).unwrap()).unwrap(),
+        observed,
+    };
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(20));
+            child.handle.signal(Signal::Terminate).unwrap();
+        });
+        verify_candidates(vec![target], &[])
+    });
+    assert!(result.unwrap().is_empty());
+    assert!(child
+        .handle
+        .wait_until_exit(Instant::now() + Duration::from_secs(2))
+        .unwrap());
+}
+
+#[test]
+fn startup_missing_argv_cannot_authorize_or_discard_a_live_process() {
+    let directory = tempfile::tempdir().unwrap();
+    let child = orphan(directory.path(), false);
+    let observed = proctable::processes()
+        .unwrap()
+        .into_iter()
+        .find(|process| process.pid == child.pid)
+        .unwrap();
+    let target = Target {
+        handle: ProcessHandle::open(ProcessId::try_from(child.pid).unwrap()).unwrap(),
+        observed,
+    };
+    assert!(verify_candidates(vec![target], &[]).is_err());
+    assert!(!child.handle.has_exited().unwrap());
+}
+
+#[test]
+fn startup_gateway_scope_is_exact_and_unique() {
+    let root = Path::new("/tmp/startup-owned-root");
+    for arguments in [
+        vec!["--run-dir", "/tmp/startup-owned-root-other"],
+        vec!["--run-dir", "/tmp/startup-owned-root/sessions/a"],
+        vec![
+            "--run-dir",
+            "/tmp/startup-owned-root",
+            "--run-dir",
+            "/tmp/startup-owned-root",
+        ],
+        vec!["--session-dir", "/tmp/startup-owned-root"],
+        vec!["--run-dir"],
+    ] {
+        let argv = std::iter::once("capsem-gateway")
+            .chain(arguments)
+            .map(std::ffi::OsString::from)
+            .collect();
+        let process = Process::from_argv(9001, 1, argv);
+        assert!(super::super::find_orphan_capsem_pids(&[process], root).is_empty());
+    }
+}
+
+#[test]
+fn startup_discards_only_kernel_confirmed_absence_before_pinning() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut child = Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    let observed = Process::from_argv(
+        pid,
+        1,
+        vec![
+            "capsem-process".into(),
+            "--session-dir".into(),
+            directory.path().join("sessions/original").into_os_string(),
+        ],
+    );
+    assert!(pin_candidates(&[observed], directory.path()).unwrap().is_empty());
 }
 
 #[test]

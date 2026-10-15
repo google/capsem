@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Service crash recovery confirms exiting orphan identities and retires the
+  previous gateway before starting its replacement.
+
 - CLI commands fail promptly when their explicitly selected local service is
   absent, while retaining the gateway startup wait for a running service.
 

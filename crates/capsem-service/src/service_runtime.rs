@@ -514,10 +514,10 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
 /// the same run_dir it must reap these orphans or the host accumulates
 /// wedged Apple VZ instances and leaked vsock ports.
 ///
-/// Matches the exact `--session-dir` argument because the spawn-side
-/// always writes the absolute session dir as `<run_dir>/sessions/<id>` or
-/// `<run_dir>/persistent/<id>`. Pure -- no side effects -- so the matching
-/// is unit-testable without spawning real processes.
+/// Matches exact session directories for VM owners and the exact `--run-dir`
+/// for gateways. The old gateway must release its singleton and runtime-file
+/// ownership before its replacement starts. Selection has no side effects;
+/// native handles and fresh ancestry verification authorize retirement.
 pub(super) fn find_orphan_capsem_pids(
     processes: &[capsem_foundation::proctable::Process],
     run_dir: &std::path::Path,
@@ -527,13 +527,16 @@ pub(super) fn find_orphan_capsem_pids(
     processes
         .iter()
         .filter_map(|process| {
-            if std::path::Path::new(process.argv.first()?).file_name() != Some(OsStr::new("capsem-process")) {
-                return None;
-            }
+            let scope_argument = match std::path::Path::new(process.argv.first()?).file_name()? {
+                binary if binary == OsStr::new("capsem-process") => "--session-dir",
+                binary if binary == OsStr::new("capsem-gateway") => "--run-dir",
+                _ => return None,
+            };
+            let pid = i32::try_from(process.pid).ok().filter(|pid| *pid > 0)?;
             let mut arguments = process.argv.iter().skip(1);
             let mut directory = None;
             while let Some(argument) = arguments.next() {
-                if argument == "--session-dir" {
+                if argument == scope_argument {
                     if directory.is_some() {
                         return None;
                     }
@@ -541,6 +544,9 @@ pub(super) fn find_orphan_capsem_pids(
                 }
             }
             let directory = directory?;
+            if scope_argument == "--run-dir" {
+                return (directory == run_dir).then_some(pid);
+            }
             let relative = directory.strip_prefix(run_dir).ok()?;
             let mut components = relative.components();
             match (components.next(), components.next(), components.next()) {
@@ -548,7 +554,7 @@ pub(super) fn find_orphan_capsem_pids(
                     if root == "sessions" || root == "persistent" => {}
                 _ => return None,
             }
-            i32::try_from(process.pid).ok().filter(|pid| *pid > 0)
+            Some(pid)
         })
         .collect()
 }

@@ -12,7 +12,10 @@ use capsem_foundation::proctable::Process;
 use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use capsem_foundation::unix::process::{ProcessHandle, ProcessId, Signal};
+use capsem_foundation::unix::process::{probe, ProcessHandle, ProcessId, ProcessState, Signal};
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const EXIT_GRACE: Duration = Duration::from_secs(2);
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct Target {
@@ -32,11 +35,15 @@ fn pin_candidates(observations: &[Process], root: &Path) -> Result<Vec<Target>> 
         {
             continue;
         }
-        match ProcessHandle::open(ProcessId::try_from(observed.pid)?) {
+        let pid = ProcessId::try_from(observed.pid)?;
+        match ProcessHandle::open(pid) {
             Ok(handle) => pinned.push(Target {
                 handle,
                 observed: observed.clone(),
             }),
+            // A table observation can disappear before it can be pinned.
+            // Only a positive kernel absence probe permits discarding it.
+            Err(_) if probe(pid)? == ProcessState::Gone => {}
             Err(error) => return Err(error).context("pin original startup process"),
         }
     }
@@ -46,15 +53,26 @@ fn pin_candidates(observations: &[Process], root: &Path) -> Result<Vec<Target>> 
     // Pin every candidate before this one fresh sweep. A process that exited
     // between sweeps cannot redirect any handle to its recycled numeric PID.
     let fresh = proctable::processes().context("verify pinned startup arguments")?;
+    verify_candidates(pinned, &fresh)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn verify_candidates(pinned: Vec<Target>, fresh: &[Process]) -> Result<Vec<Target>> {
     let mut verified = Vec::new();
     for target in pinned {
         if target.handle.has_exited()? {
             continue;
         }
-        let current = fresh
-            .iter()
-            .find(|process| process.pid == target.observed.pid)
-            .context("pinned startup process identity unavailable")?;
+        let Some(current) = fresh.iter().find(|process| process.pid == target.observed.pid) else {
+            // /proc cmdline can disappear before the pinned process finishes
+            // exiting. Confirm that original exit; never signal a hidden live
+            // process or treat a missing table row as exit authority.
+            ensure!(
+                target.handle.wait_until_exit(Instant::now() + EXIT_GRACE)?,
+                "pinned startup process identity unavailable"
+            );
+            continue;
+        };
         ensure!(
             current.argv == target.observed.argv && current.parent_pid != std::process::id(),
             "pinned startup process identity changed"
@@ -85,7 +103,7 @@ pub(super) fn retire(root: &Path) -> Result<()> {
             Err(error) => return Err(error.into()),
         }
     }
-    let grace = Instant::now() + Duration::from_secs(2);
+    let grace = Instant::now() + EXIT_GRACE;
     let mut forced = Vec::new();
     for target in targets {
         if !target.handle.wait_until_exit(grace)? {
@@ -93,7 +111,7 @@ pub(super) fn retire(root: &Path) -> Result<()> {
             forced.push(target);
         }
     }
-    let forced_exit = Instant::now() + Duration::from_secs(2);
+    let forced_exit = Instant::now() + EXIT_GRACE;
     for target in forced {
         ensure!(
             target.handle.wait_until_exit(forced_exit)?,
