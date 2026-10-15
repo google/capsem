@@ -11,8 +11,11 @@ use std::net::IpAddr;
 use anyhow::{bail, Result};
 
 use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
+use crate::mcp_worker::McpHttpRole;
 
 mod guest_metadata;
+mod request;
+pub use request::{decode_upstream_grant_request, encode_upstream_grant_request};
 
 pub use guest_metadata::GuestFileTime;
 use guest_metadata::{
@@ -34,7 +37,7 @@ pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 pub const MAX_GUEST_SHARE_PATH_BYTES: usize = 4096;
 
 const MAGIC: [u8; 2] = *b"UG";
-const VERSION: u8 = 7;
+const VERSION: u8 = 8;
 const MAGIC_RANGE: std::ops::Range<usize> = 0..2;
 const VERSION_OFFSET: usize = 2;
 const KIND_OFFSET: usize = 3;
@@ -60,6 +63,7 @@ const ATTACH_PROXY_MCP: u8 = 9;
 const ATTACH_PROXY_TRACE_HINTS: u8 = 10;
 const OPEN_LOOPBACK_LISTENER: u8 = 11;
 const SET_GUEST_TIMES: u8 = 12;
+const ATTACH_MCP_HTTP: u8 = 13;
 const TCP_RESOLVED: u8 = 101;
 const DESCRIPTOR_GRANTED: u8 = 102;
 const DENIED: u8 = 103;
@@ -70,6 +74,7 @@ const PROXY_MCP_ADOPTED: u8 = 107;
 const PROXY_TRACE_HINTS_ADOPTED: u8 = 108;
 const LOOPBACK_LISTENER_GRANTED: u8 = 109;
 const GUEST_TIMES_SET: u8 = 110;
+const MCP_HTTP_ADOPTED: u8 = 111;
 
 /// Application protocol spoken over a granted TCP stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -233,6 +238,10 @@ pub enum UpstreamGrantRequest {
     AttachProxyTraceHints {
         request_id: u64,
     },
+    AttachMcpHttp {
+        request_id: u64,
+        role: McpHttpRole,
+    },
     OpenLoopbackListener {
         request_id: u64,
         port: u16,
@@ -242,6 +251,9 @@ pub enum UpstreamGrantRequest {
 /// Coordinator-to-worker record. Ledger grants carry two independent fds.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UpstreamGrantResponse {
+    McpHttpAdopted {
+        request_id: u64,
+    },
     TcpResolved {
         request_id: u64,
         selection_id: u64,
@@ -289,7 +301,10 @@ impl UpstreamGrantRequest {
     /// Requests never carry descriptors from the untrusted worker.
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
-            Self::AttachProxyTraffic { .. } | Self::AttachProxyMcp { .. } | Self::AttachProxyTraceHints { .. } => 1,
+            Self::AttachProxyTraffic { .. }
+            | Self::AttachProxyMcp { .. }
+            | Self::AttachProxyTraceHints { .. }
+            | Self::AttachMcpHttp { .. } => 1,
             _ => 0,
         }
     }
@@ -308,267 +323,9 @@ impl UpstreamGrantResponse {
             | Self::GuestTimesSet { .. }
             | Self::ProxyTrafficAdopted { .. }
             | Self::ProxyMcpAdopted { .. }
+            | Self::McpHttpAdopted { .. }
             | Self::ProxyTraceHintsAdopted { .. } => 0,
         }
-    }
-}
-
-/// Encode one worker request into its exact fixed-size record.
-pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[u8; UPSTREAM_GRANT_FRAME_SIZE]> {
-    let mut frame = empty_frame();
-    match request {
-        UpstreamGrantRequest::ResolveTcp {
-            request_id,
-            protocol,
-            host,
-            port,
-        } => {
-            require_nonzero("request id", *request_id)?;
-            if *port == 0 {
-                bail!("upstream port cannot be zero");
-            }
-            validate_normalized_host(host)?;
-            frame[KIND_OFFSET] = RESOLVE_TCP;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-            put_u16(&mut frame, PORT_RANGE, *port);
-            put_u16(&mut frame, DETAIL_RANGE, protocol.code());
-            put_name(&mut frame, host)?;
-        }
-        UpstreamGrantRequest::ConnectTcp {
-            request_id,
-            selection_id,
-        } => {
-            require_nonzero("request id", *request_id)?;
-            require_nonzero("selection id", *selection_id)?;
-            frame[KIND_OFFSET] = CONNECT_TCP;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-            put_u64(&mut frame, RESOURCE_ID_RANGE, *selection_id);
-        }
-        UpstreamGrantRequest::OpenDns {
-            request_id,
-            upstream_index,
-        } => {
-            require_nonzero("request id", *request_id)?;
-            frame[KIND_OFFSET] = OPEN_DNS;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-            put_u16(&mut frame, DETAIL_RANGE, *upstream_index);
-        }
-        UpstreamGrantRequest::Adopted { grant_id } => {
-            require_nonzero("grant id", *grant_id)?;
-            frame[KIND_OFFSET] = ADOPTED;
-            put_u64(&mut frame, RESOURCE_ID_RANGE, *grant_id);
-        }
-        UpstreamGrantRequest::Release { resource_id } => {
-            require_nonzero("resource id", *resource_id)?;
-            frame[KIND_OFFSET] = RELEASE;
-            put_u64(&mut frame, RESOURCE_ID_RANGE, *resource_id);
-        }
-        UpstreamGrantRequest::SetGuestMode {
-            request_id,
-            relative_path,
-            mode,
-        } => {
-            require_nonzero("request id", *request_id)?;
-            if *mode & !0o7777 != 0 {
-                bail!("guest mode contains non-permission bits");
-            }
-            validate_guest_share_path(relative_path)?;
-            frame[KIND_OFFSET] = SET_GUEST_MODE;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-            put_u16(&mut frame, DETAIL_RANGE, *mode);
-            put_path(&mut frame, relative_path)?;
-        }
-        UpstreamGrantRequest::SetGuestTimes {
-            request_id,
-            relative_path,
-            atime,
-            mtime,
-        } => {
-            require_nonzero("request id", *request_id)?;
-            validate_guest_share_path(relative_path)?;
-            if matches!((atime, mtime), (GuestFileTime::Omit, GuestFileTime::Omit)) {
-                bail!("guest timestamp request changes no timestamps");
-            }
-            frame[KIND_OFFSET] = SET_GUEST_TIMES;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-            put_path(&mut frame, relative_path)?;
-            put_guest_times(&mut frame, *atime, *mtime)?;
-        }
-        UpstreamGrantRequest::OpenLedger { request_id } => {
-            require_nonzero("request id", *request_id)?;
-            frame[KIND_OFFSET] = OPEN_LEDGER;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-        }
-        UpstreamGrantRequest::AttachProxyTraffic { request_id, service } => {
-            require_nonzero("request id", *request_id)?;
-            frame[KIND_OFFSET] = ATTACH_PROXY_TRAFFIC;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-            put_u16(&mut frame, DETAIL_RANGE, service.code());
-        }
-        UpstreamGrantRequest::AttachProxyMcp { request_id } => {
-            require_nonzero("request id", *request_id)?;
-            frame[KIND_OFFSET] = ATTACH_PROXY_MCP;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-        }
-        UpstreamGrantRequest::AttachProxyTraceHints { request_id } => {
-            require_nonzero("request id", *request_id)?;
-            frame[KIND_OFFSET] = ATTACH_PROXY_TRACE_HINTS;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-        }
-        UpstreamGrantRequest::OpenLoopbackListener { request_id, port } => {
-            require_nonzero("request id", *request_id)?;
-            frame[KIND_OFFSET] = OPEN_LOOPBACK_LISTENER;
-            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
-            put_u16(&mut frame, PORT_RANGE, *port);
-        }
-    }
-    Ok(frame)
-}
-
-/// Decode and fully validate one worker request.
-pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -> Result<UpstreamGrantRequest> {
-    validate_envelope(frame)?;
-    require_empty_policy_digest(frame)?;
-    let request_id = get_u64(frame, REQUEST_ID_RANGE);
-    let resource_id = get_u64(frame, RESOURCE_ID_RANGE);
-    let port = get_u16(frame, PORT_RANGE);
-    let detail = get_u16(frame, DETAIL_RANGE);
-    let name = get_name(frame)?;
-    let relative_path = get_path(frame)?;
-    if frame[KIND_OFFSET] != SET_GUEST_TIMES {
-        require_empty_time_fields(frame)?;
-    }
-    match frame[KIND_OFFSET] {
-        RESOLVE_TCP => {
-            require_nonzero("request id", request_id)?;
-            if resource_id != 0 || port == 0 {
-                bail!("invalid TCP resolution fields");
-            }
-            let protocol = UpstreamProtocol::decode(detail)?;
-            validate_normalized_host(&name)?;
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::ResolveTcp {
-                request_id,
-                protocol,
-                host: name,
-                port,
-            })
-        }
-        CONNECT_TCP => {
-            require_nonzero("request id", request_id)?;
-            require_nonzero("selection id", resource_id)?;
-            require_empty_fields(port, detail, &name)?;
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::ConnectTcp {
-                request_id,
-                selection_id: resource_id,
-            })
-        }
-        OPEN_DNS => {
-            require_nonzero("request id", request_id)?;
-            if resource_id != 0 || port != 0 || !name.is_empty() {
-                bail!("invalid DNS grant fields");
-            }
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::OpenDns {
-                request_id,
-                upstream_index: detail,
-            })
-        }
-        ADOPTED => {
-            require_nonzero("grant id", resource_id)?;
-            if request_id != 0 {
-                bail!("adoption cannot carry a request id");
-            }
-            require_empty_fields(port, detail, &name)?;
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::Adopted { grant_id: resource_id })
-        }
-        RELEASE => {
-            require_nonzero("resource id", resource_id)?;
-            if request_id != 0 {
-                bail!("release cannot carry a request id");
-            }
-            require_empty_fields(port, detail, &name)?;
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::Release { resource_id })
-        }
-        SET_GUEST_MODE => {
-            require_nonzero("request id", request_id)?;
-            if resource_id != 0 || port != 0 || !name.is_empty() || detail & !0o7777 != 0 {
-                bail!("invalid guest mode request fields");
-            }
-            validate_guest_share_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::SetGuestMode {
-                request_id,
-                relative_path,
-                mode: detail,
-            })
-        }
-        SET_GUEST_TIMES => {
-            require_nonzero("request id", request_id)?;
-            if resource_id != 0 || port != 0 || detail != 0 || !name.is_empty() {
-                bail!("invalid guest timestamp request fields");
-            }
-            validate_guest_share_path(&relative_path)?;
-            let (atime, mtime) = get_guest_times(frame)?;
-            if matches!((atime, mtime), (GuestFileTime::Omit, GuestFileTime::Omit)) {
-                bail!("guest timestamp request changes no timestamps");
-            }
-            Ok(UpstreamGrantRequest::SetGuestTimes {
-                request_id,
-                relative_path,
-                atime,
-                mtime,
-            })
-        }
-        OPEN_LEDGER => {
-            require_nonzero("request id", request_id)?;
-            if resource_id != 0 {
-                bail!("ledger request cannot carry a resource");
-            }
-            require_empty_fields(port, detail, &name)?;
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::OpenLedger { request_id })
-        }
-        ATTACH_PROXY_TRAFFIC => {
-            require_nonzero("request id", request_id)?;
-            if resource_id != 0 || port != 0 || !name.is_empty() {
-                bail!("proxy traffic request carries unrelated fields");
-            }
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::AttachProxyTraffic {
-                request_id,
-                service: ProxyTrafficService::decode(detail)?,
-            })
-        }
-        ATTACH_PROXY_MCP => {
-            require_nonzero("request id", request_id)?;
-            if resource_id != 0 {
-                bail!("proxy MCP request carries a resource");
-            }
-            require_empty_fields(port, detail, &name)?;
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::AttachProxyMcp { request_id })
-        }
-        ATTACH_PROXY_TRACE_HINTS => {
-            require_nonzero("request id", request_id)?;
-            if resource_id != 0 {
-                bail!("proxy trace-hint request carries a resource");
-            }
-            require_empty_fields(port, detail, &name)?;
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::AttachProxyTraceHints { request_id })
-        }
-        OPEN_LOOPBACK_LISTENER => {
-            require_nonzero("request id", request_id)?;
-            if resource_id != 0 || detail != 0 || !name.is_empty() {
-                bail!("loopback listener request carries unrelated fields");
-            }
-            require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::OpenLoopbackListener { request_id, port })
-        }
-        kind => bail!("invalid upstream request kind {kind}"),
     }
 }
 
@@ -576,6 +333,11 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
 pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Result<[u8; UPSTREAM_GRANT_FRAME_SIZE]> {
     let mut frame = empty_frame();
     match response {
+        UpstreamGrantResponse::McpHttpAdopted { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = MCP_HTTP_ADOPTED;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
         UpstreamGrantResponse::TcpResolved {
             request_id,
             selection_id,
@@ -753,6 +515,12 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
                 bail!("proxy traffic adoption carries unrelated fields");
             }
             Ok(UpstreamGrantResponse::ProxyTrafficAdopted { request_id })
+        }
+        MCP_HTTP_ADOPTED => {
+            if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {
+                bail!("MCP HTTP adoption carries unrelated fields");
+            }
+            Ok(UpstreamGrantResponse::McpHttpAdopted { request_id })
         }
         PROXY_MCP_ADOPTED => {
             if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {

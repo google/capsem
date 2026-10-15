@@ -3,6 +3,28 @@ use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 
 const POLICY_DIGEST: &str = "blake3:0000000000000000000000000000000000000000000000000000000000000001";
 
+#[test]
+fn mcp_http_handoff_is_typed_and_carries_only_its_connected_channel() {
+    for role in [
+        crate::mcp_worker::McpHttpRole::Aggregator,
+        crate::mcp_worker::McpHttpRole::Builtin,
+    ] {
+        let request = UpstreamGrantRequest::AttachMcpHttp { request_id: 42, role };
+        request_roundtrip(request.clone());
+        assert_eq!(request.expected_descriptor_count(), 1);
+        response_roundtrip(UpstreamGrantResponse::McpHttpAdopted { request_id: 42 });
+        let mut unknown = encode_upstream_grant_request(&request).unwrap();
+        unknown[DETAIL_RANGE].copy_from_slice(&255_u16.to_be_bytes());
+        assert!(decode_upstream_grant_request(&unknown).is_err());
+        let mut malformed = encode_upstream_grant_request(&request).unwrap();
+        malformed[RESOURCE_ID_RANGE].copy_from_slice(&1_u64.to_be_bytes());
+        assert!(decode_upstream_grant_request(&malformed).is_err());
+        let mut malformed = encode_upstream_grant_request(&request).unwrap();
+        malformed[PORT_RANGE].copy_from_slice(&443_u16.to_be_bytes());
+        assert!(decode_upstream_grant_request(&malformed).is_err());
+    }
+}
+
 fn request_roundtrip(request: UpstreamGrantRequest) {
     let encoded = encode_upstream_grant_request(&request).unwrap();
     assert_eq!(decode_upstream_grant_request(&encoded).unwrap(), request);

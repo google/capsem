@@ -191,6 +191,18 @@ fn write_runtime_limits() {
     let cache_image_catalog_retry_seconds =
         cache_integer("image_catalog_retry_seconds", 1, cache_image_catalog_refresh_seconds);
     let cache_image_verification_batch_keys = cache_integer("image_verification_batch_keys", 1, 65_536);
+    let mcp_integer = |key: &str, maximum: i64| {
+        config
+            .get("mcp")
+            .and_then(|mcp| mcp.get(key))
+            .and_then(toml::Value::as_integer)
+            .filter(|value| (1..=maximum).contains(value))
+            .unwrap_or_else(|| panic!("runtime limits: mcp.{key} must be between 1 and {maximum}"))
+    };
+    let mcp_http_timeout_seconds = mcp_integer("http_timeout_seconds", 3600);
+    let mcp_startup_timeout_seconds = mcp_integer("startup_timeout_seconds", 300);
+    let mcp_worker_queue_capacity = mcp_integer("worker_queue_capacity", 65_536);
+    let mcp_builtin_peers_per_session = mcp_integer("builtin_peers_per_session", 16);
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     std::fs::write(
         format!("{out_dir}/runtime_limits.rs"),
@@ -200,6 +212,14 @@ fn write_runtime_limits() {
              /// TCP descriptor grants and each of the two DNS sessions derive\n\
              /// their bounds from this one config-owned value.\n\
              pub const NETWORK_CLIENT_CAPACITY: usize = {capacity};\n\
+             /// Native MCP HTTP response-header and body request deadline.\n\
+             pub const MCP_HTTP_TIMEOUT_SECONDS: u64 = {mcp_http_timeout_seconds};\n\
+             /// Native MCP bootstrap/readiness deadline.\n\
+             pub const MCP_STARTUP_TIMEOUT_SECONDS: u64 = {mcp_startup_timeout_seconds};\n\
+             /// Bounded native MCP request/response queue capacity.\n\
+             pub const MCP_WORKER_QUEUE_CAPACITY: usize = {mcp_worker_queue_capacity};\n\
+             /// Approved first-party tool peers for one VM generation.\n\
+             pub const MCP_BUILTIN_PEERS_PER_SESSION: usize = {mcp_builtin_peers_per_session};\n\
              /// Live and retiring traffic grants allowed during connection replacement.\n\
              pub const NETWORK_TRAFFIC_GRANT_CAPACITY: usize = {traffic_grant_capacity};\n\
              /// Minimum descriptor budget for a network-facing process.\n\

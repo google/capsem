@@ -43,6 +43,13 @@ disk_flush_interval_milliseconds = 1000
 # A burst also flushes before the timer at this exact batch multiple.
 disk_flush_max_pending_events = 1048576
 
+[mcp]
+# Bounds for the native guest-tool workers, not the external npm SDK client.
+http_timeout_seconds = 30
+startup_timeout_seconds = 10
+worker_queue_capacity = 64
+builtin_peers_per_session = 1
+
 [cache]
 # Bounded runtime maps and freshness windows are product capacities. Keep
 # them here so every process sees the same policy and local literals cannot

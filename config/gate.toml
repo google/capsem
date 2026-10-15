@@ -1112,7 +1112,6 @@ must_stay_below_lines = 3000
 "crates/capsem-logger/src/writer/tests.rs" = 1237
 "crates/capsem-mock-server/src/main.rs" = 1167
 "crates/capsem-process/src/vsock.rs" = 1239
-"crates/capsem-proto/src/lib.rs" = 1008
 "crates/capsem-proto/src/tests.rs" = 1446
 "crates/capsem-service/src/tests/assets_registry.rs" = 1111
 "crates/capsem-service/src/tests/lifecycle.rs" = 1367
