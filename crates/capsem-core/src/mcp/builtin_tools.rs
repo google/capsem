@@ -598,7 +598,12 @@ async fn handle_http_headers(
         None => return tool_error(id, "missing required parameter: url"),
     };
 
-    let method = args.get("method").and_then(|v| v.as_str()).unwrap_or("HEAD");
+    // Policy and the ledger must see the actual outgoing method, including
+    // the existing HEAD fallback for every argument other than exact GET.
+    let method = match args.get("method").and_then(|v| v.as_str()) {
+        Some("GET") => "GET",
+        _ => "HEAD",
+    };
 
     let checked = match authorize_upstream(url, method, security_rules, plugin_policy).await {
         Ok(checked) => checked,
@@ -610,7 +615,7 @@ async fn handle_http_headers(
             record_http(
                 ledger,
                 &extract_domain(url),
-                "HEAD",
+                method,
                 &path,
                 HttpDecision::Denied,
                 None,

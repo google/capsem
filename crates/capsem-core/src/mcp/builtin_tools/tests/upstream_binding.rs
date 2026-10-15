@@ -5,6 +5,87 @@
 //! whose answer changed between check and dial reached anything.
 
 use super::*;
+
+#[tokio::test]
+async fn denied_header_get_is_recorded_as_get() {
+    let rules = rules(
+        r#"
+        [profiles.rules.block_get]
+        name = "block_get"
+        action = "block"
+        match = 'http.method == "GET"'
+    "#,
+    );
+    let mut ledger = Vec::new();
+    let response = call_builtin_tool(
+        "http_headers",
+        &serde_json::json!({"url": "http://127.0.0.1:9/", "method": "GET"}),
+        &test_client(),
+        &rules,
+        &BTreeMap::new(),
+        None,
+        &mut ledger,
+    )
+    .await;
+    assert_eq!(response.result.unwrap()["isError"], true);
+    let BuiltinLedgerRecord::HttpRequest(record) = &ledger[0];
+    assert_eq!(record.method, "GET");
+    assert_eq!(record.decision, HttpDecision::Denied);
+}
+
+#[tokio::test]
+async fn headers_fallback_cannot_authorize_post_and_then_send_a_blocked_head() {
+    let fixture = spawn_builtin_http_fixture().await;
+    let rules = rules(
+        r#"
+        [profiles.rules.allow_fixture]
+        name = "allow_fixture"
+        priority = 100
+        action = "allow"
+        match = 'http.host == "127.0.0.1"'
+        [profiles.rules.block_head]
+        name = "block_head"
+        priority = 10
+        action = "block"
+        match = 'http.method == "HEAD"'
+    "#,
+    );
+    for method in ["POST", "get"] {
+        let mut ledger = Vec::new();
+        let response = call_builtin_tool(
+            "http_headers",
+            &serde_json::json!({"url": format!("{}/", fixture.base_url), "method": method}),
+            &test_client(),
+            &rules,
+            &BTreeMap::new(),
+            Some(serde_json::json!(1)),
+            &mut ledger,
+        )
+        .await;
+        assert_eq!(
+            response.result.unwrap()["isError"],
+            true,
+            "{method} bypassed the HEAD block"
+        );
+        assert!(fixture.state.requests().is_empty(), "blocked HEAD reached upstream");
+        let BuiltinLedgerRecord::HttpRequest(record) = &ledger[0];
+        assert_eq!(record.method, "HEAD");
+        assert_eq!(record.decision, HttpDecision::Denied);
+    }
+    let response = call_builtin_tool(
+        "http_headers",
+        &serde_json::json!({"url": format!("{}/", fixture.base_url), "method": "GET"}),
+        &test_client(),
+        &rules,
+        &BTreeMap::new(),
+        None,
+        &mut Vec::new(),
+    )
+    .await;
+    assert_ne!(response.result.unwrap()["isError"], true);
+    assert_eq!(fixture.state.requests().len(), 1);
+    assert_eq!(fixture.state.requests()[0].method, http::Method::GET);
+}
 use std::net::SocketAddr;
 
 fn rules(toml: &str) -> SecurityRuleSet {

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Builtin HTTP-header tools evaluate policy and record the method actually
+  sent, preventing unsupported method arguments from bypassing a HEAD block.
+
 - Route ordinary CLI session, image, network and proxy commands through the
   authenticated gateway using the Rust SDK. Missing or rejected credentials
   fail without retrying mutations or falling back to the service socket.
