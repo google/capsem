@@ -150,3 +150,33 @@ export const FOOTER_COLUMNS = [
     ],
   },
 ] as const;
+
+
+// Image references are illustrative until the public agent images are selected.
+// The renderer can replace either HTML result panel with a captured UI later.
+export const HERO_DEMO = {
+  label: "FROM FIRST COMMAND TO REAL WORK",
+  title: "Your agent. Its own VM.",
+  description: "Install once. Launch an OCI image. Let your agent get to work inside a fresh, isolated Linux VM.",
+  terminalLabel: "Capsem interactive product demo",
+  demoLabel: "Illustrative demo · accelerated · example OCI images",
+  pause: "Pause", play: "Play", replay: "Replay",
+  host: "Your shell", websiteVM: "VM 01 / website", inboxVM: "VM 02 / inbox",
+  imageLabel: "OCI image", isolated: "Isolated Linux VM",
+  agy: { name: "Antigravity CLI", model: "Gemini", workspace: "~/website", status: "Generating…", prompt: ">" },
+  previewLabel: "Website preview", previewURL: "localhost / studio",
+  preview: { brand: "FORM & FIELD", nav: "Independent design studio", eyebrow: "THOUGHTFUL BY DESIGN", title: "A little space.\nA bigger idea.", description: "We create places, objects, and experiences that make everyday life a little more extraordinary.", action: "Explore our work ↗", footer: "Architecture / Objects / Digital", monogram: "F/f" },
+  inboxLabel: "Recent emails · fictional demo data",
+  emails: [
+    { sender: "Maya Chen", subject: "Website launch — ready for review", time: "09:41" },
+    { sender: "Design team", subject: "A few ideas for the next chapter", time: "09:28" },
+    { sender: "Alex Morgan", subject: "Coffee on Thursday?", time: "08:56" },
+  ],
+  chapters: [
+    { label: "Install", duration: 7000, kicker: "ONE COMMAND", title: "Start here. Everything follows.", detail: "Download and install Capsem from your terminal.", href: SITE.docs + "/getting-started/", link: "Installation guide ↗", context: "host", command: SITE.installCmd, lines: ["Downloading Capsem…", "Installing the CLI and service…", "✓ Capsem is ready."] },
+    { label: "Boot a VM", duration: 6500, kicker: "OCI IMAGE → LINUX VM", title: "Your tools. Already in the image.", detail: "Launch an agent image inside a fresh hardware-isolated VM.", href: SITE.docs + "/usage/cli/", link: "Explore OCI workloads ↗", context: "website", command: "capsem run -p 0:3000 --image docker://example/agy:latest", lines: ["Pulling OCI image · example/agy:latest", "Starting an isolated Linux VM…", "✓ agy ready · website workspace mounted"] },
+    { label: "Build", duration: 8000, kicker: "LET THE AGENT WORK", title: "An idea becomes a website.", detail: "The image brings the agent and its development tools. Capsem provides the boundary.", href: "#features", link: "See what is built in ↗", context: "website", command: "Build a beautiful website for a design studio. Preview it on port 3000.", lines: ["agy › Creating the studio website…", "Writing page, styles, and interactions", "Starting the preview server on :3000", "✓ Website ready to preview"] },
+    { label: "Preview", duration: 7000, kicker: "SEE WHAT YOU SHIPPED", title: "From terminal to something tangible.", detail: "Preview the result through a published loopback port.", href: SITE.docs + "/usage/cli/", link: "Explore port publishing ↗", context: "preview", command: "", lines: [] },
+    { label: "Another VM", duration: 11000, kicker: "NEW IMAGE. FRESH VM.", title: "Different work. A separate environment.", detail: "The first VM closes. A Codex image launches in a new VM, with its connected mail tool.", href: "#how-it-works", link: "How Capsem works ↗", context: "inbox", command: "capsem run --image docker://example/codex-mail:latest", lines: ["✓ Previous workload exited · VM 01 destroyed", "Starting VM 02 · example/codex-mail:latest", "codex › List my recent emails.", "Calling connected mail tool · list messages", "✓ Found 3 recent messages"] },
+  ],
+} as const;

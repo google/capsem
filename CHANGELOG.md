@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Interactive marketing hero demo showing installation, an OCI agent VM building
+  and previewing a website, and a separate Codex OCI VM with an illustrative inbox.
+
 ### Security
 
 - A guest could make the host walk arbitrary host directories on every
