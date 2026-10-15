@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update the marketing build's selector parser to avoid quadratic parsing of
+  long flat selectors.
+
 - Invalidly encoded explicit gateway URLs fail closed instead of selecting a
   local gateway.
 
