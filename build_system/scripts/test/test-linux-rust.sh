@@ -61,8 +61,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --locked -p capsem-router --test subprocess --profile ci
 
 # Service unit tests discover and execute the real native MCP cohort. A
-# coverage test executable is not the production worker it supervises.
-cargo build --locked -p capsem-mcp-aggregator -p capsem-mcp-builtin
+# coverage test executable is not the production worker it supervises. Build
+# beside the coverage test cohort, since nextest runs from each package root.
+cargo llvm-cov run --locked --no-cfg-coverage --no-report -p capsem-mcp-aggregator -- --version
+cargo llvm-cov run --locked --no-cfg-coverage --no-report -p capsem-mcp-builtin -- --version
 
 cargo llvm-cov nextest \
     --no-cfg-coverage \

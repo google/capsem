@@ -286,9 +286,8 @@ jobs:
       # connected capabilities through capsem-mcp-transport.
       - name: Build native MCP workers for service tests
         run: |
-          cargo build --locked -p capsem-mcp-aggregator -p capsem-mcp-builtin
-          codesign --sign - --force cache/target/cargo/debug/capsem-mcp-aggregator
-          codesign --sign - --force cache/target/cargo/debug/capsem-mcp-builtin
+          cargo llvm-cov run --locked --no-cfg-coverage --no-report -p capsem-mcp-aggregator -- --version
+          cargo llvm-cov run --locked --no-cfg-coverage --no-report -p capsem-mcp-builtin -- --version
 
       - name: Unit tests with coverage
         run: |

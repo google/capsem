@@ -17,7 +17,9 @@ def native_builds(source: str) -> set[str]:
     return {
         command.argv[index + 1]
         for command in parsed_commands(source, origin="native CI prerequisite")
-        if command.argv[:2] == ("cargo", "build")
+        if command.argv[:3] == ("cargo", "llvm-cov", "run")
+        and "--no-report" in command.argv
+        and command.argv[-2:] == ("--", "--version")
         for index, argument in enumerate(command.argv[:-1])
         if argument == "-p"
     }
