@@ -1,6 +1,6 @@
 //! Local discovery and presentation around the shared authenticated SDK.
 
-use super::{ApiResponse, DirectServiceLifetime, ListResponse, ServiceAdminClient};
+use super::{ApiResponse, ConnectMode, DirectServiceLifetime, ListResponse, ServiceAdminClient};
 use anyhow::{Context, Result};
 use capsem_sdk::transport::{CallOptions, MediaType, Request, Transport};
 use serde::{de::DeserializeOwned, Serialize};
@@ -33,7 +33,8 @@ impl GatewayClient {
         Box::pin(async move {
             self.connection
                 .get_or_try_init(|| async {
-                    if self.bootstrap.auto_launch && std::env::var_os("CAPSEM_GATEWAY_URL").is_none() {
+                    let explicit_gateway = std::env::var_os("CAPSEM_GATEWAY_URL").is_some();
+                    if self.bootstrap.auto_launch && !explicit_gateway {
                         self.bootstrap.ensure_service().await?;
                     }
                     let run_dir = self
@@ -41,6 +42,19 @@ impl GatewayClient {
                         .uds_path
                         .parent()
                         .context("service socket has no run directory")?;
+                    if !self.bootstrap.auto_launch
+                        && !explicit_gateway
+                        && crate::gateway_url_from_runtime(run_dir).await.is_none()
+                    {
+                        drop(
+                            self.bootstrap
+                                .connect_with_timeout(ConnectMode::FailFast)
+                                .await
+                                .with_context(|| {
+                                    format!("cannot connect to service at {}", self.bootstrap.uds_path.display())
+                                })?,
+                        );
+                    }
                     let url = crate::wait_for_gateway_url(run_dir).await?;
                     let token = match std::env::var("CAPSEM_GATEWAY_TOKEN") {
                         Ok(token) => token,

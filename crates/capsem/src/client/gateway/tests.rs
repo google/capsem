@@ -3,6 +3,18 @@ use crate::client::tests::fake_service::FakeService;
 use serde_json::json;
 
 #[tokio::test]
+async fn absent_local_service_fails_before_waiting_for_gateway_startup() {
+    let run_dir = tempfile::tempdir().unwrap();
+    let client = GatewayClient::new(run_dir.path().join("service.sock"), false);
+    let error = tokio::time::timeout(Duration::from_secs(1), client.get::<serde_json::Value>("/vms/list"))
+        .await
+        .expect("an absent service must not spend the gateway startup deadline")
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("cannot connect to service"));
+    assert!(!run_dir.path().join("gateway.port").exists());
+}
+
+#[tokio::test]
 async fn ordinary_requests_use_gateway_auth_and_never_the_service_socket() {
     let service = FakeService::start();
     service.route("GET", "/vms/list", 200, json!({"sandboxes": []}));

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CLI commands fail promptly when their explicitly selected local service is
+  absent, while retaining the gateway startup wait for a running service.
+
 - MCP worker RPC errors preserve upstream timeout and failure causes for tool,
   resource and prompt requests.
 
