@@ -301,6 +301,11 @@ component_management:
       paths:
         - mcp/typescript/src/**
 
+    - component_id: mcp-transport
+      name: MCP Transport
+      paths:
+        - crates/capsem-mcp-transport/src/**
+
     # MCP aggregator binary.
     - component_id: mcp-aggregator
       name: MCP Aggregator
