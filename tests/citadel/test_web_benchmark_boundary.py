@@ -472,6 +472,12 @@ def test_tauri_icon_owner_and_duplicate_are_observed_red() -> None:
     assert any("duplicate crate-local Tauri icon" in problem for problem in problems), RATIONALE
 
 
+def test_canonical_docs_paths_are_owned_and_retired_roots_still_fail() -> None:
+    assert not _legacy_references({"example.md": "web/docs/src/content/guide.md"}), RATIONALE
+    assert _legacy_references({"example.md": "docs/guide.md"}), RATIONALE
+    assert _legacy_references({"example.md": "../docs/guide.md"}), RATIONALE
+
+
 def test_current_web_benchmark_boundary_is_exact() -> None:
     policy = tomllib.loads(POLICY.read_text(encoding="utf-8"))
     assert policy.get("version") == 1
