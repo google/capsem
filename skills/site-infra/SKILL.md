@@ -132,9 +132,12 @@ Use `pnpm --dir web/docs run dev` for local review and `pnpm --dir web/docs run 
 for the production build and link checks, through the bounded command wrapper.
 Verify root navigation and changed routes after restarting the server.
 
+`ci.yaml` owns the merge-blocking `docs-build` job.
 Pushes to `main` run `.github/workflows/docs.yaml`, build the manual, deploy it to
 Cloudflare Pages `capsem-docs`, and smoke the introduction, SDK, installation,
 and security pages. Verify the deployed content before reporting publication.
+This deployment is independent from binary and runtime releases; use
+`/release-process` for channel publication at `release.capsem.org`.
 
 ## Writing and review
 

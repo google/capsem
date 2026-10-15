@@ -23,7 +23,8 @@ pnpm --dir web/marketing run preview
 `ci.yaml` owns the merge-blocking `site-build` job. Pushes to `main` trigger
 `site.yaml`, which builds, deploys to Cloudflare Pages, and smokes `capsem.org`.
 Changes to `web/diagrams/` trigger both public-site builds and deployments.
-This rail is independent from binary and profile releases.
+This rail is independent from binary and runtime releases. Use `/release-process`
+for channel publication at `release.capsem.org`.
 
 ## Architecture and content
 

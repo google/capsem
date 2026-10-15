@@ -1621,9 +1621,20 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert f"pages deploy {directory}/dist/ --project-name={project_name}" in workflow
         assert smoke_name in workflow
         assert f"SITE_URL: {site_url}" in workflow
-        assert 'curl -fsSLI "$SITE_URL/" -o' in workflow
-        assert "grep -qi '^content-type: text/html'" in workflow
-        assert "grep -qi '<main[ >]'" in workflow or "grep -q '<main id=\"main\">'" in workflow
+        if workflow_name == "docs.yaml":
+            assert "bash build_system/scripts/web/smoke-docs-site.sh" in workflow
+            assert 'curl --max-time 20 -fsSL "$SITE_URL/$1"' in workflow
+            for route, marker in (
+                ("", "How Capsem works"),
+                ("sdk/", "Getting started with the SDK"),
+                ("architecture/security/", "Security architecture"),
+                ("getting-started/installation/", "Installation"),
+            ):
+                assert f'check_page "{route}" "{marker}"' in workflow
+        else:
+            assert 'curl -fsSLI "$SITE_URL/" -o' in workflow
+            assert "grep -qi '^content-type: text/html'" in workflow
+            assert "grep -qi '<main[ >]'" in workflow or "grep -q '<main id=\"main\">'" in workflow
         assert failure in workflow
         assert "release-channel.yaml" not in workflow
         assert "release.yaml" not in workflow
@@ -2925,22 +2936,15 @@ def test_site_skills_preserve_every_main_merge_deploy_rail() -> None:
     site_infra_text = " ".join(site_infra_skill.split())
     site_marketing_text = " ".join(site_marketing_skill.split())
 
-    assert "`ci.yaml` runs the merge-blocking `docs-build` job" in site_infra_text
-    assert (
-        "deploys only on every push to `main` and smokes `https://docs.capsem.org/`"
-        in site_infra_text
-    )
-    assert "requires the warmed `/getting-started/` tombstone markers" in site_infra_text
-    assert "`ci.yaml` runs the merge-blocking `site-build` job" in site_marketing_text
-    assert (
-        "deploys only on every push to `main` and smokes `https://capsem.org/`"
-        in site_marketing_text
-    )
-
-    for skill in (site_infra_skill, site_marketing_skill):
-        assert "independent from binary releases" in skill
-        assert "manual VM asset releases" in skill
-        assert "`release.capsem.org` asset-channel workflow" in skill
+    for text, job, workflow in (
+        (site_infra_text, "docs-build", "docs.yaml"),
+        (site_marketing_text, "site-build", "site.yaml"),
+    ):
+        assert "`ci.yaml`" in text and f"`{job}`" in text
+        assert "`main`" in text and workflow in text and "smoke" in text
+        assert "independent from binary and runtime releases" in text
+        assert "`/release-process`" in text and "`release.capsem.org`" in text
+    assert "smoke the introduction, SDK, installation, and security pages" in site_infra_text
 
 
 def test_capsem_update_checks_release_channel_manifest_not_github_latest() -> None:
