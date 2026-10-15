@@ -37,7 +37,7 @@ pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 pub const MAX_GUEST_SHARE_PATH_BYTES: usize = 4096;
 
 const MAGIC: [u8; 2] = *b"UG";
-const VERSION: u8 = 8;
+const VERSION: u8 = 9;
 const MAGIC_RANGE: std::ops::Range<usize> = 0..2;
 const VERSION_OFFSET: usize = 2;
 const KIND_OFFSET: usize = 3;
@@ -64,6 +64,7 @@ const ATTACH_PROXY_TRACE_HINTS: u8 = 10;
 const OPEN_LOOPBACK_LISTENER: u8 = 11;
 const SET_GUEST_TIMES: u8 = 12;
 const ATTACH_MCP_HTTP: u8 = 13;
+const OPEN_MCP_AGGREGATOR: u8 = 14;
 const TCP_RESOLVED: u8 = 101;
 const DESCRIPTOR_GRANTED: u8 = 102;
 const DENIED: u8 = 103;
@@ -75,6 +76,7 @@ const PROXY_TRACE_HINTS_ADOPTED: u8 = 108;
 const LOOPBACK_LISTENER_GRANTED: u8 = 109;
 const GUEST_TIMES_SET: u8 = 110;
 const MCP_HTTP_ADOPTED: u8 = 111;
+const MCP_AGGREGATOR_GRANTED: u8 = 112;
 
 /// Application protocol spoken over a granted TCP stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -242,6 +244,9 @@ pub enum UpstreamGrantRequest {
         request_id: u64,
         role: McpHttpRole,
     },
+    OpenMcpAggregator {
+        request_id: u64,
+    },
     OpenLoopbackListener {
         request_id: u64,
         port: u16,
@@ -251,6 +256,9 @@ pub enum UpstreamGrantRequest {
 /// Coordinator-to-worker record. Ledger grants carry two independent fds.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UpstreamGrantResponse {
+    McpAggregatorGranted {
+        request_id: u64,
+    },
     McpHttpAdopted {
         request_id: u64,
     },
@@ -298,7 +306,8 @@ pub enum UpstreamGrantResponse {
 }
 
 impl UpstreamGrantRequest {
-    /// Requests never carry descriptors from the untrusted worker.
+    /// Capability attachment requests carry one connected channel; ordinary
+    /// resource requests never carry worker-provided descriptors.
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
             Self::AttachProxyTraffic { .. }
@@ -315,7 +324,9 @@ impl UpstreamGrantResponse {
     /// the direct worker channel and the trusted checkpoint channel.
     pub const fn expected_descriptor_count(&self) -> usize {
         match self {
-            Self::DescriptorGranted { .. } | Self::LoopbackListenerGranted { .. } => 1,
+            Self::DescriptorGranted { .. }
+            | Self::LoopbackListenerGranted { .. }
+            | Self::McpAggregatorGranted { .. } => 1,
             Self::LedgerGranted { .. } => 2,
             Self::TcpResolved { .. }
             | Self::Denied { .. }
@@ -333,6 +344,11 @@ impl UpstreamGrantResponse {
 pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Result<[u8; UPSTREAM_GRANT_FRAME_SIZE]> {
     let mut frame = empty_frame();
     match response {
+        UpstreamGrantResponse::McpAggregatorGranted { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = MCP_AGGREGATOR_GRANTED;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
         UpstreamGrantResponse::McpHttpAdopted { request_id } => {
             require_nonzero("request id", *request_id)?;
             frame[KIND_OFFSET] = MCP_HTTP_ADOPTED;
@@ -516,11 +532,15 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
             }
             Ok(UpstreamGrantResponse::ProxyTrafficAdopted { request_id })
         }
-        MCP_HTTP_ADOPTED => {
+        MCP_HTTP_ADOPTED | MCP_AGGREGATOR_GRANTED => {
             if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {
-                bail!("MCP HTTP adoption carries unrelated fields");
+                bail!("MCP capability adoption carries unrelated fields");
             }
-            Ok(UpstreamGrantResponse::McpHttpAdopted { request_id })
+            Ok(if frame[KIND_OFFSET] == MCP_HTTP_ADOPTED {
+                UpstreamGrantResponse::McpHttpAdopted { request_id }
+            } else {
+                UpstreamGrantResponse::McpAggregatorGranted { request_id }
+            })
         }
         PROXY_MCP_ADOPTED => {
             if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {

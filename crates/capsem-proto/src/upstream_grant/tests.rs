@@ -4,6 +4,32 @@ use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 const POLICY_DIGEST: &str = "blake3:0000000000000000000000000000000000000000000000000000000000000001";
 
 #[test]
+fn mcp_aggregator_grant_has_no_worker_selected_process_or_environment_fields() {
+    let request = UpstreamGrantRequest::OpenMcpAggregator { request_id: 43 };
+    request_roundtrip(request.clone());
+    assert_eq!(request.expected_descriptor_count(), 0);
+    let response = UpstreamGrantResponse::McpAggregatorGranted { request_id: 43 };
+    response_roundtrip(response.clone());
+    assert_eq!(response.expected_descriptor_count(), 1);
+    for offset in [
+        RESOURCE_ID_RANGE.start,
+        PORT_RANGE.start,
+        DETAIL_RANGE.start,
+        NAME_LENGTH_OFFSET,
+        PATH_RANGE.start,
+        TIME_FLAGS_OFFSET,
+    ] {
+        let mut frame = encode_upstream_grant_request(&request).unwrap();
+        frame[offset] = 1;
+        assert!(
+            decode_upstream_grant_request(&frame).is_err(),
+            "unrelated field accepted at {offset}"
+        );
+    }
+    assert!(encode_upstream_grant_request(&UpstreamGrantRequest::OpenMcpAggregator { request_id: 0 }).is_err());
+}
+
+#[test]
 fn mcp_http_handoff_is_typed_and_carries_only_its_connected_channel() {
     for role in [
         crate::mcp_worker::McpHttpRole::Aggregator,
