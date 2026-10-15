@@ -76,12 +76,12 @@ pub(super) async fn handle_mcp_info(
 pub(super) async fn handle_mcp_servers(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::McpServersListResponse>, AppError> {
-    let (settings, corp) = state.off_worker(|_| policy_files()).await??;
-    let mcp = merged_mcp(&settings, &corp);
-    let builtin_bin = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|dir| dir.join("capsem-mcp-builtin")));
-    let servers = capsem_core::mcp::build_server_list(&mcp, builtin_bin.as_deref(), HashMap::new());
+    let servers = state.off_worker(|_| {
+        let (settings, corp) = policy_files()?;
+        let mcp = merged_mcp(&settings, &corp);
+        let builtin = crate::service_runtime::find_sibling_binary("capsem-mcp-builtin");
+        Ok::<_, AppError>(capsem_core::mcp::build_server_list(&mcp, Some(&builtin), HashMap::new()))
+    }).await??;
     let cache = latest_mcp_tool_cache(&state);
     Ok(Json(api::McpServersListResponse(
         servers

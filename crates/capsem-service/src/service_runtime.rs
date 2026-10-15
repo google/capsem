@@ -623,7 +623,15 @@ pub(super) async fn shutdown_signal() {
 /// cache/target/cargo/debug/ for development builds.
 pub(super) fn find_sibling_binary(name: &str) -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
-        let sibling = exe.parent().unwrap().join(name);
+        let directory = exe.parent().unwrap();
+        // Cargo's deps directory contains test executables, never the native
+        // companion cohort. A catalog fixture once planted a fake binary here.
+        let directory = if directory.file_name().is_some_and(|part| part == "deps") {
+            directory.parent().unwrap_or(directory)
+        } else {
+            directory
+        };
+        let sibling = directory.join(name);
         if sibling.exists() {
             return sibling;
         }

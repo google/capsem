@@ -532,5 +532,5 @@ mod vm_info;
 
 pub(crate) use assets_registry::make_state_in;
 pub(crate) use settings_files::EnvVarGuard;
-use settings_files::{ensure_test_builtin_mcp_binary, install_empty_settings_env, make_test_state_with_tempdir_at};
+use settings_files::{install_empty_settings_env, make_test_state_with_tempdir_at};
 use update_routes::decode_response_json;
