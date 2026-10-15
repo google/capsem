@@ -160,7 +160,7 @@ export const HERO_DEMO = {
   chapters: ["Easy to install", "Build fast", "Ship quickly", "Switch agent seamlessly", "Get things done"],
   inserts: {
     build: { eyebrow: "FROM IDEA TO FIRST DRAFT", title: "Build fast.", detail: "Your favorite agent and tools are all ready to go." },
-    work: { eyebrow: "A FRESH VM. A NEW TASK.", title: "Work fast.", detail: "Boot your next image. Your tools and connections come with it." },
+    work: { eyebrow: "NEW TASK — NEW AGENT", title: "Switch workflow instantly", detail: "Capsem offers images for all the agents, tools and workflow you need. Switching is one command away." },
   },
   codex: {
     name: "OpenAI Codex", modelLabel: "model:", model: "gpt-6.1-sol medium",
