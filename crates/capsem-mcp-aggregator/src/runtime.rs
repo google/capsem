@@ -298,12 +298,16 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
                     },
                     Err(e) => AggregatorResponse {
                         id,
-                        body: AggregatorResult::Error { error: e.to_string() },
+                        body: AggregatorResult::Error {
+                            error: format!("{e:#}"),
+                        },
                     },
                 },
                 Err(e) => AggregatorResponse {
                     id,
-                    body: AggregatorResult::Error { error: e.to_string() },
+                    body: AggregatorResult::Error {
+                        error: format!("{e:#}"),
+                    },
                 },
             }
         }
@@ -323,12 +327,16 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
                     },
                     Err(e) => AggregatorResponse {
                         id,
-                        body: AggregatorResult::Error { error: e.to_string() },
+                        body: AggregatorResult::Error {
+                            error: format!("{e:#}"),
+                        },
                     },
                 },
                 Err(e) => AggregatorResponse {
                     id,
-                    body: AggregatorResult::Error { error: e.to_string() },
+                    body: AggregatorResult::Error {
+                        error: format!("{e:#}"),
+                    },
                 },
             }
         }
@@ -353,12 +361,16 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
                     },
                     Err(e) => AggregatorResponse {
                         id,
-                        body: AggregatorResult::Error { error: e.to_string() },
+                        body: AggregatorResult::Error {
+                            error: format!("{e:#}"),
+                        },
                     },
                 },
                 Err(e) => AggregatorResponse {
                     id,
-                    body: AggregatorResult::Error { error: e.to_string() },
+                    body: AggregatorResult::Error {
+                        error: format!("{e:#}"),
+                    },
                 },
             }
         }

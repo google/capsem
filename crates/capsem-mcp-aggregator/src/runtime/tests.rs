@@ -60,6 +60,110 @@ async fn dispatch(mgr: &Arc<RwLock<McpServerManager>>, id: u64, method: Aggregat
     handle_request(mgr, AggregatorRequest { id, method }).await
 }
 
+#[tokio::test]
+async fn tool_dispatch_returns_the_upstream_result_with_its_request_id() {
+    let server = crate::test_support::spawn_recording_mcp_server().await.unwrap();
+    let mut def = http_def("recording");
+    def.url = server.url.clone();
+    let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
+    mgr.connect_and_initialize(&def).await.unwrap();
+    let mgr = Arc::new(RwLock::new(mgr));
+
+    let response = dispatch(
+        &mgr,
+        731,
+        AggregatorMethod::CallTool {
+            name: "recording__echo".into(),
+            arguments: serde_json::json!({"message": "correlated"}),
+            timeout_ms: Some(5_000),
+        },
+    )
+    .await;
+
+    assert_eq!(response.id, 731);
+    let AggregatorResult::CallResult { result } = response.body else {
+        panic!("expected upstream tool result, got {:?}", response.body);
+    };
+    assert_eq!(result["content"][0]["text"], "echo:correlated");
+    assert_eq!(
+        server.state.tool_calls(),
+        vec![crate::test_support::RecordedMcpToolCall {
+            tool: "echo".into(),
+            arguments: serde_json::json!({"message": "correlated"}),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_hanging_dispatch_keeps_catalog_reads_available_and_returns_its_timeout() {
+    let server = crate::test_support::spawn_hanging_mcp_server().await.unwrap();
+    let mut def = http_def("hanging");
+    def.url = server.url.clone();
+    let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
+    mgr.connect_and_initialize(&def).await.unwrap();
+    let mgr = Arc::new(RwLock::new(mgr));
+    let call = dispatch(
+        &mgr,
+        732,
+        AggregatorMethod::CallTool {
+            name: "hanging__hang".into(),
+            arguments: serde_json::json!({}),
+            timeout_ms: Some(300),
+        },
+    );
+    let catalog = async {
+        tokio::task::yield_now().await;
+        assert!(
+            mgr.try_write().is_ok(),
+            "an in-flight upstream request must release the manager lock"
+        );
+        let response = tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            dispatch(&mgr, 733, AggregatorMethod::ListTools),
+        )
+        .await
+        .expect("an in-flight upstream request must not hold the manager lock");
+        assert_eq!(response.id, 733);
+        let AggregatorResult::Tools { tools } = response.body else {
+            panic!("expected tools, got {:?}", response.body);
+        };
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].namespaced_name, "hanging__hang");
+    };
+    let (response, ()) = tokio::join!(call, catalog);
+    assert_eq!(response.id, 732);
+    let error = error_text(&response.body);
+    assert!(error.to_lowercase().contains("timeout"), "{error}");
+}
+
+#[tokio::test]
+async fn unsupported_resource_and_prompt_replies_preserve_the_remote_error() {
+    let server = crate::test_support::spawn_recording_mcp_server().await.unwrap();
+    let mut def = http_def("recording");
+    def.url = server.url.clone();
+    let mut mgr = McpServerManager::new(vec![def.clone()], reqwest::Client::new());
+    mgr.connect_and_initialize(&def).await.unwrap();
+    let mgr = Arc::new(RwLock::new(mgr));
+    let methods = [
+        AggregatorMethod::ReadResource {
+            uri: capsem_proto::mcp_contracts::namespace_resource_uri("recording", "file:///missing"),
+            timeout_ms: Some(5_000),
+        },
+        AggregatorMethod::GetPrompt {
+            name: "recording__missing".into(),
+            arguments: serde_json::json!({"topic": "missing"}),
+            timeout_ms: Some(5_000),
+        },
+    ];
+    for (offset, method) in methods.into_iter().enumerate() {
+        let id = 734 + offset as u64;
+        let response = dispatch(&mgr, id, method).await;
+        assert_eq!(response.id, id);
+        let error = error_text(&response.body);
+        assert!(error.contains("-32601"), "remote method-not-found code lost: {error}");
+    }
+}
+
 // ── Correlation ────────────────────────────────────────────────────
 //
 // Responses travel back out of order -- handlers run concurrently and a single

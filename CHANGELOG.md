@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MCP worker RPC errors preserve upstream timeout and failure causes for tool,
+  resource and prompt requests.
+
 - MCP settings refresh preserves the builtin admitted before VM-owner
   confinement, without reopening its host executable path.
 
