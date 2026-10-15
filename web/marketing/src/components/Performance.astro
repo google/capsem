@@ -4,7 +4,7 @@ import { SPEED } from "../lib/data";
 <section class="performance-section section-dark section-space bg-surface text-ink" aria-labelledby="speed-title">
   <div class="content-shell">
     <div class="prose-brand"><h2 id="speed-title">{SPEED.title}</h2><p>{SPEED.description}</p></div>
-    <div class="mt-10 grid gap-6 md:grid-cols-3">{SPEED.stats.map((stat, i) => <article class="panel speed-card relative overflow-hidden">
+    <div class="mt-10 grid gap-6 md:grid-cols-3">{SPEED.stats.map((stat, i) => <article class={`panel speed-card speed-card-${i} relative overflow-hidden`}>
       <div class="mb-8 flex h-20 items-center justify-between text-accent" aria-hidden="true">
         <svg class="h-20 w-32" viewBox="0 0 128 80" fill="none" stroke="currentColor" stroke-width="1.5">
           {i === 0 ? <><path class="speed-glow" d="M24 21 51 6l27 15v32L51 69 24 53Z"/><path d="m24 21 27 16 27-16M51 37v32M38 13l27 16"/><path class="speed-line" d="M87 24h28M87 36h19M87 48h10"/></>
