@@ -36,6 +36,21 @@ async def main() -> None:
             uploaded = await vm.files.write("sdk-proof.bin", data)
             assert uploaded.success and uploaded.size == len(data)
             assert await vm.files.read("sdk-proof.bin") == data
+            await vm.files.upload("/var/tmp/sdk-outside.bin", data)
+            assert await vm.files.download("/var/tmp/sdk-outside.bin") == data
+            assert await vm.files.download("/var/tmp/sdk-outside.bin", max_bytes=len(data)) == data
+            try:
+                await vm.files.download("/var/tmp/sdk-outside.bin", max_bytes=16)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("expected ValueError when file exceeds max_bytes")
+            large = (bytes(range(256)) * 43_000) + b"\x00SDK_MULTIPART_11M\xff"
+            assert len(large) > 10 * 1024 * 1024
+            for large_path in ("/root/sdk-large.bin", "/var/tmp/sdk-large.bin"):
+                await vm.files.upload(large_path, large)
+                assert await vm.files.download(large_path) == large
+                await vm.exec(f"rm -f {large_path}")
             assert "sdk-proof.bin" in {entry.name for entry in (await vm.files.list()).entries}
             digest = hashlib.sha256(data).hexdigest()
             executed = await vm.exec("sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7")
