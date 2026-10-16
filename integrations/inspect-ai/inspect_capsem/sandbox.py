@@ -19,6 +19,7 @@ from inspect_ai.util import ExecResult, SandboxConnection, SandboxEnvironment
 from inspect_ai.util import SandboxEnvironmentConfigType as _CfgType
 
 from inspect_capsem._compose import coerce_config
+from inspect_capsem._eval_loader import export_sample_vm_events
 from inspect_capsem._exec import exec_in_sandbox
 from inspect_capsem._files import read_guest_file, write_guest_file
 from inspect_capsem._tools import bake_sandbox_tools_into_controller
@@ -27,6 +28,7 @@ from inspect_capsem.config import CapsemSandboxConfig
 logger = logging.getLogger(__name__)
 
 _INIT_TEARDOWN_TIMEOUT_SECS = 25.0
+_EXPORT_TIMEOUT_SECS = 30.0
 
 
 def _oci_create_command(cfg: CapsemSandboxConfig) -> tuple[str, ...] | None:
@@ -55,20 +57,14 @@ async def _start_sample_vm(
 
         oci_image, ca_pem = await build_and_stage_oci_image(cfg.build)
     oci_cmd = _oci_create_command(cfg) if cfg.execution_mode == "container" else None
-    extra_kw: dict[str, Any] = {"registry_ca_pem": ca_pem} if ca_pem else {}
+    env_dict = dict(cfg.environment) if cfg.environment else None
+    extra_kw: dict[str, Any] = {"image": oci_image, "command": oci_cmd, "env": env_dict}
+    if ca_pem:
+        extra_kw["registry_ca_pem"] = ca_pem
     if labels := _sample_vm_labels(task_name):
         extra_kw["labels"] = labels
-    env_dict = dict(cfg.environment) if cfg.environment else None
-    start_task = asyncio.ensure_future(
-        controller.start_vm(
-            cpu_count=cfg.cpu_count,
-            ram_gb=cfg.ram_gb,
-            image=oci_image,
-            command=oci_cmd,
-            env=env_dict,
-            **extra_kw,
-        )
-    )
+    coro = controller.start_vm(cpu_count=cfg.cpu_count, ram_gb=cfg.ram_gb, **extra_kw)
+    start_task = asyncio.ensure_future(coro)
     try:
         return await asyncio.shield(start_task)
     except asyncio.CancelledError:
@@ -151,17 +147,15 @@ class CapsemSandboxEnvironment(SandboxEnvironment):
         cls, task_name: str, config: _CfgType | str | None, cleanup: bool
     ) -> None:
         del config
-        envs = [
-            e for e in list(cls._active_environments.values()) if task_name in (None, e._task_name)
-        ]
-        for env in envs:
-            with contextlib.suppress(Exception):
-                await env.cleanup()
-            cls._active_environments.pop(env._instance_id, None)
-            if env._owns_controller:
-                env._owns_controller = False
+        for env in list(cls._active_environments.values()):
+            if task_name in (None, env._task_name):
                 with contextlib.suppress(Exception):
-                    await env._controller.close()
+                    await env.cleanup()
+                cls._active_environments.pop(env._instance_id, None)
+                if env._owns_controller:
+                    env._owns_controller = False
+                    with contextlib.suppress(Exception):
+                        await env._controller.close()
         if not cleanup:
             raise NotImplementedError(
                 "Capsem sandboxes use lease-owned managed sessions (Hypervisor.managed()) and "
@@ -231,18 +225,29 @@ class CapsemSandboxEnvironment(SandboxEnvironment):
                 await env.cleanup()
 
     async def cleanup(self) -> None:
-        if not self._cleaned_up and self._vm_id:
-            try:
-                await self._controller.stop_vm(self._vm_id)
-                self._cleaned_up = True
-            except Exception as exc:
-                logger.warning("Failed to stop Capsem VM %s: %s", self._vm_id, exc)
-                return
-        CapsemSandboxEnvironment._active_environments.pop(self._instance_id, None)
-        if self._owns_controller:
-            self._owns_controller = False
-            with contextlib.suppress(Exception):
-                await self._controller.close()
+        try:
+            if not self._cleaned_up and self._vm_id:
+                labels = {"managed-by": "inspect-capsem"}
+                if self._task_name:
+                    labels["inspect-capsem-task"] = truncate_label_value(self._task_name)
+                try:
+                    coro = export_sample_vm_events(self._controller, self._vm_id, labels=labels)
+                    await asyncio.wait_for(coro, timeout=_EXPORT_TIMEOUT_SECS)
+                except Exception as exc:
+                    logger.warning("Failed to export Capsem VM %s events: %s", self._vm_id, exc)
+                finally:
+                    try:
+                        await self._controller.stop_vm(self._vm_id)
+                        self._cleaned_up = True
+                    except Exception as exc:
+                        logger.warning("Failed to stop Capsem VM %s: %s", self._vm_id, exc)
+        finally:
+            if self._cleaned_up or not self._vm_id:
+                CapsemSandboxEnvironment._active_environments.pop(self._instance_id, None)
+            if self._owns_controller:
+                self._owns_controller = False
+                with contextlib.suppress(Exception):
+                    await self._controller.close()
 
     async def exec(
         self,
