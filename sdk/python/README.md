@@ -16,9 +16,8 @@ start it on your computer before using the SDK.
 
 ## Usage
 
-Draft: the local-connection example below depends on [SDK local access](https://github.com/google/capsem/issues/344)
-and [decoded command output](https://github.com/google/capsem/issues/345). For the
-currently supported gateway connection, use the [integration guide](https://docs.capsem.org/guides/developers/integrate-the-sdk/#connect-to-a-remote-installation).
+`Hypervisor()` discovers the local running service. For a remote service,
+pass its complete gateway URL and bearer token explicitly.
 
 Once Capsem is running, create a VM and run a command inside it. Use an unused
 VM name in place of `sdk-demo`.

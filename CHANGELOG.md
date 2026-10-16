@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Public SDK and MCP packages identify their canonical source and license;
+  Python SDK packages include their usage guide.
+
 - Rust SDK registry dependencies include their canonical runtime limits, so
   building them does not require the Capsem source checkout.
 

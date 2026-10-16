@@ -4,7 +4,9 @@ The Rust gateway contracts produce [OpenAPI](specification/openapi.json), then
 generated operations and typed models for [Python](python/README.md),
 [TypeScript](typescript/README.md), and [Rust](rust/README.md). The small
 `Hypervisor` and `VM` facades share those operations. The web UI uses TypeScript;
-the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
+the TUI uses Rust. Python and Node.js clients discover the local service when
+constructed without connection arguments; Rust uses `Hypervisor::local()`.
+Remote and browser clients take a complete HTTP(S) URL and bearer token.
 
 | Interface | Methods |
 | --- | --- |

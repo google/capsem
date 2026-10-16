@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from copy import deepcopy
@@ -29,6 +30,19 @@ INSPECT_LOCK_RATIONALE = (
     "the extension requirement. A stale0.6.3 lock row previously hid behind "
     "passing source tests after labels and typed errors required a newer SDK."
 )
+
+
+def test_registry_packages_identify_their_canonical_source() -> None:
+    for project in (CONFIG.sdk_typescript.project, CONFIG.mcp_typescript.project):
+        package = json.loads((ROOT / project / "package.json").read_text())
+        assert package.get("repository") == {
+            "type": "git", "url": "git+https://github.com/google/capsem.git", "directory": project,
+        }, SDK_RATIONALE
+        assert package.get("license") == "Apache-2.0", SDK_RATIONALE
+    python = tomllib.loads(CONFIG.path(CONFIG.sdk_python.manifest).read_text())["project"]
+    assert python.get("readme") == "README.md", SDK_RATIONALE
+    assert python.get("license") == "Apache-2.0", SDK_RATIONALE
+    assert python.get("urls", {}).get("Repository") == "https://github.com/google/capsem", SDK_RATIONALE
 
 
 def _inspect_lock_problems(extension: dict, sdk: dict, lock: dict) -> list[str]:
