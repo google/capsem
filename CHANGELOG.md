@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Explain how to manage multiple VMs and navigate their terminals in the TUI.
 
-- Explain Capsem’s main components and request flow in the introduction with a vertical system diagram.
+- Keep the Intro brief: explain container images, VM isolation, and the service model, then lead to installation and interactive or SDK-driven use cases; keep component diagrams in architecture.
 
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed

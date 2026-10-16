@@ -341,7 +341,15 @@ docstrings/comments, including hand-written facades as well as generated
 operations. Do not generate or overwrite the getting-started README, and do
 not claim a reference exists before it is generated and accessible.
 
-## System introductions
+## Product entry pages and architecture explanations
+
+Keep the product intro brief: explain what Capsem runs (container images inside
+isolated Linux VMs), its service model, and the main interactive and SDK-driven
+uses. Lead next to installation, then task links for those uses. Do not turn an
+entry page into a component tour or duplicate its architecture diagram.
+
+Keep component relationships and diagrams in the canonical architecture
+explanation, not in the product intro.
 
 Explain the major components, where they run, and how control, requests, and
 records move between them. Name each component and state its concrete job.
@@ -351,7 +359,7 @@ each interface when first introduced, including how the web UI and desktop app
 relate. Do not present a prerequisite as a parallel alternative to tasks that
 depend on it.
 Use top-to-bottom overview diagrams that fit the reading column; do not require
-horizontal scrolling to understand the introduction. Verify the rendered layout,
+horizontal scrolling to understand the overview. Verify the rendered layout,
 since a vertical arrangement alone does not guarantee a narrow diagram.
 
 ## Diagrams

@@ -1,30 +1,5 @@
 import type { Diagram } from '@capsem/diagrams/types';
 
-export const introduction: Diagram = {
-  title: 'How the components connect', width: 680, height: 1410,
-  nodes: [
-    { id: 'perVM', label: 'FOR EACH VM · ON YOUR COMPUTER', x: 20, y: 490, width: 640, height: 730, boundary: 'group' },
-    { id: 'vm', label: 'LINUX VM', x: 120, y: 695, width: 440, height: 170, boundary: 'vm' },
-    { id: 'clients', label: 'CLI · TUI · Capsem UI\nPython / TypeScript / Rust SDKs · MCP server', x: 80, y: 25, width: 520, height: 90 },
-    { id: 'gateway', label: 'Gateway\nAuthenticates clients', x: 160, y: 195, width: 360, tone: 'processing' },
-    { id: 'service', label: 'Service\nCreates and manages VMs', x: 160, y: 345, width: 360, tone: 'processing' },
-    { id: 'owner', label: 'VM process\nBoots Linux and connects to guest helpers', x: 130, y: 550, width: 420 },
-    { id: 'workload', label: 'OCI container\nYour agent and tools', x: 160, y: 755, width: 360 },
-    { id: 'engine', label: 'Security engine\nInspects requests and applies rules', x: 140, y: 960, width: 400, tone: 'processing' },
-    { id: 'writer', label: 'Log writer\nStores activity and decisions', x: 160, y: 1115, width: 360 },
-    { id: 'upstream', label: 'External services\nModel providers · APIs · MCP servers', x: 130, y: 1310, width: 420 },
-  ],
-  links: [
-    { from: 'clients', to: 'gateway', label: 'API requests' },
-    { from: 'gateway', to: 'service', label: 'VM operations' },
-    { from: 'service', to: 'owner', label: 'start / stop / resume' },
-    { from: 'owner', to: 'workload', label: 'terminal, commands, files', both: true },
-    { from: 'workload', to: 'engine', label: 'HTTP / HTTPS / DNS / model / MCP requests' },
-    { from: 'engine', to: 'writer', label: 'sanitized records' },
-    { from: 'engine', to: 'upstream', label: 'allowed requests', source: 'right', target: 'right', labelAt: .7, labelOffset: 60, via: [{ x: 625, y: 996 }, { x: 625, y: 1346 }] },
-  ],
-};
-
 export const systemOverview: Diagram = {
   title: 'Control and data', width: 1020, height: 1500,
   nodes: [
