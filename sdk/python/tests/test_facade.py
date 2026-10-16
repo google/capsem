@@ -8,7 +8,11 @@ from typing import Any
 
 import pytest
 from capsem import VM, ExecResult, HttpError, Hypervisor, Registry, models
-from capsem.execution import CREATE_READY_SECS, GATEWAY_REQUEST_BUDGET_SECS, command_deadline
+from capsem.execution import (
+    CREATE_READY_SECS,
+    GATEWAY_REQUEST_BUDGET_SECS,
+    command_deadline,
+)
 
 from .facade_gateway import gateway
 
