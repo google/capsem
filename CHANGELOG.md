@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Python gateway discovery requires complete URL/token pairs, keeps remote
+  connections from borrowing local credentials, redacts tokens from endpoint
+  representations, and refuses unsafe or incomplete local metadata.
+
 ### Fixed
 
 - Native MCP handoffs retain connected sockets until the receiving worker

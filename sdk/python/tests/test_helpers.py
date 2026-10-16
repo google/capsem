@@ -45,9 +45,13 @@ def test_capsem_run_dir_priority(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 def test_discover_gateway_from_files_and_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for var in ("CAPSEM_GATEWAY_URL", "CAPSEM_GATEWAY_TOKEN", "CAPSEM_RUN_DIR", "CAPSEM_HOME"):
         monkeypatch.delenv(var, raising=False)
-    with pytest.raises(RuntimeError, match="gateway bearer token not found"):
+    with pytest.raises(ConnectionError, match="local Capsem"):
         discover_gateway(run_dir=tmp_path)
     (tmp_path / "gateway.token").write_text("file-token\n", encoding="utf-8")
+    (tmp_path / "gateway.token").chmod(0o600)
+    with pytest.raises(ConnectionError, match="local Capsem"):
+        discover_gateway(run_dir=tmp_path)
+    (tmp_path / "gateway.port").write_text("19222\n", encoding="utf-8")
     assert discover_gateway(run_dir=tmp_path) == GatewayEndpoint(
         url=DEFAULT_GATEWAY_URL, token="file-token", run_dir=tmp_path,
     )
@@ -55,7 +59,7 @@ def test_discover_gateway_from_files_and_env(monkeypatch: pytest.MonkeyPatch, tm
     assert discover_gateway(run_dir=tmp_path).url == "http://127.0.0.1:19444"
     for bad_port in ("not-a-port", "0", "70000"):
         (tmp_path / "gateway.port").write_text(f"{bad_port}\n", encoding="utf-8")
-        with pytest.raises(ValueError, match="invalid port"):
+        with pytest.raises(ConnectionError, match="local Capsem"):
             discover_gateway(run_dir=tmp_path)
     monkeypatch.setenv("CAPSEM_GATEWAY_URL", "http://127.0.0.1:19666/")
     monkeypatch.setenv("CAPSEM_GATEWAY_TOKEN", "env-token")
@@ -75,6 +79,7 @@ def test_hypervisor_connect_and_vm_use_discovered_gateway(
             monkeypatch.delenv("CAPSEM_GATEWAY_TOKEN", raising=False)
             (tmp_path / "gateway.port").write_text(f"{port}\n", encoding="utf-8")
             (tmp_path / "gateway.token").write_text("token\n", encoding="utf-8")
+            (tmp_path / "gateway.token").chmod(0o600)
             async with Hypervisor.connect(run_dir=tmp_path) as hv, VM(run_dir=tmp_path, id="vm-0") as vm:
                 assert isinstance(await hv.info(), models.HypervisorInfo)
                 assert isinstance(await vm.info(), models.SandboxInfo)
