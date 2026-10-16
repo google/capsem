@@ -10,12 +10,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import capsem_integrations._transfer as xfer_mod
 import inspect_ai
 import inspect_capsem._tools as tools_mod
-import inspect_capsem._transfer as xfer_mod
 import pytest
 from capsem.models import ExecOutput, ExecOutputEncoding
-from inspect_capsem._controller import SdkCapsemController
+from capsem_integrations._controller import SdkCapsemController
 from inspect_capsem._tools import (
     INSPECT_SANDBOX_TOOLS_GUEST_PATH,
     INSPECT_SANDBOX_TOOLS_ONEDIR_PATH,

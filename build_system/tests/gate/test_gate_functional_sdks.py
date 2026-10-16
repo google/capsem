@@ -22,6 +22,7 @@ PREPARED = (
     "sdk.python.sync", "functional.sdk.rust.example", "fast.sdk.python.build",
     "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm",
     "functional.sdk.python.package-prewarm",
+    "integrations.common.sync", "fast.integrations.common.build",
     "integrations.inspect-ai.sync", "fast.integrations.inspect-ai.build",
 )
 
@@ -43,10 +44,15 @@ def test_python_sdk_tests_cannot_start_before_the_archives_they_install_are_buil
         "clean installed-package acceptance must consume this source's wheel and sdist, "
         "not whichever archive a previous run happened to leave"
     )
-    assert {"fast.sdk.python.build", "fast.integrations.inspect-ai.build"} <= _ancestors(
+    assert {
+        "fast.sdk.python.build",
+        "fast.integrations.common.build",
+        "fast.integrations.inspect-ai.build",
+    } <= _ancestors(
         plan, "fast.integrations.inspect-ai.tests"
     ), (
-        "clean installed inspect-capsem acceptance must consume this source's SDK and "
+        "clean installed inspect-capsem acceptance must consume this source's SDK, "
+        "capsem-integrations, and "
         "inspect-capsem wheel and sdist archives"
     )
 
@@ -59,6 +65,7 @@ def test_python_projects_cannot_empty_each_others_or_the_shared_pytest_scratch()
     scratch_paths = []
     for label, settings in (
         ("fast.sdk.python.tests", config.sdk_python),
+        ("fast.integrations.common.tests", config.integrations_common),
         ("fast.integrations.inspect-ai.tests", config.integrations_inspect_ai),
     ):
         commands = [action for action in plan.step_named(label).actions if isinstance(action, Run)]
@@ -71,7 +78,7 @@ def test_python_projects_cannot_empty_each_others_or_the_shared_pytest_scratch()
         scratch = argv[argv.index("--basetemp") + 1]
         assert scratch == str(config.path(settings.pytest_scratch))
         scratch_paths.append(scratch)
-    assert scratch_paths[0] != scratch_paths[1]
+    assert len(set(scratch_paths)) == len(scratch_paths)
 
 
 def test_typescript_package_acceptance_has_network_prewarm_outside_the_sandbox() -> None:
@@ -100,16 +107,19 @@ def test_functional_installed_sdks_use_current_archives_and_declared_network_pre
 
     plan = gate_plan("test-functional")
     python = "fast.sdk.python.build"
+    common_pkg = "fast.integrations.common.build"
     inspect_pkg = "fast.integrations.inspect-ai.build"
     npm = "fast.sdk.typescript.build"
     warmed = "fast.sdk.typescript.package-prewarm"
-    assert {python, inspect_pkg, npm, warmed} <= set(plan.labels), "Braavos needs actual installed SDK artifacts"
+    assert {python, common_pkg, inspect_pkg, npm, warmed} <= set(plan.labels), "Braavos needs actual installed SDK artifacts"
     assert "sdk.python.sync" in _ancestors(plan, python)
+    assert "integrations.common.sync" in _ancestors(plan, common_pkg)
     assert "integrations.inspect-ai.sync" in _ancestors(plan, inspect_pkg)
     assert npm in _ancestors(plan, warmed)
     assert Needs.NETWORK in plan.step_named(warmed).needs
     assert "[outside kernel sandbox]" in plan.step_named(warmed).actions[0].render()
     assert "--no-isolation" in plan.step_named(python).actions[0].render()
+    assert "--no-isolation" in plan.step_named(common_pkg).actions[0].render()
     assert "--no-isolation" in plan.step_named(inspect_pkg).actions[0].render()
 
 
@@ -129,7 +139,8 @@ def test_candidate_rehydrates_python_build_backends_after_cache_enforcement() ->
 def test_composed_sdk_packages_have_one_producer_and_no_dependency_cycle() -> None:
     plan = gate_plan("candidate")
     labels = plan.labels
-    for label in ("fast.sdk.python.build", "fast.integrations.inspect-ai.build",
+    for label in ("fast.sdk.python.build", "fast.integrations.common.build",
+                  "fast.integrations.inspect-ai.build",
                   "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm"):
         assert labels.count(label) == 1
 
@@ -155,7 +166,7 @@ def test_the_packages_the_suites_drive_are_among_the_installed_workspaces() -> N
 
 def test_sdk_preparation_stays_offline_inside_the_sandbox() -> None:
     plan = gate_plan("test-functional")
-    for label in ("sdk.python.sync", "integrations.inspect-ai.sync"):
+    for label in ("sdk.python.sync", "integrations.common.sync", "integrations.inspect-ai.sync"):
         sync = plan.step_named(label).actions[0].render()
         assert "--no-build-isolation" in sync, (
             "an isolated build fetches its backend from the network"

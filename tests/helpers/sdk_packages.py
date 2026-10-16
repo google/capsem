@@ -164,6 +164,10 @@ def inspect_ai_gateway(
     sdk_manifest = tomllib.loads((root / sdk_settings["manifest"]).read_text())["project"]
     sdk_stem = f"{sdk_manifest['name'].replace('-', '_')}-{sdk_manifest['version']}"
     sdk_wheel = _archive(root / sdk_settings["build_output"], f"{sdk_stem}-*.whl")
+    common_settings = gate_cfg["integrations_common"]
+    common_manifest = tomllib.loads((root / common_settings["manifest"]).read_text())["project"]
+    common_stem = f"{common_manifest['name'].replace('-', '_')}-{common_manifest['version']}"
+    common_wheel = _archive(root / common_settings["build_output"], f"{common_stem}-*.whl")
     settings = gate_cfg["integrations_inspect_ai"]
     project_python = root / settings["project"] / ".venv/bin/python"
     base_python = str(project_python.resolve()) if project_python.exists() else sys.executable
@@ -190,7 +194,7 @@ def inspect_ai_gateway(
             )
             pip_cmd = [
                 "uv", "pip", "install", "--offline", "--no-deps",
-                "--python", str(python), str(sdk_wheel), str(archive),
+                "--python", str(python), str(sdk_wheel), str(common_wheel), str(archive),
             ]
             _run(pip_cmd, work, environment)
             payload = work / "payload.py"

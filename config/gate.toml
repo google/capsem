@@ -1067,7 +1067,7 @@ direct_concurrency = ["planrunner.py", "metadatasurvey.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript", "mcp/typescript", "integrations"]
+roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript", "mcp/typescript", "integrations/common", "integrations/inspect-ai"]
 suffixes = [".py", ".sh", ".ts", ".mjs"]
 max_lines = 300
 
@@ -1804,6 +1804,7 @@ cache_stage = "audit-results"
 lockfiles = [
     "Cargo.lock",
     "build_system/uv.lock",
+    "integrations/common/uv.lock",
     "integrations/inspect-ai/uv.lock",
     "mcp/typescript/pnpm-lock.yaml",
     "sdk/python/uv.lock",
@@ -1898,6 +1899,12 @@ name = "python-sdk"
 pattern = "sdk/python/*.py"
 enforced_by = ["fast.sdk.python.lint", "fast.sdk.python.types"]
 checked_by = ["fast.sdk.python.tests", "fast.sdk.python.build", "fast.sdk.python.generate"]
+
+[[lint_surfaces]]
+name = "integrations-common"
+pattern = "integrations/common/*.py"
+enforced_by = ["fast.integrations.common.lint", "fast.integrations.common.types"]
+checked_by = ["fast.integrations.common.tests", "fast.integrations.common.build"]
 
 [[lint_surfaces]]
 name = "inspect-ai"
@@ -3732,6 +3739,14 @@ build_output = "cache/target/sdk/python"
 environment_python = "sdk/python/.venv/bin/python"
 package_build_requirements = "cache/target/sdk/python/package-build-requirements.txt"
 pytest_scratch = "cache/target/tests/client-packages/python"
+
+[integrations_common]
+project = "integrations/common"
+manifest = "integrations/common/pyproject.toml"
+source = "integrations/common/capsem_integrations"
+tests = "integrations/common/tests"
+build_output = "cache/target/integrations/common"
+pytest_scratch = "cache/target/tests/client-packages/common"
 
 [integrations_inspect_ai]
 project = "integrations/inspect-ai"

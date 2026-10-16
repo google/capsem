@@ -13,13 +13,13 @@ from typing import Any, cast
 import inspect_ai.util._sandbox.self_check as inspect_self_check
 import inspect_capsem.sandbox as sb_mod
 from capsem import Hypervisor, models
+from capsem_integrations._controller import SdkCapsemController
 from inspect_ai import Task, eval_async
 from inspect_ai.dataset import Sample
 from inspect_ai.scorer import includes
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import SandboxEnvironmentSpec, sandbox
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
-from inspect_capsem._controller import SdkCapsemController
 
 try:
     from tests.host_build_acceptance import verify_host_build_workload_mode

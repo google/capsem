@@ -9,8 +9,8 @@ from typing import Any, cast
 
 import inspect_capsem.sandbox as sb
 import pytest
+from capsem_integrations._controller import CommandResult
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
-from inspect_capsem._controller import CommandResult
 
 from .helpers import LocalFakeCapsemController, Scripted, init_env
 

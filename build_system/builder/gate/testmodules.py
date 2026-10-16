@@ -173,6 +173,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # SDK checks remain separate leaves of the consolidated source-guard
     # fragment so each language reports its own failure and timing.
     sdk_checked = sdkchecks.fragment(plan, config, after=(syntax,))
+    common_checked = sdkchecks.common_fragment(plan, config, after=(syntax,))
     inspect_checked = sdkchecks.inspect_fragment(plan, config, after=(syntax,))
     typescript_checked = sdkchecks.typescript_fragment(plan, config, after=(syntax, node))
     rust_sdk_checked = sdkregistrychecks.rust_fragment(plan, config, after=(syntax,))
@@ -223,6 +224,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     return (
         *audited,
         *sdk_checked,
+        *common_checked,
         *inspect_checked,
         *typescript_checked,
         *rust_sdk_checked,

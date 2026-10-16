@@ -122,6 +122,7 @@ class GateConfig(Strict):
     functional: FunctionalConfig
     modules: ModulesConfig
     sdk_python: PythonSdkConfig
+    integrations_common: PythonPackageConfig
     integrations_inspect_ai: PythonPackageConfig
     sdk_typescript: TypeScriptSdkConfig
     mcp_typescript: NodePackageConfig
