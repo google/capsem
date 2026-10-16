@@ -165,14 +165,20 @@ async fn expired_lease_revokes_and_cleans_up_its_worker_automatically() {
     spawn_lease_monitor(Arc::clone(&state), id.to_string());
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            if state.standalone_proxies.lock().await.is_empty() {
+            // Removing the lease starts asynchronous worker and ledger teardown;
+            // it does not acknowledge completion of the final directory removal.
+            if state.standalone_proxies.lock().await.is_empty()
+                && !tokio::fs::try_exists(state.run_dir.join("sessions").join(id))
+                    .await
+                    .unwrap()
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("expired lease was not removed");
+    .expect("expired lease or its worker session was not cleaned up");
     assert!(!state.run_dir.join("sessions").join(id).exists());
 }
 
