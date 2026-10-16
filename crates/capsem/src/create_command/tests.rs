@@ -193,13 +193,10 @@ mod against_the_service {
     #[tokio::test]
     async fn create_and_fork_reject_malformed_labels_and_dispatch_fork_labels() {
         let service = FakeService::start();
+        let mut sandbox = capsem_api::SandboxInfo::new("vm-1".into(), 1, capsem_api::VmLifecycleState::Running, true);
+        sandbox.name = Some("vm-1".into());
         service
-            .route(
-                "GET",
-                "/vms/list",
-                200,
-                json!({"sandboxes": [{"id": "vm-1", "name": "vm-1", "pid": 1, "status": "Running", "persistent": true}]}),
-            )
+            .route("GET", "/vms/list", 200, json!({"sandboxes": [sandbox]}))
             .route(
                 "POST",
                 "/vms/vm-1/fork",
