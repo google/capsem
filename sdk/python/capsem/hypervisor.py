@@ -9,9 +9,15 @@ from . import _operations as api
 from . import models
 from ._client import Client
 from ._debug import Debug
+from ._local import local_connection
 from ._networks import Networks
 from ._profiles import Profiles
-from .execution import CREATE_READY_SECS, GATEWAY_REQUEST_BUDGET_SECS, ExecResult, command_deadline
+from .execution import (
+    CREATE_READY_SECS,
+    GATEWAY_REQUEST_BUDGET_SECS,
+    ExecResult,
+    command_deadline,
+)
 from .registry import Registry
 from .vm import VM
 
@@ -37,7 +43,11 @@ def _named_profile_id(profile: models.ProfileSummary | None) -> str | None:
 
 
 class Hypervisor(Client):
-    def __init__(self, url: str, token: str, *, timeout: float = 30) -> None:
+    def __init__(self, url: str | None = None, token: str | None = None, *, timeout: float = 30) -> None:
+        if url is None and token is None:
+            url, token = local_connection()
+        elif url is None or token is None:
+            raise ValueError("provide both gateway URL and token, or neither for local Capsem")
         super().__init__(url, token, timeout=timeout)
         self.networks = Networks(self._transport)
         self.profiles = Profiles(self._transport)
