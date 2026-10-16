@@ -16,6 +16,8 @@ pub(crate) async fn handle_exec(
 ) -> Result<Json<ExecResponse>, AppError> {
     let timeout_secs =
         capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
+    let user = capsem_api::exec_user(payload.user.as_deref()).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
+    let cwd = capsem_api::exec_cwd(payload.cwd.as_deref()).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
     let uds_path = running_uds_path(&state, &id)?;
     let target = capsem_api::exec_target(
         payload.target,
@@ -34,6 +36,8 @@ pub(crate) async fn handle_exec(
             id: state.next_job_id(),
             command: payload.command,
             target: proto_exec_target(target),
+            user,
+            cwd,
         },
         Some(timeout_secs),
     )

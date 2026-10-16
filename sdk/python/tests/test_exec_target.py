@@ -24,7 +24,11 @@ def test_exec_targets_and_omission_use_exact_authenticated_wire_payloads():
             assert json.loads(state.requests[-1][2]) == {"command": "printf default", "timeout_secs": 12}
             await vm.exec("printf default", timeout_secs=12, target=None)
             assert "target" not in json.loads(state.requests[-1][2])
-            assert len(state.requests) == 4
+            await vm.exec("pwd", timeout_secs=12, user="1000:1000", cwd="/workspace")
+            assert json.loads(state.requests[-1][2]) == {
+                "command": "pwd", "timeout_secs": 12, "user": "1000:1000", "cwd": "/workspace",
+            }
+            assert len(state.requests) == 5
     asyncio.run(run())
 
 

@@ -35,6 +35,18 @@ try {
   assert.equal(exec.exit_code, 7);
   assert.equal(exec.stdout.data.split(' ')[0], digest);
   assertOutput(exec.stderr, 'SDK_STDERR');
+  const asNobody = await vm.exec('id -u; id -g; pwd', {user: 'nobody', cwd: '/tmp'});
+  assert.equal(asNobody.exit_code, 0);
+  const nobodyLines = asNobody.stdout.data.trim().split('\n');
+  assert.equal(nobodyLines.length, 3);
+  assert.notEqual(nobodyLines[0], '0');
+  assert.equal(nobodyLines[2], '/tmp');
+  const asRoot = await vm.exec('id -u; id -g; pwd', {user: '0:0', cwd: '/tmp'});
+  assert.equal(asRoot.exit_code, 0);
+  assert.deepEqual(asRoot.stdout.data.trim().split('\n'), ['0', '0', '/tmp']);
+  const unknownUser = await vm.exec('echo unreachable', {user: 'no_such_capsem_user_99999'});
+  assert.equal(unknownUser.exit_code, 125);
+  assert(unknownUser.stderr.data.includes('unknown user'));
   await vm.log({tail: 10});
   await hv.log({tail: 10});
   await vm.history({limit: 10});

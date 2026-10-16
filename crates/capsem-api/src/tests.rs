@@ -463,6 +463,34 @@ fn exec_target_defaults_to_the_workload_only_where_there_is_one() {
 }
 
 #[test]
+fn exec_user_and_cwd_validate_and_omit_when_absent() {
+    let req: ExecRequest =
+        serde_json::from_value(json!({"command": "pwd", "user": "1000:1000", "cwd": "/workspace"})).unwrap();
+    assert_eq!(req.user.as_deref(), Some("1000:1000"));
+    assert_eq!(req.cwd.as_deref(), Some("/workspace"));
+    assert_eq!(
+        serde_json::to_value(&req).unwrap(),
+        json!({"command": "pwd", "user": "1000:1000", "cwd": "/workspace"})
+    );
+
+    assert_eq!(exec_user(None), Ok(None));
+    for valid_user in ["root", "0", "1000", "1000:1000", "alice", "_apt:nogroup", "svc-1.a:1000"] {
+        assert_eq!(exec_user(Some(valid_user)), Ok(Some(valid_user.to_string())));
+    }
+    for invalid_user in ["", " ", "root;id", "-root", "user:", ":group", "a:b:c", "999999999999"] {
+        assert!(exec_user(Some(invalid_user)).is_err(), "accepted {invalid_user:?}");
+    }
+
+    assert_eq!(exec_cwd(None), Ok(None));
+    for valid_cwd in ["/", "/workspace", "/tmp/dir with spaces"] {
+        assert_eq!(exec_cwd(Some(valid_cwd)), Ok(Some(valid_cwd.to_string())));
+    }
+    for invalid_cwd in ["", "relative", "./dir", "/tmp/bad\0path", "/tmp/bad\npath"] {
+        assert!(exec_cwd(Some(invalid_cwd)).is_err(), "accepted {invalid_cwd:?}");
+    }
+}
+
+#[test]
 fn validate_name_enforces_shared_vm_identifier_rule() {
     for valid in [
         "a",

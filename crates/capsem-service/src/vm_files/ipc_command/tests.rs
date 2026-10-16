@@ -85,6 +85,8 @@ async fn send_ipc_command_covers_connect_handshake_send_close_timeout_and_reply_
         id: 1,
         command: "x".repeat(capsem_foundation::ipc_channel::MAX_IPC_FRAME_SIZE as usize + 1),
         target: capsem_proto::ipc::ExecTarget::Vm,
+        user: None,
+        cwd: None,
     };
     let send_err = send_ipc_command(&state, &sock_path, oversized, Some(5))
         .await

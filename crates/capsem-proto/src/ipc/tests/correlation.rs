@@ -11,6 +11,8 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
                 id: 7,
                 command: "true".into(),
                 target: ExecTarget::Vm,
+                user: None,
+                cwd: None,
             },
             Some(7),
         ),

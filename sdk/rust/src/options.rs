@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use std::fmt;
 
-use crate::models::{HistoryLayerFilter, NetworkInfo, TimelineLayer};
+use crate::models::{ExecTarget, HistoryLayerFilter, NetworkInfo, TimelineLayer};
 
 /// Credentials and optional trust material used for one registry pull.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -54,6 +54,14 @@ pub struct CreateOptions {
     pub image: Option<String>,
     pub command: Vec<String>,
     pub registry: Option<Registry>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExecOptions {
+    pub timeout_secs: Option<u64>,
+    pub target: Option<ExecTarget>,
+    pub user: Option<String>,
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

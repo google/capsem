@@ -4845,6 +4845,13 @@
           "command": {
             "type": "string"
           },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Working directory inside the target (`/`-rooted path). Absent means\nthe workload image's `WORKDIR` for a workload exec, or `/root` in the VM."
+          },
           "target": {
             "oneOf": [
               {
@@ -4863,6 +4870,13 @@
             ],
             "format": "int64",
             "minimum": 0
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "User (`name`, `uid`, `name:group`, or `uid:gid`) to run as. Absent\nmeans the workload image's user for a workload exec, or root in the VM."
           }
         }
       },

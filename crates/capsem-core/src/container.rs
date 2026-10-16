@@ -164,8 +164,21 @@ pub fn session_env(
 /// no byte of it is ever shell syntax at either quoting level; the launcher
 /// refuses when no workload runs.
 pub fn workload_exec_command(command: &str) -> String {
+    workload_exec_command_with(command, None, None)
+}
+
+/// Like [`workload_exec_command`], with optional `user` and `cwd` overrides
+/// applied to the `runc exec` process spec.
+pub fn workload_exec_command_with(command: &str, user: Option<&str>, cwd: Option<&str>) -> String {
     use std::fmt::Write as _;
-    let request = serde_json::json!({ "command": command, "tty": false }).to_string();
+    let mut request = serde_json::json!({ "command": command, "tty": false });
+    if let Some(user) = user {
+        request["user"] = serde_json::Value::String(user.to_owned());
+    }
+    if let Some(cwd) = cwd {
+        request["cwd"] = serde_json::Value::String(cwd.to_owned());
+    }
+    let request = request.to_string();
     let mut payload = String::with_capacity(request.len() * 2);
     for byte in request.bytes() {
         write!(payload, "{byte:02x}").expect("writing to a String cannot fail");

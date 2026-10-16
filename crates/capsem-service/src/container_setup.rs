@@ -497,6 +497,8 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
             id: state.next_job_id(),
             command: capsem_core::container::detached_launch_command(),
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
         },
         Some(30),
     )

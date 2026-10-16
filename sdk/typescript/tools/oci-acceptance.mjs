@@ -23,6 +23,21 @@ async function entered(vm) {
   assert.equal(result.exit_code, 0);
   assert.equal(result.stdout.data, 'SDK_OCI_WORKLOAD');
   assert.equal(result.stderr.data, '');
+  const asNobody = await vm.exec('id -u; id -g; pwd', {user: 'nobody', cwd: '/tmp', target: ExecTarget.WORKLOAD});
+  assert.equal(asNobody.exit_code, 0);
+  const nobodyLines = asNobody.stdout.data.trim().split('\n');
+  assert.equal(nobodyLines.length, 3);
+  assert.notEqual(nobodyLines[0], '0');
+  assert.equal(nobodyLines[2], '/tmp');
+  const asRoot = await vm.exec('id -u; id -g; pwd', {user: '0:0', cwd: '/tmp', target: ExecTarget.WORKLOAD});
+  assert.equal(asRoot.exit_code, 0);
+  assert.deepEqual(asRoot.stdout.data.trim().split('\n'), ['0', '0', '/tmp']);
+  const unknownUser = await vm.exec('echo unreachable', {
+    user: 'no_such_capsem_user_99999',
+    target: ExecTarget.WORKLOAD,
+  });
+  assert.equal(unknownUser.exit_code, 125);
+  assert(unknownUser.stderr.data.includes('unknown user'));
   const host = await vm.exec(guest, {target: ExecTarget.VM});
   assert.equal(host.exit_code, 0);
   assert.equal(host.stdout.data, 'SDK_OCI_VM');

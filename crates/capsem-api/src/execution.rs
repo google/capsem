@@ -41,7 +41,7 @@ pub fn exec_timeout_secs(requested: Option<u64>) -> Result<u64, String> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, ToSchema)]
 pub struct ExecRequest {
     pub command: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,6 +50,66 @@ pub struct ExecRequest {
     /// runs an image, otherwise the VM.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ExecTarget>,
+    /// User (`name`, `uid`, `name:group`, or `uid:gid`) to run as. Absent
+    /// means the workload image's user for a workload exec, or root in the VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    /// Working directory inside the target (`/`-rooted path). Absent means
+    /// the workload image's `WORKDIR` for a workload exec, or `/root` in the VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
+fn is_valid_user_or_group_token(token: &str) -> bool {
+    if token.is_empty() || token.len() > 64 {
+        return false;
+    }
+    if token.bytes().all(|b| b.is_ascii_digit()) {
+        return token.parse::<u32>().is_ok();
+    }
+    let bytes = token.as_bytes();
+    if !(bytes[0].is_ascii_alphabetic() || bytes[0] == b'_') {
+        return false;
+    }
+    let body = if bytes.len() > 1 && *bytes.last().unwrap() == b'$' {
+        &bytes[1..bytes.len() - 1]
+    } else {
+        &bytes[1..]
+    };
+    body.iter()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+}
+
+/// Validate an optional exec `user` (`name`, `uid`, `name:group`, or `uid:gid`).
+pub fn exec_user(requested: Option<&str>) -> Result<Option<String>, String> {
+    let Some(raw) = requested else {
+        return Ok(None);
+    };
+    let valid = match raw.split_once(':') {
+        Some((user, group)) => is_valid_user_or_group_token(user) && is_valid_user_or_group_token(group),
+        None => is_valid_user_or_group_token(raw),
+    };
+    if !valid {
+        return Err("user must be a valid POSIX user/group name or numeric uid[:gid]".to_string());
+    }
+    Ok(Some(raw.to_string()))
+}
+
+/// Validate an optional exec `cwd` (`/`-rooted guest path without NUL or newlines).
+pub fn exec_cwd(requested: Option<&str>) -> Result<Option<String>, String> {
+    let Some(raw) = requested else {
+        return Ok(None);
+    };
+    if !raw.starts_with('/') {
+        return Err("cwd must be an absolute path starting with '/'".to_string());
+    }
+    if raw.len() > 4096 {
+        return Err("cwd must be at most 4096 bytes".to_string());
+    }
+    if raw.bytes().any(|b| matches!(b, b'\0' | b'\n' | b'\r')) {
+        return Err("cwd must not contain NUL or newline characters".to_string());
+    }
+    Ok(Some(raw.to_string()))
 }
 
 /// Where an exec runs.

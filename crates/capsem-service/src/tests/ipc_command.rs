@@ -143,6 +143,8 @@ async fn replaced_generation_cannot_supply_an_accepted_command_reply() {
             id: 42,
             command: "true".into(),
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
         },
         Some(5),
     )
@@ -215,6 +217,8 @@ async fn send_ipc_command_ignores_lifecycle_broadcasts() {
             id: 41,
             command: "true".into(),
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
         },
         Some(5),
     )

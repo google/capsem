@@ -38,7 +38,7 @@ pub(super) fn install(
 
 pub(super) async fn run(
     id: u64,
-    (command, target): (String, capsem_proto::ipc::ExecTarget),
+    (command, target, user, cwd): (String, capsem_proto::ipc::ExecTarget, Option<String>, Option<String>),
     jobs: Arc<JobStore>,
     control: mpsc::Sender<ServiceToProcess>,
     output: mpsc::Sender<ProcessToService>,
@@ -48,7 +48,13 @@ pub(super) async fn run(
     let installed = registration.is_some();
     let result = if let Some(rx) = registration {
         if control
-            .send(ServiceToProcess::Exec { id, command, target })
+            .send(ServiceToProcess::Exec {
+                id,
+                command,
+                target,
+                user,
+                cwd,
+            })
             .await
             .is_err()
         {

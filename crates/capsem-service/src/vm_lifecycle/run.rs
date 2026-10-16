@@ -99,6 +99,8 @@ pub(crate) async fn handle_run(
             command: payload.command,
             // A one-shot run boots a VM with no workload.
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
         },
         Some(timeout_secs),
     )

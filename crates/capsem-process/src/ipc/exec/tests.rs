@@ -11,7 +11,7 @@ async fn owner_cancellation_releases_stream_registration_and_pending_ack() {
     let registration = install(11, true, &jobs, &output);
     let task = tokio::spawn(run(
         11,
-        ("sleep 100".into(), ExecTarget::Workload),
+        ("sleep 100".into(), ExecTarget::Workload, None, None),
         jobs.clone(),
         control.clone(),
         output,
@@ -22,7 +22,7 @@ async fn owner_cancellation_releases_stream_registration_and_pending_ack() {
     // ledger before it wraps it for the workload.
     assert!(matches!(
         commands.recv().await,
-        Some(ServiceToProcess::Exec { id: 11, command, target: ExecTarget::Workload }) if command == "sleep 100"
+        Some(ServiceToProcess::Exec { id: 11, command, target: ExecTarget::Workload, user: None, cwd: None }) if command == "sleep 100"
     ));
     jobs.pending_acks.lock().unwrap().insert(
         11,
@@ -68,7 +68,7 @@ async fn failed_dispatch_returns_error_and_removes_registration() {
     let registration = install(12, true, &jobs, &output);
     run(
         12,
-        ("true".into(), ExecTarget::Vm),
+        ("true".into(), ExecTarget::Vm, None, None),
         jobs.clone(),
         control,
         output,
@@ -96,7 +96,7 @@ async fn duplicate_id_does_not_replace_original_job_or_dispatch_again() {
     assert!(registration.is_none(), "a duplicate id must not be registered again");
     run(
         13,
-        ("true".into(), ExecTarget::Vm),
+        ("true".into(), ExecTarget::Vm, None, None),
         jobs.clone(),
         control,
         output,

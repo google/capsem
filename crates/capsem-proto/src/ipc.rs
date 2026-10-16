@@ -61,11 +61,15 @@ pub enum ServiceToProcess {
     Shutdown,
     /// Execute a command and wait for completion (structured). `command` is
     /// the caller's own: the VM owner records it and applies policy to it,
-    /// then wraps it for `target`.
+    /// then wraps it for `target`, `user`, and `cwd`.
     Exec {
         id: u64,
         command: String,
         target: ExecTarget,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        user: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
     /// Write a file to the guest.
     WriteFile {

@@ -5,7 +5,7 @@ use tokio::sync::OnceCell;
 
 use crate::client::Client;
 use crate::resources::{Container, Files, Ports, Stats, VmNetworks};
-use crate::{models, operations as api, Error, Result, VmSelector};
+use crate::{models, operations as api, Error, ExecOptions, Result, VmSelector};
 
 mod queries;
 
@@ -154,12 +154,26 @@ impl VM {
     }
 
     pub async fn exec(&self, command: &str, timeout_secs: Option<u64>) -> Result<models::ExecResponse> {
+        self.exec_with(
+            command,
+            ExecOptions {
+                timeout_secs,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn exec_with(&self, command: &str, options: ExecOptions) -> Result<models::ExecResponse> {
+        let timeout_secs = options.timeout_secs;
         let params = api::ExecVmParams {
             id: self.resolve().await?,
             body: models::ExecRequest {
                 command: command.into(),
                 timeout_secs,
-                target: None,
+                target: options.target,
+                user: options.user,
+                cwd: options.cwd,
             },
         };
         api::exec_vm(

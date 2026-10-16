@@ -59,14 +59,24 @@ fn exec_roundtrip() {
         id: 42,
         command: "echo hi".into(),
         target: ExecTarget::Workload,
+        user: Some("1000:1000".into()),
+        cwd: Some("/workspace".into()),
     };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
-        ServiceToProcess::Exec { id, command, target } => {
+        ServiceToProcess::Exec {
+            id,
+            command,
+            target,
+            user,
+            cwd,
+        } => {
             assert_eq!(id, 42);
             assert_eq!(command, "echo hi");
             assert_eq!(target, ExecTarget::Workload);
+            assert_eq!(user.as_deref(), Some("1000:1000"));
+            assert_eq!(cwd.as_deref(), Some("/workspace"));
         }
         _ => panic!("wrong variant"),
     }
@@ -369,6 +379,8 @@ fn job_ids_are_distinct() {
         id: 1,
         command: "a".into(),
         target: ExecTarget::Vm,
+        user: None,
+        cwd: None,
     };
     let write = ServiceToProcess::WriteFile {
         id: 2,

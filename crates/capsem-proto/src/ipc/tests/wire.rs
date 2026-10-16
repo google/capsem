@@ -36,6 +36,8 @@ fn service_to_process_variant_names_and_roundtrips_are_stable() {
             id: 1,
             command: "true".into(),
             target: ExecTarget::Vm,
+            user: None,
+            cwd: None,
         },
         ServiceToProcess::WriteFile {
             id: 2,

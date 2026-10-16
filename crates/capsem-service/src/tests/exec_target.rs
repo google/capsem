@@ -31,6 +31,8 @@ async fn exec(state: &Arc<ServiceState>, vm: &str, target: Option<capsem_api::Ex
             command: "id -u".to_string(),
             timeout_secs: Some(5),
             target,
+            user: None,
+            cwd: None,
         }),
     )
     .await
@@ -98,7 +100,6 @@ async fn a_session_without_a_workload_execs_in_the_vm_and_refuses_a_workload_tar
         vec![("id -u".to_string(), Wire::Vm)]
     );
 }
-
 fn sleep_reply(msg: &ServiceToProcess) -> FakeProcessReply {
     let sleep = matches!(msg, ServiceToProcess::Exec { command, .. } if command == "sleep");
     Box::pin(async move {
@@ -209,5 +210,64 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
         assert_eq!(err.status, StatusCode::NOT_FOUND);
         assert_eq!(err.body.code, Some(ErrorCode::VmNotFound));
         assert_eq!(err.body.vm_id.as_deref(), Some("missing-vm"));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_forwards_validated_user_and_cwd_and_refuses_malformed_ones_before_ipc() {
+    let dir = tempfile::tempdir().unwrap();
+    let (state, _state_dir) = make_test_state_with_tempdir();
+    let uds_path = dir.path().join("exec.sock");
+    let owner = spawn_fake_process(&uds_path, 1, exec_ok);
+    setup_vm_with_workspace_and_uds(&state, dir.path(), "plain-vm", uds_path);
+
+    for bad_req in [
+        ExecRequest {
+            command: "pwd".into(),
+            user: Some("bad user".into()),
+            ..Default::default()
+        },
+        ExecRequest {
+            command: "pwd".into(),
+            cwd: Some("relative/path".into()),
+            ..Default::default()
+        },
+    ] {
+        let err = handle_exec(State(Arc::clone(&state)), Path("plain-vm".into()), Json(bad_req))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    let _ = handle_exec(
+        State(Arc::clone(&state)),
+        Path("plain-vm".into()),
+        Json(ExecRequest {
+            command: "pwd".into(),
+            timeout_secs: Some(5),
+            target: None,
+            user: Some("1000:1000".into()),
+            cwd: Some("/workspace".into()),
+        }),
+    )
+    .await
+    .unwrap();
+
+    let messages = owner.await.unwrap();
+    assert_eq!(messages.len(), 1);
+    match &messages[0] {
+        ServiceToProcess::Exec {
+            command,
+            target,
+            user,
+            cwd,
+            ..
+        } => {
+            assert_eq!(command, "pwd");
+            assert_eq!(*target, Wire::Vm);
+            assert_eq!(user.as_deref(), Some("1000:1000"));
+            assert_eq!(cwd.as_deref(), Some("/workspace"));
+        }
+        other => panic!("expected exec, got {other:?}"),
     }
 }

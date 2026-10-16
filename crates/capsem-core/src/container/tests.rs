@@ -126,6 +126,19 @@ fn a_workload_exec_carries_any_command_exactly_to_the_launcher() {
         decode_workload_exec(payload),
         serde_json::json!({ "command": hostile, "tty": false })
     );
+
+    let with_overrides = workload_exec_command_with("pwd", Some("1000:1000"), Some("/workspace"));
+    let (_, hex_with) = with_overrides.rsplit_once("--exec ").unwrap();
+    let hex_with = hex_with.strip_suffix('\'').unwrap_or(hex_with);
+    assert_eq!(
+        decode_workload_exec(hex_with),
+        serde_json::json!({
+            "command": "pwd",
+            "tty": false,
+            "user": "1000:1000",
+            "cwd": "/workspace"
+        })
+    );
 }
 
 /// The terminal shell of an image session hands its PTY to the launcher's

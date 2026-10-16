@@ -72,6 +72,8 @@ pub(super) async fn exec(client: &GatewayClient, args: &ExecArgs) -> Result<i32>
         command: args.command.clone(),
         timeout_secs: args.timeout,
         target: args.target.map(Into::into),
+        user: None,
+        cwd: None,
     };
     let response: ApiResponse<ExecResponse> = client.post(&format!("/vms/{session_id}/exec"), request).await?;
     let response = response.into_result()?;

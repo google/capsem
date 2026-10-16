@@ -300,8 +300,14 @@ pub(crate) async fn handle_ipc_connection(
             }
             ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => {
                 let (id, job, streaming) = match msg {
-                    ServiceToProcess::Exec { id, command, target } => (id, (command, target), false),
-                    ServiceToProcess::ExecStream { id, command, target } => (id, (command, target), true),
+                    ServiceToProcess::Exec {
+                        id,
+                        command,
+                        target,
+                        user,
+                        cwd,
+                    } => (id, (command, target, user, cwd), false),
+                    ServiceToProcess::ExecStream { id, command, target } => (id, (command, target, None, None), true),
                     _ => unreachable!(),
                 };
                 connection_execs.insert(id);

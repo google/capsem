@@ -171,6 +171,45 @@ def test_an_image_terminal_type_is_kept(launcher):
     assert [entry for entry in env if entry.startswith("TERM=")] == ["TERM=dumb"]
 
 
+def test_exec_process_overrides_user_and_cwd_from_workload_rootfs(launcher, tmp_path, capsys):
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "etc").mkdir(parents=True)
+    (rootfs / "etc/passwd").write_text(
+        "root:x:0:0:root:/root:/bin/sh\n"
+        "alice:x:1001:1002:Alice:/home/alice:/bin/sh\n"
+    )
+    (rootfs / "etc/group").write_text(
+        "root:x:0:\n"
+        "alice:x:1002:\n"
+        "wheel:x:10:alice\n"
+    )
+    config = workload_config(launcher)
+    config["root"]["path"] = str(rootfs)
+
+    by_name = launcher.exec_process(config, ["id"], False, user="alice", cwd="/workspace")
+    assert by_name["cwd"] == "/workspace"
+    assert by_name["user"] == {"uid": 1001, "gid": 1002, "additionalGids": [1002, 10]}
+    assert "USER=alice" in by_name["env"]
+    assert "LOGNAME=alice" in by_name["env"]
+    assert "HOME=/home/alice" in by_name["env"]
+
+    by_pair = launcher.exec_process(config, ["id"], False, user="alice:wheel")
+    assert by_pair["user"] == {"uid": 1001, "gid": 10, "additionalGids": [10]}
+
+    by_uid = launcher.exec_process(config, ["id"], False, user="2000:2001")
+    assert by_uid["user"] == {"uid": 2000, "gid": 2001, "additionalGids": [2001]}
+
+    with pytest.raises(SystemExit) as bad_user:
+        launcher.exec_process(config, ["id"], False, user="ghost")
+    assert bad_user.value.code == 125
+    assert "unknown user: ghost" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit) as bad_group:
+        launcher.exec_process(config, ["id"], False, user="alice:ghost")
+    assert bad_group.value.code == 125
+    assert "unknown group: ghost" in capsys.readouterr().err
+
+
 class Stop(Exception):
     pass
 

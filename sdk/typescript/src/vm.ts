@@ -79,9 +79,13 @@ export class VM extends Client {
     const {transport, id} = await this.context(options);
     return api.getVmInfo(transport, {id}, options);
   }
-  async exec(command: string, options: CallOptions & {timeout_secs?: number; target?: models.ExecTarget | null} = {}): Promise<models.ExecResponse> {
+  async exec(command: string, options: CallOptions & {
+    timeout_secs?: number; target?: models.ExecTarget | null; user?: string | null; cwd?: string | null;
+  } = {}): Promise<models.ExecResponse> {
     const body = ExecRequestSchema.parse({command, timeout_secs: options.timeout_secs ?? null,
-      ...(options.target == null ? {} : {target: options.target})});
+      ...(options.target == null ? {} : {target: options.target}),
+      ...(options.user == null ? {} : {user: options.user}),
+      ...(options.cwd == null ? {} : {cwd: options.cwd})});
     const {transport, id} = await this.context(options);
     return api.execVm(transport, {id, body}, {
       ...options, timeoutMs: options.timeoutMs ?? commandDeadlineMs(transport.timeoutMs, options.timeout_secs),
