@@ -54,7 +54,7 @@ export function mountDiagram(root: HTMLElement): () => void {
   }
   const svg = host.querySelector('svg')!;
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `${diagram.description ?? diagram.title}. Full connection list follows the diagram.`);
+  svg.setAttribute('aria-label', `${diagram.description ?? diagram.title}. Connection details are in the legend.`);
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   let zoom = 1, x = 0, y = 0;
   const controls = root.querySelector<HTMLElement>('.diagram-toolbar')!;
@@ -80,6 +80,7 @@ export function mountDiagram(root: HTMLElement): () => void {
     if (action === 'fit') fit();
   }, options);
   canvas.addEventListener('keydown', (event) => {
+    if (event.target !== canvas) return;
     if (!['+', '=', '-', '0', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
     event.preventDefault();
     if (event.key === '+' || event.key === '=') changeZoom(1.25);
@@ -93,7 +94,7 @@ export function mountDiagram(root: HTMLElement): () => void {
   }, options);
   let drag: { px: number; py: number; x: number; y: number; scale: number } | undefined;
   canvas.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || controls.contains(event.target as Node)) return;
     const bounds = svg.getBoundingClientRect();
     drag = { px: event.clientX, py: event.clientY, x, y, scale: Math.min(bounds.width / diagram.width, bounds.height / diagram.height) * zoom };
     canvas.setPointerCapture(event.pointerId);
