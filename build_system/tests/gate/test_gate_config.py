@@ -530,8 +530,8 @@ def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> Non
     assert issubclass(PythonPackageConfig, source)
     assert tuple(PythonPackageConfig.model_fields) == (*fields, "pytest_scratch")
     assert all(field.is_required() for field in PythonPackageConfig.model_fields.values())
-    assert gate_config.GateConfig.model_fields["integrations_common"].annotation is PythonPackageConfig
-    assert gate_config.GateConfig.model_fields["integrations_inspect_ai"].annotation is PythonPackageConfig
+    for owner in ("integrations_common", "integrations_inspect_ai", "integrations_harbor"):
+        assert gate_config.GateConfig.model_fields[owner].annotation is PythonPackageConfig
     assert tuple(PythonSdkConfig.model_fields) == (
         *PythonPackageConfig.model_fields,
         "specification",

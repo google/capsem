@@ -175,6 +175,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     sdk_checked = sdkchecks.fragment(plan, config, after=(syntax,))
     common_checked = sdkchecks.common_fragment(plan, config, after=(syntax,))
     inspect_checked = sdkchecks.inspect_fragment(plan, config, after=(syntax,))
+    harbor_checked = sdkchecks.harbor_fragment(plan, config, after=(syntax,))
     typescript_checked = sdkchecks.typescript_fragment(plan, config, after=(syntax, node))
     rust_sdk_checked = sdkregistrychecks.rust_fragment(plan, config, after=(syntax,))
     cohort = plan.add(sdkregistrychecks.package_cohort(config), after=(
@@ -226,6 +227,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         *sdk_checked,
         *common_checked,
         *inspect_checked,
+        *harbor_checked,
         *typescript_checked,
         *rust_sdk_checked,
         cohort,

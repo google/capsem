@@ -91,6 +91,7 @@ def test_inspect_extension_ci_owns_prewarm_tests_and_coverage() -> None:
     for proj, flag, src_glob in (
         ("integrations/common", "integrations-common", "integrations/common/capsem_integrations/**"),
         ("integrations/inspect-ai", "inspect-ai", "integrations/inspect-ai/inspect_capsem/**"),
+        ("integrations/harbor", "harbor", "integrations/harbor/harbor_capsem/**"),
     ):
         prewarm = PYTHON_PREWARM.replace("sdk/python ", f"{proj} ")
         assert any(prewarm in step.get("run", "").splitlines() for step in fast["jobs"]["static"]["steps"]), RATIONALE

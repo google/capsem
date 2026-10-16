@@ -345,6 +345,14 @@ jobs:
           uv sync --frozen --no-install-project
           uv run --frozen pytest --junitxml=../../cache/target/coverage/junit/inspect-ai.xml
 
+      - name: Harbor extension tests with coverage
+        working-directory: integrations/harbor
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/cache/target/coverage/harbor/.coverage
+        run: |
+          uv sync --frozen --no-install-project
+          uv run --frozen pytest --junitxml=../../cache/target/coverage/junit/harbor.xml
+
       - name: Python lint and type check
         run: |
           uv run --project build_system --frozen capsem-gate lint
@@ -476,6 +484,15 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+      - name: Upload Harbor extension coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
+        with:
+          files: cache/target/coverage/harbor/coverage.xml
+          flags: harbor
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
       - name: Upload Rust unit test coverage
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
@@ -517,7 +534,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
         with:
-          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml,cache/target/coverage/junit/python-sdk.xml,cache/target/coverage/junit/integrations-common.xml,cache/target/coverage/junit/inspect-ai.xml,cache/target/coverage/junit/typescript-sdk.xml,cache/target/coverage/junit/mcp-typescript.xml
+          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml,cache/target/coverage/junit/python-sdk.xml,cache/target/coverage/junit/integrations-common.xml,cache/target/coverage/junit/inspect-ai.xml,cache/target/coverage/junit/harbor.xml,cache/target/coverage/junit/typescript-sdk.xml,cache/target/coverage/junit/mcp-typescript.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
@@ -610,6 +627,7 @@ jobs:
           python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project
           python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project integrations/common --frozen --no-install-project
           python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project integrations/inspect-ai --frozen --no-install-project
+          python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project integrations/harbor --frozen --no-install-project
           cargo fetch --locked
           for workspace in web/app sdk/typescript mcp/typescript build_system/release_site; do
             pnpm --dir "$workspace" install --frozen-lockfile
