@@ -502,7 +502,7 @@ def _source_package_type():
 
 
 def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> None:
-    from capsem_builder.gate.buildschema import PythonSdkConfig, SdkConfig
+    from capsem_builder.gate.buildschema import PythonPackageConfig, PythonSdkConfig, SdkConfig
 
     source = _source_package_type()
     fields = ("project", "manifest", "source", "tests", "build_output")
@@ -517,8 +517,13 @@ def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> Non
         assert gate_config.GateConfig.model_fields[owner].annotation is SdkConfig
         assert isinstance(getattr(CONFIG, owner), SdkConfig)
     assert gate_config.GateConfig.model_fields["sdk_python"].annotation is PythonSdkConfig
+    assert issubclass(PythonPackageConfig, source)
+    assert tuple(PythonPackageConfig.model_fields) == (*fields, "pytest_scratch")
+    assert all(field.is_required() for field in PythonPackageConfig.model_fields.values())
+    assert gate_config.GateConfig.model_fields["integrations_inspect_ai"].annotation is PythonPackageConfig
     assert tuple(PythonSdkConfig.model_fields) == (
-        *SdkConfig.model_fields,
+        *PythonPackageConfig.model_fields,
+        "specification",
         "environment_python",
         "package_build_requirements",
     )
