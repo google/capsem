@@ -102,6 +102,7 @@ async fn configured_capability_owns_destination_and_credentials_and_retires_inde
     let first = upstream().await;
     let second = upstream().await;
     let store = capsem_credentials::CredentialStore::global();
+    store.clear_for_test();
     let first_ref = store
         .inject(
             capsem_credentials::CredentialProvider::Mcp,
@@ -168,6 +169,7 @@ async fn configured_capability_owns_destination_and_credentials_and_retires_inde
     );
     other_authority.revoke();
     other_task.await.unwrap();
+    store.clear_for_test();
 }
 
 #[tokio::test]
