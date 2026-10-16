@@ -594,7 +594,7 @@ jobs:
           name: install-glowup-evidence-${{ github.run_attempt }}
           path: |
             cache/target/gate-runs/
-            cache/target/tests/evidence/installed/
+            cache/target/tests/evidence/
           retention-days: 7
           if-no-files-found: ${{ steps.install_e2e.outcome == 'failure' && 'error' || 'warn' }}
 

@@ -30,6 +30,9 @@ def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -
     seed_stopped_workspace(service.tmp_dir, ASSETS_DIR)
     with managed_service(service) as managed:
         before = managed.ready()
+        assert (service.tmp_dir / "managed-service.log").is_file(), (
+            "the native supervisor must retain startup output for failed hosted acceptance"
+        )
         if sys.platform == "linux":
             assert os.readlink(f"/proc/{before.service_pid}/ns/net") == os.readlink("/proc/self/ns/net")
             assert "NoNewPrivs:\t1" in Path(f"/proc/{before.service_pid}/status").read_text()
