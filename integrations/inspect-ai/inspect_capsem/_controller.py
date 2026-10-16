@@ -71,14 +71,6 @@ class CapsemController(Protocol):
     async def close(self) -> None: ...
 
 
-def is_root_user_spec(user: str | None) -> bool:
-    """Return True when `user` is unset, empty, or resolves to root (`root`, `0`, `0:0`)."""
-    if user is None:
-        return True
-    u, _, g = user.strip().partition(":")
-    return u.strip().lower() in ("", "root", "0") and g.strip().lower() in ("", "root", "0")
-
-
 def _normalize_image_ref(image: str | None) -> str | None:
     if not image or not image.strip():
         return None
@@ -181,6 +173,18 @@ class SdkCapsemController:
             session = await self._hypervisor.create(**kwargs)
         except CreateTimeoutError as exc:
             await self._cleanup_failed_create(exc)
+            raise
+        except HttpError as exc:
+            if registry_ca_pem and exc.status in (400, 403):
+                auth = (norm_image or "").removeprefix("docker://").partition("/")[
+                    0
+                ] or "127.0.0.1:5055"
+                raise RuntimeError(
+                    f"capsem-service rejected loopback build registry image {norm_image!r} "
+                    f"({exc}). To enable Compose 'build:' / Dockerfile sandboxes, add "
+                    f'sources = ["{auth}"] and admit = ["{auth}/inspect-capsem/build"] '
+                    "under [images] in settings.toml."
+                ) from exc
             raise
         vm_id = str(session.id)
         self._sessions[vm_id] = session

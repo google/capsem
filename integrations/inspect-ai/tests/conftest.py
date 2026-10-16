@@ -14,6 +14,12 @@ import pytest
 from inspect_capsem import CapsemSandboxEnvironment
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers", "requires_docker: test requires a local docker CLI and daemon"
+    )
+
+
 _PORTABLE_TIMEOUT_SHIM = f"""#!{sys.executable}
 import os
 import signal

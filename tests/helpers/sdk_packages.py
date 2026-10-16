@@ -52,15 +52,29 @@ def python_gateway(
             prefix = work / "runtime"
             python = prefix / "bin/python"
             runtime_lock = work / "pylock.toml"
-            _run(["uv", "export", "--project", str(root / settings["project"]),
-                  "--frozen", "--offline", "--no-dev", "--no-emit-project",
-                  "--format", "pylock.toml", "--output-file", str(runtime_lock)],
-                 work, environment)
-            _run(["uv", "venv", "--offline", "--python", sys.executable, str(prefix)], work, environment)
-            _run(["uv", "pip", "sync", "--offline", "--python", str(python), str(runtime_lock)],
-                 work, environment)
-            _run(["uv", "pip", "install", "--offline", "--no-deps", "--python", str(python), str(archive)],
-                 work, environment)
+            _run(
+                [
+                    "uv", "export", "--project", str(root / settings["project"]),
+                    "--frozen", "--offline", "--no-dev", "--no-emit-project",
+                    "--format", "pylock.toml", "--output-file", str(runtime_lock)
+                ],
+                work, environment,
+            )
+            _run(
+                ["uv", "venv", "--offline", "--python", sys.executable, str(prefix)],
+                work, environment,
+            )
+            _run(
+                ["uv", "pip", "sync", "--offline", "--python", str(python), str(runtime_lock)],
+                work, environment,
+            )
+            _run(
+                [
+                    "uv", "pip", "install", "--offline", "--no-deps",
+                    "--python", str(python), str(archive)
+                ],
+                work, environment,
+            )
             _run(["uv", "pip", "check", "--python", str(python)], work, environment)
             payload = work / "payload.py"
             gateway = work / "gateway.py"
@@ -108,12 +122,15 @@ def typescript_gateway(
     with tempfile.TemporaryDirectory(prefix="braavos-npm-") as temporary:
         work = Path(temporary)
         assert not work.resolve().is_relative_to(root.resolve())
-        (work / "package.json").write_text(json.dumps({"name": "braavos-consumer", "private": True}))
+        pkg_doc = {"name": "braavos-consumer", "private": True}
+        (work / "package.json").write_text(json.dumps(pkg_doc))
         receipt = work / "payload.json"
         receipt.write_text(json.dumps({"archiveSha256": digest, "files": files}))
         # Resolve exclusively from the clean consumer. The gate owns cache
         # prewarming; acceptance cannot fetch dependencies or run build hooks.
-        clean = {key: value for key, value in environment.items() if key not in {"NODE_PATH", "NODE_OPTIONS"}}
+        clean = {
+            k: v for k, v in environment.items() if k not in {"NODE_PATH", "NODE_OPTIONS"}
+        }
         _run(["npm", "install", "--offline", "--omit=dev", "--ignore-scripts", "--no-audit",
               "--no-fund", str(archive)], work, clean)
         payload = work / "payload.mjs"
@@ -122,7 +139,11 @@ def typescript_gateway(
         shutil.copyfile(project / "tools/crypto.mjs", work / "crypto.mjs")
         shutil.copyfile(project / "tools" / probe, gateway)
         report = work / "acceptance.json"
-        result = _run(["node", str(payload), str(root), str(archive), str(report), str(receipt)], work, clean)
+        result = _run(
+            ["node", str(payload), str(root), str(archive), str(report), str(receipt)],
+            work,
+            clean,
+        )
         assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in result
         verified = json.loads(report.read_text())
         assert verified["ok"] and verified["sha256"] == digest
@@ -167,18 +188,24 @@ def inspect_ai_gateway(
                 ],
                 work, environment,
             )
-            _run(
-                ["uv", "pip", "install", "--offline", "--no-deps", "--python", str(python), str(sdk_wheel), str(archive)],
-                work, environment,
-            )
+            pip_cmd = [
+                "uv", "pip", "install", "--offline", "--no-deps",
+                "--python", str(python), str(sdk_wheel), str(archive),
+            ]
+            _run(pip_cmd, work, environment)
             payload = work / "payload.py"
             gateway = work / "gateway.py"
             tests_dir = root / settings["tests"]
             for name, destination in (("image_package_acceptance.py", payload), (probe, gateway)):
                 shutil.copyfile(tests_dir / name, destination)
-            fixture_helper = tests_dir / "oci_workload_fixture.py"
-            if fixture_helper.is_file():
-                shutil.copyfile(fixture_helper, work / "oci_workload_fixture.py")
+            for helper_name in (
+                "oci_workload_fixture.py",
+                "host_build_fixture.py",
+                "host_build_acceptance.py",
+            ):
+                helper_path = tests_dir / helper_name
+                if helper_path.is_file():
+                    shutil.copyfile(helper_path, work / helper_name)
             report = work / "payload.json"
             result = _run([str(python), "-I", str(payload), "--archive", str(archive),
                            "--source-root", str(root), "--output", str(report)], work, environment)
@@ -195,4 +222,3 @@ def inspect_ai_gateway(
         assert not work.exists()
         assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
     return "".join(results)
-

@@ -11,7 +11,8 @@ from inspect_capsem import CapsemSandboxConfig
 from inspect_capsem.containers.spec import ContainerSpec
 
 CONTAINERS_DIR = Path(__file__).resolve().parents[1] / "inspect_capsem" / "containers"
-ALLOWED_PREFIX = ("inspect_capsem.containers",)
+USERS_FILE = Path(__file__).resolve().parents[1] / "inspect_capsem" / "_users.py"
+ALLOWED_PREFIX = ("inspect_capsem.containers", "inspect_capsem._users")
 
 
 def _imported_modules(py_file: Path) -> set[str]:
@@ -33,6 +34,8 @@ def test_containers_package_has_no_inspect_or_parent_imports() -> None:
             assert not mod.startswith("inspect_ai"), f"{py_file.name} imported {mod!r}"
             if mod.startswith("inspect_capsem"):
                 assert mod.startswith(ALLOWED_PREFIX), f"{py_file.name} imported {mod!r}"
+    for mod in _imported_modules(USERS_FILE):
+        assert not mod.startswith(("inspect_ai", "inspect_capsem")), f"_users.py imported {mod!r}"
 
 
 def test_vm_mode_does_not_import_containers_at_top_level() -> None:
