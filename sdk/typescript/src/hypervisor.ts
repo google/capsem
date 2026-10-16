@@ -1,4 +1,5 @@
 import {Client} from './client.js';
+import {localConnection} from '#local';
 import {Debug} from './debug.js';
 import {commandDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
@@ -21,7 +22,11 @@ export class Hypervisor extends Client {
   readonly profiles: Profiles;
   readonly debug: Debug;
   #defaults: Promise<models.ProfileDefaults> | undefined;
-  constructor(url: string, token: string, options: TransportOptions = {}) {
+  constructor(url?: string, token?: string, options: TransportOptions = {}) {
+    if (url === undefined && token === undefined) [url, token] = localConnection();
+    else if (url === undefined || token === undefined) {
+      throw new TypeError('Provide both gateway URL and token, or neither for local Capsem');
+    }
     const transport = new Transport(url, token, options);
     super(transport);
     this.networks = new Networks(transport);

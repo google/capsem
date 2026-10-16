@@ -12,6 +12,7 @@ export default ts.config(
   },
   {
     files: ['src/**/*.ts'],
+    ignores: ['src/local-node.ts'],
     rules: {'no-restricted-imports': ['error', {paths: builtinModules, patterns: ['node:*']}]},
   },
 );

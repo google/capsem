@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Connect the Python SDK to the installed local gateway without constructor arguments, while keeping discovered credentials loopback-only and explicit remote connections unchanged.
+- Connect Python and Node.js SDKs to the installed local gateway without constructor arguments, while keeping discovered credentials loopback-only and explicit remote connections unchanged; browser clients remain explicit.
 
 ### Documentation
 
