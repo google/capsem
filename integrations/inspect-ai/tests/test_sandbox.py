@@ -285,7 +285,7 @@ async def test_task_init_and_task_cleanup_isolation_and_retry(
             "t-flaky", None, {"default": env_flaky}, interrupted=False
         )
     assert "Failed to stop Capsem VM v-flaky" in caplog.text
-    assert "v-flaky" not in flaky_ctrl.stopped and not flaky_ctrl.closed
+    assert "v-flaky" not in flaky_ctrl.stopped and flaky_ctrl.closed
 
     await CapsemSandboxEnvironment.task_cleanup("t-flaky", None, cleanup=True)
     assert "v-flaky" in flaky_ctrl.stopped and flaky_ctrl.closed
