@@ -6,6 +6,7 @@ version = 1
 obsolete_root_paths = []
 distributions = [
   "build_system/pyproject.toml=capsem-builder",
+  "integrations/inspect-ai/pyproject.toml=inspect-capsem-sandbox",
   "sdk/python/pyproject.toml=capsem",
 ]
 entrypoints = [

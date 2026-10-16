@@ -61,7 +61,7 @@ filterwarnings = ["error"]
 # A passing test's tmp_path is removed at its teardown, so a run's scratch
 # peaks at what the failing and in-flight tests hold, not the whole suite.
 tmp_path_retention_policy = "failed"
-pythonpath = ["..", "../tests", "../integrations/inspect-ai", "tests/gate", "tests/release", "tests/release_site"]
+pythonpath = ["..", "../tests", "tests/gate", "tests/release", "tests/release_site"]
 markers = [
     "capability(name): qualification group selected by the candidate's declared capabilities",
     "mcp: MCP black-box integration tests (require capsem-service + VM assets)",
