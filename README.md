@@ -22,11 +22,11 @@
   <img src="https://img.shields.io/badge/Debian-13%2B-A81D33?logo=debian&logoColor=white" alt="Debian 13 or later" />
 </p>
 
-## Capsem 0.6 pre-release
+## Capsem 0.7 pre-release
 
-Capsem 0.6 is undergoing release qualification. Installation instructions,
+Capsem 0.7 is undergoing release qualification. Installation instructions,
 downloadable packages, and detailed documentation are intentionally unavailable
-until the public release, planned for Summer 2026.
+until the public release.
 
 The current documentation status is at **[docs.capsem.org](https://docs.capsem.org/)**.
 

@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Correct the release preflight's version line so qualified 0.7 packages can
+  be published, and align the pre-release documentation labels.
+
 - SDK release handoffs keep adversarial test files out of published archive
   directories and apply bounded retention to client package outputs.
 
