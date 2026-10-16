@@ -183,6 +183,15 @@ def test_native_supervisor_restart_is_owned_by_glowup_on_both_platforms() -> Non
         assert config.suites.pytest.managed_restart_driver in rendered
 
 
+def test_native_restart_rejects_a_broken_host_before_cross_compiling_packages() -> None:
+    plan = gate_plan("test-glowup")
+    for arch in gate_config.load(PROJECT_ROOT).architectures:
+        assert "glowup.pytest.managed-restart" in _ancestors(plan, f"package.{arch}.build"), (
+            "Managed restart consumes the prepared host cohort, not cross-compiled packages; "
+            "a startup failure must surface before spending hours building both architectures."
+        )
+
+
 def test_pulled_package_lanes_keep_native_restart_and_sdk_prerequisites() -> None:
     config = gate_config.load(PROJECT_ROOT)
     for owner in (BinaryQualification, RuntimeQualification):

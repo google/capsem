@@ -91,8 +91,13 @@ class ManagedService:
             except (OSError, ValueError, ConnectionError):
                 pass
             time.sleep(0.1)
-        raise AssertionError(f"managed gateway did not become ready; evidence: {self.service.tmp_dir}")
+        state = self.startup_state()
+        (self.service.tmp_dir / "managed-supervisor-state.txt").write_text(state)
+        raise AssertionError(f"managed gateway did not become ready; {state}; evidence: {self.service.tmp_dir}")
 
+    def startup_state(self) -> str:
+        result = self.command("list", self.label, check=False)
+        return f"launchctl returncode={result.returncode}"
 
     def pid(self) -> int:
         job = self.command("list", self.label, check=False)
@@ -139,6 +144,13 @@ class SystemdService(ManagedService):
     def active(self) -> bool:
         return self.command("is-active", self.label, check=False).returncode == 0
 
+    def startup_state(self) -> str:
+        result = self.command(
+            "show", self.label, "--property=ActiveState,SubState,Result,ExecMainStatus,MainPID",
+            "--no-pager", check=False,
+        )
+        return result.stdout.strip() or f"systemctl returncode={result.returncode}"
+
 
 def service_arguments(service: ServiceInstance) -> list[str]:
     return [
@@ -181,6 +193,7 @@ def launchd_service(service: ServiceInstance) -> Iterator[ManagedService]:
 def systemd_service(service: ServiceInstance) -> Iterator[ManagedService]:
     owner = SystemdService(service)
     environment = service_environment(service)
+    log = service.tmp_dir / "managed-service.log"
     with (
         supervisor_lifetime(service, owner),
         manager_environment(service.tmp_dir, owner.manager_label, owner.retire) as manager,
@@ -190,6 +203,8 @@ def systemd_service(service: ServiceInstance) -> Iterator[ManagedService]:
             "systemd-run", "--user", "--collect", f"--unit={owner.label}",
             "--property=Restart=always", "--property=RestartSec=0.1",
             "--property=NoNewPrivileges=yes",
+            f"--property=StandardOutput=append:{log}",
+            f"--property=StandardError=append:{log}",
             "--property=KillMode=control-group", "--property=TimeoutStopSec=15",
             *(f"--setenv={key}={value}" for key, value in environment.items()),
             *service_arguments(service),

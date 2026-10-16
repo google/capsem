@@ -235,10 +235,13 @@ def _build_and_prove(
     content: RuntimeContent,
     runtime: Step | None = None,
 ) -> Step:
-    # `previous` chains each architecture behind the last; the first has
-    # nothing before it beyond whatever this phase was given.
     verified = phase.add(_content_step(config, content), after=after)
-    previous: tuple = (verified,)
+    # This proof consumes the prepared host binaries and manifest, not either
+    # cross-compiled package. Reject broken startup before those expensive builds.
+    native = managedrestart.fragment(
+        plan, config, after=(verified, *filter(None, (runtime,))), content=content
+    )
+    previous: tuple = (native,)
     for arch in config.architectures:
         # The final install step below authors a checked local release graph
         # before installing the exact native package and running the broader
@@ -282,12 +285,6 @@ def _build_and_prove(
                 after=previous,
             ),
         )
-    previous = (
-        managedrestart.fragment(
-            plan, config, after=(*previous, *filter(None, (runtime,))), content=content
-        ),
-    )
-
     sbom = phase.add(hostpackage.sbom_step(config), after=previous)
     exact_install_image = installplan.fragment(plan, config)
     return phase.add(
