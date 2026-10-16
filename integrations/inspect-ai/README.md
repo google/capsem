@@ -9,7 +9,7 @@ uv sync --project integrations/inspect-ai --frozen
 uv run --project integrations/inspect-ai inspect eval task.py --sandbox capsem
 ```
 
-See the [Inspect AI Sandbox documentation](https://docs.capsem.org/usage/inspect-ai/) (`web/docs/src/content/docs/usage/inspect-ai.md`) for configuration (`CapsemSandboxConfig`), environment variables, and lifecycle behavior.
+See the [Inspect AI Sandbox documentation](https://docs.capsem.org/usage/inspect-ai/) for configuration (`CapsemSandboxConfig`), environment variables, and lifecycle behavior.
 
 The current source provides the original pure Dockerfile instruction scanner,
 heredoc transformations, multistage CA patcher and final-stage USER/WORKDIR
