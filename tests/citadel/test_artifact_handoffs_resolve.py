@@ -12,8 +12,8 @@ the wiring between them is not, and wiring is what has failed all day: a tool
 absent from one job's list, a directory nothing staged, a variable a child no
 longer saw.
 
-Checked here because it is decidable from the file: the upload exists or it
-does not, and the job that performs it either precedes this one or does not.
+Checked here because it is decidable from the workflow graph, including local
+reusable calls: an upload exists and its owning job precedes the download.
 """
 
 from __future__ import annotations
@@ -175,6 +175,21 @@ def _workflow_jobs(path: Path) -> dict[str, dict]:
     return {k: v for k, v in (jobs or {}).items() if isinstance(v, dict)}
 
 
+def _called_workflow(workflow: Path, job: dict) -> Path | None:
+    uses = job.get("uses", "")
+    if uses.startswith("./.github/workflows/"):
+        return workflow.parent / Path(uses).name
+    return None
+
+
+def _produced(workflow: Path, job: dict, chain: tuple[Path, ...] = ()) -> set[str]:
+    child = _called_workflow(workflow, job)
+    if child is None:
+        return _artifacts(job, UPLOAD)
+    assert child not in chain, f"recursive artifact workflow call: {child.name}"
+    return set().union(*(_produced(child, row, (*chain, child)) for row in _workflow_jobs(child).values()))
+
+
 def test_the_guard_sees_real_handoffs() -> None:
     """A rule over no artifacts asserts nothing."""
     total = 0
@@ -223,25 +238,29 @@ def test_cross_run_download_accepts_a_verified_upstream_matrix_reuse() -> None:
     }
 
 
-@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda path: path.name)
-def test_every_downloaded_artifact_is_uploaded_by_an_earlier_job(workflow: Path) -> None:
-    """The download either resolves or the release dies an hour in."""
+def _unresolved(workflow: Path, inherited: frozenset[str] = frozenset(), chain: tuple[Path, ...] = ()) -> list[str]:
+    assert workflow not in chain, f"recursive artifact workflow call: {workflow.name}"
     jobs = _workflow_jobs(workflow)
     unresolved = []
     for name, job in jobs.items():
+        # A local reusable workflow shares this run's artifact namespace, but
+        # receives only outputs from the caller's completed dependencies.
+        earlier = set(inherited)
+        for ancestor in _ancestors(jobs, name):
+            earlier |= _produced(workflow, jobs[ancestor], (*chain, workflow))
+        child = _called_workflow(workflow, job)
+        if child is not None:
+            unresolved.extend(_unresolved(child, frozenset(earlier), (*chain, workflow)))
         wanted = _artifacts(job, DOWNLOAD) - _cross_run_downloads(job, jobs)
         if not wanted:
             continue
-        earlier = _ancestors(jobs, name)
         # A job may also consume what it produced itself.
-        available = _artifacts(job, UPLOAD)
-        for ancestor in earlier:
-            available |= _artifacts(jobs[ancestor], UPLOAD)
+        available = earlier | _artifacts(job, UPLOAD)
         for missing in sorted(wanted - available):
             producers = sorted(
                 other
                 for other, candidate in jobs.items()
-                if missing in _artifacts(candidate, UPLOAD)
+                if missing in _produced(workflow, candidate, (*chain, workflow))
             )
             unresolved.append(
                 f"{name} downloads {missing!r}, "
@@ -251,4 +270,42 @@ def test_every_downloaded_artifact_is_uploaded_by_an_earlier_job(workflow: Path)
                     else "which no job in this workflow uploads"
                 )
             )
+    return unresolved
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS, ids=lambda path: path.name)
+def test_every_downloaded_artifact_is_uploaded_by_an_earlier_job(workflow: Path) -> None:
+    """Every entrypoint proves the complete caller/callee artifact graph."""
+    document = yaml.safe_load(workflow.read_text())
+    triggers = document.get("on", document.get(True, {}))
+    callers = [parent for parent in WORKFLOWS for job in _workflow_jobs(parent).values()
+               if _called_workflow(parent, job) == workflow]
+    if set(triggers) == {"workflow_call"} and callers:
+        # The caller's parametrized case recurses into this workflow with its
+        # actual dependency outputs, rather than inventing external uploads.
+        for caller in callers:
+            unresolved = _unresolved(caller)
+            assert not unresolved, f"{caller.name}: " + "; ".join(unresolved)
+        return
+    unresolved = _unresolved(workflow)
     assert not unresolved, f"{workflow.name}: " + "; ".join(unresolved)
+
+
+@pytest.mark.parametrize("mutation", [None, "missing-edge", "wrong-name", "child-order"])
+def test_reusable_artifacts_keep_real_caller_and_child_dependencies(tmp_path: Path, mutation: str | None) -> None:
+    parent = tmp_path / "parent.yaml"
+    child = tmp_path / "child.yaml"
+    upload = {"steps": [{"uses": UPLOAD, "with": {"name": "archive"}}]}
+    consume = {"steps": [{"uses": DOWNLOAD, "with": {"name": "archive"}}]}
+    child_upload = {"steps": [{"uses": UPLOAD, "with": {"name": "verified"}}]}
+    child_consume = {"needs": "prepare", "steps": [{"uses": DOWNLOAD, "with": {"name": "verified"}}]}
+    call = {"needs": "build", "uses": "./.github/workflows/child.yaml"}
+    if mutation == "missing-edge":
+        call.pop("needs")
+    elif mutation == "wrong-name":
+        upload["steps"][0]["with"]["name"] = "different"
+    elif mutation == "child-order":
+        child_consume.pop("needs")
+    parent.write_text(yaml.safe_dump({"jobs": {"build": upload, "publish": call}}))
+    child.write_text(yaml.safe_dump({"jobs": {"consume": consume, "prepare": child_upload, "finish": child_consume}}))
+    assert bool(_unresolved(parent)) == bool(mutation)
