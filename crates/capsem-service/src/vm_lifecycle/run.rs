@@ -8,13 +8,13 @@ pub(crate) async fn handle_run(
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
     let timeout_secs =
-        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
     let _launch = state
         .lifecycle
         .admit()
-        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::CONFLICT, e.to_string()))?;
     if let Some(reason) = state.off_worker(|state| vm_asset_block_reason(&state)).await? {
-        return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
+        return Err(AppError::new(StatusCode::PRECONDITION_FAILED, reason));
     }
 
     let id = {
@@ -55,7 +55,7 @@ pub(crate) async fn handle_run(
             })
         })
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {e}")))?;
         provision_result.map_err(|e| provision_failure(&e))?;
         // The blocking worker has published its child. Executing the user's
         // command is no longer launch admission work for service shutdown.
@@ -67,7 +67,7 @@ pub(crate) async fn handle_run(
         // sibling-service overlap this lock exists to prevent.
         let uds_path = state
             .instance_socket_path(&id)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await {
             drop(_vz_host_guard);
             drop(_vz_guard);
@@ -81,13 +81,13 @@ pub(crate) async fn handle_run(
             // is still flushing.
             let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
             preserve_failed_run_shutdown_result(Arc::clone(&state), id.clone(), shutdown_result).await?;
-            return Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, e));
+            return Err(AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e));
         }
     }
 
     let uds_path = state
         .instance_socket_path(&id)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // 2. Execute command.
     let job_id = state.next_job_id();
@@ -125,11 +125,11 @@ pub(crate) async fn handle_run(
             exit_code,
             truncated,
         })),
-        Ok(_) => Err(AppError(
+        Ok(_) => Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "unexpected IPC response".into(),
         )),
-        Err(e) => Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {e}"))),
+        Err(e) => Err(e.into_exec_app_error(true)),
     };
     response
 }

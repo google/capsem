@@ -10,7 +10,7 @@ use super::*;
 fn owner_of(state: &ServiceState, vm: &str, peer: ServicePeer) -> Result<(), AppError> {
     owner_connection::OwnerConnection::current(state, vm, peer.0)
         .map(|_| ())
-        .map_err(|error| AppError(StatusCode::FORBIDDEN, error))
+        .map_err(|error| AppError::new(StatusCode::FORBIDDEN, error))
 }
 
 /// What a VM is called on the private zone: its display name.
@@ -102,13 +102,13 @@ pub(crate) async fn resolve_private(
         }
         (None, Some(address)) => visible.iter().find(|member| member.address == address),
         _ => {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::BAD_REQUEST,
                 "resolve names exactly one of a name or an address".into(),
             ))
         }
     };
-    let member = found.ok_or_else(|| AppError(StatusCode::NOT_FOUND, "no such member".into()))?;
+    let member = found.ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, "no such member".into()))?;
     Ok(PrivateResolveResponse {
         name: member.full_name(),
         address: member.address,

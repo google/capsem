@@ -50,7 +50,7 @@ pub(super) async fn query_route_objects(
             error = %error,
             "session ledger route DB query failed"
         );
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("{ledger} ledger query {query_name} failed for {vm_id}: {error}"),
         )
@@ -93,7 +93,7 @@ where
                     error = %error,
                     "session ledger route DB query mapping failed"
                 );
-                AppError(
+                AppError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("{ledger} ledger query {query_name} mapping failed for {vm_id}: {error}"),
                 )

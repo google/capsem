@@ -160,25 +160,25 @@ fn relay_client() -> Result<&'static reqwest::Client, AppError> {
                 .map_err(|error| error.to_string())
         })
         .as_ref()
-        .map_err(|_| AppError(StatusCode::BAD_GATEWAY, "metric collector client unavailable".into()))
+        .map_err(|_| AppError::new(StatusCode::BAD_GATEWAY, "metric collector client unavailable".into()))
 }
 
 fn current_collector_url() -> Result<reqwest::Url, AppError> {
     let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     let Some(Destination::Corp(base)) = Destination::corp(corp.corp_rule_files.open_telemetry.as_deref()) else {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::NOT_FOUND,
             "metric export is not configured".into(),
         ));
     };
     let url = reqwest::Url::parse(&format!("{base}/v1/metrics")).map_err(|_| {
-        AppError(
+        AppError::new(
             StatusCode::BAD_GATEWAY,
             "configured metric collector endpoint is invalid".into(),
         )
     })?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_GATEWAY,
             "configured metric collector endpoint must use HTTP or HTTPS".into(),
         ));
@@ -195,17 +195,17 @@ pub(crate) async fn handle_metric_relay(
     body: axum::body::Bytes,
 ) -> Result<(StatusCode, axum::http::HeaderMap, axum::body::Bytes), AppError> {
     let owner = owner_connection::OwnerConnection::current(&state, &id, peer.0)
-        .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
+        .map_err(|error| AppError::new(StatusCode::FORBIDDEN, error))?;
     if headers.get(axum::http::header::CONTENT_TYPE)
         != Some(&axum::http::HeaderValue::from_static("application/x-protobuf"))
     {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "metric broker accepts OTLP protobuf only".into(),
         ));
     }
     if body.len() > capsem_core::service_uds::MAX_BODY_BYTES {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "metric request body is too large".into(),
         ));
@@ -251,7 +251,7 @@ async fn relay_metric_body_authorized(
     body: axum::body::Bytes,
 ) -> Result<MetricRelayResponse, AppError> {
     if body.len() > capsem_proto::proxy_metrics::MAX_PROXY_METRIC_BODY_BYTES {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "metric request body is too large".into(),
         ));
@@ -259,7 +259,7 @@ async fn relay_metric_body_authorized(
     let collector = current_collector_url()?;
     authority
         .validate(state)
-        .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
+        .map_err(|error| AppError::new(StatusCode::FORBIDDEN, error))?;
     let request = relay_client()?
         .post(collector)
         .header(axum::http::header::CONTENT_TYPE, "application/x-protobuf")
@@ -269,7 +269,7 @@ async fn relay_metric_body_authorized(
     let response = match tokio::select! {
         biased;
         () = authority.revoked() => {
-            return Err(AppError(StatusCode::FORBIDDEN, "proxy metric authority was revoked".into()));
+            return Err(AppError::new(StatusCode::FORBIDDEN, "proxy metric authority was revoked".into()));
         }
         response = &mut request => response,
     } {
@@ -281,7 +281,7 @@ async fn relay_metric_body_authorized(
             } else {
                 StatusCode::BAD_GATEWAY
             };
-            return Err(AppError(status, "metric collector request failed".into()));
+            return Err(AppError::new(status, "metric collector request failed".into()));
         }
     };
     let status = response.status();
@@ -292,14 +292,14 @@ async fn relay_metric_body_authorized(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| {
             warn!(vm = id, %error, "metric collector response failed");
-            AppError(StatusCode::BAD_GATEWAY, "metric collector response failed".into())
+            AppError::new(StatusCode::BAD_GATEWAY, "metric collector response failed".into())
         })?;
         if bytes
             .len()
             .checked_add(chunk.len())
             .is_none_or(|length| length > capsem_core::service_uds::MAX_BODY_BYTES)
         {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::BAD_GATEWAY,
                 "metric collector response is too large".into(),
             ));
@@ -308,7 +308,7 @@ async fn relay_metric_body_authorized(
     }
     authority
         .validate(state)
-        .map_err(|error| AppError(StatusCode::FORBIDDEN, error))?;
+        .map_err(|error| AppError::new(StatusCode::FORBIDDEN, error))?;
     let mut response_headers = axum::http::HeaderMap::new();
     if let Some(content_type) = content_type {
         response_headers.insert(axum::http::header::CONTENT_TYPE, content_type);
@@ -360,7 +360,9 @@ async fn serve_proxy_metric_channel_authorized(
                     .map(str::to_string),
                 body: relayed.body.to_vec(),
             },
-            Err(AppError(_, message)) => ProxyMetricResponse::Rejected { message },
+            Err(error) => ProxyMetricResponse::Rejected {
+                message: error.into_message(),
+            },
         };
         responses
             .send(ProxyMetricBrokerMessage::Response(response))
@@ -489,7 +491,7 @@ pub(crate) fn spawn_refresh(state: Arc<ServiceState>, table: SessionTable) {
         loop {
             match collect(&state).await {
                 Ok(totals) => *table.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = totals,
-                Err(error) => warn!(error = %error.1, "session metric refresh failed"),
+                Err(error) => warn!(error = %error.body.error, "session metric refresh failed"),
             }
             tokio::time::sleep(REFRESH_INTERVAL).await;
         }

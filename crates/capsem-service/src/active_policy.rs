@@ -95,7 +95,7 @@ pub(crate) async fn push_policy_to_running_instances(
         .await?;
     match managed {
         Ok(policy) => state.managed.reload_policy(policy, _mutation).await.map_err(|_| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "managed lease policy reload failed".into(),
             )
@@ -105,8 +105,8 @@ pub(crate) async fn push_policy_to_running_instances(
                 .managed
                 .deny_policy(_mutation)
                 .await
-                .map_err(|_| AppError(StatusCode::INTERNAL_SERVER_ERROR, "managed lease denial failed".into()))?;
-            return Err(AppError(
+                .map_err(|_| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "managed lease denial failed".into()))?;
+            return Err(AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "managed lease policy invalid".into(),
             ));
@@ -205,7 +205,7 @@ pub(crate) async fn push_policy_to_running_instances(
         } else {
             "VMs and proxy sessions"
         };
-        Err(AppError(
+        Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
                 "policy applied to {} of {total} running {subjects}; not applied: {}",

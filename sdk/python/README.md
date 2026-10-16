@@ -50,3 +50,6 @@ VM inventory includes those labels. Forks inherit them by default;
 
 For more, use the [SDK guides](https://docs.capsem.org/guides/developers/integrate-the-sdk/) or the
 [Python SDK reference](https://docs.capsem.org/sdk/python/).
+
+Use `Hypervisor.connect(run_dir=...)` for an explicit local runtime directory.
+Timeout errors expose structured VM IDs, codes and deadline metadata.

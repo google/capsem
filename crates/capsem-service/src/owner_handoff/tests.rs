@@ -38,8 +38,8 @@ async fn handoff_grants_are_revoked_when_the_owner_is_removed_or_replaced() {
             insert_fake_instance_with_session_dir(&state, "session", 1, state.run_dir.join("sessions/session"));
         }
         let error = handoff.validate(&state, expected.to_str().unwrap()).unwrap_err();
-        assert_eq!(error.0, StatusCode::BAD_GATEWAY);
-        assert_eq!(error.1, "VM owner changed during handoff admission");
+        assert_eq!(error.status, StatusCode::BAD_GATEWAY);
+        assert_eq!(error.body.error, "VM owner changed during handoff admission");
     }
 }
 
@@ -47,5 +47,5 @@ async fn handoff_grants_are_revoked_when_the_owner_is_removed_or_replaced() {
 async fn stopped_sessions_have_no_owner_handoff_grant() {
     let state = crate::tests::make_test_state();
     let error = OwnerHandoff::acquire(&state, "stopped").await.err().unwrap();
-    assert_eq!(error.0, StatusCode::NOT_FOUND);
+    assert_eq!(error.status, StatusCode::NOT_FOUND);
 }

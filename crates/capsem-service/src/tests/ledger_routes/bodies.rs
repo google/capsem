@@ -46,11 +46,12 @@ fn an_event_id_is_twelve_lowercase_hex_characters_or_a_bad_request() {
         "0123456789ag", // 'g' is not hex
         "0123456789 b",
     ] {
-        let AppError(status, message) = validate_event_id(rejected).expect_err(rejected);
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
+        let err = validate_event_id(rejected).expect_err(rejected);
+        assert_eq!(err.status, StatusCode::BAD_REQUEST, "{rejected}");
         assert!(
-            message.contains("12 lowercase hex characters"),
-            "the refusal must name the constraint, got {message:?}"
+            err.body.error.contains("12 lowercase hex characters"),
+            "the refusal must name the constraint, got {:?}",
+            err.body.error
         );
     }
 }

@@ -4631,6 +4631,33 @@
           "native_consumer_sign_in"
         ]
       },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "vm_not_found",
+          "create_timeout",
+          "exec_timeout",
+          "configuration_required",
+          "unsupported_capability",
+          "unknown_scope_profile",
+          "policy_denied",
+          "scope_denied",
+          "connection_unavailable",
+          "reauth_required",
+          "storage_unavailable",
+          "storage_commit_failed",
+          "transaction_expired",
+          "transaction_cancelled",
+          "invalid_callback",
+          "provider_rejected",
+          "provider_timeout",
+          "owner_changed",
+          "session_unavailable",
+          "grant_unavailable",
+          "request_conflict",
+          "revocation_pending"
+        ]
+      },
       "ErrorEvent": {
         "type": "object",
         "required": [
@@ -4667,13 +4694,31 @@
         ],
         "properties": {
           "code": {
-            "type": [
-              "string",
-              "null"
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ErrorCode"
+              }
             ]
           },
           "error": {
             "type": "string"
+          },
+          "timeout_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "vm_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

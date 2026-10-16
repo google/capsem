@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Self
 
 from ._transport import Transport
+from .discovery import discover_gateway
 
 
 class Client:
-    def __init__(self, url: str, token: str, *, timeout: float = 30) -> None:
+    def __init__(self, url: str | None = None, token: str | None = None, *,
+                 run_dir: str | Path | None = None, timeout: float = 30) -> None:
+        if url is None or token is None:
+            endpoint = discover_gateway(url=url, token=token, run_dir=run_dir)
+            url, token = endpoint.url, endpoint.token
         self.__transport = Transport(url, token, timeout=timeout)
         self._owns_connection = True
         self._closed = False
