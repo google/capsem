@@ -89,10 +89,11 @@ async def test_exec_edge_cases() -> None:
     assert len(ctrl.commands) == 2 and "rm -f /tmp/.capsem_cmd_" in ctrl.commands[1]
 
     ctrl.commands.clear()
-    env_nonroot = env_for(ctrl, user="developer")
+    env_nonroot = env_for(ctrl, execution_mode="container", user="developer")
     assert (await env_nonroot.exec(["id", "-un"])).success
     assert any(
-        "su -m developer" in c
+        not c.startswith("sh -c")
+        and "su -m developer" in c
         and 'export USER="$__u" LOGNAME="$__u" HOME="${__h:-/home/$__u}"' in c
         for c in ctrl.commands
     )
@@ -103,11 +104,11 @@ async def test_exec_edge_cases() -> None:
         user=str(os.getuid()),
         timeout=None,
     )
-    su_idx = nonroot_script.index("-s /bin/bash -c ") + len("-s /bin/bash -c ")
+    su_idx = nonroot_script.index("-s /bin/sh -c ") + len("-s /bin/sh -c ")
     su_body = shlex.split(nonroot_script[su_idx:])[0]
     sub_env = {**os.environ, "HOME": "/root", "USER": "root", "LOGNAME": "root"}
     sub_out = subprocess.run(
-        ["bash", "-c", su_body], env=sub_env, capture_output=True, text=True, check=True
+        ["/bin/sh", "-c", su_body], env=sub_env, capture_output=True, text=True, check=True
     ).stdout
     uid = os.getuid()
     expected = {f"{uid}:{uid}:/home/{uid}"}
@@ -126,10 +127,10 @@ async def test_exec_edge_cases() -> None:
         user=str(os.getuid()),
         timeout=None,
     )
-    su_override_idx = override_script.index("-s /bin/bash -c ") + len("-s /bin/bash -c ")
+    su_override_idx = override_script.index("-s /bin/sh -c ") + len("-s /bin/sh -c ")
     su_override_body = shlex.split(override_script[su_override_idx:])[0]
     override_out = subprocess.run(
-        ["bash", "-c", su_override_body],
+        ["/bin/sh", "-c", su_override_body],
         env=sub_env,
         capture_output=True,
         text=True,
@@ -147,16 +148,20 @@ async def test_exec_edge_cases() -> None:
         )
 
     ctrl.commands.clear()
-    env_uid = env_for(ctrl, user="1000:1000")
+    env_uid = env_for(ctrl, execution_mode="container", user="1000:1000")
     assert (await env_uid.exec(["id", "-u"])).success
     assert any(
-        "setpriv --reuid=1000 --regid=1000 --clear-groups /bin/bash -c" in c for c in ctrl.commands
+        not c.startswith("sh -c")
+        and "setpriv --reuid=1000 --regid=1000 --clear-groups /bin/sh -c" in c
+        for c in ctrl.commands
     )
     ctrl.commands.clear()
-    env_bare_uid = env_for(ctrl, user="1000")
+    env_bare_uid = env_for(ctrl, execution_mode="container", user="1000")
     assert (await env_bare_uid.exec(["id", "-u"])).success
     assert any(
-        "id -un 1000" in c and "setpriv --reuid=1000 --regid=0 --clear-groups /bin/bash -c" in c
+        not c.startswith("sh -c")
+        and "id -un 1000" in c
+        and "setpriv --reuid=1000 --regid=0 --clear-groups /bin/sh -c" in c
         for c in ctrl.commands
     )
 
