@@ -355,6 +355,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/panics", get(proxy::handle_proxy))
         .route("/host-logs/{name}", get(proxy::handle_proxy))
         .route("/vms/{id}/bodies/export.warc.gz", get(proxy::handle_proxy))
+        .route("/vms/{id}/export/rows.ndjson.gz", get(proxy::handle_proxy))
         .route("/vms/{id}/bodies/{event_id}", get(proxy::handle_proxy))
         .route("/vms/{id}/timeline", get(proxy::handle_proxy))
         .route("/vms/{id}/security/latest", get(proxy::handle_proxy))

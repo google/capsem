@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
+import json
 import os
 import uuid
 
-from capsem import VM, Hypervisor, models
+from capsem import VM, HttpError, Hypervisor, models
+from capsem import _operations as api
+
+
+async def _assert_live_exports(hv: Hypervisor, vm_id: str) -> None:
+    rows_raw = gzip.decompress(await api.export_vm_rows(hv._transport, id=vm_id)).decode()
+    lines = [json.loads(line) for line in rows_raw.splitlines() if line.strip()]
+    assert lines and lines[0]["type"] == "header" and lines[0]["format"] == "capsem.rows.v1"
+    assert lines[0]["format_version"] == 1 and lines[0]["vm_id"] == vm_id
+    assert any(item.get("table") == "exec_events" for item in lines[1:])
+    warc_raw = gzip.decompress(await api.export_vm_bodies(hv._transport, id=vm_id))
+    assert warc_raw.startswith(b"WARC/1.1\r\n")
 
 
 async def ready(vm: VM) -> None:
@@ -41,6 +54,8 @@ async def main() -> None:
             executed = await vm.exec("sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7")
             assert executed.exit_code == 7 and executed.stdout.data.split()[0] == digest
             assert executed.stderr.data == "SDK_STDERR"
+            assert vm.id is not None
+            await _assert_live_exports(hv, vm.id)
             assert isinstance(await vm.log(tail=10), models.LogsResponse)
             assert isinstance(await hv.log(tail=10), models.HostLogsResponse)
             assert isinstance(await vm.history(limit=10), models.HistoryResponse)
@@ -63,7 +78,6 @@ async def main() -> None:
             await vm.resume()
             await ready(vm)
             assert await vm.files.read("sdk-proof.bin") == data
-            print(f"SDK_LIVE_ACCEPTANCE_OK bytes={len(data)} sha256={digest}")
             completed = True
         finally:
             # On failure the owning service fixture preserves evidence before
@@ -73,6 +87,21 @@ async def main() -> None:
                     await fork.delete()
                 await vm.delete()
         assert not any(entry.name in {name, name + "-fork"} for entry in (await hv.list()).sandboxes)
+        async with hv.managed(cpus=2, memory=2) as mvm:
+            await ready(mvm)
+            assert mvm.id is not None
+            managed_id = mvm.id
+            stopped_managed = await mvm.stop()
+            assert stopped_managed.success and not stopped_managed.persistent
+            await _assert_live_exports(hv, managed_id)
+        for export_fn in (api.export_vm_rows, api.export_vm_bodies):
+            try:
+                await export_fn(hv._transport, id=managed_id)
+            except HttpError as err:
+                assert err.status == 404
+            else:
+                raise AssertionError("expected 404 after managed session close")
+        print(f"SDK_LIVE_ACCEPTANCE_OK bytes={len(data)} sha256={digest}")
 
 
 if __name__ == "__main__":

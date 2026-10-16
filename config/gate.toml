@@ -3035,6 +3035,7 @@ measured = [
     "/networks",
     "/detection/latest",
     "/enforcement/latest",
+    "/security/latest",
     "/detection/status",
     "/enforcement/status",
     "/assets/status",
@@ -3085,14 +3086,14 @@ unmeasured = [
     "/networks/{id}/members/{vm_id}",
     # The image catalog is read from a registry, at most every 30 minutes;
     # timing it would time the network. Pulls are network-bound mutations.
-    # /enforcement/latest moved to measured so the debt does not grow.
+    # /enforcement/latest and /security/latest moved to measured so adding
+    # binary gzip export streams keeps the debt ratchet from growing.
     "/images",
     "/images/pull",
     "/host-logs/{name}",
     "/panics",
     "/purge",
     "/run",
-    "/security/latest",
     "/security/status",
     "/service-logs",
     "/settings/edit",
@@ -3110,6 +3111,7 @@ unmeasured = [
     "/vms/{id}/enforcement/latest",
     "/vms/{id}/enforcement/status",
     "/vms/{id}/bodies/export.warc.gz",
+    "/vms/{id}/export/rows.ndjson.gz",
     "/vms/{id}/exec",
     "/vms/{id}/files/content",
     "/vms/{id}/files/list",

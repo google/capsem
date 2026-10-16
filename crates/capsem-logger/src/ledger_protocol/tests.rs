@@ -221,3 +221,74 @@ fn streamed_replies_enforce_chunk_and_row_bounds() {
     .validate()
     .is_err());
 }
+
+#[test]
+fn table_rows_query_validates_table_allowlist_cursor_and_limit() {
+    assert_eq!(DEFAULT_EXPORT_LEDGER_TABLES.len(), 16);
+    assert_eq!(EXPORTABLE_LEDGER_TABLES.len(), 18);
+    assert!(!DEFAULT_EXPORT_LEDGER_TABLES.contains(&"security_rule_events"));
+    assert!(!DEFAULT_EXPORT_LEDGER_TABLES.contains(&"security_decision_events"));
+    assert!(EXPORTABLE_LEDGER_TABLES.contains(&"security_rule_events"));
+    assert!(EXPORTABLE_LEDGER_TABLES.contains(&"security_decision_events"));
+
+    assert!(LedgerQuery::TableWatermarks {
+        tables: EXPORTABLE_LEDGER_TABLES.iter().map(|t| (*t).to_string()).collect(),
+    }
+    .validate()
+    .is_ok());
+
+    for table in EXPORTABLE_LEDGER_TABLES {
+        assert!(LedgerQuery::TableRows {
+            table: (*table).to_string(),
+            after_id: 0,
+            max_id: Some(100),
+            limit: 2_000,
+        }
+        .validate()
+        .is_ok());
+    }
+    for invalid in [
+        LedgerQuery::TableWatermarks { tables: Vec::new() },
+        LedgerQuery::TableWatermarks {
+            tables: vec!["sqlite_master".to_string()],
+        },
+        LedgerQuery::TableRows {
+            table: "sqlite_master".to_string(),
+            after_id: 0,
+            max_id: None,
+            limit: 100,
+        },
+        LedgerQuery::TableRows {
+            table: "ledger_commitments".to_string(),
+            after_id: 0,
+            max_id: None,
+            limit: 100,
+        },
+        LedgerQuery::TableRows {
+            table: "model_calls".to_string(),
+            after_id: -1,
+            max_id: None,
+            limit: 100,
+        },
+        LedgerQuery::TableRows {
+            table: "model_calls".to_string(),
+            after_id: 5,
+            max_id: Some(4),
+            limit: 100,
+        },
+        LedgerQuery::TableRows {
+            table: "model_calls".to_string(),
+            after_id: 0,
+            max_id: None,
+            limit: 0,
+        },
+        LedgerQuery::TableRows {
+            table: "model_calls".to_string(),
+            after_id: 0,
+            max_id: None,
+            limit: 2_001,
+        },
+    ] {
+        assert_eq!(invalid.validate(), Err(LedgerProtocolError::InvalidOperation));
+    }
+}

@@ -5,7 +5,9 @@ use std::time::{Duration, SystemTime};
 
 use capsem_foundation::ipc_channel;
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
-use capsem_logger::ledger_protocol::{LedgerClientMessage, LedgerCommand, LedgerReply, LedgerServerMessage};
+use capsem_logger::ledger_protocol::{
+    LedgerClientMessage, LedgerCommand, LedgerQuery, LedgerReply, LedgerServerMessage,
+};
 use capsem_logger::{Decision, NetEvent, WriteOp};
 use capsem_proto::ledger::{
     LedgerChannelGrant, LedgerClientRole, LedgerGeneration, LedgerHello, LedgerOutcome, LedgerRequest,
@@ -181,6 +183,91 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
             }
         ));
     }
+
+    let reader_grant = LedgerChannelGrant::new(GENERATION, 2, LedgerClientRole::Reader).unwrap();
+    let (reader_client, reader_ledger_end) = UnixStream::pair().unwrap();
+    requests
+        .send(
+            &encode_ledger_control_request(LedgerControlRequest::Attach(reader_grant)),
+            &[reader_ledger_end.as_raw_fd()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        event(&events).await,
+        LedgerControlEvent::Adopted {
+            generation: GENERATION,
+            client_id: 2,
+        }
+    );
+    drop(reader_ledger_end);
+    let (reader_sender, reader_receiver) =
+        ipc_channel::channel_from_std::<LedgerClientMessage, LedgerServerMessage>(reader_client).unwrap();
+    reader_sender
+        .send(LedgerClientMessage::Hello {
+            hello: LedgerHello::for_grant(&reader_grant),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        reader_receiver.recv().await.unwrap(),
+        LedgerServerMessage::Welcome { .. }
+    ));
+    reader_sender
+        .send(LedgerClientMessage::Request {
+            request: LedgerRequest::new(
+                10,
+                LedgerCommand::Query {
+                    query: LedgerQuery::TableRows {
+                        table: "net_events".into(),
+                        after_id: 0,
+                        max_id: Some(1),
+                        limit: 10,
+                    },
+                },
+            )
+            .unwrap(),
+        })
+        .await
+        .unwrap();
+    let LedgerServerMessage::Response { response } = reader_receiver.recv().await.unwrap() else {
+        panic!("expected table rows response")
+    };
+    let LedgerOutcome::Success {
+        reply: LedgerReply::Query { sets },
+    } = response.outcome()
+    else {
+        panic!("expected table rows query success, got {:?}", response.outcome());
+    };
+    assert_eq!(sets.len(), 1);
+    assert_eq!(sets[0].rows.len(), 1);
+
+    reader_sender
+        .send(LedgerClientMessage::Request {
+            request: LedgerRequest::new(11, LedgerCommand::ExportWarc).unwrap(),
+        })
+        .await
+        .unwrap();
+    let mut warc_chunks = Vec::new();
+    loop {
+        let LedgerServerMessage::Response { response } = reader_receiver.recv().await.unwrap() else {
+            panic!("expected WARC export response")
+        };
+        match response.outcome() {
+            LedgerOutcome::Success {
+                reply: LedgerReply::WarcChunk { bytes, .. },
+            } => warc_chunks.extend_from_slice(bytes),
+            LedgerOutcome::Success {
+                reply: LedgerReply::WarcComplete { summary },
+            } => {
+                assert_eq!(summary.records, 1);
+                break;
+            }
+            other => panic!("unexpected confined WARC export outcome: {other:?}"),
+        }
+    }
+    assert!(!warc_chunks.is_empty());
+
     requests
         .send(
             &encode_ledger_control_request(LedgerControlRequest::Shutdown { generation: GENERATION }),

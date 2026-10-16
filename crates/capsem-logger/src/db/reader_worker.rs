@@ -253,6 +253,16 @@ fn commit(reader: &DbReader, observed: Option<i64>) -> bool {
 }
 
 fn execute_query_many(reader: &DbReader, queries: Vec<DbQueryOwned>) -> DbResult<Vec<String>> {
+    let tx = if queries.len() > 1 {
+        Some(
+            reader
+                .connection()
+                .unchecked_transaction()
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
     let mut results = Vec::with_capacity(queries.len());
     for (sql, params) in queries {
         let started = Instant::now();
@@ -260,5 +270,6 @@ fn execute_query_many(reader: &DbReader, queries: Vec<DbQueryOwned>) -> DbResult
         record_query_metrics("execute_many", started, params.len(), &result);
         results.push(result?);
     }
+    drop(tx);
     Ok(results)
 }

@@ -11,9 +11,29 @@ pub(crate) struct Runtime {
     controller: Controller,
     grants: Arc<capsem_credentials::GrantAuthority>,
     policy: std::sync::RwLock<Option<ManagedSessionPolicy>>,
+    retained_sessions: std::sync::Mutex<HashMap<String, PathBuf>>,
 }
 
+const RETAINED_SESSION_MARKER: &str = ".managed-retained";
+
 impl Runtime {
+    pub(crate) fn retain_stopped_session(&self, id: String, session_dir: PathBuf) {
+        let _ = std::fs::write(session_dir.join(RETAINED_SESSION_MARKER), b"1");
+        self.retained_sessions.lock().unwrap().insert(id, session_dir);
+    }
+
+    pub(crate) fn retained_session_dir(&self, id: &str) -> Option<PathBuf> {
+        self.retained_sessions.lock().unwrap().get(id).cloned()
+    }
+
+    pub(crate) fn take_retained_session(&self, id: &str) -> Option<PathBuf> {
+        let dir = self.retained_sessions.lock().unwrap().remove(id);
+        if let Some(ref path) = dir {
+            let _ = std::fs::remove_file(path.join(RETAINED_SESSION_MARKER));
+        }
+        dir
+    }
+
     pub(crate) fn grant_authority(&self) -> Arc<capsem_credentials::GrantAuthority> {
         Arc::clone(&self.grants)
     }
@@ -55,6 +75,19 @@ impl Runtime {
     pub(crate) fn open(run_dir: &StdPath, policy: ManagedSessionPolicy) -> Result<Self> {
         policy.validate().map_err(anyhow::Error::msg)?;
         let lifetime = Duration::from_secs(u64::from(policy.lease_seconds));
+        let retained = std::fs::read_dir(run_dir.join("sessions"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir() && !t.is_symlink()))
+            .filter_map(|e| {
+                let p = e.path();
+                p.join(RETAINED_SESSION_MARKER)
+                    .is_file()
+                    .then(|| e.file_name().into_string().ok().map(|id| (id, p)))
+                    .flatten()
+            })
+            .collect();
         Ok(Self {
             controller: Controller::new(
                 Registry::open(&run_dir.join("managed-ownership"))?,
@@ -69,6 +102,7 @@ impl Runtime {
                 },
             )?),
             policy: std::sync::RwLock::new(Some(policy)),
+            retained_sessions: std::sync::Mutex::new(retained),
         })
     }
 
@@ -104,7 +138,7 @@ impl Runtime {
         });
     }
 
-    async fn recover_pending(state: Arc<ServiceState>) {
+    pub(crate) async fn recover_pending(state: Arc<ServiceState>) {
         let runtime = &state.managed;
         let inventory = match runtime.controller.recovery_inventory().await {
             Ok(inventory) => inventory,
@@ -133,6 +167,15 @@ impl Runtime {
         while let Some(result) = workers.join_next().await {
             if let Err(error) = result {
                 warn!(%error, "managed startup cleanup worker interrupted");
+            }
+        }
+        let orphaned: Vec<String> = runtime.retained_sessions.lock().unwrap().keys().cloned().collect();
+        for id in orphaned {
+            if let Some(dir) = runtime.take_retained_session(&id) {
+                state.unregister_session_db_handle(&id);
+                let _ = state.ledger_workers.shutdown(&id).await;
+                let _ = state.off_worker(move |state| state.delete_session_dir(&dir)).await;
+                let _ = state.ledger_workers.retire(&id).await;
             }
         }
     }

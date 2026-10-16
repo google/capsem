@@ -319,6 +319,13 @@ impl ManagedLifecycle {
         let state = Arc::clone(&self.state);
         let target = binding;
         let id = target.id().to_string();
+        let _ = self.state.managed.take_retained_session(&id);
+        self.state.unregister_session_db_handle(&id);
+        self.state
+            .ledger_workers
+            .shutdown(&id)
+            .await
+            .map_err(anyhow::Error::msg)?;
         self.state
             .off_worker(move |_| {
                 let directory = state.run_dir.join("sessions").join(target.id());
