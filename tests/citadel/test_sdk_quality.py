@@ -108,6 +108,14 @@ def test_mcp_tests_consume_the_exported_publication_archives() -> None:
         assert selection in " ".join(plan.step_named(label).render()), SDK_RATIONALE
 
 
+def test_adversarial_python_scratch_never_enters_a_publication_export() -> None:
+    for settings in (CONFIG.sdk_python, CONFIG.integrations_inspect_ai):
+        scratch = Path(settings.pytest_scratch)
+        for export in CONFIG.prefix.exports:
+            assert not scratch.is_relative_to(export), SDK_RATIONALE
+            assert not Path(export).is_relative_to(scratch), SDK_RATIONALE
+
+
 @pytest.mark.parametrize("mutation", ["sdk_version", "extension_version", "sdk_path", "minimum"])
 def test_inspect_lock_guard_rejects_stale_or_incompatible_packages(mutation: str) -> None:
     extension, sdk, lock = deepcopy(_inspect_version_inputs())

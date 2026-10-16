@@ -75,15 +75,15 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-linux-x86_64
-          path: release-native/
+          path: cache/target/release/staging/client-native/
       - name: Extract the qualified native service for public SDK consumers
         shell: bash
         run: |
           set -euo pipefail
-          packages=(release-native/*.deb)
+          packages=(cache/target/release/staging/client-native/*.deb)
           test "${#packages[@]}" -eq 1
-          dpkg-deb -x "${packages[0]}" release-native/extracted
+          dpkg-deb -x "${packages[0]}" cache/target/release/staging/client-native/extracted
       - name: Install public registry clients and prove real service access
         run: >
           uv run --project build_system --frozen python tests/client_registry_acceptance.py
-          --binary-dir release-native/extracted/usr/bin
+          --binary-dir cache/target/release/staging/client-native/extracted/usr/bin

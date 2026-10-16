@@ -65,6 +65,9 @@ class OutputRootsConfig(Strict):
     gate_runs: str
     packages: str
     test_artifacts: str
+    sdk_packages: str
+    inspect_packages: str
+    mcp_packages: str
 
     @field_validator("*")
     @classmethod

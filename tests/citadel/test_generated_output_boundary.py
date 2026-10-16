@@ -26,6 +26,9 @@ FINAL_OUTPUT_ROOTS = {
     "gate_runs": "cache/target/gate-runs",
     "packages": "cache/target/packages",
     "test_artifacts": "cache/target/tests/evidence",
+    "sdk_packages": "cache/target/sdk",
+    "inspect_packages": "cache/target/integrations/inspect-ai",
+    "mcp_packages": "cache/target/mcp/typescript",
 }
 
 RATIONALE = """\

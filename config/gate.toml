@@ -38,6 +38,9 @@ distribution = "cache/target/release/distribution"
 gate_runs = "cache/target/gate-runs"
 packages = "cache/target/packages"
 test_artifacts = "cache/target/tests/evidence"
+sdk_packages = "cache/target/sdk"
+inspect_packages = "cache/target/integrations/inspect-ai"
+mcp_packages = "cache/target/mcp/typescript"
 
 [architectures.arm64]
 rust_target = "aarch64-unknown-linux-gnu"
@@ -3725,7 +3728,7 @@ tests = "sdk/python/tests"
 build_output = "cache/target/sdk/python"
 environment_python = "sdk/python/.venv/bin/python"
 package_build_requirements = "cache/target/sdk/python/package-build-requirements.txt"
-pytest_scratch = "cache/target/sdk/python/pytest"
+pytest_scratch = "cache/target/tests/client-packages/python"
 
 [integrations_inspect_ai]
 project = "integrations/inspect-ai"
@@ -3733,7 +3736,7 @@ manifest = "integrations/inspect-ai/pyproject.toml"
 source = "integrations/inspect-ai/inspect_capsem"
 tests = "integrations/inspect-ai/tests"
 build_output = "cache/target/integrations/inspect-ai"
-pytest_scratch = "cache/target/integrations/inspect-ai/pytest"
+pytest_scratch = "cache/target/tests/client-packages/inspect-ai"
 
 [sdk_rust]
 project = "sdk/rust"

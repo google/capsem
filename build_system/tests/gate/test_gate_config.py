@@ -68,6 +68,9 @@ def test_generated_output_roots_are_target_owned_and_distinct(
         "gate_runs": "cache/target/gate-runs",
         "packages": "cache/target/packages",
         "test_artifacts": "cache/target/tests/evidence",
+        "sdk_packages": "cache/target/sdk",
+        "inspect_packages": "cache/target/integrations/inspect-ai",
+        "mcp_packages": "cache/target/mcp/typescript",
     }
 
 

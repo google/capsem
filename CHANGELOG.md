@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SDK release handoffs keep adversarial test files out of published archive
+  directories and apply bounded retention to client package outputs.
+
 - Stable native releases publish the qualified SDK, npm MCP and Inspect package
   cohort in dependency order and verify clean public registry consumers.
 
