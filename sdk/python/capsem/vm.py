@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TypeVar
 
@@ -13,6 +13,7 @@ from . import models
 from ._client import Client
 from ._connections import CredentialGrants
 from ._container import Container
+from ._export import Export
 from ._networks import VmNetworks
 from ._ports import Ports
 from ._resources import Files, Stats
@@ -42,12 +43,16 @@ class VM(Client):
         self.stats = Stats(self)
         self.container = Container(self)
         self._has_container: bool | None = None
+        self._managed: bool = False
+        self._on_stop: Callable[[], None] | None = None
         self.ports = Ports(self)
         self.credential_grants = CredentialGrants(self)
+        self.export = Export(self)
 
     @classmethod
     def _bind(cls, transport: Transport, *, id: str | None = None, name: str | None = None,
-              container: bool | None = None) -> VM:
+              container: bool | None = None, managed: bool = False,
+              on_stop: Callable[[], None] | None = None) -> VM:
         """Bind a handle to `transport` by `id`, or lazily by `name` when `id` is unknown.
 
         A handle bound with `id=None` resolves `name` via `GET /vms/list` on its
@@ -58,6 +63,8 @@ class VM(Client):
         vm._select(name=None if id else name, id=id)
         vm._name = name
         vm._has_container = container
+        vm._managed = managed
+        vm._on_stop = on_stop
         return vm
 
     @property
@@ -138,6 +145,8 @@ class VM(Client):
         ))
 
     async def stop(self) -> models.StopResponse:
+        if self._on_stop is not None:
+            self._on_stop()
         vm_id = await self._resolve()
         return await self._call(vm_id, api.stop_vm(self._transport, id=vm_id))
 
