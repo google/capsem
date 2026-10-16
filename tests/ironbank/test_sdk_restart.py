@@ -42,6 +42,7 @@ def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -
         result = subprocess.run(command, cwd=project, env={
             **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
             "SDK_GATEWAY_URL": f"http://127.0.0.1:{before.port}", "SDK_GATEWAY_TOKEN": before.token,
+            "CAPSEM_RUN_DIR": str(service.tmp_dir),
         }, capture_output=True, text=True, timeout=20, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
         assert "SDK_RESTART_ACCEPTED" in result.stdout
@@ -59,11 +60,12 @@ def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -
             cwd=project, env={
                 **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
                 "SDK_GATEWAY_URL": f"http://127.0.0.1:{after.port}", "SDK_GATEWAY_TOKEN": after.token,
-                "SDK_VM_ID": VM_ID,
+                "SDK_VM_ID": VM_ID, "CAPSEM_RUN_DIR": str(service.tmp_dir),
             }, capture_output=True, text=True, timeout=30, check=False,
         )
         assert reconnect.returncode == 0, reconnect.stdout + reconnect.stderr
         assert "BRAAVOS_SDK_ACCEPTANCE_OK" in reconnect.stdout
+        assert "SDK_LOCAL_DISCOVERY_OK" in reconnect.stdout
         print(f"{language}: acknowledgement delivered; service and gateway PIDs changed; token rotated; stopped VM unchanged")
 
 
