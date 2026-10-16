@@ -25,6 +25,26 @@ it('sends explicit targets and preserves the default authenticated exec body', a
         expect([request.method, request.url]).toEqual(['POST', '/vms/immutable-id/exec']);
         expect(request.headers.authorization).toBe('Bearer token');
       }
+      expect(await vm.container.exec('printf container', {timeout_secs: 12})).toEqual(result);
+      expect(received).toHaveLength(6);
+      expect([received.at(-1)?.method, received.at(-1)?.url]).toEqual(['POST', '/vms/immutable-id/exec']);
+      expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({
+        command: 'printf container',
+        timeout_secs: 12,
+        target: 'workload',
+      });
+      expect(received.at(-1)?.headers.authorization).toBe('Bearer token');
+      expect(await vm.container.exec('pwd', {timeout_secs: 12, user: '1000:1000', cwd: '/workspace'})).toEqual(result);
+      expect(received).toHaveLength(7);
+      expect([received.at(-1)?.method, received.at(-1)?.url]).toEqual(['POST', '/vms/immutable-id/exec']);
+      expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({
+        command: 'pwd',
+        timeout_secs: 12,
+        target: 'workload',
+        user: '1000:1000',
+        cwd: '/workspace',
+      });
+      expect(received.at(-1)?.headers.authorization).toBe('Bearer token');
     } finally {vm.close();}
   });
 });
@@ -51,6 +71,11 @@ it('keeps service target refusal without VM fallback or replay', async () => {
       await expect(pending).rejects.toMatchObject({status: 409});
       expect(received).toHaveLength(1);
       expect(JSON.parse(received[0]?.body.toString() ?? '')).toMatchObject({target: 'workload'});
+      const containerPending = vm.container.exec('printf no');
+      await expect(containerPending).rejects.toBeInstanceOf(HttpError);
+      await expect(containerPending).rejects.toMatchObject({status: 409});
+      expect(received).toHaveLength(2);
+      expect(JSON.parse(received[1]?.body.toString() ?? '')).toMatchObject({target: 'workload'});
     } finally {vm.close();}
   });
 });

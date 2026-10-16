@@ -28,7 +28,23 @@ def test_exec_targets_and_omission_use_exact_authenticated_wire_payloads():
             assert json.loads(state.requests[-1][2]) == {
                 "command": "pwd", "timeout_secs": 12, "user": "1000:1000", "cwd": "/workspace",
             }
-            assert len(state.requests) == 5
+            await vm.container.exec("printf container", timeout_secs=12)
+            assert state.requests[-1][:2] == ("POST", "/vms/immutable-id/exec")
+            assert json.loads(state.requests[-1][2]) == {
+                "command": "printf container",
+                "timeout_secs": 12,
+                "target": "workload",
+            }
+            await vm.container.exec("pwd", timeout_secs=12, user="1000:1000", cwd="/workspace")
+            assert state.requests[-1][:2] == ("POST", "/vms/immutable-id/exec")
+            assert json.loads(state.requests[-1][2]) == {
+                "command": "pwd",
+                "timeout_secs": 12,
+                "target": "workload",
+                "user": "1000:1000",
+                "cwd": "/workspace",
+            }
+            assert len(state.requests) == 7
     asyncio.run(run())
 
 
@@ -52,6 +68,13 @@ def test_target_refusal_never_falls_back_or_replays():
             assert captured.value.status == 409
             assert len(state.requests) == 1
             assert json.loads(state.requests[0][2])["target"] == "workload"
+            state.exec_status = 400
+            with pytest.raises(HttpError) as container_err:
+                await vm.container.exec("printf no")
+            assert container_err.value.status == 400
+            assert len(state.requests) == 2
+            assert state.requests[1][:2] == ("POST", "/vms/immutable-id/exec")
+            assert json.loads(state.requests[1][2])["target"] == "workload"
     asyncio.run(run())
 
 

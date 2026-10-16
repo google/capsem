@@ -1,6 +1,6 @@
 use crate::client::Client;
 
-use crate::{models, operations as api, DiagnosticOptions, NetworkLogOptions, Result, TriageOptions, VM};
+use crate::{models, operations as api, DiagnosticOptions, ExecOptions, NetworkLogOptions, Result, TriageOptions, VM};
 
 /// Paths are the guest's: `/root/x` in a VM, `/workspace/x` in its container,
 /// or `x` relative to the workspace; see [`Files::exact`].
@@ -97,6 +97,37 @@ impl Container<'_> {
                 id: self.0.resolve().await?,
             },
             self.0.client.options,
+        )
+        .await
+    }
+
+    pub async fn exec(&self, command: &str, timeout_secs: Option<u64>) -> Result<models::ExecResponse> {
+        self.exec_with(
+            command,
+            ExecOptions {
+                timeout_secs,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn exec_with(&self, command: &str, options: ExecOptions) -> Result<models::ExecResponse> {
+        let timeout_secs = options.timeout_secs;
+        let params = api::ExecVmParams {
+            id: self.0.resolve().await?,
+            body: models::ExecRequest {
+                command: command.into(),
+                timeout_secs,
+                target: Some(models::ExecTarget::Workload),
+                user: options.user,
+                cwd: options.cwd,
+            },
+        };
+        api::exec_vm(
+            &self.0.client.transport,
+            &params,
+            self.0.client.command_options(timeout_secs),
         )
         .await
     }

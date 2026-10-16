@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `vm.container.exec(...)` (`vm.container().exec(...)` / `exec_with(...)` in
+  Rust) in the Python, Rust, and TypeScript SDKs runs a command directly in a
+  session's OCI container workload (`POST /vms/{id}/exec` with
+  `target: "workload"`, plus optional `user` and `cwd`), refusing sessions that
+  do not run a container.
+
 - `POST /vms/{id}/exec` and `vm.exec(...)` in the Python, TypeScript, and Rust
   SDKs accept optional `user` (`name`, `uid`, `name:group`, or `uid:gid`) and
   `cwd` (`/`-rooted path) fields, running workload commands via the OCI `runc exec`

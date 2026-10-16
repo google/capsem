@@ -145,6 +145,27 @@ async fn container_and_port_resources_hide_wire_exposure_details() {
     assert_eq!(create["container"]["attach"], false);
     vm.container().status().await.unwrap();
     request(&mut server, "/vms/vm-1/container").await;
+    vm.container().exec("printf workload", Some(4)).await.unwrap();
+    assert_eq!(
+        request(&mut server, "/vms/vm-1/exec").await,
+        json!({"command": "printf workload", "timeout_secs": 4, "target": "workload"})
+    );
+    vm.container()
+        .exec_with(
+            "pwd",
+            ExecOptions {
+                timeout_secs: Some(4),
+                user: Some("1000:1000".into()),
+                cwd: Some("/workspace".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&mut server, "/vms/vm-1/exec").await,
+        json!({"command": "pwd", "timeout_secs": 4, "target": "workload", "user": "1000:1000", "cwd": "/workspace"})
+    );
     let port = vm.ports().open(8080).await.unwrap();
     request(&mut server, "/vms/vm-1/exposures").await;
     assert!(!port.authenticate);

@@ -1,7 +1,9 @@
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
+import {commandDeadlineMs} from './execution.js';
 import type {NetworkLogOptions} from './options.js';
 import type {CallOptions, Transport} from './transport.js';
+import {ExecRequestSchema} from './validation/ExecRequest.js';
 
 export interface VmContext {transport: Transport; id: string}
 class Resource {
@@ -43,6 +45,21 @@ export class Container extends Resource {
   async status(options: CallOptions = {}): Promise<models.ContainerStatusResponse> {
     const {transport, id} = await this.context(options);
     return api.getVmContainer(transport, {id}, options);
+  }
+  async exec(command: string, options: CallOptions & {
+    timeout_secs?: number; user?: string | null; cwd?: string | null;
+  } = {}): Promise<models.ExecResponse> {
+    const body = ExecRequestSchema.parse({
+      command,
+      timeout_secs: options.timeout_secs ?? null,
+      target: models.ExecTarget.WORKLOAD,
+      ...(options.user == null ? {} : {user: options.user}),
+      ...(options.cwd == null ? {} : {cwd: options.cwd}),
+    });
+    const {transport, id} = await this.context(options);
+    return api.execVm(transport, {id, body}, {
+      ...options, timeoutMs: options.timeoutMs ?? commandDeadlineMs(transport.timeoutMs, options.timeout_secs),
+    });
   }
 }
 
