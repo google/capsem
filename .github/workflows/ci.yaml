@@ -543,8 +543,10 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install Linux workspace prerequisites
-        run: sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt
+      - name: Bootstrap complete install qualification host
+        env:
+          CAPSEM_SKIP_ASSET_CHECK: "1"
+        run: sh bootstrap.sh --yes
 
       - name: Prove Linux sandbox boundary
         run: python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner

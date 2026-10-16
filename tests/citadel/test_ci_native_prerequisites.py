@@ -5,12 +5,19 @@ Hosted unit tests once discovered no MCP executable, and install CI demanded
 that stable already publish the first runtime that this candidate introduces.
 """
 
+from copy import deepcopy
 from pathlib import Path
 
+import pytest
 from helpers.workflow_contract import parsed_commands, workflow_jobs
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKERS = {"capsem-mcp-aggregator", "capsem-mcp-builtin"}
+INSTALL_BINFMT_RATIONALE = (
+    "The complete install owner builds both architectures. Provision distro QEMU/binfmt "
+    "through the existing host bootstrap before entering the gate; CI otherwise fails "
+    "assets.preflight after spending twenty minutes building the install environment."
+)
 
 
 def native_builds(source: str) -> set[str]:
@@ -50,6 +57,43 @@ def test_source_install_ci_qualifies_its_runtime_without_a_prior_release() -> No
         "the first runtime cannot depend on already being publicly released"
     )
     assert not any(step.get("uses") == "./.github/actions/fetch-release-inputs" for step in job["steps"])
+
+
+def _assert_install_bootstrap(steps) -> None:
+    proof = next(index for index, step in enumerate(steps) if step.get("id") == "install_e2e")
+    bootstraps = [
+        step for step in steps[:proof]
+        if any(
+            command.argv == ("sh", "bootstrap.sh", "--yes")
+            for command in parsed_commands(step.get("run", ""), origin="install host bootstrap")
+        )
+    ]
+    assert len(bootstraps) == 1, INSTALL_BINFMT_RATIONALE
+    bootstrap = bootstraps[0]
+    assert "if" not in bootstrap and not bootstrap.get("continue-on-error"), INSTALL_BINFMT_RATIONALE
+    assert bootstrap.get("env", {}).get("CAPSEM_SKIP_ASSET_CHECK") == "1", (
+        "Bootstrap owns host prerequisites; the following test-glowup owns asset construction."
+    )
+
+
+def test_source_install_ci_bootstraps_cross_arch_host_before_complete_proof() -> None:
+    _assert_install_bootstrap(workflow_jobs(ROOT / ".github/workflows/ci.yaml")["test-install"]["steps"])
+
+
+@pytest.mark.parametrize("mutation", ["missing", "late", "conditional", "duplicate-assets"])
+def test_install_bootstrap_guard_refuses_broken_order_or_ownership(mutation: str) -> None:
+    steps = deepcopy(workflow_jobs(ROOT / ".github/workflows/ci.yaml")["test-install"]["steps"])
+    index = next(index for index, step in enumerate(steps) if step.get("run") == "sh bootstrap.sh --yes")
+    if mutation == "missing":
+        steps.pop(index)
+    elif mutation == "late":
+        steps.append(steps.pop(index))
+    elif mutation == "conditional":
+        steps[index]["if"] = "${{ false }}"
+    else:
+        steps[index]["env"]["CAPSEM_SKIP_ASSET_CHECK"] = "0"
+    with pytest.raises(AssertionError):
+        _assert_install_bootstrap(steps)
 
 
 def test_coverage_cleans_before_preparing_workers_and_preserves_them_for_reporting() -> None:
