@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The npm MCP server reports its installed package version in protocol handshakes.
+
 - Inspect requires the SDK version providing its labels and typed-error APIs,
   and its frozen dependency lock matches the current SDK package.
 
