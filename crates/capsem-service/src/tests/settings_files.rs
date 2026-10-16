@@ -3,7 +3,7 @@ use super::*;
 // Settings handler tests
 // -----------------------------------------------------------------------
 
-pub(super) struct SettingsEnvGuard {
+pub(crate) struct SettingsEnvGuard {
     // Holds the path redirect for the guard's lifetime; restores on drop.
     _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     previous_corp: Option<std::ffi::OsString>,
@@ -42,7 +42,7 @@ impl Drop for SettingsEnvGuard {
     }
 }
 
-pub(super) fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, PathBuf, PathBuf) {
+pub(crate) fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, PathBuf, PathBuf) {
     let settings_path = dir.path().join("settings.toml");
     let corp_path = dir.path().join("corp.toml");
     capsem_core::net::policy_config::write_settings_file(
@@ -179,6 +179,7 @@ fn resolve_rejects_symlink_escape() {
             base_version: "0.0.0".into(),
             persistent: false,
             env: None,
+            labels: None,
             forked_from: None,
         },
     );
@@ -214,6 +215,7 @@ fn resolve_valid_path_inside_workspace() {
             base_version: "0.0.0".into(),
             persistent: false,
             env: None,
+            labels: None,
             forked_from: None,
         },
     );

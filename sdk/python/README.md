@@ -44,5 +44,9 @@ image or your own OCI image when permitted by your administrator.
 The example runs `echo hello`, displays its output, and leaves `sdk-demo`
 stopped with its work preserved.
 
+Pass `labels={"suite": "eval"}` to `create(...)` to attach advisory metadata.
+VM inventory includes those labels. Forks inherit them by default;
+`fork(name, labels={})` clears them and a nonempty map replaces them.
+
 For more, use the [SDK guides](https://docs.capsem.org/guides/developers/integrate-the-sdk/) or the
 [Python SDK reference](https://docs.capsem.org/sdk/python/).

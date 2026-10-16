@@ -109,6 +109,7 @@ function provisionRequest(options: CreateOptions): models.ProvisionRequest {
     name: options.name || null, persistent: Boolean(options.name),
     cpus: options.cpus ?? null, ram_mb,
     env: container === undefined ? options.env ?? null : null,
+    ...(options.labels === undefined ? {} : {labels: options.labels}),
     networks: (options.networks ?? []).map(network => network.name),
     ...(container === undefined ? {} : {container}),
   };

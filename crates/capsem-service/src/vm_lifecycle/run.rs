@@ -49,6 +49,7 @@ pub(crate) async fn handle_run(
                 version_override: Some(version),
                 persistent: false,
                 env,
+                labels: None,
                 from: None,
                 description: None,
             })
