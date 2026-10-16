@@ -18,6 +18,6 @@ def test_editable_install_maps_the_direct_source_directory() -> None:
 
 
 def test_installed_distribution_uses_the_reserved_builder_name() -> None:
-    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())["project"]
+    project = tomllib.loads((PROJECT_ROOT.parent / "build_system/pyproject.toml").read_text())["project"]
     assert project["name"] == "capsem-builder"
     assert version(project["name"]) == project["version"]
