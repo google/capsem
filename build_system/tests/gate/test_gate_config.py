@@ -521,6 +521,7 @@ def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> Non
         *SdkConfig.model_fields,
         "environment_python",
         "package_build_requirements",
+        "pytest_scratch",
     )
     assert all(field.is_required() for field in PythonSdkConfig.model_fields.values())
 
