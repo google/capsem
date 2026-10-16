@@ -112,7 +112,7 @@ pub(crate) async fn handle_run(
     let failed = !matches!(&exec_result, Ok(ProcessToService::ExecResult { .. }));
     finalize_one_shot_session(Arc::clone(&state), id.clone(), shutdown_result, failed).await?;
 
-    let response = match exec_result {
+    match exec_result {
         Ok(ProcessToService::ExecResult {
             stdout,
             stderr,
@@ -130,6 +130,5 @@ pub(crate) async fn handle_run(
             "unexpected IPC response".into(),
         )),
         Err(e) => Err(e.into_exec_app_error(true)),
-    };
-    response
+    }
 }
