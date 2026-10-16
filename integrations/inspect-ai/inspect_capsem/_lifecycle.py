@@ -14,8 +14,8 @@ from capsem import models
 
 from inspect_capsem._controller import (
     _NONCE_LABEL,
-    _TASK_LABEL,
     _is_managed_vm,
+    _managed_vm_labels,
     _managed_vm_prefix_slug,
 )
 
@@ -71,9 +71,7 @@ async def _init_sample_vm(
 ) -> str:
     """Start and register a VM for sample_init, cleaning up on cancellation."""
     nonce = uuid.uuid4().hex
-    sample_labels = {_NONCE_LABEL: nonce}
-    if task_name:
-        sample_labels[_TASK_LABEL] = task_name[:255]
+    sample_labels = _managed_vm_labels(task_name=task_name, nonce=nonce)
     oci_image = cfg.image if cfg.execution_mode == "container" else None
     ca_pem: str | None = None
     if cfg.execution_mode == "container" and cfg.build:

@@ -98,7 +98,7 @@ def _managed_vm_labels(
     if prefix := _managed_vm_prefix_slug():
         labels[_PREFIX_LABEL] = prefix
     if task_name:
-        labels[_TASK_LABEL] = task_name[:255]
+        labels[_TASK_LABEL] = task_name.encode("utf-8")[:255].decode("utf-8", errors="ignore")
     if nonce:
         labels[_NONCE_LABEL] = nonce
     if extra:

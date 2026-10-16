@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Inspect task labels respect the service's UTF-8 byte limit for accented
+  and emoji task names.
+
 - Native MCP handoffs retain connected sockets until the receiving worker
   confirms adoption, preventing intermittent initialization failures on macOS.
 
