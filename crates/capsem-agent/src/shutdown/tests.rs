@@ -1,4 +1,6 @@
 use super::*;
+use capsem_foundation::unix::process::{wait_for_child_exit, ProcessId};
+use std::io::{BufRead, BufReader};
 use std::process::{Child, Command};
 
 fn kill_hangup_default() -> nix::Result<nix::sys::signal::SigHandler> {
@@ -12,6 +14,7 @@ fn spawn(cmd: &str) -> (Child, Pid) {
     use std::os::unix::process::CommandExt;
     let mut command = Command::new("sh");
     command.arg("-c").arg(cmd);
+    command.stdout(std::process::Stdio::piped());
     // SAFETY: only async-signal-safe work before exec, a single signal(2).
     unsafe {
         command.pre_exec(|| {
@@ -45,9 +48,12 @@ fn hangup_ends_shell_long_before_the_grace_period() {
 /// A shell that ignores SIGHUP is killed at the grace ceiling, no later.
 #[test]
 fn shell_ignoring_hangup_is_killed_at_the_grace_ceiling() {
-    let (_child, pid) = spawn("trap '' HUP TERM; exec sleep 300");
-    // Let sh install the trap before we signal, or the HUP lands first.
-    std::thread::sleep(Duration::from_millis(100));
+    let (mut child, pid) = spawn("trap '' HUP TERM; printf 'ready\\n'; exec sleep 300");
+    let mut ready = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut ready)
+        .unwrap();
+    assert_eq!(ready, "ready\n", "the shell must install its traps before SIGHUP");
     let grace = Duration::from_millis(300);
     let started = Instant::now();
     let end = hang_up_and_wait(pid, grace);
@@ -61,12 +67,13 @@ fn shell_ignoring_hangup_is_killed_at_the_grace_ceiling() {
 /// A shell that already exited (a zombie nobody reaped) is collected at once.
 #[test]
 fn already_exited_shell_returns_immediately() {
-    let (_child, pid) = spawn("exit 0");
-    std::thread::sleep(Duration::from_millis(100));
-    let started = Instant::now();
-    let end = hang_up_and_wait(pid, Duration::from_secs(5));
+    let (child, pid) = spawn("exit 0");
+    // Observe an actual zombie without consuming its status. A fixed sleep
+    // did not establish this state on loaded coverage runners.
+    wait_for_child_exit(ProcessId::try_from(child.id()).unwrap()).unwrap();
+    let end = hang_up_and_wait(pid, Duration::ZERO);
     assert!(matches!(end, ShellEnd::Exited { .. }), "{end}");
-    assert!(started.elapsed() < Duration::from_millis(500));
+    assert_eq!(waitpid(pid, Some(WaitPidFlag::WNOHANG)), Err(nix::errno::Errno::ECHILD));
 }
 
 /// A pid that was reaped by someone else must not stall the shutdown.
@@ -74,10 +81,9 @@ fn already_exited_shell_returns_immediately() {
 fn already_reaped_shell_returns_immediately() {
     let (mut child, pid) = spawn("exit 0");
     child.wait().expect("reap");
-    let started = Instant::now();
-    let end = hang_up_and_wait(pid, Duration::from_secs(5));
+    let end = hang_up_and_wait(pid, Duration::ZERO);
     assert!(matches!(end, ShellEnd::Exited { .. }), "{end}");
-    assert!(started.elapsed() < Duration::from_millis(500));
+    assert_eq!(waitpid(pid, Some(WaitPidFlag::WNOHANG)), Err(nix::errno::Errno::ECHILD));
 }
 
 #[test]
