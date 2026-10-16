@@ -128,20 +128,23 @@ def _host_has_gnu_timeout() -> bool:
 
 
 @pytest.fixture(scope="session")
-def _portable_timeout_bin_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    bin_dir = tmp_path_factory.mktemp("portable-timeout-bin")
-    write_portable_timeout_shim(bin_dir)
+def _host_guest_tools_bin_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Host-backed Linux guest fixtures need GNU stat on BSD hosts."""
+    bin_dir = tmp_path_factory.mktemp("host-guest-tools-bin")
+    if not _host_has_gnu_timeout():
+        write_portable_timeout_shim(bin_dir)
+    if gstat := shutil.which("gstat"):
+        (bin_dir / "stat").symlink_to(gstat)
     return bin_dir
 
 
 @pytest.fixture(autouse=True)
 def _clear_process_owned_vms(
-    _portable_timeout_bin_dir: Path, monkeypatch: pytest.MonkeyPatch
+    _host_guest_tools_bin_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
     monkeypatch.delenv("CAPSEM_VM_PREFIX", raising=False)
-    if not _host_has_gnu_timeout():
-        cur_path = os.environ.get("PATH", "/usr/bin:/bin")
-        monkeypatch.setenv("PATH", f"{_portable_timeout_bin_dir}:{cur_path}")
+    cur_path = os.environ.get("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("PATH", f"{_host_guest_tools_bin_dir}:{cur_path}")
     lifecycle_mod._PROCESS_OWNED_VMS.clear()
     CapsemSandboxEnvironment._active_environments.clear()
     yield

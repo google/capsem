@@ -326,6 +326,9 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/cache/target/coverage/python-sdk/.coverage
         run: uv run --frozen pytest --junitxml=../../cache/target/coverage/junit/python-sdk.xml
 
+      - name: Install Linux guest tools for host-backed Inspect fixtures
+        run: brew install coreutils
+
       - name: Inspect AI extension tests with coverage
         working-directory: integrations/inspect-ai
         env:
