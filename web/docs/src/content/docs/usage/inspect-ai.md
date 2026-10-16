@@ -19,13 +19,14 @@ gateway (`capsem-service`).
 
 ## Install and configure
 
-`inspect-capsem-sandbox` depends on `inspect-ai`, `capsem` (`>=0.7.0`), `pydantic`, and `pyyaml`:
+Use a Capsem 0.7.1 or newer service. `inspect-capsem-sandbox` depends on `inspect-ai`,
+the Python `capsem` SDK (`>=0.7.1`), `pydantic`, and `pyyaml`:
 
 ```sh
 pip install inspect-capsem-sandbox
 ```
 
-When installing from a repository checkout before `0.7.0` is published, install `./sdk/python` and
+When installing from a repository checkout before `0.7.1` is published, install `./sdk/python` and
 `./integrations/inspect-ai` from the same revision.
 
 Run any Inspect evaluation in a Capsem VM sandbox from the CLI:
@@ -112,11 +113,13 @@ admit = ["127.0.0.1:5055/inspect-capsem/build"]
 
 ## Environment variables
 
-Gateway discovery follows the same precedence as the `capsem` CLI:
+Gateway discovery uses a complete explicit URL/token pair, then a complete
+environment pair, then the installed gateway's private metadata. Partial pairs
+are refused instead of borrowing credentials from another source.
 
-- `CAPSEM_GATEWAY_URL`: Explicit gateway base URL (falls back to `<run_dir>/gateway.port`, else
-  `http://127.0.0.1:19222`).
-- `CAPSEM_GATEWAY_TOKEN`: Explicit bearer token (falls back to `<run_dir>/gateway.token`).
+- `CAPSEM_GATEWAY_URL` / `CAPSEM_GATEWAY_TOKEN`: Set both to connect to an explicit gateway.
+  Without either, discovery reads `<run_dir>/gateway.port` and `<run_dir>/gateway.token`;
+  missing or unsafe metadata is refused.
 - `CAPSEM_RUN_DIR` / `CAPSEM_HOME`: `<run_dir>` is resolved from `CAPSEM_RUN_DIR`, else
   `$CAPSEM_HOME/run`, else `~/.capsem/run`.
 - `CAPSEM_VM_PREFIX`: Optional per-run label slug for isolating concurrent `inspect eval` runs on a

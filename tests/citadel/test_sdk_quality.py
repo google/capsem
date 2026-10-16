@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ from capsem_builder.gate import sdkchecks
 from capsem_builder.gate.execution import Needs
 from capsem_builder.gate.plan import Plan
 from helpers.gate import gate_plan
+from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = gate_config.load(ROOT)
@@ -21,6 +23,65 @@ SDK_RATIONALE = (
     "test/coverage and package-build checks in the fast gate. Size checks "
     "alone do not prove that a usable SDK was tested."
 )
+INSPECT_LOCK_RATIONALE = (
+    "Inspect's frozen editable SDK must match the actual SDK source and satisfy "
+    "the extension requirement. A stale0.6.3 lock row previously hid behind "
+    "passing source tests after labels and typed errors required a newer SDK."
+)
+
+
+def _inspect_lock_problems(extension: dict, sdk: dict, lock: dict) -> list[str]:
+    packages = {entry["name"]: entry for entry in lock["package"]}
+    problems = []
+    if packages[extension["name"]]["version"] != extension["version"]:
+        problems.append("extension version differs from its lock")
+    locked_sdk = packages[sdk["name"]]
+    if locked_sdk["version"] != sdk["version"]:
+        problems.append("SDK version differs from its source")
+    if locked_sdk["source"] != {"editable": "../../sdk/python"}:
+        problems.append("SDK lock must select its actual editable source")
+    requirement = next(Requirement(value) for value in extension["dependencies"]
+                       if Requirement(value).name == sdk["name"])
+    if sdk["version"] not in requirement.specifier:
+        problems.append("source SDK does not satisfy the extension requirement")
+    return problems
+
+
+def _inspect_version_inputs() -> tuple[dict, dict, dict]:
+    project = ROOT / CONFIG.integrations_inspect_ai.project
+    extension = tomllib.loads((project / "pyproject.toml").read_text())["project"]
+    sdk = tomllib.loads(CONFIG.path(CONFIG.sdk_python.manifest).read_text())["project"]
+    lock = tomllib.loads((project / "uv.lock").read_text())
+    return extension, sdk, lock
+
+
+def test_inspect_frozen_sdk_matches_the_actual_package_contract() -> None:
+    assert not _inspect_lock_problems(*_inspect_version_inputs()), INSPECT_LOCK_RATIONALE
+
+
+@pytest.mark.parametrize("mutation", ["sdk_version", "extension_version", "sdk_path", "minimum"])
+def test_inspect_lock_guard_rejects_stale_or_incompatible_packages(mutation: str) -> None:
+    extension, sdk, lock = deepcopy(_inspect_version_inputs())
+    packages = {entry["name"]: entry for entry in lock["package"]}
+    # Establish one coherent fixture before introducing the selected defect.
+    packages[sdk["name"]]["version"] = sdk["version"]
+    assert not _inspect_lock_problems(extension, sdk, lock)
+    match mutation:
+        case "sdk_version":
+            packages[sdk["name"]]["version"] = "0.0.1"
+        case "extension_version":
+            packages[extension["name"]]["version"] = "0.0.1"
+        case "sdk_path":
+            packages[sdk["name"]]["source"] = {"registry": "https://pypi.org/simple"}
+        case "minimum":
+            extension["dependencies"] = ["capsem>=999.0.0"]
+    expected = {
+        "sdk_version": "SDK version differs from its source",
+        "extension_version": "extension version differs from its lock",
+        "sdk_path": "SDK lock must select its actual editable source",
+        "minimum": "source SDK does not satisfy the extension requirement",
+    }
+    assert _inspect_lock_problems(extension, sdk, lock) == [expected[mutation]], INSPECT_LOCK_RATIONALE
 
 
 def _coverage_problems(project: dict) -> list[str]:

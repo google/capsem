@@ -1,8 +1,12 @@
 # Inspect AI integration (`inspect-capsem-sandbox`)
 
-`inspect-capsem-sandbox` (`inspect_capsem`) registers the `capsem` [`SandboxEnvironment`](https://inspect.aisi.org.uk/sandboxing.html) for [Inspect AI](https://inspect.aisi.org.uk/), running evaluations inside isolated Capsem micro-VMs via the Python [`capsem`](../../sdk/python/README.md) SDK. It is carried from Pierre Tholoniat's original implementation in [#291](https://github.com/google/capsem/pull/291) (commit `bb61fc82d44bc42c978c4acf5435a1975600c75e`) and is not published to PyPI yet.
+`inspect-capsem-sandbox` (`inspect_capsem`) registers the `capsem` [`SandboxEnvironment`](https://inspect.aisi.org.uk/sandboxing.html) for [Inspect AI](https://inspect.aisi.org.uk/), running evaluations inside isolated Capsem micro-VMs via the Python [`capsem`](../../sdk/python/README.md) SDK.
 
-From a repository checkout (or via `pip install inspect-capsem-sandbox` once published):
+Use a Capsem 0.7.1 or newer service and Python SDK. The extension needs the VM
+labels and typed errors introduced with that SDK cohort. It is not published
+to PyPI yet.
+
+From a repository checkout:
 
 ```bash
 uv sync --project integrations/inspect-ai --frozen
@@ -11,44 +15,23 @@ uv run --project integrations/inspect-ai inspect eval task.py --sandbox capsem
 
 See the [Inspect AI Sandbox documentation](https://docs.capsem.org/usage/inspect-ai/) for configuration (`CapsemSandboxConfig`), environment variables, and lifecycle behavior.
 
-The current source provides the original pure Dockerfile instruction scanner,
-heredoc transformations, multistage CA patcher and final-stage USER/WORKDIR
-metadata extraction. `inspect_capsem.containers.dockerfile` remains their
-canonical import; the implementations are split into small owning modules.
-The transformations accept text and have no host discovery, credential,
-filesystem, build-engine or session-lifecycle authority.
+The default VM mode runs commands and file transfers through the public SDK.
+Container mode creates an OCI workload in a Capsem VM and targets that workload
+for execution and transfers. The adapter labels its ephemeral VMs and tracks
+cleanup; named or persistent VMs are excluded from its leftover sweep.
 
-Compose parsing preserves the proposed single-service fields, interpolation,
-project dotenv semantics, build arguments/targets, mounts, ports, healthcheck,
-init, memory and network intent. `ComposeInputs` is an immutable snapshot of
-environment, file text and directory facts supplied by the evaluator. File
-parsing reads only that snapshot; absent text is refused. These values confer
-no permission to read host paths or access credentials. The controller must
-obtain grants and validate regular files and transfer limits before creating
-the snapshot.
+Compose and Dockerfile inputs share the existing instruction scanner, final-stage
+USER/WORKDIR metadata extraction, and CA patcher. Compose parsing uses an
+evaluator-supplied `ComposeInputs` snapshot and explicit byte, node, and depth
+limits. Parsing does not grant access to host paths or credentials.
 
-The evaluator must supply `ComposeLimits` for bytes, nodes and depth. Limits
-cover YAML construction, merge expansion, alias traversal, variable expansion
-and intermediate fragments. Interpolation/YAML diagnostics avoid echoing
-variable values or malformed dotenv lines.
+Host builds require Docker BuildKit and an explicit operator host-build grant.
+BuildKit executes original Dockerfile instructions, including heredocs; CA
+patching preserves instruction bodies. The adapter stages the resulting image
+through its loopback registry and supplies that registry's CA through the SDK.
+The service must admit the registry source and image namespace as described in
+the configuration documentation.
 
-Classic-frontend heredoc lowering is an optional transform. It does not select
-a build engine or replace full Dockerfile execution. Full unification onto the
-evaluator-controlled `ComposeInputs` snapshot, native builder acceptance, and
-standalone wheel/sdist package qualification remain in progress under
-[#310](https://github.com/google/capsem/issues/310) and
-[#311](https://github.com/google/capsem/issues/311). Preserve the original
-integration's complete behavior when carrying those components.
-
-Focused source checks use the repository's frozen development environment:
-
-```sh
-python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 60 -- \
-  env PYTHONPATH=integrations/inspect-ai uv run --project build_system --frozen \
-  python -m pytest -c build_system/pyproject.toml --rootdir . \
-  integrations/inspect-ai/tests/containers -q
-```
-
-These tests prove the carried text transformations, including actual bounded
-shell/interpreter semantics. They do not qualify a native builder or Inspect
-sandbox. Native acceptance and package publication require their full gates.
+The package tests cover SDK lifecycle and transfer behavior, Compose/Dockerfile
+parsing, installed wheel/sdist payloads, and a native Docker BuildKit fixture.
+Complete Capsem VM and release acceptance remain separate qualification gates.

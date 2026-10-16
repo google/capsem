@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Inspect requires the SDK version providing its labels and typed-error APIs,
+  and its frozen dependency lock matches the current SDK package.
+
 - Inspect task labels respect the service's UTF-8 byte limit for accented
   and emoji task names.
 

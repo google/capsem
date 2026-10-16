@@ -282,7 +282,7 @@ wheels = [
 
 [[package]]
 name = "capsem"
-version = "0.6.3"
+version = "0.7.1"
 source = { editable = "../../sdk/python" }
 dependencies = [
     { name = "aiohttp" },
@@ -302,11 +302,13 @@ dev = [
     { name = "build", specifier = ">=1.2" },
     { name = "editables", specifier = "==0.5" },
     { name = "hatchling", specifier = "==1.29.0" },
+    { name = "openai", specifier = "==2.54.0" },
     { name = "pytest", specifier = ">=9" },
     { name = "pytest-cov", specifier = ">=6" },
     { name = "ruff", specifier = ">=0.15.16" },
     { name = "ty", specifier = ">=0.0.46" },
 ]
+package-build = [{ name = "hatchling", specifier = "==1.29.0" }]
 
 [[package]]
 name = "certifi"
