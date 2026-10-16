@@ -234,7 +234,7 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     ), after=after)
     mcp = config.mcp_typescript
     mcp_root = config.path(mcp.project)
-    archives = {"CAPSEM_MCP_PACKAGE_ARCHIVES": str(config.path(mcp.build_output))}
+    archives = {config.environment.mcp_package_archives: str(config.path(mcp.build_output))}
     mcp_phase = plan.phase("fast.mcp.typescript")
     mcp_built = mcp_phase.add(
         step(

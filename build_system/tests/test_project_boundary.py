@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import tomllib
 from importlib.metadata import version
 from pathlib import Path
 
@@ -17,4 +18,6 @@ def test_editable_install_maps_the_direct_source_directory() -> None:
 
 
 def test_installed_distribution_uses_the_reserved_builder_name() -> None:
-    assert version("capsem-builder") == "0.7.0"
+    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())["project"]
+    assert project["name"] == "capsem-builder"
+    assert version(project["name"]) == project["version"]

@@ -164,6 +164,7 @@ class EnvironmentConfig(Strict):
     run_dir: str
     assets_dir: str
     benchmark_root: str
+    mcp_package_archives: str
     coverage_file: str
     source_checkout: str
     repository_root: str

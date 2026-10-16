@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import host
+from capsem_builder.gate.actions import Run
 from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.module_glowup import glowup
 from capsem_builder.gate.plan import Plan
@@ -60,7 +61,9 @@ def test_python_projects_cannot_empty_each_others_or_the_shared_pytest_scratch()
         ("fast.sdk.python.tests", config.sdk_python),
         ("fast.integrations.inspect-ai.tests", config.integrations_inspect_ai),
     ):
-        argv = shlex.split(plan.step_named(label).actions[0].render())
+        commands = [action for action in plan.step_named(label).actions if isinstance(action, Run)]
+        assert len(commands) == 1
+        argv = shlex.split(commands[0].render())
         assert "--basetemp" in argv, (
             "separate Python projects must override inherited basetemp rather than "
             "deleting concurrent Citadel tmp_path directories"

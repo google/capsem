@@ -103,7 +103,7 @@ def test_mcp_tests_consume_the_exported_publication_archives() -> None:
     ], SDK_RATIONALE
     output = getattr(CONFIG.mcp_typescript, "build_output", None)
     assert output and output in CONFIG.prefix.exports, SDK_RATIONALE
-    selection = f"CAPSEM_MCP_PACKAGE_ARCHIVES={CONFIG.path(output)}"
+    selection = f"{CONFIG.environment.mcp_package_archives}={CONFIG.path(output)}"
     for label in ("fast.mcp.typescript.package-prewarm", "fast.mcp.typescript.tests"):
         assert selection in " ".join(plan.step_named(label).render()), SDK_RATIONALE
 
