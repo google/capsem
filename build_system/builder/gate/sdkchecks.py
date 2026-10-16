@@ -6,6 +6,7 @@ from .actions import Run
 from .buildschema import PythonPackageConfig, SourcePackageConfig
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
+from .fileactions import MakeDir
 from .phase import Phase
 from .plan import Plan
 from .pythonenv import uv_run
@@ -166,7 +167,8 @@ def _python_package_fragment(
     checks["build"] = phase.shared(python_package(settings, step_prefix=step_prefix), after=(synced,))
     plan.record_stage(checks["build"].label, stage)
     tested = phase.add(step(
-        "tests", Run(["uv", "run", "--frozen", "--no-sync", "pytest",
+        "tests", MakeDir(config.path(settings.pytest_scratch).parent),
+        Run(["uv", "run", "--frozen", "--no-sync", "pytest",
                       "--basetemp", str(config.path(settings.pytest_scratch))], cwd=config.path(settings.project)),
         kind=Kind.UNIT_TEST, speed=Speed.FAST,
     ), after=(checks["build"], *extra_tests_after))
