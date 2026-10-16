@@ -10,6 +10,11 @@ const {Hypervisor, VM, HttpError} = sdk;
 const url = process.env.SDK_GATEWAY_URL, token = process.env.SDK_GATEWAY_TOKEN, id = process.env.SDK_VM_ID;
 assert(url && token && id, 'SDK acceptance fixture must provide gateway credentials and VM ID');
 
+const local = new Hypervisor();
+try {assert((await local.list()).sandboxes.some(entry => entry.id === id));}
+finally {local.close();}
+process.stdout.write('SDK_LOCAL_DISCOVERY_OK\n');
+
 const denied = new Hypervisor(url, 'incorrect-token');
 try {await assert.rejects(denied.list(), error => error instanceof HttpError && error.status === 401);}
 finally {denied.close();}

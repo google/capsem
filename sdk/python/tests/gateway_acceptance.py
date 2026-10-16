@@ -11,6 +11,9 @@ from capsem import VM, HttpError, Hypervisor, models
 async def main() -> None:
     url, token = os.environ["SDK_GATEWAY_URL"], os.environ["SDK_GATEWAY_TOKEN"]
     expected_id = os.environ["SDK_VM_ID"]
+    async with Hypervisor() as local:
+        assert any(entry.id == expected_id for entry in (await local.list()).sandboxes)
+    print("SDK_LOCAL_DISCOVERY_OK")
     async with Hypervisor(url, "incorrect-token") as denied:
         try:
             await denied.list()

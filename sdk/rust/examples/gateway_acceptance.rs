@@ -7,6 +7,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = std::env::var("SDK_GATEWAY_URL")?;
     let token = std::env::var("SDK_GATEWAY_TOKEN")?;
     let id = std::env::var("SDK_VM_ID")?;
+    let local = Hypervisor::local()?;
+    assert!(local.list().await?.sandboxes.iter().any(|vm| vm.id == id));
+    println!("SDK_LOCAL_DISCOVERY_OK");
     let denied = Hypervisor::new(&url, "incorrect-token")?;
     assert!(matches!(denied.list().await, Err(Error::Http { status: 401, .. })));
     let hv = Hypervisor::new(&url, &token)?;
