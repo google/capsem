@@ -76,6 +76,7 @@ ONLINE_FAST = {
     "fast.mcp.typescript.package-prewarm",
     "integrations.common.prewarm",
     "integrations.inspect-ai.prewarm",
+    "integrations.harbor.prewarm",
     "fast.toolchain.node",
     "fast.toolchain.rust",
 }

@@ -1,0 +1,147 @@
+"""Shared pytest fixtures for harbor-capsem tests."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers", "requires_docker: test requires a local docker CLI and daemon"
+    )
+
+
+_PORTABLE_TIMEOUT_SHIM = f"""#!{sys.executable}
+import os
+import signal
+import subprocess
+import sys
+
+
+def _parse_secs(raw: str) -> float:
+    s = raw.strip()
+    for suffix, mult in (("s", 1.0), ("m", 60.0), ("h", 3600.0), ("d", 86400.0)):
+        if s.endswith(suffix):
+            return float(s[: -len(suffix)]) * mult
+    return float(s)
+
+
+def _parse_sig(raw: str) -> int:
+    s = raw.strip().upper().removeprefix("SIG")
+    if s.isdigit():
+        return int(s)
+    return int(getattr(signal, f"SIG{{s}}", signal.SIGTERM))
+
+
+def main(argv: list[str]) -> int:
+    if "--version" in argv:
+        print("timeout (GNU coreutils portable shim) 1.0")
+        return 0
+    sig = int(signal.SIGTERM)
+    kill_after: float | None = None
+    i = 0
+    while i < len(argv) and argv[i].startswith("-"):
+        arg = argv[i]
+        if arg == "--":
+            i += 1
+            break
+        if arg in ("-k", "--kill-after"):
+            kill_after = _parse_secs(argv[i + 1])
+            i += 2
+        elif arg.startswith("--kill-after="):
+            kill_after = _parse_secs(arg.split("=", 1)[1])
+            i += 1
+        elif arg.startswith("-k") and len(arg) > 2:
+            kill_after = _parse_secs(arg[2:])
+            i += 1
+        elif arg in ("-s", "--signal"):
+            sig = _parse_sig(argv[i + 1])
+            i += 2
+        elif arg.startswith("--signal="):
+            sig = _parse_sig(arg.split("=", 1)[1])
+            i += 1
+        elif arg.startswith("-s") and len(arg) > 2:
+            sig = _parse_sig(arg[2:])
+            i += 1
+        else:
+            i += 1
+    if len(argv) - i < 2:
+        return 125
+    duration = _parse_secs(argv[i])
+    cmd = argv[i + 1 :]
+    proc = subprocess.Popen(cmd, start_new_session=True)
+    try:
+        rc = proc.wait(timeout=duration)
+        return 128 + (-rc) if rc < 0 else rc
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            pass
+        if sig != int(signal.SIGKILL):
+            try:
+                proc.wait(timeout=kill_after if kill_after is not None else 1.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+            return 124
+        proc.wait()
+        return 137
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+"""
+
+
+def write_portable_timeout_shim(bin_dir: Path) -> Path:
+    """Write a GNU-compatible `timeout` shim script into `bin_dir` and return its path."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    shim = bin_dir / "timeout"
+    shim.write_text(_PORTABLE_TIMEOUT_SHIM, encoding="utf-8")
+    shim.chmod(0o755)
+    return shim
+
+
+def _host_has_gnu_timeout() -> bool:
+    if shutil.which("timeout") is None:
+        return False
+    try:
+        out = subprocess.run(
+            ["timeout", "--version"], capture_output=True, text=True, check=False
+        ).stdout
+    except OSError:
+        return False
+    return "GNU coreutils" in out and "uutils" not in out
+
+
+@pytest.fixture(scope="session")
+def _host_guest_tools_bin_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Host-backed Linux guest fixtures need GNU stat on BSD hosts."""
+    bin_dir = tmp_path_factory.mktemp("host-guest-tools-bin")
+    if not _host_has_gnu_timeout():
+        write_portable_timeout_shim(bin_dir)
+    if gstat := shutil.which("gstat"):
+        (bin_dir / "stat").symlink_to(gstat)
+    return bin_dir
+
+
+@pytest.fixture(autouse=True)
+def _isolate_harbor_env(
+    _host_guest_tools_bin_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    cur_path = os.environ.get("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("PATH", f"{_host_guest_tools_bin_dir}:{cur_path}")
+    for var in ("CAPSEM_VM_PREFIX", "CAPSEM_TRACE_EXPORT", "CAPSEM_INCLUDE_SECURITY_EVENTS"):
+        monkeypatch.delenv(var, raising=False)
+    yield

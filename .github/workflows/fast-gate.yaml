@@ -75,6 +75,7 @@ jobs:
           python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project
           python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project integrations/common --frozen --no-install-project
           python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project integrations/inspect-ai --frozen --no-install-project
+          python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project integrations/harbor --frozen --no-install-project
           cargo fetch --locked
           for workspace in web/app web/docs web/marketing build_system/release_site sdk/typescript mcp/typescript; do
             pnpm --dir "$workspace" install --frozen-lockfile

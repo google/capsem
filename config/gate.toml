@@ -1067,7 +1067,7 @@ direct_concurrency = ["planrunner.py", "metadatasurvey.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript", "mcp/typescript", "integrations/common", "integrations/inspect-ai"]
+roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript", "mcp/typescript", "integrations/common", "integrations/inspect-ai", "integrations/harbor"]
 suffixes = [".py", ".sh", ".ts", ".mjs"]
 max_lines = 300
 
@@ -1806,6 +1806,7 @@ lockfiles = [
     "build_system/uv.lock",
     "integrations/common/uv.lock",
     "integrations/inspect-ai/uv.lock",
+    "integrations/harbor/uv.lock",
     "mcp/typescript/pnpm-lock.yaml",
     "sdk/python/uv.lock",
     "sdk/typescript/pnpm-lock.yaml",
@@ -1911,6 +1912,12 @@ name = "inspect-ai"
 pattern = "integrations/inspect-ai/*.py"
 enforced_by = ["fast.integrations.inspect-ai.lint", "fast.integrations.inspect-ai.types"]
 checked_by = ["fast.integrations.inspect-ai.tests", "fast.integrations.inspect-ai.build"]
+
+[[lint_surfaces]]
+name = "harbor"
+pattern = "integrations/harbor/*.py"
+enforced_by = ["fast.integrations.harbor.lint", "fast.integrations.harbor.types"]
+checked_by = ["fast.integrations.harbor.tests", "fast.integrations.harbor.build"]
 
 [[lint_surfaces]]
 name = "typescript-sdk"
@@ -3755,6 +3762,14 @@ source = "integrations/inspect-ai/inspect_capsem"
 tests = "integrations/inspect-ai/tests"
 build_output = "cache/target/integrations/inspect-ai"
 pytest_scratch = "cache/target/tests/client-packages/inspect-ai"
+
+[integrations_harbor]
+project = "integrations/harbor"
+manifest = "integrations/harbor/pyproject.toml"
+source = "integrations/harbor/harbor_capsem"
+tests = "integrations/harbor/tests"
+build_output = "cache/target/integrations/harbor"
+pytest_scratch = "cache/target/tests/client-packages/harbor"
 
 [sdk_rust]
 project = "sdk/rust"
