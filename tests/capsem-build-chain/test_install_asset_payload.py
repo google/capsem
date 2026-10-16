@@ -3116,7 +3116,7 @@ def test_ci_install_job_uploads_glowup_evidence_on_failure() -> None:
     )
     assert set(upload["with"]["path"].splitlines()) == {
         "cache/target/gate-runs/",
-        f"{gate_config.load(PROJECT_ROOT).install.layout.glowup_evidence}/",
+        f"{gate_config.load(PROJECT_ROOT).outputs.test_artifacts}/",
     }
     assert upload["with"]["if-no-files-found"] == (
         "${{ steps.install_e2e.outcome == 'failure' && 'error' || 'warn' }}"
