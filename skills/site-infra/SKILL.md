@@ -351,8 +351,10 @@ isolated Linux VMs), its service model, and the main interactive and SDK-driven
 uses. Lead next to installation, then task links for those uses. Do not turn an
 entry page into a component tour or duplicate its architecture diagram.
 
-Keep component relationships and diagrams in the canonical architecture
-explanation, not in the product intro.
+An intro may include one compact conceptual diagram showing how the reader
+uses Capsem and what runs inside its isolation boundary. Keep detailed
+component relationships and process diagrams in the canonical architecture
+explanation; do not reproduce that tour in the product intro.
 
 Explain the major components, where they run, and how control, requests, and
 records move between them. Name each component and state its concrete job.
