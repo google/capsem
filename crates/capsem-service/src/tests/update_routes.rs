@@ -496,6 +496,8 @@ async fn automatic_update_reports_command_failure_for_backoff() {
 }
 
 pub(super) async fn decode_response_json<T: serde::de::DeserializeOwned>(response: axum::response::Response) -> T {
+    let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    serde_json::from_slice(&bytes).unwrap()
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("HTTP {status}: {}: {error}", String::from_utf8_lossy(&bytes)))
 }

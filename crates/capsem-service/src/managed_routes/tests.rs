@@ -146,7 +146,7 @@ async fn managed_http_create_attaches_labels_to_instance_and_info_and_closes_cle
     let script = dir.path().join("fake-capsem-process");
     std::fs::write(
         &script,
-        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then : > \"${2%.sock}.launched\"; : > \"${2%.sock}.ready\"; shift 2; else shift; fi\ndone\nexec sleep 30\n",
+        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then printf launched > \"${2%.sock}.launched\"; printf ready > \"${2%.sock}.ready\"; shift 2; else shift; fi\ndone\nexec sleep 30\n",
     )
     .unwrap();
     #[cfg(unix)]
@@ -157,6 +157,7 @@ async fn managed_http_create_attaches_labels_to_instance_and_info_and_closes_cle
 
     let mut owned = crate::tests::test_state(dir.path().join("run"), dir.path().join("assets"), None);
     owned.process_binary = script;
+    crate::tests::install_test_ledger_worker(&mut owned, dir.path());
     let state = Arc::new(owned);
     crate::tests::install_test_runtime_assets(&state);
     let app = build_service_router(Arc::clone(&state));

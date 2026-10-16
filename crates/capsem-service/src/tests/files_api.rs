@@ -769,7 +769,7 @@ async fn handle_provision_attaches_labels_and_list_fingerprint_tracks_label_chan
     let script = dir.path().join("fake-capsem-process");
     std::fs::write(
         &script,
-        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then : > \"${2%.sock}.launched\"; shift 2; else shift; fi\ndone\nexec sleep 30\n",
+        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then printf launched > \"${2%.sock}.launched\"; shift 2; else shift; fi\ndone\nexec sleep 30\n",
     )
     .unwrap();
     #[cfg(unix)]
@@ -780,6 +780,7 @@ async fn handle_provision_attaches_labels_and_list_fingerprint_tracks_label_chan
 
     let mut owned = test_state(dir.path().join("run"), dir.path().join("assets"), None);
     owned.process_binary = script;
+    install_test_ledger_worker(&mut owned, dir.path());
     let state = Arc::new(owned);
     install_test_runtime_assets(&state);
 
@@ -875,7 +876,13 @@ async fn handle_provision_attaches_labels_and_list_fingerprint_tracks_label_chan
         entry.defunct = false;
         entry.last_error = None;
     }
-    assert_eq!(state.resume_sandbox(&created.id, None, None).unwrap(), created.id);
+    let resumed_id = created.id.clone();
+    let resumed = state
+        .off_worker(move |state| state.resume_sandbox(&resumed_id, None, None))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed, created.id);
     assert_eq!(
         state
             .instances

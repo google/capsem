@@ -153,6 +153,13 @@ pub(crate) fn make_test_state() -> Arc<ServiceState> {
     Arc::new(make_test_state_owned())
 }
 
+pub(crate) fn install_test_ledger_worker(state: &mut ServiceState, directory: &StdPath) {
+    state.ledger_workers = Arc::new(crate::ledger_worker::LedgerWorkers::new(
+        crate::ledger_worker::tests::fake_binary(directory, "normal"),
+        state.run_dir.join("ledger-commitments"),
+    ));
+}
+
 /// The test state before it is shared, for tests that replace an owner.
 pub(crate) fn make_test_state_owned() -> ServiceState {
     let test_tempdir = tempfile::tempdir().unwrap();
