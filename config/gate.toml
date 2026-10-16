@@ -1429,7 +1429,7 @@ install = ["cargo", "install", "sccache", "--version", "0.17.0", "--locked"]
 [release]
 # The selected commit is prepared and committed before release. Qualification
 # may create immutable Git refs afterward; it may never edit tracked source.
-line = "0.6"
+line = "0.7"
 # A release dispatches only a commit whose exact `just test <commit>` journal
 # passed on this machine: four stable attempts once each burned a 2.5 h hosted
 # lane on a defect the local glow-up catches in minutes (RELEASE.md 8.1).

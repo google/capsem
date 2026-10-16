@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Correct the release preflight's version line so qualified 0.7 packages can
+  be published, and align the pre-release documentation labels.
+
 - Native MCP handoffs retain connected sockets until the receiving worker
   confirms adoption, preventing intermittent initialization failures on macOS.
 
