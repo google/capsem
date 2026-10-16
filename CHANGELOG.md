@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Private network cable answers require the exact handoff token, frame kind
   and one connected stream descriptor before service adoption or switch grants.
 
+### Added
+
+- The Python SDK adds `vm.files.upload(path, data)` and
+  `vm.files.download(path, max_bytes=...)` for multi-part file transfers above
+  `MAX_REQUEST_BODY_BYTES` (`10 MiB`) and guest paths outside the Files API
+  workspace root, using direct single-request `files.write` / `files.read` when
+  a workspace path fits in one part and falling back to staged part transfers
+  otherwise, and raising `ValueError` when a download exceeds `max_bytes`.
+
 ### Fixed
 
 - Private network cable handoffs retain the original socket until service
