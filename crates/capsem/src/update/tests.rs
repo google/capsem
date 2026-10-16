@@ -1507,6 +1507,30 @@ fn binary_installer_apply_plan_rejects_unknown_layout() {
     );
 }
 
+async fn installer_http_server(payload: &[u8]) -> (std::net::SocketAddr, tokio::task::JoinSet<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let payload = bytes::Bytes::copy_from_slice(payload);
+    // Own the listener until the client arrives, and abort on test failure. Parsing the
+    // request avoids closing a raw socket with unread headers and resetting the response.
+    let mut server = tokio::task::JoinSet::new();
+    server.spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        hyper::server::conn::http1::Builder::new()
+            .keep_alive(false)
+            .serve_connection(
+                hyper_util::rt::TokioIo::new(stream),
+                hyper::service::service_fn(move |_| {
+                    let body = http_body_util::Full::new(payload.clone());
+                    async move { Ok::<_, std::convert::Infallible>(hyper::Response::new(body)) }
+                }),
+            )
+            .await
+            .unwrap();
+    });
+    (addr, server)
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[allow(clippy::await_holding_lock)]
 async fn download_binary_installer_fetches_verifies_and_caches() {
@@ -1514,17 +1538,7 @@ async fn download_binary_installer_fetches_verifies_and_caches() {
     let home = tempfile::tempdir().unwrap();
     let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
     let payload = b"downloaded installer payload".to_vec();
-    let response_payload = payload.clone();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut request = [0_u8; 1024];
-        let _ = std::io::Read::read(&mut stream, &mut request);
-        let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", response_payload.len());
-        std::io::Write::write_all(&mut stream, header.as_bytes()).unwrap();
-        std::io::Write::write_all(&mut stream, &response_payload).unwrap();
-    });
+    let (addr, mut server) = installer_http_server(&payload).await;
     let installer = BinaryInstaller {
         name: "Capsem-99.99.99.pkg".to_string(),
         url: format!("http://{addr}/Capsem-99.99.99.pkg"),
@@ -1535,7 +1549,11 @@ async fn download_binary_installer_fetches_verifies_and_caches() {
     };
 
     let path = download_binary_installer(&installer).await.unwrap();
-    server.join().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), server.join_next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 
     assert_eq!(
         path,
@@ -1584,32 +1602,7 @@ fn binary_installer_cache_is_manifest_digest_addressed_and_channel_independent()
 async fn corrupt_cached_binary_installer_is_discarded_and_refetched() {
     let home = tempfile::tempdir().unwrap();
     let payload = b"replacement installer payload".to_vec();
-    let response_payload = payload.clone();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let server = std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        loop {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let mut request = [0_u8; 1024];
-                    let _ = std::io::Read::read(&mut stream, &mut request);
-                    let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", response_payload.len());
-                    std::io::Write::write_all(&mut stream, header.as_bytes()).unwrap();
-                    std::io::Write::write_all(&mut stream, &response_payload).unwrap();
-                    return true;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    if std::time::Instant::now() >= deadline {
-                        return false;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Err(error) => panic!("accept installer request: {error}"),
-            }
-        }
-    });
+    let (addr, mut server) = installer_http_server(&payload).await;
     let installer = BinaryInstaller {
         name: "Capsem.pkg".to_string(),
         url: format!("http://{addr}/Capsem.pkg"),
@@ -1626,11 +1619,13 @@ async fn corrupt_cached_binary_installer_is_discarded_and_refetched() {
     std::fs::create_dir_all(target.parent().unwrap()).unwrap();
     std::fs::write(&target, b"corrupt").unwrap();
 
-    let result = download_binary_installer_at(home.path(), &installer).await;
-    let fetched = server.join().unwrap();
-    let path = result.unwrap();
+    let path = download_binary_installer_at(home.path(), &installer).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), server.join_next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 
-    assert!(fetched, "corrupt cache entry must trigger an artifact fetch");
     assert_eq!(path, target);
     assert_eq!(std::fs::read(path).unwrap(), payload);
 }
