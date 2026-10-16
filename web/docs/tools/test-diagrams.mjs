@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { systemOverview, securityEngine, investigation } from '../src/lib/overview-diagrams.ts';
+import { introduction, systemOverview, securityEngine, investigation } from '../src/lib/overview-diagrams.ts';
 import { securityProcesses, securityNetwork } from '../src/lib/diagrams.ts';
 import { diagramLegend, nodeMeaning, semantics } from '../../diagrams/semantics.ts';
 import { SECURITY_DIAGRAM } from '../../marketing/src/lib/data.ts';
 
-const diagrams = [systemOverview, securityEngine, investigation, securityProcesses, securityNetwork, SECURITY_DIAGRAM];
+const diagrams = [introduction, systemOverview, securityEngine, investigation, securityProcesses, securityNetwork, SECURITY_DIAGRAM];
 
 test('distinct diagram meanings use distinct Tailwind color families', () => {
   for (const diagram of diagrams) {

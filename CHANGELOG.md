@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Add a compact conceptual diagram to Intro showing interfaces, Capsem, and container images inside isolated Linux VMs.
+
 - Introduce each published documentation page with its purpose and scope, put prerequisites before dependent examples, and clarify the writing guidance on explanations before details.
 
 - Use a shared JointJS viewer across all published documentation diagrams and the marketing security diagram; remove the production Mermaid renderer.

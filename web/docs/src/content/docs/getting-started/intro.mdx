@@ -8,6 +8,9 @@ next:
   link: /getting-started/installation/
 ---
 
+import Diagram from '@capsem/diagrams/Diagram.astro';
+import { introduction } from '../../../lib/overview-diagrams';
+
 Capsem runs AI agents and tools from container images inside isolated Linux
 VMs on your computer. It provides a security layer for inspecting requests,
 applying access rules, and recording activity.
@@ -16,6 +19,10 @@ Like Docker, Capsem runs as a service that you can control from command-line
 tools or code. Use it for interactive work through the terminal interface
 (TUI) or graphical Capsem UI, or integrate it into your own product and
 evaluation workflows with the Python, TypeScript, or Rust SDK.
+
+<div style="max-width: 26rem; margin-inline: auto;">
+  <Diagram diagram={introduction} />
+</div>
 
 ## Install Capsem
 

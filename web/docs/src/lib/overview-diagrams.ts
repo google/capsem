@@ -1,5 +1,20 @@
 import type { Diagram } from '@capsem/diagrams/types';
 
+export const introduction: Diagram = {
+  title: 'Capsem at a glance', width: 420, height: 330,
+  description: 'Use the TUI, Capsem UI, SDK, or an AI agent via MCP to run container images inside isolated Linux VMs with Capsem.',
+  nodes: [
+    { id: 'clients', label: 'TUI · Capsem UI · SDK\nAI agent via MCP', x: 20, y: 15, width: 380, height: 62 },
+    { id: 'capsem', label: 'Capsem\nControls access · records activity', x: 60, y: 113, width: 300, height: 62, tone: 'processing' },
+    { id: 'vm', label: 'ISOLATED LINUX VMs', x: 20, y: 215, width: 380, height: 100, boundary: 'vm' },
+    { id: 'workload', label: 'Your container images\nAgents and tools', x: 45, y: 252, width: 330, height: 50 },
+  ],
+  links: [
+    { from: 'clients', to: 'capsem', label: 'use' },
+    { from: 'capsem', to: 'vm', label: 'runs' },
+  ],
+};
+
 export const systemOverview: Diagram = {
   title: 'Control and data', width: 1020, height: 1500,
   nodes: [
