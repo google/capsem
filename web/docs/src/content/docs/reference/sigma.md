@@ -3,9 +3,10 @@ title: Sigma syntax
 description: Which Sigma fields, conditions, and actions does Capsem support?
 ---
 
-Capsem loads a subset of [Sigma's YAML rule format](https://sigmahq.io/docs/basics/rules.html)
-and compiles it into its shared security rule set. This reference covers the
-complete supported format. For a procedure, see
+This reference describes the subset of [Sigma's YAML rule format](https://sigmahq.io/docs/basics/rules.html)
+that Capsem supports for detections. It covers rule fields, selections,
+conditions, actions, and file configuration, including defaults that can
+affect access. For a procedure, see
 [Write detection rules](/guides/enterprise/write-detection-rules/).
 
 ## Rule fields

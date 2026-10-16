@@ -3,6 +3,11 @@ title: Manifest reference
 description: Which manifests describe Capsem releases, runtime assets, and corporate distributions?
 ---
 
+This reference explains the manifests used to describe Capsem releases, VM
+runtime assets, and corporate distributions. It covers their fields,
+relationships, validation, and channel selection so you can identify the
+document that controls a package or runtime update.
+
 A release manifest selects host packages and the VM runtime. It does not
 configure agents or replace corporate security policy. OCI application images
 are separate from the kernel/initrd/rootfs used to boot a VM.

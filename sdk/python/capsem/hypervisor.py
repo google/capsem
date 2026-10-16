@@ -11,6 +11,7 @@ from ._connections import Connections
 from ._credentials import Credentials
 from ._debug import Debug
 from ._images import Images
+from ._local import local_connection
 from ._mcp import Mcp
 from ._networks import Networks
 from .execution import (
@@ -66,7 +67,11 @@ def _provision_request(*, name: str = "", cpus: int | None = None,
 
 
 class Hypervisor(Client):
-    def __init__(self, url: str, token: str, *, timeout: float = 30) -> None:
+    def __init__(self, url: str | None = None, token: str | None = None, *, timeout: float = 30) -> None:
+        if url is None and token is None:
+            url, token = local_connection()
+        elif url is None or token is None:
+            raise ValueError("provide both gateway URL and token, or neither for local Capsem")
         super().__init__(url, token, timeout=timeout)
         self.networks = Networks(self._transport)
         self.mcp = Mcp(self._transport)

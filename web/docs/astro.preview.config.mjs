@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import tailwindcss from '@tailwindcss/vite';
 import { unified } from '@astrojs/markdown-remark';
 
 const links = (...slugs) => slugs.map((slug) => ({ slug }));
@@ -20,6 +21,7 @@ export default defineConfig({
   site: 'https://docs.capsem.org',
   srcDir: './preview',
   cacheDir: './.astro/preview-cache',
+  vite: { plugins: [tailwindcss()] },
   redirects: {
     '/': '/getting-started/intro/',
     '/getting-started/': '/getting-started/intro/',

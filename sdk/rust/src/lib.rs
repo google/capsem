@@ -7,6 +7,7 @@ mod credentials;
 mod error;
 mod hypervisor;
 mod images;
+mod local;
 mod managed;
 pub use connections::{Connections, CredentialGrants};
 pub use credentials::Credentials;

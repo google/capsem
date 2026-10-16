@@ -5,6 +5,13 @@
   "type": "module",
   "engines": {"node": ">=20"},
   "files": ["dist", "README.md"],
+  "imports": {
+    "#local": {
+      "browser": "./dist/local-browser.js",
+      "node": "./dist/local-node.js",
+      "default": "./dist/local-browser.js"
+    }
+  },
   "exports": {
     ".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"},
     "./models": {"types": "./dist/models/index.d.ts", "import": "./dist/models/index.js"},

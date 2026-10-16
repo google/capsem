@@ -14,6 +14,18 @@ pub struct Hypervisor {
 }
 
 impl Hypervisor {
+    /// Connect to the installed local gateway without copying its URL or token.
+    /// Reconstruct after a service restart to read the new credentials.
+    pub fn local() -> Result<Self> {
+        Self::local_in(&capsem_foundation::paths::capsem_run_dir())
+    }
+
+    /// Connect through metadata in a custom runtime directory, always on loopback.
+    pub fn local_in(run_dir: &std::path::Path) -> Result<Self> {
+        let (url, token) = crate::local::connection(run_dir)?;
+        Self::new(&url, &token)
+    }
+
     fn memory_mb(memory: Option<u64>) -> Result<Option<u64>> {
         memory
             .map(|gib| {

@@ -3,9 +3,10 @@ title: Write detection rules
 description: How do I write Sigma rules to detect activity in Capsem?
 ---
 
-Use Sigma rules to record activity that matches particular security-event
-fields. This guide detects requests to a destination and calls to selected
-MCP tools. You need an installed Capsem and permission to change user rules.
+This guide shows how to write Sigma rules that detect requests to a destination
+and calls to selected MCP tools, then check the recorded matches. Detections
+identify activity; the examples record it without changing access decisions.
+You need an installed Capsem and permission to change user rules.
 
 ## Create a detection
 

@@ -3,8 +3,9 @@ title: Deploy Capsem in your enterprise
 description: How do I deploy Capsem with centrally managed images, policy, and reporting?
 ---
 
-Distribute the native package and a corporate policy, then verify both allowed
-and refused operations on a pilot host. You need device-management or package
+This guide explains how to deploy Capsem with centrally managed images, security
+policy, and reporting. It starts with a pilot host, checks allowed and refused
+operations, and then covers fleet rollout. You need device-management or package
 installation authority and ownership of the policy distribution endpoint.
 
 ## Choose what your organization owns

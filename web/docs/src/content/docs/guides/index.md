@@ -3,7 +3,9 @@ title: Guides
 description: Which guide helps me complete my task with Capsem?
 ---
 
-Choose the task you want to complete.
+These guides explain how to complete specific tasks with Capsem, from working
+in a VM to deploying it for a team or integrating it into an application.
+Choose the guide for your task below; planned workflows are marked explicitly.
 
 ## Users
 

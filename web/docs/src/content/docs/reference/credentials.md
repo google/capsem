@@ -3,6 +3,11 @@ title: Credentials reference
 description: How are credentials stored, granted to VMs, substituted, and revoked?
 ---
 
+This reference explains how credentials are stored on the host, granted to VMs,
+substituted into allowed requests, and revoked. It distinguishes connections,
+credential references, and VM grants so you can authorize access without
+copying secrets into a VM.
+
 The service owns credential material. A connection, a credential reference,
 and a VM grant are separate resources; saving a credential or completing
 sign-in does not by itself authorize every VM to use it.

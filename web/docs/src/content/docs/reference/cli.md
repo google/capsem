@@ -3,7 +3,9 @@ title: CLI reference
 description: What commands, arguments, and options does the Capsem CLI support?
 ---
 
-Run Capsem commands on your computer. Commands accept a VM name or immutable
+This reference describes Capsem's command-line operations for creating,
+accessing, managing, and inspecting VMs, plus service administration and
+diagnostics. Run these commands on your computer. They accept a VM name or immutable
 ID where `VM` appears below; commands explicitly taking `NAME` require a
 persistent VM name. Use `capsem COMMAND --help` for that installed version's
 complete option help.

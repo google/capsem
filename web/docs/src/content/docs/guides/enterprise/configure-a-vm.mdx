@@ -5,8 +5,9 @@ description: How do I create a VM with environment variables, files, credentials
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Create the VM with its non-secret environment, transfer its input files, and
-supply credentials through broker references. You need an already connected
+This guide shows how to configure a VM through the SDK with environment
+variables, input files, credentials, and network access. It keeps non-secret
+configuration separate from brokered credentials. You need an already connected
 SDK client named `capsem`; start with [SDK onboarding](/sdk/).
 
 The examples use a new persistent VM named `agent-work`, 2 CPU cores, and
@@ -131,7 +132,8 @@ For VMs that must communicate, create a named private network and pass the
 returned network object in each VM's `networks` option. The SDK also exposes
 attach/detach operations for existing VMs.
 
-For example, with Python and an already running `vm`:
+For example, start your service on port 8080 inside the workload first. Then,
+with Python and an already running `vm`:
 
 ```python
 network = await capsem.networks.create("evaluation")
@@ -139,8 +141,7 @@ await vm.networks.attach(network)
 port = await vm.ports.open(8080)
 ```
 
-Start your service on port 8080 inside the workload first. The returned
-`port.host` identifies the selected loopback port on your computer.
+The returned `port.host` identifies the selected loopback port on your computer.
 Close the publication with `await vm.ports.close(port)` when finished.
 
 Private-network traffic and published ports use separate relays and bypass

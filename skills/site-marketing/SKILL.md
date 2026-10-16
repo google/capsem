@@ -55,8 +55,11 @@ verify animated, paused, replay, and reduced-motion states when changing it.
 Use `@capsem/diagrams/Diagram.astro` from the shared `web/diagrams/` package.
 Keep marketing definitions and labels in `data.ts`; do not fork the viewer,
 add another renderer, or introduce JointJS+ without an explicit decision.
-Use the shared blue/violet accent tones for marketing; the security manual's
-permission-level palette serves a separate explanation.
+Use shared semantic tones from `web/diagrams/semantics.ts`, backed by Tailwind
+color tokens. Every used meaning appears in the diagram's Legend, and distinct
+meanings use distinct color families. Keep host credentials, processing, and
+VM boundaries separate; permission levels serve the security manual's
+separate explanation.
 
 Preserve hardware and process boundaries and connection direction when editing.
 Verify readable labels, zoom/pan/fit controls, the text connection table, and

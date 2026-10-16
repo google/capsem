@@ -3,9 +3,10 @@ title: CEL syntax
 description: Which CEL expressions and event fields can I use in Capsem rules?
 ---
 
-Capsem uses a subset of [Common Expression Language (CEL)](https://cel.dev/)
-in a TOML rule's `match` field. This reference covers the complete supported
-expression syntax. For a procedure, see [Enforce security policy](/guides/enterprise/enforce-security-policy/).
+This reference describes the subset of [Common Expression Language (CEL)](https://cel.dev/)
+supported in a Capsem rule's `match` field. It covers operators, functions,
+event fields, quoting, missing values, and expression limits so you can write
+valid conditions. For a procedure, see [Enforce security policy](/guides/enterprise/enforce-security-policy/).
 
 ## Operators
 

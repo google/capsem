@@ -3,8 +3,9 @@ title: Run evaluations with Inspect AI
 description: How do I run Inspect AI evaluations in Capsem?
 ---
 
-TODO: the Inspect AI integration is not installed or published yet.
-Its integration and package qualification are tracked in
+This page describes the planned workflow for running Inspect AI evaluations
+in Capsem and points to the automation available today. The Inspect AI
+integration is not installed or published yet; its qualification is tracked in
 [#342](https://github.com/google/capsem/issues/342).
 
 This guide will cover choosing an evaluation image, configuring authorized

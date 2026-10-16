@@ -1,4 +1,5 @@
 import {Client} from './client.js';
+import {localConnection} from '#local';
 import {Debug} from './debug.js';
 import {Images} from './images.js';
 import {Credentials} from './credentials.js';
@@ -29,7 +30,11 @@ export class Hypervisor extends Client {
   readonly images: Images;
   readonly credentials: Credentials;
   readonly connections: Connections;
-  constructor(url: string, token: string, options: TransportOptions = {}) {
+  constructor(url?: string, token?: string, options: TransportOptions = {}) {
+    if (url === undefined && token === undefined) [url, token] = localConnection();
+    else if (url === undefined || token === undefined) {
+      throw new TypeError('Provide both gateway URL and token, or neither for local Capsem');
+    }
     const transport = new Transport(url, token, options);
     super(transport);
     this.networks = new Networks(transport);

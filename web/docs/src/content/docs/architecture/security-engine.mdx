@@ -6,7 +6,13 @@ description: How does the security engine evaluate operations, handle credential
 import Diagram from '@capsem/diagrams/Diagram.astro';
 import { securityEngine } from '../../../lib/overview-diagrams';
 
-The security engine runs in `capsem-proxy`, a host subprocess assigned to one VM. It is responsible for:
+This page explains how Capsem's security engine inspects an operation, decides
+whether it can proceed, supplies authorized credentials, and records the result.
+It also describes where inspection and enforcement apply, so you can understand
+what a security decision does and does not protect.
+
+The engine runs in `capsem-proxy`, a host subprocess assigned to one VM.
+Its responsibilities are:
 
 - **Network analysis:** decrypt HTTPS and identify the destination, HTTP request,
   model call, or MCP tool call being made.

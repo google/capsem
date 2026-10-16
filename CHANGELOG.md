@@ -38,8 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - MCP settings refresh preserves the builtin admitted before VM-owner
   confinement, without reopening its host executable path.
+- Connect Python and Node.js SDKs to the installed local gateway without constructor arguments, and Rust through `Hypervisor::local()`, while keeping discovered credentials loopback-only and explicit remote connections unchanged; browser clients remain explicit.
 
 ### Documentation
+
+- Introduce each published documentation page with its purpose and scope, put prerequisites before dependent examples, and clarify the writing guidance on explanations before details.
 
 - Use a shared JointJS viewer across all published documentation diagrams and the marketing security diagram; remove the production Mermaid renderer.
 
@@ -49,10 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Explain how to manage multiple VMs and navigate their terminals in the TUI.
 
-- Explain Capsem’s main components and request flow in the introduction with a vertical system diagram.
+- Keep the Intro brief: explain container images, VM isolation, and the service model, then lead to installation and interactive or SDK-driven use cases; keep component diagrams in architecture.
 
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
+
+- Define diagram colors with shared semantic Tailwind tokens, include color meanings in each Legend, and distinguish process boundaries from permission levels.
 
 - Compact diagram controls inside the canvas, rename the text disclosure to Legend, and remove repeated visible library credits.
 

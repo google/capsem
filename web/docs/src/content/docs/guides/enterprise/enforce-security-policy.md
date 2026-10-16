@@ -3,9 +3,9 @@ title: Enforce security policy
 description: How do I write rules that allow or block access in Capsem?
 ---
 
-Use access rules to choose which destinations and operations a VM can use.
-This guide allows an API destination, restricts its HTTP methods, and blocks
-an MCP tool. You need an installed Capsem and permission to change user rules;
+This guide shows how to control which destinations and operations a VM can use:
+allow an API, restrict its HTTP methods, block an MCP tool, and apply a corporate
+constraint. You need an installed Capsem and permission to change user rules;
 user rules cannot override corp constraints.
 
 ## Create and load a rule file
@@ -68,6 +68,14 @@ reason = "This VM must not delete files through this MCP tool."
 This targets one tool on one server. It does not block other tools named
 `delete_file` on different servers.
 
+## Check the result
+
+Create a new VM after saving the files, then access it through the
+[TUI or Capsem UI](/getting-started/how-to-use-capsem/#access-your-vm).
+Try a GET and a POST against your chosen API. GET should be allowed; POST should
+be refused with the rule's reason. Check the recorded security decision to
+confirm which rule matched. Corp constraints can still refuse the GET.
+
 ## Enforce a corporate constraint
 
 After checking the rule on a pilot VM, put administrator constraints in your
@@ -83,18 +91,11 @@ reason = "Corporate policy permits only GET and HEAD."
 ```
 
 Select it through `[corp_rule_files].enforcement` in your corporate file,
-validate with `capsem-admin enforcement validate PATH --source corp --json`,
-and distribute both files through your administrator-owned configuration.
+then validate with `capsem-admin enforcement validate PATH --source corp --json`.
+Repeat the allowed and refused request checks on a pilot before distributing
+both files through your administrator-owned configuration.
 Corporate rules precede user rules. See
 [Deploy Capsem in your enterprise](/guides/enterprise/deploy-capsem/).
-
-## Check the result
-
-Create a new VM after saving the files, then access it through the
-[TUI or Capsem UI](/getting-started/how-to-use-capsem/#access-your-vm).
-Try a GET and a POST against your chosen API. GET should be allowed; POST should
-be refused with the rule's reason. Check the recorded security decision to
-confirm which rule matched. Corp constraints can still refuse the GET.
 
 For all operators, string functions, event fields, and quoting rules, use the
 [CEL syntax reference](/reference/cel/). To record detections, see

@@ -9,6 +9,7 @@ use crate::*;
 mod deadlines;
 mod fixture;
 mod interactions;
+mod local;
 use fixture::{gateway, reply, request};
 
 #[tokio::test]

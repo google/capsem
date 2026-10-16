@@ -5,9 +5,11 @@
   "type": "module",
   "exports": {
     "./Diagram.astro": "./Diagram.astro",
-    "./types": "./types.ts"
+    "./types": "./types.ts",
+    "./semantics": "./semantics.ts"
   },
   "dependencies": {
-    "@joint/core": "4.3.3"
+    "@joint/core": "4.3.3",
+    "tailwindcss": "4.3.3"
   }
 }
