@@ -4,6 +4,7 @@ pub use capsem_api as models;
 mod client;
 mod error;
 mod hypervisor;
+mod local;
 pub mod operations;
 mod options;
 pub mod resources;
