@@ -265,3 +265,21 @@ fn a_line_break_in_a_header_value_is_refused_by_field_name() {
         );
     }
 }
+
+#[test]
+fn gzip_chunk_encoder_streams_one_valid_gzip_member_and_unfinished_stream_fails_gunzip() {
+    let mut encoder = GzipChunkEncoder::new();
+    let mut streamed = Vec::new();
+    encoder.write_all(b"{\"line\":1}\n").expect("write first line");
+    streamed.extend_from_slice(&encoder.flush_chunk().expect("flush first chunk"));
+    encoder.write_all(b"{\"line\":2}\n").expect("write second line");
+    streamed.extend_from_slice(&encoder.flush_chunk().expect("flush second chunk"));
+    // Before finish(), the stream lacks the gzip trailer and final deflate block.
+    assert!(
+        gunzip_bytes(&streamed).is_err(),
+        "an unfinished gzip stream must fail decompression"
+    );
+    streamed.extend_from_slice(&encoder.finish().expect("finish gzip stream"));
+    let inflated = gunzip_bytes(&streamed).expect("inflate finished gzip stream");
+    assert_eq!(inflated, b"{\"line\":1}\n{\"line\":2}\n");
+}

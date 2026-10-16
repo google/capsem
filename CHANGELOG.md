@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Stream session ledger rows as gzipped NDJSON (`capsem.rows.v1`) via `GET /vms/{id}/export/rows.ndjson.gz` (with optional `?tables=` filtering) alongside generated Python, Rust, and TypeScript SDK operations.
+
+- Managed sessions retain their stopped session directory until lease close, expiry, or explicit deletion so callers can export `rows.ndjson.gz` and `bodies/export.warc.gz` after `POST /vms/{id}/stop`, and confined ledger workers spool WARC exports inside the session directory instead of `/tmp`.
+
 - Reuse the supported public release HTTP reader for client continuation and isolate npm publisher configuration from legacy registry credentials while preserving GitHub OIDC authority.
 
 - Record the deliberate async-executor1.14.1 native lock/cache identity update while preserving the original published client and native artifacts.
@@ -24,7 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Temporarily defer Inspect adapter PyPI upload and public registry consumption pending publishing authorization (#392); retain its archive and service acceptance and all core SDK/MCP publication.
 
 - Check all native package executables on PATH during public install verification, while retaining version checks for every user-prefix CLI companion; the desktop app is installed under the native system path.
-
 - Include wrapper bootstrap and teardown in process-cleanup test watchdogs on slower CI runners, retaining command deadlines and complete descendant-reaping assertions.
 
 - Isolate private supervisor managers from machine-wide environment generators so hosted runtime-directory defaults cannot contaminate the installed service's D-Bus address.

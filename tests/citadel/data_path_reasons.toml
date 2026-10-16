@@ -453,7 +453,10 @@ json = { count = 3, reason = "db-json" }
 json = { count = 1, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/ledger_server/queries.rs"]
-json = { count = 13, reason = "db-json" }
+json = { count = 17, reason = "db-json" }
+
+[sources."crates/capsem-service/src/ledger_routes/rows_export.rs"]
+json = { count = 7, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/lib.rs"]
 hash = { count = 2, reason = "hash-archive" }
