@@ -40,7 +40,9 @@ fn main() {
 }
 
 fn write_runtime_limits() {
-    let config_path = PathBuf::from("../../config/data/runtime-limits.toml");
+    // Cargo packages the canonical config symlink as a regular file, so
+    // registry consumers generate the same constants without our checkout.
+    let config_path = PathBuf::from("runtime-limits.toml");
     let source = std::fs::read_to_string(&config_path)
         .unwrap_or_else(|error| panic!("runtime limits: read {}: {error}", config_path.display()));
     let config: toml::Value = toml::from_str(&source)

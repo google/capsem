@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rust SDK registry dependencies include their canonical runtime limits, so
+  building them does not require the Capsem source checkout.
+
 - The npm MCP server reports its installed package version in protocol handshakes.
 
 - Inspect requires the SDK version providing its labels and typed-error APIs,
