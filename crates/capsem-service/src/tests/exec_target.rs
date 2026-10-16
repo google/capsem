@@ -99,6 +99,24 @@ async fn a_session_without_a_workload_execs_in_the_vm_and_refuses_a_workload_tar
     );
 }
 
+fn sleep_reply(msg: &ServiceToProcess) -> FakeProcessReply {
+    let sleep = matches!(msg, ServiceToProcess::Exec { command, .. } if command == "sleep");
+    Box::pin(async move {
+        if sleep {
+            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        }
+        None
+    })
+}
+
+#[tokio::test]
+async fn one_shot_timeout_owner_child() {
+    let Some(socket) = std::env::var_os("CAPSEM_EXEC_TIMEOUT_OWNER") else {
+        return;
+    };
+    spawn_fake_process(StdPath::new(&socket), 2, sleep_reply).await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
@@ -106,43 +124,32 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
     let (_settings_guard, _, _) = install_empty_settings_env(&settings_dir);
     let dir = tempfile::tempdir().unwrap();
     let mut state = make_test_state_owned();
+    install_test_ledger_worker(&mut state, dir.path());
     let sleep_bin = state.run_dir.join("sleep-proc.sh");
-    std::fs::write(&sleep_bin, "#!/bin/sh\nsleep 2\n").unwrap();
+    // The socket must belong to the PID provision_sandbox actually spawned.
+    // Serving it in this parent beside an unrelated sleep child correctly
+    // fails the worker-authority check before reaching the exec timeout.
+    let executable = std::env::current_exe().unwrap();
+    let quoted = format!("'{}'", executable.to_string_lossy().replace('\'', "'\"'\"'"));
+    let script = format!(
+        "#!/bin/sh\nsocket=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then shift; socket=$1; fi\n  shift\ndone\nCAPSEM_EXEC_TIMEOUT_OWNER=\"$socket\" exec {quoted} --exact tests::exec_target::one_shot_timeout_owner_child --nocapture\n"
+    );
+    std::fs::write(&sleep_bin, script).unwrap();
     #[cfg(unix)]
     std::fs::set_permissions(&sleep_bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     state.process_binary = sleep_bin;
     let state = Arc::new(state);
     install_test_runtime_assets(&state);
     let st = || State(Arc::clone(&state));
-    let sleep_handler = |msg: &ServiceToProcess| -> FakeProcessReply {
-        let sleep = matches!(msg, ServiceToProcess::Exec { command, .. } if command == "sleep");
-        Box::pin(async move {
-            if sleep {
-                tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-            }
-            None
-        })
-    };
-    let watcher = Arc::clone(&state);
-    let run_owner = tokio::spawn(async move {
-        let uds = loop {
-            if let Some(info) = watcher.instances.lock().unwrap().values().next() {
-                break info.uds_path.clone();
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        };
-        spawn_fake_process(&uds, 2, sleep_handler).await.unwrap()
-    });
     let run_req: RunRequest = serde_json::from_value(json!({"command": "sleep", "timeout_secs": 1})).unwrap();
     let run_err = handle_run(st(), Json(run_req)).await.unwrap_err();
-    assert_eq!(run_err.status, StatusCode::GATEWAY_TIMEOUT);
+    assert_eq!(run_err.status, StatusCode::GATEWAY_TIMEOUT, "{run_err:?}");
     assert_eq!(run_err.body.code, Some(ErrorCode::ExecTimeout));
     assert_eq!(run_err.body.timeout_secs, Some(1));
     assert_eq!(run_err.body.error, "exec failed: IPC command timed out after 1s");
-    let _ = run_owner.await;
 
     let uds_path = dir.path().join("exec.sock");
-    let owner = spawn_fake_process(&uds_path, 2, sleep_handler);
+    let owner = spawn_fake_process(&uds_path, 2, sleep_reply);
     setup_vm_with_workspace_and_uds(&state, dir.path(), "plain-vm", uds_path.clone());
     let plain = || Path("plain-vm".to_string());
     let req = |cmd: &str, t: u64| {
