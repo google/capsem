@@ -207,6 +207,8 @@ fn fully_populated_security_event() -> SecurityEvent {
             exec_path: text(),
             name: text(),
             command: text(),
+            user: text(),
+            cwd: text(),
             exit_code: text(),
             stdout: text(),
             stderr: text(),

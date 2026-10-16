@@ -320,7 +320,7 @@ at all -- `has(http.valid)`, not `has(http)`.
 | `file.create` | `file.create.valid`, `file.create.path`, `file.create.name`, `file.create.ext`, `file.create.mime_type`, `file.create.content` |
 | `file.write` | `file.write.valid`, `file.write.path`, `file.write.name`, `file.write.ext`, `file.write.mime_type`, `file.write.content` |
 | `file.delete` | `file.delete.valid`, `file.delete.path`, `file.delete.name`, `file.delete.ext`, `file.delete.mime_type`, `file.delete.content` |
-| `process` | `process.valid`, `process.name`, `process.command`, `process.exec.valid`, `process.exec.id`, `process.exec.path`, `process.exec.exit_code`, `process.exec.stdout`, `process.exec.stderr`, `process.audit.valid` |
+| `process` | `process.valid`, `process.name`, `process.command`, `process.exec.valid`, `process.exec.id`, `process.exec.path`, `process.exec.user`, `process.exec.cwd`, `process.exec.exit_code`, `process.exec.stdout`, `process.exec.stderr`, `process.audit.valid` |
 | `ip` | `ip.valid`, `ip.value`, `ip.version` |
 | `tcp` | `tcp.valid`, `tcp.port` |
 | `udp` | `udp.valid`, `udp.port` |

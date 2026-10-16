@@ -1116,6 +1116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Private network cable answers require the exact handoff token, frame kind
   and one connected stream descriptor before service adoption or switch grants.
 
+### Added
+
+- `POST /vms/{id}/exec` and `vm.exec(...)` in the Python, TypeScript, and Rust
+  SDKs accept optional `user` (`name`, `uid`, `name:group`, or `uid:gid`) and
+  `cwd` (`/`-rooted path) fields, running workload commands via the OCI `runc exec`
+  process spec and VM commands after ledger recording, `process.exec.user` /
+  `process.exec.cwd` CEL policy evaluation, and human approval gate enforcement.
+
 ### Fixed
 
 - Clear obsolete app-download errors after preparation recovers, while keeping

@@ -509,6 +509,8 @@ impl DbReader {
                     .map_err(|error| {
                         rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, error.into())
                     })?,
+                user: None,
+                cwd: None,
                 trace_id: row.get(4)?,
                 process_name: row.get(5)?,
                 credential_ref: row.get(6)?,

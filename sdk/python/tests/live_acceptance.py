@@ -41,6 +41,20 @@ async def main() -> None:
             executed = await vm.exec("sha256sum /root/sdk-proof.bin; printf SDK_STDERR >&2; exit 7")
             assert executed.exit_code == 7 and executed.stdout.data.split()[0] == digest
             assert executed.stderr.data == "SDK_STDERR"
+            as_nobody = await vm.exec("id -u; id -g; pwd", user="nobody", cwd="/tmp")
+            assert as_nobody.exit_code == 0, as_nobody
+            nobody_lines = as_nobody.stdout.data.strip().splitlines()
+            assert len(nobody_lines) == 3 and nobody_lines[0] != "0" and nobody_lines[2] == "/tmp", nobody_lines
+            as_uid_gid = await vm.exec("id -u; id -g; pwd", user="65534:65534", cwd="/var/tmp")
+            assert as_uid_gid.exit_code == 0 and as_uid_gid.stdout.data.strip().splitlines() == [
+                "65534", "65534", "/var/tmp",
+            ], as_uid_gid
+            as_root = await vm.exec("id -u; id -g; pwd", user="0:0", cwd="/tmp")
+            assert as_root.exit_code == 0 and as_root.stdout.data.strip().splitlines() == [
+                "0", "0", "/tmp",
+            ], as_root
+            unknown_user = await vm.exec("echo unreachable", user="no_such_capsem_user_99999")
+            assert unknown_user.exit_code == 125 and "unknown user" in unknown_user.stderr.data, unknown_user
             assert isinstance(await vm.log(tail=10), models.LogsResponse)
             assert isinstance(await hv.log(tail=10), models.HostLogsResponse)
             assert isinstance(await vm.history(limit=10), models.HistoryResponse)

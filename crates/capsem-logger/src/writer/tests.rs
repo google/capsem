@@ -846,32 +846,29 @@ fn exec_event_insert_then_update_roundtrip() {
         let writer = DbWriter::open(&db_path, 64).unwrap();
         let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
         rt.block_on(async {
-            writer
-                .write(WriteOp::ExecEvent(crate::events::ExecEvent {
-                    event_id: None,
-                    timestamp: std::time::SystemTime::now(),
-                    exec_id: 42,
-                    command: "ls -la".into(),
-                    source: "mcp".into(),
-                    target: capsem_proto::ipc::ExecTarget::Workload,
-                    trace_id: Some("t1".into()),
-                    process_name: Some("capsem".into()),
-                    credential_ref: None,
-                }))
-                .await;
-
-            writer
-                .write(WriteOp::ExecEventComplete(crate::events::ExecEventComplete {
-                    exec_id: 42,
-                    exit_code: 0,
-                    duration_ms: 120,
-                    stdout: "out".into(),
-                    stderr: Vec::new(),
-                    stdout_bytes: 128,
-                    stderr_bytes: 0,
-                    pid: Some(1234),
-                }))
-                .await;
+            writer.write(WriteOp::ExecEvent(crate::events::ExecEvent {
+                event_id: None,
+                timestamp: std::time::SystemTime::now(),
+                exec_id: 42,
+                command: "ls -la".into(),
+                source: "mcp".into(),
+                target: capsem_proto::ipc::ExecTarget::Workload,
+                user: None,
+                cwd: None,
+                trace_id: Some("t1".into()),
+                process_name: Some("capsem".into()),
+                credential_ref: None,
+            })).await;
+            writer.write(WriteOp::ExecEventComplete(crate::events::ExecEventComplete {
+                exec_id: 42,
+                exit_code: 0,
+                duration_ms: 120,
+                stdout: "out".into(),
+                stderr: Vec::new(),
+                stdout_bytes: 128,
+                stderr_bytes: 0,
+                pid: Some(1234),
+            })).await;
         });
     }
 

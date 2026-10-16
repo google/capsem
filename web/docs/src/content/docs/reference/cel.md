@@ -75,7 +75,7 @@ event. Field names are case-sensitive; unknown names are rejected.
 | MCP | `mcp.method`, `mcp.server.name`, `mcp.server.valid`, `mcp.tool_call.name`, `mcp.tool_call.valid`, `mcp.tool_list`, `mcp.tool_list.valid`, `mcp.request.id`, `mcp.request.method`, `mcp.request.arguments`, `mcp.request.valid`, `mcp.response.content`, `mcp.response.valid`, `mcp.event.valid`, `mcp.valid` |
 | Container | `container.image`, `container.registry`, `container.digest`, `container.valid` |
 | IP / transport | `ip.value`, `ip.version`, `ip.valid`, `tcp.port`, `tcp.valid`, `udp.port`, `udp.valid` |
-| Process | `process.name`, `process.command`, `process.valid`, `process.audit.valid`, `process.exec.id`, `process.exec.path`, `process.exec.stdout`, `process.exec.stderr`, `process.exec.exit_code`, `process.exec.valid` |
+| Process | `process.name`, `process.command`, `process.valid`, `process.audit.valid`, `process.exec.id`, `process.exec.path`, `process.exec.user`, `process.exec.cwd`, `process.exec.stdout`, `process.exec.stderr`, `process.exec.exit_code`, `process.exec.valid` |
 | File | `file.kind`, `file.content`, `file.valid`; for each operation `create`, `delete`, `export`, `import`, `read`, `write`: `file.<operation>.content`, `.ext`, `.mime_type`, `.name`, `.path`, `.valid` |
 | Network | `network.action`, `network.id`, `network.mode`, `network.name`, `network.protocol`, `network.publication.id`, `network.side`, `network.target`, `network.valid`; for each endpoint `source`, `destination`: `network.<endpoint>.generation`, `.ip`, `.port`, `.vm_id`, `.vm_name` |
 

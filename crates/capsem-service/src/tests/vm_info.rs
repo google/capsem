@@ -357,6 +357,8 @@ async fn list_reports_totals_for_a_stopped_persistent_vm_and_none_without_a_ledg
         command: "true".into(),
         source: "api".into(),
         target: capsem_proto::ipc::ExecTarget::Vm,
+        user: None,
+        cwd: None,
         trace_id: None,
         process_name: None,
         credential_ref: None,

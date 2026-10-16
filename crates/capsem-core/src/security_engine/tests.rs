@@ -277,6 +277,8 @@ fn exec_write(credential_ref: Option<&str>) -> WriteOp {
         command: "true".to_string(),
         source: "api".to_string(),
         target: capsem_proto::ipc::ExecTarget::Vm,
+        user: None,
+        cwd: None,
         trace_id: Some("trace".to_string()),
         process_name: None,
         credential_ref: credential_ref.map(str::to_string),

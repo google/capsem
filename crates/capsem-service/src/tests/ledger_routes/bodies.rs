@@ -316,6 +316,8 @@ async fn the_stats_list_names_exec_output_bodies() {
             command: "echo hi".to_string(),
             source: "api".to_string(),
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
             trace_id: None,
             process_name: Some("bash".to_string()),
             credential_ref: None,

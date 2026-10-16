@@ -321,6 +321,8 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
             id: 10,
             command: "printf ok".to_string(),
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
         })
         .await
         .unwrap();
@@ -404,6 +406,8 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
             id: 17,
             command: "false".to_string(),
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
         })
         .await
         .unwrap();
@@ -436,6 +440,8 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
             id: 18,
             command: "closed".to_string(),
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
         })
         .await
         .unwrap();
@@ -787,6 +793,8 @@ fn classify_exec() {
             id: 1,
             command: "ls".into(),
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
         }),
         IpcAction::Job
     );

@@ -135,7 +135,41 @@ fn summary(event: &SecurityEvent) -> String {
                 .unwrap_or("operation")
         );
     }
+    if event.event_type == RuntimeSecurityEventType::ProcessExec {
+        if let Some(process) = &event.process {
+            let mut qualifiers = Vec::new();
+            if let Some(user) = process.user.as_deref() {
+                qualifiers.push(format!("user={}", sanitize_display_token(user)));
+            }
+            if let Some(cwd) = process.cwd.as_deref() {
+                qualifiers.push(format!("cwd={}", sanitize_display_token(cwd)));
+            }
+            if !qualifiers.is_empty() {
+                let raw = format!("{} operation ({})", event.event_type.as_str(), qualifiers.join(", "));
+                return truncate_display(raw, 256);
+            }
+        }
+    }
     format!("{} operation", event.event_type.as_str())
+}
+
+fn sanitize_display_token(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect()
+}
+
+fn truncate_display(mut value: String, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    value
 }
 
 /// Conservative retained copies for proxy semantic bodies and request heads.

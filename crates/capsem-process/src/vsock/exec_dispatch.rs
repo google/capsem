@@ -25,16 +25,74 @@ pub(super) struct ExecDispatch {
     pub(super) approvals: Option<Arc<capsem_core::security_engine::approval::client::ApprovalCapability>>,
 }
 
+const VM_USER_SWITCH_SCRIPT: &str = concat!(
+    "_u=$1; _c=$2; _g=\"\"; ",
+    "case \"$_u\" in *:*) _g=${_u#*:}; _u=${_u%%:*};; esac; ",
+    "case \"$_u\" in ''|*[!0-9]*) ",
+    "_pw=$(getent passwd \"$_u\" 2>/dev/null || grep -E \"^${_u}:\" /etc/passwd 2>/dev/null | head -n 1); ",
+    "[ -n \"$_pw\" ] || { echo \"capsem: unknown user: $_u\" >&2; exit 125; }; ",
+    "_uid=$(printf '%s' \"$_pw\" | cut -d: -f3); _gid=$(printf '%s' \"$_pw\" | cut -d: -f4); _un=\"$_u\";; ",
+    "*) _uid=\"$_u\"; ",
+    "_pw=$(getent passwd \"$_uid\" 2>/dev/null || grep -E \"^[^:]*:[^:]*:${_uid}:\" /etc/passwd 2>/dev/null | head -n 1); ",
+    "_un=$(printf '%s' \"$_pw\" | cut -d: -f1); _gid=$(printf '%s' \"$_pw\" | cut -d: -f4); ",
+    "[ -n \"$_gid\" ] || _gid=0;; esac; ",
+    "if [ -n \"$_g\" ]; then case \"$_g\" in ''|*[!0-9]*) ",
+    "_gr=$(getent group \"$_g\" 2>/dev/null || grep -E \"^${_g}:\" /etc/group 2>/dev/null | head -n 1); ",
+    "[ -n \"$_gr\" ] || { echo \"capsem: unknown group: $_g\" >&2; exit 125; }; ",
+    "_gid=$(printf '%s' \"$_gr\" | cut -d: -f3);; ",
+    "*) _gid=\"$_g\";; esac; fi; ",
+    "_hm=$(printf '%s' \"$_pw\" | cut -d: -f6); ",
+    "export HOME=\"${_hm:-/}\" USER=\"${_un:-$_uid}\" LOGNAME=\"${_un:-$_uid}\"; ",
+    "_sh=/bin/bash; [ -x \"$_sh\" ] || _sh=/bin/sh; ",
+    "if [ -n \"$_un\" ] && [ -z \"$_g\" ]; then exec su -m \"$_un\" -s \"$_sh\" -c \"$_c\"; fi; ",
+    "exec setpriv --reuid=\"$_uid\" --regid=\"$_gid\" --clear-groups \"$_sh\" -c \"$_c\"",
+);
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+fn is_vm_root_user(user: &str) -> bool {
+    matches!(user, "root" | "0" | "root:root" | "0:0" | "root:0" | "0:root")
+}
+
 /// The command the guest agent runs for `command` in `target`.
-pub(super) fn guest_command(command: String, target: ExecTarget) -> String {
+pub(super) fn guest_command(
+    command: String,
+    target: ExecTarget,
+    user: Option<&str>,
+    cwd: Option<&str>,
+) -> String {
     match target {
-        ExecTarget::Vm => command,
-        ExecTarget::Workload => capsem_core::container::workload_exec_command(&command),
+        ExecTarget::Vm => {
+            let inner = match cwd {
+                Some(dir) => format!("cd -- {} && exec bash -c {}", shell_quote(dir), shell_quote(&command)),
+                None => command,
+            };
+            match user.filter(|u| !is_vm_root_user(u)) {
+                Some(user_spec) => format!(
+                    "/bin/sh -c {} sh {} {}",
+                    shell_quote(VM_USER_SWITCH_SCRIPT),
+                    shell_quote(user_spec),
+                    shell_quote(&inner)
+                ),
+                None => inner,
+            }
+        }
+        ExecTarget::Workload => capsem_core::container::workload_exec_command_with(&command, user, cwd),
     }
 }
 
 impl ExecDispatch {
-    pub(super) fn spawn(&self, calls: &mut tokio::task::JoinSet<()>, id: u64, command: String, target: ExecTarget) {
+    pub(super) fn spawn(
+        &self,
+        calls: &mut tokio::task::JoinSet<()>,
+        id: u64,
+        command: String,
+        target: ExecTarget,
+        user: Option<String>,
+        cwd: Option<String>,
+    ) {
         while calls.try_join_next().is_some() {}
         let Some(cancellation) = self.cancellation(id) else {
             return;
@@ -46,7 +104,11 @@ impl ExecDispatch {
             return;
         }
         let dispatch = self.clone();
-        calls.spawn(async move { dispatch.dispatch_original(id, command, target, cancellation).await });
+        calls.spawn(async move {
+            dispatch
+                .dispatch_original(id, command, target, user, cwd, cancellation)
+                .await
+        });
     }
 
     fn cancellation(&self, id: u64) -> Option<Arc<tokio_util::sync::CancellationToken>> {
@@ -59,11 +121,19 @@ impl ExecDispatch {
     }
 
     #[cfg(test)]
-    pub(super) async fn dispatch(&self, id: u64, command: String, target: ExecTarget) {
+    pub(super) async fn dispatch(
+        &self,
+        id: u64,
+        command: String,
+        target: ExecTarget,
+        user: Option<String>,
+        cwd: Option<String>,
+    ) {
         let Some(cancellation) = self.cancellation(id) else {
             return;
         };
-        self.dispatch_original(id, command, target, cancellation).await;
+        self.dispatch_original(id, command, target, user, cwd, cancellation)
+            .await;
     }
 
     async fn dispatch_original(
@@ -71,11 +141,16 @@ impl ExecDispatch {
         id: u64,
         command: String,
         target: ExecTarget,
+        user: Option<String>,
+        cwd: Option<String>,
         cancellation: Arc<tokio_util::sync::CancellationToken>,
     ) {
-        if cancellation.is_cancelled()
-            || command.len().saturating_mul(4) > capsem_proto::APPROVAL_HELD_BYTES_PER_REQUEST
-        {
+        let held_bytes = command
+            .len()
+            .saturating_add(user.as_ref().map_or(0, String::len))
+            .saturating_add(cwd.as_ref().map_or(0, String::len))
+            .saturating_mul(4);
+        if cancellation.is_cancelled() || held_bytes > capsem_proto::APPROVAL_HELD_BYTES_PER_REQUEST {
             self.refuse(
                 id,
                 &cancellation,
@@ -105,6 +180,8 @@ impl ExecDispatch {
                 command: command.clone(),
                 source: "api".into(),
                 target,
+                user: user.clone(),
+                cwd: cwd.clone(),
                 trace_id,
                 process_name: None,
                 credential_ref: None,
@@ -113,7 +190,7 @@ impl ExecDispatch {
         .await;
         if let Ok(Some(emission)) = &mut boundary {
             let result = self
-                .resolve_approval(id, emission, command.len().saturating_mul(4), &cancellation)
+                .resolve_approval(id, emission, held_bytes, &cancellation)
                 .await;
             if let Err(error) = result {
                 boundary = Err(error);
@@ -123,6 +200,15 @@ impl ExecDispatch {
                 emission.enforcement.action = capsem_core::security_engine::SecurityEnforcementAction::Block;
                 emission.event.decision.effective = capsem_core::security_engine::SecurityDecisionKind::Block;
                 emission.enforcement.reason = Some("policy changed while execution was pending".into());
+            } else if emission.event.process.as_ref().is_none_or(|process| {
+                process.command.as_deref() != Some(command.as_str())
+                    || process.user.as_deref() != user.as_deref()
+                    || process.cwd.as_deref() != cwd.as_deref()
+            }) {
+                emission.enforcement.action = capsem_core::security_engine::SecurityEnforcementAction::Block;
+                emission.event.decision.effective = capsem_core::security_engine::SecurityDecisionKind::Block;
+                emission.enforcement.reason =
+                    Some("execution context changed while approval was pending".into());
             }
         }
         // The command has not reached the guest yet, so a non-allow decision
@@ -132,7 +218,7 @@ impl ExecDispatch {
             self.refuse(id, &cancellation, refusal);
             return;
         }
-        let command = guest_command(command, target);
+        let command = guest_command(command, target, user.as_deref(), cwd.as_deref());
         let frame = match crate::guest_control::Prepared::new(&HostToGuest::Exec { id, command }) {
             Ok(frame) => frame,
             Err(error) => {

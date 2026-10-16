@@ -12,5 +12,7 @@ from .model_base import Model
 
 class ExecRequest(Model):
     command: StrictStr
+    cwd: StrictStr | None = None
     target: ExecTarget | None = None
     timeout_secs: Annotated[StrictInt, Field(ge=0)] | None = None
+    user: StrictStr | None = None

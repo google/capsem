@@ -193,6 +193,21 @@ async fn controls_and_resources_use_the_canonical_vm_routes() {
         request(&mut server, "/vms/vm-1/exec").await,
         json!({"command":"printf hello","timeout_secs":4})
     );
+    vm.exec_with(
+        "pwd",
+        ExecOptions {
+            timeout_secs: Some(4),
+            target: Some(models::ExecTarget::Vm),
+            user: Some("1000:1000".into()),
+            cwd: Some("/workspace".into()),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        request(&mut server, "/vms/vm-1/exec").await,
+        json!({"command":"pwd","timeout_secs":4,"target":"vm","user":"1000:1000","cwd":"/workspace"})
+    );
     vm.start().await.unwrap();
     request(&mut server, "/vms/vm-1/start").await;
     vm.pause().await.unwrap();

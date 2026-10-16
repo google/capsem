@@ -16,7 +16,11 @@ it('sends explicit targets and preserves the default authenticated exec body', a
       expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({command: 'printf default', timeout_secs: 12});
       await vm.exec('printf default', {timeout_secs: 12, target: null});
       expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).not.toHaveProperty('target');
-      expect(received).toHaveLength(4);
+      await vm.exec('pwd', {timeout_secs: 12, user: '1000:1000', cwd: '/workspace'});
+      expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({
+        command: 'pwd', timeout_secs: 12, user: '1000:1000', cwd: '/workspace',
+      });
+      expect(received).toHaveLength(5);
       for (const request of received) {
         expect([request.method, request.url]).toEqual(['POST', '/vms/immutable-id/exec']);
         expect(request.headers.authorization).toBe('Bearer token');

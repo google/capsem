@@ -459,9 +459,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 ServiceToProcess::UnplugCable { cable } => {
                     capsem_core::try_send!("hub_cable", hub_tx.send(HostToGuest::UnplugCable { cable }).await);
                 }
-                ServiceToProcess::Exec { id, command, target } => {
-                    exec_dispatch.spawn(&mut exec_calls, id, command, target)
-                }
+                ServiceToProcess::Exec {
+                    id,
+                    command,
+                    target,
+                    user,
+                    cwd,
+                } => exec_dispatch.spawn(&mut exec_calls, id, command, target, user, cwd),
                 ServiceToProcess::CancelExec { id } => {
                     js_for_cmd.cancel_exec(id);
                     let cancellation_id = js_for_cmd

@@ -246,7 +246,7 @@ json = { count = 16, reason = "container" }
 json = { count = 4, reason = "container" }
 
 [sources."crates/capsem-core/src/container.rs"]
-json = { count = 2, reason = "container" }
+json = { count = 4, reason = "container" }
 
 [sources."crates/capsem-core/src/credential_broker.rs"]
 json = { count = 5, reason = "mcp" }

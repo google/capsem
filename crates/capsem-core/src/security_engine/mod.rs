@@ -320,12 +320,11 @@ pub async fn emit_substitution_security_write_and_rules(
 pub fn security_event_from_exec_event(event: &ExecEvent) -> SecurityEvent {
     let security_event = SecurityEvent::new(RuntimeSecurityEventType::ProcessExec).with_process(ProcessSecurityEvent {
         exec_id: Some(event.exec_id.to_string()),
-        exec_path: None,
         name: event.process_name.clone(),
         command: Some(event.command.clone()),
-        exit_code: None,
-        stdout: None,
-        stderr: None,
+        user: event.user.clone(),
+        cwd: event.cwd.clone(),
+        ..Default::default()
     });
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
@@ -336,12 +335,10 @@ pub fn security_event_from_exec_event(event: &ExecEvent) -> SecurityEvent {
 pub fn security_event_from_exec_complete_event(event: &ExecEventComplete) -> SecurityEvent {
     SecurityEvent::new(RuntimeSecurityEventType::ProcessExecComplete).with_process(ProcessSecurityEvent {
         exec_id: Some(event.exec_id.to_string()),
-        exec_path: None,
-        name: None,
-        command: None,
         exit_code: Some(event.exit_code.to_string()),
         stdout: Some(capsem_logger::output_preview(&event.stdout)),
         stderr: Some(capsem_logger::output_preview(&event.stderr)),
+        ..Default::default()
     })
 }
 
@@ -352,9 +349,7 @@ pub fn security_event_from_audit_event(event: &AuditEvent) -> SecurityEvent {
             exec_path: Some(event.exe.clone()),
             name: event.comm.clone(),
             command: Some(event.argv.clone()),
-            exit_code: None,
-            stdout: None,
-            stderr: None,
+            ..Default::default()
         });
     match event.trace_id.clone() {
         Some(trace_id) => security_event.with_trace_id(trace_id),
@@ -1469,6 +1464,10 @@ pub struct ProcessSecurityEvent {
     pub exec_path: Option<String>,
     pub name: Option<String>,
     pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     pub exit_code: Option<String>,
     pub stdout: Option<String>,
     pub stderr: Option<String>,
@@ -1479,14 +1478,14 @@ impl ProcessSecurityEvent {
         match field {
             "valid" => Some(PolicySubjectValue::Bool(true)),
             "exec.valid" => Some(PolicySubjectValue::Bool(
-                self.exec_id.is_some()
-                    || self.exec_path.is_some()
-                    || self.name.is_some()
-                    || self.command.is_some()
-                    || self.exit_code.is_some(),
+                [&self.exec_id, &self.exec_path, &self.name, &self.command, &self.user, &self.cwd, &self.exit_code]
+                    .into_iter()
+                    .any(Option::is_some),
             )),
             "exec.id" => borrowed_string(self.exec_id.as_deref()),
             "exec.path" => borrowed_string(self.exec_path.as_deref()),
+            "exec.user" => borrowed_string(self.user.as_deref()),
+            "exec.cwd" => borrowed_string(self.cwd.as_deref()),
             "exec.exit_code" => borrowed_string(self.exit_code.as_deref()),
             "exec.stdout" => borrowed_string(self.stdout.as_deref()),
             "exec.stderr" => borrowed_string(self.stderr.as_deref()),

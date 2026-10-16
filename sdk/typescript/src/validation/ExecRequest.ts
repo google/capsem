@@ -6,6 +6,8 @@ import {ExecTargetSchema} from "./ExecTarget.js";
 
 export const ExecRequestSchema: z.ZodType<ExecRequest> = z.object({
   "command": z.string(),
+  "cwd": z.string().nullable().exactOptional(),
   "target": z.union([z.null(), z.lazy(() => ExecTargetSchema)]).exactOptional(),
   "timeout_secs": z.int().min(0).nullable().exactOptional(),
+  "user": z.string().nullable().exactOptional(),
 });

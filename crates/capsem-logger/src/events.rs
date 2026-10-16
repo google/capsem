@@ -804,6 +804,10 @@ pub struct ExecEvent {
     /// is what the caller asked for in either case, never the launcher that
     /// carries it into the workload.
     pub target: capsem_proto::ipc::ExecTarget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     pub trace_id: Option<String>,
     pub process_name: Option<String>,
     #[serde(default)]

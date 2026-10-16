@@ -106,10 +106,13 @@ class VM(Client):
         return await self._call(vm_id, api.get_vm_info(self._transport, id=vm_id))
 
     async def exec(self, command: str, *, timeout_secs: int | None = None,
-                   target: models.ExecTarget | None = None) -> ExecResult:
+                   target: models.ExecTarget | None = None,
+                   user: str | None = None, cwd: str | None = None) -> ExecResult:
         body = models.ExecRequest.model_validate({
             "command": command, "timeout_secs": timeout_secs,
             **({"target": target} if target is not None else {}),
+            **({"user": user} if user is not None else {}),
+            **({"cwd": cwd} if cwd is not None else {}),
         })
         vm_id = await self._resolve()
         return await _exec_with_timeout(

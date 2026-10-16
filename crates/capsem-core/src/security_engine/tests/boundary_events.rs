@@ -409,6 +409,8 @@ match = 'process.exec.id == "42" && process.exec.exit_code == "0" && process.exe
             command: "python main.py".to_string(),
             source: "api".to_string(),
             target: capsem_proto::ipc::ExecTarget::Vm,
+            user: None,
+            cwd: None,
             trace_id: Some("trace_exec".to_string()),
             process_name: None,
             credential_ref: None,

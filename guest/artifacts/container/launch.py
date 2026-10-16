@@ -24,6 +24,7 @@ import termios
 import time
 import tty
 from pathlib import Path
+from typing import NoReturn
 
 # The guest-writable stage must not grow an import cache or load stale pyc.
 _console = runpy.run_path(str(Path(__file__).with_name("runtime_console.py")))
@@ -1071,34 +1072,138 @@ def run(stage, detached=False):
         shutil.rmtree(RUNTIME)
 
 
-def exec_request(encoded):
-    """(argv, tty) from the host's hex-encoded JSON request (capsem-core
-    `workload_exec_command`): `command` runs under the image's /bin/sh, `argv`
-    runs as given."""
+def _rootfs_file(rootfs, rel_path):
+    try:
+        root_real = Path(rootfs).resolve()
+        candidate = (root_real / rel_path).resolve()
+    except (OSError, RuntimeError):
+        return None
+    if not candidate.is_relative_to(root_real) or not candidate.is_file():
+        return None
+    return candidate
+
+
+def _passwd_entries(rootfs):
+    passwd = _rootfs_file(rootfs, "etc/passwd")
+    if passwd is None:
+        return []
+    entries = []
+    for line in passwd.read_text(errors="replace").splitlines():
+        parts = line.split(":")
+        if len(parts) >= 7 and parts[2].isdigit() and parts[3].isdigit():
+            entries.append((parts[0], int(parts[2]), int(parts[3]), parts[5] or "/"))
+    return entries
+
+
+def _group_entries(rootfs):
+    group = _rootfs_file(rootfs, "etc/group")
+    if group is None:
+        return []
+    entries = []
+    for line in group.read_text(errors="replace").splitlines():
+        parts = line.split(":")
+        if len(parts) >= 4 and parts[2].isdigit():
+            members = [m for m in parts[3].split(",") if m]
+            entries.append((parts[0], int(parts[2]), members))
+    return entries
+
+
+def _fail_exec_user(message: str) -> NoReturn:
+    print(message, file=sys.stderr)
+    raise SystemExit(125)
+
+
+def resolve_exec_user(rootfs, spec):
+    """Resolve `user` (`name`, `uid`, `name:group`, or `uid:gid`) against
+    the workload rootfs's `/etc/passwd` and `/etc/group`."""
+    user_token, group_token = spec.split(":", 1) if ":" in spec else (spec, None)
+    if not user_token or (group_token is not None and not group_token):
+        _fail_exec_user(f"capsem: invalid user: {spec}")
+    passwd = _passwd_entries(rootfs)
+    groups = _group_entries(rootfs)
+    if user_token.isdigit():
+        uid = int(user_token)
+        match = next((entry for entry in passwd if entry[1] == uid), None)
+        username, gid, home = (
+            (match[0], match[2], match[3])
+            if match
+            else (("root" if uid == 0 else str(uid)), 0, ("/root" if uid == 0 else "/"))
+        )
+    else:
+        match = next((entry for entry in passwd if entry[0] == user_token), None)
+        if match is None and user_token == "root":
+            match = ("root", 0, 0, "/root")
+        if match is None:
+            _fail_exec_user(f"capsem: unknown user: {user_token}")
+        username, uid, gid, home = match
+    if group_token is not None:
+        if group_token.isdigit():
+            gid = int(group_token)
+        else:
+            gmatch = next((entry for entry in groups if entry[0] == group_token), None)
+            if gmatch is None and group_token == "root":
+                gmatch = ("root", 0, [])
+            if gmatch is None:
+                _fail_exec_user(f"capsem: unknown group: {group_token}")
+            gid = gmatch[1]
+        additional_gids = [gid]
+    else:
+        additional_gids = [gid]
+        for _, group_gid, members in groups:
+            if username in members and group_gid not in additional_gids:
+                additional_gids.append(group_gid)
+    return {"uid": uid, "gid": gid, "additionalGids": additional_gids}, username, home
+
+
+def exec_request_options(encoded):
+    """(argv, tty, user, cwd) from the host's hex-encoded JSON request."""
     request = json.loads(bytes.fromhex(encoded))
-    if not isinstance(request, dict) or set(request) - {"argv", "command", "tty"}:
+    if not isinstance(request, dict) or set(request) - {"argv", "command", "tty", "user", "cwd"}:
         raise ValueError(f"refusing exec request {request!r}")
     if ("argv" in request) == ("command" in request):
         raise ValueError("an exec request names exactly one of argv and command")
     argv = request["argv"] if "argv" in request else ["/bin/sh", "-c", request["command"]]
     tty = request.get("tty", False)
+    user = request.get("user")
+    cwd = request.get("cwd")
     if (
         not isinstance(argv, list)
         or not argv
         or not all(isinstance(arg, str) and "\0" not in arg for arg in argv)
         or not argv[0]
         or type(tty) is not bool
+        or (user is not None and (not isinstance(user, str) or not user or "\0" in user))
+        or (cwd is not None and (not isinstance(cwd, str) or not cwd.startswith("/") or "\0" in cwd))
     ):
         raise ValueError(f"refusing exec request {request!r}")
+    return argv, tty, user, cwd
+
+
+def exec_request(encoded):
+    """(argv, tty) from the host's hex-encoded JSON request (capsem-core
+    `workload_exec_command`): `command` runs under the image's /bin/sh, `argv`
+    runs as given."""
+    argv, tty, _, _ = exec_request_options(encoded)
     return argv, tty
 
 
-def exec_process(config, argv, tty):
+def exec_process(config, argv, tty, user=None, cwd=None, rootfs=None):
     """The workload's own process with another command: the image's user, cwd
-    and env, and the capabilities, rlimits and no-new-privileges `configure`
-    gave it. runc exec joins its namespaces, cgroup and seccomp filter."""
+    and env (unless overridden by `user` or `cwd`), and the capabilities,
+    rlimits and no-new-privileges `configure` gave it. runc exec joins its
+    namespaces, cgroup and seccomp filter."""
     process = json.loads(json.dumps(config["process"]))
     process.update(args=argv, terminal=tty)
+    if cwd is not None:
+        process["cwd"] = cwd
+    if user is not None:
+        root = Path(rootfs) if rootfs is not None else Path((config.get("root") or {}).get("path") or MERGED)
+        user_spec, username, home = resolve_exec_user(root, user)
+        process["user"] = user_spec
+        env_overrides = {"HOME": home, "USER": username, "LOGNAME": username}
+        env = [entry for entry in process["env"] if entry.split("=", 1)[0] not in env_overrides]
+        env.extend(f"{k}={v}" for k, v in env_overrides.items())
+        process["env"] = env
     if tty:
         existing = {entry.split("=", 1)[0] for entry in process["env"]}
         process["env"] += [f"{key}={value}" for key, value in TERMINAL_ENV.items() if key not in existing]
@@ -1129,22 +1234,32 @@ def exec_workload(encoded):
     The process spec travels in a memfd, so nothing is written to disk and
     nothing is left to clean up; runc reads it through /proc/self/fd.
     """
-    argv, tty = exec_request(encoded)
+    argv, tty, user, cwd = exec_request_options(encoded)
     bundle = workload_bundle()
     if bundle is None:
         raise SystemExit("capsem: no container workload is running in this session")
-    spec = process_spec(bundle, argv, tty)
+    spec = process_spec(bundle, argv, tty, user=user, cwd=cwd)
     runc = exec_argv(f"/proc/self/fd/{spec}")
     os.execvp(runc[0], runc)
 
 
-def process_spec(bundle, argv, tty):
+def _workload_rootfs(bundle, config):
+    configured = Path((config.get("root") or {}).get("path") or MERGED)
+    if _rootfs_file(configured, "etc/passwd") is not None:
+        return configured
+    if bundle is not None and _rootfs_file(Path(bundle) / "rootfs", "etc/passwd") is not None:
+        return Path(bundle) / "rootfs"
+    return configured
+
+
+def process_spec(bundle, argv, tty, user=None, cwd=None):
     """A descriptor runc inherits holding the exec's process spec, from the
     running workload's `bundle`: a memfd, so nothing is written to disk and
     nothing is left to clean up."""
     config = json.loads((bundle / "config.json").read_text())
+    rootfs = _workload_rootfs(bundle, config) if user is not None else None
     spec = os.memfd_create("capsem-exec", 0)
-    os.write(spec, json.dumps(exec_process(config, argv, tty)).encode())
+    os.write(spec, json.dumps(exec_process(config, argv, tty, user=user, cwd=cwd, rootfs=rootfs)).encode())
     os.set_inheritable(spec, True)
     return spec
 
