@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import tomllib
 from copy import deepcopy
+from os.path import relpath
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,7 +39,9 @@ def _inspect_lock_problems(extension: dict, sdk: dict, lock: dict) -> list[str]:
     locked_sdk = packages[sdk["name"]]
     if locked_sdk["version"] != sdk["version"]:
         problems.append("SDK version differs from its source")
-    if locked_sdk["source"] != {"editable": "../../sdk/python"}:
+    editable = Path(relpath(ROOT / CONFIG.sdk_python.project,
+                            ROOT / CONFIG.integrations_inspect_ai.project)).as_posix()
+    if locked_sdk["source"] != {"editable": editable}:
         problems.append("SDK lock must select its actual editable source")
     requirement = next(Requirement(value) for value in extension["dependencies"]
                        if Requirement(value).name == sdk["name"])
@@ -48,10 +51,12 @@ def _inspect_lock_problems(extension: dict, sdk: dict, lock: dict) -> list[str]:
 
 
 def _inspect_version_inputs() -> tuple[dict, dict, dict]:
-    project = ROOT / CONFIG.integrations_inspect_ai.project
-    extension = tomllib.loads((project / "pyproject.toml").read_text())["project"]
+    project = Path(CONFIG.integrations_inspect_ai.project)
+    extension = tomllib.loads(CONFIG.path(CONFIG.integrations_inspect_ai.manifest).read_text())["project"]
     sdk = tomllib.loads(CONFIG.path(CONFIG.sdk_python.manifest).read_text())["project"]
-    lock = tomllib.loads((project / "uv.lock").read_text())
+    lockfile = next(path for path in CONFIG.audits.dependency_policy.lockfiles
+                    if Path(path).parent == project)
+    lock = tomllib.loads(CONFIG.path(lockfile).read_text())
     return extension, sdk, lock
 
 
