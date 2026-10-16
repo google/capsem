@@ -26,9 +26,12 @@ their current values. Two ways to satisfy it, both better than a literal:
 
 from __future__ import annotations
 
+import ast
 import re
 import tomllib
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SEARCH_ROOTS = (PROJECT_ROOT / "tests", PROJECT_ROOT / "scripts")
@@ -61,6 +64,50 @@ def _reads(text: str, declaring: Path) -> bool:
     return declaring.name in text
 
 
+def _value_strings(text: str) -> tuple[str, ...]:
+    tree = ast.parse(text)
+    docstrings: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                docstrings.add(id(first.value))
+    return tuple(
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
+    )
+
+
+def _restates(literals: tuple[str, ...], value: str) -> bool:
+    pattern = re.compile(rf"(?<![\w.]){re.escape(value)}(?![\w.])")
+    return any(pattern.search(literal) is not None for literal in literals)
+
+
+@pytest.mark.parametrize("template", [
+    "# historical dependency {value}\n",
+    '"""Historical release {value} used another layout."""\n',
+    'def history():\n    """Dependency {value} used another syntax."""\n',
+    "latency_sample = {value}\n",
+])
+def test_the_authority_scanner_ignores_comments_docstrings_and_numeric_samples(template: str) -> None:
+    line = next(value for value, (name, _) in _authorities().items() if name == "the release line")
+    assert not _restates(_value_strings(template.format(value=line)), line)
+
+
+@pytest.mark.parametrize("template", [
+    'expected_version = "{value}"\n',
+    'assert reported_version == "{value}"\n',
+    'expected = \'{{"version": "{value}"}}\'\n',
+])
+def test_the_authority_scanner_still_rejects_behavioral_string_literals(template: str) -> None:
+    line = next(value for value, (name, _) in _authorities().items() if name == "the release line")
+    assert _restates(_value_strings(template.format(value=line)), line)
+
+
 def test_no_test_restates_a_value_its_config_declares() -> None:
     authorities = _authorities()
     assert authorities, "no authoritative values found; this guard would pass vacuously"
@@ -71,11 +118,12 @@ def test_no_test_restates_a_value_its_config_declares() -> None:
             if path.name == Path(__file__).name:
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
+            literals = _value_strings(text)
             for value, (what, declaring) in authorities.items():
                 if path == declaring or _reads(text, declaring):
                     continue
                 # Word-bounded so 0.6 does not match inside 10.6.2.
-                if re.search(rf"(?<![\w.]){re.escape(value)}(?![\w.])", text):
+                if _restates(literals, value):
                     offenders.append(
                         f"{path.relative_to(PROJECT_ROOT)} spells {value!r}, which is "
                         f"{what} declared by {declaring.relative_to(PROJECT_ROOT)}"
