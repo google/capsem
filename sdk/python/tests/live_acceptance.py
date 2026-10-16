@@ -10,16 +10,15 @@ import os
 import uuid
 
 from capsem import VM, HttpError, Hypervisor, models
-from capsem import _operations as api
 
 
-async def _assert_live_exports(hv: Hypervisor, vm_id: str) -> None:
-    rows_raw = gzip.decompress(await api.export_vm_rows(hv._transport, id=vm_id)).decode()
+async def _assert_live_exports(vm: VM, vm_id: str) -> None:
+    rows_raw = gzip.decompress(await vm.export.rows()).decode()
     lines = [json.loads(line) for line in rows_raw.splitlines() if line.strip()]
     assert lines and lines[0]["type"] == "header" and lines[0]["format"] == "capsem.rows.v1"
     assert lines[0]["format_version"] == 1 and lines[0]["vm_id"] == vm_id
     assert any(item.get("table") == "exec_events" for item in lines[1:])
-    warc_raw = gzip.decompress(await api.export_vm_bodies(hv._transport, id=vm_id))
+    warc_raw = gzip.decompress(await vm.export.warc())
     assert warc_raw.startswith(b"WARC/1.1\r\n")
 
 
@@ -55,7 +54,7 @@ async def main() -> None:
             assert executed.exit_code == 7 and executed.stdout.data.split()[0] == digest
             assert executed.stderr.data == "SDK_STDERR"
             assert vm.id is not None
-            await _assert_live_exports(hv, vm.id)
+            await _assert_live_exports(vm, vm.id)
             assert isinstance(await vm.log(tail=10), models.LogsResponse)
             assert isinstance(await hv.log(tail=10), models.HostLogsResponse)
             assert isinstance(await vm.history(limit=10), models.HistoryResponse)
@@ -93,10 +92,11 @@ async def main() -> None:
             managed_id = mvm.id
             stopped_managed = await mvm.stop()
             assert stopped_managed.success and not stopped_managed.persistent
-            await _assert_live_exports(hv, managed_id)
-        for export_fn in (api.export_vm_rows, api.export_vm_bodies):
+            await _assert_live_exports(mvm, managed_id)
+        closed_vm = hv.vm(id=managed_id)
+        for export_coro in (closed_vm.export.rows(), closed_vm.export.warc()):
             try:
-                await export_fn(hv._transport, id=managed_id)
+                await export_coro
             except HttpError as err:
                 assert err.status == 404
             else:
