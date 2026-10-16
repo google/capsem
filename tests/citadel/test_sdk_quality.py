@@ -109,7 +109,7 @@ def test_mcp_tests_consume_the_exported_publication_archives() -> None:
 
 
 def test_adversarial_python_scratch_never_enters_a_publication_export() -> None:
-    for settings in (CONFIG.sdk_python, CONFIG.integrations_common, CONFIG.integrations_inspect_ai):
+    for settings in (CONFIG.sdk_python, CONFIG.integrations_common, CONFIG.integrations_inspect_ai, CONFIG.integrations_harbor):
         scratch = Path(settings.pytest_scratch)
         for export in CONFIG.prefix.exports:
             assert not scratch.is_relative_to(export), SDK_RATIONALE
@@ -246,6 +246,7 @@ def test_inspect_extension_checks_are_in_the_real_fast_plan() -> None:
     for settings, frag_fn, cov_arg in (
         (CONFIG.integrations_common, sdkchecks.common_fragment, "--cov=capsem_integrations"),
         (CONFIG.integrations_inspect_ai, sdkchecks.inspect_fragment, "--cov=inspect_capsem"),
+        (CONFIG.integrations_harbor, sdkchecks.harbor_fragment, "--cov=harbor_capsem"),
     ):
         leaves = frag_fn(Plan("Integrations checks"), CONFIG, after=())
         for check in leaves:

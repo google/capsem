@@ -7,6 +7,7 @@ obsolete_root_paths = []
 distributions = [
   "build_system/pyproject.toml=capsem-builder",
   "integrations/common/pyproject.toml=capsem-integrations",
+  "integrations/harbor/pyproject.toml=harbor-capsem-sandbox",
   "integrations/inspect-ai/pyproject.toml=inspect-capsem-sandbox",
   "sdk/python/pyproject.toml=capsem",
 ]

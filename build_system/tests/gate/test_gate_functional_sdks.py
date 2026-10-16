@@ -19,11 +19,12 @@ from capsem_builder.gate.qualification import BinaryQualification, RuntimeQualif
 from helpers.gate import PROJECT_ROOT, gate_plan
 
 PREPARED = (
-    "sdk.python.sync", "functional.sdk.rust.example", "fast.sdk.python.build",
-    "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm",
-    "functional.sdk.python.package-prewarm",
-    "integrations.common.sync", "fast.integrations.common.build",
-    "integrations.inspect-ai.sync", "fast.integrations.inspect-ai.build",
+    "sdk.python.sync", "integrations.common.sync",
+    "integrations.inspect-ai.sync", "integrations.harbor.sync",
+    "functional.sdk.rust.example", "fast.sdk.python.build",
+    "fast.integrations.common.build", "fast.integrations.inspect-ai.build",
+    "fast.integrations.harbor.build", "fast.sdk.typescript.build",
+    "fast.sdk.typescript.package-prewarm", "functional.sdk.python.package-prewarm",
 )
 
 
@@ -84,17 +85,12 @@ def test_python_sdk_tests_cannot_start_before_the_archives_they_install_are_buil
         "clean installed-package acceptance must consume this source's wheel and sdist, "
         "not whichever archive a previous run happened to leave"
     )
-    assert {
-        "fast.sdk.python.build",
-        "fast.integrations.common.build",
-        "fast.integrations.inspect-ai.build",
-    } <= _ancestors(
-        plan, "fast.integrations.inspect-ai.tests"
-    ), (
-        "clean installed inspect-capsem acceptance must consume this source's SDK, "
-        "capsem-integrations, and "
-        "inspect-capsem wheel and sdist archives"
-    )
+    for target, pkg in (("inspect-ai", "inspect-capsem"), ("harbor", "harbor-capsem")):
+        assert {
+            "fast.sdk.python.build", "fast.integrations.common.build", f"fast.integrations.{target}.build",
+        } <= _ancestors(plan, f"fast.integrations.{target}.tests"), (
+            f"clean installed {pkg} acceptance must consume this source's SDK, capsem-integrations, and {pkg} archives"
+        )
 
 
 def test_python_projects_cannot_empty_each_others_or_the_shared_pytest_scratch() -> None:
@@ -107,6 +103,7 @@ def test_python_projects_cannot_empty_each_others_or_the_shared_pytest_scratch()
         ("fast.sdk.python.tests", config.sdk_python),
         ("fast.integrations.common.tests", config.integrations_common),
         ("fast.integrations.inspect-ai.tests", config.integrations_inspect_ai),
+        ("fast.integrations.harbor.tests", config.integrations_harbor),
     ):
         commands = [action for action in plan.step_named(label).actions if isinstance(action, Run)]
         assert len(commands) == 1
@@ -149,18 +146,21 @@ def test_functional_installed_sdks_use_current_archives_and_declared_network_pre
     python = "fast.sdk.python.build"
     common_pkg = "fast.integrations.common.build"
     inspect_pkg = "fast.integrations.inspect-ai.build"
+    harbor_pkg = "fast.integrations.harbor.build"
     npm = "fast.sdk.typescript.build"
     warmed = "fast.sdk.typescript.package-prewarm"
-    assert {python, common_pkg, inspect_pkg, npm, warmed} <= set(plan.labels), "Braavos needs actual installed SDK artifacts"
+    assert {python, common_pkg, inspect_pkg, harbor_pkg, npm, warmed} <= set(plan.labels), "Braavos needs actual installed SDK artifacts"
     assert "sdk.python.sync" in _ancestors(plan, python)
     assert "integrations.common.sync" in _ancestors(plan, common_pkg)
     assert "integrations.inspect-ai.sync" in _ancestors(plan, inspect_pkg)
+    assert "integrations.harbor.sync" in _ancestors(plan, harbor_pkg)
     assert npm in _ancestors(plan, warmed)
     assert Needs.NETWORK in plan.step_named(warmed).needs
     assert "[outside kernel sandbox]" in plan.step_named(warmed).actions[0].render()
     assert "--no-isolation" in plan.step_named(python).actions[0].render()
     assert "--no-isolation" in plan.step_named(common_pkg).actions[0].render()
     assert "--no-isolation" in plan.step_named(inspect_pkg).actions[0].render()
+    assert "--no-isolation" in plan.step_named(harbor_pkg).actions[0].render()
 
 
 def test_candidate_rehydrates_python_build_backends_after_cache_enforcement() -> None:
@@ -180,7 +180,7 @@ def test_composed_sdk_packages_have_one_producer_and_no_dependency_cycle() -> No
     plan = gate_plan("candidate")
     labels = plan.labels
     for label in ("fast.sdk.python.build", "fast.integrations.common.build",
-                  "fast.integrations.inspect-ai.build",
+                  "fast.integrations.inspect-ai.build", "fast.integrations.harbor.build",
                   "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm"):
         assert labels.count(label) == 1
 
@@ -223,7 +223,7 @@ def test_sdk_and_mcp_acceptance_select_the_published_sdk_archive_directory() -> 
 
 def test_sdk_preparation_stays_offline_inside_the_sandbox() -> None:
     plan = gate_plan("test-functional")
-    for label in ("sdk.python.sync", "integrations.common.sync", "integrations.inspect-ai.sync"):
+    for label in ("sdk.python.sync", "integrations.common.sync", "integrations.inspect-ai.sync", "integrations.harbor.sync"):
         sync = plan.step_named(label).actions[0].render()
         assert "--no-build-isolation" in sync, (
             "an isolated build fetches its backend from the network"

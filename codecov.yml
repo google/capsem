@@ -34,6 +34,10 @@ coverage:
         target: 90%
         flags:
           - inspect-ai
+      harbor:
+        target: 90%
+        flags:
+          - harbor
       typescript-sdk:
         target: 90%
         flags:
@@ -65,6 +69,10 @@ flags:
   inspect-ai:
     paths:
       - integrations/inspect-ai/inspect_capsem/**
+    carryforward: true
+  harbor:
+    paths:
+      - integrations/harbor/harbor_capsem/**
     carryforward: true
   mcp-server:
     paths:
@@ -125,6 +133,11 @@ component_management:
       name: Inspect AI Extension
       paths:
         - integrations/inspect-ai/inspect_capsem/**
+
+    - component_id: harbor
+      name: Harbor Extension
+      paths:
+        - integrations/harbor/harbor_capsem/**
 
     # MITM HTTPS proxy, TLS, cert authority, domain/HTTP policy,
     # AI traffic parsing (SSE, providers, pricing). All of net/
