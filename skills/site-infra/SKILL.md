@@ -139,9 +139,25 @@ and security pages. Verify the deployed content before reporting publication.
 ## Writing and review
 
 Write for the intended reader with the structure of the chosen document type.
-Use BLUF: lead with the direct answer in one or two simple sentences. Avoid
-abstract framing and paragraphs that repeat a diagram or table. Architecture
-pages use concrete component relationships and a process/role/sandboxing table.
+Start every page with a short introductory paragraph explaining what the page
+covers and which reader question it answers. Give the reader the overall idea
+before definitions, implementation details, diagrams, tables, code, or language
+tabs. This applies to reference and generated pages too. A page title or
+frontmatter description does not replace the visible introduction.
+
+Use BLUF as a writing principle, not a mandatory format: explain the main idea
+before supporting detail. Do not add a BLUF heading, a canned summary, or force
+every opening into the same wording. A concrete sentence such as “This page
+provides an overview of Capsem's security architecture and how it mitigates
+risks” is useful orientation; follow it with the specific scope of that page.
+
+Check logical progression across the whole page: introduce the topic before
+its parts, explain a concept before using it, and put prerequisites and choices
+before dependent actions. In procedures, show the result before moving to the
+next step; in reference, order entries by the interface rather than imposing
+a tutorial. Avoid abstract framing and paragraphs that repeat a diagram or
+table. Architecture pages use concrete component relationships and a
+process/role/sandboxing table.
 Keep one canonical explanation or contract and link to it instead of repeating
 it. No filler, marketing pitches, or speculative features. Use tables for
 comparable facts and JointJS diagrams when they clarify relationships.
@@ -172,8 +188,9 @@ For each paragraph, identify both:
 2. What can the user do with this answer?
 
 If either answer is missing, delete or rewrite the paragraph. Do not write
-prose merely to describe Capsem, announce a topic, repeat a diagram or heading,
-or fill space. Explanations must support a concrete user action or decision;
+prose merely to repeat a topic, diagram, or heading, or fill space. An opening
+that explains scope helps readers decide whether the page answers their question;
+it is not filler. Explanations must support a concrete user action or decision;
 reference must help the user configure, call, inspect, or diagnose something.
 The questions are an editing check, not mandatory question-shaped headings.
 
@@ -239,8 +256,10 @@ review the whole affected page for the same pattern, not only the cited line.
 
 Review before delivery:
 
-- **Every page:** does it answer its description question for its intended
-  reader, use accurate and consistent terms, and stay within one type?
+- **Every page:** does its opening explain the topic and scope before details?
+  Does the main idea come before supporting material, and does each section
+  follow logically from what the reader already knows? Does it answer its
+  description question, use consistent terms, and stay within one type?
 - **Tutorial:** can a newcomer follow the chosen path without guessing and see
   the promised result at each meaningful step? Are prerequisites, transitions,
   and links for further detail clear throughout?

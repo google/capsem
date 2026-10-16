@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Introduce each published documentation page with its purpose and scope, put prerequisites before dependent examples, and clarify the writing guidance on explanations before details.
+
 - Use a shared JointJS viewer across all published documentation diagrams and the marketing security diagram; remove the production Mermaid renderer.
 
 - Replace security architecture diagrams with JointJS Community, zoom and pan controls, and accessible connection tables.

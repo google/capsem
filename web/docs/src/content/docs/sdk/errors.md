@@ -3,7 +3,9 @@ title: Errors and recovery
 description: How do SDK errors, timeouts, cancellation, and retries behave?
 ---
 
-SDK requests use the authenticated gateway. A request failure can leave its
+This page explains SDK errors, deadlines, cancellation, and connection lifetime
+so you can handle failures without unintentionally repeating an operation.
+A request failure can leave its
 result uncertain: the service may have accepted a change before the response
 was lost. SDKs do not automatically replay mutations.
 

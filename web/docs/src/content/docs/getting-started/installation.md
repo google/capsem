@@ -8,6 +8,10 @@ next:
   link: /getting-started/how-to-use-capsem/
 ---
 
+This guide explains how to install Capsem on macOS or Linux and check that its
+background service and VM assets are ready. Start by checking your computer's
+requirements, then install the package and verify it before creating a VM.
+
 ## Requirements
 
 | Operating system | Hardware |

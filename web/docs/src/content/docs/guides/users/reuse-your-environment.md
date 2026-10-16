@@ -3,9 +3,9 @@ title: Configure and reuse your environment
 description: How do I choose an image, retain my tools and files, and duplicate a VM?
 ---
 
-Choose an image and resources when creating a VM. Name the VM when you want to
-keep its files, return to its running programs after suspension, or duplicate
-a prepared environment. This guide assumes
+This guide explains how to choose a VM's image and resources, decide whether
+to keep it, and reuse its tools and files. It covers temporary VMs, suspension,
+and independent copies of a prepared VM. The examples assume
 [Capsem is installed](/getting-started/installation/).
 
 ## Choose an image for your VM

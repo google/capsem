@@ -6,9 +6,10 @@ description: How do Capsem's components work together?
 import Diagram from '@capsem/diagrams/Diagram.astro';
 import { systemOverview } from '../../../lib/overview-diagrams';
 
-Capsem runs agents and tools in OCI containers inside Linux VMs on your computer.
-A shared service manages the VMs; separate host workers run each VM, inspect
-its traffic, and store its records.
+This page explains how Capsem's clients, shared service, and per-VM workers
+work together to run agents and tools in Linux VMs on your computer. It follows
+VM creation, traffic handling, record storage, and shutdown so you can identify
+which component owns each part of the work.
 
 ## Control and data
 

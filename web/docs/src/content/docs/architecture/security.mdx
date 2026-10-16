@@ -7,8 +7,10 @@ template: splash
 import Diagram from '@capsem/diagrams/Diagram.astro';
 import { securityProcesses, securityNetwork } from '../../../lib/diagrams';
 
-Capsem runs OCI containers inside separate VMs. Host processes handle VM
-control, proxy traffic, MCP tools, network connections, and log storage.
+This page provides an overview of Capsem's security architecture and how its
+VM boundaries, process sandboxes, and access grants limit the risks of a
+compromised agent or host worker. It explains which components hold authority,
+how their access is restricted and revoked, and which risks remain.
 
 See the [security engine](/architecture/security-engine/) for event processing,
 rule decisions, credentials, and logging.

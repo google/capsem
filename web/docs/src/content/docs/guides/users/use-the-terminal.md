@@ -3,10 +3,10 @@ title: Use Capsem from the terminal
 description: How do I open a VM terminal, run commands, and transfer files from my computer?
 ---
 
-The terminal interface (TUI) lets you work in several VMs from one terminal
-window: switch between their terminals, check their status, and create, fork,
-suspend, or resume VMs. Use `capsem exec` for a single command and `capsem cp`
-for file transfers.
+This guide explains how to work with VMs from your computer's terminal:
+open the terminal interface (TUI), switch between VMs, run individual commands,
+and transfer files. The TUI manages several VMs in one window; `capsem exec`
+and `capsem cp` handle commands and file transfers without opening it.
 
 [Install Capsem](/getting-started/installation/) first, then
 [create a VM](/getting-started/how-to-use-capsem/#launch-your-first-vm).
@@ -89,15 +89,16 @@ Quote shell expressions so your computer's shell does not expand them first.
 
 ## Transfer files
 
-Once the VM is running, upload a local file and download it again:
+Once the VM is running, create `task.txt` on your computer. Then upload the
+file and download it again:
 
 ```sh
 capsem cp ./task.txt my-work:task.txt
 capsem cp my-work:task.txt ./task-copy.txt
 ```
 
-Create `task.txt` on your computer first. The VM-side paths are relative to
-its workspace. Compare `task-copy.txt` with your original to check the transfer.
+The VM-side paths are relative to its workspace. Compare `task-copy.txt` with
+your original to check the transfer.
 Exactly one side of `capsem cp` must name a VM.
 
 ## Pause or reuse work

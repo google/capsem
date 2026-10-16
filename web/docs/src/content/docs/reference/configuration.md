@@ -3,8 +3,10 @@ title: Configuration reference
 description: Which configuration files control Capsem and how are they combined?
 ---
 
-Capsem combines built-in defaults, user settings, and corporate constraints.
-The service owns the effective policy supplied to each VM's workers.
+This reference explains which files configure Capsem, which settings they
+contain, and how built-in defaults, user settings, and corporate constraints
+combine. It covers application preferences, runtime policy, and validation so
+you can identify where a setting belongs and which value takes precedence.
 
 ## Files
 

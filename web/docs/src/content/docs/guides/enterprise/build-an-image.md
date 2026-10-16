@@ -3,8 +3,9 @@ title: Build your own image
 description: How do I build and run an OCI image with my team's tools in Capsem?
 ---
 
-Build a Linux OCI image with your tools, publish it to a registry, and admit
-its source and contents in Capsem policy. You need a container builder,
+This guide shows how to package your team's tools in a Linux OCI image,
+publish it to a registry, authorize it in Capsem policy, and run it in a VM.
+You need a container builder,
 permission to publish to your registry, and an administrator who can approve
 the image.
 
@@ -33,14 +34,15 @@ initrd, or rootfs to add application tools.
 
 ## Build and publish
 
-Replace the registry path with one you own. For an Apple Silicon host:
+Choose `linux/arm64` for an Apple Silicon or arm64 host, `linux/amd64` for an
+x86_64 host, or publish both platforms for a mixed fleet. Replace the registry
+path with one you own. For an Apple Silicon host:
 
 ```sh
 docker buildx build --platform linux/arm64 -t ghcr.io/your-org/your-image:v1 --push .
 ```
 
-Use `linux/amd64` for an x86_64 host, or publish both platforms for a mixed
-fleet. Record the registry's returned image digest; a tag can move.
+Record the registry's returned image digest; a tag can move.
 
 ## Admit the image
 
@@ -65,7 +67,10 @@ See [Configuration reference](/reference/configuration/) for precedence.
 
 ## Run and check
 
-Once the policy is active, prefetch and create the VM:
+Once the policy is active, prefetch and create the VM. For a private registry,
+add `--registry-user USER` before `--image` and supply
+`CAPSEM_REGISTRY_PASSWORD` in the host environment. `--registry-ca PATH` adds a
+PEM CA for that pull only.
 
 ```sh
 capsem images pull ghcr.io/your-org/your-image:v1
@@ -73,10 +78,6 @@ capsem create -n custom --image ghcr.io/your-org/your-image:v1
 capsem exec custom 'python3 --version'
 capsem shell custom
 ```
-
-For a private registry, add `--registry-user USER` before `--image` and
-supply `CAPSEM_REGISTRY_PASSWORD` in the host environment.
-`--registry-ca PATH` adds a PEM CA for that pull only.
 
 Check that your tool runs under the intended user and that required
 destinations are allowed. If a TLS client uses its own trust store, configure

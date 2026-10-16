@@ -5,8 +5,10 @@ description: How do I integrate Capsem into an application with bounded VM lifet
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Use one SDK client for the application connection, then choose persistent VMs
-for retained work or managed scopes for temporary jobs. Start with
+This guide explains how to integrate Capsem into an application, choose VM
+lifetimes, configure workloads, and handle failures without replaying changes.
+It covers persistent VMs for retained work and managed scopes for temporary
+jobs. Start with
 [SDK onboarding](/sdk/); the examples below assume a connected client named
 `capsem`.
 

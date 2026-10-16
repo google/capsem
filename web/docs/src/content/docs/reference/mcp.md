@@ -3,8 +3,10 @@ title: MCP reference
 description: Which Capsem MCP interfaces and tools are available and what authority do they have?
 ---
 
-Capsem has two MCP interfaces: a host server for managing VMs, and a guest relay
-for tools used inside a VM. They have different credentials and permissions.
+This reference describes Capsem's two Model Context Protocol (MCP) interfaces:
+the host server for managing VMs and the guest relay for tools used inside a VM.
+It covers their tools, connection options, results, and different credentials
+and permissions.
 
 ## Interfaces
 

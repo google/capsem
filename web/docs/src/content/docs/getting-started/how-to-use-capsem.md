@@ -11,8 +11,9 @@ next:
   link: /guides/users/reuse-your-environment/
 ---
 
-Start a VM to work with an AI agent, pause it when you are done for the day,
-or duplicate it to try something new. Run the Capsem commands below in a
+This guide walks you through creating your first VM, opening it through the
+terminal or Capsem UI, pausing your work, and duplicating the VM to try a change.
+Run the Capsem commands below in a
 terminal on your own computer, after [installing Capsem](/getting-started/installation/).
 
 ## Launch your first VM

@@ -3,6 +3,11 @@ title: Enforcement rules reference
 description: What is the enforcement rule format and how does Capsem choose a decision?
 ---
 
+This reference defines Capsem's enforcement rule format and how matching rules,
+priorities, and plugins determine an operation's effective decision. It covers
+rule fields, processing actions, and validation, including the distinction
+between recording a detection and refusing access.
+
 Enforcement files are TOML. Each enabled rule matches a
 [CEL expression](/reference/cel/) against a security event and specifies
 `allow`, `ask`, or `block`.

@@ -3,6 +3,10 @@ title: Reference
 description: Where can I find Capsem's exact interface and configuration contracts?
 ---
 
+This section collects Capsem's exact command, tool, configuration, and data
+contracts. Choose a reference below to look up supported inputs, defaults,
+permissions, outputs, and limits; use the guides for step-by-step tasks.
+
 | Contract | Reference |
 | --- | --- |
 | Terminal commands | [CLI](/reference/cli/) |

@@ -3,6 +3,11 @@ title: Telemetry reference
 description: What activity does Capsem record and how can I query or export it?
 ---
 
+This reference describes the activity Capsem records and the interfaces for
+querying it, retrieving bodies, and exporting retained evidence. It explains
+record correlation, completeness, integrity, and retention so you can interpret
+what the data does and does not establish.
+
 Each VM has a ledger for commands, model and MCP activity, network observations,
 file activity, security decisions, and detections. The log writer owns that
 ledger and its body archive; clients query through the gateway.
