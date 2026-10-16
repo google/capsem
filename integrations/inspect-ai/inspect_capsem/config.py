@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 if TYPE_CHECKING:
-    from .containers import ContainerSpec, HostBuildGrant
+    from capsem_integrations.containers import ContainerSpec, HostBuildGrant
 else:
     HostBuildGrant = Any
 
@@ -55,7 +55,7 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
                     "supervises the container process directly."
                 )
             if out.get("host_build") is not None:
-                from .containers.build_grant import HostBuildGrant
+                from capsem_integrations.containers.build_grant import HostBuildGrant
 
                 grant = HostBuildGrant.from_value(out["host_build"])
                 out["host_build"] = (
@@ -64,11 +64,11 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
                     else (grant.to_dict() if grant is not None else None)
                 )
             if out.get("allowed_host_env"):
-                from .containers import validate_host_env_patterns
+                from capsem_integrations.containers import validate_host_env_patterns
 
                 validate_host_env_patterns(out["allowed_host_env"], source="allowed_host_env")
             if out.get("build") is not None or out.get("dockerfile") is not None:
-                from .containers.build_grant import resolve_direct_host_build
+                from capsem_integrations.containers.build_grant import resolve_direct_host_build
 
                 out["build"] = resolve_direct_host_build(
                     {"build": out.get("build"), "dockerfile": out.get("dockerfile")},
@@ -125,7 +125,10 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
 
     def to_container_spec(self) -> ContainerSpec:
         """Convert this sandbox config into an Inspect-free `ContainerSpec`."""
-        from .containers import ContainerSpec, resolve_effective_allowed_host_paths
+        from capsem_integrations.containers import (
+            ContainerSpec,
+            resolve_effective_allowed_host_paths,
+        )
 
         if not (self.image and self.image.strip()) and not self.build:
             raise ValueError(

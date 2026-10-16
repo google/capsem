@@ -21,9 +21,10 @@ for execution and transfers. The adapter labels its ephemeral VMs and tracks
 cleanup; named or persistent VMs are excluded from its leftover sweep.
 
 Compose and Dockerfile inputs share the existing instruction scanner, final-stage
-USER/WORKDIR metadata extraction, and CA patcher. Compose parsing uses an
-evaluator-supplied `ComposeInputs` snapshot and explicit byte, node, and depth
-limits. Parsing does not grant access to host paths or credentials.
+USER/WORKDIR metadata extraction, and CA patcher via [`capsem-integrations`](../common/README.md).
+Compose parsing uses an evaluator-supplied `ComposeInputs` snapshot and explicit
+byte, node, and depth limits. Parsing does not grant access to host paths or
+credentials.
 
 Host builds require Docker BuildKit and an explicit operator host-build grant.
 BuildKit executes original Dockerfile instructions, including heredocs; CA

@@ -10,15 +10,15 @@ import shlex
 import uuid
 from typing import Any, ClassVar, Literal, overload
 
-from inspect_ai.util import ExecResult, SandboxConnection, SandboxEnvironment
-from inspect_ai.util import SandboxEnvironmentConfigType as _CfgType
-
-from inspect_capsem._compose import coerce_config
-from inspect_capsem._controller import (
+from capsem_integrations._controller import (
     CapsemController,
     SdkCapsemController,
     truncate_label_value,
 )
+from inspect_ai.util import ExecResult, SandboxConnection, SandboxEnvironment
+from inspect_ai.util import SandboxEnvironmentConfigType as _CfgType
+
+from inspect_capsem._compose import coerce_config
 from inspect_capsem._exec import exec_in_sandbox
 from inspect_capsem._files import read_guest_file, write_guest_file
 from inspect_capsem._tools import bake_sandbox_tools_into_controller
@@ -51,7 +51,7 @@ async def _start_sample_vm(
     oci_image = cfg.image if cfg.execution_mode == "container" else None
     ca_pem: str | None = None
     if cfg.execution_mode == "container" and cfg.build:
-        from inspect_capsem.containers.image_build import build_and_stage_oci_image
+        from capsem_integrations.containers.image_build import build_and_stage_oci_image
 
         oci_image, ca_pem = await build_and_stage_oci_image(cfg.build)
     oci_cmd = _oci_create_command(cfg) if cfg.execution_mode == "container" else None
@@ -180,7 +180,7 @@ class CapsemSandboxEnvironment(SandboxEnvironment):
             vm_id = await _start_sample_vm(controller, cfg, task_name=task_name)
             working_dir = cfg.working_dir or "/workspace"
             if cfg.execution_mode == "container":
-                from inspect_capsem import containers as _c
+                from capsem_integrations import containers as _c
 
                 spec = cfg.to_container_spec()
                 await _c.prepare_oci_workload_container(controller, vm_id, spec)

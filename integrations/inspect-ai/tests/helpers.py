@@ -9,9 +9,9 @@ from typing import Any, cast
 
 import inspect_capsem.sandbox as sb
 from capsem import models
+from capsem_integrations._controller import CommandResult
 from inspect_ai.util._sandbox import self_check as inspect_self_check
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
-from inspect_capsem._controller import CommandResult
 
 Result = CommandResult | Callable[[str], CommandResult]
 Rules = Sequence[tuple[str, Result]]

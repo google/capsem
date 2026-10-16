@@ -74,6 +74,7 @@ ONLINE_FAST = {
     "sdk.python.prewarm",
     "fast.sdk.typescript.package-prewarm",
     "fast.mcp.typescript.package-prewarm",
+    "integrations.common.prewarm",
     "integrations.inspect-ai.prewarm",
     "fast.toolchain.node",
     "fast.toolchain.rust",

@@ -9,7 +9,7 @@ import re
 import shlex
 from pathlib import Path
 
-from inspect_capsem._controller import CapsemController
+from capsem_integrations._controller import CapsemController
 
 logger = logging.getLogger(__name__)
 

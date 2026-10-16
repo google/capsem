@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import inspect_capsem._compose as compose_mod
 import inspect_capsem.sandbox as sb_mod
 import pytest
+from capsem_integrations.containers import HostBuildGrant
 from inspect_ai.util import ComposeConfig, ComposeService
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
-from inspect_capsem.containers import HostBuildGrant
 
-from .helpers import LocalFakeCapsemController
+from .helpers import LocalFakeCapsemController, Scripted
 
 
 def test_coerce_config_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CAPSEM_ALLOWED_HOST_PATHS", raising=False)
     monkeypatch.delenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", raising=False)
     monkeypatch.delenv("CAPSEM_INSPECT_HOST_BUILD", raising=False)
     coerce = compose_mod.coerce_config
@@ -66,6 +68,7 @@ def test_compose_file_config_applies_service_fields(
 ) -> None:
     """Compose file parses service image, working_dir, env, command, volumes, limits."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CAPSEM_ALLOWED_HOST_PATHS", raising=False)
     monkeypatch.delenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", raising=False)
     monkeypatch.delenv("CAPSEM_INSPECT_HOST_BUILD", raising=False)
     host_dir = tmp_path / "mounted_dir"
@@ -163,6 +166,62 @@ def test_compose_file_config_applies_service_fields(
     for bad_dict_key in ("build_context", "build_args", "build_target", "dockerfile_inline"):
         with pytest.raises(ValueError, match=bad_dict_key):
             compose_mod.coerce_config({bad_dict_key: "x"})
+    with pytest.raises(ValueError, match="ports"):
+        CapsemSandboxConfig.model_validate({"image": "alpine:3.20", "ports": ("8080:80",)})
+    with pytest.raises(ValueError, match="Wildcard-only or invalid pattern"):
+        CapsemSandboxConfig(allowed_host_env=("*",))
+
+
+async def test_cybergym_sample_metadata_and_build_vm_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`SAMPLE_METADATA_*` interpolates from `metadata` and `_start_sample_vm` stages builds."""
+    monkeypatch.setenv("SAMPLE_METADATA_HOST_LEAK", "leaked_from_host")
+    monkeypatch.setenv("CAPSEM_INSPECT_ALLOWED_HOST_ENV", "SAMPLE_*")
+    (tmp_path / ".env").write_text("SAMPLE_METADATA_HOST_LEAK=leaked_from_dotenv\n")
+    compose_path = tmp_path / "compose.yaml"
+    compose_path.write_text(
+        "services:\n  default:\n    image: ${SAMPLE_METADATA_IMAGE_VULNERABLE}\n    environment:\n"
+        "      - EXECUTOR_COMMAND=${SAMPLE_METADATA_EXECUTOR_COMMAND}\n      - BARE_KEY\n"
+        "      - SAMPLE_METADATA_HOST_LEAK\n      - LEAK_INTERP=${SAMPLE_METADATA_HOST_LEAK}\n"
+    )
+    pre_coerced = compose_mod.coerce_config(str(compose_path))
+    ctrl = Scripted()
+    monkeypatch.setattr(sb_mod, "SdkCapsemController", lambda: ctrl)
+    metadata = {
+        "image_vulnerable": "cybergym/vuln-target:1.2",
+        "executor command": "/usr/local/bin/run-poc --fast",
+        "bare_key": "ignored_without_prefix",
+    }
+    with caplog.at_level(logging.WARNING):
+        envs = await CapsemSandboxEnvironment.sample_init("cybergym_task", pre_coerced, metadata)
+    try:
+        assert "Ignoring non-allowlisted host environment variable" not in caplog.text
+        assert ctrl.started[0]["image"] == "cybergym/vuln-target:1.2"
+        assert ctrl.started[0]["env"] == {
+            "EXECUTOR_COMMAND": "/usr/local/bin/run-poc --fast",
+            "BARE_KEY": "",
+            "SAMPLE_METADATA_HOST_LEAK": "",
+            "LEAK_INTERP": "",
+        }
+    finally:
+        await CapsemSandboxEnvironment.sample_cleanup("cybergym_task", None, envs, False)
+
+    import capsem_integrations.containers.image_build as ib_mod
+
+    monkeypatch.setenv("CAPSEM_INSPECT_HOST_BUILD", "1")
+    monkeypatch.setenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", str(tmp_path))
+    df = tmp_path / "Dockerfile"
+    df.write_text("FROM alpine:3.20\n", encoding="utf-8")
+
+    async def _fake_stage(_spec: dict[str, object]) -> tuple[str, str]:
+        return ("127.0.0.1:5000/inspect-capsem/build@sha256:abc", "-----BEGIN CERTIFICATE-----\n")
+
+    monkeypatch.setattr(ib_mod, "build_and_stage_oci_image", _fake_stage)
+    cfg_build = CapsemSandboxConfig(dockerfile=str(df))
+    assert await sb_mod._start_sample_vm(ctrl, cfg_build) == "vm-s"
+    assert ctrl.started[-1]["image"].startswith("127.0.0.1:5000/")
+    assert "BEGIN CERTIFICATE" in ctrl.started[-1]["registry_ca_pem"]
 
 
 async def test_multi_service_compose_rejected_in_sample_init(

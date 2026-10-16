@@ -7,8 +7,8 @@ import shutil
 import subprocess as sp
 from pathlib import Path
 
-import inspect_capsem._controller as ctrl_mod
-import inspect_capsem._exec as exec_mod
+import capsem_integrations._controller as ctrl_mod
+import capsem_integrations._exec as exec_mod
 import inspect_capsem.sandbox as sb_mod
 import pytest
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment

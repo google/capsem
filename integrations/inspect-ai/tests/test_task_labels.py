@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from capsem_integrations._controller import truncate_label_value
 from inspect_capsem import CapsemSandboxConfig
-from inspect_capsem._controller import truncate_label_value
 from inspect_capsem.sandbox import _sample_vm_labels, _start_sample_vm
 
 from .helpers import Scripted

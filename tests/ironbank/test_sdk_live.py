@@ -77,6 +77,7 @@ def test_installed_sdk_oci_create_and_execution_targets(language: str, tmp_path:
 
 @pytest.mark.integration
 def test_inspect_ai_live_vm_sandbox_acceptance() -> None:
+    """Verify installed integrations/common and integrations/inspect-ai wheels/sdists against a live VM."""
     service = ServiceInstance()
     gateway = GatewayInstance(service.uds_path)
     try:
