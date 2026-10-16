@@ -9,7 +9,7 @@ from capsem_builder.release.tools import release_binaries
 ROOT = Path(__file__).resolve().parents[2]
 COHORT_RATIONALE = (
     "The actual publisher must accept this checkout's version cohort before "
-    "qualification: 0.7 once passed while release.line still required 0.6."
+    "qualification: it once passed with a stale release.line setting."
 )
 
 
