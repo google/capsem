@@ -2658,7 +2658,7 @@ resumable = ["cache/target/build/install-image"]
 # Run directories cross the prefix through `runtransfer`; its ledger, digest,
 # latest link and active marker are collection state and must never be merged
 # as ordinary build output.
-exports = ["cache/target/assets", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks"]
+exports = ["cache/target/assets", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks", "cache/target/sdk", "cache/target/integrations/inspect-ai", "cache/target/mcp/typescript"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for
@@ -3753,3 +3753,4 @@ build_output = "cache/target/sdk/typescript"
 
 [mcp_typescript]
 project = "mcp/typescript"
+build_output = "cache/target/mcp/typescript"

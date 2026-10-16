@@ -64,6 +64,27 @@ def test_inspect_frozen_sdk_matches_the_actual_package_contract() -> None:
     assert not _inspect_lock_problems(*_inspect_version_inputs()), INSPECT_LOCK_RATIONALE
 
 
+def test_rust_registry_packages_are_verified_and_exported_by_the_fast_gate() -> None:
+    plan = gate_plan("test-fast")
+    packaged = plan.step_named("fast.sdk.rust.package")
+    assert "capsem_builder.release.tools.package_rust_sdk" in " ".join(packaged.render()), SDK_RATIONALE
+    output = Path(CONFIG.sdk_rust.build_output)
+    assert any(Path(path) == output or Path(path) in output.parents
+               for path in CONFIG.prefix.exports), SDK_RATIONALE
+
+
+def test_mcp_tests_consume_the_exported_publication_archives() -> None:
+    plan = gate_plan("test-fast")
+    assert plan.step_named("fast.mcp.typescript.types").render() == [
+        f"(in {CONFIG.path(CONFIG.mcp_typescript.project)}) pnpm run check"
+    ], SDK_RATIONALE
+    output = getattr(CONFIG.mcp_typescript, "build_output", None)
+    assert output and output in CONFIG.prefix.exports, SDK_RATIONALE
+    selection = f"CAPSEM_MCP_PACKAGE_ARCHIVES={CONFIG.path(output)}"
+    for label in ("fast.mcp.typescript.package-prewarm", "fast.mcp.typescript.tests"):
+        assert selection in " ".join(plan.step_named(label).render()), SDK_RATIONALE
+
+
 @pytest.mark.parametrize("mutation", ["sdk_version", "extension_version", "sdk_path", "minimum"])
 def test_inspect_lock_guard_rejects_stale_or_incompatible_packages(mutation: str) -> None:
     extension, sdk, lock = deepcopy(_inspect_version_inputs())

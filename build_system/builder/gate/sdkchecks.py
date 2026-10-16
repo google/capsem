@@ -232,6 +232,7 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     ), after=after)
     mcp = config.mcp_typescript
     mcp_root = config.path(mcp.project)
+    archives = {"CAPSEM_MCP_PACKAGE_ARCHIVES": str(config.path(mcp.build_output))}
     mcp_phase = plan.phase("fast.mcp.typescript")
     mcp_built = mcp_phase.add(
         step(
@@ -242,10 +243,14 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
         ),
         after=(built,),
     )
+    mcp_typed = mcp_phase.add(
+        step("types", Run(["pnpm", "run", "check"], cwd=mcp_root), kind=Kind.LINT, speed=Speed.FAST),
+        after=(mcp_built,),
+    )
     mcp_warmed = mcp_phase.add(
         step(
             "package-prewarm",
-            Run(["pnpm", "run", "prewarm:packed"], cwd=mcp_root, outside_sandbox=True),
+            Run(["pnpm", "run", "prewarm:packed"], cwd=mcp_root, env=archives, outside_sandbox=True),
             kind=Kind.COMPILE,
             needs=frozenset({Needs.DISK, Needs.NETWORK}),
             speed=Speed.FAST,
@@ -255,13 +260,13 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     mcp_tested = mcp_phase.add(
         step(
             "tests",
-            Run(["pnpm", "run", "test:mcp"], cwd=mcp_root),
+            Run(["pnpm", "run", "test:mcp"], cwd=mcp_root, env=archives),
             kind=Kind.UNIT_TEST,
             speed=Speed.FAST,
         ),
         after=(mcp_warmed,),
     )
-    return (*checks, built, warmed, tested, generated, mcp_built, mcp_warmed, mcp_tested)
+    return (*checks, built, warmed, tested, generated, mcp_built, mcp_typed, mcp_warmed, mcp_tested)
 
 
 def rust_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
@@ -271,7 +276,12 @@ def rust_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) ->
                                "--specification", settings.specification, "--rust-source", settings.source)),
         kind=Kind.LINT, speed=Speed.FAST,
     ), after=after)
-    return (generated,)
+    packaged = plan.phase("fast.sdk.rust").add(step(
+        "package", Run(uv_run(config, "python", "-m", "capsem_builder.release.tools.package_rust_sdk")),
+        kind=Kind.PACKAGE, speed=Speed.FAST,
+        contends=(config.exclusive("workspace_binaries"),),
+    ), after=(generated,))
+    return generated, packaged
 
 
 def typescript_bundle(config: GateConfig) -> Step:

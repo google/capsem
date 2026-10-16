@@ -49,6 +49,7 @@ class PythonSdkConfig(PythonPackageConfig):
 
 class NodePackageConfig(Strict):
     project: str
+    build_output: str
 
 
 class HostImageConfig(Strict):
