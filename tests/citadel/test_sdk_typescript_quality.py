@@ -45,10 +45,38 @@ def test_typescript_quality_is_enforced() -> None:
     _assert_quality(*_settings())
     root = ROOT / CONFIG.sdk_typescript.project
     browser = json.loads((root / "tsconfig.browser.json").read_text())
-    assert browser == {"extends": "./tsconfig.json", "compilerOptions": {"types": [], "noEmit": True}}, SDK_RATIONALE
+    _assert_browser_quality(browser)
     for root in (CONFIG.sdk_typescript.source, CONFIG.sdk_typescript.tests):
         for path in (ROOT / root).rglob("*.ts"):
             assert not re.search(r"(?:eslint-disable|@ts-ignore|@ts-nocheck|[vc]8 ignore|istanbul ignore)", path.read_text()), SDK_RATIONALE
+
+
+def _assert_browser_quality(browser: dict) -> None:
+    assert browser == {
+        "extends": "./tsconfig.json",
+        "compilerOptions": {
+            "types": [], "noEmit": True, "customConditions": ["browser"],
+            "paths": {"#local": ["./src/local-browser.ts"]},
+        },
+        "exclude": ["src/local-node.ts"],
+    }, SDK_RATIONALE
+
+
+@pytest.mark.parametrize("mutation", ["node", "built", "types", "exclude"])
+def test_browser_discovery_must_stay_independent_of_node_and_build_output(mutation: str) -> None:
+    root = ROOT / CONFIG.sdk_typescript.project
+    browser = json.loads((root / "tsconfig.browser.json").read_text())
+    match mutation:
+        case "node":
+            browser["compilerOptions"]["paths"]["#local"] = ["./src/local-node.ts"]
+        case "built":
+            browser["compilerOptions"]["paths"]["#local"] = ["./dist/local-browser.d.ts"]
+        case "types":
+            browser["compilerOptions"]["types"] = ["node"]
+        case "exclude":
+            browser["exclude"] = ["src/**/*.ts"]
+    with pytest.raises(AssertionError, match="SDK code"):
+        _assert_browser_quality(browser)
 
 
 @pytest.mark.parametrize("mutation", ["source", "tests", "floor", "coverage", "strict", "lib", "browser"])
