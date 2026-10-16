@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use serde_json::{Map, Value};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,6 +120,50 @@ pub(super) fn bootstrap_retired_first_party_channel_source(channel: &str, retire
     bootstrapped.insert("status".to_string(), Value::String("current".to_string()));
     bootstrapped.insert("packages".to_string(), Value::Array(Vec::new()));
     Ok(Value::Object(bootstrapped))
+}
+
+/// Normalize only the shipped first-party 0.6 source while merging its first
+/// runtime. Package identities stay intact; ordinary graph readers stay strict.
+pub(super) fn prepare_runtime_release_base(mut base: Value, channel: &str) -> Result<Value> {
+    if let Some(profiles) = base.get("profiles") {
+        FirstPartyChannel::parse(channel)?;
+        ensure!(
+            base.get("runtime").is_none(),
+            "legacy profile source must not carry a staged runtime"
+        );
+        ensure!(
+            profiles.as_object().is_some_and(|profiles| !profiles.is_empty()),
+            "legacy profile source must contain a nonempty profiles object"
+        );
+        let packages = base
+            .get("packages")
+            .and_then(Value::as_array)
+            .filter(|packages| !packages.is_empty())
+            .ok_or_else(|| anyhow!("legacy profile source must preserve an existing package cohort"))?;
+        for package in packages {
+            let version = package
+                .get("version")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("legacy package must declare its version"))?;
+            let parsed = semver::Version::parse(version)?;
+            ensure!(
+                parsed.major == 0 && parsed.minor == 6,
+                "profile source migration accepts only the shipped 0.6 package cohort"
+            );
+            let url = package.get("url").and_then(Value::as_str).unwrap_or_default();
+            ensure!(
+                url.starts_with(&format!(
+                    "https://github.com/google/capsem/releases/download/v{version}/"
+                )),
+                "legacy package must retain its official versioned publication URL"
+            );
+        }
+        base.as_object_mut()
+            .expect("profiles belong to an object")
+            .remove("profiles");
+    }
+    super::validate_assets_channel_graph_manifest(&base, channel)?;
+    Ok(base)
 }
 
 #[cfg(test)]

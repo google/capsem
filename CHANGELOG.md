@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Runtime releases can migrate the existing 0.6 profile source while preserving
+  package identities and staging the new runtime until a compatible binary is qualified.
+
 - Correct the release preflight's version line so qualified 0.7 packages can
   be published, and align the pre-release documentation labels.
 

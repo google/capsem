@@ -147,3 +147,79 @@ fn retired_graph_digest_is_a_canonical_lowercase_sha256() {
         );
     }
 }
+
+fn legacy_source(channel: &str) -> Value {
+    let mut graph = retired_profile_graph(channel);
+    let package = &mut graph["packages"][0];
+    package["id"] = json!("capsem-0-6-9-deb-arm64");
+    package["name"] = json!("Capsem_0.6.9_arm64.deb");
+    package["version"] = json!("0.6.9");
+    package["url"] = json!("https://github.com/google/capsem/releases/download/v0.6.9/Capsem_0.6.9_arm64.deb");
+    package["binaries"][0]["version"] = json!("0.6.9");
+    graph
+}
+
+#[test]
+fn legacy_runtime_source_preserves_every_package_field_and_channel() {
+    for channel in ["stable", "nightly"] {
+        let legacy = legacy_source(channel);
+        let migrated = prepare_runtime_release_base(legacy.clone(), channel).expect("migrate source");
+        let mut expected = legacy;
+        expected.as_object_mut().expect("source object").remove("profiles");
+        assert_eq!(migrated, expected, "only the legacy runtime unit may leave the source");
+        assert!(!migrated["packages"].as_array().expect("packages").is_empty());
+        assert!(migrated.get("runtime").is_none());
+    }
+}
+
+#[test]
+fn legacy_source_migration_refuses_foreign_or_relabelled_channels() {
+    for channel in ["nightly", "corp"] {
+        assert!(prepare_runtime_release_base(legacy_source("stable"), channel).is_err());
+    }
+}
+
+#[test]
+fn legacy_source_migration_refuses_mixed_or_malformed_state() {
+    let legacy = legacy_source("stable");
+    for (key, value) in [
+        ("runtime", json!(null)),
+        ("runtime", json!({"revision": "already-staged"})),
+        ("profiles", json!({})),
+        ("profiles", json!([])),
+        ("packages", json!([])),
+        ("status", json!("deprecated")),
+        ("unexpected_metadata", json!(true)),
+    ] {
+        let mut invalid = legacy.clone();
+        invalid[key] = value;
+        assert!(
+            prepare_runtime_release_base(invalid, "stable").is_err(),
+            "{key} must not be discarded"
+        );
+    }
+}
+
+#[test]
+fn legacy_source_migration_refuses_other_package_lines_or_publishers() {
+    for version in ["0.5.9", "0.7.0", "1.0.0", "not-semver"] {
+        let mut invalid = legacy_source("stable");
+        invalid["packages"][0]["version"] = json!(version);
+        assert!(prepare_runtime_release_base(invalid, "stable").is_err(), "{version}");
+    }
+    let mut foreign = legacy_source("stable");
+    foreign["packages"][0]["url"] = json!("https://example.com/Capsem.deb");
+    assert!(prepare_runtime_release_base(foreign, "stable").is_err());
+}
+
+#[test]
+fn ordinary_runtime_sources_keep_strict_validation() {
+    let modern = bootstrap_first_party_channel_source("nightly", &donor("stable")).expect("modern source");
+    assert_eq!(
+        prepare_runtime_release_base(modern.clone(), "nightly").expect("valid"),
+        modern
+    );
+    let mut invalid = modern;
+    invalid["unexpected_metadata"] = json!(true);
+    assert!(prepare_runtime_release_base(invalid, "nightly").is_err());
+}
