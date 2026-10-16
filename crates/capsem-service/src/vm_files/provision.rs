@@ -203,6 +203,9 @@ pub(crate) async fn complete_create(
         .get(id)
         .map(|instance| instance.uds_path.clone());
     if let Some(socket) = socket {
+        // `provision_attempt` succeeds on `StillBootingTimedOut` once the
+        // 500 ms launch ceiling elapses; `sync_memory` waits for `.launched`
+        // whenever in-memory credentials require an IPC handoff.
         crate::credential_routes::sync_memory(state, &socket)
             .await
             .map_err(|error| AppError::new(StatusCode::SERVICE_UNAVAILABLE, error))?;

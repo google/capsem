@@ -94,6 +94,8 @@ async fn persistent_boot_crash_reads_the_log_before_the_reaper_caches_its_tail()
 /// kept for post-mortem the way any failed session is.
 #[tokio::test]
 async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
+    let _lock = crate::tests::SETTINGS_ENV_LOCK.lock().await;
+    capsem_core::credential_broker::CredentialStore::global().clear_for_test();
     let mut state = crate::tests::make_test_state_owned();
     state.containers = ContainerSetups::with_source(Box::new(RefusingImages));
     let state = Arc::new(state);
@@ -187,4 +189,64 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
     let kept = find_failed_session_dir(&state.run_dir, "box").expect("the failed create's ledger and logs are kept");
     assert_eq!(std::fs::read(kept.join("session.db")).unwrap(), b"ledger");
     assert_eq!(std::fs::read(kept.join("process.log")).unwrap(), b"log");
+}
+
+/// When `provision_attempt` hits the 500 ms launch ceiling and returns
+/// `StillBootingTimedOut`, the VM is registered in `state.instances` before
+/// `capsem-process` has bound its IPC socket or stamped `.launched`. With
+/// in-memory credentials present, `complete_create` must wait for `.launched`
+/// before `sync_memory` opens the owner IPC socket instead of failing with 503.
+#[tokio::test]
+async fn complete_create_waits_for_launch_before_syncing_memory_credentials() {
+    use capsem_core::credential_broker::{CredentialProvider, CredentialStore};
+    use capsem_credentials::CredentialPersistence;
+
+    let _lock = crate::tests::SETTINGS_ENV_LOCK.lock().await;
+    CredentialStore::global().clear_for_test();
+    let state = crate::tests::make_test_state();
+    let session_dir = state.run_dir.join("sessions").join("slow-boot");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let uds_path = session_dir.join("process.sock");
+    insert_fake_instance_with_session_dir(&state, "slow-boot", std::process::id(), session_dir.clone());
+    let reference = CredentialStore::global()
+        .inject(
+            CredentialProvider::Google,
+            "private-delayed-launch-token",
+            CredentialPersistence::Memory,
+        )
+        .unwrap();
+
+    let delayed_uds = uds_path.clone();
+    let owner = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        let listener = tokio::net::UnixListener::bind(&delayed_uds).unwrap();
+        std::fs::write(delayed_uds.with_extension("launched"), b"launched\n").unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut stream = stream.into_std().unwrap();
+        let stream = tokio::task::spawn_blocking(move || {
+            capsem_foundation::ipc_handshake::negotiate_responder(&mut stream, "capsem-process-test", "").unwrap();
+            stream
+        })
+        .await
+        .unwrap();
+        let (tx, rx) = channel_from_std::<ProcessToService, ServiceToProcess>(stream).unwrap();
+        let ServiceToProcess::InjectCredentials { id, credentials } = rx.recv().await.unwrap() else {
+            panic!("expected credential injection after launch");
+        };
+        let store = CredentialStore::default();
+        store.import_memory_credentials(credentials).unwrap();
+        assert_eq!(
+            store.resolve(CredentialProvider::Google, &reference).unwrap().as_deref(),
+            Some("private-delayed-launch-token")
+        );
+        tx.send(ProcessToService::CredentialsInjected { id, error: None })
+            .await
+            .unwrap();
+    });
+
+    let result = complete_create(&state, "slow-boot", &[], None).await;
+    CredentialStore::global().clear_for_test();
+    let response = result.expect("complete_create should wait for .launched before syncing memory credentials");
+    assert_eq!(response.id, "slow-boot");
+    owner.await.unwrap();
 }

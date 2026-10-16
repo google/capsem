@@ -57,6 +57,26 @@ pub(crate) async fn sync_memory(state: &Arc<ServiceState>, socket: &StdPath) -> 
     if credentials.is_empty() {
         return Ok(());
     }
+    match vm_files::launch::wait_for_launch(
+        &socket.with_extension("ready"),
+        &socket.with_extension("launched"),
+        || {
+            state
+                .instances
+                .lock()
+                .unwrap()
+                .values()
+                .any(|instance| instance.uds_path == socket)
+        },
+        std::time::Duration::from_secs(30),
+    )
+    .await
+    {
+        vm_files::launch::LaunchWait::Ready | vm_files::launch::LaunchWait::Launched => {}
+        vm_files::launch::LaunchWait::Crashed | vm_files::launch::LaunchWait::TimedOut => {
+            return Err("credential owner handoff unavailable".into());
+        }
+    }
     let id = state.job_counter.fetch_add(1, Ordering::Relaxed);
     let command = ServiceToProcess::InjectCredentials { id, credentials };
     let result = tokio::time::timeout(
