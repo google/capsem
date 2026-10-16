@@ -1,5 +1,6 @@
 import { dia, shapes } from '@joint/core';
 import type { Diagram } from './types';
+import { nodeMeaning } from './semantics';
 
 export function mountDiagram(root: HTMLElement): () => void {
   const diagram: Diagram = JSON.parse(root.dataset.diagram!);
@@ -14,7 +15,7 @@ export function mountDiagram(root: HTMLElement): () => void {
     background: { color: 'transparent' },
   });
   for (const node of diagram.nodes) {
-    const kind = node.boundary ?? node.permission ?? 'external';
+    const kind = nodeMeaning(node);
     const cell = new shapes.standard.Rectangle({
       id: node.id, position: { x: node.x, y: node.y },
       size: { width: node.width ?? 220, height: node.height ?? 72 },
@@ -46,7 +47,7 @@ export function mountDiagram(root: HTMLElement): () => void {
         position: { distance: edge.labelAt ?? .5, offset: edge.labelOffset ?? -12 },
         attrs: {
           text: { text: edge.label, fill: 'var(--diagram-ink)', fontFamily: 'system-ui, sans-serif', fontSize: 12 },
-          rect: { fill: 'var(--diagram-external)', rx: 3, ry: 3 },
+          rect: { fill: 'var(--diagram-canvas)', rx: 3, ry: 3 },
         },
       }] : [],
     });

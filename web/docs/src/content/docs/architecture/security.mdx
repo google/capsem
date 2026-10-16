@@ -15,18 +15,11 @@ how their access is restricted and revoked, and which risks remain.
 See the [security engine](/architecture/security-engine/) for event processing,
 rule decisions, credentials, and logging.
 
-Colors show the host permissions available if a process is compromised:
-
-| Color | Host permissions |
-| --- | --- |
-| 🟢 Green — minimum | Granted connections only; no arbitrary host files or new connections. |
-| 🟡 Yellow — limited | Assigned files, credentials, or upstream connections. |
-| 🟠 Orange — elevated | VM control and virtualization resources. |
-| 🔴 Red — maximum | Full launching-user permissions or trusted coordinator authority. |
-
-Grey groups identify ownership by one VM. Blue outlines mark VM hardware
-boundaries. External systems are uncolored; client colors assume an ordinary
-user application without a Capsem-installed sandbox.
+Node colors show the host permissions available if a process is compromised.
+Each diagram's **Legend** explains its colors and boundaries: slate groups
+identify ownership by one VM, and cyan outlines mark VM hardware boundaries.
+External services have a neutral fill; client permission levels assume an
+ordinary user application without a Capsem-installed sandbox.
 
 ## Processes and control
 

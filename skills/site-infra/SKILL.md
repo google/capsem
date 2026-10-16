@@ -367,6 +367,12 @@ Preserve all connections, directionality, permission levels, and boundaries
 when migrating. Give diagrams deliberate layouts, zoom/pan/fit controls, and
 server-rendered connection tables so the information remains available without
 JavaScript. Verify label readability and controls on desktop and mobile.
+Every color used in a diagram must appear in its Legend. Use the shared
+semantic meanings in `web/diagrams/semantics.ts`, backed by Tailwind palette
+tokens; SVG fills and legend swatches must come from those same definitions.
+Distinct meanings in one diagram use distinct color families, not different
+shades of one hue. Keep permission levels separate from process and VM
+boundaries, and verify the expanded Legend after changing a diagram.
 All published diagrams use this component; archived manual sources retain their
 old Mermaid text but are excluded from the build. Do not add another renderer
 or a JointJS+ dependency for a new diagram. Keep external services outside

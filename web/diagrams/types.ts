@@ -1,8 +1,8 @@
-export type Permission = 'minimum' | 'limited' | 'elevated' | 'maximum' | 'external';
-export type Tone = Permission | 'accent' | 'secondary';
+export type Permission = 'minimum' | 'limited' | 'elevated' | 'maximum';
+export type Tone = Permission | 'component' | 'processing' | 'restricted' | 'credential';
 export interface DiagramNode {
   id: string; label: string; x: number; y: number;
-  permission?: Tone; width?: number; height?: number;
+  tone?: Tone; width?: number; height?: number;
   boundary?: 'vm' | 'group' | 'engine';
 }
 export interface DiagramLink {

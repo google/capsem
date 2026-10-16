@@ -2,8 +2,23 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { introduction, systemOverview, securityEngine, investigation } from '../src/lib/overview-diagrams.ts';
 import { securityProcesses, securityNetwork } from '../src/lib/diagrams.ts';
+import { diagramLegend, nodeMeaning, semantics } from '../../diagrams/semantics.ts';
+import { SECURITY_DIAGRAM } from '../../marketing/src/lib/data.ts';
 
-const diagrams = [introduction, systemOverview, securityEngine, investigation, securityProcesses, securityNetwork];
+const diagrams = [introduction, systemOverview, securityEngine, investigation, securityProcesses, securityNetwork, SECURITY_DIAGRAM];
+
+test('distinct diagram meanings use distinct Tailwind color families', () => {
+  for (const diagram of diagrams) {
+    const legend = diagramLegend(diagram);
+    const families = legend.map(meaning => semantics[meaning].family);
+    assert.equal(new Set(families).size, legend.length, `${diagram.title}: meanings share a color family`);
+    for (const node of diagram.nodes) {
+      assert.ok(legend.includes(nodeMeaning(node)), `${diagram.title}: ${node.label} has no legend entry`);
+    }
+  }
+  assert.notEqual(semantics.engine.family, semantics.limited.family);
+  assert.notEqual(semantics.vm.family, semantics.processing.family);
+});
 
 test('diagram connections resolve to unique nodes', () => {
   for (const diagram of diagrams) {
