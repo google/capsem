@@ -449,6 +449,60 @@ fn runtime_release_refuses_a_candidate_without_a_runtime() {
 }
 
 #[test]
+fn runtime_release_migrates_legacy_profiles_preserving_packages() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("legacy-source.json");
+    let candidate_path = temp.path().join("runtime.json");
+    let revision = "0.7.0-0123456789ab";
+    let mut legacy = test_runtime_graph("nightly", "1.0.0");
+    legacy.as_object_mut().expect("graph").remove("runtime");
+    legacy["profiles"] = serde_json::json!({"code": {"current": "0.6.9"}});
+    for package in legacy["packages"].as_array_mut().expect("packages") {
+        let previous = package["version"].as_str().expect("version").to_string();
+        package["version"] = serde_json::json!("0.6.9");
+        for field in ["name", "url"] {
+            let value = package[field]
+                .as_str()
+                .expect("package field")
+                .replace(&previous, "0.6.9");
+            package[field] = serde_json::json!(value);
+        }
+        for binary in package["binaries"].as_array_mut().expect("binaries") {
+            binary["version"] = serde_json::json!("0.6.9");
+        }
+    }
+    let original = serde_json::to_vec_pretty(&legacy).expect("legacy source");
+    fs::write(&path, &original).expect("write source");
+    let mut candidate = test_runtime_graph("nightly", revision);
+    candidate["runtime"]["min_capsem_version"] = serde_json::json!("0.7.0");
+    candidate["runtime"]["source_commit"] = serde_json::json!("f".repeat(40));
+    fs::write(&candidate_path, serde_json::to_vec(&candidate).expect("candidate")).expect("write candidate");
+    let mut args = release_args(&path, legacy["version"].as_str().expect("manifest version"), revision);
+    args.candidate_manifest = Some(candidate_path.clone());
+    assert!(
+        apply_runtime_release_status(&args).is_err(),
+        "a foreign candidate must not migrate the source"
+    );
+    assert_eq!(fs::read(&path).expect("unchanged source"), original);
+    candidate["runtime"]["source_commit"] = serde_json::json!(source_commit().as_str());
+    fs::write(&candidate_path, serde_json::to_vec(&candidate).expect("candidate")).expect("write candidate");
+    let report = apply_runtime_release_status(&args).expect("stage first runtime from the legacy source");
+    let written: serde_json::Value = serde_json::from_slice(&fs::read(&path).expect("written source")).expect("json");
+    assert_eq!(
+        written["packages"], legacy["packages"],
+        "migration must preserve the actual predecessor cohort"
+    );
+    assert_eq!(written["channel"], legacy["channel"]);
+    assert!(written.get("profiles").is_none());
+    assert_eq!(written["runtime"]["revision"], revision);
+    assert!(
+        !report.compatible_with_current_binary,
+        "the old binary must not activate the new runtime"
+    );
+    validate_assets_channel_graph_manifest(&written, "nightly").expect("strict current graph");
+}
+
+#[test]
 fn corporate_manifest_carries_the_corporations_runtime_under_its_base() {
     let temp = tempfile::tempdir().expect("tempdir");
     let base = "https://corp.example/runtime/";

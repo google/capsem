@@ -1187,7 +1187,7 @@ fn merge_graph_runtime_release(
             .with_context(|| format!("read candidate manifest {}", candidate_manifest.display()))?,
     )
     .with_context(|| format!("parse candidate manifest {}", candidate_manifest.display()))?;
-    validate_assets_channel_graph_manifest(&base, &args.channel)?;
+    base = channel_bootstrap::prepare_runtime_release_base(base, &args.channel)?;
     validate_assets_channel_graph_manifest(&candidate, &args.channel)?;
     let mut runtime = graph_runtime(&candidate).cloned().ok_or_else(|| {
         anyhow!(

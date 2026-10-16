@@ -420,6 +420,16 @@ The selected runtime is then authored through the normal `capsem-admin release`
 path. Bootstrap is not a third public release command, a generic authoring
 shortcut, or permission to relabel a release graph from another channel.
 
+For the 0.7 clean break, the serialized runtime authorer MAY consume a
+first-party 0.6 source containing profiles when merging its first validated
+runtime candidate. It MUST preserve every existing package row and identity,
+remove only the obsolete profile unit, and keep ordinary graph readers strict.
+Mixed profile/runtime state, other package lines, foreign publication URLs,
+empty package membership and channel relabeling MUST fail. A failed candidate
+MUST leave the source unchanged. This source-only migration neither serves 0.6
+field binaries nor retires their package cohort; existing compatibility,
+staging and installed predecessor proof requirements still apply.
+
 One migration-only variant replaces a known broken pre-0.6 first-party graph.
 `config/gate.toml` MUST name its channel and exact current-manifest SHA-256.
 The selector MUST require the catalog digest and freshly fetched payload digest
