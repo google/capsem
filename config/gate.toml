@@ -3729,6 +3729,7 @@ tests = "sdk/python/tests"
 build_output = "cache/target/sdk/python"
 environment_python = "sdk/python/.venv/bin/python"
 package_build_requirements = "cache/target/sdk/python/package-build-requirements.txt"
+pytest_scratch = "cache/target/sdk/python/pytest"
 
 [sdk_rust]
 project = "sdk/rust"

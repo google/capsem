@@ -40,6 +40,7 @@ class SdkConfig(SourcePackageConfig):
 class PythonSdkConfig(SdkConfig):
     environment_python: str
     package_build_requirements: str
+    pytest_scratch: str
 
 
 class NodePackageConfig(Strict):

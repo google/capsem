@@ -43,6 +43,20 @@ def test_python_sdk_tests_cannot_start_before_the_archives_they_install_are_buil
     )
 
 
+def test_python_sdk_pytest_cannot_empty_the_other_suites_shared_basetemp() -> None:
+    import shlex
+
+    plan = gate_plan("test-fast")
+    argv = shlex.split(plan.step_named("fast.sdk.python.tests").actions[0].render())
+    assert "--basetemp" in argv, (
+        "SDK pytest has a separate project without tests/conftest.py: it must override "
+        "inherited basetemp or it deletes concurrent Citadel tmp_path directories"
+    )
+    config = gate_config.load(PROJECT_ROOT)
+    scratch = argv[argv.index("--basetemp") + 1]
+    assert scratch == str(config.path(config.sdk_python.pytest_scratch))
+
+
 def test_typescript_package_acceptance_has_network_prewarm_outside_the_sandbox() -> None:
     from capsem_builder.gate.execution import Needs
 

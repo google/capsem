@@ -138,7 +138,8 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tupl
     checks["build"] = phase.shared(python_package(config), after=(synced,))
     plan.record_stage(checks["build"].label, "fast.sdk.python")
     tested = phase.add(step(
-        "tests", Run(["uv", "run", "--frozen", "--no-sync", "pytest"], cwd=config.path(settings.project)),
+        "tests", Run(["uv", "run", "--frozen", "--no-sync", "pytest",
+                      "--basetemp", str(config.path(settings.pytest_scratch))], cwd=config.path(settings.project)),
         kind=Kind.UNIT_TEST, speed=Speed.FAST,
     ), after=(checks["build"],))
     return (*checks.values(), tested)
