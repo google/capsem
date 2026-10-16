@@ -38,6 +38,13 @@ async function entered(vm) {
   });
   assert.equal(unknownUser.exit_code, 125);
   assert(unknownUser.stderr.data.includes('unknown user'));
+  const containerExec = await vm.container.exec(workload);
+  assert.equal(containerExec.exit_code, 0);
+  assert.equal(containerExec.stdout.data, 'SDK_OCI_WORKLOAD');
+  assert.equal(containerExec.stderr.data, '');
+  const containerNobody = await vm.container.exec('id -u; id -g; pwd', {user: 'nobody', cwd: '/tmp'});
+  assert.equal(containerNobody.exit_code, 0);
+  assert.deepEqual(containerNobody.stdout.data.trim().split('\n'), nobodyLines);
   const host = await vm.exec(guest, {target: ExecTarget.VM});
   assert.equal(host.exit_code, 0);
   assert.equal(host.stdout.data, 'SDK_OCI_VM');

@@ -32,6 +32,14 @@ async def entered(vm: VM) -> None:
     assert as_root.exit_code == 0 and as_root.stdout.data.strip().splitlines() == ["0", "0", "/tmp"], as_root
     unknown = await vm.exec("echo unreachable", user="no_such_capsem_user_99999", target=models.ExecTarget.WORKLOAD)
     assert unknown.exit_code == 125 and "unknown user" in unknown.stderr.data, unknown
+    container_exec = await vm.container.exec(WORKLOAD)
+    assert container_exec.exit_code == 0 and container_exec.stdout.data == "SDK_OCI_WORKLOAD", (
+        container_exec.exit_code, container_exec.stdout.data, container_exec.stderr_bytes,
+    )
+    assert container_exec.stderr_bytes == b""
+    container_nobody = await vm.container.exec("id -u; id -g; pwd", user="nobody", cwd="/tmp")
+    assert container_nobody.exit_code == 0, container_nobody
+    assert container_nobody.stdout.data.strip().splitlines() == nobody_lines, container_nobody
     guest = await vm.exec(GUEST, target=models.ExecTarget.VM)
     assert guest.exit_code == 0 and guest.stdout.data == "SDK_OCI_VM", guest
     assert guest.stderr_bytes == b""
