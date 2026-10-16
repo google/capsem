@@ -54,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Compact diagram controls inside the canvas, rename the text disclosure to Legend, and remove repeated visible library credits.
+
 - Fixed download dialog dismissal and close control; gave each performance card one consistent accent.
 
 - Added platform-aware direct installer downloads, an alternate-platform dialog,
