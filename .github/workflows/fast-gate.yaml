@@ -87,3 +87,18 @@ jobs:
 
       - name: Run release source contracts
         run: uv run --project build_system --frozen capsem-gate test-release-contracts
+
+      - name: Retain verified registry package archives
+        if: ${{ inputs.source_commit != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: client-packages
+          if-no-files-found: error
+          path: |
+            cache/target/sdk/python/*.whl
+            cache/target/sdk/python/*.tar.gz
+            cache/target/sdk/rust/*.crate
+            cache/target/sdk/typescript/*.tgz
+            cache/target/integrations/inspect-ai/*.whl
+            cache/target/integrations/inspect-ai/*.tar.gz
+            cache/target/mcp/typescript/*.tgz

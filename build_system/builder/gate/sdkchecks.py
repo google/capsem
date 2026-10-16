@@ -269,21 +269,6 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     return (*checks, built, warmed, tested, generated, mcp_built, mcp_typed, mcp_warmed, mcp_tested)
 
 
-def rust_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> tuple[Step, ...]:
-    settings = config.sdk_rust
-    generated = plan.phase("fast.sdk.rust").add(step(
-        "generate", Run(uv_run(config, "python", "-m", "capsem_builder.sdkgen", "--check",
-                               "--specification", settings.specification, "--rust-source", settings.source)),
-        kind=Kind.LINT, speed=Speed.FAST,
-    ), after=after)
-    packaged = plan.phase("fast.sdk.rust").add(step(
-        "package", Run(uv_run(config, "python", "-m", "capsem_builder.release.tools.package_rust_sdk")),
-        kind=Kind.PACKAGE, speed=Speed.FAST,
-        contends=(config.exclusive("workspace_binaries"),),
-    ), after=(generated,))
-    return generated, packaged
-
-
 def typescript_bundle(config: GateConfig) -> Step:
     """Compile the linked SDK before a standalone frontend consumer starts."""
     return step(

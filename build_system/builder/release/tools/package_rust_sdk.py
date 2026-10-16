@@ -55,15 +55,21 @@ def publication_order(
         raise ValueError("cyclic SDK publication dependencies") from error
 
 
+def cargo_metadata(root: Path) -> dict[str, Any]:
+    return json.loads(subprocess.check_output(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps", "--offline"],
+        cwd=root,
+    ))
+
+
 def main() -> None:
     config = load(Path.cwd())
-    metadata = json.loads(subprocess.check_output(
-        ["cargo", "metadata", "--format-version", "1", "--no-deps", "--offline"],
-        cwd=config.root,
-    ))
+    metadata = cargo_metadata(config.root)
     packages = publication_order(metadata["packages"], config.path(config.sdk_rust.manifest), config.root)
     selected = [argument for package in packages for argument in ("--package", package["name"])]
-    subprocess.run(["cargo", "package", "--locked", "--offline", *selected], cwd=config.root, check=True)
+    # Developer feedback may package recorded uncommitted work. Cargo preserves
+    # its dirty bit; publication requires the exact clean source below.
+    subprocess.run(["cargo", "package", "--locked", "--offline", "--allow-dirty", *selected], cwd=config.root, check=True)
     output = config.path(config.sdk_rust.build_output)
     output.mkdir(parents=True, exist_ok=True)
     for package in packages:

@@ -1,0 +1,89 @@
+name: Publish verified client packages
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_tag:
+        required: true
+        type: string
+    secrets:
+      PYPI_TOKEN:
+        required: true
+      NPM_TOKEN:
+        required: true
+      CARGO_REGISTRY_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+      - uses: ./.github/actions/rust-cache
+        with:
+          key: client-publication
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: client-packages
+          path: cache/target
+      - name: Materialize locked publication dependencies
+        run: |
+          uv sync --project build_system --frozen
+          cargo fetch --locked
+      - name: Attest the tested registry archives
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: |
+            cache/target/sdk/python/*.whl
+            cache/target/sdk/python/*.tar.gz
+            cache/target/sdk/rust/*.crate
+            cache/target/sdk/typescript/*.tgz
+            cache/target/integrations/inspect-ai/*.whl
+            cache/target/integrations/inspect-ai/*.tar.gz
+            cache/target/mcp/typescript/capsem-mcp-*.tgz
+      - name: Publish and verify the exact client cohort
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: >
+          uv run --project build_system --frozen python -m capsem_builder.release.tools.client_publishers publish
+          --source-commit "$SOURCE_COMMIT" --release-tag "$RELEASE_TAG"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-linux-x86_64
+          path: release-native/
+      - name: Extract the qualified native service for public SDK consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=(release-native/*.deb)
+          test "${#packages[@]}" -eq 1
+          dpkg-deb -x "${packages[0]}" release-native/extracted
+      - name: Install public registry clients and prove real service access
+        run: >
+          uv run --project build_system --frozen python tests/client_registry_acceptance.py
+          --binary-dir release-native/extracted/usr/bin

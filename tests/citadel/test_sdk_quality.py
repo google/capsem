@@ -87,6 +87,15 @@ def test_rust_registry_packages_are_verified_and_exported_by_the_fast_gate() -> 
                for path in CONFIG.prefix.exports), SDK_RATIONALE
 
 
+@pytest.mark.parametrize("owner", ["candidate", "test-fast"])
+def test_qualification_validates_all_retained_client_archives_before_native_work(owner: str) -> None:
+    plan = gate_plan(owner)
+    cohort = plan.step_named("fast.sdk.packages.validate")
+    assert "capsem_builder.release.tools.client_package_archives" in " ".join(cohort.render()), SDK_RATIONALE
+    producers = {"fast.sdk.rust.package", "fast.sdk.python.build", "fast.mcp.typescript.tests"}
+    assert producers <= plan.after_of(cohort.label), SDK_RATIONALE
+
+
 def test_mcp_tests_consume_the_exported_publication_archives() -> None:
     plan = gate_plan("test-fast")
     assert plan.step_named("fast.mcp.typescript.types").render() == [

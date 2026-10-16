@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stable native releases publish the qualified SDK, npm MCP and Inspect package
+  cohort in dependency order and verify clean public registry consumers.
+
 - Public SDK and MCP packages identify their canonical source and license;
   Python SDK packages include their usage guide.
 

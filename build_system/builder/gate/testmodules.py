@@ -25,6 +25,7 @@ from . import (
     pytestsuite,
     sandbox,
     sdkchecks,
+    sdkregistrychecks,
     sourcechecks,
     toolchain,
     webaudits,
@@ -174,7 +175,10 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     sdk_checked = sdkchecks.fragment(plan, config, after=(syntax,))
     inspect_checked = sdkchecks.inspect_fragment(plan, config, after=(syntax,))
     typescript_checked = sdkchecks.typescript_fragment(plan, config, after=(syntax, node))
-    rust_sdk_checked = sdkchecks.rust_fragment(plan, config, after=(syntax,))
+    rust_sdk_checked = sdkregistrychecks.rust_fragment(plan, config, after=(syntax,))
+    cohort = plan.add(sdkregistrychecks.package_cohort(config), after=(
+        *sdk_checked, *inspect_checked, *typescript_checked, *rust_sdk_checked,
+    ))
 
     # The web surfaces import `web/app/src/lib/mock-settings.generated.ts`,
     # which is gitignored and therefore never part of the source a run is
@@ -222,6 +226,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         *inspect_checked,
         *typescript_checked,
         *rust_sdk_checked,
+        cohort,
         *guards.leaves,
         formatted,
         digest,

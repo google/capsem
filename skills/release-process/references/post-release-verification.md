@@ -82,3 +82,32 @@ running service to ensure the tray via `/companions/tray/ensure`; spawning
 `capsem-tray` directly bypasses the service parent guard and is not the product
 path.
 ## Documentation site
+
+## Stable SDK and adapter registries
+
+The binary workflow calls `release-client-packages.yaml` only after the native
+public download/install proof. It consumes the source gate's `client-packages`
+artifact rather than repacking Python or npm sources. The Rust publisher uses
+Cargo's official packager and refuses any byte difference from the tested
+crate before upload. Its verification build runs without publishing tokens.
+
+Before a stable attempt, configure Actions secrets `PYPI_TOKEN`, `NPM_TOKEN`,
+and `CARGO_REGISTRY_TOKEN` with authority for the existing Capsem projects and
+their dependency crates. PyPI authority must cover both `capsem` and
+`inspect-capsem-sandbox`; npm authority must cover `@capsem/sdk` and `@capsem/mcp`.
+Never put a token in source, command arguments, logs, or a conversation.
+
+`client_registry` anonymously checks exact public versions and downloads their
+bytes. `tests/client_registry_acceptance.py` then starts the exact native
+package's service and runs clean consumers outside the checkout. Python checks
+SDK discovery and the Inspect plugin; Node checks SDK discovery and packed MCP
+handshake/status; Rust compiles only registry dependencies and calls the service.
+The SDK defaults discover the isolated service's actual local metadata.
+
+If publication stops partway through, repair the registry authority or transport
+and retry the same qualified source through the owning binary release command.
+The publisher accepts only byte-identical already-uploaded files and publishes
+missing files in dependency order. It never uses a skip-existing flag. Native
+publication can already be live while this continuation is incomplete; do not
+report the coordinated release complete until the public consumer proof passes.
+
