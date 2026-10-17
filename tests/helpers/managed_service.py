@@ -219,6 +219,10 @@ def systemd_service(service: ServiceInstance) -> Iterator[ManagedService]:
         manager_environment(service.tmp_dir, owner.manager_label, owner.retire) as manager,
     ):
         owner.environment = manager.environment
+        # The manager's unit defaults can point at another session's bus.
+        # Its child must query the same authenticated manager as this owner.
+        runtime = manager.environment["XDG_RUNTIME_DIR"]
+        environment.update(XDG_RUNTIME_DIR=runtime, DBUS_SESSION_BUS_ADDRESS=f"unix:path={runtime}/bus")
         result = subprocess.run([
             "systemd-run", "--user", "--collect", f"--unit={owner.label}",
             "--property=Restart=always", "--property=RestartSec=0.1",

@@ -53,6 +53,10 @@ explicitly through the privilege transition. The worker checks its socket peer,
 native owner and network namespace before restoring the manager environment.
 Never adopt an ambient user manager outside the sealed worker's namespace:
 its service can be healthy while localhost is unreachable from the test.
+Pass that authenticated manager's runtime and bus address explicitly into the
+service unit too. A user manager's default unit environment can point at a
+different session; worker-only binding leaves a healthy service unable to
+verify its own restart policy.
 
 Focused Ruff commands must select `--config build_system/pyproject.toml`, as
 the gate does. Auto-discovery from a root-level test used a different Python
