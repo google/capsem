@@ -48,6 +48,11 @@ async fn mcp_aggregator_grant_is_connected_and_a_denial_does_not_replay_the_requ
             Some(descriptor.as_raw_fd()),
         )
         .await;
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::Adopted { grant_id: 2 }
+        );
+        drop(descriptor);
         peer.write_all(b"connected RPC").unwrap();
         // Darwin stops reporting a connected peer once its endpoint closes.
         // Keep this granted capability live until the client has consumed it.
@@ -778,4 +783,51 @@ fn inherited_channel_is_duplicated_cloexec_and_connected() {
     let mut byte = [0_u8; 1];
     peer.read_exact(&mut byte).unwrap();
     assert_eq!(byte, [b'x']);
+}
+
+#[tokio::test]
+async fn descriptor_handoffs_retain_original_only_until_matching_receipt() {
+    for kind in 0..4 {
+        let (broker, worker) = UnixStream::pair().unwrap();
+        let (requests, responses) = channels(broker);
+        let (receiver, sender) = channels(worker);
+        let (original, peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let mut peer = tokio::net::UnixStream::from_std(peer).unwrap();
+        let handoff = tokio::spawn(async move {
+            match kind {
+                0 => attach_proxy_mcp(&sender, &receiver, 7, original.into()).await,
+                1 => attach_proxy_trace_hints(&sender, &receiver, 7, original.into()).await,
+                2 => attach_proxy_traffic(&sender, &receiver, 7, ProxyTrafficService::Http, original.into()).await,
+                _ => mcp::attach_http(&sender, &receiver, 7, McpHttpRole::Aggregator, original.into()).await,
+            }
+            .unwrap()
+            .unwrap();
+        });
+        let frame = requests.recv().await.unwrap();
+        assert_eq!(frame.fds.len(), 1);
+        drop(frame);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), peer.read(&mut [0]))
+                .await
+                .is_err(),
+            "handoff {kind} released its original before receipt"
+        );
+        let response = match kind {
+            0 => UpstreamGrantResponse::ProxyMcpAdopted { request_id: 7 },
+            1 => UpstreamGrantResponse::ProxyTraceHintsAdopted { request_id: 7 },
+            2 => UpstreamGrantResponse::ProxyTrafficAdopted { request_id: 7 },
+            _ => UpstreamGrantResponse::McpHttpAdopted { request_id: 7 },
+        };
+        send_response(&responses, &response, None).await;
+        tokio::time::timeout(Duration::from_secs(2), handoff)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            peer.read(&mut [0]).await.unwrap(),
+            0,
+            "handoff {kind} retained original after receipt"
+        );
+    }
 }

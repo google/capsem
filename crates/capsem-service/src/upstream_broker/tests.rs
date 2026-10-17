@@ -901,3 +901,16 @@ async fn malformed_frame_closes_the_generation_before_any_response() {
     assert!(error.contains("invalid upstream grant magic"), "{error}");
     assert!(client.responses.recv().await.is_err());
 }
+
+#[tokio::test(start_paused = true)]
+async fn unacknowledged_descriptor_expires_without_a_next_request() {
+    let (client, _publisher, _authority, task) = start_broker(test_policy("policy-a", None, vec![]));
+    let (_, descriptors) = client
+        .request(&UpstreamGrantRequest::OpenLoopbackListener { request_id: 1, port: 0 })
+        .await;
+    tokio::time::advance(ADOPTION_TIMEOUT).await;
+    let completion = task.await.unwrap().unwrap();
+    assert!(completion.cleanup_confirmed);
+    assert_eq!(completion.protocol_result.unwrap_err(), "descriptor adoption timed out");
+    drop(descriptors);
+}

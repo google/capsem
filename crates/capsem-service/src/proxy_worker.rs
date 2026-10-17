@@ -415,8 +415,8 @@ impl WorkerProcess {
             .send(&encode_proxy_control_request(ProxyControlRequest::Attach(grant)), &raw)
             .await
             .context("send proxy descriptor grant")?;
-        drop(descriptors);
-        match self.recv_event().await? {
+        // SCM_RIGHTS send completion is not receiver ownership on Darwin.
+        let result = match self.recv_event().await? {
             ProxyControlEvent::Adopted {
                 generation,
                 grant_id: adopted,
@@ -434,7 +434,9 @@ impl WorkerProcess {
                 reason,
             }),
             event => bail!("proxy worker sent {event:?} while adopting grant {grant_id}"),
-        }
+        };
+        drop(descriptors);
+        result
     }
 
     async fn apply_policy(&mut self, active_policy: Vec<u8>) -> Result<PolicyApply> {
@@ -608,14 +610,16 @@ impl PendingWorker {
             )
             .await
             .context("send proxy startup grant")?;
-        drop(stream);
-        match self.recv_event().await? {
+        // Keep the policy socket alive until this generation adopts it.
+        let result = match self.recv_event().await? {
             ProxyControlEvent::Adopted {
                 generation,
                 grant_id: adopted,
             } if generation == self.generation && adopted == grant_id => Ok(()),
             event => bail!("proxy worker sent {event:?} while adopting startup grant {grant_id}"),
-        }
+        };
+        drop(stream);
+        result
     }
 
     async fn kill_reap(&mut self) {

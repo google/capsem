@@ -140,6 +140,13 @@ scope cancellation and positive child reaping. The native MCP regression is
 `upstream_broker/mcp_spawn/tests.rs`: it delays adoption, checks that the original
 stays alive, and proves it is released after the receipt. Keeping an extra
 socket for the child's entire lifetime masks disconnects and leaks descriptors.
+The same rule covers startup policy, proxy traffic/MCP/trace hints, ledger
+clients, gateway connections and the aggregator's owner connection. Auditing
+only the native MCP bootstrap missed these paths and left a macOS policy-update
+broken pipe. `tests/citadel/test_descriptor_adoption_lifetime.py` guards the
+early-drop sites; gateway and upstream grant tests also drop the received copy
+before acknowledging to prove the sender still owns its original, then assert
+EOF after adoption to rule out retention leaks.
 
 Direct Unix calls remain valid only in modules that implement a kernel or
 platform ABI rather than reusable host policy, such as KVM/FUSE and guest audit

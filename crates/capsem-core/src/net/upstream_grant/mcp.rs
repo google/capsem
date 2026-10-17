@@ -50,6 +50,7 @@ pub(super) async fn open_aggregator(
         } if response_id == request_id => {
             let descriptor = descriptors.pop().ok_or("MCP aggregator grant omitted its descriptor")?;
             fd::validate_connected_stream(descriptor.as_fd()).map_err(|error| error.to_string())?;
+            send_request(sender, &UpstreamGrantRequest::Adopted { grant_id: request_id }).await?;
             Ok(Ok(UnixStream::from(descriptor)))
         }
         UpstreamGrantResponse::Denied {
@@ -75,9 +76,8 @@ pub(super) async fn attach_http(
         .await
         .map_err(|_| "send MCP HTTP handoff timed out".to_string())?
         .map_err(|error| format!("send MCP HTTP handoff: {error}"))?;
-    drop(descriptor);
     let (response, _) = receive_response(receiver).await?;
-    match response {
+    let result = match response {
         UpstreamGrantResponse::McpHttpAdopted {
             request_id: response_id,
         } if response_id == request_id => Ok(Ok(())),
@@ -88,5 +88,7 @@ pub(super) async fn attach_http(
         response => Err(format!(
             "unexpected MCP HTTP response for request {request_id}: {response:?}"
         )),
-    }
+    };
+    drop(descriptor);
+    result
 }

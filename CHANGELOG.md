@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Proxy startup, proxy capabilities, ledger clients and native MCP owner
+  connections retain socket owners until adoption; missing gateway or upstream
+  adoption expires and releases the grant instead of retaining it indefinitely.
+
+- Gateway connection grants acknowledge descriptor adoption before the service
+  releases its original socket, avoiding intermittent macOS request failures.
+
+- VM-to-proxy traffic, MCP and trace-hint socket handoffs retain their original
+  through receiver adoption, preventing intermittent macOS connection failures.
+
 - Runtime releases can migrate the existing 0.6 profile source while preserving
   package identities and staging the new runtime until a compatible binary is qualified.
 

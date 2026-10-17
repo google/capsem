@@ -489,13 +489,14 @@ impl WorkerProcess {
             )
             .await
             .context("send ledger descriptor grant")?;
-        drop(worker);
         loop {
             match self.recv_event().await? {
                 LedgerControlEvent::Adopted {
                     generation,
                     client_id: adopted,
                 } if generation == self.generation && adopted == client_id => {
+                    // A queued SCM_RIGHTS reference alone is insufficient on Darwin.
+                    drop(worker);
                     return Ok(LedgerClient {
                         stream: client,
                         commitment: None,
