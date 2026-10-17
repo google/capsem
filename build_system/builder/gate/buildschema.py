@@ -47,6 +47,10 @@ class PythonSdkConfig(PythonPackageConfig):
     package_build_requirements: str
 
 
+class TypeScriptSdkConfig(SdkConfig):
+    build_timeout_seconds: PositiveInt
+
+
 class NodePackageConfig(Strict):
     project: str
     build_output: str

@@ -39,6 +39,7 @@ from .buildschema import (
     SbomConfig,
     SdkConfig,
     SigningConfig,
+    TypeScriptSdkConfig,
     WebSurfacesConfig,
 )
 from .configschema import (
@@ -122,7 +123,7 @@ class GateConfig(Strict):
     modules: ModulesConfig
     sdk_python: PythonSdkConfig
     integrations_inspect_ai: PythonPackageConfig
-    sdk_typescript: SdkConfig
+    sdk_typescript: TypeScriptSdkConfig
     mcp_typescript: NodePackageConfig
     sdk_rust: SdkConfig
     imagebuild: ImageBuildConfig

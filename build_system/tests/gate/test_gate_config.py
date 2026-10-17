@@ -505,7 +505,12 @@ def _source_package_type():
 
 
 def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> None:
-    from capsem_builder.gate.buildschema import PythonPackageConfig, PythonSdkConfig, SdkConfig
+    from capsem_builder.gate.buildschema import (
+        PythonPackageConfig,
+        PythonSdkConfig,
+        SdkConfig,
+        TypeScriptSdkConfig,
+    )
 
     source = _source_package_type()
     fields = ("project", "manifest", "source", "tests", "build_output")
@@ -516,9 +521,11 @@ def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> Non
     # last, while remaining mandatory and preserving every SDK owner type.
     assert tuple(SdkConfig.model_fields) == (*fields, "specification")
     assert all(field.is_required() for field in SdkConfig.model_fields.values())
-    for owner in ("sdk_typescript", "sdk_rust"):
-        assert gate_config.GateConfig.model_fields[owner].annotation is SdkConfig
+    for owner, model in (("sdk_typescript", TypeScriptSdkConfig), ("sdk_rust", SdkConfig)):
+        assert gate_config.GateConfig.model_fields[owner].annotation is model
         assert isinstance(getattr(CONFIG, owner), SdkConfig)
+    assert tuple(TypeScriptSdkConfig.model_fields) == (*SdkConfig.model_fields, "build_timeout_seconds")
+    assert all(field.is_required() for field in TypeScriptSdkConfig.model_fields.values())
     assert gate_config.GateConfig.model_fields["sdk_python"].annotation is PythonSdkConfig
     assert issubclass(PythonPackageConfig, source)
     assert tuple(PythonPackageConfig.model_fields) == (*fields, "pytest_scratch")

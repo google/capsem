@@ -3754,6 +3754,9 @@ specification = "sdk/specification/openapi.json"
 source = "sdk/typescript/src"
 tests = "sdk/typescript/tests"
 build_output = "cache/target/sdk/typescript"
+# Hosted concurrent type checks took 123s; the runner owns this finite build
+# budget and tears down the entire compiler process group on expiry.
+build_timeout_seconds = 300
 
 [mcp_typescript]
 project = "mcp/typescript"

@@ -11,8 +11,9 @@ for (const entry of readdirSync(dist)) {
   rmSync(join(dist, entry), {recursive: true, force: true});
 }
 const compiler = fileURLToPath(import.meta.resolve('typescript/bin/tsc'));
+// The calling gate/test runner owns the deadline and compiler process group.
 const result = spawnSync(process.execPath, [compiler, '-p', 'tsconfig.json'], {
-  cwd: fileURLToPath(root), stdio: 'inherit', timeout: 60_000,
+  cwd: fileURLToPath(root), stdio: 'inherit',
 });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);
