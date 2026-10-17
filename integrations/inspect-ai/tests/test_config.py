@@ -63,12 +63,6 @@ def test_coerce_config_and_unsupported_knobs() -> None:
     cfg = CapsemSandboxConfig(cpu_count=2)
     assert coerce_config(cfg) is cfg
     assert coerce_config({"cpu_count": 2}) == CapsemSandboxConfig(cpu_count=2)
-    with pytest.raises(NotImplementedError, match="template"):
-        coerce_config({"template": "code"})
-    with pytest.raises(NotImplementedError, match="allow_domains"):
-        coerce_config({"allow_domains": ["pypi.org"]})
-    with pytest.raises(NotImplementedError, match="host_workspace_dir"):
-        coerce_config({"host_workspace_dir": "/tmp/ws"})
     with pytest.raises(ValidationError, match="requires an explicit OCI image reference"):
         CapsemSandboxConfig(execution_mode="container")
     with pytest.raises(ValueError, match="requires an explicit OCI image reference"):

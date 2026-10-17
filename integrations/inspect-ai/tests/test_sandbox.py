@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-import inspect_capsem._lifecycle as lifecycle_mod
 import inspect_capsem.sandbox as sb
 import pytest
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
@@ -57,8 +56,6 @@ async def test_sample_init_container_and_vm_modes() -> None:
     assert env.vm_id == "vm-s"
     assert env.execution_mode == "vm"
     assert ctrl.started[0]["env"] == {"FOO": "bar"}
-    assert ctrl.started[0]["labels"]["managed-by"] == "inspect-capsem"
-    assert ctrl.started[0]["labels"]["inspect-capsem-task"] == "t"
     await env.cleanup()
     assert ctrl.stopped == ["vm-s"]
 
@@ -86,8 +83,7 @@ async def test_failed_init_teardown_does_not_block_event_loop(
                 raise RuntimeError("second stop fails")
             await super().stop_vm(vm_id)
 
-    ctrl = SlowStop([("test -x", hang)])
-    ticks: list[float] = []
+    ctrl, ticks = SlowStop([("test -x", hang)]), []
 
     async def ticker() -> None:
         while True:
@@ -97,15 +93,12 @@ async def test_failed_init_teardown_does_not_block_event_loop(
     tick_task = asyncio.create_task(ticker())
     monkeypatch.setattr(sb, "SdkCapsemController", lambda: ctrl)
     try:
-        with pytest.raises(TimeoutError):
-            await CapsemSandboxEnvironment.sample_init("t", CapsemSandboxConfig(), {})
-        # A failing teardown is logged; the original error still propagates.
-        with pytest.raises(TimeoutError):
-            await CapsemSandboxEnvironment.sample_init("t", CapsemSandboxConfig(), {})
+        for _ in range(2):
+            with pytest.raises(TimeoutError):
+                await CapsemSandboxEnvironment.sample_init("t", CapsemSandboxConfig(), {})
     finally:
         tick_task.cancel()
-    assert ctrl.stopped == ["vm-s"]
-    assert len(ticks) > 10
+    assert ctrl.stopped == ["vm-s"] and len(ticks) > 10
 
 
 async def test_failed_init_teardown_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,7 +110,7 @@ async def test_failed_init_teardown_is_bounded(monkeypatch: pytest.MonkeyPatch) 
             del vm_id
             await asyncio.sleep(10.0)
 
-    monkeypatch.setattr(lifecycle_mod, "_INIT_TEARDOWN_TIMEOUT_SECS", 0.1)
+    monkeypatch.setattr(sb, "_INIT_TEARDOWN_TIMEOUT_SECS", 0.1)
     t0 = time.monotonic()
     with pytest.raises(TimeoutError, match="test -x"):
         await init_env(HungStop([("test -x", hang)]), CapsemSandboxConfig())
@@ -153,11 +146,9 @@ async def test_sample_init_cancellation_cleans_up_started_vm(
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert started_vms == ["vm-1"]
-    assert ctrl.stopped == ["vm-1"]
+    assert started_vms == ["vm-1"] and ctrl.stopped == ["vm-1"]
 
-    entered_start = asyncio.Event()
-    finish_start = asyncio.Event()
+    entered_start, finish_start = asyncio.Event(), asyncio.Event()
 
     class CancelDuringStartController(Scripted):
         def __init__(self, *, fail_stop: bool = False) -> None:
@@ -197,6 +188,18 @@ async def test_sample_init_cancellation_cleans_up_started_vm(
         await t_start_fail
     assert "Failed to stop Capsem VM vm-during-start after cancelled start_vm" in caplog.text
 
+    entered_start.clear()
+    finish_start.clear()
+    monkeypatch.setattr(sb, "_INIT_TEARDOWN_TIMEOUT_SECS", 0.05)
+    ctrl_start_hung = CancelDuringStartController(fail_stop=False)
+    monkeypatch.setattr(sb, "SdkCapsemController", lambda: ctrl_start_hung)
+    t_start_hung = asyncio.create_task(CapsemSandboxEnvironment.sample_init("t", cfg, {}))
+    await asyncio.wait_for(entered_start.wait(), timeout=2.0)
+    t_start_hung.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t_start_hung
+    assert ctrl_start_hung.stopped == []
+
 
 async def test_controller_closed_on_sample_cleanup_and_failed_init(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -228,64 +231,70 @@ async def test_controller_closed_on_sample_cleanup_and_failed_init(
     assert len(created_controllers) == 2 and created_controllers[1].close_count == 1
 
 
-async def test_sample_init_cancelled_or_lost_sdk_create_sweeps_untracked_vm(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_task_init_and_task_cleanup_isolation_and_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Cancelled or lost-response Hypervisor.create sweeps only the matching per-create nonce VM."""
-    from types import SimpleNamespace
+    """task_cleanup raises NotImplementedError on cleanup=False and scopes cleanup=True by task."""
+    await CapsemSandboxEnvironment.task_init("t", None)
 
-    from inspect_capsem._controller import SdkCapsemController
+    controller = LocalFakeCapsemController(tmp_path)
+    monkeypatch.setattr(sb, "SdkCapsemController", lambda: controller)
 
-    created_on_server = asyncio.Event()
-    deleted: list[str] = []
-    mode: dict[str, Any] = {"fail": False, "labels": {}}
-    lost_id = "550e8400-e29b-41d4-a716-446655440001"
-    sibling_id = "550e8400-e29b-41d4-a716-446655440002"
-    named_id = "550e8400-e29b-41d4-a716-446655440003"
-
-    class CancelCreateHyp:
-        async def create(self, **kwargs: Any) -> Any:
-            mode["labels"] = dict(kwargs.get("labels") or {})
-            if mode["fail"]:
-                raise RuntimeError("lost HTTP response")
-            created_on_server.set()
-            await asyncio.sleep(10.0)
-
-        async def list(self) -> Any:
-            lbls = mode["labels"]
-            sib_lbls = {**lbls, "inspect-capsem-nonce": "concurrent-sibling-nonce"}
-            return SimpleNamespace(
-                sandboxes=[
-                    SimpleNamespace(id=lost_id, name="vm-1", persistent=False, labels=lbls),
-                    SimpleNamespace(id=sibling_id, name="vm-2", persistent=False, labels=sib_lbls),
-                    SimpleNamespace(id=named_id, name="devbox", persistent=True, labels=lbls),
-                ]
-            )
-
-        def vm(self, *, id: str) -> Any:
-            async def _del() -> None:
-                deleted.append(id)
-
-            return SimpleNamespace(delete=_del)
-
-        async def close(self) -> None:
-            pass
-
-    monkeypatch.setattr(lifecycle_mod, "_INIT_TEARDOWN_TIMEOUT_SECS", 0.05)
-    monkeypatch.setattr(
-        sb, "SdkCapsemController", lambda: SdkCapsemController(cast(Any, CancelCreateHyp()))
+    envs_a = await CapsemSandboxEnvironment.sample_init(
+        task_name="task_a", config=CapsemSandboxConfig(working_dir=str(tmp_path)), metadata={}
     )
-    task = asyncio.create_task(
-        CapsemSandboxEnvironment.sample_init("cancel_lost", CapsemSandboxConfig(), {})
+    envs_b = await CapsemSandboxEnvironment.sample_init(
+        task_name="task_b", config=CapsemSandboxConfig(working_dir=str(tmp_path)), metadata={}
     )
-    await asyncio.wait_for(created_on_server.wait(), timeout=2.0)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert deleted == [lost_id]
+    vm_a = cast(CapsemSandboxEnvironment, envs_a["default"]).vm_id
+    vm_b = cast(CapsemSandboxEnvironment, envs_b["default"]).vm_id
+    vm_untagged = await controller.start_vm(cpu_count=1, ram_gb=1)
+    env_untagged = CapsemSandboxEnvironment(
+        vm_id=vm_untagged, controller=cast(Any, controller), working_dir=str(tmp_path)
+    )
 
-    deleted.clear()
-    mode["fail"] = True
-    with pytest.raises(RuntimeError, match="lost HTTP response"):
-        await CapsemSandboxEnvironment.sample_init("cancel_lost", CapsemSandboxConfig(), {})
-    assert deleted == [lost_id]
+    with pytest.raises(NotImplementedError, match=r"Hypervisor\.managed\(\).*cleanup=False"):
+        await CapsemSandboxEnvironment.task_cleanup("task_b", None, cleanup=False)
+    assert vm_b in controller.stopped_vms and controller.close_count == 1
+    assert vm_a not in controller.stopped_vms and vm_untagged not in controller.stopped_vms
+
+    await CapsemSandboxEnvironment.task_cleanup("task_a", None, cleanup=True)
+    assert vm_a in controller.stopped_vms and controller.close_count == 2
+    assert vm_untagged not in controller.stopped_vms
+
+    await CapsemSandboxEnvironment.task_cleanup(cast(Any, None), None, cleanup=True)
+    assert vm_untagged in controller.stopped_vms and env_untagged.vm_id == vm_untagged
+
+    class FlakyStopController(Scripted):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_stops = 1
+
+        async def stop_vm(self, vm_id: str) -> None:
+            if self.fail_stops > 0:
+                self.fail_stops -= 1
+                raise RuntimeError("transient gateway error")
+            await super().stop_vm(vm_id)
+
+    flaky_ctrl = FlakyStopController()
+    env_flaky = CapsemSandboxEnvironment(
+        "v-flaky", flaky_ctrl, task_name="t-flaky", owns_controller=True
+    )
+    with caplog.at_level("WARNING", logger="inspect_capsem"):
+        await CapsemSandboxEnvironment.sample_cleanup(
+            "t-flaky", None, {"default": env_flaky}, interrupted=False
+        )
+    assert "Failed to stop Capsem VM v-flaky" in caplog.text
+    assert "v-flaky" not in flaky_ctrl.stopped and not flaky_ctrl.closed
+
+    await CapsemSandboxEnvironment.task_cleanup("t-flaky", None, cleanup=True)
+    assert "v-flaky" in flaky_ctrl.stopped and flaky_ctrl.closed
+
+    always_fail_ctrl = FlakyStopController()
+    always_fail_ctrl.fail_stops = 5
+    env_fail = CapsemSandboxEnvironment(
+        "v-always-fail", always_fail_ctrl, task_name="t-fail", owns_controller=True
+    )
+    await CapsemSandboxEnvironment.task_cleanup("t-fail", None, cleanup=True)
+    assert always_fail_ctrl.closed
+    assert env_fail._instance_id not in CapsemSandboxEnvironment._active_environments

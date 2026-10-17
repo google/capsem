@@ -18,7 +18,7 @@ from capsem.models import ExecOutput, ExecOutputEncoding
 from inspect_capsem._controller import CommandResult, SdkCapsemController
 
 from .conftest import write_portable_timeout_shim
-from .helpers import Scripted, _host_timeout_skips, env_for, exec_response
+from .helpers import FakeManagedScope, Scripted, _host_timeout_skips, env_for, exec_response
 from .test_sandbox_exec import test_exit_137_sigkill_vs_actual_timeout
 
 
@@ -42,9 +42,9 @@ async def test_sdk_exec_forwards_timeout_secs(monkeypatch: pytest.MonkeyPatch) -
     calls: list[tuple[int | None, Any]] = []
     hv = capsem.Hypervisor("http://127.0.0.1:1", "t")
 
-    async def fake_create(self: Any, **kwargs: Any) -> Any:
+    def fake_managed(self: Any, **kwargs: Any) -> Any:
         del kwargs
-        return self.vm(id="s")
+        return FakeManagedScope(self.vm(id="s"))
 
     async def fake_exec(
         self: Any, command: str, *, timeout_secs: int | None = None, target: Any = None
@@ -53,7 +53,7 @@ async def test_sdk_exec_forwards_timeout_secs(monkeypatch: pytest.MonkeyPatch) -
         calls.append((timeout_secs, target))
         return exec_response(0)
 
-    monkeypatch.setattr(capsem.Hypervisor, "create", fake_create)
+    monkeypatch.setattr(capsem.Hypervisor, "managed", fake_managed)
     monkeypatch.setattr(capsem.VM, "exec", fake_exec)
     ctrl = SdkCapsemController(hypervisor=hv)
     try:
@@ -94,9 +94,9 @@ async def test_sdk_controller_maps_gateway_errors_and_timeouts(
 ) -> None:
     targets_seen: list[Any] = []
 
-    async def fake_create(self: Any, **kwargs: Any) -> Any:
+    def fake_managed(self: Any, **kwargs: Any) -> Any:
         del kwargs
-        return self.vm(id="s")
+        return FakeManagedScope(self.vm(id="s"))
 
     async def fake_exec(
         self: Any, command: str, *, timeout_secs: int | None = None, target: Any = None
@@ -116,7 +116,7 @@ async def test_sdk_controller_maps_gateway_errors_and_timeouts(
             )
         raise HttpError(500, "other failure")
 
-    monkeypatch.setattr(capsem.Hypervisor, "create", fake_create)
+    monkeypatch.setattr(capsem.Hypervisor, "managed", fake_managed)
     monkeypatch.setattr(capsem.VM, "exec", fake_exec)
     ctrl = SdkCapsemController(hypervisor=capsem.Hypervisor("http://127.0.0.1:1", "t"))
     try:
@@ -162,9 +162,9 @@ async def test_sdk_controller_with_async_capsem_hypervisor_and_vm() -> None:
             del name, id
             return self._vm
 
-        async def create(self, **kwargs: Any) -> FakeAsyncVM:
+        def managed(self, **kwargs: Any) -> FakeManagedScope:
             del kwargs
-            return self._vm
+            return FakeManagedScope(self._vm)
 
         async def close(self) -> None:
             return None
@@ -195,7 +195,7 @@ def test_exec_output_text_decodes_sdk_streams() -> None:
 async def test_sdk_controller_reuses_persistent_event_loop_with_aiohttp() -> None:
     """SdkCapsemController reuses a persistent event loop across real Hypervisor aiohttp calls."""
     seen_targets: list[Any] = []
-    created_count = 0
+    req_to_vid: dict[str, str] = {}
 
     class _Handler(http.server.BaseHTTPRequestHandler):
         def _send_json(self, payload: dict[str, Any]) -> None:
@@ -207,13 +207,27 @@ async def test_sdk_controller_reuses_persistent_event_loop_with_aiohttp() -> Non
             self.wfile.write(raw)
 
         def do_POST(self) -> None:
-            nonlocal created_count
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            gen, exp = "46a98f98-4683-4b09-b319-e235179d76bb", "2099-01-01T00:00:00+00:00"
             if self.path == "/vms/create":
-                created_count += 1
-                s = f"sb-{created_count}"
-                self._send_json({"id": s, "name": s, "status": "Running", "available_actions": []})
+                rid = body["managed"]["request_id"]
+                keys = ("request_id", "generation", "expires_at", "lease_seconds")
+                own = {
+                    **dict(zip(keys, (rid, gen, exp, 60), strict=True)),
+                    "renew_after_seconds": 30,
+                }
+                vid = "sb-2" if body.get("container") else "sb-1"
+                req_to_vid[rid] = vid
+                vm_keys = ("id", "name", "status", "persistent", "available_actions", "ownership")
+                self._send_json(
+                    dict(zip(vm_keys, (vid, vid, "Running", False, [], own), strict=True))
+                )
+            elif self.path.endswith("/close"):
+                rid = self.path.split("/")[3]
+                ckeys = ("request_id", "generation", "state", "session_id", "evidence_retained")
+                vals = (rid, gen, "closed", req_to_vid.get(rid, "sb-1"), False)
+                self._send_json(dict(zip(ckeys, vals, strict=True)))
             elif self.path.endswith("/exec"):
                 seen_targets.append(body.get("target"))
                 out = {"data": f"ok:{body.get('command', '')}\n", "encoding": "utf8"}
@@ -221,9 +235,6 @@ async def test_sdk_controller_reuses_persistent_event_loop_with_aiohttp() -> Non
                 self._send_json({"exit_code": 0, "stdout": out, "stderr": err, "truncated": False})
             else:
                 self._send_json({"success": True})
-
-        def do_DELETE(self) -> None:
-            self._send_json({"success": True})
 
         def log_message(self, format: str, *args: object) -> None:
             del format, args

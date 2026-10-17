@@ -35,24 +35,6 @@ class CapsemSandboxConfig(BaseModel, frozen=True, extra="forbid"):
     @classmethod
     def _reject_unsupported_knobs(cls, data: Any) -> Any:
         if isinstance(data, Mapping):
-            if data.get("template") is not None:
-                msg = (
-                    "CapsemSandboxConfig does not support template selection yet; "
-                    "Hypervisor.create uses the service default VM profile"
-                )
-                raise NotImplementedError(msg)
-            if data.get("allow_domains") is not None:
-                msg = (
-                    "CapsemSandboxConfig does not support per-VM allow_domains; "
-                    "configure domain policy in the Capsem profile"
-                )
-                raise NotImplementedError(msg)
-            if data.get("host_workspace_dir") is not None:
-                msg = (
-                    "host_workspace_dir is not supported: Capsem does not expose "
-                    "a host VirtioFS mount"
-                )
-                raise NotImplementedError(msg)
             if data.get("ports") not in (None, (), []):
                 raise ValueError(
                     "Config field 'ports' is not supported in Capsem OCI-workload mode; "

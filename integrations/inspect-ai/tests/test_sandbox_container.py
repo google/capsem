@@ -9,7 +9,6 @@ from pathlib import Path
 
 import inspect_capsem._controller as ctrl_mod
 import inspect_capsem._exec as exec_mod
-import inspect_capsem._lifecycle as lc_mod
 import inspect_capsem.sandbox as sb_mod
 import pytest
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
@@ -31,14 +30,14 @@ def test_oci_create_command_and_image_normalization() -> None:
     assert ctrl_mod._normalize_image_ref("  ") is None
     assert ctrl_mod._normalize_image_ref("python:3.12-slim") == "docker://python:3.12-slim"
     assert ctrl_mod._normalize_image_ref("docker://alpine:3.19") == "docker://alpine:3.19"
-    assert lc_mod._oci_create_command(CapsemSandboxConfig(image="alpine:3.19")) is None
+    assert sb_mod._oci_create_command(CapsemSandboxConfig(image="alpine:3.19")) is None
     assert (
-        lc_mod._oci_create_command(CapsemSandboxConfig(image="alpine:3.19", command="   ")) is None
+        sb_mod._oci_create_command(CapsemSandboxConfig(image="alpine:3.19", command="   ")) is None
     )
-    assert lc_mod._oci_create_command(
+    assert sb_mod._oci_create_command(
         CapsemSandboxConfig(image="alpine:3.19", command="python3 -m http.server 8080")
     ) == ("python3", "-m", "http.server", "8080")
-    assert lc_mod._oci_create_command(
+    assert sb_mod._oci_create_command(
         CapsemSandboxConfig(image="alpine:3.19", command=("sleep", "infinity"))
     ) == ("sleep", "infinity")
 

@@ -11,7 +11,7 @@ import inspect_capsem.sandbox as sb
 from capsem import models
 from inspect_ai.util._sandbox import self_check as inspect_self_check
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
-from inspect_capsem._controller import CommandResult, _managed_vm_labels
+from inspect_capsem._controller import CommandResult
 
 Result = CommandResult | Callable[[str], CommandResult]
 Rules = Sequence[tuple[str, Result]]
@@ -25,23 +25,21 @@ def fail(code: int = 1, stdout: str = "", stderr: str = "boom") -> CommandResult
     return CommandResult(exit_code=code, stdout=stdout, stderr=stderr)
 
 
-def sandbox_info(
-    vid: str = "",
-    name: str | None = None,
-    *,
-    status: models.VmLifecycleState = models.VmLifecycleState.RUNNING,
-    persistent: bool = False,
-    labels: dict[str, str] | None = None,
-) -> models.SandboxInfo:
-    return models.SandboxInfo(
-        id=vid,
-        name=name,
-        status=status,
-        persistent=persistent,
-        available_actions=[],
-        pid=1,
-        labels=labels,
-    )
+class FakeManagedScope:
+    """Minimal `ManagedSession` test double wrapping a `VM` handle."""
+
+    def __init__(self, vm: Any) -> None:
+        self.vm = vm
+        self.closed = False
+
+    async def __aenter__(self) -> Any:
+        return self.vm
+
+    async def close(self) -> None:
+        self.closed = True
+        delete_fn = getattr(self.vm, "delete", None)
+        if delete_fn is not None:
+            await delete_fn()
 
 
 def exec_response(
@@ -68,22 +66,17 @@ class Scripted:
         self.commands: list[str] = []
         self.started: list[dict[str, Any]] = []
         self.stopped: list[str] = []
-        self.vms: list[models.SandboxInfo] = []
         self.uploads: dict[str, bytes] = {}
         self.files: dict[str, bytes] = {}
         self.download_max_bytes: list[int | None] = []
         self.closed: bool = False
 
     async def start_vm(self, **kwargs: Any) -> str:
-        kwargs["labels"] = _managed_vm_labels(kwargs.get("labels"))
         self.started.append(kwargs)
         return "vm-s"
 
     async def stop_vm(self, vm_id: str) -> None:
         self.stopped.append(vm_id)
-
-    async def list_vms(self) -> list[models.SandboxInfo]:
-        return self.vms
 
     async def exec_in_vm(self, vm_id: str, command: str, *, timeout: int = 120) -> CommandResult:
         del vm_id, timeout
@@ -116,7 +109,6 @@ class LocalFakeCapsemController:
         self.root_dir = root_dir
         self.skip_bake = skip_bake
         self.vms: dict[str, Path] = {}
-        self.vm_labels: dict[str, dict[str, str]] = {}
         self.started_vms: list[dict[str, Any]] = []
         self.stopped_vms: list[str] = []
         self.commands: list[str] = []
@@ -145,14 +137,12 @@ class LocalFakeCapsemController:
         vm_root = self.root_dir / vm_id
         vm_root.mkdir(parents=True, exist_ok=True)
         self.vms[vm_id] = vm_root
-        vm_labels = _managed_vm_labels(labels)
-        self.vm_labels[vm_id] = vm_labels
         self.started_vms.append(
             {
                 "vm_id": vm_id,
                 "cpu_count": cpu_count,
                 "ram_gb": ram_gb,
-                "labels": vm_labels,
+                "labels": dict(labels) if labels else {},
             }
         )
         return vm_id
@@ -162,17 +152,6 @@ class LocalFakeCapsemController:
             raise RuntimeError("404 not found")
         self.stopped_vms.append(vm_id)
         self.vms.pop(vm_id, None)
-        self.vm_labels.pop(vm_id, None)
-
-    async def list_vms(self) -> list[models.SandboxInfo]:
-        return [
-            sandbox_info(
-                vid,
-                f"vm-{i + 1}" if vid in self.vm_labels else vid,
-                labels=dict(self.vm_labels.get(vid, {})),
-            )
-            for i, vid in enumerate(self.vms)
-        ]
 
     def _resolve_path(self, vm_id: str, guest_path: str) -> Path:
         vm_root = self.vms.setdefault(vm_id, self.root_dir / vm_id)

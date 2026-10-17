@@ -15,11 +15,11 @@ from typing import Any, cast
 import pytest
 from capsem import HttpError
 from inspect_capsem._controller import SdkCapsemController
-from inspect_capsem._lifecycle import _init_sample_vm
 from inspect_capsem.config import CapsemSandboxConfig
 from inspect_capsem.containers import HostBuildGrant
 from inspect_capsem.containers import image_build as ib_mod
 from inspect_capsem.containers import oci_ingest as ing_mod
+from inspect_capsem.sandbox import _start_sample_vm
 
 from ..helpers import Scripted
 from .test_oci_registry import _make_oci_tar
@@ -104,7 +104,7 @@ async def test_build_and_stage_lifecycle_cache_and_admission_error(
     cfg = CapsemSandboxConfig(dockerfile=str(df))
     assert cfg.to_container_spec().build is not None
     ctrl = Scripted()
-    assert await _init_sample_vm(ctrl, cfg, "task-build") == "vm-s" and len(calls) == 3
+    assert await _start_sample_vm(ctrl, cfg) == "vm-s" and len(calls) == 3
     build_cmd, _ = calls[0]
     assert "--network" in build_cmd and build_cmd[build_cmd.index("--network") + 1] == "none"
     assert "--config" in build_cmd and build_cmd[build_cmd.index("--config") + 1] != str(
@@ -115,7 +115,7 @@ async def test_build_and_stage_lifecycle_cache_and_admission_error(
         started["image"].startswith("127.0.0.1:")
         and "BEGIN CERTIFICATE" in started["registry_ca_pem"]
     )
-    await _init_sample_vm(ctrl, cfg, "task-build-cached")
+    await _start_sample_vm(ctrl, cfg)
     assert len(calls) == 3
 
     # Corrupted layer triggers automatic rebuild
@@ -125,15 +125,22 @@ async def test_build_and_stage_lifecycle_cache_and_admission_error(
     layer_hex = str(m_doc["layers"][0]["digest"]).removeprefix("sha256:")
     (blobs_dir / layer_hex).write_bytes(b"corrupted-layer-bytes")
     assert not ing_mod.verify_cached_manifest_blobs(blobs_dir, m_hex)
-    await _init_sample_vm(ctrl, cfg, "task-build-rebuild")
+    await _start_sample_vm(ctrl, cfg)
     assert len(calls) == 6
     (blobs_dir / m_hex).write_bytes(b"not-json")
     assert not ing_mod.verify_cached_manifest_blobs(blobs_dir, m_hex)
 
-    class RejectingHypervisor:
-        async def create(self, **kwargs: Any) -> Any:
-            assert kwargs.get("registry") is not None
+    class RejectingScope:
+        async def __aenter__(self) -> Any:
             raise HttpError(403, "image source is not allowed")
+
+        async def close(self) -> None:
+            return
+
+    class RejectingHypervisor:
+        def managed(self, **kwargs: Any) -> Any:
+            assert kwargs.get("registry") is not None
+            return RejectingScope()
 
         async def close(self) -> None:
             return

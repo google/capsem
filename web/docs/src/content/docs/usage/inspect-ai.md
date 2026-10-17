@@ -7,8 +7,8 @@ sidebar:
 
 `inspect-capsem-sandbox` registers a `capsem` [`SandboxEnvironment`](https://inspect.aisi.org.uk/sandboxing.html)
 for [Inspect AI](https://inspect.aisi.org.uk/) backed by isolated Capsem micro-VMs. It uses the
-Python `capsem` SDK (`capsem.Hypervisor` and `capsem.VM`) to talk to the authenticated Capsem HTTP
-gateway (`capsem-service`).
+Python `capsem` SDK (`capsem.Hypervisor`, `capsem.ManagedSession`, and `capsem.VM`) to talk to the
+authenticated Capsem HTTP gateway (`capsem-service`).
 
 | What | Name |
 | --- | --- |
@@ -61,25 +61,23 @@ A string sandbox config is also accepted: a `compose.yaml` / `docker-compose.yml
 
 - **`execution_mode="vm"` (default)**: Commands and file operations execute directly inside an
   ephemeral Capsem micro-VM.
-- **`execution_mode="container"`**: Commands execute inside a rootless OCI workload container provisioned by `capsem-init` (`Hypervisor.create(image="docker://<image>")`) and entered via `runc exec --cwd / -u 0 workload bash -c …` (selected automatically when `compose_file`, `image`, `dockerfile`, or `build` is set). The container image must provide `bash`, coreutils (`timeout`, `stat`, `base64`, `head`, `split`), `tar`/`gzip`, and `setpriv`/`su`/`getent`/`id` when executing as a non-root user. `connection()` (`capsem shell <vm_id>`) opens an interactive shell in the backing Capsem VM.
+- **`execution_mode="container"`**: Commands execute inside a rootless OCI workload container provisioned by `capsem-init` (`Hypervisor.managed(image="docker://<image>")`) and entered via `runc exec --cwd / -u 0 workload bash -c …` (selected automatically when `compose_file`, `dockerfile`, `build`, or `image` is set). The container image must provide `bash`, coreutils (`timeout`, `stat`, `base64`, `head`, `split`), `tar`/`gzip`, and `setpriv`/`su`/`getent`/`id` when executing as a non-root user. `connection()` (`capsem shell <vm_id>`) opens an interactive shell in the backing Capsem VM.
 
-### Compose support
+### Compose and Dockerfile support
 
-In `container` mode, `inspect-capsem-sandbox` parses single-service `compose.yaml` / `docker-compose.yml` files with `PyYAML`:
+In `container` mode, `inspect-capsem-sandbox` parses single-service `compose.yaml` / `docker-compose.yml` files (`PyYAML`) and standalone `Dockerfile` / `Containerfile` paths:
 
-- **Supported service fields**: `image`, `build` / `dockerfile`, `working_dir`, `environment` (mapping or `KEY=VALUE` list, with project `.env` interpolation, Inspect `SAMPLE_METADATA_<KEY>` synthesis from scalar sample metadata, and operator-owned host environment allowlisting via `CAPSEM_INSPECT_ALLOWED_HOST_ENV`), `user`, `command`, `entrypoint`, `volumes` (host bind-mount sources inside the Compose directory or `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` staged once at sample start as one-way, root-owned `0:0` copies capped at 256 MiB, preserving file modes), `healthcheck` (polled via `sh -c` with default `retries=3`, `interval` sleep capped at 2 s), `mem_limit` / `deploy.resources.limits.memory` (mapped to VM `ram_gb`), and `cpus` / `deploy.resources.limits.cpus` (mapped to VM `cpu_count`).
+- **Supported service fields**: `image`, `build` (context path or mapping with `context`, `dockerfile`, `target`, and `args`), `working_dir`, `environment` (mapping or `KEY=VALUE` list, with project `.env` interpolation, Inspect `SAMPLE_METADATA_<KEY>` synthesis from scalar sample metadata, and operator-owned host environment allowlisting via `CAPSEM_INSPECT_ALLOWED_HOST_ENV`), `user`, `command`, `entrypoint`, `volumes` (host bind-mount sources inside the Compose directory or `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` staged once at sample start as one-way, root-owned `0:0` copies capped at 256 MiB, preserving file modes), `healthcheck` (polled via `sh -c` with default `retries=3`, `interval` sleep capped at 2 s), `mem_limit` / `deploy.resources.limits.memory` (mapped to VM `ram_gb`), and `cpus` / `deploy.resources.limits.cpus` (mapped to VM `cpu_count`).
 - **Host environment and path isolation**: Host `os.environ` is default-deny in Compose interpolation and bare `environment` keys unless allowlisted by the operator via `CAPSEM_INSPECT_ALLOWED_HOST_ENV` (explicit variable names or literal-prefix patterns; wildcard-only and character-class patterns are rejected), optionally narrowed by `CapsemSandboxConfig.allowed_host_env`. Host bind-mount `volumes` are restricted to the resolved `compose.yaml` directory (`os.path.realpath` containment) or `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` (optionally narrowed by `CapsemSandboxConfig.allowed_host_paths`).
 - **Unsupported**: Compose files without a non-empty `services:` mapping, multi-service `services:` (>1 service), `depends_on`, `env_file`, `ports`, non-default `network_mode` (including `none`, `host`, and `service:<name>`), `internal: true` networks, and privilege/namespace keys (`privileged`, `cap_add`, `cap_drop`, `devices`, `security_opt`, `sysctls`, `pid`, `ipc`, `uts`, `cgroup`) raise `ValueError`. Other unrecognized service keys log a `WARNING` and are ignored (`x-*` extension keys are ignored silently). `x-inspect_k8s_sandbox.allow_domains`, `template`, `allow_domains`, and `host_workspace_dir` raise `NotImplementedError`.
 
-### Evaluator-granted host image builds (`Compose build:` & `Dockerfile`)
+### Host-side image builds (`Dockerfile` and Compose `build:`)
 
-Host-assisted `Dockerfile` and Compose `build:` execution is **opt-in and disabled by default** (permission is never inferred from the presence of a `Dockerfile` or `build:` stanza). The evaluator process environment is the root authority (`CAPSEM_INSPECT_HOST_BUILD=1` and `CAPSEM_INSPECT_ALLOWED_HOST_PATHS`), and task config (`CapsemSandboxConfig(host_build=HostBuildGrant(...))`) can only narrow — never widen — those grants. When granted, `inspect_capsem` builds a Linux OCI image on the host (`--network none` and an isolated empty `DOCKER_CONFIG` by default), ingests the `docker image save` archive into a local content-addressed blob cache, and serves it over a loopback HTTPS OCI v2 registry (`127.0.0.1:5055` by default) with a per-VM `[images]` `ca_pem` trust anchor passed to `capsem-service`.
+Because `Dockerfile` / `build:` specifications execute `docker build` on the evaluator host before the VM boots, host image building is **disabled by default** and governed by evaluator environment policy (`HostBuildGrant`):
 
-> **Evaluator environment authority (`CAPSEM_INSPECT_HOST_BUILD` & `HostBuildGrant`):** `Dockerfile` `RUN` instructions execute inside `docker build` on the **host Docker daemon** before the built image is pulled into the Capsem micro-VM by digest (`127.0.0.1:<port>/inspect-capsem/build@sha256:<digest>`). Without `CAPSEM_INSPECT_HOST_BUILD=1` in the evaluator environment, any `Dockerfile` or Compose `build:` config fails fast with `ValueError` (even if `host_build` is set on the task). A task passing `host_build=False` or `HostBuildGrant(enabled=False)` disables host builds for that task.
->
-> **Explicit context & symlink containment (`CAPSEM_INSPECT_ALLOWED_HOST_PATHS` & `HostBuildGrant.allowed_contexts`):** Build context roots are **never** inferred from a `compose.yaml` file's parent directory. The evaluator must allowlist build context and `Dockerfile` directories via `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` (optionally narrowed per task via `allowed_host_paths` or `HostBuildGrant(allowed_contexts=(...,))`). Non-`.dockerignore`d symlinks inside the build context whose `os.path.realpath` escapes the context root are rejected before `docker build` runs, and mounting `docker.sock` into a sandbox is forbidden.
->
-> **Network, CA trust, credentials, and cache integrity (`CAPSEM_INSPECT_BUILD_CACHE_DIR`):** Host builds default to `--network none` (operator ceiling `CAPSEM_INSPECT_BUILD_NETWORK=none|default`, optionally narrowed by `HostBuildGrant(network="none")`; `--network host` is always refused) and an isolated temporary `DOCKER_CONFIG` (`{"auths":{}}`) so ambient `~/.docker/config.json` credentials are never read unless `CAPSEM_INSPECT_BUILD_DOCKER_CONFIG` is explicitly set under an allowed host path. When `CAPSEM_INSPECT_BUILD_CA_PEM_FILE` (for example `~/.capsem/ca.crt`) is set under `CAPSEM_INSPECT_ALLOWED_HOST_PATHS`, `inspect_capsem` stages `.capsem-ca.crt` (the Capsem CA only, copied to `/usr/local/share/ca-certificates/capsem-ca.crt` for `update-ca-certificates` and `NODE_EXTRA_CA_CERTS`) and `.capsem-ca-bundle.crt` (the full root bundle from `CAPSEM_INSPECT_BUILD_CA_BUNDLE_FILE` plus the Capsem CA, copied to `/usr/local/share/capsem/ca-bundle.crt` for `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `PIP_CERT`, `CURL_CA_BUNDLE`, and `GIT_SSL_CAINFO`, plus `UV_NATIVE_TLS=1`), runs the distro CA updater and NSS `certutil` (`$HOME/.pki/nssdb`) before the first shell-form `RUN`, and seeds `$HOME/.pki/nssdb` at container startup (while `capsem-init` bind-mounts `/etc/ssl/certs/ca-certificates.crt` and sets the runtime TLS environment inside the VM). Networked builds (`--network default`) with `CAPSEM_INSPECT_BUILD_CA_PEM_FILE` require `CAPSEM_INSPECT_BUILD_CA_BUNDLE_FILE` (for example `/etc/ssl/certs/ca-certificates.crt`) so public root CAs remain trusted during `docker build`. Cache keys hash all regular files in the build context (plus non-`.dockerignore`d symlinks), `Dockerfile`, `args`, `target`, `network`, target platform, and the SHA-256 fingerprint of any configured build CA files (so CA rotation automatically invalidates cached builds). On cache hits, manifest, config, and layer blobs are verified by SHA-256; any corrupted blob and stale cache-key pointer are unlinked before rebuilding. Inside the VM, `capsem-init` applies the built OCI image's `Config.WorkingDir` (probed by `inspect_capsem` when `working_dir` is not explicitly set) and `Config.User` at container start.
+1. **Evaluator environment authority**: Set `CAPSEM_INSPECT_HOST_BUILD=1` and `CAPSEM_INSPECT_ALLOWED_HOST_PATHS=/abs/path/to/eval/root` in the evaluator environment. Build context directories and Dockerfiles must resolve inside `CAPSEM_INSPECT_ALLOWED_HOST_PATHS` after `os.path.realpath()` (symlinks escaping the context root are rejected).
+2. **Task-level narrowing (`HostBuildGrant`)**: Tasks can pass `CapsemSandboxConfig(host_build=HostBuildGrant(allowed_contexts=..., network="none"))` (or `host_build=False`) to narrow the operator's environment grant, never to widen it. `--network host` is always refused (`network="none"` by default; `network="default"` requires `CAPSEM_INSPECT_BUILD_NETWORK=default`).
+3. **Loopback HTTPS OCI registry and caching**: Built images are exported via `docker image save`, ingested into a content-addressed OCI blob store (`~/.cache/capsem/inspect-oci-builds`, keyed by SHA-256 over the `.dockerignore`-filtered context tree, Dockerfile, `target`, sorted `args`, and platform), and served to `capsem-service` over a read-only loopback TLS 1.2+ OCI v2 registry (`127.0.0.1:5055` by default) with a per-host self-signed CA passed via `Registry(ca_pem=...)`. Cached manifests are re-verified on every hit and rebuilt automatically if any layer blob is missing or corrupted.
 
 Host-side image builds require the `docker` CLI (with BuildKit enabled, the default since Docker 23.0; `DOCKER_BUILDKIT=0` is refused) and `openssl` on `PATH`, plus an explicit image source admission rule in `~/.capsem/settings.toml` (matching the loopback registry `host:port`, `127.0.0.1:5055` by default) before starting `capsem-service`:
 
@@ -122,11 +120,6 @@ are refused instead of borrowing credentials from another source.
   missing or unsafe metadata is refused.
 - `CAPSEM_RUN_DIR` / `CAPSEM_HOME`: `<run_dir>` is resolved from `CAPSEM_RUN_DIR`, else
   `$CAPSEM_HOME/run`, else `~/.capsem/run`.
-- `CAPSEM_VM_PREFIX`: Optional per-run label slug for isolating concurrent `inspect eval` runs on a
-  shared host. Sample VMs are created unnamed and ephemeral (`persistent=False`) with
-  `labels={"managed-by": "inspect-capsem"}`; setting `CAPSEM_VM_PREFIX=<value>` normalizes `<value>`
-  and attaches `inspect-capsem-prefix: <slug>` so leftover sweeps and
-  `inspect sandbox cleanup capsem` only reap VMs matching the active prefix.
 - `CAPSEM_INSPECT_ALLOWED_HOST_ENV`: Operator-owned comma-separated list of host environment variable names or literal-prefix patterns permitted in Compose interpolation and bare `environment` entries.
 - `CAPSEM_INSPECT_ALLOWED_HOST_PATHS`: Operator-owned list of host directory or file roots permitted for bind-mount sources and `Dockerfile` / `build:` contexts.
 - `CAPSEM_INSPECT_HOST_BUILD`: Set to `1` (`true`) in the evaluator environment to authorize host-side `docker build` execution, or `0` (`false`) to deny (defaults to disabled).
@@ -143,6 +136,13 @@ are refused instead of borrowing credentials from another source.
 
 ## Lifecycle, cleanup, and limits
 
+- **Managed sessions and `--no-sandbox-cleanup`**: Each sample VM is opened via
+  `Hypervisor.managed(...)` (`capsem.ManagedSession`), which binds the micro-VM to a renewable
+  gateway lease (`POST /vms/managed/{request_id}/renew` and `/close`). Sample VMs are closed on
+  `sample_cleanup` and `task_cleanup(cleanup=True)`, and the gateway lease reaper automatically
+  destroys any sample VM if the evaluation process crashes or loses connectivity. Because Capsem
+  sandboxes are lease-owned and never outlive the evaluation process, `task_cleanup(...,
+  cleanup=False)` (`inspect eval --no-sandbox-cleanup`) raises `NotImplementedError`.
 - **Timeouts**: When `exec(..., timeout=None)` is called without an explicit timeout, the controller
   call is capped at Capsem's 3600 s service ceiling (`EXEC_TIMEOUT_CEILING_SECS`) without wrapping
   the guest command in `timeout -k 1s`. A service-side kill at the 3600 s ceiling returns a non-zero
@@ -166,10 +166,6 @@ are refused instead of borrowing credentials from another source.
   entry) and resets `USER`, `LOGNAME`, and `HOME` from the target user's `/etc/passwd` entry
   (`getent passwd`, falling back to the numeric UID), unless passed explicitly in
   `exec(..., env=...)`.
-- **Signal handling and cleanup**: `inspect_ai` handles `SIGINT` cleanly (`sample_cleanup`,
-  `task_cleanup`, and `@atexit` hooks). Under `systemd-run` or another supervisor, configure
-  `KillSignal=SIGINT` (and `KillMode=mixed` under `systemd` so `uv run` does not deliver duplicate
-  `SIGINT` signals). If a run is cancelled mid-create and the 25 s teardown wait expires, run
-  `inspect sandbox cleanup capsem` to delete any remaining VMs carrying the
-  `managed-by=inspect-capsem` label (and matching `inspect-capsem-prefix` when `CAPSEM_VM_PREFIX` is
-  set).
+- **Signal handling**: `inspect_ai` handles `SIGINT` cleanly (`sample_cleanup` and `task_cleanup`).
+  Under `systemd-run` or another supervisor, configure `KillSignal=SIGINT` (and `KillMode=mixed`
+  under `systemd` so `uv run` does not deliver duplicate `SIGINT` signals).
