@@ -121,6 +121,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/release/test_client_registry.py",
         "build_system/tests/release/test_rust_sdk_packages.py",
         "build_system/tests/release/test_deb_package_portability.py",
+        "build_system/tests/release/test_public_install_smoke.py",
         "build_system/tests/release/test_release_module_boundary.py",
         "build_system/tests/release/test_release_foundation_tool_boundary.py",
         "build_system/tests/release/test_release_foundation_tools.py",
