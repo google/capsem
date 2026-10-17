@@ -5,6 +5,7 @@ import errno
 import functools
 import hashlib
 import importlib
+import inspect
 import json
 import os
 import re
@@ -844,7 +845,9 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert script.count("update --assets --channel nightly") == 1
     assert "corp-escape.log" in script
     assert "update --assets --channel stable" not in script
-    transition_gate = Path(check_public_binary_release.__file__).read_text()
+    transition_gate = Path(inspect.getfile(
+        check_public_binary_release.run_docker_install_smoke
+    )).read_text()
     fixture_transport = (
         PROJECT_ROOT / "build_system/builder/release/tools/release_fixture_server.py"
     ).read_text()
