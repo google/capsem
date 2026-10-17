@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Private network cable handoffs retain the original socket until service
+  adoption, including when a reconnect replaces the cable table entry.
+
 - Proxy startup, proxy capabilities, ledger clients and native MCP owner
   connections retain socket owners until adoption; missing gateway or upstream
   adoption expires and releases the grant instead of retaining it indefinitely.

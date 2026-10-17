@@ -125,6 +125,7 @@ impl Service {
             .expect("the owner answers")
             .ok()?;
         assert_eq!(frame.bytes[1], SEAT_LINK);
+        self.sender.send(&frame.bytes, &[]).await.unwrap();
         let fd = frame.fds.into_iter().next().expect("the answer carries the stream");
         let std = std::os::unix::net::UnixStream::from(fd);
         std.set_nonblocking(true).unwrap();
@@ -482,4 +483,60 @@ async fn a_detach_older_than_the_latest_plug_leaves_the_cable_up() {
         ServiceToProcess::UnplugCable { cable } if cable == rejoined
     ));
     assert!(ended(&mut guest).await, "a current detach takes the cable down");
+}
+
+#[tokio::test]
+async fn replacement_does_not_release_a_handed_off_socket_before_adoption() {
+    let (cables, mut instructions) = cables("allow");
+    let team = plugged(&cables, &mut instructions, 0x91, TEAM, IN_TEAM).await;
+    let (conn, mut guest) = guest_stream();
+    cables.attach_guest(team, conn);
+    let service = Service::asks(&cables);
+    service.present(0x91).await;
+    let frame = service.receiver.recv().await.unwrap();
+    assert_eq!(frame.fds.len(), 1);
+    drop(frame);
+    let (replacement, _replacement_guest) = guest_stream();
+    cables.attach_guest(team, replacement);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), guest.read(&mut [0]))
+            .await
+            .is_err(),
+        "replacing the cable table released an unadopted socket"
+    );
+    service.sender.send(&seat_frame(SEAT_LINK, 0x91), &[]).await.unwrap();
+    assert!(ended(&mut guest).await, "original retained after adoption");
+    drop(service);
+}
+
+#[tokio::test]
+async fn wrong_cable_adoption_receipt_releases_the_held_cable() {
+    for (kind, token, extra) in [(SEAT_LINK, 8, false), (SEAT_PREVIEW, 7, false), (SEAT_LINK, 7, true)] {
+        let (cables, mut instructions) = cables("allow");
+        let team = plugged(&cables, &mut instructions, 7, TEAM, IN_TEAM).await;
+        let (conn, mut guest) = guest_stream();
+        cables.attach_guest(team, conn);
+        let service = Service::asks(&cables);
+        service.present(7).await;
+        let frame = service.receiver.recv().await.unwrap();
+        let fds = if extra { vec![frame.fds[0].as_raw_fd()] } else { vec![] };
+        service.sender.send(&seat_frame(kind, token), &fds).await.unwrap();
+        drop(frame);
+        assert!(ended(&mut guest).await, "invalid receipt kept a cable held");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn missing_cable_adoption_expires_and_releases_the_original() {
+    let (cables, mut instructions) = cables("allow");
+    let team = plugged(&cables, &mut instructions, 7, TEAM, IN_TEAM).await;
+    let (conn, mut guest) = guest_stream();
+    cables.attach_guest(team, conn);
+    let (owner, service) = std::os::unix::net::UnixStream::pair().unwrap();
+    let receiver = Receiver::new(service).unwrap();
+    let task = tokio::spawn(async move { cables.take_within(7, owner, Duration::from_secs(1)).await });
+    drop(receiver.recv().await.unwrap());
+    tokio::time::advance(ADOPTION_DEADLINE).await;
+    assert!(task.await.unwrap().unwrap_err().to_string().contains("did not adopt"));
+    assert!(ended(&mut guest).await);
 }
