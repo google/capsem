@@ -138,9 +138,10 @@ class SystemdService(ManagedService):
         # The private manager has no installed user units; use the product's
         # real unit name so its supervisor ownership query remains truthful.
         self.label = "capsem.service"
-        self.environment = dict(os.environ)
+        self.environment: dict[str, str] | None = None
 
     def command(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        assert self.environment is not None, "supervisor manager has not been bound"
         result = subprocess.run(
             ["systemctl", "--user", *args], env=self.environment,
             capture_output=True, text=True, timeout=10, check=False,
@@ -157,10 +158,11 @@ class SystemdService(ManagedService):
         return pid
 
     def retire(self) -> None:
-        self.command("stop", self.label, check=False)
+        if self.environment is not None:
+            self.command("stop", self.label, check=False)
 
     def active(self) -> bool:
-        return self.command("is-active", self.label, check=False).returncode == 0
+        return self.environment is not None and self.command("is-active", self.label, check=False).returncode == 0
 
     def startup_state(self) -> str:
         result = self.command(

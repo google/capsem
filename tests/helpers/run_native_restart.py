@@ -14,7 +14,7 @@ from pathlib import Path
 
 from capsem_builder.gate import config as gate_config
 
-from .systemd_manager import manager_environment
+from .systemd_manager import manager_environment, manager_pid
 
 
 def main() -> int:
@@ -22,6 +22,8 @@ def main() -> int:
     parser.add_argument("--inside", action="store_true")
     parser.add_argument("--uid", type=int)
     parser.add_argument("--gid", type=int)
+    parser.add_argument("--manager-runtime", type=Path)
+    parser.add_argument("--manager-pid", type=int)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -31,6 +33,15 @@ def main() -> int:
         assert (os.getuid(), os.getgid()) == (args.uid, args.gid), "native supervisor UID/GID changed"
         assert args.uid != 0, "native SDK acceptance requires the ordinary user"
         assert "NoNewPrivs:\t1" in Path("/proc/self/status").read_text()
+        assert args.manager_runtime is not None, "native supervisor manager runtime is required"
+        assert manager_pid(args.manager_runtime, same_network=True) == args.manager_pid, (
+            "native supervisor manager PID changed"
+        )
+        # Privilege/session tools can rewrite the ambient manager environment.
+        # Bind only the manager we created and authenticated before entering;
+        # never let an inherited host-user bus redirect the service outside it.
+        os.environ["XDG_RUNTIME_DIR"] = str(args.manager_runtime)
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={args.manager_runtime / 'bus'}"
         assert [name for _, name in socket.if_nameindex()] == ["lo"]
         policy = gate_config.load(Path(__file__).resolve().parents[2]).sandbox
         with socket.socket() as probe:
@@ -66,7 +77,9 @@ def main() -> int:
                 "/usr/bin/setpriv", f"--reuid={os.getuid()}", f"--regid={os.getgid()}",
                 group_flag, "--no-new-privs", "--",
                 sys.executable, "-m", __spec__.name, "--inside",
-                "--uid", str(os.getuid()), "--gid", str(os.getgid()), "--", *command,
+                "--uid", str(os.getuid()), "--gid", str(os.getgid()),
+                "--manager-runtime", manager.environment["XDG_RUNTIME_DIR"],
+                "--manager-pid", str(manager.pid), "--", *command,
             ]
             return subprocess.run(argv, env=manager.environment, check=False).returncode
     finally:

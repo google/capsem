@@ -19,12 +19,16 @@ class UserManager:
     pid: int
 
 
-def manager_pid(runtime: Path) -> int:
+def manager_pid(runtime: Path, *, same_network: bool = False) -> int:
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(2)
         connection.connect(str(runtime / "systemd/private"))
         pid, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
     assert uid == os.getuid() and pid > 0, "user manager has a different native owner"
+    if same_network:
+        assert os.readlink(f"/proc/{pid}/ns/net") == os.readlink("/proc/self/ns/net"), (
+            "native supervisor manager is outside the worker network namespace"
+        )
     return pid
 
 
@@ -41,7 +45,7 @@ def manager_environment(
     """
     if not private_network and os.environ.get("XDG_RUNTIME_DIR"):
         environment = dict(os.environ)
-        manager = UserManager(environment, manager_pid(Path(environment["XDG_RUNTIME_DIR"])))
+        manager = UserManager(environment, manager_pid(Path(environment["XDG_RUNTIME_DIR"]), same_network=True))
         slot = subprocess.run(
             ["systemctl", "--user", "show", "capsem.service", "--property=LoadState", "--value"],
             env=environment, capture_output=True, text=True, timeout=2, check=False,
