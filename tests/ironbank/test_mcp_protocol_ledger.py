@@ -485,7 +485,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert mcp_tool_events[0]["tool_name"] == "fixture_lookup"
 
         sdk = subprocess.run(
-            ["uv", "run", "--frozen", "python", "-m", "tests.mcp_acceptance"],
+            ["uv", "run", "--frozen", "--no-sync", "python", "-m", "tests.mcp_acceptance"],
             cwd=PROJECT_ROOT / "sdk/python",
             env={**{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
                  "SDK_GATEWAY_URL": gateway.base_url, "SDK_GATEWAY_TOKEN": gateway.token,

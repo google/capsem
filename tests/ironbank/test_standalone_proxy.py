@@ -215,6 +215,7 @@ def test_standalone_proxy_serves_official_sdks_without_a_vm():
                 "--project",
                 "sdk/python",
                 "--frozen",
+                "--no-sync",
                 "python",
                 "sdk/python/tests/standalone_openai_client.py",
                 "--base-url",
