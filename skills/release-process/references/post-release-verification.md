@@ -16,9 +16,7 @@ uv run --project build_system --frozen python3 build_system/scripts/release/chec
   --channel stable \
   --manifest-url https://release.capsem.org/assets/stable/manifest.json \
   --install-script-url https://capsem.org/install.sh \
-  --docker-linux-install \
-  --docker-channel-switch \
-  --docker-upgrade
+  --docker-linux-install
 ```
 
 Use `build_system/scripts/release/check-public-binary-release.py` for post-deploy glow-up instead of
@@ -28,6 +26,19 @@ package SHA-256, package-owned binary hashes, absence of a packaged
 install, stable/nightly asset switching, and the binary updater path. Package
 scripts must not normalize or convert manifest JSON; the selected channel
 manifest is the only runtime manifest format.
+
+The public Docker check boots the shared real systemd harness before the
+installer runs as its ordinary test user. It uses the qualified, input-keyed
+install dependency image by default; `--docker-image` may select another clean
+prepared systemd image with that user and the masked binfmt unit. It owns a
+unique container and removes it on failure or interruption. Public downloads
+use an explicit bridge network; the ordinary installed-package proof remains
+sealed with `runtime_network = "none"`.
+
+Use `--docker-channel-switch` only when both deployed channels are compatible
+with the installed binary, and `--docker-upgrade` only for a supported genuine
+second compiled cohort. Stable 0.7 publication does not imply that the
+independently owned nightly channel has migrated from 0.6.
 
 Binary transition proof must use two genuinely compiled package cohorts with
 different versions. Rewriting only Debian control metadata, package provenance,

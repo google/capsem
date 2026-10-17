@@ -12,8 +12,8 @@ from .docker import Docker, Mount
 from .errors import GateError
 from .installcontainer import (
     VmDeviceRuntime,
-    await_systemd,
     claim_owned_paths,
+    start_systemd_container,
     systemd_command,
     verify_vm_device_access,
     virtualisation_runtime,
@@ -117,25 +117,20 @@ class DebProof:
 
     def _start(self, runtime: VmDeviceRuntime) -> None:
         self._runner.note("Starting clean systemd container for exact package proof...")
-        cgroup = self._install.cgroup_path
         image = installimage.require_local_image(self._runner, self._config)
-        tmpfs = [f for path in self._install.tmpfs_paths for f in ("--tmpfs", path)]
         self._docker.remove(self._proof.container)
-        self._docker.run_detached(
+        start_systemd_container(
+            self._docker, self._install,
             network=self._install.runtime_network,
             name=self._proof.container,
             image=image,
             command=systemd_command(self._install, runtime.runtime_user_devices),
             options=[
-                "--privileged",
-                "--cgroupns=host",
                 "--security-opt",
                 "seccomp=unconfined",
                 *runtime.docker_options,
-                *tmpfs,
             ],
             mounts=[
-                Mount(cgroup, cgroup, "rw"),
                 # Generated after the image; read-only so proof cannot alter it.
                 *(
                     Mount.generated(str(self.root / name), f"{self._install.mount}/{name}")
@@ -147,12 +142,7 @@ class DebProof:
                     self._install.proof_assets_mount,
                 ),
             ],
-        )
-        await_systemd(
-            self._docker,
-            self._proof.container,
             attempts=self._proof.systemd_ready_attempts,
-            interval=self._install.systemd_ready_interval_seconds,
             sleep=self._sleep,
         )
         claim_owned_paths(self._docker, self._proof.container, self._install)
