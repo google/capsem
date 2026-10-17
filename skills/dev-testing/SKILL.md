@@ -43,6 +43,11 @@ already compiled a test when a later edit lands, so its green result can cover
 older bytes. If inputs changed during compilation or execution, that result
 does not verify the final source; rerun the focused regression after the edit.
 
+SDK acceptance launchers use `uv run --frozen --no-sync` against the environment
+prepared by the gate. Snapshot refresh changes source mtimes; an implicit sync
+can rebuild the editable SDK and fetch its backend inside the sealed namespace.
+Dependency preparation belongs to the earlier environment owner.
+
 Focused Ruff commands must select `--config build_system/pyproject.toml`, as
 the gate does. Auto-discovery from a root-level test used a different Python
 version and reversed `tomllib` import grouping, passing locally then failing
