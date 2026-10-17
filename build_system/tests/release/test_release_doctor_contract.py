@@ -5432,7 +5432,7 @@ def test_hosted_install_failure_uploads_exact_gate_and_glowup_evidence() -> None
         for row in job["steps"]
         if row.get("name") == "Upload install and glow-up evidence on failure"
     )
-    evidence = gate_config.load(PROJECT_ROOT).install.layout.glowup_evidence
+    evidence = gate_config.load(PROJECT_ROOT).outputs.test_artifacts
 
     install = next(row for row in job["steps"] if row.get("name") == "Run install e2e tests")
     assert install["id"] == "install_e2e"
