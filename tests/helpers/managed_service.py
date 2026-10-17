@@ -70,11 +70,15 @@ class ManagedService:
 
     def ready(self, previous: GatewayIdentity | None = None) -> GatewayIdentity:
         deadline = time.monotonic() + 45
+        probe = "supervisor PID"
+        last_probe = "not attempted"
         while time.monotonic() < deadline:
             try:
                 root = self.service.tmp_dir
+                probe = "supervisor PID"
                 pid = self.pid()
                 self.remember(pid)
+                probe = "gateway runtime files"
                 identity = GatewayIdentity(
                     port=int((root / "gateway.port").read_text()),
                     token=(root / "gateway.token").read_text().strip(),
@@ -86,12 +90,26 @@ class ManagedService:
                     and identity.gateway_pid != previous.gateway_pid
                     and identity.token != previous.token
                 )
-                if changed and identity.get("/vms/list")[0] == 200:
-                    return identity
-            except (OSError, ValueError, ConnectionError):
-                pass
+                probe = "gateway HTTP"
+                if sys.platform == "linux":
+                    namespaces = (
+                        os.readlink(f"/proc/{process}/ns/net")
+                        for process in (os.getpid(), identity.service_pid, identity.gateway_pid)
+                    )
+                    probe += " test/service/gateway namespaces=" + "/".join(namespaces)
+                if changed:
+                    status, _ = identity.get("/vms/list")
+                    last_probe = f"{probe} status={status}"
+                    if status == 200:
+                        return identity
+                else:
+                    last_probe = "gateway identity has not rotated"
+            except (OSError, ValueError, ConnectionError) as error:
+                # Error text or HTTP bodies can contain credentials. Retain
+                # only the failed stage and error class, never token contents.
+                last_probe = f"{probe}: {type(error).__name__} errno={getattr(error, 'errno', None)}"
             time.sleep(0.1)
-        state = self.startup_state()
+        state = f"{self.startup_state()}; last probe: {last_probe}"
         (self.service.tmp_dir / "managed-supervisor-state.txt").write_text(state)
         raise AssertionError(f"managed gateway did not become ready; {state}; evidence: {self.service.tmp_dir}")
 
