@@ -45,7 +45,7 @@ EXPECTED_TARGETS = frozenset(
         "crates/",
         "guest/",
         "images/",
-        "integrations/inspect-ai/",
+        "integrations/",
         "mcp/",
         "sdk/",
         "skills/",

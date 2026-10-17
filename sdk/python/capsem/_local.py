@@ -21,13 +21,23 @@ def _read(path: Path, *, private: bool = False) -> str:
         return data.decode("ascii").strip()
 
 
-def local_connection() -> tuple[str, str]:
+def capsem_run_dir(run_dir: str | Path | None = None) -> Path:
+    """Resolve the runtime directory without opening gateway metadata."""
+    if run_dir is not None:
+        raw = str(run_dir).strip()
+        if not raw:
+            raise ValueError("run_dir must be a nonempty path")
+        return Path(raw).expanduser()
+    root = os.environ.get("CAPSEM_RUN_DIR", "").strip()
+    if root:
+        return Path(root).expanduser()
+    home = os.environ.get("CAPSEM_HOME", "").strip()
+    return (Path(home).expanduser() if home else Path.home() / ".capsem") / "run"
+
+
+def local_connection(run_dir: str | Path | None = None) -> tuple[str, str]:
     try:
-        root = os.environ.get("CAPSEM_RUN_DIR")
-        if not root:
-            home = os.environ.get("CAPSEM_HOME")
-            root = str((Path(home) if home else Path.home() / ".capsem") / "run")
-        directory = Path(root)
+        directory = capsem_run_dir(run_dir)
         token = _read(directory / "gateway.token", private=True)
         port = _read(directory / "gateway.port")
         if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:

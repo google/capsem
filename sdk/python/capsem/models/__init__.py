@@ -54,6 +54,7 @@ from .credential_storage import CredentialStorage as CredentialStorage
 from .disconnect_response import DisconnectResponse as DisconnectResponse
 from .dns_event import DnsEvent as DnsEvent
 from .enrollment_kind import EnrollmentKind as EnrollmentKind
+from .error_code import ErrorCode as ErrorCode
 from .error_event import ErrorEvent as ErrorEvent
 from .error_response import ErrorResponse as ErrorResponse
 from .event_bodies_response import EventBodiesResponse as EventBodiesResponse

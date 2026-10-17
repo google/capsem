@@ -125,7 +125,7 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn fake_binary(directory: &Path, mode: &str) -> PathBuf {
+pub(crate) fn fake_binary(directory: &Path, mode: &str) -> PathBuf {
     let binary = directory.join(format!("capsem-ledger-{mode}"));
     write_fake_binary(&binary, mode);
     binary

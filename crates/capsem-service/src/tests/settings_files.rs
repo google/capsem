@@ -3,7 +3,7 @@ use super::*;
 // Settings handler tests
 // -----------------------------------------------------------------------
 
-pub(super) struct SettingsEnvGuard {
+pub(crate) struct SettingsEnvGuard {
     // Holds the path redirect for the guard's lifetime; restores on drop.
     _capsem_paths: capsem_foundation::paths::CapsemPathsGuard,
     previous_corp: Option<std::ffi::OsString>,
@@ -42,7 +42,7 @@ impl Drop for SettingsEnvGuard {
     }
 }
 
-pub(super) fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, PathBuf, PathBuf) {
+pub(crate) fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, PathBuf, PathBuf) {
     let settings_path = dir.path().join("settings.toml");
     let corp_path = dir.path().join("corp.toml");
     capsem_core::net::policy_config::write_settings_file(
@@ -90,7 +90,7 @@ async fn handle_save_settings_rejects_unknown_key() {
     let result = handle_save_settings(State(state), Json(changes)).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -117,11 +117,11 @@ async fn handle_save_settings_rejects_retired_policy_rule_keys_atomically() {
         .await
         .expect_err("retired policy rule key should be rejected by settings handler");
 
-    assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
     assert!(
-        err.1.contains(&format!("unknown setting: {retired_key}")),
+        err.body.error.contains(&format!("unknown setting: {retired_key}")),
         "error should point to the retired policy key, got: {}",
-        err.1
+        err.body.error
     );
     let loaded = capsem_core::net::policy_config::load_settings_file(&user_path).unwrap();
     assert!(
@@ -179,6 +179,7 @@ fn resolve_rejects_symlink_escape() {
             base_version: "0.0.0".into(),
             persistent: false,
             env: None,
+            labels: None,
             forked_from: None,
         },
     );
@@ -214,6 +215,7 @@ fn resolve_valid_path_inside_workspace() {
             base_version: "0.0.0".into(),
             persistent: false,
             env: None,
+            labels: None,
             forked_from: None,
         },
     );
@@ -412,8 +414,9 @@ fn classify_launchd_transient_routes_to_retry() {
 fn classify_boot_crash_bails_with_500_and_tail() {
     let tail = "Error: failed to boot VM\n\nCaused by:\n    bogus".to_string();
     match classify_attempt_decision(ProvisionAttemptOutcome::BootCrash { tail: tail.clone() }, "vm-4") {
-        AttemptDecision::BailWithError(AppError(status, msg)) => {
-            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        AttemptDecision::BailWithError(err) => {
+            let msg = &err.body.error;
+            assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
             assert!(msg.contains("vm-4"), "msg should embed the id: {msg}");
             assert!(msg.contains(&tail), "msg should embed the log tail: {msg}");
             assert!(msg.contains("capsem logs vm-4"), "msg should hint at follow-up cmd");
@@ -426,9 +429,9 @@ fn classify_boot_crash_bails_with_500_and_tail() {
 fn classify_provision_error_already_exists_returns_409() {
     let err = anyhow::anyhow!("persistent VM \"vm-5\" already exists. Use `capsem resume vm-5`.");
     match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-5") {
-        AttemptDecision::BailWithError(AppError(status, _)) => {
+        AttemptDecision::BailWithError(err) => {
             assert_eq!(
-                status,
+                err.status,
                 StatusCode::CONFLICT,
                 "duplicate-name errors must return 409 so clients can distinguish from server failures"
             );
@@ -441,8 +444,9 @@ fn classify_provision_error_already_exists_returns_409() {
 fn classify_provision_error_other_returns_500() {
     let err = anyhow::anyhow!("rootfs not found at /missing/path");
     match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-6") {
-        AttemptDecision::BailWithError(AppError(status, msg)) => {
-            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        AttemptDecision::BailWithError(err) => {
+            let msg = &err.body.error;
+            assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
             assert!(msg.contains("rootfs not found"), "underlying error preserved: {msg}");
         }
         other => panic!("expected BailWithError(500), got {other:?}"),
@@ -454,10 +458,10 @@ fn classify_provision_error_reports_the_whole_cause_chain() {
     // #289: the caller saw only "load the policy inputs", never why.
     let err = anyhow::anyhow!("settings.toml cannot define corp.rules").context("load the policy inputs");
     match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-7") {
-        AttemptDecision::BailWithError(AppError(status, msg)) => {
-            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        AttemptDecision::BailWithError(err) => {
+            assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
             assert_eq!(
-                msg,
+                err.body.error,
                 "provision failed: load the policy inputs: settings.toml cannot define corp.rules"
             );
         }
@@ -469,8 +473,8 @@ fn classify_provision_error_reports_the_whole_cause_chain() {
 fn classify_provision_error_finds_already_exists_below_context() {
     let err = anyhow::anyhow!("persistent VM \"vm-8\" already exists").context("claim the persistent name");
     match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-8") {
-        AttemptDecision::BailWithError(AppError(status, msg)) => {
-            assert_eq!(status, StatusCode::CONFLICT, "{msg}");
+        AttemptDecision::BailWithError(err) => {
+            assert_eq!(err.status, StatusCode::CONFLICT, "{}", err.body.error);
         }
         other => panic!("expected BailWithError(409), got {other:?}"),
     }

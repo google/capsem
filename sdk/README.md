@@ -4,7 +4,9 @@ The Rust gateway contracts produce [OpenAPI](specification/openapi.json), then
 generated operations and typed models for [Python](python/README.md),
 [TypeScript](typescript/README.md), and [Rust](rust/README.md). The small
 `Hypervisor` and `VM` facades share those operations. The web UI uses TypeScript;
-the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
+the TUI uses Rust. Python and Node.js clients discover the local service when
+constructed without connection arguments; Rust uses `Hypervisor::local()`.
+Remote and browser clients take a complete HTTP(S) URL and bearer token.
 
 | Interface | Methods |
 | --- | --- |
@@ -84,6 +86,10 @@ uses the TypeScript SDK to present these resources to AI agents over stdio. It
 requires an explicit gateway URL, bearer token, and HTTP transport timeout; the
 native Capsem installer does not install Node.js or download the npm package.
 
+The [`inspect-capsem-sandbox`](../integrations/inspect-ai/README.md) extension registers a `capsem`
+`SandboxEnvironment` for [Inspect AI](https://inspect.aisi.org.uk/) backed by
+the Python gateway SDK (`SdkCapsemController`).
+
 ## Credential injection
 
 Supply host credentials through `credentials.inject`; it returns an opaque
@@ -141,7 +147,6 @@ managed OAuth connection and per-session grant flow remains separate work.
 The long-term credential storage model remains open in
 [#343](https://github.com/google/capsem/issues/343), including Windows DPAPI,
 macOS encryption at rest and user/system service or injected deployments.
-
 ## Oversight
 
 Citadel inventories SDK source, including checked-in generated files. Python

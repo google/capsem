@@ -21,9 +21,11 @@ impl ServiceState {
             version_override,
             persistent,
             env,
+            labels,
             from,
             description,
         } = options;
+        let labels = non_empty_labels(labels);
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
@@ -368,6 +370,7 @@ impl ServiceState {
                 last_error: None,
                 checkpoint_path: None,
                 env: env.clone(),
+                labels: labels.clone(),
             });
             if let Err(error) = registration {
                 let _reaper = instance_reaper::kill_and_reap(child, retirement);
@@ -397,6 +400,7 @@ impl ServiceState {
                 base_version: version,
                 persistent,
                 env,
+                labels,
                 forked_from: from_name,
             },
         );

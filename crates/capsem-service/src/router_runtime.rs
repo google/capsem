@@ -208,13 +208,13 @@ pub(super) async fn handle_system_status(
         })
         .await??;
     capsem_assets::asset_manager::ManifestV2::from_json(&serde_json::to_string(&manifest).map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("serialize installed manifest for validation: {error}"),
         )
     })?)
     .map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("installed manifest is invalid: {error:#}"),
         )
@@ -259,13 +259,13 @@ async fn handle_gateway_status(
 
 pub(super) fn read_installed_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {
     let content = std::fs::read_to_string(path).map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("read installed status document {}: {error}", path.display()),
         )
     })?;
     serde_json::from_str(&content).map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("parse installed status document {}: {error}", path.display()),
         )
@@ -275,7 +275,7 @@ pub(super) fn read_installed_status_document(path: &StdPath) -> Result<serde_jso
 pub(super) fn read_manifest_metadata_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {
     let value = read_installed_status_document(path)?;
     if value.get("schema").and_then(serde_json::Value::as_str) != Some("capsem.manifest_metadata.v1") {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "installed manifest metadata must use schema capsem.manifest_metadata.v1".to_string(),
         ));
@@ -303,7 +303,7 @@ pub(super) async fn handle_update_apply(
         return Ok(Json(planned_update_response(plan)));
     }
     if !request.confirmed {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
             "update apply requires confirmed=true or dry_run=true".to_string(),
         ));
@@ -349,7 +349,7 @@ pub(super) async fn execute_update_command_unlocked(
         .output()
         .await
         .map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("failed to start update command: {error}"),
             )
@@ -433,7 +433,7 @@ pub(super) async fn run_automatic_update_once(state: &ServiceState) -> Automatic
     let plan = update_command_plan(UpdateCommandKind::Apply);
     let response = match execute_update_command_unlocked(plan).await {
         Ok(response) => response,
-        Err(error) => return AutomaticUpdateOutcome::Failed(error.1),
+        Err(error) => return AutomaticUpdateOutcome::Failed(error.body.error),
     };
     if response.status != api::UpdateActionStatus::Succeeded {
         let detail = response
@@ -446,7 +446,7 @@ pub(super) async fn run_automatic_update_once(state: &ServiceState) -> Automatic
     }
     match reload_activated_update_runtime(state) {
         Ok(disposition) => AutomaticUpdateOutcome::Succeeded(disposition),
-        Err(error) => AutomaticUpdateOutcome::Failed(error.1),
+        Err(error) => AutomaticUpdateOutcome::Failed(error.body.error),
     }
 }
 
@@ -499,13 +499,13 @@ pub(super) fn should_start_automatic_update_loop(parent_pid: Option<u32>) -> boo
 pub(super) fn reload_activated_update_runtime(state: &ServiceState) -> Result<UpdateRuntimeDisposition, AppError> {
     let path = state.assets_dir.join("manifest.json");
     let content = std::fs::read_to_string(&path).map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("read activated update manifest {}: {error}", path.display()),
         )
     })?;
     let manifest = capsem_assets::asset_manager::ManifestV2::from_json(&content).map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("validate activated update manifest {}: {error:#}", path.display()),
         )
@@ -515,7 +515,7 @@ pub(super) fn reload_activated_update_runtime(state: &ServiceState) -> Result<Up
         .manifest
         .write()
         .map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("installed manifest lock poisoned: {error}"),
             )

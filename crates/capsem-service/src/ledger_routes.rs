@@ -38,7 +38,7 @@ pub(super) async fn handle_security_latest(
         "security_latest"
     );
     let body = serde_json::to_vec(&rows).map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to serialize security latest response: {error}"),
         )
@@ -55,7 +55,7 @@ pub(super) async fn handle_detection_latest(
     let limit = params.limit.unwrap_or(100).min(2000);
     let rows = security_latest_for_vm(&state, &id, limit, true).await?;
     let body = serde_json::to_vec(&rows).map_err(|error| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to serialize detection latest response: {error}"),
         )
@@ -119,7 +119,7 @@ pub(super) fn ledger_route_error(
         error = %error,
         "session ledger route DB operation failed"
     );
-    AppError(
+    AppError::new(
         StatusCode::INTERNAL_SERVER_ERROR,
         format!("failed to {operation} {ledger} ledger for {vm_id}: {error}"),
     )

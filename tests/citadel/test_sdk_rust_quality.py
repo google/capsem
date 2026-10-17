@@ -8,7 +8,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from capsem_builder.gate import sdkchecks
+from capsem_builder.gate import sdkregistrychecks
 from capsem_builder.gate.plan import Plan
 from citadel.test_sdk_ci import _documents
 from citadel.test_sdk_quality import CONFIG, ROOT, SDK_RATIONALE
@@ -63,7 +63,8 @@ def test_rust_sdk_has_native_coverage_and_ci_owners() -> None:
 
 
 def test_rust_generation_is_enforced_in_the_fast_plan() -> None:
-    (expected,) = sdkchecks.rust_fragment(Plan("Rust SDK"), CONFIG, after=())
+    expected, packaged = sdkregistrychecks.rust_fragment(Plan("Rust SDK"), CONFIG, after=())
+    assert packaged.label == "fast.sdk.rust.package", SDK_RATIONALE
     actual = gate_plan("test-fast")
     assert expected.label in actual.labels, SDK_RATIONALE
     assert expected.render() == actual.step_named(expected.label).render(), SDK_RATIONALE

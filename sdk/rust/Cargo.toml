@@ -10,9 +10,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-capsem-api = { path = "../../crates/capsem-api", version = "0.7.0" }
-capsem-crypto = { path = "../../crates/capsem-crypto", version = "0.7.0", default-features = false, features = ["random", "secrets"] }
-capsem-foundation = { path = "../../crates/capsem-foundation", version = "0.7.0" }
+capsem-api = { path = "../../crates/capsem-api", version = "0.7.1" }
+capsem-crypto = { path = "../../crates/capsem-crypto", version = "0.7.1", default-features = false, features = ["random", "secrets"] }
+capsem-foundation = { path = "../../crates/capsem-foundation", version = "0.7.1" }
 futures.workspace = true
 humantime.workspace = true
 reqwest.workspace = true

@@ -290,6 +290,7 @@ impl ServiceState {
                 base_version: version,
                 persistent: true,
                 env: None,
+                labels: entry.labels,
                 forked_from: entry.forked_from,
             },
         );

@@ -1735,6 +1735,37 @@ This specification does not choose:
 Those choices may vary without changing the architecture, provided every
 normative invariant and contract test in this document remains satisfied.
 
+## Client registry publication
+
+Stable binary publication also publishes the Python, TypeScript and Rust SDKs,
+the SDK-backed npm MCP server, and the Inspect adapter from that exact source.
+This is a continuation of the binary release, not another operator entrypoint
+or a VM runtime manifest family. Nightly native publication does not consume
+stable client registry versions.
+
+The SDKs and MCP server use the native version. Inspect retains its own version
+and MUST require a compatible SDK. Qualification MUST build and verify the
+actual registry archives, preserve them across the workflow handoff, and test
+the packaged clients against the native service. Publication MUST validate
+archive identity and source before using registry credentials. Rust library
+dependencies precede the Rust SDK; the Python SDK precedes Inspect; the npm SDK
+precedes MCP.
+
+The existing binary release authority and its complete qualification remain
+required. Registry publication starts only after native publication and public
+native download/install verification succeed. Its prerequisites MUST fail early
+when publisher credentials are missing. Configured credentials do not by
+themselves establish package ownership; the registry must authorize each upload.
+
+Registries are immutable and independent. Publication is resumable only when
+already-public archive bytes exactly match the qualified archives. A version
+collision MUST fail, never silently skip a different artifact or overwrite it.
+No atomic transaction across native hosting and the registries is implied;
+a client failure leaves that native release public and the client cohort
+incomplete until the same-source retry succeeds. Completion requires anonymous
+public archive verification and clean registry installations exercising the real
+service, Inspect entry point, and MCP protocol handshake.
+
 ## 23. Summary of the governing contract
 
 Capsem binaries and the VM runtime are independently releasable but jointly

@@ -14,7 +14,7 @@ async fn credential_lifecycle_deletion_rechecks_replacement_after_waiting_for_la
     let generation = state.instances.lock().unwrap()[&id].generation;
     drop(launching);
     match pending.await {
-        Err(error) => assert_eq!(error.0, StatusCode::CONFLICT),
+        Err(error) => assert_eq!(error.status, StatusCode::CONFLICT),
         Ok(_) => panic!("deletion acquired authority over a replacement"),
     }
     assert_eq!(state.instances.lock().unwrap()[&id].generation, generation);

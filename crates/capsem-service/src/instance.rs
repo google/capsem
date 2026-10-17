@@ -65,6 +65,8 @@ pub(crate) struct InstanceInfo {
     pub(crate) env: Option<std::collections::HashMap<String, String>>,
     /// Sandbox this VM was cloned from, if any
     pub(crate) forked_from: Option<String>,
+    /// Key-value metadata labels attached at creation
+    pub(crate) labels: Option<std::collections::HashMap<String, String>>,
 }
 
 #[cfg(test)]

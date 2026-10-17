@@ -634,3 +634,43 @@ source_patterns = [
   "target/tests/ironbank/build-*.log",
   "target/tests/ironbank/*/run-failure/**/*",
 ]
+
+[stages.sdk-packages]
+description = "Packaged Python, Rust and TypeScript SDK archives."
+scope = "disk"
+path = "target/sdk"
+warm_size_bytes = 33554432
+max_size_bytes = 67108864
+prune_strategy = "lru"
+maximum_age_hours = 168
+maximum_count = 24
+
+[stages.inspect-packages]
+description = "Qualified Inspect wheel and source distribution."
+scope = "disk"
+path = "target/integrations/inspect-ai"
+warm_size_bytes = 4194304
+max_size_bytes = 8388608
+prune_strategy = "lru"
+maximum_age_hours = 168
+maximum_count = 24
+
+[stages.mcp-packages]
+description = "Qualified npm MCP and its tested SDK tarball."
+scope = "disk"
+path = "target/mcp/typescript"
+warm_size_bytes = 4194304
+max_size_bytes = 8388608
+prune_strategy = "lru"
+maximum_age_hours = 168
+maximum_count = 24
+
+[stages.client-test-scratch]
+description = "Adversarial SDK and Inspect test files, separate from publishable archives."
+scope = "disk"
+path = "target/tests/client-packages"
+warm_size_bytes = 67108864
+max_size_bytes = 134217728
+prune_strategy = "lru"
+maximum_age_hours = 168
+maximum_count = 24

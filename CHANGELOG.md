@@ -9,10 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Python gateway discovery requires complete URL/token pairs, keeps remote
+  connections from borrowing local credentials, redacts tokens from endpoint
+  representations, and refuses unsafe or incomplete local metadata.
+
 - Private network cable answers require the exact handoff token, frame kind
   and one connected stream descriptor before service adoption or switch grants.
 
 ### Fixed
+
+- Host-ledger diagnostics report malformed binary fields as corruption without
+  aborting verification or changing the ledger hash format.
 
 - Private network cable handoffs retain the original socket until service
   adoption, including when a reconnect replaces the cable table entry.
@@ -32,6 +39,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Correct the release preflight's version line so qualified 0.7 packages can
   be published, and align the pre-release documentation labels.
+
+- SDK release handoffs keep adversarial test files out of published archive
+  directories and apply bounded retention to client package outputs.
+
+- Stable native releases publish the qualified SDK, npm MCP and Inspect package
+  cohort in dependency order and verify clean public registry consumers.
+
+- Public SDK and MCP packages identify their canonical source and license;
+  Python SDK packages include their usage guide.
+
+- Rust SDK registry dependencies include their canonical runtime limits, so
+  building them does not require the Capsem source checkout.
+
+- The npm MCP server reports its installed package version in protocol handshakes.
+
+- Inspect requires the SDK version providing its labels and typed-error APIs,
+  and its frozen dependency lock matches the current SDK package.
+
+- Inspect task labels respect the service's UTF-8 byte limit for accented
+  and emoji task names.
 
 - Native MCP handoffs retain connected sockets until the receiving worker
   confirms adoption, preventing intermittent initialization failures on macOS.
@@ -1798,6 +1825,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ErrorResponse` adds an optional typed `code: ErrorCode` (`"create_timeout"`,
+  `"exec_timeout"`, `"vm_not_found"`), `vm_id`, and `timeout_secs` on the HTTP
+  error wire contract, with service-side exec timeouts returning HTTP 504
+  (`StatusCode::GATEWAY_TIMEOUT`). The Python SDK adds host gateway discovery
+  (`discover_gateway`, `capsem_run_dir`, `GatewayEndpoint`,
+  `Hypervisor.connect`, and optional `url`/`token`/`run_dir` on `Hypervisor`
+  and `VM` resolving `CAPSEM_GATEWAY_URL`, `CAPSEM_GATEWAY_TOKEN`, and
+  `<run_dir>/gateway.{port,token}`) and structured exceptions
+  (`CapsemError`, `CapsemTimeoutError`, `CreateTimeoutError`,
+  `ExecTimeoutError`, and `VmNotFoundError`) dispatched from
+  `HttpError.code` (`models.ErrorCode`). The Python and TypeScript SDKs also
+  export `MAX_REQUEST_BODY_BYTES` and `CREATE_READY_SECS` guarded by Citadel
+  against the service and API constants.
+- `POST /vms/create` (`ProvisionRequest`) and `POST /vms/{id}/fork` (`ForkRequest`)
+  accept optional advisory `labels` (`<= 64` entries, ASCII keys `1..=64`
+  matching the VM-name rule `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`, values `<= 255`
+  UTF-8 bytes without control characters; `{}` is treated as no labels),
+  returned on `SandboxInfo.labels` across `/vms/list` and `/vms/{id}/info`.
+  Labels are set at creation, immutable afterward, preserved across `persist`
+  and `resume`, and inherited on `fork` unless overridden (with `{}` clearing).
+  `Hypervisor.create` and `VM.fork` across the Python, Rust, and TypeScript
+  SDKs (as well as `capsem create -l KEY=VALUE` and `capsem fork -l KEY=VALUE`)
+  attach or override `labels`.
 - Images can be named from the catalog. The service reads
   `ghcr.io/google/capsem/catalog:stable` (or the mirror `[images] catalog`
   names, trusting `[images] catalog_ca` for it; `catalog = false` turns it
@@ -1915,6 +1965,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   period when it stops; its session directory survives every stop, so its
   bodies previously only ever grew. Ephemeral sessions are deleted whole and
   are unaffected.
+
+- `integrations/inspect-ai` (`inspect-capsem-sandbox`) provides a standalone
+  [Inspect AI](https://inspect.aisi.org.uk/) `SandboxEnvironment` registered
+  under `capsem`, supporting direct VM execution (`execution_mode="vm"`) and
+  rootless OCI workload container execution (`execution_mode="container"`)
+  with single-service Docker Compose support, evaluator-granted `Dockerfile`
+  and Compose `build:` image builds served via a loopback HTTPS OCI v2
+  registry with `[images]` `ca_pem` and `admit`, `SAMPLE_METADATA_*`
+  interpolation, and operator-owned host environment and bind-mount
+  allowlists, backed by the Capsem Python gateway SDK (`capsem>=0.7.0`).
 
 - The profile catalog names its own defaults, one per runtime: the binary
   compiles them from `config/profile-catalog.toml` (a runtime's default

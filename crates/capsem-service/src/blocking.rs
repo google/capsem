@@ -18,7 +18,7 @@ impl ServiceState {
     {
         let state = Arc::clone(self);
         tokio::task::spawn_blocking(move || f(state)).await.map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("blocking task failed: {error}"),
             )

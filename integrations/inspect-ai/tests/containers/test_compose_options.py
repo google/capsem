@@ -147,3 +147,64 @@ def test_compose_long_form_build_fields_and_refusals(
         in caplog.text
     )
     assert "x-inspect" not in caplog.text
+
+
+async def test_declared_named_volumes_init_and_ports_parity(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from typing import Any, cast
+
+    import inspect_capsem.containers.compose_fields as compose_fields_mod
+    from inspect_capsem import CapsemSandboxConfig
+    from inspect_capsem.containers.runtime import prepare_oci_workload_container
+
+    from ..helpers import Scripted, ok
+
+    compose_doc = {
+        "volumes": {"cache-vol": None, "ro-vol": {"driver": "local"}},
+        "services": {
+            "app": {
+                "image": "alpine:3.20",
+                "init": True,
+                "expose": [{"target": 8080, "protocol": "tcp"}],
+                "volumes": [
+                    "cache-vol:/var/cache/app",
+                    {
+                        "type": "volume",
+                        "source": "ro-vol",
+                        "target": "/var/lib/ro",
+                        "read_only": True,
+                    },
+                ],
+            }
+        },
+    }
+    with caplog.at_level(logging.WARNING):
+        fields = compose_fields_mod.extract_capsem_compose_fields(compose_doc, base_dir=tmp_path)
+    assert "Ignoring Compose 'init: true' in service 'app'" in caplog.text
+    assert "init" not in fields and "expose" not in fields and "ports" not in fields
+    assert fields["volumes"] == ("cache-vol:/var/cache/app", "ro-vol:/var/lib/ro:ro")
+
+    cfg = CapsemSandboxConfig(**fields)
+    ctrl = Scripted([("", ok())])
+    await prepare_oci_workload_container(cast(Any, ctrl), "vm-1", cfg.to_container_spec())
+    assert ctrl.commands == [
+        "mkdir -p /var/cache/app && (chmod a+rwx /var/cache/app 2>/dev/null || true)",
+        "mkdir -p /var/lib/ro && (chmod a+rx /var/lib/ro 2>/dev/null || true)",
+    ]
+
+    for bad_top in (
+        {"volumes": ["not-a-dict"], "services": {"app": {"image": "a"}}},
+        {"volumes": {"/bad": {}}, "services": {"app": {"image": "a"}}},
+        {"volumes": {"ext": {"external": True}}, "services": {"app": {"image": "a"}}},
+        {"volumes": {"nfs": {"driver": "nfs"}}, "services": {"app": {"image": "a"}}},
+        {
+            "volumes": {" declared": {}},
+            "services": {"app": {"image": "a", "volumes": ["undeclared:/data"]}},
+        },
+        {"services": {"app": {"image": "a", "ports": [{"published": 8080}]}}},
+    ):
+        with pytest.raises(ValueError):
+            compose_fields_mod.extract_capsem_compose_fields(bad_top, base_dir=tmp_path)
+    with pytest.raises(ValueError, match="ports"):
+        CapsemSandboxConfig.model_validate({"image": "alpine:3.20", "ports": ("8080:80",)})

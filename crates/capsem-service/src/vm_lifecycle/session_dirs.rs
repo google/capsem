@@ -14,14 +14,14 @@ use super::*;
 pub(super) fn claim_persistent_name(state: &ServiceState, entry: PersistentVmEntry) -> Result<(), AppError> {
     let registry = state.persistent_registry.lock().unwrap();
     if registry.contains(&entry.name) {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::CONFLICT,
             format!("persistent VM \"{}\" already exists", entry.name),
         ));
     }
     registry
         .register(entry)
-        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+        .map_err(|error| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 
 /// Move a persisted session that still lives where it ran to
@@ -82,7 +82,7 @@ pub(super) async fn remove_purged_session_dir(state: &Arc<ServiceState>, vm_id: 
     let _deletion_guard = match connection_routes::lifecycle::deletion(state, vm_id).await {
         Ok(guard) => guard,
         Err(error) => {
-            warn!(vm_id, error = %error.1, "purge credential retirement remains pending");
+            warn!(vm_id, error = %error.body.error, "purge credential retirement remains pending");
             return false;
         }
     };

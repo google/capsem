@@ -33,7 +33,7 @@ pub(crate) async fn handle_stream(
 ) -> Result<axum::response::Response, AppError> {
     let upgrade = upgrade.protocols([stream::STREAM_SUBPROTOCOL]);
     if upgrade.selected_protocol().is_none() {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
             format!(
                 "stream requires the {} WebSocket subprotocol",
@@ -43,7 +43,7 @@ pub(crate) async fn handle_stream(
     }
     let uds_path = running_uds_path(&state, &id)?;
     let owner = crate::owner_connection::OwnerConnection::acquire(&state, &uds_path)
-        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
+        .map_err(|e| AppError::new(StatusCode::BAD_GATEWAY, e))?;
     Ok(upgrade
         .max_message_size(stream::MAX_STREAM_FRAME_BYTES)
         .on_upgrade(move |socket| session(state, id, owner, socket)))

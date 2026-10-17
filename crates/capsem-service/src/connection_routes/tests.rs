@@ -31,7 +31,7 @@ async fn connection_catalog_query_refuses_invalid_input_without_echoing_it() {
         let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
         let error: api::ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(error.error, "credential request refused");
-        assert_eq!(error.code, Some("request_conflict".into()));
+        assert_eq!(error.code, Some(api::ErrorCode::RequestConflict));
         assert!(!String::from_utf8(bytes.to_vec()).unwrap().contains("private-query"));
     }
     for query in ["", "limit=1", "limit=32&cursor=12345678-1234-4234-8234-123456789abc"] {
@@ -158,7 +158,7 @@ async fn retained_credential_approvals_use_canonical_registry_owner_without_a_pr
     let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
     assert_eq!(
         serde_json::from_slice::<api::ErrorResponse>(&bytes).unwrap().code,
-        Some("grant_unavailable".into())
+        Some(api::ErrorCode::GrantUnavailable)
     );
     for route_id in [
         "retained-box".into(),

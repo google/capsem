@@ -82,7 +82,9 @@ pub(super) fn spawn_exit_reaper(
         match receipt {
             Ok(Ok(())) => {}
             Ok(Err(error)) => warn!(id, %error, "durable native exit receipt remains unconfirmed"),
-            Err(error) => warn!(id, error = %error.1, "native exit receipt worker interrupted"),
+            Err(error) => {
+                warn!(id, error = %error.body.error, "native exit receipt worker interrupted")
+            }
         }
 
         // An ephemeral VM's removal from the instances map below is the
@@ -115,7 +117,7 @@ pub(super) fn spawn_exit_reaper(
             // The VM is gone: a container setup for it has nothing left to do.
             let policy = connection_routes::lifecycle::stop_policy(info.persistent, true);
             if let Err(error) = state.connections.stop_runtime(&id, generation, policy).await {
-                warn!(id, error = %error.1, "exited session credential metadata remains pending");
+                warn!(id, error = %error.body.error, "exited session credential metadata remains pending");
             }
             state.containers.cancel_and_wait(&id).await;
         }

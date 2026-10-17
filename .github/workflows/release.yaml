@@ -59,8 +59,24 @@ jobs:
           test "$GITHUB_REF" = "refs/tags/capsem-source-$SOURCE_COMMIT"
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
 
-  runtime-preflight:
+  client-publication-prerequisites:
     needs: source-identity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Require stable registry publisher configuration
+        if: ${{ inputs.channel == 'stable' && inputs.publish == true }}
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: uv run --project build_system --frozen python -m capsem_builder.release.tools.client_publishers check-credentials
+
+  runtime-preflight:
+    needs: [source-identity, client-publication-prerequisites]
     uses: ./.github/workflows/release-runtime-preflight.yaml
     with:
       channel: ${{ inputs.channel }}
@@ -68,7 +84,7 @@ jobs:
       source_commit: ${{ inputs.source_commit }}
 
   fast-gate:
-    needs: source-identity
+    needs: [source-identity, client-publication-prerequisites]
     uses: ./.github/workflows/fast-gate.yaml
     with:
       source_commit: ${{ inputs.source_commit }}
@@ -1273,6 +1289,23 @@ jobs:
         run: >
           build_system/scripts/build/prove-live-public-install.sh
           "$ASSET_MANIFEST_URL" "$RELEASE_CHANNEL"
+
+  publish-client-packages:
+    needs: [verify-release-downloads]
+    if: ${{ inputs.channel == 'stable' && inputs.publish == true }}
+    uses: ./.github/workflows/release-client-packages.yaml
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    with:
+      source_commit: ${{ inputs.source_commit }}
+      release_tag: ${{ inputs.tag }}
+    secrets:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   cleanup-unpublished-version-claim:
     needs: [verify-release-downloads]
