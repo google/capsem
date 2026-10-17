@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Host-ledger diagnostics report malformed binary fields as corruption without
+  aborting verification or changing the ledger hash format.
+
 - Private network cable handoffs retain the original socket until service
   adoption, including when a reconnect replaces the cable table entry.
 

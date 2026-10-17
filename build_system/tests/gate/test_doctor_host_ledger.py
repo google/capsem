@@ -35,6 +35,24 @@ def test_the_python_chain_hash_matches_the_rust_golden_vector() -> None:
     assert chain_hash(GENESIS_HASH, golden).hex() == GOLDEN
 
 
+@pytest.mark.parametrize("field", ["detail", "prev_hash", "hash"])
+@pytest.mark.parametrize("value", [None, "binary", 32, [1, 2]])
+def test_nonbinary_host_fields_report_corruption(field: str, value: object) -> None:
+    item = event("session_created", "test", 1)
+    item.update(prev_hash=GENESIS_HASH, hash=chain_hash(GENESIS_HASH, item))
+    item[field] = value
+    with pytest.raises(ValueError, match=f"host event {field} must be binary data"):
+        verify_chain([item])
+
+
+@pytest.mark.parametrize("buffer_type", [bytes, bytearray, memoryview])
+def test_binary_buffers_preserve_the_host_chain(buffer_type: type) -> None:
+    item = event("session_stopped", "golden", 1_791_000_000_000)
+    item["detail"] = buffer_type(bytes([0x81, 0xA1, 0x61, 0x05]))
+    item.update(prev_hash=buffer_type(GENESIS_HASH), hash=buffer_type(bytes.fromhex(GOLDEN)))
+    assert verify_chain([item]) == 1
+
+
 def write_ledger(path: Path, events: list[dict]) -> None:
     with closing(sqlite3.connect(path)) as connection:
         connection.execute(
@@ -91,3 +109,19 @@ def test_sessions_and_chain_read_back(tmp_path: Path) -> None:
         connection.commit()
     with pytest.raises(ValueError, match="broken at event 1"):
         verify_chain(read_host_events(path))
+
+
+@pytest.mark.parametrize("field", ["detail", "prev_hash", "hash"])
+def test_sqlite_text_corruption_is_a_doctor_failure(tmp_path: Path, field: str) -> None:
+    from capsem_builder.gate.tools.doctor.doctor_session_host_verify import _verify_host_ledger
+    from capsem_builder.gate.tools.doctor.doctor_session_verify import Results
+
+    path = tmp_path / "host.db"
+    write_ledger(path, [event("session_created", "test", 1), event("session_stopped", "test", 2)])
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute(f"UPDATE host_events SET {field} = ? WHERE id = 1", ("not binary",))
+        connection.commit()
+    results = Results()
+    _verify_host_ledger(results, "test", path)
+    assert results.failed == [f"host event {field} must be binary data"]
+    assert not results.success
