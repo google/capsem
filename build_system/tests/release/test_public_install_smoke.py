@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import signal
 import subprocess
 from pathlib import Path
@@ -10,6 +11,14 @@ import pytest
 from capsem_builder.gate.proc import Runner
 from capsem_builder.release.tools import check_public_binary_release as gate
 from capsem_builder.release.tools.public_install_smoke import public_install_container
+
+
+@pytest.fixture(autouse=True)
+def docker_available(monkeypatch) -> None:
+    original = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name, *args, **kwargs: (
+        "/usr/bin/docker" if name == "docker" else original(name, *args, **kwargs)
+    ))
 
 
 def test_public_install_starts_systemd_before_executing_the_installer(monkeypatch) -> None:
