@@ -148,10 +148,12 @@ async fn descriptor_writer_preserves_blocking_and_try_admission_order() {
 }
 
 #[tokio::test]
-async fn consecutive_admissions_share_one_commitment_and_ledger_exchange() {
+async fn queued_admissions_share_one_commitment_and_ledger_exchange() {
     let grant = LedgerChannelGrant::new(LedgerGeneration::new([8; 16]), 12, LedgerClientRole::VmOwner).unwrap();
     let (ledger_client, ledger_server) = UnixStream::pair().unwrap();
     let (commitment_client, commitment_server) = UnixStream::pair().unwrap();
+    let (reservation_started, reservation_received) = tokio::sync::oneshot::channel();
+    let (release_reservation, admissions_queued) = tokio::sync::oneshot::channel();
     let commitment_task = tokio::spawn(async move {
         let (responses, requests) = capsem_foundation::ipc_channel::channel_from_std::<
             CommitmentServerMessage,
@@ -169,6 +171,7 @@ async fn consecutive_admissions_share_one_commitment_and_ledger_exchange() {
             .await
             .unwrap();
         let mut pending = Vec::new();
+        let mut queue_barrier = Some((reservation_started, admissions_queued));
         loop {
             let CommitmentClientMessage::Request { request_id, command } = requests.recv().await.unwrap() else {
                 panic!("unexpected repeated commitment hello")
@@ -179,11 +182,17 @@ async fn consecutive_admissions_share_one_commitment_and_ledger_exchange() {
                     previous_hash,
                     reservations,
                 } => {
-                    assert_eq!(first_producer_sequence, 1);
-                    assert_eq!(reservations.len(), 2);
+                    let first = u64::try_from(pending.len() + 1).unwrap();
+                    assert_eq!(first_producer_sequence, first);
+                    assert_eq!(reservations.len(), if first == 1 { 1 } else { 2 });
+                    if let Some((started, queued)) = queue_barrier.take() {
+                        started.send(()).unwrap();
+                        queued.await.unwrap();
+                    }
+                    let through = first + u64::try_from(reservations.len()).unwrap() - 1;
                     let mut previous_hash = previous_hash;
                     for (index, reservation) in reservations.into_iter().enumerate() {
-                        let sequence = u64::try_from(index + 1).unwrap();
+                        let sequence = first + u64::try_from(index).unwrap();
                         let commitment = LedgerCommitment::new(
                             grant,
                             sequence,
@@ -197,10 +206,11 @@ async fn consecutive_admissions_share_one_commitment_and_ledger_exchange() {
                         pending.push(commitment);
                     }
                     CommitmentReply::ReservedBatch {
-                        global_sequences: vec![1, 2],
+                        global_sequences: (first..=through).collect(),
                     }
                 }
                 capsem_proto::ledger_commitment::CommitmentCommand::Anchor { commitments } => {
+                    assert_eq!(pending.len(), 3);
                     assert_eq!(commitments, pending);
                     pending.clear();
                     CommitmentReply::Anchored { checkpoint_sequence: 1 }
@@ -230,27 +240,29 @@ async fn consecutive_admissions_share_one_commitment_and_ledger_exchange() {
             })
             .await
             .unwrap();
-        let LedgerClientMessage::Request { request } = requests.recv().await.unwrap() else {
-            panic!("unexpected repeated ledger hello")
-        };
-        let crate::ledger_protocol::LedgerCommand::AdmitBatch { admissions } = request.operation() else {
-            panic!("expected one admission batch")
-        };
-        assert_eq!(admissions.len(), 2);
-        responses
-            .send(LedgerServerMessage::Response {
-                response: LedgerResponse::success(
-                    request.request_id(),
-                    crate::ledger_protocol::LedgerReply::AcceptedBatch {
-                        first_admission_id: 1,
-                        through_admission_id: 2,
-                        accepted: 2,
-                    },
-                )
-                .unwrap(),
-            })
-            .await
-            .unwrap();
+        for (first_admission_id, through_admission_id, accepted) in [(1, 1, 1), (2, 3, 2)] {
+            let LedgerClientMessage::Request { request } = requests.recv().await.unwrap() else {
+                panic!("unexpected repeated ledger hello")
+            };
+            let crate::ledger_protocol::LedgerCommand::AdmitBatch { admissions } = request.operation() else {
+                panic!("expected queued admissions to share one batch")
+            };
+            assert_eq!(admissions.len(), usize::from(accepted));
+            responses
+                .send(LedgerServerMessage::Response {
+                    response: LedgerResponse::success(
+                        request.request_id(),
+                        crate::ledger_protocol::LedgerReply::AcceptedBatch {
+                            first_admission_id,
+                            through_admission_id,
+                            accepted,
+                        },
+                    )
+                    .unwrap(),
+                })
+                .await
+                .unwrap();
+        }
         let LedgerClientMessage::Request { request } = requests.recv().await.unwrap() else {
             panic!("unexpected repeated ledger hello")
         };
@@ -263,7 +275,7 @@ async fn consecutive_admissions_share_one_commitment_and_ledger_exchange() {
                 response: LedgerResponse::success(
                     request.request_id(),
                     crate::ledger_protocol::LedgerReply::Durable {
-                        through_admission_id: 2,
+                        through_admission_id: 3,
                     },
                 )
                 .unwrap(),
@@ -284,8 +296,13 @@ async fn consecutive_admissions_share_one_commitment_and_ledger_exchange() {
     .unwrap()
     .unwrap();
 
+    // Hold an actual reservation response until both later writes are queued;
+    // sequential producers can otherwise be preempted past the batching window.
+    assert!(writer.try_write(event_with_id("warmup.example", "0123456789ad")));
+    reservation_received.await.unwrap();
     assert!(writer.try_write(event_with_id("one.example", "0123456789ae")));
     assert!(writer.try_write(event_with_id("two.example", "0123456789af")));
+    release_reservation.send(()).unwrap();
     writer.flush_checked().await.unwrap();
     commitment_task.await.unwrap();
     ledger_task.await.unwrap();
