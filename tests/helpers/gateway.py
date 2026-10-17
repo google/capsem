@@ -203,15 +203,27 @@ class GatewayInstance:
                             granted.close()
                         granted = None
                 if granted:
-                    response[3] = 101
-                    response[12] = kind
-                    fds = array("i", [granted.fileno()])
-                    sent = channel.sendmsg(
-                        [response], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds)]
-                    )
-                    if sent < len(response):
-                        channel.sendall(response[sent:])
-                    granted.close()
+                    with granted:
+                        response[3] = 101
+                        response[12] = kind
+                        fds = array("i", [granted.fileno()])
+                        sent = channel.sendmsg(
+                            [response], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds)]
+                        )
+                        if sent < len(response):
+                            channel.sendall(response[sent:])
+                        # Match the real coordinator: SCM_RIGHTS only queues a
+                        # reference, and Adopted is a receipt, not a new open.
+                        adopted = bytearray(response)
+                        adopted[3] = 3
+                        adopted[12] = 0
+                        previous_timeout = channel.gettimeout()
+                        channel.settimeout(5)
+                        try:
+                            if self._recv_exact(channel, len(adopted)) != adopted:
+                                return
+                        finally:
+                            channel.settimeout(previous_timeout)
                 else:
                     response[3] = 102
                     response[12] = 1
@@ -219,6 +231,7 @@ class GatewayInstance:
         except OSError:
             pass
         finally:
+            channel.close()
             for name in (
                 "gateway.token",
                 "gateway.port",

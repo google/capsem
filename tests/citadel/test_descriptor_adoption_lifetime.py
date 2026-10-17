@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -92,3 +93,47 @@ def test_service_checks_cable_answer_identity_before_acknowledging() -> None:
     source = re.sub(r"\s+", "", source)
     assert "answer.bytes==seat_frame(SEAT_LINK,token)" in source, ADOPTION_RATIONALE
     assert "fd::validate_connected_stream(stream.as_fd())?;" in source, ADOPTION_RATIONALE
+
+
+def python_coordinator_receipts(source: str) -> bool:
+    method = next(node for node in ast.walk(ast.parse(source))
+                  if isinstance(node, ast.FunctionDef) and node.name == "_serve_grants")
+    for owner in ast.walk(method):
+        if not isinstance(owner, ast.With) or not any(
+            isinstance(item.context_expr, ast.Name) and item.context_expr.id == "granted" for item in owner.items
+        ):
+            continue
+        if any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+               and node.func.attr == "close" and isinstance(node.func.value, ast.Name)
+               and node.func.value.id == "granted" for node in ast.walk(owner)):
+            continue
+        fields = {}
+        receives = False
+        for node in ast.walk(owner):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                for target in node.targets:
+                    if (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
+                            and target.value.id == "adopted" and isinstance(target.slice, ast.Constant)):
+                        fields[target.slice.value] = node.value.value
+            if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+                continue
+            check = node.test
+            receives |= (
+                isinstance(check.left, ast.Call) and isinstance(check.left.func, ast.Attribute)
+                and check.left.func.attr == "_recv_exact" and len(check.ops) == 1
+                and isinstance(check.ops[0], ast.NotEq) and len(check.comparators) == 1
+                and isinstance(check.comparators[0], ast.Name) and check.comparators[0].id == "adopted"
+                and any(isinstance(statement, ast.Return) for statement in node.body)
+            )
+        if fields == {3: 3, 12: 0} and receives:
+            return True
+    return False
+
+
+def test_python_gateway_fixture_owns_the_socket_through_its_receipt() -> None:
+    source = (ROOT / "tests/helpers/gateway.py").read_text()
+    assert python_coordinator_receipts(source), ADOPTION_RATIONALE
+    assert not python_coordinator_receipts(source.replace("with granted:", "with contextlib.nullcontext():"))
+    assert not python_coordinator_receipts(source.replace("self._recv_exact(channel, len(adopted))", "b''"))
+    assert not python_coordinator_receipts(source.replace("adopted[3] = 3", "adopted[3] = 1"))
+    assert not python_coordinator_receipts(source.replace("with granted:", "with granted:\n                        granted.close()"))
