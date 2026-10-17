@@ -17,7 +17,15 @@ from capsem.models import ExecOutput, ExecOutputEncoding
 from inspect_capsem import CapsemSandboxEnvironment
 from inspect_capsem._controller import CommandResult, SdkCapsemController
 
-from .helpers import Scripted, _host_timeout_skips, _run_inspect_self_check, exec_response, fail, ok
+from .helpers import (
+    FakeManagedScope,
+    Scripted,
+    _host_timeout_skips,
+    _run_inspect_self_check,
+    exec_response,
+    fail,
+    ok,
+)
 
 
 def _server_check_rel_path(path: str) -> None:
@@ -26,15 +34,11 @@ def _server_check_rel_path(path: str) -> None:
 
 
 def test_rel_to_stage_dir_path_validation() -> None:
-    for invalid in (
-        "/workspace/../etc/passwd",
-        "/etc/passwd",
-        "/workspace",
-        "/workspace/a:b.txt",
-        "/workspace/a@b.txt",
-        "/workspace/a+b.txt",
-        "/workspace/with space.txt",
-    ):
+    invalids = (
+        "/workspace/../etc/passwd", "/etc/passwd", "/workspace", "/workspace/a:b.txt",
+        "/workspace/a@b.txt", "/workspace/a+b.txt", "/workspace/with space.txt",
+    )  # fmt: skip
+    for invalid in invalids:
         assert xfer_mod._rel_to_stage_dir(invalid, "/workspace") is None
     assert xfer_mod._rel_to_stage_dir("/workspace/sub/ok_1.txt", "/workspace") == "sub/ok_1.txt"
     assert xfer_mod._rel_to_stage_dir("/root/.bashrc", "/root") == ".bashrc"
@@ -55,9 +59,9 @@ async def test_sdk_direct_stage_dir_transfers_and_assembly_failure(
     hv = capsem.Hypervisor("http://127.0.0.1:1", "t")
     files_cls = type(hv.vm(id="probe").files)
 
-    async def fake_create(self: Any, **kwargs: Any) -> Any:
+    def fake_managed(self: Any, **kwargs: Any) -> Any:
         del kwargs
-        return self.vm(id="vm-direct")
+        return FakeManagedScope(self.vm(id="vm-direct"))
 
     async def fake_write_file(self: Any, path: str, data: bytes) -> None:
         del self
@@ -77,7 +81,7 @@ async def test_sdk_direct_stage_dir_transfers_and_assembly_failure(
             return exec_response(1, stderr="disk full")
         return exec_response(0)
 
-    monkeypatch.setattr(capsem.Hypervisor, "create", fake_create)
+    monkeypatch.setattr(capsem.Hypervisor, "managed", fake_managed)
     monkeypatch.setattr(files_cls, "write", fake_write_file)
     monkeypatch.setattr(files_cls, "read", fake_read_file)
     monkeypatch.setattr(capsem.VM, "exec", fake_exec)
@@ -251,13 +255,13 @@ async def test_sdk_controller_file_transfer_self_check(
     monkeypatch.setattr(xfer_mod, "_XFER_PART_BYTES", 1024)
     local_vm = _LocalSdkVM(stage_root)
 
-    async def _create(**_: Any) -> _LocalSdkVM:
-        return local_vm
+    def _managed(**_: Any) -> FakeManagedScope:
+        return FakeManagedScope(local_vm)
 
     async def _close() -> None:
         return None
 
-    hv = SimpleNamespace(vm=lambda **_: local_vm, create=_create, close=_close)
+    hv = SimpleNamespace(vm=lambda **_: local_vm, managed=_managed, close=_close)
     ctrl = SdkCapsemController(hypervisor=cast(Any, hv))
     work = tmp_path / "work"
     work.mkdir()

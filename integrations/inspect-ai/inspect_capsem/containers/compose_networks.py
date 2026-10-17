@@ -85,6 +85,6 @@ def _reject_k8s_allow_domains(selected_svc: Any, compose_cfg: Any = None) -> Non
         if domains:
             msg = (
                 "x-inspect_k8s_sandbox.allow_domains is not supported: Capsem enforces "
-                "domain policy at the VM profile level, not per-container/per-sample"
+                "domain policy via service-wide settings, not per-container/per-sample"
             )
             raise NotImplementedError(msg)
