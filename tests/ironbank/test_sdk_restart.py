@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,33 @@ from helpers.service import ServiceInstance
 from helpers.stopped_workspace import VM_ID, seed_stopped_workspace
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@contextmanager
+def unrelated_manager_defaults() -> Iterator[None]:
+    """The service must use its authenticated owner, not manager defaults."""
+    if sys.platform != "linux":
+        yield
+        return
+    from helpers.systemd_manager import manager_pid
+
+    manager_pid(Path(os.environ["XDG_RUNTIME_DIR"]), same_network=True)
+    command = ["systemctl", "--user"]
+    keys = ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")
+    previous = subprocess.run(
+        [*command, "show-environment"], check=True, capture_output=True, text=True, timeout=5,
+    )
+    restore = [line for line in previous.stdout.splitlines() if line.partition("=")[0] in keys]
+    try:
+        subprocess.run([
+            *command, "set-environment", "XDG_RUNTIME_DIR=/nonexistent/capsem-runtime",
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/capsem-bus",
+        ], check=True, capture_output=True, timeout=5)
+        yield
+    finally:
+        subprocess.run([*command, "unset-environment", *keys], check=True, capture_output=True, timeout=5)
+        if restore:
+            subprocess.run([*command, "set-environment", *restore], check=True, capture_output=True, timeout=5)
 
 
 def test_unbound_systemd_supervisor_cannot_touch_an_ambient_unit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,7 +112,7 @@ def workspace_digest(root: Path) -> dict[str, str]:
 def test_sdk_receives_managed_restart_and_reconnects_explicitly(language: str) -> None:
     service = ServiceInstance()
     seed_stopped_workspace(service.tmp_dir, ASSETS_DIR)
-    with managed_service(service) as managed:
+    with unrelated_manager_defaults(), managed_service(service) as managed:
         before = managed.ready()
         assert (service.tmp_dir / "managed-service.log").is_file(), (
             "the native supervisor must retain startup output for failed hosted acceptance"
