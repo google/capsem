@@ -22,6 +22,48 @@ const MAX_ADMIT_METADATA_BYTES: usize = 4 * 1024;
 /// Every large result streams in independently bounded pieces.
 pub const MAX_LEDGER_STREAM_CHUNK_BYTES: usize = 256 * 1024;
 pub const MAX_LEDGER_QUERY_ROWS: usize = 2_000;
+/// Non-security session ledger tables exported by default by
+/// `GET /vms/{id}/export/rows.ndjson.gz`.
+pub const DEFAULT_EXPORT_LEDGER_TABLES: &[&str] = &[
+    "model_calls",
+    "model_items",
+    "tool_calls",
+    "tool_responses",
+    "event_body_blobs",
+    "exec_events",
+    "audit_events",
+    "net_events",
+    "dns_events",
+    "fs_events",
+    "substitution_events",
+    "security_ask_events",
+    "policy_mutation_events",
+    "transport_events",
+    "security_rule_runs",
+    "security_decision_runs",
+];
+/// Every session ledger table allowed in `?tables=` for
+/// `GET /vms/{id}/export/rows.ndjson.gz`.
+pub const EXPORTABLE_LEDGER_TABLES: &[&str] = &[
+    "model_calls",
+    "model_items",
+    "tool_calls",
+    "tool_responses",
+    "event_body_blobs",
+    "exec_events",
+    "audit_events",
+    "net_events",
+    "dns_events",
+    "fs_events",
+    "substitution_events",
+    "security_ask_events",
+    "policy_mutation_events",
+    "transport_events",
+    "security_rule_runs",
+    "security_decision_runs",
+    "security_rule_events",
+    "security_decision_events",
+];
 const MAX_QUERY_TEXT_BYTES: usize = 4 * 1024;
 const MAX_LEDGER_COLUMNS: usize = 128;
 const MAX_LEDGER_COLUMN_BYTES: usize = 128;
@@ -216,6 +258,16 @@ pub enum LedgerQuery {
         after_global_sequence: u64,
         limit: u16,
     },
+    TableWatermarks {
+        tables: Vec<String>,
+    },
+    TableRows {
+        table: String,
+        after_id: i64,
+        #[serde(default)]
+        max_id: Option<i64>,
+        limit: u16,
+    },
 }
 
 impl LedgerQuery {
@@ -225,6 +277,24 @@ impl LedgerQuery {
         let valid = match self {
             Self::SecurityLatest { limit, .. } | Self::Triage { limit } | Self::Commitments { limit, .. } => {
                 valid_limit(*limit)
+            }
+            Self::TableWatermarks { tables } => {
+                !tables.is_empty()
+                    && tables.len() <= EXPORTABLE_LEDGER_TABLES.len()
+                    && tables
+                        .iter()
+                        .all(|table| EXPORTABLE_LEDGER_TABLES.contains(&table.as_str()))
+            }
+            Self::TableRows {
+                table,
+                after_id,
+                max_id,
+                limit,
+            } => {
+                valid_limit(*limit)
+                    && *after_id >= 0
+                    && max_id.is_none_or(|watermark| watermark >= *after_id)
+                    && EXPORTABLE_LEDGER_TABLES.contains(&table.as_str())
             }
             Self::Timeline {
                 layers,

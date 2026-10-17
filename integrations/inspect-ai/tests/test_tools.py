@@ -10,12 +10,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import capsem_integrations._transfer as xfer_mod
 import inspect_ai
 import inspect_capsem._tools as tools_mod
-import inspect_capsem._transfer as xfer_mod
 import pytest
 from capsem.models import ExecOutput, ExecOutputEncoding
-from inspect_capsem._controller import SdkCapsemController
+from capsem_integrations._controller import SdkCapsemController
 from inspect_capsem._tools import (
     INSPECT_SANDBOX_TOOLS_GUEST_PATH,
     INSPECT_SANDBOX_TOOLS_ONEDIR_PATH,
@@ -23,7 +23,7 @@ from inspect_capsem._tools import (
     resolve_inspect_sandbox_tools_host_binary,
 )
 
-from .helpers import LocalFakeCapsemController, Scripted, fail
+from .helpers import FakeManagedScope, LocalFakeCapsemController, Scripted, fail
 
 
 def found_name() -> str:
@@ -128,9 +128,9 @@ async def test_bake_without_workspace_uses_files_api_parts(
             return None
 
     class Hv:
-        async def create(self, **kwargs: Any) -> Any:
+        def managed(self, **kwargs: Any) -> Any:
             created.append(kwargs)
-            return Session()
+            return FakeManagedScope(Session())
 
         async def close(self) -> None:
             return None
@@ -141,8 +141,7 @@ async def test_bake_without_workspace_uses_files_api_parts(
     ctrl = SdkCapsemController(hypervisor=cast(Any, Hv()))
     try:
         vid = await ctrl.start_vm(cpu_count=1, ram_gb=1)
-        assert created[0].get("name") is None
-        assert created[0].get("labels", {}).get("managed-by") == "inspect-capsem"
+        assert created[0] == {"cpus": 1, "memory": 1}
         assert await bake_sandbox_tools_into_controller(ctrl, vid, host_binary_path=tools)
     finally:
         await ctrl.close()

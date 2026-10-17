@@ -170,6 +170,98 @@ async fn ordinary_stop_and_delete_converge_managed_claim_to_original_closed_owne
 }
 
 #[tokio::test]
+async fn stopped_managed_vm_exports_rows_and_warc_before_close() {
+    let state = crate::tests::make_test_state();
+    let (effects, _original) = active(&state).await;
+    let vm_id = effects.binding.id().to_string();
+    let session_dir = state.run_dir.join("sessions").join(&vm_id);
+    let db_path = session_dir.join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 16).unwrap();
+    writer
+        .write(capsem_logger::WriteOp::NetEvent(capsem_logger::NetEvent {
+            event_id: Some("0123456789ab".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            domain: "managed.example.test".to_string(),
+            port: 443,
+            decision: capsem_logger::Decision::Allowed,
+            process_name: Some("curl".to_string()),
+            pid: Some(10),
+            method: Some("POST".to_string()),
+            path: Some("/v1".to_string()),
+            query: None,
+            status_code: Some(200),
+            bytes_sent: 2,
+            bytes_received: 16,
+            duration_ms: 4,
+            matched_rule: None,
+            request_headers: None,
+            response_headers: None,
+            request_body: Some(b"{}".to_vec()),
+            response_body: Some(br#"{"ok":"managed"}"#.to_vec()),
+            conn_type: Some("https".to_string()),
+            policy_mode: None,
+            policy_action: Some("allow".to_string()),
+            policy_rule: None,
+            policy_reason: None,
+            trace_id: None,
+            credential_ref: None,
+        }))
+        .await;
+    writer.flush().await;
+    tokio::task::spawn_blocking(move || writer.shutdown_blocking())
+        .await
+        .unwrap();
+
+    let app = build_service_router(state.clone());
+    let (status, stop_body) = post(&app, &format!("/vms/{vm_id}/stop"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{stop_body}");
+    assert!(session_dir.exists(), "stopped managed VM session dir must remain until close");
+
+    let rows_response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::GET)
+                .uri(format!("/vms/{vm_id}/export/rows.ndjson.gz?tables=net_events"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows_response.status(), StatusCode::OK);
+    let rows_bytes = axum::body::to_bytes(rows_response.into_body(), usize::MAX).await.unwrap();
+    let rows_text = String::from_utf8(capsem_logger::gunzip_bytes(&rows_bytes).unwrap()).unwrap();
+    assert!(rows_text.contains("managed.example.test"), "{rows_text}");
+
+    let warc_response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method(axum::http::Method::GET)
+                .uri(format!("/vms/{vm_id}/bodies/export.warc.gz"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(warc_response.status(), StatusCode::OK);
+    let warc_bytes = axum::body::to_bytes(warc_response.into_body(), usize::MAX).await.unwrap();
+    let warc_text = String::from_utf8_lossy(&capsem_logger::gunzip_bytes(&warc_bytes).unwrap()).into_owned();
+    assert!(warc_text.contains(r#"{"ok":"managed"}"#), "{warc_text}");
+
+    let close = format!("/vms/managed/{REQUEST}/close");
+    let (status, closed) = post(
+        &app,
+        &close,
+        json!({"ownership_token":"af".repeat(32),"outcome":"completed"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{closed}");
+    assert!(!session_dir.exists(), "close must delete the retained managed session dir");
+    effects.reaper.lock().await.take().unwrap().await.unwrap();
+}
+
+#[tokio::test]
 async fn reloaded_policy_reports_actual_narrowed_lease_and_cannot_extend_old_reservation() {
     let state = crate::tests::make_test_state();
     let (effects, original) = active(&state).await;

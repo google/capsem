@@ -306,6 +306,60 @@ async fn accepted_durable_query_body_retention_and_warc_run_through_one_owner() 
     .await;
     assert!(matches!(commitments, LedgerReply::Query { ref sets } if sets.len() == 1 && sets[0].rows.len() == 1));
 
+    let watermarks = request(
+        &reader,
+        &reader_replies,
+        8,
+        LedgerCommand::Query {
+            query: LedgerQuery::TableWatermarks {
+                tables: vec!["net_events".into(), "exec_events".into()],
+            },
+        },
+    )
+    .await;
+    assert!(matches!(
+        watermarks,
+        LedgerReply::Query { ref sets }
+            if sets.len() == 1 && sets[0].rows.len() == 2
+    ));
+
+    let net_rows = request(
+        &reader,
+        &reader_replies,
+        9,
+        LedgerCommand::Query {
+            query: LedgerQuery::TableRows {
+                table: "net_events".into(),
+                after_id: 0,
+                max_id: Some(1),
+                limit: 10,
+            },
+        },
+    )
+    .await;
+    assert!(matches!(
+        net_rows,
+        LedgerReply::Query { ref sets }
+            if sets.len() == 1
+                && sets[0].rows.len() == 1
+                && sets[0].columns.first().map(String::as_str) == Some("id")
+    ));
+    let net_rows_after = request(
+        &reader,
+        &reader_replies,
+        10,
+        LedgerCommand::Query {
+            query: LedgerQuery::TableRows {
+                table: "net_events".into(),
+                after_id: 1,
+                max_id: Some(1),
+                limit: 10,
+            },
+        },
+    )
+    .await;
+    assert!(matches!(net_rows_after, LedgerReply::Query { ref sets } if sets.len() == 1 && sets[0].rows.is_empty()));
+
     drop(producer);
     drop(reader);
     assert_eq!(producer_task.await.unwrap().unwrap(), LedgerClientExit::Disconnected);

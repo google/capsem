@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add `vm.export` (`quiesce`, `rows`, `warc`, `events`, `atif`) and `capsem.trace`
+  (`rows_to_atif`, `enrich_atif_trajectory`, `WarcBodyReader`) to the Python SDK
+  for exporting and hydrating `ATIF-v1.7` trajectories from `rows.ndjson.gz`
+  and `export.warc.gz`.
+
+- Stream session ledger rows as gzipped NDJSON (`capsem.rows.v1`) via
+  `GET /vms/{id}/export/rows.ndjson.gz` (with optional `?tables=` filtering)
+  alongside generated Python, Rust, and TypeScript SDK operations.
+
 ### Security
 
 - Python gateway discovery requires complete URL/token pairs, keeps remote
@@ -56,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Inspect task labels respect the service's UTF-8 byte limit for accented
   and emoji task names.
+
+- Managed sessions retain their stopped session directory until lease close,
+  expiry, or explicit deletion so callers can export `rows.ndjson.gz` and
+  `bodies/export.warc.gz` after `POST /vms/{id}/stop`, and confined ledger
+  workers spool WARC exports inside the session directory instead of `/tmp`.
 
 - Native MCP handoffs retain connected sockets until the receiving worker
   confirms adoption, preventing intermittent initialization failures on macOS.

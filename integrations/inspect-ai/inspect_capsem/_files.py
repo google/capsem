@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import logging
-import posixpath
 import shlex
 from typing import TYPE_CHECKING
 
+from capsem_integrations._exec import _resolve_guest_path
 from inspect_ai.util import OutputLimitExceededError, SandboxEnvironmentLimits
 
 if TYPE_CHECKING:
-    from inspect_capsem._controller import CapsemController
+    from capsem_integrations._controller import CapsemController
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +26,6 @@ def _chown_to_container_user_snippet(target_q: str, default_user: str | None) ->
         f'{target_q} ;; *) chown "$__u:" {target_q} 2>/dev/null || chown "$__u" {target_q} ;; '
         "esac; fi"
     )
-
-
-def _resolve_guest_path(path: str, working_dir: str) -> str:
-    """Resolve `path` against `working_dir` if relative; return normalized path."""
-    if posixpath.isabs(path):
-        return posixpath.normpath(path)
-    return posixpath.normpath(posixpath.join(working_dir, path))
 
 
 def _decode_text_bytes(raw_bytes: bytes, file: str) -> str:

@@ -122,6 +122,65 @@ pub fn write_record<W: Write>(out: &mut W, rec: &WarcRecord<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Incremental single-member gzip encoder that yields compressed byte chunks
+/// for bounded HTTP streaming without buffering an entire session in memory.
+pub struct GzipChunkEncoder {
+    inner: GzEncoder<Vec<u8>>,
+}
+
+impl Default for GzipChunkEncoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GzipChunkEncoder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: GzEncoder::new(Vec::new(), Compression::default()),
+        }
+    }
+
+    pub fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.inner.write_all(buf)
+    }
+
+    pub fn flush_chunk(&mut self) -> std::io::Result<Vec<u8>> {
+        self.inner.flush()?;
+        Ok(std::mem::take(self.inner.get_mut()))
+    }
+
+    pub fn finish(self) -> std::io::Result<Vec<u8>> {
+        self.inner.finish()
+    }
+}
+
+/// Inflate a single-member or multi-member gzip stream to its raw bytes.
+pub fn gunzip_bytes(mut compressed: &[u8]) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    if compressed.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "empty gzip stream",
+        ));
+    }
+    let mut out = Vec::new();
+    while !compressed.is_empty() {
+        let mut decoder = flate2::bufread::GzDecoder::new(compressed);
+        decoder.read_to_end(&mut out)?;
+        let rest = decoder.into_inner();
+        if rest.len() == compressed.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "gzip decoder made no progress",
+            ));
+        }
+        compressed = rest;
+    }
+    Ok(out)
+}
+
 /// The named headers and the blank line that ends them, in a fixed order.
 ///
 /// Order is not significant to a WARC reader, but it is significant to a human

@@ -11,6 +11,7 @@ pub mod session_types;
 mod wire_bytes;
 pub mod writer;
 
+pub use capsem_archive::{gunzip_bytes, GzipChunkEncoder};
 pub use db::{
     snapshot_session_ledger, ArchivedBodies, BodyDirection, DbHandle, ExportSummary, ReadCacheDomain, SessionDb,
     SkipReason, SkippedBody, StoredBody,
