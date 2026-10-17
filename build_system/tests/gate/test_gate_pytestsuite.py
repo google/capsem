@@ -13,6 +13,7 @@ declared, and the plan honours it however the steps are written.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -337,6 +338,22 @@ def test_collection_uses_one_locked_project_for_both_roots() -> None:
     assert CONFIG.suites.pytest.require_artifacts not in rendered
     assert "--cov" not in rendered
     assert "-n" not in rendered
+
+
+@pytest.mark.parametrize("suffix", ["", "/"])
+def test_collection_distinguishes_descendants_from_root_prefixes(suffix: str) -> None:
+    data = CONFIG.model_dump()
+    data["root"] = CONFIG.root
+    data["suites"]["pytest"].update(root=f"tests{suffix}", build_system_root=f"build_system/tests{suffix}")
+    descendants = ("tests/test_owned.py", "build_system/tests/test_owned.py")
+    siblings = ("tests_extra/test_contract.py", "build_system/tests_extra/test_contract.py")
+    data["suites"]["source_contract"] = (*descendants, *siblings, "external/test_contract.py")
+    config = gate_config.GateConfig.model_validate(data)
+
+    argv = shlex.split(" ".join(pytestsuite.collection(config).render()))
+
+    assert all(path in argv for path in (*siblings, "external/test_contract.py"))
+    assert all(path not in argv for path in descendants)
 
 
 def test_every_serial_node_has_a_non_broad_execution_rail() -> None:
