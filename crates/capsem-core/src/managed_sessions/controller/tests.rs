@@ -628,8 +628,16 @@ async fn corrupt_store_cannot_extend_a_live_managed_vm_past_its_finite_lease() {
         .set_lease_limit(LeasePolicy::new(Duration::from_millis(100)).unwrap())
         .await
         .unwrap();
-    std::fs::write(path.join(format!("{request}.json")), b"corrupt ownership record").unwrap();
-    fixture.cleanup_release.add_permits(1);
+    // Inject between owned I/O operations: an expiry transaction already
+    // writing its temporary file must not replace the corruption afterward.
+    let corrupt_path = path.join(format!("{request}.json"));
+    owner
+        .io(move |_| {
+            std::fs::write(corrupt_path, b"corrupt ownership record")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
     tokio::time::timeout(Duration::from_secs(1), fixture.cleanup_entered.acquire())
         .await
         .expect("a store failure bypassed finite VM retirement")
@@ -644,6 +652,20 @@ async fn corrupt_store_cannot_extend_a_live_managed_vm_past_its_finite_lease() {
         ),
         "failed persistence must not manufacture a Closed acknowledgement"
     );
+    fixture.cleanup_release.add_permits(1);
+    let work = owner.0.works.lock().await.get(&request).unwrap().clone();
+    let ticket = Ticket {
+        request,
+        generation: snapshot.generation(),
+    };
+    assert!(
+        matches!(
+            owner.cleanup_work(ticket, work, false).await,
+            Err(Failure::StoreUnavailable)
+        ),
+        "the completed cleanup must report the failed durable acknowledgement"
+    );
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
