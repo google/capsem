@@ -48,6 +48,12 @@ prepared by the gate. Snapshot refresh changes source mtimes; an implicit sync
 can rebuild the editable SDK and fetch its backend inside the sealed namespace.
 Dependency preparation belongs to the earlier environment owner.
 
+Linux managed-supervisor acceptance hands the private manager's runtime and PID
+explicitly through the privilege transition. The worker checks its socket peer,
+native owner and network namespace before restoring the manager environment.
+Never adopt an ambient user manager outside the sealed worker's namespace:
+its service can be healthy while localhost is unreachable from the test.
+
 Focused Ruff commands must select `--config build_system/pyproject.toml`, as
 the gate does. Auto-discovery from a root-level test used a different Python
 version and reversed `tomllib` import grouping, passing locally then failing

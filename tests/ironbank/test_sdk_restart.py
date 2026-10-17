@@ -18,6 +18,61 @@ from helpers.stopped_workspace import VM_ID, seed_stopped_workspace
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_unbound_systemd_supervisor_cannot_touch_an_ambient_unit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from helpers.managed_service import SystemdService
+
+    def unexpected_command(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("unbound supervisor attempted a systemd command")
+
+    owner = SystemdService(ServiceInstance(sign_binaries=False))
+    monkeypatch.setattr(subprocess, "run", unexpected_command)
+    owner.retire()
+    assert not owner.active()
+    with pytest.raises(AssertionError, match="supervisor manager has not been bound"):
+        owner.command("show", owner.label)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux user-manager handoff")
+def test_supervisor_worker_keeps_explicit_manager_across_environment_changes(tmp_path: Path) -> None:
+    from helpers.systemd_manager import manager_pid
+
+    runtime = os.environ["XDG_RUNTIME_DIR"]
+    manager = manager_pid(Path(runtime))
+    result = subprocess.run([
+        sys.executable, "-m", "tests.helpers.run_native_restart", "--inside",
+        "--uid", str(os.getuid()), "--gid", str(os.getgid()),
+        "--manager-runtime", runtime, "--manager-pid", str(manager), "--",
+        sys.executable, "-c",
+        "import os,sys; "
+        "assert os.environ['XDG_RUNTIME_DIR'] == sys.argv[1]; "
+        "assert os.environ['DBUS_SESSION_BUS_ADDRESS'] == 'unix:path=' + sys.argv[1] + '/bus'; "
+        "print('SDK_SUPERVISOR_MANAGER_HANDOFF_OK')", runtime,
+    ], cwd=ROOT, env={
+        **os.environ,
+        "XDG_RUNTIME_DIR": str(tmp_path / "unrelated-runtime"),
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path={tmp_path / 'unrelated-bus'}",
+    }, capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "SDK_SUPERVISOR_KERNEL_PROOF_OK" in result.stdout
+    assert "SDK_SUPERVISOR_MANAGER_HANDOFF_OK" in result.stdout
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux user-manager handoff")
+def test_supervisor_worker_refuses_a_different_manager_pid() -> None:
+    result = subprocess.run([
+        sys.executable, "-m", "tests.helpers.run_native_restart", "--inside",
+        "--uid", str(os.getuid()), "--gid", str(os.getgid()),
+        "--manager-runtime", os.environ["XDG_RUNTIME_DIR"], "--manager-pid", str(os.getpid()),
+        "--", sys.executable, "-c", "print('UNEXPECTED_KERNEL_COMMAND')",
+    ], cwd=ROOT, capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode != 0
+    assert "AssertionError: native supervisor manager PID changed" in result.stderr
+    assert "SDK_SUPERVISOR_KERNEL_PROOF_OK" not in result.stdout
+    assert "UNEXPECTED_KERNEL_COMMAND" not in result.stdout
+
+
 def workspace_digest(root: Path) -> dict[str, str]:
     return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (root / "guest/workspace").rglob("*") if path.is_file()}
