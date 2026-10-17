@@ -41,3 +41,46 @@ async fn completed_switch_retirement_is_awaited_despite_another_network_failure(
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn cable_answer_requires_exact_identity_shape_and_connected_stream() {
+    use std::os::fd::{AsRawFd as _, OwnedFd};
+    for case in 0..6 {
+        let (service, owner) = std::os::unix::net::UnixStream::pair().unwrap();
+        let sender = Sender::new(service.try_clone().unwrap()).unwrap();
+        let receiver = Receiver::new(service).unwrap();
+        let answers = Sender::new(owner.try_clone().unwrap()).unwrap();
+        let receipts = Receiver::new(owner).unwrap();
+        let task = tokio::spawn(async move { adopt_cable(&sender, &receiver, 7).await });
+        let (stream, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let descriptor: OwnedFd = if case == 4 {
+            tempfile::tempfile().unwrap().into()
+        } else {
+            stream.into()
+        };
+        let bytes = match case {
+            1 => seat_frame(SEAT_LINK, 8),
+            2 => seat_frame(capsem_proto::privatelink::SEAT_PREVIEW, 7),
+            _ => seat_frame(SEAT_LINK, 7),
+        };
+        let fds = if case == 3 {
+            vec![]
+        } else {
+            vec![descriptor.as_raw_fd()]
+        };
+        answers.send(&bytes, &fds).await.unwrap();
+        let result = task.await.unwrap();
+        if case == 0 {
+            assert!(result.is_ok());
+            let receipt = receipts.recv().await.unwrap();
+            assert_eq!(receipt.bytes, seat_frame(SEAT_LINK, 7));
+            assert!(receipt.fds.is_empty());
+        } else {
+            assert!(result.is_err(), "accepted invalid cable answer {case}");
+            assert!(
+                receipts.recv().await.is_err(),
+                "acknowledged invalid cable answer {case}"
+            );
+        }
+    }
+}

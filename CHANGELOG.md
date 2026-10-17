@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Private network cable answers require the exact handoff token, frame kind
+  and one connected stream descriptor before service adoption or switch grants.
+
 ### Fixed
 
 - Private network cable handoffs retain the original socket until service

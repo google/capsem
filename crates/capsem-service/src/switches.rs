@@ -414,20 +414,28 @@ async fn handshake(
         .send(&seat_frame(SEAT_LINK, token), &[])
         .await
         .context("present the link token")?;
+    let stream = adopt_cable(&sender, &receiver, token).await?;
+    handoff.owner.validate(state, false).map_err(|e| anyhow!(e))?;
+    let host = host(state, network).await?;
+    let port = host.plug(generation, address, stream.as_fd()).await?;
+    Ok((host, port, socket))
+}
+
+async fn adopt_cable(sender: &Sender, receiver: &Receiver, token: u64) -> Result<std::os::fd::OwnedFd> {
     let answer = tokio::time::timeout(STREAM_TIMEOUT, receiver.recv())
         .await
         .context("the owner did not hand the guest stream over in time")?
         .context("the owner closed the seat without the guest stream")?;
     ensure!(
-        answer.fds.len() == 1,
-        "the owner answered with {} descriptors, not one",
-        answer.fds.len()
+        answer.bytes == seat_frame(SEAT_LINK, token) && answer.fds.len() == 1,
+        "invalid cable descriptor answer identity or shape"
     );
     let stream = answer.fds.into_iter().next().unwrap();
-    handoff.owner.validate(state, false).map_err(|e| anyhow!(e))?;
-    let host = host(state, network).await?;
-    let port = host.plug(generation, address, stream.as_fd()).await?;
-    Ok((host, port, socket))
+    capsem_foundation::unix::fd::validate_connected_stream(stream.as_fd())?;
+    tokio::time::timeout(Duration::from_secs(5), sender.send(&seat_frame(SEAT_LINK, token), &[]))
+        .await
+        .context("cable adoption receipt timed out")??;
+    Ok(stream)
 }
 
 /// Plug a running member's cable into its network's switch; a VM that is

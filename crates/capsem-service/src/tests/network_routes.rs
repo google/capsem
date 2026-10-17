@@ -330,13 +330,15 @@ fn fake_link_seat(
             assert_eq!(frame.bytes[1], 5, "a link request");
             let sender = Sender::new(std.try_clone().unwrap()).unwrap();
             sender.send(&frame.bytes, &[switch_end.as_raw_fd()]).await.unwrap();
+            let receipt = receiver.recv().await.unwrap();
+            assert!(receipt.fds.is_empty());
+            assert_eq!(receipt.bytes, frame.bytes);
+            drop(switch_end);
             std.set_nonblocking(true).unwrap();
             let released = released_tx.clone();
             tokio::spawn(async move {
-                // Darwin may flush a descriptor only an in-flight message
-                // refers to: the owner keeps its copy until the service lets
-                // go, as the real seat does.
-                let _switch_end = switch_end;
+                // The service adopted the descriptor. This control connection
+                // remains the lease; the sender's extra data copy is gone.
                 let mut watch = tokio::net::UnixStream::from_std(std).unwrap();
                 let mut sink = [0u8; 8];
                 while tokio::io::AsyncReadExt::read(&mut watch, &mut sink).await.unwrap_or(0) != 0 {}
