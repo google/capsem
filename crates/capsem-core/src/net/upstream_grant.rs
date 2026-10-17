@@ -503,10 +503,9 @@ async fn attach_proxy_mcp(
         .await
         .map_err(|_| "send proxy MCP handoff timed out".to_string())?
         .map_err(|error| format!("send proxy MCP handoff: {error}"))?;
-    drop(descriptor);
     let (response, fds) = receive_response(receiver).await?;
     debug_assert!(fds.is_empty());
-    match response {
+    let result = match response {
         UpstreamGrantResponse::ProxyMcpAdopted {
             request_id: response_id,
         } if response_id == request_id => Ok(Ok(())),
@@ -517,7 +516,9 @@ async fn attach_proxy_mcp(
         response => Err(format!(
             "unexpected proxy MCP response for request {request_id}: {response:?}"
         )),
-    }
+    };
+    drop(descriptor);
+    result
 }
 
 async fn attach_proxy_trace_hints(
@@ -532,10 +533,9 @@ async fn attach_proxy_trace_hints(
         .await
         .map_err(|_| "send proxy trace-hint handoff timed out".to_string())?
         .map_err(|error| format!("send proxy trace-hint handoff: {error}"))?;
-    drop(descriptor);
     let (response, fds) = receive_response(receiver).await?;
     debug_assert!(fds.is_empty());
-    match response {
+    let result = match response {
         UpstreamGrantResponse::ProxyTraceHintsAdopted {
             request_id: response_id,
         } if response_id == request_id => Ok(Ok(())),
@@ -546,7 +546,9 @@ async fn attach_proxy_trace_hints(
         response => Err(format!(
             "unexpected proxy trace-hint response for request {request_id}: {response:?}"
         )),
-    }
+    };
+    drop(descriptor);
+    result
 }
 
 async fn attach_proxy_traffic(
@@ -563,10 +565,9 @@ async fn attach_proxy_traffic(
         .await
         .map_err(|_| "send proxy traffic handoff timed out".to_string())?
         .map_err(|error| format!("send proxy traffic handoff: {error}"))?;
-    drop(descriptor);
     let (response, fds) = receive_response(receiver).await?;
     debug_assert!(fds.is_empty());
-    match response {
+    let result = match response {
         UpstreamGrantResponse::ProxyTrafficAdopted {
             request_id: response_id,
         } if response_id == request_id => Ok(Ok(())),
@@ -577,7 +578,9 @@ async fn attach_proxy_traffic(
         response => Err(format!(
             "unexpected proxy traffic response for request {request_id}: {response:?}"
         )),
-    }
+    };
+    drop(descriptor);
+    result
 }
 
 async fn open_ledger(
