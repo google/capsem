@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Proxy startup, proxy capabilities, ledger clients and native MCP owner
+  connections retain socket owners until adoption; missing gateway or upstream
+  adoption expires and releases the grant instead of retaining it indefinitely.
+
 - Gateway connection grants acknowledge descriptor adoption before the service
   releases its original socket, avoiding intermittent macOS request failures.
 

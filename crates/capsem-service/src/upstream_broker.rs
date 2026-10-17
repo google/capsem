@@ -32,11 +32,15 @@ use tracing::{debug, warn};
 use crate::instance::WorkerGrant;
 use crate::ledger_worker::{LedgerClient, LedgerWorkers};
 
+mod adoption;
+use adoption::AwaitingAdoption;
 mod guest_metadata;
 mod mcp_http;
 mod mcp_native;
 mod mcp_spawn;
+mod responses;
 use guest_metadata::{set_guest_mode, set_guest_times};
+use responses::{send_denied, send_response, send_response_descriptors};
 
 #[derive(Debug)]
 pub(crate) struct BrokerCompletion {
@@ -46,6 +50,7 @@ pub(crate) struct BrokerCompletion {
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
+const ADOPTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 type WireSender = DescriptorSender<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
 type WireReceiver = DescriptorReceiver<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
@@ -120,21 +125,6 @@ impl LedgerSource {
                 )
                 .await
                 .map_err(|error| format!("acquire VM ledger channel: {error:#}")),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AwaitingAdoption {
-    Upstream(u64),
-    Ledger(u64),
-    Listener(u64),
-}
-
-impl AwaitingAdoption {
-    const fn grant_id(self) -> u64 {
-        match self {
-            Self::Upstream(grant_id) | Self::Ledger(grant_id) | Self::Listener(grant_id) => grant_id,
         }
     }
 }
@@ -298,14 +288,23 @@ async fn run(
     let mut awaiting_adoption = None;
     let ledger_configured = ledger.is_some();
     let mut pending_ledger: Option<(LedgerChannelGrant, Vec<OwnedFd>)> = None;
+    let mut pending_aggregator: Option<OwnedFd> = None;
+    let mut adoption_deadline = None;
     let result: Result<(), String> = async {
         'requests: loop {
+            if awaiting_adoption.is_none() {
+                adoption_deadline = None;
+            } else if adoption_deadline.is_none() {
+                adoption_deadline = Some(tokio::time::Instant::now() + ADOPTION_TIMEOUT);
+            }
             while let Some(result) = mcp_workers.try_join_next() {
                 mcp_cleanup_confirmed &= matches!(result, Ok(Ok(())));
             }
             let frame = tokio::select! {
                 biased;
                 () = authority.revoked() => break Err("worker authority revoked".to_string()),
+                () = tokio::time::sleep_until(adoption_deadline.unwrap_or_else(tokio::time::Instant::now)),
+                    if adoption_deadline.is_some() => break Err("descriptor adoption timed out".to_string()),
                 update = updates.recv() => {
                     apply_policy_update(
                         update.ok_or_else(|| "upstream policy publisher closed".to_string())?,
@@ -365,12 +364,15 @@ async fn run(
                     }
                     match channel {
                         Ok(channel) => {
+                            let descriptor = OwnedFd::from(channel);
                             send_response(
                                 &responses,
                                 &UpstreamGrantResponse::McpAggregatorGranted { request_id },
-                                Some(&channel.into()),
+                                Some(&descriptor),
                             )
-                            .await?
+                            .await?;
+                            pending_aggregator = Some(descriptor);
+                            awaiting_adoption = Some(AwaitingAdoption::Aggregator(request_id));
                         }
                         Err(error) => {
                             warn!(%error, "native MCP aggregator startup failed");
@@ -658,6 +660,15 @@ async fn run(
                     awaiting_adoption = Some(AwaitingAdoption::Listener(grant_id));
                 }
                 UpstreamGrantRequest::Adopted { grant_id } => {
+                    if awaiting_adoption == Some(AwaitingAdoption::Aggregator(grant_id)) {
+                        drop(
+                            pending_aggregator
+                                .take()
+                                .ok_or("aggregator grant disappeared before adoption")?,
+                        );
+                        awaiting_adoption = None;
+                        continue;
+                    }
                     if awaiting_adoption == Some(AwaitingAdoption::Ledger(grant_id)) {
                         let Some((grant, descriptors)) = pending_ledger.take() else {
                             break Err(format!("ledger grant {grant_id} disappeared before adoption"));
@@ -849,6 +860,7 @@ async fn run(
         }
     }
     .await;
+    drop(pending_aggregator);
     drop(mcp_policy_updates);
     while let Some(result) = mcp_workers.join_next().await {
         mcp_cleanup_confirmed &= matches!(result, Ok(Ok(())));
@@ -891,34 +903,6 @@ async fn send_active_grant(
         Some(&grant.descriptor),
     )
     .await
-}
-
-async fn send_denied(sender: &WireSender, request_id: u64, reason: UpstreamGrantDenial) -> Result<(), String> {
-    send_response(sender, &UpstreamGrantResponse::Denied { request_id, reason }, None).await
-}
-
-async fn send_response(
-    sender: &WireSender,
-    response: &UpstreamGrantResponse,
-    descriptor: Option<&OwnedFd>,
-) -> Result<(), String> {
-    let descriptors = descriptor.into_iter().collect::<Vec<_>>();
-    send_response_descriptors(sender, response, &descriptors).await
-}
-
-async fn send_response_descriptors(
-    sender: &WireSender,
-    response: &UpstreamGrantResponse,
-    descriptors: &[&OwnedFd],
-) -> Result<(), String> {
-    let bytes =
-        encode_upstream_grant_response(response).map_err(|error| format!("encode grant response: {error:#}"))?;
-    let descriptors = descriptors.iter().map(|fd| fd.as_raw_fd()).collect::<Vec<_>>();
-    tokio::time::timeout(RESPONSE_TIMEOUT, sender.send(&bytes, &descriptors))
-        .await
-        .map_err(|_| "send upstream grant response timed out".to_string())?
-        .map_err(|error| format!("send upstream grant response: {error}"))?;
-    Ok(())
 }
 
 fn allocate_id(next: &mut u64) -> Result<u64, String> {

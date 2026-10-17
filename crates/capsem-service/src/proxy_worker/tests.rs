@@ -180,7 +180,7 @@ pub(crate) async fn fake(mode: &'static str) -> Result<ProxyWorker> {
     command
         .args(["--exact", "proxy_worker::tests::fake_proxy_worker_child", "--nocapture"])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .kill_on_drop(true);
     launch(
         command,
@@ -212,21 +212,23 @@ async fn supervisor_applies_policy_grants_connected_descriptors_and_reaps() {
 
 #[tokio::test]
 async fn ordinary_traffic_disconnect_does_not_terminate_the_proxy_generation() {
-    let worker = fake("traffic_close").await.unwrap();
-    let (peer, granted) = UnixStream::pair().unwrap();
-    worker
-        .grant(ProxyCapability::HttpTraffic, granted.into())
-        .await
-        .unwrap();
-    drop(peer);
-    tokio::task::yield_now().await;
+    for _ in 0..8 {
+        let worker = fake("traffic_close").await.unwrap();
+        let (peer, granted) = UnixStream::pair().unwrap();
+        worker
+            .grant(ProxyCapability::HttpTraffic, granted.into())
+            .await
+            .unwrap();
+        drop(peer);
+        tokio::task::yield_now().await;
 
-    let digest = worker.apply_policy(ACTIVE_POLICY.to_vec()).await.unwrap();
-    assert_eq!(
-        digest,
-        capsem_core::net::policy_config::active_policy_digest(ACTIVE_POLICY)
-    );
-    worker.shutdown().await.unwrap();
+        let digest = worker.apply_policy(ACTIVE_POLICY.to_vec()).await.unwrap();
+        assert_eq!(
+            digest,
+            capsem_core::net::policy_config::active_policy_digest(ACTIVE_POLICY)
+        );
+        worker.shutdown().await.unwrap();
+    }
 }
 
 #[tokio::test]
