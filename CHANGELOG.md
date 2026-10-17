@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gateway connection grants acknowledge descriptor adoption before the service
+  releases its original socket, avoiding intermittent macOS request failures.
+
 - VM-to-proxy traffic, MCP and trace-hint socket handoffs retain their original
   through receiver adoption, preventing intermittent macOS connection failures.
 

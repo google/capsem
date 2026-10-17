@@ -1,7 +1,7 @@
 //! Serialized requests for coordinator-minted Unix connection descriptors.
 
 use std::io;
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsFd as _, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -114,7 +114,14 @@ async fn exchange(
     }
     match decoded {
         GatewayGrantResponse::Granted { kind, .. } if kind == expected && response.fds.len() == 1 => {
-            Ok(response.fds.into_iter().next().unwrap())
+            let descriptor = response.fds.into_iter().next().unwrap();
+            capsem_foundation::unix::fd::validate_connected_stream(descriptor.as_fd())?;
+            let receipt =
+                encode_gateway_grant_request(&GatewayGrantRequest::Adopted { request_id }).map_err(io::Error::other)?;
+            tokio::time::timeout(WIRE_TIMEOUT, sender.send(&receipt, &[]))
+                .await
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "gateway adoption receipt timed out"))??;
+            Ok(descriptor)
         }
         GatewayGrantResponse::Denied { reason, .. } if response.fds.is_empty() => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,

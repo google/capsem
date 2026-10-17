@@ -30,6 +30,15 @@ async fn grants_service_and_registry_named_owner_connections() {
                 kind: expected,
             });
             responses.send(&response, &[granted.as_raw_fd()]).await.unwrap();
+            let receipt = requests.recv().await.unwrap();
+            assert!(receipt.fds.is_empty());
+            assert_eq!(
+                decode_gateway_grant_request(&receipt.bytes).unwrap(),
+                GatewayGrantRequest::Adopted {
+                    request_id: request.request_id()
+                }
+            );
+            drop(granted);
             std::io::Write::write_all(&mut peer, &[kind_code(expected)]).unwrap();
             peers.push(peer);
         }
